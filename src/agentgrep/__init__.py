@@ -119,8 +119,18 @@ def build_description(
 CLI_DESCRIPTION = build_description(
     """
     Read-only search across Codex, Claude, and Cursor local stores.
+
+    ``search`` is the default subcommand. ``agentgrep bliss`` is
+    equivalent to ``agentgrep search bliss``.
     """,
     (
+        (
+            "quick",
+            (
+                "agentgrep bliss",
+                "agentgrep serene bliss --agent codex",
+            ),
+        ),
         (
             "search",
             (
@@ -669,6 +679,54 @@ def normalize_color_mode(argv: cabc.Sequence[str] | None) -> ColorMode:
     return "auto"
 
 
+SUBCOMMANDS: frozenset[str] = frozenset({"search", "find"})
+
+
+def inject_default_subcommand(
+    argv: cabc.Sequence[str] | None,
+) -> cabc.Sequence[str] | None:
+    """Prepend ``search`` to ``argv`` when no subcommand is supplied.
+
+    Walks ``argv`` skipping the global ``--color`` option and any help flag.
+    If the first remaining token is not a known subcommand, inserts
+    ``search`` at that position so ``agentgrep bliss`` parses identically
+    to ``agentgrep search bliss``. Returns the input unchanged when no
+    injection is needed.
+
+    Examples
+    --------
+    >>> inject_default_subcommand(["bliss"])
+    ['search', 'bliss']
+    >>> inject_default_subcommand(["search", "bliss"])
+    ['search', 'bliss']
+    >>> inject_default_subcommand(["find", "codex"])
+    ['find', 'codex']
+    >>> inject_default_subcommand(["--color", "never", "bliss"])
+    ['--color', 'never', 'search', 'bliss']
+    >>> inject_default_subcommand(["--help"])
+    ['--help']
+    >>> inject_default_subcommand([])
+    []
+    """
+    effective = list(sys.argv[1:]) if argv is None else list(argv)
+    index = 0
+    while index < len(effective):
+        token = effective[index]
+        if token in {"-h", "--help"}:
+            return argv
+        if token == "--color" and index + 1 < len(effective):
+            index += 2
+            continue
+        if token.startswith("--color="):
+            index += 1
+            continue
+        if token in SUBCOMMANDS:
+            return argv
+        effective.insert(index, "search")
+        return effective
+    return argv
+
+
 @contextlib.contextmanager
 def configured_color_environment(color_mode: ColorMode) -> cabc.Iterator[None]:
     """Temporarily configure env vars for argparse help color handling."""
@@ -770,6 +828,7 @@ def parse_args(
 ) -> SearchArgs | FindArgs | None:
     """Parse CLI arguments into typed dataclasses."""
     color_mode = normalize_color_mode(argv)
+    argv = inject_default_subcommand(argv)
     with configured_color_environment(color_mode):
         bundle = create_parser(color_mode)
         namespace = bundle.parser.parse_args(argv)

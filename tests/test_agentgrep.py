@@ -259,6 +259,38 @@ def test_help_examples_are_present_for_help_flags() -> None:
     assert "agentgrep find cursor --json" in find_help.stdout
 
 
+def test_search_is_default_verb(tmp_path: pathlib.Path) -> None:
+    completed = run_agentgrep_cli(
+        "zzz_default_verb_no_match",
+        env={"HOME": str(tmp_path)},
+    )
+
+    assert "search examples:" not in completed.stdout
+    assert "find examples:" not in completed.stdout
+    assert completed.returncode == 1
+    assert "No matches found." in completed.stderr
+
+
+def test_default_verb_works_after_global_color_flag(tmp_path: pathlib.Path) -> None:
+    completed = run_agentgrep_cli(
+        "--color",
+        "never",
+        "zzz_default_verb_no_match",
+        env={"HOME": str(tmp_path)},
+    )
+
+    assert "search examples:" not in completed.stdout
+    assert completed.returncode == 1
+
+
+def test_root_help_not_rewritten_by_default_verb() -> None:
+    completed = run_agentgrep_cli("--help")
+
+    assert completed.returncode == 0
+    assert "search examples:" in completed.stdout
+    assert "find examples:" in completed.stdout
+
+
 def test_force_color_colorizes_help_output() -> None:
     completed = run_agentgrep_cli(
         "--color",
