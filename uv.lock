@@ -11,7 +11,7 @@ exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for 
 exclude-newer-span = "P3D"
 
 [[package]]
-name = "agentex"
+name = "agentgrep"
 version = "0.1.0a0"
 source = { editable = "." }
 dependencies = [

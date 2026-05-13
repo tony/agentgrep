@@ -1,5 +1,5 @@
 # ruff: noqa: D102, D103
-"""Functional tests for the ``agentex`` CLI package."""
+"""Functional tests for the ``agentgrep`` CLI package."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import typing as t
 
 import pytest
 
-import agentex as _agentex_module
+import agentgrep as _agentgrep_module
 
 if t.TYPE_CHECKING:
     import collections.abc as cabc
@@ -127,7 +127,7 @@ class ImportlibLike(t.Protocol):
     def import_module(self, name: str) -> object: ...
 
 
-class AgentexModule(t.Protocol):
+class AgentGrepModule(t.Protocol):
     """Structural type for the loaded standalone module."""
 
     shutil: ShutilLike
@@ -170,9 +170,9 @@ class AgentexModule(t.Protocol):
     def print_search_results(self, records: list[SearchRecordLike], args: object) -> None: ...
 
 
-def load_agentex_module() -> AgentexModule:
-    """Return the installed ``agentex`` package."""
-    return t.cast("AgentexModule", t.cast("object", _agentex_module))
+def load_agentgrep_module() -> AgentGrepModule:
+    """Return the installed ``agentgrep`` package."""
+    return t.cast("AgentGrepModule", t.cast("object", _agentgrep_module))
 
 
 def write_jsonl(path: pathlib.Path, rows: cabc.Sequence[object]) -> None:
@@ -181,12 +181,12 @@ def write_jsonl(path: pathlib.Path, rows: cabc.Sequence[object]) -> None:
     _ = path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
 
 
-def run_agentex_cli(
+def run_agentgrep_cli(
     *args: str,
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """Run the installed CLI in a subprocess via ``python -m agentex``."""
-    command = [sys.executable, "-m", "agentex", *args]
+    """Run the installed CLI in a subprocess via ``python -m agentgrep``."""
+    command = [sys.executable, "-m", "agentgrep", *args]
     merged_env = os.environ.copy()
     if env is not None:
         merged_env.update(env)
@@ -200,7 +200,7 @@ def run_agentex_cli(
 
 
 def test_select_backends_prefers_first_available(monkeypatch: pytest.MonkeyPatch) -> None:
-    agentex = load_agentex_module()
+    agentgrep = load_agentgrep_module()
 
     def fake_which(name: str) -> str | None:
         mapping = {
@@ -210,8 +210,8 @@ def test_select_backends_prefers_first_available(monkeypatch: pytest.MonkeyPatch
         }
         return mapping.get(name)
 
-    monkeypatch.setattr(agentex.shutil, "which", fake_which)
-    backends = agentex.select_backends()
+    monkeypatch.setattr(agentgrep.shutil, "which", fake_which)
+    backends = agentgrep.select_backends()
 
     assert backends.find_tool == "/tmp/fd"
     assert backends.grep_tool == "/tmp/rg"
@@ -219,48 +219,48 @@ def test_select_backends_prefers_first_available(monkeypatch: pytest.MonkeyPatch
 
 
 def test_cli_without_subcommand_prints_main_help() -> None:
-    completed = run_agentex_cli()
+    completed = run_agentgrep_cli()
 
     assert completed.returncode == 0
-    assert "usage: agentex" in completed.stdout
+    assert "usage: agentgrep" in completed.stdout
     assert "search examples:" in completed.stdout
     assert "find examples:" in completed.stdout
 
 
 def test_search_without_terms_prints_help() -> None:
-    completed = run_agentex_cli("search")
+    completed = run_agentgrep_cli("search")
 
     assert completed.returncode == 0
-    assert "usage: agentex search" in completed.stdout
+    assert "usage: agentgrep search" in completed.stdout
     assert "examples:" in completed.stdout
-    assert "agentex search bliss" in completed.stdout
+    assert "agentgrep search bliss" in completed.stdout
 
 
 def test_find_without_pattern_prints_help() -> None:
-    completed = run_agentex_cli("find")
+    completed = run_agentgrep_cli("find")
 
     assert completed.returncode == 0
-    assert "usage: agentex find" in completed.stdout
+    assert "usage: agentgrep find" in completed.stdout
     assert "examples:" in completed.stdout
-    assert "agentex find codex" in completed.stdout
+    assert "agentgrep find codex" in completed.stdout
     assert "codex history_file" not in completed.stdout
 
 
 def test_help_examples_are_present_for_help_flags() -> None:
-    root_help = run_agentex_cli("--help")
-    search_help = run_agentex_cli("search", "--help")
-    find_help = run_agentex_cli("find", "--help")
+    root_help = run_agentgrep_cli("--help")
+    search_help = run_agentgrep_cli("search", "--help")
+    find_help = run_agentgrep_cli("find", "--help")
 
     assert root_help.returncode == 0
     assert search_help.returncode == 0
     assert find_help.returncode == 0
     assert "search examples:" in root_help.stdout
-    assert "agentex search serenity --json" in search_help.stdout
-    assert "agentex find cursor --json" in find_help.stdout
+    assert "agentgrep search serenity --json" in search_help.stdout
+    assert "agentgrep find cursor --json" in find_help.stdout
 
 
 def test_force_color_colorizes_help_output() -> None:
-    completed = run_agentex_cli(
+    completed = run_agentgrep_cli(
         "--color",
         "always",
         "search",
@@ -272,7 +272,7 @@ def test_force_color_colorizes_help_output() -> None:
 
 
 def test_no_color_overrides_color_always() -> None:
-    completed = run_agentex_cli(
+    completed = run_agentgrep_cli(
         "--color",
         "always",
         "search",
@@ -287,7 +287,7 @@ def test_search_codex_prompt_match_returns_full_prompt(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    agentex = load_agentex_module()
+    agentgrep = load_agentgrep_module()
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
 
@@ -325,7 +325,7 @@ def test_search_codex_prompt_match_returns_full_prompt(
         ],
     )
 
-    query = agentex.SearchQuery(
+    query = agentgrep.SearchQuery(
         terms=("serenity", "bliss"),
         search_type="prompts",
         any_term=False,
@@ -334,12 +334,12 @@ def test_search_codex_prompt_match_returns_full_prompt(
         agents=("codex",),
         limit=None,
     )
-    sources = agentex.discover_sources(
+    sources = agentgrep.discover_sources(
         home,
         ("codex",),
-        agentex.BackendSelection(None, None, None),
+        agentgrep.BackendSelection(None, None, None),
     )
-    records = agentex.search_sources(query, sources, agentex.BackendSelection(None, None, None))
+    records = agentgrep.search_sources(query, sources, agentgrep.BackendSelection(None, None, None))
 
     assert len(records) == 1
     assert records[0].kind == "prompt"
@@ -351,7 +351,7 @@ def test_plan_search_sources_prefilters_one_root_once(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    agentex = load_agentex_module()
+    agentgrep = load_agentgrep_module()
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
 
@@ -366,7 +366,7 @@ def test_plan_search_sources_prefilters_one_root_once(
         [{"type": "response_item", "payload": {"role": "user", "content": "other"}}],
     )
 
-    query = agentex.SearchQuery(
+    query = agentgrep.SearchQuery(
         terms=("bliss",),
         search_type="prompts",
         any_term=False,
@@ -375,10 +375,10 @@ def test_plan_search_sources_prefilters_one_root_once(
         agents=("codex",),
         limit=None,
     )
-    sources = agentex.discover_sources(
+    sources = agentgrep.discover_sources(
         home,
         ("codex",),
-        agentex.BackendSelection(None, None, None),
+        agentgrep.BackendSelection(None, None, None),
     )
     calls: list[list[str]] = []
 
@@ -386,11 +386,11 @@ def test_plan_search_sources_prefilters_one_root_once(
         calls.append(command)
         return subprocess.CompletedProcess(command, 0, f"{first}\n", "")
 
-    monkeypatch.setattr(agentex, "run_readonly_command", fake_run)
-    planned = agentex.plan_search_sources(
+    monkeypatch.setattr(agentgrep, "run_readonly_command", fake_run)
+    planned = agentgrep.plan_search_sources(
         query,
         sources,
-        agentex.BackendSelection(None, "/fake/rg", None),
+        agentgrep.BackendSelection(None, "/fake/rg", None),
     )
 
     assert len(calls) == 1
@@ -401,7 +401,7 @@ def test_search_prefers_newer_sources_when_limiting(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    agentex = load_agentex_module()
+    agentgrep = load_agentgrep_module()
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
 
@@ -425,7 +425,7 @@ def test_search_prefers_newer_sources_when_limiting(
     os.utime(older, ns=(older_mtime_ns, older_mtime_ns))
     os.utime(newer, ns=(newer_mtime_ns, newer_mtime_ns))
 
-    query = agentex.SearchQuery(
+    query = agentgrep.SearchQuery(
         terms=("bliss",),
         search_type="prompts",
         any_term=False,
@@ -434,12 +434,12 @@ def test_search_prefers_newer_sources_when_limiting(
         agents=("codex",),
         limit=1,
     )
-    sources = agentex.discover_sources(
+    sources = agentgrep.discover_sources(
         home,
         ("codex",),
-        agentex.BackendSelection(None, None, None),
+        agentgrep.BackendSelection(None, None, None),
     )
-    records = agentex.search_sources(query, sources, agentex.BackendSelection(None, None, None))
+    records = agentgrep.search_sources(query, sources, agentgrep.BackendSelection(None, None, None))
 
     assert len(records) == 1
     assert records[0].path == newer
@@ -449,7 +449,7 @@ def test_search_dedupes_identical_prompts_within_session(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    agentex = load_agentex_module()
+    agentgrep = load_agentgrep_module()
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
 
@@ -478,7 +478,7 @@ def test_search_dedupes_identical_prompts_within_session(
         ],
     )
 
-    query = agentex.SearchQuery(
+    query = agentgrep.SearchQuery(
         terms=("bliss",),
         search_type="prompts",
         any_term=False,
@@ -487,12 +487,12 @@ def test_search_dedupes_identical_prompts_within_session(
         agents=("codex",),
         limit=None,
     )
-    sources = agentex.discover_sources(
+    sources = agentgrep.discover_sources(
         home,
         ("codex",),
-        agentex.BackendSelection(None, None, None),
+        agentgrep.BackendSelection(None, None, None),
     )
-    records = agentex.search_sources(query, sources, agentex.BackendSelection(None, None, None))
+    records = agentgrep.search_sources(query, sources, agentgrep.BackendSelection(None, None, None))
 
     assert len(records) == 1
     assert records[0].timestamp == "2026-01-01T00:01:00Z"
@@ -502,7 +502,7 @@ def test_search_keeps_identical_prompts_across_sessions(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    agentex = load_agentex_module()
+    agentgrep = load_agentgrep_module()
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
 
@@ -522,7 +522,7 @@ def test_search_keeps_identical_prompts_across_sessions(
     write_jsonl(first, rows)
     write_jsonl(second, rows)
 
-    query = agentex.SearchQuery(
+    query = agentgrep.SearchQuery(
         terms=("bliss",),
         search_type="prompts",
         any_term=False,
@@ -531,12 +531,12 @@ def test_search_keeps_identical_prompts_across_sessions(
         agents=("codex",),
         limit=None,
     )
-    sources = agentex.discover_sources(
+    sources = agentgrep.discover_sources(
         home,
         ("codex",),
-        agentex.BackendSelection(None, None, None),
+        agentgrep.BackendSelection(None, None, None),
     )
-    records = agentex.search_sources(query, sources, agentex.BackendSelection(None, None, None))
+    records = agentgrep.search_sources(query, sources, agentgrep.BackendSelection(None, None, None))
 
     assert len(records) == 2
     assert {record.path for record in records} == {first, second}
@@ -546,7 +546,7 @@ def test_search_limit_applies_to_unique_results(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    agentex = load_agentex_module()
+    agentgrep = load_agentgrep_module()
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
 
@@ -584,7 +584,7 @@ def test_search_limit_applies_to_unique_results(
         ],
     )
 
-    query = agentex.SearchQuery(
+    query = agentgrep.SearchQuery(
         terms=("bliss",),
         search_type="prompts",
         any_term=False,
@@ -593,12 +593,12 @@ def test_search_limit_applies_to_unique_results(
         agents=("codex",),
         limit=2,
     )
-    sources = agentex.discover_sources(
+    sources = agentgrep.discover_sources(
         home,
         ("codex",),
-        agentex.BackendSelection(None, None, None),
+        agentgrep.BackendSelection(None, None, None),
     )
-    records = agentex.search_sources(query, sources, agentex.BackendSelection(None, None, None))
+    records = agentgrep.search_sources(query, sources, agentgrep.BackendSelection(None, None, None))
 
     assert len(records) == 2
     assert [record.text for record in records] == ["bliss second", "bliss prompt"]
@@ -608,7 +608,7 @@ def test_search_codex_history_json_returns_history_record(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    agentex = load_agentex_module()
+    agentgrep = load_agentgrep_module()
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
 
@@ -626,7 +626,7 @@ def test_search_codex_history_json_returns_history_record(
         encoding="utf-8",
     )
 
-    query = agentex.SearchQuery(
+    query = agentgrep.SearchQuery(
         terms=("serenity",),
         search_type="history",
         any_term=False,
@@ -635,12 +635,12 @@ def test_search_codex_history_json_returns_history_record(
         agents=("codex",),
         limit=None,
     )
-    sources = agentex.discover_sources(
+    sources = agentgrep.discover_sources(
         home,
         ("codex",),
-        agentex.BackendSelection(None, None, None),
+        agentgrep.BackendSelection(None, None, None),
     )
-    records = agentex.search_sources(query, sources, agentex.BackendSelection(None, None, None))
+    records = agentgrep.search_sources(query, sources, agentgrep.BackendSelection(None, None, None))
 
     assert len(records) == 1
     assert records[0].kind == "history"
@@ -651,7 +651,7 @@ def test_cursor_ai_tracking_summary_is_exposed_as_history(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    agentex = load_agentex_module()
+    agentgrep = load_agentgrep_module()
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
 
@@ -691,7 +691,7 @@ def test_cursor_ai_tracking_summary_is_exposed_as_history(
     connection.commit()
     connection.close()
 
-    query = agentex.SearchQuery(
+    query = agentgrep.SearchQuery(
         terms=("serenity", "bliss"),
         search_type="history",
         any_term=False,
@@ -700,12 +700,12 @@ def test_cursor_ai_tracking_summary_is_exposed_as_history(
         agents=("cursor",),
         limit=None,
     )
-    sources = agentex.discover_sources(
+    sources = agentgrep.discover_sources(
         home,
         ("cursor",),
-        agentex.BackendSelection(None, None, None),
+        agentgrep.BackendSelection(None, None, None),
     )
-    records = agentex.search_sources(query, sources, agentex.BackendSelection(None, None, None))
+    records = agentgrep.search_sources(query, sources, agentgrep.BackendSelection(None, None, None))
 
     assert len(records) == 1
     assert records[0].agent == "cursor"
@@ -717,7 +717,7 @@ def test_cursor_state_itemtable_extracts_prompt(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    agentex = load_agentex_module()
+    agentgrep = load_agentgrep_module()
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
 
@@ -738,7 +738,7 @@ def test_cursor_state_itemtable_extracts_prompt(
     connection.commit()
     connection.close()
 
-    query = agentex.SearchQuery(
+    query = agentgrep.SearchQuery(
         terms=("serenity", "bliss"),
         search_type="prompts",
         any_term=False,
@@ -747,12 +747,12 @@ def test_cursor_state_itemtable_extracts_prompt(
         agents=("cursor",),
         limit=None,
     )
-    sources = agentex.discover_sources(
+    sources = agentgrep.discover_sources(
         home,
         ("cursor",),
-        agentex.BackendSelection(None, None, None),
+        agentgrep.BackendSelection(None, None, None),
     )
-    records = agentex.search_sources(query, sources, agentex.BackendSelection(None, None, None))
+    records = agentgrep.search_sources(query, sources, agentgrep.BackendSelection(None, None, None))
 
     assert len(records) == 1
     assert records[0].kind == "prompt"
@@ -763,7 +763,7 @@ def test_find_discovers_sources_and_filters_pattern(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    agentex = load_agentex_module()
+    agentgrep = load_agentgrep_module()
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
 
@@ -776,12 +776,12 @@ def test_find_discovers_sources_and_filters_pattern(
     connection = sqlite3.connect(cursor_db)
     connection.close()
 
-    sources = agentex.discover_sources(
+    sources = agentgrep.discover_sources(
         home,
         ("codex", "cursor"),
-        agentex.BackendSelection(None, None, None),
+        agentgrep.BackendSelection(None, None, None),
     )
-    records = agentex.find_sources("state", sources, None)
+    records = agentgrep.find_sources("state", sources, None)
 
     assert len(records) == 1
     assert records[0].agent == "cursor"
@@ -789,8 +789,8 @@ def test_find_discovers_sources_and_filters_pattern(
 
 
 def test_json_output_falls_back_without_pydantic() -> None:
-    agentex = load_agentex_module()
-    record = agentex.SearchRecord(
+    agentgrep = load_agentgrep_module()
+    record = agentgrep.SearchRecord(
         kind="prompt",
         agent="codex",
         store="codex.sessions",
@@ -798,7 +798,7 @@ def test_json_output_falls_back_without_pydantic() -> None:
         path=pathlib.Path("/tmp/example.jsonl"),
         text="serenity and bliss",
     )
-    args = agentex.SearchArgs(
+    args = agentgrep.SearchArgs(
         terms=("serenity",),
         agents=("codex",),
         search_type="prompts",
@@ -810,19 +810,19 @@ def test_json_output_falls_back_without_pydantic() -> None:
         color_mode="auto",
     )
 
-    original_import_module = agentex.importlib.import_module
+    original_import_module = agentgrep.importlib.import_module
 
     def fake_import_module(name: str) -> object:
         if name == "pydantic":
             raise ImportError
         return original_import_module(name)
 
-    agentex.importlib.import_module = fake_import_module  # type: ignore[method-assign]
+    agentgrep.importlib.import_module = fake_import_module  # type: ignore[method-assign]
     buffer = io.StringIO()
     with contextlib.redirect_stdout(buffer):
-        agentex.print_search_results([record], args)
+        agentgrep.print_search_results([record], args)
 
     payload = t.cast("dict[str, object]", json.loads(buffer.getvalue()))
-    assert payload["schema_version"] == "agentex.v1"
+    assert payload["schema_version"] == "agentgrep.v1"
     results = t.cast("list[dict[str, object]]", payload["results"])
     assert results[0]["text"] == "serenity and bliss"

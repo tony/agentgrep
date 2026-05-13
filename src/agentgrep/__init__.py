@@ -61,7 +61,7 @@ type KeyValueRow = tuple[object, object]
 
 AGENT_CHOICES: tuple[AgentName, ...] = ("codex", "claude", "cursor")
 JSON_FILE_SUFFIXES: frozenset[str] = frozenset({".json", ".jsonl"})
-SCHEMA_VERSION: str = "agentex.v1"
+SCHEMA_VERSION: str = "agentgrep.v1"
 USER_ROLES: frozenset[str] = frozenset({"human", "user"})
 CURSOR_STATE_TOKENS: tuple[str, ...] = ("chat", "composer", "prompt", "history")
 OFFICIAL_CURSOR_STATE_PATHS: tuple[pathlib.Path, ...] = (
@@ -124,18 +124,18 @@ CLI_DESCRIPTION = build_description(
         (
             "search",
             (
-                "agentex search bliss",
-                "agentex search serene bliss --agent codex",
-                "agentex search prompt history --type history --ndjson",
-                "agentex search design --ui",
+                "agentgrep search bliss",
+                "agentgrep search serene bliss --agent codex",
+                "agentgrep search prompt history --type history --ndjson",
+                "agentgrep search design --ui",
             ),
         ),
         (
             "find",
             (
-                "agentex find codex",
-                "agentex find sessions --agent codex",
-                "agentex find cursor --json",
+                "agentgrep find codex",
+                "agentgrep find sessions --agent codex",
+                "agentgrep find cursor --json",
             ),
         ),
     ),
@@ -148,11 +148,11 @@ SEARCH_DESCRIPTION = build_description(
         (
             None,
             (
-                "agentex search bliss",
-                "agentex search serene bliss --agent codex",
-                "agentex search prompt history --type history --ndjson",
-                "agentex search serenity --json",
-                "agentex search design --ui",
+                "agentgrep search bliss",
+                "agentgrep search serene bliss --agent codex",
+                "agentgrep search prompt history --type history --ndjson",
+                "agentgrep search serenity --json",
+                "agentgrep search design --ui",
             ),
         ),
     ),
@@ -165,9 +165,9 @@ FIND_DESCRIPTION = build_description(
         (
             None,
             (
-                "agentex find codex",
-                "agentex find sessions --agent codex",
-                "agentex find cursor --json",
+                "agentgrep find codex",
+                "agentgrep find sessions --agent codex",
+                "agentgrep find cursor --json",
             ),
         ),
     ),
@@ -230,7 +230,7 @@ class EnvelopePayload(t.TypedDict):
 
 
 class PydanticTypeAdapter(t.Protocol):
-    """Minimal TypeAdapter surface used by ``agentex``."""
+    """Minimal TypeAdapter surface used by ``agentgrep``."""
 
     def validate_python(self, value: object, /) -> object:
         """Validate a Python object."""
@@ -305,12 +305,12 @@ def should_enable_help_color(color_mode: ColorMode) -> bool:
     return sys.stdout.isatty()
 
 
-def create_themed_formatter(color_mode: ColorMode) -> type[AgentexHelpFormatter]:
+def create_themed_formatter(color_mode: ColorMode) -> type[AgentGrepHelpFormatter]:
     """Create a formatter class with a bound theme."""
     theme = AnsiHelpTheme.default() if should_enable_help_color(color_mode) else None
 
-    class ThemedAgentexHelpFormatter(AgentexHelpFormatter):
-        """AgentexHelpFormatter with a configured theme."""
+    class ThemedAgentGrepHelpFormatter(AgentGrepHelpFormatter):
+        """AgentGrepHelpFormatter with a configured theme."""
 
         _theme: object | None
 
@@ -332,10 +332,10 @@ def create_themed_formatter(color_mode: ColorMode) -> type[AgentexHelpFormatter]
             )
             self._theme = theme
 
-    return ThemedAgentexHelpFormatter
+    return ThemedAgentGrepHelpFormatter
 
 
-class AgentexHelpFormatter(argparse.RawDescriptionHelpFormatter):
+class AgentGrepHelpFormatter(argparse.RawDescriptionHelpFormatter):
     """Extend help output with syntax-colored example sections."""
 
     _theme: object | None = None
@@ -520,7 +520,7 @@ class BackendSelection:
 
 @dataclasses.dataclass(slots=True)
 class SearchArgs:
-    """Typed arguments for ``agentex search``."""
+    """Typed arguments for ``agentgrep search``."""
 
     terms: tuple[str, ...]
     agents: tuple[AgentName, ...]
@@ -535,7 +535,7 @@ class SearchArgs:
 
 @dataclasses.dataclass(slots=True)
 class FindArgs:
-    """Typed arguments for ``agentex find``."""
+    """Typed arguments for ``agentgrep find``."""
 
     pattern: str | None
     agents: tuple[AgentName, ...]
@@ -592,7 +592,7 @@ class SearchRecord:
 
 @dataclasses.dataclass(slots=True)
 class FindRecord:
-    """Normalized discovery record for ``agentex find``."""
+    """Normalized discovery record for ``agentgrep find``."""
 
     kind: t.Literal["find"]
     agent: AgentName
@@ -690,7 +690,7 @@ def create_parser(
     """Create the root parser and subparsers."""
     formatter_class = create_themed_formatter(color_mode)
     parser = argparse.ArgumentParser(
-        prog="agentex",
+        prog="agentgrep",
         description=CLI_DESCRIPTION,
         formatter_class=formatter_class,
         color=color_mode != "never",
@@ -2060,7 +2060,7 @@ def run_ui(records: list[SearchRecord]) -> None:
             t.cast("object", importlib.import_module("textual.widgets")),
         )
     except ImportError as error:
-        msg = "Textual is required for --ui. Run with `uv run py/agentex.py ... --ui`."
+        msg = "Textual is required for --ui. Run with `uv run py/agentgrep.py ... --ui`."
         raise RuntimeError(msg) from error
 
     app_type = textual_app.App
@@ -2072,7 +2072,7 @@ def run_ui(records: list[SearchRecord]) -> None:
     input_widget = textual_widgets.Input
     static_type = textual_widgets.Static
 
-    class AgentexApp(app_type):  # type: ignore[valid-type, misc]
+    class AgentGrepApp(app_type):  # type: ignore[valid-type, misc]
         """Read-only explorer for normalized search records."""
 
         CSS: t.ClassVar[str] = """
@@ -2169,12 +2169,12 @@ def run_ui(records: list[SearchRecord]) -> None:
             detail = t.cast("StaticLike", app.query_one("#detail", static_type))
             detail.update("\n".join(details))
 
-    app = t.cast("RunnableAppLike", t.cast("object", AgentexApp(records)))
+    app = t.cast("RunnableAppLike", t.cast("object", AgentGrepApp(records)))
     app.run()
 
 
 def run_search_command(args: SearchArgs) -> int:
-    """Execute ``agentex search``."""
+    """Execute ``agentgrep search``."""
     if not args.terms and args.output_mode != "ui":
         msg = "search requires at least one term unless --ui is used"
         raise SystemExit(msg)
@@ -2192,7 +2192,7 @@ def run_search_command(args: SearchArgs) -> int:
 
 
 def run_find_command(args: FindArgs) -> int:
-    """Execute ``agentex find``."""
+    """Execute ``agentgrep find``."""
     records = run_find_query(
         pathlib.Path.home(),
         args.agents,

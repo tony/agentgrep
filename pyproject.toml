@@ -1,5 +1,5 @@
 [project]
-name = "agentex"
+name = "agentgrep"
 version = "0.1.0a0"
 description = "Read-only search for local AI agent prompts and history (Codex, Claude, Cursor)"
 requires-python = ">=3.14,<4.0"
@@ -37,12 +37,12 @@ dependencies = [
 ]
 
 [project.urls]
-"Bug Tracker" = "https://github.com/tony/agentex/issues"
-Repository = "https://github.com/tony/agentex"
+"Bug Tracker" = "https://github.com/tony/agentgrep/issues"
+Repository = "https://github.com/tony/agentgrep"
 
 [project.scripts]
-agentex = "agentex:main"
-agentex-mcp = "agentex.mcp:main"
+agentgrep = "agentgrep:main"
+agentgrep-mcp = "agentgrep.mcp:main"
 
 [dependency-groups]
 dev = [
@@ -133,7 +133,7 @@ pyupgrade.keep-runtime-typing = false
 
 [tool.ruff.lint.isort]
 known-first-party = [
-  "agentex",
+  "agentgrep",
 ]
 combine-as-imports = true
 required-imports = [
@@ -165,7 +165,7 @@ doctest_optionflags = [
   "NORMALIZE_WHITESPACE",
 ]
 testpaths = [
-  "src/agentex",
+  "src/agentgrep",
   "tests",
 ]
 asyncio_mode = "auto"

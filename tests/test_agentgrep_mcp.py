@@ -1,5 +1,5 @@
 # ruff: noqa: D102, D103
-"""Functional tests for the ``agentex`` FastMCP server."""
+"""Functional tests for the ``agentgrep`` FastMCP server."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import typing as t
 
 from fastmcp import Client
 
-from agentex import mcp as _agentex_mcp_module
+from agentgrep import mcp as _agentgrep_mcp_module
 
 if t.TYPE_CHECKING:
     import collections.abc as cabc
@@ -84,15 +84,15 @@ class ResourceTemplateLike(t.Protocol):
     uriTemplate: str
 
 
-class AgentexMcpModule(t.Protocol):
+class AgentGrepMcpModule(t.Protocol):
     """Structural type for the loaded MCP module."""
 
     def build_mcp_server(self) -> FastMCP: ...
 
 
-def load_agentex_mcp_module() -> AgentexMcpModule:
-    """Return the installed ``agentex.mcp`` module."""
-    return t.cast("AgentexMcpModule", t.cast("object", _agentex_mcp_module))
+def load_agentgrep_mcp_module() -> AgentGrepMcpModule:
+    """Return the installed ``agentgrep.mcp`` module."""
+    return t.cast("AgentGrepMcpModule", t.cast("object", _agentgrep_mcp_module))
 
 
 def write_jsonl(path: pathlib.Path, rows: cabc.Sequence[object]) -> None:
@@ -109,9 +109,9 @@ def extract_resource_text(contents: object) -> str:
 
 
 async def test_mcp_lists_tools_resources_prompts_and_templates() -> None:
-    agentex_mcp = load_agentex_mcp_module()
+    agentgrep_mcp = load_agentgrep_mcp_module()
 
-    async with Client(agentex_mcp.build_mcp_server()) as client:
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
         tools = t.cast("list[ToolLike]", await client.list_tools())
         resources = t.cast("list[ResourceLike]", await client.list_resources())
         prompts = t.cast("list[PromptLike]", await client.list_prompts())
@@ -121,17 +121,17 @@ async def test_mcp_lists_tools_resources_prompts_and_templates() -> None:
         )
 
     assert {tool.name for tool in tools} == {"search", "find"}
-    assert any(str(resource.uri) == "agentex://capabilities" for resource in resources)
-    assert any(str(resource.uri) == "agentex://sources" for resource in resources)
+    assert any(str(resource.uri) == "agentgrep://capabilities" for resource in resources)
+    assert any(str(resource.uri) == "agentgrep://sources" for resource in resources)
     assert any(prompt.name == "search_prompts" for prompt in prompts)
-    assert any(template.uriTemplate == "agentex://sources/{agent}" for template in templates)
+    assert any(template.uriTemplate == "agentgrep://sources/{agent}" for template in templates)
 
 
 async def test_mcp_search_tool_returns_full_prompt(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    agentex_mcp = load_agentex_mcp_module()
+    agentgrep_mcp = load_agentgrep_mcp_module()
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
 
@@ -157,7 +157,7 @@ async def test_mcp_search_tool_returns_full_prompt(
         ],
     )
 
-    async with Client(agentex_mcp.build_mcp_server()) as client:
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
         result = await client.call_tool(
             "search",
             {
@@ -182,7 +182,7 @@ async def test_mcp_find_tool_and_sources_resource(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    agentex_mcp = load_agentex_mcp_module()
+    agentgrep_mcp = load_agentgrep_mcp_module()
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
 
@@ -194,12 +194,14 @@ async def test_mcp_find_tool_and_sources_resource(
     state_db.parent.mkdir(parents=True, exist_ok=True)
     state_db.touch()
 
-    async with Client(agentex_mcp.build_mcp_server()) as client:
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
         find_result = await client.call_tool(
             "find",
             {"pattern": "state", "agent": "all", "limit": 10},
         )
-        source_text = extract_resource_text(await client.read_resource("agentex://sources/cursor"))
+        source_text = extract_resource_text(
+            await client.read_resource("agentgrep://sources/cursor")
+        )
 
     data = t.cast("FindToolDataLike", find_result.data)
     assert len(data.results) == 1
@@ -212,10 +214,10 @@ async def test_mcp_find_tool_and_sources_resource(
 
 
 async def test_mcp_capabilities_resource_reports_read_only() -> None:
-    agentex_mcp = load_agentex_mcp_module()
+    agentgrep_mcp = load_agentgrep_mcp_module()
 
-    async with Client(agentex_mcp.build_mcp_server()) as client:
-        text = extract_resource_text(await client.read_resource("agentex://capabilities"))
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        text = extract_resource_text(await client.read_resource("agentgrep://capabilities"))
 
     data = t.cast("dict[str, object]", json.loads(text))
     assert data["read_only"] is True
@@ -225,9 +227,9 @@ async def test_mcp_capabilities_resource_reports_read_only() -> None:
 
 
 async def test_mcp_prompt_guides_search() -> None:
-    agentex_mcp = load_agentex_mcp_module()
+    agentgrep_mcp = load_agentgrep_mcp_module()
 
-    async with Client(agentex_mcp.build_mcp_server()) as client:
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
         result = await client.get_prompt(
             "search_prompts",
             {"topic": "serenity", "agent": "codex"},

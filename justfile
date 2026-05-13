@@ -1,4 +1,4 @@
-# justfile for agentex
+# justfile for agentgrep
 # https://just.systems/
 
 set shell := ["bash", "-uc"]

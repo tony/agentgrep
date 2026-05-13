@@ -2,7 +2,7 @@
   "$schema": "https://gofastmcp.com/public/schemas/fastmcp.json/v1.json",
   "source": {
     "type": "filesystem",
-    "path": "src/agentex/mcp.py",
+    "path": "src/agentgrep/mcp.py",
     "entrypoint": "build_mcp_server"
   },
   "environment": {

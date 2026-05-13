@@ -1,1 +1,1 @@
-"""Functional tests for the ``agentex`` package."""
+"""Functional tests for the ``agentgrep`` package."""

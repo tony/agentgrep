@@ -3,20 +3,20 @@
 # requires-python = ">=3.14"
 # dependencies = ["fastmcp>=3.0.0", "pydantic>=2.11.3"]
 # ///
-"""FastMCP server exposing ``agentex`` search and discovery.
+"""FastMCP server exposing ``agentgrep`` search and discovery.
 
 Examples
 --------
 Run the MCP server over stdio:
 
 ```console
-$ uv run py/agentex_mcp.py
+$ uv run agentgrep-mcp
 ```
 
 Use the FastMCP config:
 
 ```console
-$ uv run fastmcp run py/agentex.fastmcp.json
+$ uv run fastmcp run fastmcp.json
 ```
 """
 
@@ -42,12 +42,12 @@ KNOWN_ADAPTERS: tuple[str, ...] = (
     "cursor.state_vscdb_legacy.v1",
     "cursor.state_vscdb_modern.v1",
 )
-READONLY_TAGS = {"readonly", "agentex"}
+READONLY_TAGS = {"readonly", "agentgrep"}
 RESOURCE_ANNOTATIONS = {"readOnlyHint": True, "idempotentHint": True}
 
 
 class SearchRecordLike(t.Protocol):
-    """Structural type for shared ``agentex`` search records."""
+    """Structural type for shared ``agentgrep`` search records."""
 
     kind: str
     agent: str
@@ -65,7 +65,7 @@ class SearchRecordLike(t.Protocol):
 
 
 class FindRecordLike(t.Protocol):
-    """Structural type for shared ``agentex`` find records."""
+    """Structural type for shared ``agentgrep`` find records."""
 
     kind: str
     agent: str
@@ -77,7 +77,7 @@ class FindRecordLike(t.Protocol):
 
 
 class SourceHandleLike(t.Protocol):
-    """Structural type for discovered ``agentex`` sources."""
+    """Structural type for discovered ``agentgrep`` sources."""
 
     agent: str
     store: str
@@ -90,7 +90,7 @@ class SourceHandleLike(t.Protocol):
 
 
 class SearchQueryFactory(t.Protocol):
-    """Factory protocol for ``agentex.SearchQuery``."""
+    """Factory protocol for ``agentgrep.SearchQuery``."""
 
     def __call__(  # noqa: D102
         self,
@@ -113,8 +113,8 @@ class BackendSelectionLike(t.Protocol):
     json_tool: str | None
 
 
-class AgentexModule(t.Protocol):
-    """Structural type for the imported ``agentex`` module."""
+class AgentGrepModule(t.Protocol):
+    """Structural type for the imported ``agentgrep`` module."""
 
     SCHEMA_VERSION: str
     SearchQuery: SearchQueryFactory
@@ -164,22 +164,22 @@ class AgentexModule(t.Protocol):
     ) -> dict[str, object]: ...
 
 
-agentex = t.cast(
-    "AgentexModule",
-    t.cast("object", importlib.import_module("agentex")),
+agentgrep = t.cast(
+    "AgentGrepModule",
+    t.cast("object", importlib.import_module("agentgrep")),
 )
 
 
-class AgentexModel(BaseModel):
+class AgentGrepModel(BaseModel):
     """Base model for MCP payloads."""
 
     model_config: t.ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
 
-class SearchRecordModel(AgentexModel):
+class SearchRecordModel(AgentGrepModel):
     """Normalized search result payload."""
 
-    schema_version: str = agentex.SCHEMA_VERSION
+    schema_version: str = agentgrep.SCHEMA_VERSION
     kind: t.Literal["prompt", "history"]
     agent: t.Literal["codex", "claude", "cursor"]
     store: str
@@ -196,14 +196,14 @@ class SearchRecordModel(AgentexModel):
 
     @classmethod
     def from_record(cls, record: SearchRecordLike) -> SearchRecordModel:
-        """Build a typed result from an ``agentex`` search record."""
-        return cls.model_validate(agentex.serialize_search_record(record))
+        """Build a typed result from an ``agentgrep`` search record."""
+        return cls.model_validate(agentgrep.serialize_search_record(record))
 
 
-class FindRecordModel(AgentexModel):
+class FindRecordModel(AgentGrepModel):
     """Normalized find result payload."""
 
-    schema_version: str = agentex.SCHEMA_VERSION
+    schema_version: str = agentgrep.SCHEMA_VERSION
     kind: t.Literal["find"]
     agent: t.Literal["codex", "claude", "cursor"]
     store: str
@@ -214,14 +214,14 @@ class FindRecordModel(AgentexModel):
 
     @classmethod
     def from_record(cls, record: FindRecordLike) -> FindRecordModel:
-        """Build a typed result from an ``agentex`` find record."""
-        return cls.model_validate(agentex.serialize_find_record(record))
+        """Build a typed result from an ``agentgrep`` find record."""
+        return cls.model_validate(agentgrep.serialize_find_record(record))
 
 
-class SourceRecordModel(AgentexModel):
+class SourceRecordModel(AgentGrepModel):
     """Discovered source summary payload."""
 
-    schema_version: str = agentex.SCHEMA_VERSION
+    schema_version: str = agentgrep.SCHEMA_VERSION
     agent: t.Literal["codex", "claude", "cursor"]
     store: str
     adapter_id: str
@@ -234,10 +234,10 @@ class SourceRecordModel(AgentexModel):
     @classmethod
     def from_source(cls, source: SourceHandleLike) -> SourceRecordModel:
         """Build a typed result from a discovered source."""
-        return cls.model_validate(agentex.serialize_source_handle(source))
+        return cls.model_validate(agentgrep.serialize_source_handle(source))
 
 
-class SearchToolQuery(AgentexModel):
+class SearchToolQuery(AgentGrepModel):
     """Echo of normalized search tool inputs."""
 
     terms: list[str]
@@ -249,15 +249,15 @@ class SearchToolQuery(AgentexModel):
     limit: int | None = None
 
 
-class SearchToolResponse(AgentexModel):
+class SearchToolResponse(AgentGrepModel):
     """Structured response for the MCP search tool."""
 
-    schema_version: str = agentex.SCHEMA_VERSION
+    schema_version: str = agentgrep.SCHEMA_VERSION
     query: SearchToolQuery
     results: list[SearchRecordModel]
 
 
-class FindToolQuery(AgentexModel):
+class FindToolQuery(AgentGrepModel):
     """Echo of normalized find tool inputs."""
 
     pattern: str | None = None
@@ -265,15 +265,15 @@ class FindToolQuery(AgentexModel):
     limit: int | None = None
 
 
-class FindToolResponse(AgentexModel):
+class FindToolResponse(AgentGrepModel):
     """Structured response for the MCP find tool."""
 
-    schema_version: str = agentex.SCHEMA_VERSION
+    schema_version: str = agentgrep.SCHEMA_VERSION
     query: FindToolQuery
     results: list[FindRecordModel]
 
 
-class BackendAvailabilityModel(AgentexModel):
+class BackendAvailabilityModel(AgentGrepModel):
     """Selected read-only subprocess backends."""
 
     find_tool: str | None = None
@@ -281,11 +281,11 @@ class BackendAvailabilityModel(AgentexModel):
     json_tool: str | None = None
 
 
-class CapabilitiesModel(AgentexModel):
+class CapabilitiesModel(AgentGrepModel):
     """Static MCP capability summary."""
 
-    schema_version: str = agentex.SCHEMA_VERSION
-    name: str = "agentex"
+    schema_version: str = agentgrep.SCHEMA_VERSION
+    name: str = "agentgrep"
     version: str = SERVER_VERSION
     read_only: bool = True
     agents: list[t.Literal["codex", "claude", "cursor"]]
@@ -301,15 +301,15 @@ SourceListAdapter = TypeAdapter(list[SourceRecordModel])
 
 
 def normalize_agent_selection(agent: AgentSelector) -> tuple[str, ...]:
-    """Convert a single MCP agent selector into ``agentex`` agents."""
+    """Convert a single MCP agent selector into ``agentgrep`` agents."""
     values: list[str] = [] if agent == "all" else [agent]
-    return agentex.parse_agents(values)
+    return agentgrep.parse_agents(values)
 
 
 def list_source_models(agent: AgentSelector = "all") -> list[SourceRecordModel]:
     """Return discovered sources as typed MCP payloads."""
-    backends = agentex.select_backends()
-    sources = agentex.discover_sources(
+    backends = agentgrep.select_backends()
+    sources = agentgrep.discover_sources(
         pathlib.Path.home(),
         normalize_agent_selection(agent),
         backends,
@@ -319,16 +319,16 @@ def list_source_models(agent: AgentSelector = "all") -> list[SourceRecordModel]:
 
 def build_capabilities() -> CapabilitiesModel:
     """Build a typed capability summary."""
-    backends = agentex.select_backends()
+    backends = agentgrep.select_backends()
     return CapabilitiesModel(
         agents=["codex", "claude", "cursor"],
         search_types=["prompts", "history", "all"],
         adapters=list(KNOWN_ADAPTERS),
         tools=["search", "find"],
         resources=[
-            "agentex://capabilities",
-            "agentex://sources",
-            "agentex://sources/{agent}",
+            "agentgrep://capabilities",
+            "agentgrep://sources",
+            "agentgrep://sources/{agent}",
         ],
         prompts=["search_prompts", "search_history", "inspect_stores"],
         backends=BackendAvailabilityModel(
@@ -342,7 +342,7 @@ def build_capabilities() -> CapabilitiesModel:
 def _build_instructions() -> str:
     """Return server instructions for MCP clients."""
     return (
-        "agentex is a read-only MCP server for local AI agent history search. "
+        "agentgrep is a read-only MCP server for local AI agent history search. "
         "Use `search` to retrieve full prompt/history matches and `find` to inspect "
         "discovered stores and session files. Search results are newest-first and "
         "duplicate prompts within the same session are collapsed. "
@@ -351,7 +351,7 @@ def _build_instructions() -> str:
     )
 
 
-class SearchRequestModel(AgentexModel):
+class SearchRequestModel(AgentGrepModel):
     """Validated search request payload."""
 
     terms: list[str]
@@ -363,7 +363,7 @@ class SearchRequestModel(AgentexModel):
     limit: int | None = None
 
 
-class FindRequestModel(AgentexModel):
+class FindRequestModel(AgentGrepModel):
     """Validated find request payload."""
 
     pattern: str | None = None
@@ -373,7 +373,7 @@ class FindRequestModel(AgentexModel):
 
 def _search_sync(request: SearchRequestModel) -> SearchToolResponse:
     """Run the blocking search work and build a typed response."""
-    query = agentex.SearchQuery(
+    query = agentgrep.SearchQuery(
         terms=tuple(request.terms),
         search_type=request.search_type,
         any_term=request.any_term,
@@ -382,7 +382,7 @@ def _search_sync(request: SearchRequestModel) -> SearchToolResponse:
         agents=normalize_agent_selection(request.agent),
         limit=request.limit,
     )
-    records = agentex.run_search_query(pathlib.Path.home(), query)
+    records = agentgrep.run_search_query(pathlib.Path.home(), query)
     return SearchToolResponse(
         query=SearchToolQuery(
             terms=request.terms,
@@ -399,7 +399,7 @@ def _search_sync(request: SearchRequestModel) -> SearchToolResponse:
 
 def _find_sync(request: FindRequestModel) -> FindToolResponse:
     """Run the blocking find work and build a typed response."""
-    records = agentex.run_find_query(
+    records = agentgrep.run_find_query(
         pathlib.Path.home(),
         normalize_agent_selection(request.agent),
         pattern=request.pattern,
@@ -509,9 +509,9 @@ def _register_resources(mcp: FastMCP) -> None:
     """Register static and templated resources."""
 
     @mcp.resource(
-        "agentex://capabilities",
-        name="agentex_capabilities",
-        description="Read-only capability summary for the agentex MCP server.",
+        "agentgrep://capabilities",
+        name="agentgrep_capabilities",
+        description="Read-only capability summary for the agentgrep MCP server.",
         mime_type="application/json",
         tags=READONLY_TAGS | {"capabilities"},
         annotations=RESOURCE_ANNOTATIONS,
@@ -522,9 +522,9 @@ def _register_resources(mcp: FastMCP) -> None:
     _ = capabilities_resource
 
     @mcp.resource(
-        "agentex://sources",
-        name="agentex_sources",
-        description="All discovered read-only agent stores known to agentex.",
+        "agentgrep://sources",
+        name="agentgrep_sources",
+        description="All discovered read-only agent stores known to agentgrep.",
         mime_type="application/json",
         tags=READONLY_TAGS | {"discovery"},
         annotations=RESOURCE_ANNOTATIONS,
@@ -535,8 +535,8 @@ def _register_resources(mcp: FastMCP) -> None:
     _ = sources_resource
 
     @mcp.resource(
-        "agentex://sources/{agent}",
-        name="agentex_sources_by_agent",
+        "agentgrep://sources/{agent}",
+        name="agentgrep_sources_by_agent",
         description="Discovered sources filtered to one agent.",
         mime_type="application/json",
         tags=READONLY_TAGS | {"discovery"},
@@ -598,7 +598,7 @@ def _register_prompts(mcp: FastMCP) -> None:
 def build_mcp_server() -> FastMCP:
     """Build and return the FastMCP server instance."""
     mcp = FastMCP(
-        name="agentex",
+        name="agentgrep",
         version=SERVER_VERSION,
         instructions=_build_instructions(),
         on_duplicate="error",
