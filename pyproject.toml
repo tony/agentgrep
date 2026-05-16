@@ -27,6 +27,7 @@ packages = [
 ]
 include = [
   { path = "tests", format = "sdist" },
+  { path = "docs", format = "sdist" },
   { path = "conftest.py", format = "sdist" },
 ]
 
@@ -54,6 +55,12 @@ dev = [
   "pytest-watcher",
   "syrupy>=5.1.0",
 ]
+docs = [
+  "gp-sphinx==0.0.1a18",
+  "sphinx-autodoc-api-style==0.0.1a18",
+  "sphinx-autodoc-fastmcp==0.0.1a18",
+  "sphinx-autobuild",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -66,11 +73,13 @@ files = [
   "src",
   "tests",
 ]
+exclude = ["^docs/"]
 
 [tool.coverage.run]
 branch = true
 parallel = true
 omit = [
+  "docs/conf.py",
   "tests/test_*.py",
 ]
 

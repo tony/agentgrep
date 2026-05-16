@@ -5,6 +5,7 @@ set shell := ["bash", "-uc"]
 
 # File patterns
 py_files := "find . -type f -not -path '*/\\.*' | grep -i '.*[.]py$' 2> /dev/null"
+doc_files := "find . -type f -not -path '*/\\.*' | grep -i '.*[.]rst$\\|.*[.]md$\\|.*[.]css$\\|.*[.]py$\\|mkdocs\\.yml\\|CHANGES\\|README\\|TODO\\|.*conf\\.py' 2> /dev/null"
 all_files := "find . -type f -not -path '*/\\.*' | grep -i '.*[.]py$\\|.*[.]rst$\\|.*[.]md$\\|.*[.]css$\\|.*[.]py$\\|mkdocs\\.yml\\|CHANGES\\|TODO\\|.*conf\\.py' 2> /dev/null"
 
 # List all available commands
@@ -33,6 +34,46 @@ watch-test:
         just test
         just _entr-warn
     fi
+
+# Build documentation
+[group: 'docs']
+build-docs:
+    just -f docs/justfile html
+
+# Watch files and rebuild docs on change
+[group: 'docs']
+watch-docs:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if command -v entr > /dev/null; then
+        {{ doc_files }} | entr -c just build-docs
+    else
+        just build-docs
+        just _entr-warn
+    fi
+
+# Serve documentation
+[group: 'docs']
+serve-docs:
+    just -f docs/justfile serve
+
+# Watch and serve docs simultaneously
+[group: 'docs']
+dev-docs:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just watch-docs &
+    just serve-docs
+
+# Start documentation server with auto-reload
+[group: 'docs']
+start-docs:
+    just -f docs/justfile start
+
+# Start documentation design mode (watches static files)
+[group: 'docs']
+design-docs:
+    just -f docs/justfile design
 
 # Format code with ruff
 [group: 'lint']

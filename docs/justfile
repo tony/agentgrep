@@ -1,0 +1,78 @@
+# justfile for agentgrep documentation
+# https://just.systems/
+
+set shell := ["bash", "-uc"]
+
+http_port := "8025"
+builddir := "_build"
+sphinxopts := ""
+sphinxbuild := "uv run sphinx-build"
+sourcedir := "."
+watch_files := "find .. -type f -not -path '*/\\.*' | grep -i '.*[.]\\(rst\\|md\\)$\\|.*[.]py$\\|CHANGES\\|README\\|TODO\\|.*conf\\.py' 2> /dev/null"
+allsphinxopts := "-d " + builddir + "/doctrees " + sphinxopts + " ."
+
+default:
+    @just --list
+
+[group: 'build']
+html:
+    {{ sphinxbuild }} -b dirhtml {{ allsphinxopts }} {{ builddir }}/html
+    @echo ""
+    @echo "Build finished. The HTML pages are in {{ builddir }}/html."
+
+[group: 'build']
+dirhtml:
+    {{ sphinxbuild }} -b dirhtml {{ allsphinxopts }} {{ builddir }}/dirhtml
+    @echo ""
+    @echo "Build finished. The HTML pages are in {{ builddir }}/dirhtml."
+
+[group: 'validate']
+linkcheck:
+    {{ sphinxbuild }} -b linkcheck {{ allsphinxopts }} {{ builddir }}/linkcheck
+    @echo ""
+    @echo "Link check complete; inspect {{ builddir }}/linkcheck/output.txt."
+
+[group: 'validate']
+doctest:
+    {{ sphinxbuild }} -b doctest {{ allsphinxopts }} {{ builddir }}/doctest
+    @echo ""
+    @echo "Doctest build complete; inspect {{ builddir }}/doctest/output.txt."
+
+[group: 'misc']
+[confirm]
+clean:
+    rm -rf {{ builddir }}/*
+
+[group: 'dev']
+watch:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if command -v entr > /dev/null; then
+        ${{ watch_files }} | entr -c just html
+    else
+        just html
+    fi
+
+[group: 'dev']
+serve:
+    @echo '=============================================================='
+    @echo ''
+    @echo 'docs server running at http://localhost:{{ http_port }}/'
+    @echo ''
+    @echo '=============================================================='
+    python -m http.server {{ http_port }} --directory {{ builddir }}/html
+
+[group: 'dev']
+dev:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just watch &
+    just serve
+
+[group: 'dev']
+start:
+    uv run sphinx-autobuild -b dirhtml "{{ sourcedir }}" "{{ builddir }}" {{ sphinxopts }} --port {{ http_port }}
+
+[group: 'dev']
+design:
+    uv run sphinx-autobuild -b dirhtml "{{ sourcedir }}" "{{ builddir }}" {{ sphinxopts }} --port {{ http_port }} --watch "." -a
