@@ -11,6 +11,7 @@ import pathlib
 import sqlite3
 import subprocess
 import sys
+import time
 import typing as t
 
 import pytest
@@ -86,6 +87,7 @@ class SearchArgsFactory(t.Protocol):
         limit: int | None,
         output_mode: str,
         color_mode: str,
+        progress_mode: str,
     ) -> object: ...
 
 
@@ -153,6 +155,15 @@ class AgentGrepModule(t.Protocol):
         backends: BackendSelectionLike,
     ) -> list[SearchRecordLike]: ...
 
+    def run_search_query(
+        self,
+        home: pathlib.Path,
+        query: object,
+        *,
+        backends: BackendSelectionLike | None = None,
+        progress: object | None = None,
+    ) -> list[SearchRecordLike]: ...
+
     def plan_search_sources(
         self,
         query: object,
@@ -168,6 +179,8 @@ class AgentGrepModule(t.Protocol):
     ) -> list[FindRecordLike]: ...
 
     def print_search_results(self, records: list[SearchRecordLike], args: object) -> None: ...
+
+    def parse_args(self, argv: cabc.Sequence[str] | None = None) -> object | None: ...
 
 
 def load_agentgrep_module() -> AgentGrepModule:
@@ -283,6 +296,19 @@ def test_default_verb_works_after_global_color_flag(tmp_path: pathlib.Path) -> N
     assert completed.returncode == 1
 
 
+def test_search_progress_mode_parses_default_and_explicit() -> None:
+    agentgrep = load_agentgrep_module()
+
+    default_args = t.cast("t.Any", agentgrep.parse_args(["search", "bliss"]))
+    disabled_args = t.cast(
+        "t.Any",
+        agentgrep.parse_args(["search", "--progress", "never", "bliss"]),
+    )
+
+    assert default_args.progress_mode == "auto"
+    assert disabled_args.progress_mode == "never"
+
+
 def test_root_help_not_rewritten_by_default_verb() -> None:
     completed = run_agentgrep_cli("--help")
 
@@ -377,6 +403,92 @@ def test_search_codex_prompt_match_returns_full_prompt(
     assert records[0].kind == "prompt"
     assert records[0].text == "A serenity prompt with bliss and detail."
     assert records[0].session_id == "session-1"
+
+
+def test_search_reports_source_and_match_progress(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+
+    first = home / ".codex" / "sessions" / "2026" / "01" / "01" / "first.jsonl"
+    second = home / ".codex" / "sessions" / "2026" / "01" / "01" / "second.jsonl"
+    write_jsonl(
+        first,
+        [{"type": "response_item", "payload": {"role": "user", "content": "bliss"}}],
+    )
+    write_jsonl(
+        second,
+        [{"type": "response_item", "payload": {"role": "user", "content": "other"}}],
+    )
+
+    query = agentgrep.SearchQuery(
+        terms=("bliss",),
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+
+    class RecordingProgress:
+        def __init__(self) -> None:
+            self.events: list[tuple[str, int | str]] = []
+
+        def start(self, query: object) -> None:
+            self.events.append(("start", 0))
+
+        def sources_discovered(self, count: int) -> None:
+            self.events.append(("discovered", count))
+
+        def prefilter_started(self, root: pathlib.Path) -> None:
+            self.events.append(("prefilter", root.name))
+
+        def sources_planned(self, planned: int, total: int) -> None:
+            self.events.append(("planned", planned))
+            self.events.append(("total", total))
+
+        def source_started(self, index: int, total: int, source: object) -> None:
+            self.events.append(("source_started", index))
+
+        def source_finished(
+            self,
+            index: int,
+            total: int,
+            source: object,
+            records: int,
+            matches: int,
+        ) -> None:
+            self.events.append(("source_finished", matches))
+
+        def result_added(self, count: int) -> None:
+            self.events.append(("result_added", count))
+
+        def finish(self, result_count: int) -> None:
+            self.events.append(("finish", result_count))
+
+        def close(self) -> None:
+            self.events.append(("close", 0))
+
+    progress = RecordingProgress()
+    records = agentgrep.run_search_query(
+        home,
+        query,
+        backends=agentgrep.BackendSelection(None, None, None),
+        progress=progress,
+    )
+
+    assert len(records) == 1
+    assert ("discovered", 2) in progress.events
+    assert ("planned", 2) in progress.events
+    assert ("source_started", 1) in progress.events
+    assert ("source_started", 2) in progress.events
+    assert ("source_finished", 1) in progress.events
+    assert ("result_added", 1) in progress.events
+    assert progress.events[-2:] == [("finish", 1), ("close", 0)]
 
 
 def test_plan_search_sources_prefilters_one_root_once(
@@ -840,6 +952,7 @@ def test_json_output_falls_back_without_pydantic() -> None:
         limit=None,
         output_mode="json",
         color_mode="auto",
+        progress_mode="auto",
     )
 
     original_import_module = agentgrep.importlib.import_module
@@ -858,3 +971,108 @@ def test_json_output_falls_back_without_pydantic() -> None:
     assert payload["schema_version"] == "agentgrep.v1"
     results = t.cast("list[dict[str, object]]", payload["results"])
     assert results[0]["text"] == "serenity and bliss"
+
+
+def test_json_output_default_does_not_emit_progress(tmp_path: pathlib.Path) -> None:
+    home = tmp_path / "home"
+    session_path = home / ".codex" / "sessions" / "2026" / "01" / "01" / "rollout.jsonl"
+    write_jsonl(
+        session_path,
+        [{"type": "response_item", "payload": {"role": "user", "content": "bliss"}}],
+    )
+
+    completed = run_agentgrep_cli("search", "bliss", "--json", env={"HOME": str(home)})
+
+    assert completed.returncode == 0
+    payload = t.cast("dict[str, object]", json.loads(completed.stdout))
+    assert payload["command"] == "search"
+    assert completed.stderr == ""
+
+
+def test_json_output_progress_always_writes_stderr_only(tmp_path: pathlib.Path) -> None:
+    home = tmp_path / "home"
+    session_path = home / ".codex" / "sessions" / "2026" / "01" / "01" / "rollout.jsonl"
+    write_jsonl(
+        session_path,
+        [{"type": "response_item", "payload": {"role": "user", "content": "bliss"}}],
+    )
+
+    completed = run_agentgrep_cli(
+        "search",
+        "bliss",
+        "--json",
+        "--progress",
+        "always",
+        env={"HOME": str(home)},
+    )
+
+    assert completed.returncode == 0
+    payload = t.cast("dict[str, object]", json.loads(completed.stdout))
+    assert payload["command"] == "search"
+    assert "Searching bliss" in completed.stderr
+    assert "Search complete: 1 match" in completed.stderr
+
+
+def test_non_tty_progress_emits_start_heartbeat_and_finish() -> None:
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    stream = io.StringIO()
+    progress = agentgrep.ConsoleSearchProgress(
+        enabled=True,
+        stream=stream,
+        tty=False,
+        heartbeat_interval=10.0,
+    )
+    query = agentgrep.SearchQuery(
+        terms=("bliss",),
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+
+    progress.start(query)
+    progress.set_status("scanning", current=1, total=3, detail="one.jsonl")
+    progress._last_heartbeat_at -= 30.0
+    progress.set_status("scanning", current=2, total=3, detail="two.jsonl")
+    progress.finish(4)
+    progress.close()
+
+    out = stream.getvalue()
+    assert "Searching bliss" in out
+    assert "... still searching bliss" in out
+    assert "scanning 2/3 sources" in out
+    assert "Search complete: 4 matches" in out
+
+
+def test_tty_progress_renders_spinner_and_clears() -> None:
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    stream = io.StringIO()
+    progress = agentgrep.ConsoleSearchProgress(
+        enabled=True,
+        stream=stream,
+        tty=True,
+        refresh_interval=0.01,
+    )
+    query = agentgrep.SearchQuery(
+        terms=("bliss",),
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+
+    progress.start(query)
+    progress.set_status("scanning", current=1, total=2, detail="one.jsonl")
+    time.sleep(0.03)
+    progress.finish(1)
+    progress.close()
+
+    out = stream.getvalue()
+    assert "Searching bliss" in out
+    assert "scanning 1/2 sources" in out
+    assert any(frame in out for frame in "|/-\\")
+    assert "\r\x1b[2K" in out

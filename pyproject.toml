@@ -50,6 +50,7 @@ dev = [
   "mypy",
   "pytest",
   "pytest-asyncio",
+  "pytest-rerunfailures>=16.2",
   "pytest-watcher",
   "syrupy>=5.1.0",
 ]

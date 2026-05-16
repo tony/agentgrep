@@ -34,6 +34,7 @@ import argparse
 import contextlib
 import dataclasses
 import importlib
+import itertools
 import json
 import os
 import pathlib
@@ -43,6 +44,8 @@ import sqlite3
 import subprocess
 import sys
 import textwrap
+import threading
+import time
 import typing as t
 
 if t.TYPE_CHECKING:
@@ -50,6 +53,7 @@ if t.TYPE_CHECKING:
 
 AgentName = t.Literal["codex", "claude", "cursor"]
 OutputMode = t.Literal["text", "json", "ndjson", "ui"]
+ProgressMode = t.Literal["auto", "always", "never"]
 PathKind = t.Literal["history_file", "session_file", "sqlite_db"]
 SearchType = t.Literal["prompts", "history", "all"]
 SourceKind = t.Literal["json", "jsonl", "sqlite"]
@@ -79,6 +83,7 @@ OPTIONS_EXPECTING_VALUE: frozenset[str] = frozenset(
         "--type",
         "--limit",
         "--color",
+        "--progress",
     },
 )
 OPTIONS_FLAG_ONLY: frozenset[str] = frozenset(
@@ -541,6 +546,7 @@ class SearchArgs:
     limit: int | None
     output_mode: OutputMode
     color_mode: ColorMode
+    progress_mode: ProgressMode
 
 
 @dataclasses.dataclass(slots=True)
@@ -624,6 +630,347 @@ class MessageCandidate:
     model: str | None = None
     session_id: str | None = None
     conversation_id: str | None = None
+
+
+class SearchProgress(t.Protocol):
+    """Progress reporter used by search internals."""
+
+    def start(self, query: SearchQuery) -> None:
+        """Mark search start."""
+        ...
+
+    def sources_discovered(self, count: int) -> None:
+        """Report discovered source count."""
+        ...
+
+    def prefilter_started(self, root: pathlib.Path) -> None:
+        """Report root prefilter start."""
+        ...
+
+    def sources_planned(self, planned: int, total: int) -> None:
+        """Report selected source count."""
+        ...
+
+    def source_started(self, index: int, total: int, source: SourceHandle) -> None:
+        """Report source scan start."""
+        ...
+
+    def source_finished(
+        self,
+        index: int,
+        total: int,
+        source: SourceHandle,
+        records: int,
+        matches: int,
+    ) -> None:
+        """Report source scan completion."""
+        ...
+
+    def result_added(self, count: int) -> None:
+        """Report deduped result count."""
+        ...
+
+    def finish(self, result_count: int) -> None:
+        """Report search completion."""
+        ...
+
+    def close(self) -> None:
+        """Release any progress resources."""
+        ...
+
+
+class NoopSearchProgress:
+    """Silent search progress reporter."""
+
+    def start(self, query: SearchQuery) -> None:
+        """Ignore search start."""
+
+    def sources_discovered(self, count: int) -> None:
+        """Ignore discovered source count."""
+
+    def prefilter_started(self, root: pathlib.Path) -> None:
+        """Ignore root prefilter start."""
+
+    def sources_planned(self, planned: int, total: int) -> None:
+        """Ignore selected source count."""
+
+    def source_started(self, index: int, total: int, source: SourceHandle) -> None:
+        """Ignore source scan start."""
+
+    def source_finished(
+        self,
+        index: int,
+        total: int,
+        source: SourceHandle,
+        records: int,
+        matches: int,
+    ) -> None:
+        """Ignore source scan completion."""
+
+    def result_added(self, count: int) -> None:
+        """Ignore deduped result count."""
+
+    def finish(self, result_count: int) -> None:
+        """Ignore search completion."""
+
+    def close(self) -> None:
+        """Nothing to release."""
+
+
+class ConsoleSearchProgress:
+    """Human progress reporter for potentially long searches."""
+
+    _SPINNER_FRAMES: t.ClassVar[str] = "|/-\\"
+
+    def __init__(
+        self,
+        *,
+        enabled: bool,
+        stream: t.TextIO | None = None,
+        tty: bool | None = None,
+        refresh_interval: float = 0.1,
+        heartbeat_interval: float = 10.0,
+    ) -> None:
+        self._enabled = enabled
+        self._stream = stream if stream is not None else sys.stderr
+        self._tty = (
+            tty
+            if tty is not None
+            else bool(
+                getattr(self._stream, "isatty", lambda: False)(),
+            )
+        )
+        self._refresh_interval = refresh_interval
+        self._heartbeat_interval = heartbeat_interval
+        self._lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._started_at: float | None = None
+        self._last_heartbeat_at: float | None = None
+        self._last_line_len = 0
+        self._query_label = "search"
+        self._phase = "starting"
+        self._detail: str | None = None
+        self._current: int | None = None
+        self._total: int | None = None
+        self._matches = 0
+        self._finished = False
+
+    def start(self, query: SearchQuery) -> None:
+        """Begin progress reporting for ``query``."""
+        if not self._enabled:
+            return
+        label = " ".join(query.terms) if query.terms else "all records"
+        now = time.monotonic()
+        with self._lock:
+            self._query_label = label
+            self._phase = "discovering"
+            self._detail = None
+            self._current = None
+            self._total = None
+            self._matches = 0
+            self._started_at = now
+            self._last_heartbeat_at = now
+            self._finished = False
+        if self._tty:
+            self._ensure_tty_thread()
+        else:
+            self._emit_line(f"Searching {label}")
+
+    def sources_discovered(self, count: int) -> None:
+        """Report discovered source count."""
+        self.set_status("discovered", total=count, detail=f"{count} sources")
+
+    def prefilter_started(self, root: pathlib.Path) -> None:
+        """Report root prefilter start."""
+        self.set_status("prefiltering", detail=str(root))
+
+    def sources_planned(self, planned: int, total: int) -> None:
+        """Report selected source count."""
+        self.set_status("planning", current=planned, total=total, detail="candidate sources")
+
+    def source_started(self, index: int, total: int, source: SourceHandle) -> None:
+        """Report source scan start."""
+        self.set_status("scanning", current=index, total=total, detail=source.path.name)
+
+    def source_finished(
+        self,
+        index: int,
+        total: int,
+        source: SourceHandle,
+        records: int,
+        matches: int,
+    ) -> None:
+        """Report source scan completion."""
+        self.set_status(
+            "scanning",
+            current=index,
+            total=total,
+            detail=f"{records} records, {format_match_count(matches)} in {source.path.name}",
+        )
+
+    def result_added(self, count: int) -> None:
+        """Report deduped result count."""
+        if not self._enabled:
+            return
+        with self._lock:
+            self._matches = count
+        self._emit_heartbeat_if_due()
+
+    def set_status(
+        self,
+        phase: str,
+        *,
+        current: int | None = None,
+        total: int | None = None,
+        detail: str | None = None,
+    ) -> None:
+        """Update the current progress status."""
+        if not self._enabled:
+            return
+        with self._lock:
+            self._phase = phase
+            self._current = current
+            self._total = total
+            self._detail = detail
+        self._emit_heartbeat_if_due()
+
+    def finish(self, result_count: int) -> None:
+        """Finish progress reporting."""
+        if not self._enabled:
+            return
+        with self._lock:
+            self._matches = result_count
+            self._phase = "complete"
+            self._finished = True
+        if self._tty:
+            self._stop_tty_thread()
+            self._clear_tty_line()
+            return
+        elapsed = self._elapsed_seconds()
+        self._emit_line(
+            f"Search complete: {format_match_count(result_count)} ({elapsed:.1f}s elapsed)",
+        )
+
+    def close(self) -> None:
+        """Stop any active progress renderer."""
+        if not self._enabled:
+            return
+        if self._tty:
+            self._stop_tty_thread()
+            self._clear_tty_line()
+
+    def _ensure_tty_thread(self) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._stop_event.clear()
+        self._thread = threading.Thread(
+            target=self._tty_loop,
+            daemon=True,
+            name="agentgrep-search-progress",
+        )
+        self._thread.start()
+
+    def _stop_tty_thread(self) -> None:
+        self._stop_event.set()
+        thread = self._thread
+        self._thread = None
+        if thread is not None:
+            thread.join(timeout=1.0)
+
+    def _tty_loop(self) -> None:
+        frames = itertools.cycle(self._SPINNER_FRAMES)
+        while not self._stop_event.is_set():
+            self._render_tty(next(frames))
+            self._stop_event.wait(self._refresh_interval)
+
+    def _render_tty(self, frame: str) -> None:
+        summary = self._summary()
+        line = f"{frame} {summary}"
+        with self._lock:
+            try:
+                self._stream.write("\r\033[2K" + line)
+                self._stream.flush()
+                self._last_line_len = len(line)
+            except OSError, ValueError:
+                pass
+
+    def _clear_tty_line(self) -> None:
+        with self._lock:
+            if self._last_line_len == 0:
+                return
+            try:
+                self._stream.write("\r\033[2K")
+                self._stream.flush()
+            except OSError, ValueError:
+                pass
+            self._last_line_len = 0
+
+    def _emit_heartbeat_if_due(self) -> None:
+        if not self._enabled or self._tty:
+            return
+        with self._lock:
+            last = self._last_heartbeat_at
+            label = self._query_label
+        if last is None:
+            return
+        now = time.monotonic()
+        if now - last < self._heartbeat_interval:
+            return
+        elapsed = self._elapsed_seconds()
+        self._emit_line(
+            f"... still searching {label}: {self._status_text()} ({elapsed:.0f}s elapsed)",
+        )
+        with self._lock:
+            self._last_heartbeat_at = now
+
+    def _emit_line(self, line: str) -> None:
+        try:
+            self._stream.write(line + "\n")
+            self._stream.flush()
+        except OSError, ValueError:
+            pass
+
+    def _summary(self) -> str:
+        elapsed = self._elapsed_seconds()
+        return " | ".join(
+            (
+                f"Searching {self._query_label}",
+                self._status_text(),
+                format_match_count(self._matches),
+                f"{elapsed:.1f}s",
+            ),
+        )
+
+    def _status_text(self) -> str:
+        with self._lock:
+            phase = self._phase
+            current = self._current
+            total = self._total
+            detail = self._detail
+        if current is not None and total is not None:
+            return f"{phase} {current}/{total} sources"
+        if detail:
+            return f"{phase} {detail}"
+        return phase
+
+    def _elapsed_seconds(self) -> float:
+        with self._lock:
+            started = self._started_at
+        if started is None:
+            return 0.0
+        return time.monotonic() - started
+
+
+def format_match_count(count: int) -> str:
+    """Return a human-readable match count."""
+    suffix = "match" if count == 1 else "matches"
+    return f"{count} {suffix}"
+
+
+def noop_search_progress() -> SearchProgress:
+    """Return a silent search progress reporter."""
+    return NoopSearchProgress()
 
 
 def select_backends() -> BackendSelection:
@@ -798,6 +1145,12 @@ def create_parser(
         metavar="N",
         help="Limit the number of results",
     )
+    _ = search_parser.add_argument(
+        "--progress",
+        choices=["auto", "always", "never"],
+        default="auto",
+        help="Show search progress on stderr",
+    )
     add_output_mode_options(search_parser, allow_ui=True)
 
     find_parser = subparsers.add_parser(
@@ -860,6 +1213,7 @@ def parse_args(
             limit=limit,
             output_mode=output_mode,
             color_mode=color_mode,
+            progress_mode=t.cast("ProgressMode", namespace.progress),
         )
     pattern = t.cast("str | None", namespace.pattern)
     if not pattern:
@@ -1099,10 +1453,16 @@ def search_sources(
     query: SearchQuery,
     sources: list[SourceHandle],
     backends: BackendSelection,
+    *,
+    progress: SearchProgress | None = None,
 ) -> list[SearchRecord]:
     """Parse and filter search results across all selected sources."""
-    planned_sources = plan_search_sources(query, sources, backends)
-    return collect_search_records(query, planned_sources)
+    active_progress = noop_search_progress() if progress is None else progress
+    planned_sources = plan_search_sources(query, sources, backends, progress=active_progress)
+    active_progress.sources_planned(len(planned_sources), len(sources))
+    records = collect_search_records(query, planned_sources, progress=active_progress)
+    active_progress.finish(len(records))
+    return records
 
 
 def run_search_query(
@@ -1110,25 +1470,45 @@ def run_search_query(
     query: SearchQuery,
     *,
     backends: BackendSelection | None = None,
+    progress: SearchProgress | None = None,
 ) -> list[SearchRecord]:
     """Discover sources and run a normalized search query."""
     active_backends = select_backends() if backends is None else backends
-    sources = discover_sources(home, query.agents, active_backends)
-    return search_sources(query, sources, active_backends)
+    active_progress = noop_search_progress() if progress is None else progress
+    active_progress.start(query)
+    try:
+        sources = discover_sources(home, query.agents, active_backends)
+        active_progress.sources_discovered(len(sources))
+        return search_sources(
+            query,
+            sources,
+            active_backends,
+            progress=active_progress,
+        )
+    finally:
+        active_progress.close()
 
 
 def plan_search_sources(
     query: SearchQuery,
     sources: list[SourceHandle],
     backends: BackendSelection,
+    *,
+    progress: SearchProgress | None = None,
 ) -> list[SourceHandle]:
     """Return the candidate sources to parse for a search query."""
+    active_progress = noop_search_progress() if progress is None else progress
     if not query.terms:
         return sources
 
     planned_sources = list(sources)
     if backends.grep_tool is not None:
-        planned_sources = prefilter_sources_by_root(query, planned_sources, backends.grep_tool)
+        planned_sources = prefilter_sources_by_root(
+            query,
+            planned_sources,
+            backends.grep_tool,
+            progress=active_progress,
+        )
     ordered_sources = [
         source
         for source in planned_sources
@@ -1147,8 +1527,11 @@ def prefilter_sources_by_root(
     query: SearchQuery,
     sources: list[SourceHandle],
     grep_program: str,
+    *,
+    progress: SearchProgress | None = None,
 ) -> list[SourceHandle]:
     """Prefilter file-backed sources by searching each root once."""
+    active_progress = noop_search_progress() if progress is None else progress
     matched_paths_by_root: dict[pathlib.Path, set[pathlib.Path] | None] = {}
     filtered_sources: list[SourceHandle] = []
     for source in sources:
@@ -1158,6 +1541,7 @@ def prefilter_sources_by_root(
             continue
 
         if search_root not in matched_paths_by_root:
+            active_progress.prefilter_started(search_root)
             matched_paths_by_root[search_root] = grep_root_paths(
                 search_root,
                 query,
@@ -1228,20 +1612,32 @@ def direct_source_matches(
 def collect_search_records(
     query: SearchQuery,
     sources: list[SourceHandle],
+    *,
+    progress: SearchProgress | None = None,
 ) -> list[SearchRecord]:
     """Parse candidate sources and collect matching records."""
+    active_progress = noop_search_progress() if progress is None else progress
     deduped: dict[tuple[str, str, str, str, str], SearchRecord] = {}
-    for source in sources:
+    total = len(sources)
+    for index, source in enumerate(sources, start=1):
         if query.limit is not None and len(deduped) >= query.limit:
             break
-        matching_records = [
-            record for record in iter_source_records(source) if matches_record(record, query)
-        ]
+        active_progress.source_started(index, total, source)
+        records_seen = 0
+        matches_seen = 0
+        matching_records: list[SearchRecord] = []
+        for record in iter_source_records(source):
+            records_seen += 1
+            if matches_record(record, query):
+                matches_seen += 1
+                matching_records.append(record)
+        active_progress.source_finished(index, total, source, records_seen, matches_seen)
         matching_records.sort(key=search_record_sort_key, reverse=True)
         for record in matching_records:
             dedupe_key = record_dedupe_key(record)
             if dedupe_key not in deduped:
                 deduped[dedupe_key] = record
+                active_progress.result_added(len(deduped))
             if query.limit is not None and len(deduped) >= query.limit:
                 break
     results = list(deduped.values())
@@ -2077,6 +2473,15 @@ def print_search_results(records: list[SearchRecord], args: SearchArgs) -> None:
         print()
 
 
+def build_search_progress(args: SearchArgs) -> SearchProgress:
+    """Build the progress reporter for a search invocation."""
+    human_output = args.output_mode in {"text", "ui"}
+    enabled = args.progress_mode == "always" or (args.progress_mode == "auto" and human_output)
+    if not enabled:
+        return noop_search_progress()
+    return ConsoleSearchProgress(enabled=True)
+
+
 def print_find_results(records: list[FindRecord], args: FindArgs) -> None:
     """Emit find results in the requested format."""
     _, serialize_find, serialize_envelope = maybe_build_pydantic()
@@ -2238,7 +2643,8 @@ def run_search_command(args: SearchArgs) -> int:
         msg = "search requires at least one term unless --ui is used"
         raise SystemExit(msg)
     query = make_search_query(args)
-    records = run_search_query(pathlib.Path.home(), query)
+    progress = build_search_progress(args)
+    records = run_search_query(pathlib.Path.home(), query, progress=progress)
     if args.output_mode == "ui":
         run_ui(records)
         return 0
