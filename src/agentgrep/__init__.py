@@ -52,6 +52,10 @@ import typing as t
 if t.TYPE_CHECKING:
     import collections.abc as cabc
 
+    PrivatePathBase = pathlib.Path
+else:
+    PrivatePathBase = type(pathlib.Path())
+
 AgentName = t.Literal["codex", "claude", "cursor"]
 OutputMode = t.Literal["text", "json", "ndjson", "ui"]
 ProgressMode = t.Literal["auto", "always", "never"]
@@ -188,6 +192,51 @@ FIND_DESCRIPTION = build_description(
         ),
     ),
 )
+
+
+class PrivatePath(PrivatePathBase):
+    """Path subclass that hides the user's home directory in textual output."""
+
+    def __new__(cls, *args: t.Any, **kwargs: t.Any) -> PrivatePath:
+        """Create a privacy-aware path."""
+        return super().__new__(cls, *args, **kwargs)
+
+    @classmethod
+    def _collapse_home(cls, value: str) -> str:
+        """Collapse the user's home directory to ``~`` when ``value`` is inside it."""
+        if value.startswith("~"):
+            return value
+
+        home = str(pathlib.Path.home())
+        if value == home:
+            return "~"
+
+        separators = {os.sep}
+        if os.altsep:
+            separators.add(os.altsep)
+
+        for separator in separators:
+            home_with_separator = home + separator
+            if value.startswith(home_with_separator):
+                return "~" + value[len(home) :]
+
+        return value
+
+    def __str__(self) -> str:
+        """Return string output with the home directory collapsed."""
+        return self._collapse_home(pathlib.Path.__str__(self))
+
+    def __repr__(self) -> str:
+        """Return repr output with the home directory collapsed."""
+        return f"{self.__class__.__name__}({str(self)!r})"
+
+
+def format_display_path(path: pathlib.Path | str, *, directory: bool = False) -> str:
+    """Return a privacy-safe display path."""
+    display = str(PrivatePath(path))
+    if directory and not display.endswith("/"):
+        return f"{display.rstrip('/')}/"
+    return display
 
 
 class SearchRecordPayload(t.TypedDict):
@@ -853,7 +902,7 @@ class ConsoleSearchProgress:
 
     def prefilter_started(self, root: pathlib.Path) -> None:
         """Report root prefilter start."""
-        self.set_status("prefiltering", detail=str(root))
+        self.set_status("prefiltering", detail=format_display_path(root, directory=True))
 
     def sources_planned(self, planned: int, total: int) -> None:
         """Report selected source count."""
@@ -2494,7 +2543,7 @@ def serialize_search_record(record: SearchRecord) -> SearchRecordPayload:
         "agent": record.agent,
         "store": record.store,
         "adapter_id": record.adapter_id,
-        "path": str(record.path),
+        "path": format_display_path(record.path),
         "text": record.text,
         "title": record.title,
         "role": record.role,
@@ -2514,7 +2563,7 @@ def serialize_find_record(record: FindRecord) -> FindRecordPayload:
         "agent": record.agent,
         "store": record.store,
         "adapter_id": record.adapter_id,
-        "path": str(record.path),
+        "path": format_display_path(record.path),
         "path_kind": record.path_kind,
         "metadata": record.metadata,
     }
@@ -2527,10 +2576,14 @@ def serialize_source_handle(source: SourceHandle) -> SourceHandlePayload:
         "agent": source.agent,
         "store": source.store,
         "adapter_id": source.adapter_id,
-        "path": str(source.path),
+        "path": format_display_path(source.path),
         "path_kind": source.path_kind,
         "source_kind": source.source_kind,
-        "search_root": None if source.search_root is None else str(source.search_root),
+        "search_root": (
+            None
+            if source.search_root is None
+            else format_display_path(source.search_root, directory=True)
+        ),
         "mtime_ns": source.mtime_ns,
     }
 
@@ -2575,7 +2628,7 @@ def print_search_results(records: list[SearchRecord], args: SearchArgs) -> None:
         return
     for index, record in enumerate(records, start=1):
         heading = f"[{index}] {record.agent} {record.kind} {record.store}"
-        details = [record.timestamp, record.model, str(record.path)]
+        details = [record.timestamp, record.model, format_display_path(record.path)]
         print(heading)
         print(" | ".join(detail for detail in details if detail))
         if record.title:
@@ -2616,7 +2669,7 @@ def print_find_results(records: list[FindRecord], args: FindArgs) -> None:
         return
     for record in records:
         print(f"{record.agent} {record.path_kind} {record.store}")
-        print(str(record.path))
+        print(format_display_path(record.path))
         print()
 
 
@@ -2715,7 +2768,7 @@ def run_ui(records: list[SearchRecord]) -> None:
                     record.kind,
                     record.timestamp or "",
                     record.title or "",
-                    str(record.path),
+                    format_display_path(record.path),
                     key=str(id(record)),
                 )
             if self.filtered_records:
@@ -2737,7 +2790,7 @@ def run_ui(records: list[SearchRecord]) -> None:
                 f"Adapter: {record.adapter_id}",
                 f"Timestamp: {record.timestamp or 'unknown'}",
                 f"Model: {record.model or 'unknown'}",
-                f"Path: {record.path}",
+                f"Path: {format_display_path(record.path)}",
                 "",
                 record.text,
             ]

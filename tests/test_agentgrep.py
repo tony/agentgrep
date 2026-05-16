@@ -1022,6 +1022,172 @@ def test_find_discovers_sources_and_filters_pattern(
     assert records[0].path.name == "state.vscdb"
 
 
+def test_display_path_collapses_home_and_marks_directories(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+
+    assert agentgrep.format_display_path(home / ".codex" / "sessions", directory=True) == (
+        "~/.codex/sessions/"
+    )
+    assert agentgrep.format_display_path(
+        home / ".codex" / "sessions" / "rollout.jsonl",
+    ) == "~/.codex/sessions/rollout.jsonl"
+    assert agentgrep.format_display_path(home, directory=True) == "~/"
+    assert agentgrep.format_display_path(
+        pathlib.Path("~/.codex/sessions"),
+        directory=True,
+    ) == "~/.codex/sessions/"
+    assert agentgrep.format_display_path(
+        pathlib.Path(f"{home}-other") / "sessions",
+        directory=True,
+    ) == f"{home}-other/sessions/"
+
+
+def test_search_json_output_uses_private_paths(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=home / ".codex" / "sessions" / "rollout.jsonl",
+        text="serenity and bliss",
+    )
+    args = agentgrep.SearchArgs(
+        terms=("serenity",),
+        agents=("codex",),
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        limit=None,
+        output_mode="json",
+        color_mode="auto",
+        progress_mode="auto",
+    )
+
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        agentgrep.print_search_results([record], args)
+
+    payload = t.cast("dict[str, object]", json.loads(buffer.getvalue()))
+    results = t.cast("list[dict[str, object]]", payload["results"])
+    assert results[0]["path"] == "~/.codex/sessions/rollout.jsonl"
+    assert str(home) not in buffer.getvalue()
+
+
+def test_text_outputs_use_private_paths(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    search_record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=home / ".codex" / "sessions" / "rollout.jsonl",
+        text="serenity and bliss",
+    )
+    find_record = agentgrep.FindRecord(
+        kind="find",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=home / ".codex" / "sessions",
+        path_kind="session_file",
+    )
+    search_args = agentgrep.SearchArgs(
+        terms=("serenity",),
+        agents=("codex",),
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        limit=None,
+        output_mode="text",
+        color_mode="auto",
+        progress_mode="auto",
+    )
+    find_args = agentgrep.FindArgs(
+        pattern="sessions",
+        agents=("codex",),
+        limit=None,
+        output_mode="text",
+        color_mode="auto",
+    )
+
+    search_buffer = io.StringIO()
+    with contextlib.redirect_stdout(search_buffer):
+        agentgrep.print_search_results([search_record], search_args)
+    find_buffer = io.StringIO()
+    with contextlib.redirect_stdout(find_buffer):
+        agentgrep.print_find_results([find_record], find_args)
+
+    assert "~/.codex/sessions/rollout.jsonl" in search_buffer.getvalue()
+    assert "~/.codex/sessions" in find_buffer.getvalue()
+    assert str(home) not in search_buffer.getvalue()
+    assert str(home) not in find_buffer.getvalue()
+
+
+def test_source_handle_serialization_uses_private_paths(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    source = agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=home / ".codex" / "sessions" / "rollout.jsonl",
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=home / ".codex" / "sessions",
+        mtime_ns=123,
+    )
+
+    payload = agentgrep.serialize_source_handle(source)
+
+    assert payload["path"] == "~/.codex/sessions/rollout.jsonl"
+    assert payload["search_root"] == "~/.codex/sessions/"
+    assert str(home) not in json.dumps(payload)
+
+
+def test_find_record_serialization_uses_private_paths(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    record = agentgrep.FindRecord(
+        kind="find",
+        agent="codex",
+        store="codex.history",
+        adapter_id="codex.history_json.v1",
+        path=home / ".codex" / "history.json",
+        path_kind="history_file",
+    )
+
+    payload = agentgrep.serialize_find_record(record)
+
+    assert payload["path"] == "~/.codex/history.json"
+    assert str(home) not in json.dumps(payload)
+
+
 def test_json_output_falls_back_without_pydantic() -> None:
     agentgrep = load_agentgrep_module()
     record = agentgrep.SearchRecord(
@@ -1301,6 +1467,41 @@ def test_tty_progress_interrupt_preserves_current_summary(
     assert "Searching bliss | scanning 118/126 sources | 109 matches" in out
     assert out.endswith("\n")
     assert "\r\x1b[2KSearching bliss | scanning 118/126 sources | 109 matches" in out
+
+
+def test_tty_progress_prefilter_uses_private_directory_path(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    stream = io.StringIO()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    progress = agentgrep.ConsoleSearchProgress(
+        enabled=True,
+        stream=stream,
+        tty=True,
+        color_mode="never",
+        refresh_interval=0.01,
+    )
+    query = agentgrep.SearchQuery(
+        terms=("bliss",),
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+
+    progress.start(query)
+    progress.prefilter_started(home / ".codex" / "sessions")
+    time.sleep(0.03)
+    progress.interrupt()
+
+    out = stream.getvalue()
+    assert "prefiltering ~/.codex/sessions/" in out
+    assert str(home) not in out
 
 
 def test_non_tty_progress_interrupt_emits_current_summary() -> None:
