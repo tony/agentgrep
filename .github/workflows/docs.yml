@@ -1,0 +1,102 @@
+name: docs
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    environment: docs
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.14"]
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Filter changed file paths to outputs
+        uses: dorny/paths-filter@v4.0.1
+        id: changes
+        with:
+          filters: |
+            root_docs:
+              - CHANGES
+              - README.*
+            docs:
+              - 'docs/**'
+            python_files:
+              - 'src/agentgrep/**'
+              - uv.lock
+              - pyproject.toml
+
+      - name: Should build
+        if: github.event_name == 'pull_request' || steps.changes.outputs.docs == 'true' || steps.changes.outputs.root_docs == 'true' || steps.changes.outputs.python_files == 'true'
+        run: echo "BUILD_DOCS=true" >> "$GITHUB_ENV"
+
+      - name: Install uv
+        if: env.BUILD_DOCS == 'true'
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          version-file: .tool-versions
+          enable-cache: true
+
+      - name: Set up Python ${{ matrix.python-version }}
+        if: env.BUILD_DOCS == 'true'
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install just
+        if: env.BUILD_DOCS == 'true'
+        uses: extractions/setup-just@v4
+
+      - name: Install dependencies
+        if: env.BUILD_DOCS == 'true'
+        run: uv sync --all-groups
+
+      - name: Cache sphinx fonts
+        if: env.BUILD_DOCS == 'true'
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/sphinx-fonts
+          key: sphinx-fonts-${{ hashFiles('docs/conf.py') }}
+          restore-keys: |
+            sphinx-fonts-
+
+      - name: Build documentation
+        if: env.BUILD_DOCS == 'true'
+        working-directory: docs
+        run: just html
+
+      - name: Configure AWS Credentials
+        if: env.BUILD_DOCS == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/master' && vars.AGENTGREP_DOCS_DEPLOY == 'true'
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AGENTGREP_DOCS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Push documentation to S3
+        if: env.BUILD_DOCS == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/master' && vars.AGENTGREP_DOCS_DEPLOY == 'true'
+        run: |
+          aws s3 sync docs/_build/html "s3://${{ secrets.AGENTGREP_DOCS_BUCKET }}" \
+            --delete --follow-symlinks
+
+      - name: Invalidate CloudFront
+        if: env.BUILD_DOCS == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/master' && vars.AGENTGREP_DOCS_DEPLOY == 'true'
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "${{ secrets.AGENTGREP_DOCS_DISTRIBUTION }}" \
+            --paths "/index.html" "/objects.inv" "/searchindex.js"
+
+      - name: Purge cache on Cloudflare
+        if: env.BUILD_DOCS == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/master' && vars.AGENTGREP_DOCS_DEPLOY == 'true'
+        uses: jakejarvis/cloudflare-purge-action@v0.3.0
+        env:
+          CLOUDFLARE_TOKEN: ${{ secrets.CLOUDFLARE_TOKEN }}
+          CLOUDFLARE_ZONE: ${{ secrets.CLOUDFLARE_ZONE }}
