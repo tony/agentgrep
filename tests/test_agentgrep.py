@@ -9,6 +9,7 @@ import json
 import os
 import pathlib
 import re
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -496,6 +497,84 @@ def test_search_reports_source_and_match_progress(
     assert ("source_finished", 1) in progress.events
     assert ("result_added", 1) in progress.events
     assert progress.events[-2:] == [("finish", 1), ("close", 0)]
+
+
+def test_run_search_query_closes_progress_on_keyboard_interrupt(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    session_path = home / ".codex" / "sessions" / "2026" / "01" / "01" / "first.jsonl"
+    write_jsonl(
+        session_path,
+        [{"type": "response_item", "payload": {"role": "user", "content": "bliss"}}],
+    )
+    query = agentgrep.SearchQuery(
+        terms=("bliss",),
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+
+    class RecordingProgress:
+        def __init__(self) -> None:
+            self.events: list[str] = []
+
+        def start(self, query: object) -> None:
+            self.events.append("start")
+
+        def sources_discovered(self, count: int) -> None:
+            self.events.append("sources_discovered")
+
+        def prefilter_started(self, root: pathlib.Path) -> None:
+            self.events.append("prefilter_started")
+
+        def sources_planned(self, planned: int, total: int) -> None:
+            self.events.append("sources_planned")
+
+        def source_started(self, index: int, total: int, source: object) -> None:
+            self.events.append("source_started")
+
+        def source_finished(
+            self,
+            index: int,
+            total: int,
+            source: object,
+            records: int,
+            matches: int,
+        ) -> None:
+            self.events.append("source_finished")
+
+        def result_added(self, count: int) -> None:
+            self.events.append("result_added")
+
+        def finish(self, result_count: int) -> None:
+            self.events.append("finish")
+
+        def close(self) -> None:
+            self.events.append("close")
+
+    def raise_interrupt(source: object) -> cabc.Iterator[object]:
+        raise KeyboardInterrupt
+        yield source
+
+    progress = RecordingProgress()
+    monkeypatch.setattr(agentgrep, "iter_source_records", raise_interrupt)
+
+    with pytest.raises(KeyboardInterrupt):
+        agentgrep.run_search_query(
+            home,
+            query,
+            backends=agentgrep.BackendSelection(None, None, None),
+            progress=progress,
+        )
+
+    assert progress.events[-1] == "close"
+    assert "finish" not in progress.events
 
 
 def test_plan_search_sources_prefilters_one_root_once(
@@ -1183,3 +1262,126 @@ def test_tty_progress_renders_spinner_and_clears(monkeypatch: pytest.MonkeyPatch
     assert "\x1b[35mbliss\x1b[0m" in out
     assert "\x1b[33m1 match\x1b[0m" in out
     assert "\r\x1b[2K" in out
+
+
+def test_main_handles_keyboard_interrupt_without_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    args = agentgrep.SearchArgs(
+        terms=("bliss",),
+        agents=("codex",),
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        limit=None,
+        output_mode="text",
+        color_mode="never",
+        progress_mode="auto",
+    )
+
+    def parse_args(argv: cabc.Sequence[str] | None = None) -> object:
+        return args
+
+    def run_search_command(args: object) -> int:
+        raise KeyboardInterrupt
+
+    def exit_on_sigint() -> t.NoReturn:
+        raise SystemExit(130)
+
+    monkeypatch.setattr(agentgrep, "parse_args", parse_args)
+    monkeypatch.setattr(agentgrep, "run_search_command", run_search_command)
+    monkeypatch.setattr(agentgrep, "_exit_on_sigint", exit_on_sigint)
+
+    with pytest.raises(SystemExit) as excinfo:
+        agentgrep.main(["search", "bliss"])
+
+    assert excinfo.value.code == 130
+    captured = capsys.readouterr()
+    assert "Interrupted by user." in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_exit_on_sigint_posix_installs_default_handler_and_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    monkeypatch.setattr(sys, "platform", "linux")
+    calls: list[tuple[str, int, object]] = []
+
+    def signal_handler(sig: int, handler: object) -> object:
+        calls.append(("signal", sig, handler))
+        return None
+
+    def raise_signal(sig: int) -> None:
+        calls.append(("raise_signal", sig, None))
+        raise SystemExit(130)
+
+    monkeypatch.setattr(signal, "signal", signal_handler)
+    monkeypatch.setattr(signal, "raise_signal", raise_signal)
+
+    with pytest.raises(SystemExit) as excinfo:
+        agentgrep._exit_on_sigint()
+
+    assert excinfo.value.code == 130
+    assert calls == [
+        ("signal", signal.SIGINT, signal.SIG_IGN),
+        ("signal", signal.SIGINT, signal.SIG_DFL),
+        ("raise_signal", signal.SIGINT, None),
+    ]
+
+
+def test_exit_on_sigint_windows_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    def fail_if_called(*args: object) -> None:
+        msg = "signal APIs should not be called on Windows fallback"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(signal, "signal", fail_if_called)
+    monkeypatch.setattr(signal, "raise_signal", fail_if_called)
+
+    with pytest.raises(SystemExit) as excinfo:
+        agentgrep._exit_on_sigint()
+
+    assert excinfo.value.code == 130
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="POSIX signal semantics only; Windows uses exit-code 130",
+)
+def test_exit_on_sigint_produces_wifsignaled_sigint() -> None:
+    runner = (
+        "import signal\n"
+        "signal.signal(signal.SIGINT, signal.default_int_handler)\n"
+        "from agentgrep import _exit_on_sigint\n"
+        "try:\n"
+        "    signal.raise_signal(signal.SIGINT)\n"
+        "except KeyboardInterrupt:\n"
+        "    _exit_on_sigint()\n"
+    )
+    src_dir = pathlib.Path(__file__).resolve().parents[1] / "src"
+    env = {
+        **os.environ,
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONPATH": os.pathsep.join(
+            p for p in (str(src_dir), os.environ.get("PYTHONPATH", "")) if p
+        ),
+    }
+
+    completed = subprocess.run(
+        [sys.executable, "-c", runner],
+        env=env,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert completed.returncode == -signal.SIGINT, (
+        f"expected WIFSIGNALED(SIGINT) (-{int(signal.SIGINT)}), "
+        f"got returncode={completed.returncode}; stderr={completed.stderr!r}"
+    )

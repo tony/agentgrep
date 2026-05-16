@@ -40,6 +40,7 @@ import os
 import pathlib
 import re
 import shutil
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -2750,14 +2751,34 @@ def run_find_command(args: FindArgs) -> int:
     return 1
 
 
+def _exit_on_sigint() -> t.NoReturn:
+    """Terminate with Ctrl-C signal semantics where the platform supports them."""
+    if sys.platform == "win32":
+        raise SystemExit(130)
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+    signal.raise_signal(signal.SIGINT)
+    raise SystemExit(130)  # pragma: no cover
+
+
+def _write_interrupt_notice() -> None:
+    with contextlib.suppress(OSError, ValueError):
+        sys.stderr.write("\nInterrupted by user.\n")
+        sys.stderr.flush()
+
+
 def main(argv: cabc.Sequence[str] | None = None) -> int:
     """Run the CLI."""
-    parsed = parse_args(argv)
-    if parsed is None:
-        return 0
-    if isinstance(parsed, SearchArgs):
-        return run_search_command(parsed)
-    return run_find_command(parsed)
+    try:
+        parsed = parse_args(argv)
+        if parsed is None:
+            return 0
+        if isinstance(parsed, SearchArgs):
+            return run_search_command(parsed)
+        return run_find_command(parsed)
+    except KeyboardInterrupt:
+        _write_interrupt_notice()
+        _exit_on_sigint()
 
 
 if __name__ == "__main__":
