@@ -39,6 +39,7 @@ import json
 import os
 import pathlib
 import re
+import select
 import shutil
 import signal
 import sqlite3
@@ -370,6 +371,7 @@ class AnsiColors:
     HEADING: t.ClassVar[str] = "\x1b[1;36m"
     HIGHLIGHT: t.ClassVar[str] = "\x1b[35m"
     MUTED: t.ClassVar[str] = "\x1b[34m"
+    WHITE: t.ClassVar[str] = "\x1b[37m"
     RESET: t.ClassVar[str] = "\x1b[0m"
 
     @classmethod
@@ -410,6 +412,10 @@ class AnsiColors:
     def muted(self, text: str) -> str:
         """Format text as muted."""
         return self.colorize(text, self.MUTED)
+
+    def white(self, text: str) -> str:
+        """Format text as plain white."""
+        return self.colorize(text, self.WHITE)
 
 
 def should_enable_color(color_mode: ColorMode, stream: t.TextIO) -> bool:
@@ -742,6 +748,93 @@ class MessageCandidate:
     conversation_id: str | None = None
 
 
+class SearchControl:
+    """Thread-safe cooperative controls for an active search."""
+
+    def __init__(self) -> None:
+        self._answer_now = threading.Event()
+
+    def request_answer_now(self) -> None:
+        """Request that search return the results collected so far."""
+        self._answer_now.set()
+
+    def answer_now_requested(self) -> bool:
+        """Return whether search should stop and answer with partial results."""
+        return self._answer_now.is_set()
+
+
+class AnswerNowInputListener:
+    """Listen for a blank Enter keypress and request a partial answer."""
+
+    def __init__(
+        self,
+        control: SearchControl,
+        *,
+        stream: t.TextIO | None = None,
+        poll_interval: float = 0.1,
+    ) -> None:
+        self._control = control
+        self._stream = stream if stream is not None else sys.stdin
+        self._poll_interval = poll_interval
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        """Start listening for a blank line on stdin."""
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._stop_event.clear()
+        self._thread = threading.Thread(
+            target=self._run,
+            daemon=True,
+            name="agentgrep-answer-now-input",
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        """Stop listening when possible."""
+        self._stop_event.set()
+        thread = self._thread
+        self._thread = None
+        if thread is not None:
+            thread.join(timeout=0.2)
+
+    def _run(self) -> None:
+        selectable = self._stream_is_selectable()
+        while not self._stop_event.is_set() and not self._control.answer_now_requested():
+            line = self._read_line(selectable)
+            if line is None:
+                continue
+            if line == "":
+                return
+            if line.strip() == "":
+                self._control.request_answer_now()
+                return
+            if not selectable:
+                return
+
+    def _read_line(self, selectable: bool) -> str | None:
+        if selectable:
+            try:
+                readable, _, _ = select.select([self._stream], [], [], self._poll_interval)
+            except (OSError, TypeError, ValueError):
+                return None
+            if not readable:
+                return None
+        try:
+            return self._stream.readline()
+        except (OSError, ValueError):
+            return ""
+
+    def _stream_is_selectable(self) -> bool:
+        try:
+            _ = self._stream.fileno()
+            readable, _, _ = select.select([self._stream], [], [], 0)
+        except (AttributeError, OSError, TypeError, ValueError):
+            return False
+        return isinstance(readable, list)
+
+
 class SearchProgress(t.Protocol):
     """Progress reporter used by search internals."""
 
@@ -782,6 +875,10 @@ class SearchProgress(t.Protocol):
 
     def finish(self, result_count: int) -> None:
         """Report search completion."""
+        ...
+
+    def answer_now(self, result_count: int) -> None:
+        """Report early search completion with partial results."""
         ...
 
     def interrupt(self) -> None:
@@ -827,6 +924,9 @@ class NoopSearchProgress:
     def finish(self, result_count: int) -> None:
         """Ignore search completion."""
 
+    def answer_now(self, result_count: int) -> None:
+        """Ignore early search completion."""
+
     def interrupt(self) -> None:
         """Ignore interrupted search."""
 
@@ -848,6 +948,7 @@ class ConsoleSearchProgress:
         color_mode: ColorMode = "auto",
         refresh_interval: float = 0.1,
         heartbeat_interval: float = 10.0,
+        answer_now_hint: bool = False,
     ) -> None:
         self._enabled = enabled
         self._stream = stream if stream is not None else sys.stderr
@@ -861,6 +962,7 @@ class ConsoleSearchProgress:
         self._colors = AnsiColors.for_stream(color_mode, self._stream)
         self._refresh_interval = refresh_interval
         self._heartbeat_interval = heartbeat_interval
+        self._answer_now_hint = answer_now_hint
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -971,6 +1073,21 @@ class ConsoleSearchProgress:
             self._finish_line(result_count, elapsed),
         )
 
+    def answer_now(self, result_count: int) -> None:
+        """Finish progress reporting with a partial-answer status."""
+        if not self._enabled:
+            return
+        with self._lock:
+            self._matches = result_count
+            self._phase = "answering now"
+            self._finished = True
+        line = self._answer_now_line(result_count)
+        if self._tty:
+            self._stop_tty_thread()
+            self._write_tty_line(line)
+            return
+        self._emit_line(line)
+
     def close(self) -> None:
         """Stop any active progress renderer."""
         if not self._enabled:
@@ -1037,6 +1154,9 @@ class ConsoleSearchProgress:
 
     def _write_tty_summary_line(self) -> None:
         line = self._summary()
+        self._write_tty_line(line)
+
+    def _write_tty_line(self, line: str) -> None:
         with self._lock:
             try:
                 self._stream.write("\r\033[2K" + line + "\n")
@@ -1072,14 +1192,15 @@ class ConsoleSearchProgress:
 
     def _summary(self) -> str:
         elapsed = self._elapsed_seconds()
-        return " | ".join(
-            (
-                self._start_line(self._query_label),
-                self._status_text(),
-                self._colors.warning(format_match_count(self._matches)),
-                self._colors.muted(f"{elapsed:.1f}s"),
-            ),
-        )
+        parts = [
+            self._start_line(self._query_label),
+            self._status_text(),
+            self._colors.warning(format_match_count(self._matches)),
+            self._colors.muted(f"{elapsed:.1f}s"),
+        ]
+        if self._answer_now_hint:
+            parts.append(self._colors.white("[Press enter, answer now]"))
+        return " | ".join(parts)
 
     def _start_line(self, label: str) -> str:
         return f"{self._colors.heading('Searching')} {self._colors.highlight(label)}"
@@ -1094,6 +1215,12 @@ class ConsoleSearchProgress:
             f"{self._colors.success('Search complete:')} "
             f"{self._colors.warning(format_match_count(result_count))} "
             f"({self._colors.muted(f'{elapsed:.1f}s elapsed')})"
+        )
+
+    def _answer_now_line(self, result_count: int) -> str:
+        return (
+            f"{self._colors.success('Answering now:')} "
+            f"{self._colors.warning(format_match_count(result_count))}"
         )
 
     def _status_text(self) -> str:
@@ -1146,14 +1273,44 @@ def which_first(names: tuple[str, ...]) -> str | None:
     return None
 
 
-def run_readonly_command(command: list[str]) -> subprocess.CompletedProcess[str]:
+def run_readonly_command(
+    command: list[str],
+    *,
+    control: SearchControl | None = None,
+) -> subprocess.CompletedProcess[str]:
     """Run a command without a shell and capture text output."""
-    return subprocess.run(
+    if control is None:
+        return subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    process = subprocess.Popen(
         command,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        check=False,
     )
+    while True:
+        try:
+            stdout, stderr = process.communicate(timeout=0.05)
+        except subprocess.TimeoutExpired:
+            if control.answer_now_requested():
+                process.terminate()
+                try:
+                    stdout, stderr = process.communicate(timeout=0.2)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    stdout, stderr = process.communicate()
+                return subprocess.CompletedProcess(
+                    command,
+                    process.returncode,
+                    stdout,
+                    stderr,
+                )
+            continue
+        return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
 @dataclasses.dataclass(slots=True)
@@ -1610,13 +1767,32 @@ def search_sources(
     backends: BackendSelection,
     *,
     progress: SearchProgress | None = None,
+    control: SearchControl | None = None,
 ) -> list[SearchRecord]:
     """Parse and filter search results across all selected sources."""
     active_progress = noop_search_progress() if progress is None else progress
-    planned_sources = plan_search_sources(query, sources, backends, progress=active_progress)
+    active_control = SearchControl() if control is None else control
+    planned_sources = plan_search_sources(
+        query,
+        sources,
+        backends,
+        progress=active_progress,
+        control=active_control,
+    )
+    if active_control.answer_now_requested():
+        active_progress.answer_now(0)
+        return []
     active_progress.sources_planned(len(planned_sources), len(sources))
-    records = collect_search_records(query, planned_sources, progress=active_progress)
-    active_progress.finish(len(records))
+    records = collect_search_records(
+        query,
+        planned_sources,
+        progress=active_progress,
+        control=active_control,
+    )
+    if active_control.answer_now_requested():
+        active_progress.answer_now(len(records))
+    else:
+        active_progress.finish(len(records))
     return records
 
 
@@ -1626,10 +1802,12 @@ def run_search_query(
     *,
     backends: BackendSelection | None = None,
     progress: SearchProgress | None = None,
+    control: SearchControl | None = None,
 ) -> list[SearchRecord]:
     """Discover sources and run a normalized search query."""
     active_backends = select_backends() if backends is None else backends
     active_progress = noop_search_progress() if progress is None else progress
+    active_control = SearchControl() if control is None else control
     active_progress.start(query)
     interrupted = False
     try:
@@ -1640,6 +1818,7 @@ def run_search_query(
             sources,
             active_backends,
             progress=active_progress,
+            control=active_control,
         )
     except KeyboardInterrupt:
         interrupted = True
@@ -1656,9 +1835,11 @@ def plan_search_sources(
     backends: BackendSelection,
     *,
     progress: SearchProgress | None = None,
+    control: SearchControl | None = None,
 ) -> list[SourceHandle]:
     """Return the candidate sources to parse for a search query."""
     active_progress = noop_search_progress() if progress is None else progress
+    active_control = SearchControl() if control is None else control
     if not query.terms:
         return sources
 
@@ -1669,11 +1850,16 @@ def plan_search_sources(
             planned_sources,
             backends.grep_tool,
             progress=active_progress,
+            control=active_control,
         )
     ordered_sources = [
         source
         for source in planned_sources
-        if source.search_root is not None or direct_source_matches(source, query, backends)
+        if not active_control.answer_now_requested()
+        and (
+            source.search_root is not None
+            or direct_source_matches(source, query, backends, active_control)
+        )
     ]
     ordered_sources.sort(key=source_order_key)
     return ordered_sources
@@ -1690,12 +1876,16 @@ def prefilter_sources_by_root(
     grep_program: str,
     *,
     progress: SearchProgress | None = None,
+    control: SearchControl | None = None,
 ) -> list[SourceHandle]:
     """Prefilter file-backed sources by searching each root once."""
     active_progress = noop_search_progress() if progress is None else progress
+    active_control = SearchControl() if control is None else control
     matched_paths_by_root: dict[pathlib.Path, set[pathlib.Path] | None] = {}
     filtered_sources: list[SourceHandle] = []
     for source in sources:
+        if active_control.answer_now_requested():
+            break
         search_root = source.search_root
         if search_root is None:
             filtered_sources.append(source)
@@ -1707,7 +1897,10 @@ def prefilter_sources_by_root(
                 search_root,
                 query,
                 grep_program,
+                control=active_control,
             )
+            if active_control.answer_now_requested():
+                break
 
         matched_paths = matched_paths_by_root[search_root]
         if matched_paths is None or source.path in matched_paths:
@@ -1719,10 +1912,15 @@ def grep_root_paths(
     search_root: pathlib.Path,
     query: SearchQuery,
     grep_program: str,
+    *,
+    control: SearchControl | None = None,
 ) -> set[pathlib.Path] | None:
     """Return file paths matched by a whole-root grep."""
+    active_control = SearchControl() if control is None else control
     matched_sets: list[set[pathlib.Path]] = []
     for term in query.terms:
+        if active_control.answer_now_requested():
+            return set()
         command = build_grep_command(
             grep_program,
             term,
@@ -1730,7 +1928,9 @@ def grep_root_paths(
             regex=query.regex,
             case_sensitive=query.case_sensitive,
         )
-        completed = run_readonly_command(command)
+        completed = run_readonly_command(command, control=active_control)
+        if active_control.answer_now_requested():
+            return set()
         if completed.returncode not in {0, 1}:
             return None
         matched_sets.append(
@@ -1755,16 +1955,33 @@ def direct_source_matches(
     source: SourceHandle,
     query: SearchQuery,
     backends: BackendSelection,
+    control: SearchControl | None = None,
 ) -> bool:
     """Return whether a direct source should be parsed."""
+    active_control = SearchControl() if control is None else control
+    if active_control.answer_now_requested():
+        return False
     if source.source_kind == "sqlite":
         return True
     if backends.grep_tool is not None:
-        grep_match = grep_file_matches(source.path, query, backends.grep_tool)
+        grep_match = grep_file_matches(
+            source.path,
+            query,
+            backends.grep_tool,
+            control=active_control,
+        )
+        if active_control.answer_now_requested():
+            return False
         if grep_match is not None:
             return grep_match
     if source.path.suffix in JSON_FILE_SUFFIXES and backends.json_tool is not None:
-        extracted = flatten_json_strings_with_tool(source.path, backends.json_tool)
+        extracted = flatten_json_strings_with_tool(
+            source.path,
+            backends.json_tool,
+            control=active_control,
+        )
+        if active_control.answer_now_requested():
+            return False
         if extracted is not None:
             return matches_text(extracted, query)
     return matches_text(read_text_file(source.path), query)
@@ -1775,19 +1992,25 @@ def collect_search_records(
     sources: list[SourceHandle],
     *,
     progress: SearchProgress | None = None,
+    control: SearchControl | None = None,
 ) -> list[SearchRecord]:
     """Parse candidate sources and collect matching records."""
     active_progress = noop_search_progress() if progress is None else progress
+    active_control = SearchControl() if control is None else control
     deduped: dict[tuple[str, str, str, str, str], SearchRecord] = {}
     total = len(sources)
     for index, source in enumerate(sources, start=1):
-        if query.limit is not None and len(deduped) >= query.limit:
+        if active_control.answer_now_requested() or (
+            query.limit is not None and len(deduped) >= query.limit
+        ):
             break
         active_progress.source_started(index, total, source)
         records_seen = 0
         matches_seen = 0
         matching_records: list[SearchRecord] = []
         for record in iter_source_records(source):
+            if active_control.answer_now_requested():
+                break
             records_seen += 1
             if matches_record(record, query):
                 matches_seen += 1
@@ -1799,7 +2022,9 @@ def collect_search_records(
             if dedupe_key not in deduped:
                 deduped[dedupe_key] = record
                 active_progress.result_added(len(deduped))
-            if query.limit is not None and len(deduped) >= query.limit:
+            if active_control.answer_now_requested() or (
+                query.limit is not None and len(deduped) >= query.limit
+            ):
                 break
     results = list(deduped.values())
     results.sort(key=search_record_sort_key, reverse=True)
@@ -2133,10 +2358,15 @@ def build_grep_command(
     return command
 
 
-def flatten_json_strings_with_tool(path: pathlib.Path, program: str) -> str | None:
+def flatten_json_strings_with_tool(
+    path: pathlib.Path,
+    program: str,
+    *,
+    control: SearchControl | None = None,
+) -> str | None:
     """Return flattened JSON strings using ``jq`` or ``jaq``."""
     command = [program, "-r", ".. | strings", str(path)]
-    completed = run_readonly_command(command)
+    completed = run_readonly_command(command, control=control)
     if completed.returncode != 0:
         return None
     return completed.stdout
@@ -2146,8 +2376,11 @@ def grep_file_matches(
     path: pathlib.Path,
     query: SearchQuery,
     program: str,
+    *,
+    control: SearchControl | None = None,
 ) -> bool | None:
     """Use ``rg`` or ``ag`` as a read-only prefilter."""
+    active_control = SearchControl() if control is None else control
     matchers = [
         run_readonly_command(
             build_grep_command(
@@ -2157,10 +2390,14 @@ def grep_file_matches(
                 regex=query.regex,
                 case_sensitive=query.case_sensitive,
             ),
+            control=active_control,
         ).returncode
         == 0
         for term in query.terms
+        if not active_control.answer_now_requested()
     ]
+    if active_control.answer_now_requested():
+        return False
     return any(matchers) if query.any_term else all(matchers)
 
 
@@ -2638,13 +2875,39 @@ def print_search_results(records: list[SearchRecord], args: SearchArgs) -> None:
         print()
 
 
-def build_search_progress(args: SearchArgs) -> SearchProgress:
-    """Build the progress reporter for a search invocation."""
+def search_progress_enabled(args: SearchArgs) -> bool:
+    """Return whether search progress should be shown for ``args``."""
     human_output = args.output_mode in {"text", "ui"}
-    enabled = args.progress_mode == "always" or (args.progress_mode == "auto" and human_output)
+    return args.progress_mode == "always" or (args.progress_mode == "auto" and human_output)
+
+
+def should_enable_answer_now(
+    args: SearchArgs,
+    *,
+    stdin: t.TextIO | None = None,
+    stderr: t.TextIO | None = None,
+) -> bool:
+    """Return whether Enter should request a partial answer for this search."""
+    input_stream = stdin if stdin is not None else sys.stdin
+    error_stream = stderr if stderr is not None else sys.stderr
+    return (
+        args.output_mode == "text"
+        and search_progress_enabled(args)
+        and bool(getattr(input_stream, "isatty", lambda: False)())
+        and bool(getattr(error_stream, "isatty", lambda: False)())
+    )
+
+
+def build_search_progress(args: SearchArgs, *, answer_now_hint: bool = False) -> SearchProgress:
+    """Build the progress reporter for a search invocation."""
+    enabled = search_progress_enabled(args)
     if not enabled:
         return noop_search_progress()
-    return ConsoleSearchProgress(enabled=True, color_mode=args.color_mode)
+    return ConsoleSearchProgress(
+        enabled=True,
+        color_mode=args.color_mode,
+        answer_now_hint=answer_now_hint,
+    )
 
 
 def print_find_results(records: list[FindRecord], args: FindArgs) -> None:
@@ -2808,8 +3071,22 @@ def run_search_command(args: SearchArgs) -> int:
         msg = "search requires at least one term unless --ui is used"
         raise SystemExit(msg)
     query = make_search_query(args)
-    progress = build_search_progress(args)
-    records = run_search_query(pathlib.Path.home(), query, progress=progress)
+    answer_now_enabled = should_enable_answer_now(args)
+    control = SearchControl()
+    listener = AnswerNowInputListener(control) if answer_now_enabled else None
+    progress = build_search_progress(args, answer_now_hint=answer_now_enabled)
+    if listener is not None:
+        listener.start()
+    try:
+        records = run_search_query(
+            pathlib.Path.home(),
+            query,
+            progress=progress,
+            control=control,
+        )
+    finally:
+        if listener is not None:
+            listener.stop()
     if args.output_mode == "ui":
         run_ui(records)
         return 0

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import io
 import json
 import os
@@ -13,6 +14,7 @@ import signal
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 import typing as t
 
@@ -317,6 +319,54 @@ def test_search_progress_mode_parses_default_and_explicit() -> None:
     assert disabled_args.progress_mode == "never"
 
 
+def test_answer_now_enabled_only_for_interactive_text_progress() -> None:
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+
+    class TtyStream(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
+    class PlainStream(io.StringIO):
+        def isatty(self) -> bool:
+            return False
+
+    text_args = agentgrep.SearchArgs(
+        terms=("bliss",),
+        agents=("codex",),
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        limit=None,
+        output_mode="text",
+        color_mode="auto",
+        progress_mode="auto",
+    )
+    json_args = dataclasses.replace(text_args, output_mode="json")
+    no_progress_args = dataclasses.replace(text_args, progress_mode="never")
+
+    assert agentgrep.should_enable_answer_now(
+        text_args,
+        stdin=TtyStream(),
+        stderr=TtyStream(),
+    )
+    assert not agentgrep.should_enable_answer_now(
+        json_args,
+        stdin=TtyStream(),
+        stderr=TtyStream(),
+    )
+    assert not agentgrep.should_enable_answer_now(
+        no_progress_args,
+        stdin=TtyStream(),
+        stderr=TtyStream(),
+    )
+    assert not agentgrep.should_enable_answer_now(
+        text_args,
+        stdin=PlainStream(),
+        stderr=TtyStream(),
+    )
+
+
 def test_root_help_not_rewritten_by_default_verb() -> None:
     completed = run_agentgrep_cli("--help")
 
@@ -499,6 +549,116 @@ def test_search_reports_source_and_match_progress(
     assert progress.events[-2:] == [("finish", 1), ("close", 0)]
 
 
+def test_collect_search_records_returns_partial_results_on_answer_now(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    source = agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "session.jsonl",
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=1,
+    )
+    first = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=source.path,
+        text="first bliss",
+    )
+    second = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=source.path,
+        text="second bliss",
+    )
+    query = agentgrep.SearchQuery(
+        terms=("bliss",),
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+    control = agentgrep.SearchControl()
+
+    def iter_records(source: object) -> cabc.Iterator[object]:
+        yield first
+        control.request_answer_now()
+        yield second
+
+    monkeypatch.setattr(agentgrep, "iter_source_records", iter_records)
+
+    records = agentgrep.collect_search_records(query, [source], control=control)
+
+    assert records == [first]
+    assert control.answer_now_requested()
+
+
+def test_run_search_command_starts_and_stops_answer_now_listener(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    events: list[str] = []
+    args = agentgrep.SearchArgs(
+        terms=("bliss",),
+        agents=("codex",),
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        limit=None,
+        output_mode="text",
+        color_mode="never",
+        progress_mode="auto",
+    )
+
+    class FakeListener:
+        def __init__(self, control: object) -> None:
+            self.control = t.cast("t.Any", control)
+
+        def start(self) -> None:
+            events.append("start")
+            self.control.request_answer_now()
+
+        def stop(self) -> None:
+            events.append("stop")
+
+    def fake_run_search_query(
+        home: pathlib.Path,
+        query: object,
+        *,
+        progress: object,
+        control: object,
+    ) -> list[object]:
+        typed_progress = t.cast("t.Any", progress)
+        typed_control = t.cast("t.Any", control)
+        assert typed_control.answer_now_requested()
+        typed_progress.answer_now(0)
+        return []
+
+    monkeypatch.setattr(agentgrep, "should_enable_answer_now", lambda args: True)
+    monkeypatch.setattr(agentgrep, "AnswerNowInputListener", FakeListener)
+    monkeypatch.setattr(agentgrep, "run_search_query", fake_run_search_query)
+    err = io.StringIO()
+
+    with contextlib.redirect_stderr(err):
+        exit_code = agentgrep.run_search_command(args)
+
+    assert exit_code == 1
+    assert events == ["start", "stop"]
+    assert "Answering now: 0 matches" in err.getvalue()
+
+
 def test_run_search_query_interrupts_progress_on_keyboard_interrupt(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -616,7 +776,11 @@ def test_plan_search_sources_prefilters_one_root_once(
     )
     calls: list[list[str]] = []
 
-    def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+    def fake_run(
+        command: list[str],
+        *,
+        control: object | None = None,
+    ) -> subprocess.CompletedProcess[str]:
         calls.append(command)
         return subprocess.CompletedProcess(command, 0, f"{first}\n", "")
 
@@ -1396,6 +1560,63 @@ def test_non_tty_progress_emits_start_heartbeat_and_finish() -> None:
     assert "Search complete: 4 matches" in out
 
 
+def test_answer_now_input_listener_requests_on_blank_enter() -> None:
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+
+    class TtyInput(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
+    control = agentgrep.SearchControl()
+    listener = agentgrep.AnswerNowInputListener(control, stream=TtyInput("\n"))
+
+    listener.start()
+    deadline = time.monotonic() + 1.0
+    while not control.answer_now_requested() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    listener.stop()
+
+    assert control.answer_now_requested()
+
+
+def test_answer_now_input_listener_ignores_nonblank_input() -> None:
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+
+    class TtyInput(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
+    control = agentgrep.SearchControl()
+    listener = agentgrep.AnswerNowInputListener(control, stream=TtyInput("not yet\n"))
+
+    listener.start()
+    time.sleep(0.01)
+    listener.stop()
+
+    assert not control.answer_now_requested()
+
+
+def test_run_readonly_command_terminates_when_answer_now_requested() -> None:
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    control = agentgrep.SearchControl()
+    timer = threading.Timer(0.05, control.request_answer_now)
+    timer.start()
+    try:
+        completed = agentgrep.run_readonly_command(
+            [
+                sys.executable,
+                "-c",
+                "import time; time.sleep(30)",
+            ],
+            control=control,
+        )
+    finally:
+        timer.cancel()
+
+    assert control.answer_now_requested()
+    assert completed.returncode != 0
+
+
 def test_tty_progress_renders_spinner_and_clears(monkeypatch: pytest.MonkeyPatch) -> None:
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     stream = io.StringIO()
@@ -1432,6 +1653,66 @@ def test_tty_progress_renders_spinner_and_clears(monkeypatch: pytest.MonkeyPatch
     assert "\x1b[35mbliss\x1b[0m" in out
     assert "\x1b[33m1 match\x1b[0m" in out
     assert "\r\x1b[2K" in out
+
+
+def test_tty_progress_renders_answer_now_hint() -> None:
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    stream = io.StringIO()
+    progress = agentgrep.ConsoleSearchProgress(
+        enabled=True,
+        stream=stream,
+        tty=True,
+        color_mode="never",
+        refresh_interval=0.01,
+        answer_now_hint=True,
+    )
+    query = agentgrep.SearchQuery(
+        terms=("bliss",),
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+
+    progress.start(query)
+    time.sleep(0.03)
+    progress.answer_now(3)
+
+    out = stream.getvalue()
+    assert "[Press enter, answer now]" in out
+    assert "Answering now: 3 matches" in out
+    assert out.endswith("\n")
+
+
+def test_tty_progress_answer_now_hint_is_white(monkeypatch: pytest.MonkeyPatch) -> None:
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    stream = io.StringIO()
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    progress = agentgrep.ConsoleSearchProgress(
+        enabled=True,
+        stream=stream,
+        tty=True,
+        color_mode="always",
+        refresh_interval=0.01,
+        answer_now_hint=True,
+    )
+    query = agentgrep.SearchQuery(
+        terms=("bliss",),
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+
+    progress.start(query)
+    time.sleep(0.03)
+    progress.answer_now(1)
+
+    assert "\x1b[37m[Press enter, answer now]\x1b[0m" in stream.getvalue()
 
 
 def test_tty_progress_interrupt_preserves_current_summary(
