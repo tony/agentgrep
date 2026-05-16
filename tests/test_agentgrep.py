@@ -8,6 +8,7 @@ import io
 import json
 import os
 import pathlib
+import re
 import sqlite3
 import subprocess
 import sys
@@ -22,6 +23,7 @@ if t.TYPE_CHECKING:
     import collections.abc as cabc
 
 AgentName = t.Literal["codex", "claude", "cursor"]
+ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 class BackendSelectionLike(t.Protocol):
@@ -192,6 +194,11 @@ def write_jsonl(path: pathlib.Path, rows: cabc.Sequence[object]) -> None:
     """Write JSONL rows."""
     path.parent.mkdir(parents=True, exist_ok=True)
     _ = path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+
+
+def strip_ansi(text: str) -> str:
+    """Return ``text`` without ANSI escape sequences."""
+    return ANSI_RE.sub("", text)
 
 
 def run_agentgrep_cli(
@@ -1013,6 +1020,100 @@ def test_json_output_progress_always_writes_stderr_only(tmp_path: pathlib.Path) 
     assert "Search complete: 1 match" in completed.stderr
 
 
+def test_json_output_progress_color_always_colours_only_stderr(
+    tmp_path: pathlib.Path,
+) -> None:
+    home = tmp_path / "home"
+    session_path = home / ".codex" / "sessions" / "2026" / "01" / "01" / "rollout.jsonl"
+    write_jsonl(
+        session_path,
+        [{"type": "response_item", "payload": {"role": "user", "content": "bliss"}}],
+    )
+
+    completed = run_agentgrep_cli(
+        "--color",
+        "always",
+        "search",
+        "bliss",
+        "--json",
+        "--progress",
+        "always",
+        env={
+            "HOME": str(home),
+            "NO_COLOR": "",
+            "FORCE_COLOR": "",
+        },
+    )
+
+    assert completed.returncode == 0
+    payload = t.cast("dict[str, object]", json.loads(completed.stdout))
+    assert payload["command"] == "search"
+    assert "\x1b[" not in completed.stdout
+    assert "\x1b[" in completed.stderr
+    assert "Search complete:" in strip_ansi(completed.stderr)
+
+
+def test_progress_no_color_overrides_color_always(monkeypatch: pytest.MonkeyPatch) -> None:
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    stream = io.StringIO()
+    monkeypatch.setenv("NO_COLOR", "1")
+    progress = agentgrep.ConsoleSearchProgress(
+        enabled=True,
+        stream=stream,
+        tty=False,
+        color_mode="always",
+    )
+    query = agentgrep.SearchQuery(
+        terms=("bliss",),
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+
+    progress.start(query)
+    progress.finish(1)
+    progress.close()
+
+    out = stream.getvalue()
+    assert "\x1b[" not in out
+    assert "Search complete: 1 match" in out
+
+
+def test_progress_force_color_enables_auto_for_non_tty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    stream = io.StringIO()
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    progress = agentgrep.ConsoleSearchProgress(
+        enabled=True,
+        stream=stream,
+        tty=False,
+        color_mode="auto",
+    )
+    query = agentgrep.SearchQuery(
+        terms=("bliss",),
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+
+    progress.start(query)
+    progress.finish(1)
+    progress.close()
+
+    out = stream.getvalue()
+    assert "\x1b[" in out
+    assert "Searching bliss" in strip_ansi(out)
+
+
 def test_non_tty_progress_emits_start_heartbeat_and_finish() -> None:
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     stream = io.StringIO()
@@ -1046,13 +1147,15 @@ def test_non_tty_progress_emits_start_heartbeat_and_finish() -> None:
     assert "Search complete: 4 matches" in out
 
 
-def test_tty_progress_renders_spinner_and_clears() -> None:
+def test_tty_progress_renders_spinner_and_clears(monkeypatch: pytest.MonkeyPatch) -> None:
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     stream = io.StringIO()
+    monkeypatch.delenv("NO_COLOR", raising=False)
     progress = agentgrep.ConsoleSearchProgress(
         enabled=True,
         stream=stream,
         tty=True,
+        color_mode="always",
         refresh_interval=0.01,
     )
     query = agentgrep.SearchQuery(
@@ -1067,12 +1170,16 @@ def test_tty_progress_renders_spinner_and_clears() -> None:
 
     progress.start(query)
     progress.set_status("scanning", current=1, total=2, detail="one.jsonl")
+    progress.result_added(1)
     time.sleep(0.03)
     progress.finish(1)
     progress.close()
 
     out = stream.getvalue()
-    assert "Searching bliss" in out
-    assert "scanning 1/2 sources" in out
-    assert any(frame in out for frame in "|/-\\")
+    plain = strip_ansi(out)
+    assert "Searching bliss" in plain
+    assert "scanning 1/2 sources" in plain
+    assert any(f"\x1b[36m{frame}\x1b[0m" in out for frame in "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+    assert "\x1b[35mbliss\x1b[0m" in out
+    assert "\x1b[33m1 match\x1b[0m" in out
     assert "\r\x1b[2K" in out

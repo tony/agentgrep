@@ -307,8 +307,63 @@ class AnsiHelpTheme(t.NamedTuple):
         )
 
 
-def should_enable_help_color(color_mode: ColorMode) -> bool:
-    """Return whether help output should use colors."""
+@dataclasses.dataclass(frozen=True, slots=True)
+class AnsiColors:
+    """Semantic ANSI colors for terminal status output."""
+
+    enabled: bool
+
+    SUCCESS: t.ClassVar[str] = "\x1b[32m"
+    WARNING: t.ClassVar[str] = "\x1b[33m"
+    ERROR: t.ClassVar[str] = "\x1b[31m"
+    INFO: t.ClassVar[str] = "\x1b[36m"
+    HEADING: t.ClassVar[str] = "\x1b[1;36m"
+    HIGHLIGHT: t.ClassVar[str] = "\x1b[35m"
+    MUTED: t.ClassVar[str] = "\x1b[34m"
+    RESET: t.ClassVar[str] = "\x1b[0m"
+
+    @classmethod
+    def for_stream(cls, color_mode: ColorMode, stream: t.TextIO) -> AnsiColors:
+        """Build semantic colors for ``stream`` and ``color_mode``."""
+        return cls(enabled=should_enable_color(color_mode, stream))
+
+    def colorize(self, text: str, color: str) -> str:
+        """Apply ``color`` to ``text`` when colors are enabled."""
+        if not self.enabled:
+            return text
+        return f"{color}{text}{self.RESET}"
+
+    def success(self, text: str) -> str:
+        """Format text as success."""
+        return self.colorize(text, self.SUCCESS)
+
+    def warning(self, text: str) -> str:
+        """Format text as warning."""
+        return self.colorize(text, self.WARNING)
+
+    def error(self, text: str) -> str:
+        """Format text as error."""
+        return self.colorize(text, self.ERROR)
+
+    def info(self, text: str) -> str:
+        """Format text as informational."""
+        return self.colorize(text, self.INFO)
+
+    def heading(self, text: str) -> str:
+        """Format text as a status heading."""
+        return self.colorize(text, self.HEADING)
+
+    def highlight(self, text: str) -> str:
+        """Format text as highlighted."""
+        return self.colorize(text, self.HIGHLIGHT)
+
+    def muted(self, text: str) -> str:
+        """Format text as muted."""
+        return self.colorize(text, self.MUTED)
+
+
+def should_enable_color(color_mode: ColorMode, stream: t.TextIO) -> bool:
+    """Return whether output written to ``stream`` should use colors."""
     if os.environ.get("NO_COLOR"):
         return False
     if color_mode == "never":
@@ -317,7 +372,12 @@ def should_enable_help_color(color_mode: ColorMode) -> bool:
         return True
     if os.environ.get("FORCE_COLOR"):
         return True
-    return sys.stdout.isatty()
+    return bool(getattr(stream, "isatty", lambda: False)())
+
+
+def should_enable_help_color(color_mode: ColorMode) -> bool:
+    """Return whether help output should use colors."""
+    return should_enable_color(color_mode, sys.stdout)
 
 
 def create_themed_formatter(color_mode: ColorMode) -> type[AgentGrepHelpFormatter]:
@@ -720,7 +780,7 @@ class NoopSearchProgress:
 class ConsoleSearchProgress:
     """Human progress reporter for potentially long searches."""
 
-    _SPINNER_FRAMES: t.ClassVar[str] = "|/-\\"
+    _SPINNER_FRAMES: t.ClassVar[str] = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
     def __init__(
         self,
@@ -728,6 +788,7 @@ class ConsoleSearchProgress:
         enabled: bool,
         stream: t.TextIO | None = None,
         tty: bool | None = None,
+        color_mode: ColorMode = "auto",
         refresh_interval: float = 0.1,
         heartbeat_interval: float = 10.0,
     ) -> None:
@@ -740,6 +801,7 @@ class ConsoleSearchProgress:
                 getattr(self._stream, "isatty", lambda: False)(),
             )
         )
+        self._colors = AnsiColors.for_stream(color_mode, self._stream)
         self._refresh_interval = refresh_interval
         self._heartbeat_interval = heartbeat_interval
         self._lock = threading.Lock()
@@ -775,7 +837,7 @@ class ConsoleSearchProgress:
         if self._tty:
             self._ensure_tty_thread()
         else:
-            self._emit_line(f"Searching {label}")
+            self._emit_line(self._start_line(label))
 
     def sources_discovered(self, count: int) -> None:
         """Report discovered source count."""
@@ -849,7 +911,7 @@ class ConsoleSearchProgress:
             return
         elapsed = self._elapsed_seconds()
         self._emit_line(
-            f"Search complete: {format_match_count(result_count)} ({elapsed:.1f}s elapsed)",
+            self._finish_line(result_count, elapsed),
         )
 
     def close(self) -> None:
@@ -886,7 +948,7 @@ class ConsoleSearchProgress:
 
     def _render_tty(self, frame: str) -> None:
         summary = self._summary()
-        line = f"{frame} {summary}"
+        line = f"{self._colors.info(frame)} {summary}"
         with self._lock:
             try:
                 self._stream.write("\r\033[2K" + line)
@@ -919,7 +981,7 @@ class ConsoleSearchProgress:
             return
         elapsed = self._elapsed_seconds()
         self._emit_line(
-            f"... still searching {label}: {self._status_text()} ({elapsed:.0f}s elapsed)",
+            self._heartbeat_line(label, elapsed),
         )
         with self._lock:
             self._last_heartbeat_at = now
@@ -935,11 +997,26 @@ class ConsoleSearchProgress:
         elapsed = self._elapsed_seconds()
         return " | ".join(
             (
-                f"Searching {self._query_label}",
+                self._start_line(self._query_label),
                 self._status_text(),
-                format_match_count(self._matches),
-                f"{elapsed:.1f}s",
+                self._colors.warning(format_match_count(self._matches)),
+                self._colors.muted(f"{elapsed:.1f}s"),
             ),
+        )
+
+    def _start_line(self, label: str) -> str:
+        return f"{self._colors.heading('Searching')} {self._colors.highlight(label)}"
+
+    def _heartbeat_line(self, label: str, elapsed: float) -> str:
+        prefix = f"{self._colors.muted('...')} {self._colors.heading('still searching')}"
+        elapsed_text = self._colors.muted(f"{elapsed:.0f}s elapsed")
+        return f"{prefix} {self._colors.highlight(label)}: {self._status_text()} ({elapsed_text})"
+
+    def _finish_line(self, result_count: int, elapsed: float) -> str:
+        return (
+            f"{self._colors.success('Search complete:')} "
+            f"{self._colors.warning(format_match_count(result_count))} "
+            f"({self._colors.muted(f'{elapsed:.1f}s elapsed')})"
         )
 
     def _status_text(self) -> str:
@@ -949,10 +1026,11 @@ class ConsoleSearchProgress:
             total = self._total
             detail = self._detail
         if current is not None and total is not None:
-            return f"{phase} {current}/{total} sources"
+            count = self._colors.warning(f"{current}/{total}")
+            return f"{self._colors.heading(phase)} {count} {self._colors.muted('sources')}"
         if detail:
-            return f"{phase} {detail}"
-        return phase
+            return f"{self._colors.heading(phase)} {self._colors.muted(detail)}"
+        return self._colors.heading(phase)
 
     def _elapsed_seconds(self) -> float:
         with self._lock:
@@ -2479,7 +2557,7 @@ def build_search_progress(args: SearchArgs) -> SearchProgress:
     enabled = args.progress_mode == "always" or (args.progress_mode == "auto" and human_output)
     if not enabled:
         return noop_search_progress()
-    return ConsoleSearchProgress(enabled=True)
+    return ConsoleSearchProgress(enabled=True, color_mode=args.color_mode)
 
 
 def print_find_results(records: list[FindRecord], args: FindArgs) -> None:
