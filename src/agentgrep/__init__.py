@@ -735,6 +735,10 @@ class SearchProgress(t.Protocol):
         """Report search completion."""
         ...
 
+    def interrupt(self) -> None:
+        """Report interrupted search."""
+        ...
+
     def close(self) -> None:
         """Release any progress resources."""
         ...
@@ -773,6 +777,9 @@ class NoopSearchProgress:
 
     def finish(self, result_count: int) -> None:
         """Ignore search completion."""
+
+    def interrupt(self) -> None:
+        """Ignore interrupted search."""
 
     def close(self) -> None:
         """Nothing to release."""
@@ -923,6 +930,16 @@ class ConsoleSearchProgress:
             self._stop_tty_thread()
             self._clear_tty_line()
 
+    def interrupt(self) -> None:
+        """Stop progress rendering while preserving the current status."""
+        if not self._enabled:
+            return
+        if self._tty:
+            self._stop_tty_thread()
+            self._write_tty_summary_line()
+            return
+        self._emit_line(self._summary())
+
     def _ensure_tty_thread(self) -> None:
         if self._thread is not None and self._thread.is_alive():
             return
@@ -964,6 +981,16 @@ class ConsoleSearchProgress:
                 return
             try:
                 self._stream.write("\r\033[2K")
+                self._stream.flush()
+            except OSError, ValueError:
+                pass
+            self._last_line_len = 0
+
+    def _write_tty_summary_line(self) -> None:
+        line = self._summary()
+        with self._lock:
+            try:
+                self._stream.write("\r\033[2K" + line + "\n")
                 self._stream.flush()
             except OSError, ValueError:
                 pass
@@ -1555,6 +1582,7 @@ def run_search_query(
     active_backends = select_backends() if backends is None else backends
     active_progress = noop_search_progress() if progress is None else progress
     active_progress.start(query)
+    interrupted = False
     try:
         sources = discover_sources(home, query.agents, active_backends)
         active_progress.sources_discovered(len(sources))
@@ -1564,8 +1592,13 @@ def run_search_query(
             active_backends,
             progress=active_progress,
         )
+    except KeyboardInterrupt:
+        interrupted = True
+        active_progress.interrupt()
+        raise
     finally:
-        active_progress.close()
+        if not interrupted:
+            active_progress.close()
 
 
 def plan_search_sources(
@@ -2763,7 +2796,7 @@ def _exit_on_sigint() -> t.NoReturn:
 
 def _write_interrupt_notice() -> None:
     with contextlib.suppress(OSError, ValueError):
-        sys.stderr.write("\nInterrupted by user.\n")
+        sys.stderr.write("Interrupted by user.\n")
         sys.stderr.flush()
 
 

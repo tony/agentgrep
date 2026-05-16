@@ -499,7 +499,7 @@ def test_search_reports_source_and_match_progress(
     assert progress.events[-2:] == [("finish", 1), ("close", 0)]
 
 
-def test_run_search_query_closes_progress_on_keyboard_interrupt(
+def test_run_search_query_interrupts_progress_on_keyboard_interrupt(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -555,6 +555,9 @@ def test_run_search_query_closes_progress_on_keyboard_interrupt(
         def finish(self, result_count: int) -> None:
             self.events.append("finish")
 
+        def interrupt(self) -> None:
+            self.events.append("interrupt")
+
         def close(self) -> None:
             self.events.append("close")
 
@@ -573,7 +576,8 @@ def test_run_search_query_closes_progress_on_keyboard_interrupt(
             progress=progress,
         )
 
-    assert progress.events[-1] == "close"
+    assert progress.events[-1] == "interrupt"
+    assert "close" not in progress.events
     assert "finish" not in progress.events
 
 
@@ -1262,6 +1266,71 @@ def test_tty_progress_renders_spinner_and_clears(monkeypatch: pytest.MonkeyPatch
     assert "\x1b[35mbliss\x1b[0m" in out
     assert "\x1b[33m1 match\x1b[0m" in out
     assert "\r\x1b[2K" in out
+
+
+def test_tty_progress_interrupt_preserves_current_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    stream = io.StringIO()
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    progress = agentgrep.ConsoleSearchProgress(
+        enabled=True,
+        stream=stream,
+        tty=True,
+        color_mode="never",
+        refresh_interval=0.01,
+    )
+    query = agentgrep.SearchQuery(
+        terms=("bliss",),
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+
+    progress.start(query)
+    progress.set_status("scanning", current=118, total=126, detail="rollout.jsonl")
+    progress.result_added(109)
+    time.sleep(0.03)
+    progress.interrupt()
+
+    out = stream.getvalue()
+    assert "Searching bliss | scanning 118/126 sources | 109 matches" in out
+    assert out.endswith("\n")
+    assert "\r\x1b[2KSearching bliss | scanning 118/126 sources | 109 matches" in out
+
+
+def test_non_tty_progress_interrupt_emits_current_summary() -> None:
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    stream = io.StringIO()
+    progress = agentgrep.ConsoleSearchProgress(
+        enabled=True,
+        stream=stream,
+        tty=False,
+        color_mode="never",
+        heartbeat_interval=10.0,
+    )
+    query = agentgrep.SearchQuery(
+        terms=("bliss",),
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+
+    progress.start(query)
+    progress.set_status("scanning", current=118, total=126, detail="rollout.jsonl")
+    progress.result_added(109)
+    progress.interrupt()
+
+    out = stream.getvalue()
+    assert "Searching bliss\n" in out
+    assert "Searching bliss | scanning 118/126 sources | 109 matches" in out
 
 
 def test_main_handles_keyboard_interrupt_without_traceback(
