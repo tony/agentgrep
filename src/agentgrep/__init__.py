@@ -817,20 +817,20 @@ class AnswerNowInputListener:
         if selectable:
             try:
                 readable, _, _ = select.select([self._stream], [], [], self._poll_interval)
-            except (OSError, TypeError, ValueError):
+            except OSError, TypeError, ValueError:
                 return None
             if not readable:
                 return None
         try:
             return self._stream.readline()
-        except (OSError, ValueError):
+        except OSError, ValueError:
             return ""
 
     def _stream_is_selectable(self) -> bool:
         try:
             _ = self._stream.fileno()
             readable, _, _ = select.select([self._stream], [], [], 0)
-        except (AttributeError, OSError, TypeError, ValueError):
+        except AttributeError, OSError, TypeError, ValueError:
             return False
         return isinstance(readable, list)
 

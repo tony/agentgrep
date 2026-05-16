@@ -1197,18 +1197,27 @@ def test_display_path_collapses_home_and_marks_directories(
     assert agentgrep.format_display_path(home / ".codex" / "sessions", directory=True) == (
         "~/.codex/sessions/"
     )
-    assert agentgrep.format_display_path(
-        home / ".codex" / "sessions" / "rollout.jsonl",
-    ) == "~/.codex/sessions/rollout.jsonl"
+    assert (
+        agentgrep.format_display_path(
+            home / ".codex" / "sessions" / "rollout.jsonl",
+        )
+        == "~/.codex/sessions/rollout.jsonl"
+    )
     assert agentgrep.format_display_path(home, directory=True) == "~/"
-    assert agentgrep.format_display_path(
-        pathlib.Path("~/.codex/sessions"),
-        directory=True,
-    ) == "~/.codex/sessions/"
-    assert agentgrep.format_display_path(
-        pathlib.Path(f"{home}-other") / "sessions",
-        directory=True,
-    ) == f"{home}-other/sessions/"
+    assert (
+        agentgrep.format_display_path(
+            pathlib.Path("~/.codex/sessions"),
+            directory=True,
+        )
+        == "~/.codex/sessions/"
+    )
+    assert (
+        agentgrep.format_display_path(
+            pathlib.Path(f"{home}-other") / "sessions",
+            directory=True,
+        )
+        == f"{home}-other/sessions/"
+    )
 
 
 def test_search_json_output_uses_private_paths(
