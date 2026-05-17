@@ -3741,7 +3741,7 @@ def build_streaming_ui_app(
             text.append("  ")
             text.append(kind_text, style=self._KIND_COLORS.get(record.kind or "", ""))
             text.append("  ")
-            text.append(timestamp_text, style="dim")
+            text.append(timestamp_text, style="italic")
             text.append("  ")
             text.append(title_text, style="bold")
             text.append("  ")
