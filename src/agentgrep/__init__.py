@@ -3875,12 +3875,14 @@ def build_streaming_ui_app(
             height: 1fr;
             overflow-x: hidden;
         }
-        /* OptionList's :focus highlight defaults to a bright $primary bg
-           which fights with the per-span semantic colors (cyan agent,
-           magenta claude, italic timestamp, …) and makes the row hard to
-           read. Force the focused-cursor row to use the same subtle
-           "blurred-cursor" styling we already have when the widget isn't
-           focused — preserves contrast for the colored fields. */
+        /* Keep Textual's OptionList default of "border appears only on focus"
+           (textual/widgets/_option_list.py:154 — ``border: tall $border``).
+           We only cancel the two parts of that focus rule that fight our
+           per-span semantic colors: the ``$foreground 5%`` background-tint
+           and the bright ``$block-cursor-*`` cursor-row recolor. */
+        #results:focus {
+            background-tint: $foreground 0%;
+        }
         #results:focus > .option-list--option-highlighted {
             color: $block-cursor-blurred-foreground;
             background: $block-cursor-blurred-background;
