@@ -3780,6 +3780,10 @@ def build_streaming_ui_app(
             ("j", "cursor_down", "Down"),
             ("l", "focus_detail", "Detail"),
             ("right", "focus_detail", ""),
+            ("g", "cursor_top", "Top"),
+            ("G", "cursor_bottom", "Bottom"),
+            ("ctrl+d", "cursor_half_page_down", "½ Down"),
+            ("ctrl+u", "cursor_half_page_up", "½ Up"),
         ]
 
         def __init__(
@@ -3853,6 +3857,33 @@ def build_streaming_ui_app(
             detail = self.app.query_one("#detail-scroll")
             t.cast("t.Any", detail).focus()
 
+        def action_cursor_top(self) -> None:
+            """Jump the highlight to the first row (vim-style ``g``)."""
+            self.action_first()
+
+        def action_cursor_bottom(self) -> None:
+            """Jump the highlight to the last row (vim-style ``G``)."""
+            self.action_last()
+
+        def _cursor_jump(self, delta: int) -> None:
+            """Move the highlight by ``delta`` rows, clamped to list bounds."""
+            row_count = len(self._records)
+            if row_count == 0:
+                return
+            current = self.highlighted if self.highlighted is not None else 0
+            target = max(0, min(row_count - 1, current + delta))
+            self.highlighted = target
+
+        def action_cursor_half_page_down(self) -> None:
+            """Advance the highlight by half the visible viewport height (vim ``Ctrl-D``)."""
+            half = max(1, self.size.height // 2)
+            self._cursor_jump(half)
+
+        def action_cursor_half_page_up(self) -> None:
+            """Move the highlight up by half the visible viewport height (vim ``Ctrl-U``)."""
+            half = max(1, self.size.height // 2)
+            self._cursor_jump(-half)
+
     vertical_scroll_base = t.cast("type[object]", vertical_scroll)
 
     class DetailScroll(
@@ -3875,6 +3906,12 @@ def build_streaming_ui_app(
             ("j", "scroll_down", "Down"),
             ("h", "focus_results", "Results"),
             ("left", "focus_results", ""),
+            ("g", "scroll_home", "Top"),
+            ("G", "scroll_end", "Bottom"),
+            ("ctrl+d", "scroll_half_down", "½ Down"),
+            ("ctrl+u", "scroll_half_up", "½ Up"),
+            ("ctrl+f", "page_down", "Pg Down"),
+            ("ctrl+b", "page_up", "Pg Up"),
         ]
 
         def action_focus_results(self) -> None:
@@ -3896,6 +3933,16 @@ def build_streaming_ui_app(
                 self.app.query_one("#filter").focus()
             else:
                 super().action_scroll_up()
+
+        def action_scroll_half_down(self) -> None:
+            """Scroll down by half the visible viewport (vim ``Ctrl-D``)."""
+            half = max(1, self.size.height // 2)
+            self.scroll_relative(y=half, animate=True)
+
+        def action_scroll_half_up(self) -> None:
+            """Scroll up by half the visible viewport (vim ``Ctrl-U``)."""
+            half = max(1, self.size.height // 2)
+            self.scroll_relative(y=-half, animate=True)
 
     class FilterInput(input_widget):  # ty: ignore[unsupported-base]
         """``Input`` subclass with debounced filter + cursor-or-focus arrows.

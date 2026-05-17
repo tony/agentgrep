@@ -1007,6 +1007,197 @@ async def test_h_from_detail_focuses_results_pane(
         assert app.focused is not None and app.focused.id == "results"
 
 
+def _seed_records(
+    agentgrep: t.Any,
+    tmp_path: pathlib.Path,
+    count: int,
+) -> list[t.Any]:
+    """Build ``count`` ``SearchRecord`` instances under ``tmp_path``."""
+    return [
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="codex.sessions",
+            adapter_id="codex.sessions_jsonl.v1",
+            path=tmp_path / f"r{idx}.jsonl",
+            text=f"row {idx}",
+        )
+        for idx in range(count)
+    ]
+
+
+async def test_g_on_results_jumps_to_top(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``g`` while the results list is focused snaps the cursor to row 0."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 5)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.all_records.extend(records)
+        app.filtered_records.extend(records)
+        app._results.append_records(records)
+        await pilot.pause()
+        await pilot.press("tab")
+        await pilot.pause()
+        app._results.highlighted = 3
+        await pilot.pause()
+        assert app._results.highlighted == 3
+        await pilot.press("g")
+        await pilot.pause()
+        assert app._results.highlighted == 0
+
+
+async def test_G_on_results_jumps_to_bottom(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``G`` while the results list is focused snaps the cursor to the last row."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 5)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.all_records.extend(records)
+        app.filtered_records.extend(records)
+        app._results.append_records(records)
+        await pilot.pause()
+        await pilot.press("tab")
+        await pilot.pause()
+        await pilot.press("G")
+        await pilot.pause()
+        assert app._results.highlighted == 4
+
+
+async def test_ctrl_d_on_results_advances_half_page(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``Ctrl-D`` on the results list advances the highlight by at least one row."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 20)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.all_records.extend(records)
+        app.filtered_records.extend(records)
+        app._results.append_records(records)
+        await pilot.pause()
+        await pilot.press("tab")
+        await pilot.pause()
+        app._results.highlighted = 0
+        await pilot.pause()
+        await pilot.press("ctrl+d")
+        await pilot.pause()
+        # Robust against tiny viewports during ``run_test`` — half-page may be
+        # as small as 1 if the simulated screen is shallow. Either way, the
+        # cursor must have moved forward and stayed within bounds.
+        assert app._results.highlighted is not None
+        assert app._results.highlighted > 0
+        assert app._results.highlighted <= len(records) - 1
+
+
+async def test_g_on_detail_scrolls_to_top(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``g`` on the detail pane jumps scroll_y back to 0."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    long_body = "\n".join(f"line {idx}" for idx in range(200))
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "long.jsonl",
+        text=long_body,
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.all_records.append(record)
+        app.filtered_records.append(record)
+        app._results.append_records([record])
+        await pilot.pause()
+        app.show_detail(record)
+        await pilot.pause()
+        app._detail_scroll.scroll_to(y=50, animate=False)
+        await pilot.pause()
+        assert app._detail_scroll.scroll_y > 0
+        app._detail_scroll.focus()
+        await pilot.pause()
+        await pilot.press("g")
+        await pilot.pause()
+        assert app._detail_scroll.scroll_y == 0
+
+
+async def test_G_on_detail_scrolls_to_bottom(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``G`` on the detail pane snaps scroll_y to (near) the maximum."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    long_body = "\n".join(f"line {idx}" for idx in range(200))
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "long.jsonl",
+        text=long_body,
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.all_records.append(record)
+        app.filtered_records.append(record)
+        app._results.append_records([record])
+        await pilot.pause()
+        app.show_detail(record)
+        await pilot.pause()
+        app._detail_scroll.focus()
+        await pilot.pause()
+        await pilot.press("G")
+        await pilot.pause()
+        assert app._detail_scroll.scroll_y >= app._detail_scroll.max_scroll_y - 0.5
+
+
+async def test_ctrl_f_on_detail_pages_down(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``Ctrl-F`` on the detail pane scrolls down by approximately one page."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    long_body = "\n".join(f"line {idx}" for idx in range(200))
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "long.jsonl",
+        text=long_body,
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.all_records.append(record)
+        app.filtered_records.append(record)
+        app._results.append_records([record])
+        await pilot.pause()
+        app.show_detail(record)
+        await pilot.pause()
+        app._detail_scroll.focus()
+        await pilot.pause()
+        before = app._detail_scroll.scroll_y
+        await pilot.press("ctrl+f")
+        await pilot.pause()
+        # Scrolled forward; exact delta depends on viewport size, just assert
+        # something happened in the right direction.
+        assert app._detail_scroll.scroll_y > before
+
+
 async def test_search_results_list_append_under_load(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
