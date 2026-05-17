@@ -720,7 +720,7 @@ class RunnableAppLike(t.Protocol):
 class TextualWidgetsModule(t.Protocol):
     """Minimal Textual widgets module surface."""
 
-    DataTable: cabc.Callable[..., object]
+    DataTable: type[object]
     Footer: cabc.Callable[[], object]
     Header: cabc.Callable[[], object]
     Input: type[object]
@@ -3589,8 +3589,34 @@ def build_streaming_ui_app(
             self.auto_refresh = None
             self.refresh()
 
+    class SmartDataTable(data_table_type):  # ty: ignore[unsupported-base]
+        """``DataTable`` with vim-style ``j`` / ``k`` aliases and edge-focus release.
+
+        Pressing ``up`` (or ``k``) when ``cursor_row == 0`` releases focus to
+        the previous widget in the focus chain (the filter input). Pressing
+        ``down`` / ``j`` at the last row stays at the last row — there's no
+        useful widget below the table.
+        """
+
+        BINDINGS: t.ClassVar[list[tuple[str, str, str]]] = [
+            ("k", "cursor_up", "Up"),
+            ("j", "cursor_down", "Down"),
+        ]
+
+        async def _on_key(self, event: object) -> None:
+            """Release focus to filter when ``up``/``k`` is pressed at row 0."""
+            key = str(getattr(event, "key", ""))
+            cursor_row = int(getattr(self, "cursor_row", 0))
+            if key in {"up", "k"} and cursor_row == 0:
+                stop = getattr(event, "stop", None)
+                if callable(stop):
+                    stop()
+                self.app.action_focus_previous()
+                return
+            await super()._on_key(event)
+
     class FilterInput(input_widget):  # ty: ignore[unsupported-base]
-        """``Input`` subclass that posts a debounced ``FilterRequested`` message.
+        """``Input`` subclass with debounced filter + cursor-or-focus arrows.
 
         The base ``Input.Changed`` event still fires immediately on each
         keystroke so the cursor, selection, and validation feedback stay
@@ -3598,9 +3624,19 @@ def build_streaming_ui_app(
         :class:`FilterRequested` message which is only posted after 150 ms of
         typing inactivity, letting a worker run the actual filter without
         blocking the input itself.
+
+        Up / down arrows are dual-purpose: when there's text in the input
+        they jump the cursor to the start / end; when the input is empty (or
+        the cursor is already at the relevant edge) they release focus to
+        the previous / next widget so the user can navigate into the results
+        table without reaching for Tab.
         """
 
         _DEBOUNCE_SECONDS: t.ClassVar[float] = 0.15
+
+        BINDINGS: t.ClassVar[list[tuple[str, str, str]]] = [
+            ("down", "release_down", "Results"),
+        ]
 
         def __init__(
             self,
@@ -3622,6 +3658,39 @@ def build_streaming_ui_app(
                     FilterRequested(payload=FilterRequestedPayload(text=value)),
                 ),
             )
+
+        async def _on_key(self, event: object) -> None:
+            """Down/up route between cursor-jump and focus-release per spec."""
+            key = str(getattr(event, "key", ""))
+            cursor = int(getattr(self, "cursor_position", 0))
+            value = str(getattr(self, "value", ""))
+            stop = getattr(event, "stop", None)
+            if key == "down":
+                if value and cursor < len(value):
+                    self.cursor_position = len(value)
+                    if callable(stop):
+                        stop()
+                    return
+                # Empty or at end — release focus to next widget (DataTable)
+                if callable(stop):
+                    stop()
+                self.app.action_focus_next()
+                return
+            if key == "up":
+                if value and cursor > 0:
+                    self.cursor_position = 0
+                    if callable(stop):
+                        stop()
+                    return
+                # Empty or at start — no widget meaningfully above; eat the key
+                if callable(stop):
+                    stop()
+                return
+            await super()._on_key(event)
+
+        def action_release_down(self) -> None:
+            """Footer-binding fallback (``_on_key`` handles the real release)."""
+            self.app.action_focus_next()
 
     class AgentGrepApp(app_type):  # ty: ignore[unsupported-base]
         """Streaming read-only explorer for normalized search records."""
@@ -3667,6 +3736,7 @@ def build_streaming_ui_app(
         }
         """
         BINDINGS: t.ClassVar[list[tuple[str, str, str]]] = [
+            ("tab", "focus_next", "Switch focus"),
             ("q", "quit", "Quit"),
             ("escape", "stop_search", "Stop search"),
             ("ctrl+c", "smart_quit", "Stop / Quit"),
@@ -3717,7 +3787,7 @@ def build_streaming_ui_app(
                 )
             yield FilterInput(placeholder="Filter by keyword", id="filter")
             with horizontal(id="body"):
-                yield data_table_type(id="results")
+                yield SmartDataTable(id="results")
                 with vertical():
                     yield static_type("Streaming results…", id="detail")
             yield footer()

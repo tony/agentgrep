@@ -810,15 +810,14 @@ def test_compute_filter_matches_empty_text_returns_all(tmp_path: pathlib.Path) -
     assert agentgrep.compute_filter_matches([record], "   ") == (record,)
 
 
-async def test_streaming_ui_app_mounts_cleanly(
+def _build_empty_ui_app(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Boot the Textual app via ``Pilot`` to surface CSS / mount errors in CI."""
+) -> t.Any:
+    """Build a streaming UI app with the search worker stubbed to a no-op."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     home = tmp_path / "home"
     home.mkdir(parents=True, exist_ok=True)
-    # Quiet the search worker so it doesn't try to walk a real codex/claude/cursor tree
     monkeypatch.setattr(
         agentgrep,
         "run_search_query",
@@ -833,11 +832,86 @@ async def test_streaming_ui_app_mounts_cleanly(
         agents=("codex",),
         limit=None,
     )
-    control = agentgrep.SearchControl()
-    app = agentgrep.build_streaming_ui_app(home, query, control=control)
+    return agentgrep.build_streaming_ui_app(home, query, control=agentgrep.SearchControl())
+
+
+async def test_streaming_ui_app_mounts_cleanly(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Boot the Textual app via ``Pilot`` to surface CSS / mount errors in CI."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test() as pilot:
         await pilot.pause()
         # If we got here, CSS parsed and on_mount completed without raising.
+
+
+async def test_tab_moves_focus_from_filter_to_results(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tab on the filter input moves focus to the DataTable below it."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        # Filter starts focused (first focusable in the chain).
+        assert app.focused is not None
+        assert app.focused.id == "filter"
+        await pilot.press("tab")
+        await pilot.pause()
+        assert app.focused is not None
+        assert app.focused.id == "results"
+
+
+async def test_down_at_empty_filter_releases_focus_to_results(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``down`` arrow on an empty filter moves focus to the results table."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "filter"
+        await pilot.press("down")
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "results"
+
+
+async def test_up_at_results_top_row_releases_focus_to_filter(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``up`` arrow when the DataTable cursor is on row 0 moves focus to the filter."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "a.jsonl",
+        text="seed row",
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        # Seed one row so the table has a row 0 to be on.
+        app.all_records.append(record)
+        app.filtered_records.append(record)
+        app._table.add_row(
+            record.agent,
+            record.kind,
+            "",
+            "",
+            agentgrep.format_display_path(record.path),
+            key="seed",
+        )
+        # Move focus to the table and confirm cursor is at row 0.
+        await pilot.press("tab")
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "results"
+        await pilot.press("up")
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "filter"
 
 
 def test_pydantic_payloads_reject_wrong_types(tmp_path: pathlib.Path) -> None:
