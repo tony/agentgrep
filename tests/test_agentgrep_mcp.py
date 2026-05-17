@@ -226,6 +226,33 @@ async def test_mcp_capabilities_resource_reports_read_only() -> None:
     assert "search_history" in prompts
 
 
+async def test_mcp_capabilities_lists_every_supported_agent_and_adapter() -> None:
+    """``agentgrep://capabilities`` must advertise every agent and adapter id.
+
+    The runtime list of agents and adapter ids has to stay in lockstep with
+    the CLI's ``AGENT_CHOICES`` and the discover-function adapter ids, or
+    MCP clients route queries to surfaces they don't know exist.
+    """
+    import agentgrep
+
+    agentgrep_mcp = load_agentgrep_mcp_module()
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        text = extract_resource_text(await client.read_resource("agentgrep://capabilities"))
+
+    data = t.cast("dict[str, object]", json.loads(text))
+    advertised_agents = t.cast("list[str]", data["agents"])
+    assert set(advertised_agents) == set(agentgrep.AGENT_CHOICES)
+
+    advertised_adapters = set(t.cast("list[str]", data["adapters"]))
+    for adapter_id in (
+        "cursor.cli_jsonl.v1",
+        "gemini.tmp_chats_jsonl.v1",
+        "gemini.tmp_logs_json.v1",
+    ):
+        assert adapter_id in advertised_adapters, adapter_id
+
+
 async def test_mcp_prompt_guides_search() -> None:
     agentgrep_mcp = load_agentgrep_mcp_module()
 

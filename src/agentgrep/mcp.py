@@ -30,6 +30,7 @@ import typing as t
 from fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
+AgentName = t.Literal["codex", "claude", "cursor", "gemini"]
 AgentSelector = t.Literal["codex", "claude", "cursor", "gemini", "all"]
 SearchTypeName = t.Literal["prompts", "history", "all"]
 
@@ -39,8 +40,11 @@ KNOWN_ADAPTERS: tuple[str, ...] = (
     "codex.sessions_jsonl.v1",
     "claude.projects_jsonl.v1",
     "cursor.ai_tracking_sqlite.v1",
+    "cursor.cli_jsonl.v1",
     "cursor.state_vscdb_legacy.v1",
     "cursor.state_vscdb_modern.v1",
+    "gemini.tmp_chats_jsonl.v1",
+    "gemini.tmp_logs_json.v1",
 )
 READONLY_TAGS = {"readonly", "agentgrep"}
 RESOURCE_ANNOTATIONS = {"readOnlyHint": True, "idempotentHint": True}
@@ -117,6 +121,7 @@ class AgentGrepModule(t.Protocol):
     """Structural type for the imported ``agentgrep`` module."""
 
     SCHEMA_VERSION: str
+    AGENT_CHOICES: tuple[AgentName, ...]
     SearchQuery: SearchQueryFactory
 
     def parse_agents(self, values: list[str]) -> tuple[str, ...]: ...  # noqa: D102
@@ -321,7 +326,7 @@ def build_capabilities() -> CapabilitiesModel:
     """Build a typed capability summary."""
     backends = agentgrep.select_backends()
     return CapabilitiesModel(
-        agents=["codex", "claude", "cursor"],
+        agents=list(agentgrep.AGENT_CHOICES),
         search_types=["prompts", "history", "all"],
         adapters=list(KNOWN_ADAPTERS),
         tools=["search", "find"],
