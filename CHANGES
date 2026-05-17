@@ -41,3 +41,8 @@ $ uvx --from 'agentgrep' --prerelease allow python
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 _Notes on the upcoming release will go here._
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+### Development
+
+- Type-checker switched from mypy to ty. Local recipes, lock file,
+  and CI all run `uv run ty check` now. (#1)
