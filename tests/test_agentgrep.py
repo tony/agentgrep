@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import importlib
 import io
 import json
 import os
@@ -1312,10 +1313,12 @@ async def test_show_detail_caps_body_at_max_lines(
         await pilot.pause()
         app.show_detail(record)
         await pilot.pause()
-        rendered = str(app._detail.render())
-        assert "more lines" in rendered
-        # Body should be capped at DETAIL_BODY_MAX_LINES, not the full 2000.
-        assert rendered.count("body line") == cap
+        # ``Static.content`` is the original Group we passed to update().
+        # For this plain-text body, the body renderable is a ``Text``.
+        group = app._detail.content
+        body_text = next(item for item in group.renderables if hasattr(item, "plain") and "body line" in item.plain)
+        assert "more lines" in body_text.plain
+        assert body_text.plain.count("body line") == cap
 
 
 def test_find_first_match_line_returns_index_of_first_match() -> None:
@@ -1398,6 +1401,144 @@ async def test_show_detail_scrolls_to_first_match(
         # Match at body line 50 + 8 header lines = ~line 58; centered into a
         # multi-row viewport, scroll_y should be > 0.
         assert app._detail_scroll.scroll_y > 0
+
+
+def test_detect_content_format_recognizes_json() -> None:
+    """``detect_content_format`` returns ``"json"`` for parseable JSON objects/arrays."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    assert agentgrep.detect_content_format('{"a": 1, "b": 2}') == "json"
+    assert agentgrep.detect_content_format("[1, 2, 3]") == "json"
+    # Whitespace + pretty-printed JSON.
+    assert agentgrep.detect_content_format('  {\n  "x": 1\n}') == "json"
+
+
+def test_detect_content_format_falls_back_to_text_for_malformed_json() -> None:
+    """A leading ``{`` that doesn't parse falls through to ``"text"``, not ``"json"``."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    assert agentgrep.detect_content_format('{"missing": ') == "text"
+    assert agentgrep.detect_content_format("{not even json}") == "text"
+
+
+def test_detect_content_format_recognizes_markdown() -> None:
+    """ATX headings and fenced code blocks at line-start trip markdown mode."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    assert agentgrep.detect_content_format("# Heading\n\nbody") == "markdown"
+    assert agentgrep.detect_content_format("intro\n\n## Subhead\n\nrest") == "markdown"
+    assert agentgrep.detect_content_format("intro\n\n```python\nprint(1)\n```") == "markdown"
+
+
+def test_detect_content_format_leans_false_negative_for_weak_markdown() -> None:
+    """Bullet-style or inline-bold chat content is intentionally NOT classified as markdown."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    # A chat message starting with "- " should keep its match highlight.
+    assert agentgrep.detect_content_format("- not really markdown") == "text"
+    # Inline **bold** alone isn't enough either.
+    assert agentgrep.detect_content_format("plain message with **emphasis** inline") == "text"
+
+
+def test_detect_content_format_handles_empty_and_plain_text() -> None:
+    """Empty body and plain chat prose both return ``"text"``."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    assert agentgrep.detect_content_format("") == "text"
+    assert agentgrep.detect_content_format("just a plain prompt") == "text"
+    assert agentgrep.detect_content_format("multi\nline\nplain\nbody") == "text"
+
+
+async def test_show_detail_renders_json_with_syntax(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A JSON record body produces a ``Syntax`` renderable in the detail Group."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    rich_syntax = importlib.import_module("rich.syntax")
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "json.jsonl",
+        text='{"alpha": 1, "beta": "two"}',
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.show_detail(record)
+        await pilot.pause()
+        rendered = app._detail.content
+        renderables = list(rendered.renderables)
+        assert any(isinstance(item, rich_syntax.Syntax) for item in renderables)
+
+
+async def test_show_detail_renders_markdown_with_markdown(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A markdown body produces a ``Markdown`` renderable in the detail Group."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    rich_markdown = importlib.import_module("rich.markdown")
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "md.jsonl",
+        text="# Heading\n\nbody paragraph\n",
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.show_detail(record)
+        await pilot.pause()
+        rendered = app._detail.content
+        renderables = list(rendered.renderables)
+        assert any(isinstance(item, rich_markdown.Markdown) for item in renderables)
+
+
+async def test_show_detail_keeps_text_highlighting_for_plain_body(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Plain-text bodies still get yellow ``highlight_regex`` spans for matches."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    rich_text_module = importlib.import_module("rich.text")
+    home = tmp_path / "home"
+    home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(agentgrep, "run_search_query", lambda *args, **kwargs: [])
+    query = agentgrep.SearchQuery(
+        terms=("libtmux",),
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+    control = agentgrep.SearchControl()
+    app = agentgrep.build_streaming_ui_app(home, query, control=control)
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "plain.jsonl",
+        text="plain prose mentioning libtmux exactly once",
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.show_detail(record)
+        await pilot.pause()
+        rendered = app._detail.content
+        renderables = list(rendered.renderables)
+        # Two Text instances: the header and the body. The body is the one
+        # carrying the highlight spans (header is bold labels only).
+        text_bodies = [
+            item
+            for item in renderables
+            if isinstance(item, rich_text_module.Text) and "libtmux" in item.plain
+        ]
+        assert text_bodies, "expected the body Text containing 'libtmux'"
+        styled = [str(span.style) for span in text_bodies[0].spans]
+        assert any("bold yellow" in style for style in styled)
 
 
 def test_pydantic_payloads_reject_wrong_types(tmp_path: pathlib.Path) -> None:

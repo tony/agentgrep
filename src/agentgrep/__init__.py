@@ -52,6 +52,9 @@ import time
 import typing as t
 
 import pydantic
+from rich.console import Group as _RichGroup
+from rich.markdown import Markdown as _RichMarkdown
+from rich.syntax import Syntax as _RichSyntax
 from rich.text import Text as _RichText
 
 if t.TYPE_CHECKING:
@@ -414,6 +417,64 @@ def highlight_matches(
             continue
         rich.highlight_regex(compiled, style=style)
     return rich
+
+
+ContentFormat = t.Literal["json", "markdown", "text"]
+"""Detected body format for detail-pane rendering — see :func:`detect_content_format`."""
+
+
+def detect_content_format(text: str) -> ContentFormat:
+    r"""Sniff the format of a record body for syntax-aware rendering.
+
+    The decision drives whether the detail pane renders the body via
+    :class:`rich.syntax.Syntax` (JSON), :class:`rich.markdown.Markdown`, or
+    the existing match-highlighted :class:`rich.text.Text`. ``record.path``
+    is **not** consulted because most adapters store the source file
+    (``.jsonl`` / ``.sqlite``) while ``record.text`` is an extracted
+    chat-message payload — the only reliable signal is the body itself.
+
+    The markdown heuristic is intentionally false-negative-biased: a plain
+    chat message that incidentally starts with ``- `` should not lose its
+    match highlighting to a misfire. Only fenced code blocks (triple
+    backtick) or ATX headings at the start of a line trip markdown mode.
+
+    Parameters
+    ----------
+    text : str
+        The body to classify.
+
+    Returns
+    -------
+    {"json", "markdown", "text"}
+        ``"json"`` when the body parses as JSON; ``"markdown"`` on a strong
+        markdown signal; ``"text"`` otherwise (also the empty-body case).
+
+    Examples
+    --------
+    >>> detect_content_format('{"a": 1}')
+    'json'
+    >>> detect_content_format("# Heading\\n\\nbody")
+    'markdown'
+    >>> detect_content_format("plain message body")
+    'text'
+    >>> detect_content_format("- not really markdown")
+    'text'
+    """
+    if not text:
+        return "text"
+    stripped = text.lstrip()
+    if stripped.startswith(("{", "[")):
+        try:
+            json.loads(text)
+        except ValueError:
+            pass
+        else:
+            return "json"
+    if re.search(r"^```", text, re.MULTILINE):
+        return "markdown"
+    if re.search(r"^#{1,6} \S", text, re.MULTILINE):
+        return "markdown"
+    return "text"
 
 
 class SearchRecordPayload(t.TypedDict):
@@ -4336,13 +4397,23 @@ def build_streaming_ui_app(
         _DETAIL_HEADER_LINES: t.ClassVar[int] = 8
 
         def show_detail(self, record: SearchRecord) -> None:
-            """Render ``record`` with colored labels + highlighted matches + scroll-to-match.
+            """Render ``record`` with colored labels + format-aware body + scroll-to-match.
 
             The body is truncated to :data:`DETAIL_BODY_MAX_LINES` lines (the
             ``VerticalScroll`` wrapper handles letting the user scroll within
-            the visible window). If any of the current search query's terms
-            occurs in the body the pane is scrolled so that line lands
-            vertically centered in the viewport.
+            the visible window). The body renderable is chosen by
+            :func:`detect_content_format`:
+
+            * JSON bodies are pretty-printed and rendered via
+              :class:`rich.syntax.Syntax` with ``ansi_dark`` theming.
+            * Markdown bodies render via :class:`rich.markdown.Markdown`.
+            * Everything else keeps the existing ``Text`` + ``highlight_regex``
+              flow so search-term matches stay bold-yellow.
+
+            If any current query term occurs in the body the pane is scrolled
+            so that line lands vertically centered in the viewport (line index
+            is recomputed against the formatted body for JSON so the jump is
+            still accurate).
             """
             if self._detail is None:
                 return
@@ -4350,7 +4421,7 @@ def build_streaming_ui_app(
             width = max(20, self._detail.size.width or 80)
             agent_color = SearchResultsList._AGENT_COLORS.get(record.agent or "", "")
             kind_color = SearchResultsList._KIND_COLORS.get(record.kind or "", "")
-            text = rich_text.Text(no_wrap=False)
+            header = rich_text.Text(no_wrap=False)
             for label, value, value_style in (
                 ("Agent:", record.agent or "", agent_color),
                 ("Kind:", record.kind or "", kind_color),
@@ -4364,24 +4435,72 @@ def build_streaming_ui_app(
                     "grey50",
                 ),
             ):
-                text.append(f"{label} ", style="bold")
-                text.append(f"{value}\n", style=value_style)
-            text.append("\n")
+                header.append(f"{label} ", style="bold")
+                header.append(f"{value}\n", style=value_style)
+            header.append("\n")
             body_truncated = truncate_lines(record.text, DETAIL_BODY_MAX_LINES)
             query_terms = list(self.query.terms)
-            highlighted = highlight_matches(
+            body_renderable, body_for_scroll = self._build_detail_body(
                 body_truncated,
                 query_terms,
-                case_sensitive=self.query.case_sensitive,
-                regex=self.query.regex,
             )
-            text.append(highlighted)
-            self._detail.update(text)
-            self._scroll_detail_to_first_match(record, query_terms)
+            self._detail.update(
+                _RichGroup(header, t.cast("t.Any", body_renderable)),
+            )
+            self._scroll_detail_to_first_match(body_for_scroll, query_terms)
+
+        def _build_detail_body(
+            self,
+            body_text: str,
+            query_terms: cabc.Sequence[str],
+        ) -> tuple[object, str]:
+            """Return ``(renderable, body_text_for_match_search)`` for ``body_text``.
+
+            The second tuple element is whatever text the caller's
+            ``find_first_match_line`` should scan. For JSON we pretty-print
+            and return the formatted text so the line index lines up with
+            what the user actually sees rendered.
+            """
+            fmt = detect_content_format(body_text)
+            if fmt == "json":
+                try:
+                    formatted = json.dumps(
+                        json.loads(body_text),
+                        indent=2,
+                        ensure_ascii=False,
+                    )
+                except json.JSONDecodeError, ValueError:
+                    formatted = body_text
+                match_line = find_first_match_line(
+                    formatted,
+                    query_terms,
+                    case_sensitive=self.query.case_sensitive,
+                    regex=self.query.regex,
+                )
+                highlight_lines = {match_line + 1} if match_line is not None else None
+                syntax = _RichSyntax(
+                    formatted,
+                    "json",
+                    theme="ansi_dark",
+                    word_wrap=True,
+                    highlight_lines=highlight_lines,
+                )
+                return syntax, formatted
+            if fmt == "markdown":
+                return _RichMarkdown(body_text, code_theme="ansi_dark"), body_text
+            return (
+                highlight_matches(
+                    body_text,
+                    query_terms,
+                    case_sensitive=self.query.case_sensitive,
+                    regex=self.query.regex,
+                ),
+                body_text,
+            )
 
         def _scroll_detail_to_first_match(
             self,
-            record: SearchRecord,
+            body_text: str,
             query_terms: cabc.Sequence[str],
         ) -> None:
             """Jump ``_detail_scroll`` so the first match lands at the viewport center."""
@@ -4389,7 +4508,7 @@ def build_streaming_ui_app(
                 return
             scroll: t.Any = self._detail_scroll
             match_line = find_first_match_line(
-                record.text,
+                body_text,
                 query_terms,
                 case_sensitive=self.query.case_sensitive,
                 regex=self.query.regex,
