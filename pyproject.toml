@@ -47,12 +47,19 @@ agentgrep-mcp = "agentgrep.mcp:main"
 
 [dependency-groups]
 dev = [
-  "ruff",
+  # Docs
+  "gp-sphinx==0.0.1a19",
+  "sphinx-autodoc-api-style==0.0.1a19",
+  "sphinx-autodoc-fastmcp==0.0.1a19",
+  "sphinx-autobuild",
+  # Testing
   "pytest",
   "pytest-asyncio",
   "pytest-rerunfailures>=16.2",
   "pytest-watcher",
   "syrupy>=5.1.0",
+  # Lint / typecheck
+  "ruff",
   "ty>=0.0.35",
 ]
 docs = [

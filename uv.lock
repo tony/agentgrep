@@ -47,11 +47,15 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "gp-sphinx" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-rerunfailures" },
     { name = "pytest-watcher" },
     { name = "ruff" },
+    { name = "sphinx-autobuild" },
+    { name = "sphinx-autodoc-api-style" },
+    { name = "sphinx-autodoc-fastmcp" },
     { name = "syrupy" },
     { name = "ty" },
 ]
@@ -71,11 +75,15 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "gp-sphinx", specifier = "==0.0.1a19" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-rerunfailures", specifier = ">=16.2" },
     { name = "pytest-watcher" },
     { name = "ruff" },
+    { name = "sphinx-autobuild" },
+    { name = "sphinx-autodoc-api-style", specifier = "==0.0.1a19" },
+    { name = "sphinx-autodoc-fastmcp", specifier = "==0.0.1a19" },
     { name = "syrupy", specifier = ">=5.1.0" },
     { name = "ty", specifier = ">=0.0.35" },
 ]
