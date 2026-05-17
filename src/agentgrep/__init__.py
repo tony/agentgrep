@@ -3875,6 +3875,17 @@ def build_streaming_ui_app(
             height: 1fr;
             overflow-x: hidden;
         }
+        /* OptionList's :focus highlight defaults to a bright $primary bg
+           which fights with the per-span semantic colors (cyan agent,
+           magenta claude, italic timestamp, …) and makes the row hard to
+           read. Force the focused-cursor row to use the same subtle
+           "blurred-cursor" styling we already have when the widget isn't
+           focused — preserves contrast for the colored fields. */
+        #results:focus > .option-list--option-highlighted {
+            color: $block-cursor-blurred-foreground;
+            background: $block-cursor-blurred-background;
+            text-style: $block-cursor-blurred-text-style;
+        }
         """
         BINDINGS: t.ClassVar[list[tuple[str, str, str]]] = [
             ("tab", "focus_next", "Switch focus"),
