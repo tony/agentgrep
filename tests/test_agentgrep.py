@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import importlib
 import io
 import json
 import os
@@ -525,6 +526,9 @@ def test_search_reports_source_and_match_progress(
         def result_added(self, count: int) -> None:
             self.events.append(("result_added", count))
 
+        def record_added(self, record: object) -> None:
+            self.events.append(("record_added", getattr(record, "kind", "?")))
+
         def finish(self, result_count: int) -> None:
             self.events.append(("finish", result_count))
 
@@ -547,6 +551,1197 @@ def test_search_reports_source_and_match_progress(
     assert ("source_finished", 1) in progress.events
     assert ("result_added", 1) in progress.events
     assert progress.events[-2:] == [("finish", 1), ("close", 0)]
+
+
+def test_collect_search_records_calls_record_added_with_each_unique_record(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    source = agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "session.jsonl",
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=1,
+    )
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=source.path,
+        text="bliss",
+        session_id="abc",
+    )
+    query = agentgrep.SearchQuery(
+        terms=("bliss",),
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+
+    class CapturingProgress:
+        def __init__(self) -> None:
+            self.added: list[object] = []
+            self.counts: list[int] = []
+
+        def start(self, query: object) -> None: ...
+        def sources_discovered(self, count: int) -> None: ...
+        def prefilter_started(self, root: pathlib.Path) -> None: ...
+        def sources_planned(self, planned: int, total: int) -> None: ...
+        def source_started(self, index: int, total: int, source: object) -> None: ...
+        def source_finished(
+            self,
+            index: int,
+            total: int,
+            source: object,
+            records: int,
+            matches: int,
+        ) -> None: ...
+        def result_added(self, count: int) -> None:
+            self.counts.append(count)
+
+        def record_added(self, record: object) -> None:
+            self.added.append(record)
+
+        def finish(self, result_count: int) -> None: ...
+        def close(self) -> None: ...
+
+    def iter_records(source: object) -> cabc.Iterator[object]:
+        yield record
+        yield record  # same dedupe key — second insert must not fire record_added
+
+    monkeypatch.setattr(agentgrep, "iter_source_records", iter_records)
+    progress = CapturingProgress()
+
+    records = agentgrep.collect_search_records(query, [source], progress=progress)
+
+    assert records == [record]
+    assert progress.added == [record]
+    assert progress.counts == [1]
+
+
+def test_streaming_search_progress_buffers_and_flushes_records(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    # Freeze the clock so the self-pacing auto-flush threshold (50 ms) never
+    # fires during the explicit-flush sequence; the test exercises the
+    # buffer/explicit-flush surface only.
+    monkeypatch.setattr(agentgrep.time, "monotonic", lambda: 0.0)
+    emitted: list[object] = []
+    progress = agentgrep.StreamingSearchProgress(emit=emitted.append)
+    record_a = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "a.jsonl",
+        text="a",
+    )
+    record_b = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "b.jsonl",
+        text="b",
+    )
+
+    progress.record_added(record_a)
+    progress.record_added(record_b)
+    progress.result_added(2)
+    progress.flush()
+
+    batches = [e for e in emitted if isinstance(e, agentgrep.StreamingRecordsBatch)]
+    assert len(batches) == 1
+    assert batches[0].records == (record_a, record_b)
+    assert batches[0].total == 2
+
+    progress.flush()
+    assert sum(1 for e in emitted if isinstance(e, agentgrep.StreamingRecordsBatch)) == 1
+
+
+def test_streaming_search_progress_self_paces_flush(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``record_added`` auto-flushes once the 50 ms batching window elapses."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    clock = {"now": 0.0}
+    monkeypatch.setattr(agentgrep.time, "monotonic", lambda: clock["now"])
+    emitted: list[object] = []
+    progress = agentgrep.StreamingSearchProgress(emit=emitted.append)
+    record_a = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "a.jsonl",
+        text="a",
+    )
+    record_b = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "b.jsonl",
+        text="b",
+    )
+
+    progress.record_added(record_a)
+    assert [e for e in emitted if isinstance(e, agentgrep.StreamingRecordsBatch)] == []
+
+    clock["now"] = agentgrep.StreamingSearchProgress._FLUSH_INTERVAL_SECONDS + 0.01
+    progress.record_added(record_b)
+
+    batches = [e for e in emitted if isinstance(e, agentgrep.StreamingRecordsBatch)]
+    assert len(batches) == 1
+    assert batches[0].records == (record_a, record_b)
+
+
+def test_streaming_search_progress_translates_progress_callbacks(
+    tmp_path: pathlib.Path,
+) -> None:
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    emitted: list[object] = []
+    progress = agentgrep.StreamingSearchProgress(emit=emitted.append)
+    query = agentgrep.SearchQuery(
+        terms=("bliss",),
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+    source = agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "session.jsonl",
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=1,
+    )
+
+    progress.start(query)
+    progress.sources_discovered(10)
+    progress.sources_planned(7, 10)
+    progress.source_started(1, 7, source)
+    progress.source_finished(1, 7, source, records=5, matches=2)
+    progress.result_added(2)
+    progress.finish(2)
+
+    snapshots = [e for e in emitted if isinstance(e, agentgrep.ProgressSnapshot)]
+    finished = [e for e in emitted if isinstance(e, agentgrep.StreamingSearchFinished)]
+
+    assert len(snapshots) == 5
+    assert snapshots[0].phase == "discovering"
+    assert snapshots[0].query_label == "bliss"
+    assert snapshots[1].phase == "discovered"
+    assert snapshots[1].detail == "10 sources"
+    assert snapshots[2].phase == "planning"
+    assert snapshots[2].current == 7
+    assert snapshots[2].total == 10
+    assert snapshots[3].phase == "scanning"
+    assert snapshots[3].current == 1
+    assert snapshots[3].total == 7
+    assert snapshots[3].detail == "session.jsonl"
+    assert snapshots[4].phase == "scanning"
+    assert snapshots[4].detail is not None
+    assert "matches" in snapshots[4].detail
+
+    assert len(finished) == 1
+    assert finished[0].outcome == "complete"
+    assert finished[0].total == 2
+    assert finished[0].elapsed >= 0.0
+
+
+def test_compute_filter_matches_returns_substring_matches(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The filter worker's pure helper matches by case-folded substring."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    blissful = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "bliss.jsonl",
+        text="serene BLISS abounds",
+    )
+    other = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "other.jsonl",
+        text="unrelated text",
+    )
+
+    matches = agentgrep.compute_filter_matches([blissful, other], "bliss")
+    assert matches == (blissful,)
+
+    no_matches = agentgrep.compute_filter_matches([blissful, other], "xyz")
+    assert no_matches == ()
+
+
+def test_compute_filter_matches_empty_text_returns_all(tmp_path: pathlib.Path) -> None:
+    """Whitespace-only or empty filter text returns every record unchanged."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "a.jsonl",
+        text="anything",
+    )
+    assert agentgrep.compute_filter_matches([record], "") == (record,)
+    assert agentgrep.compute_filter_matches([record], "   ") == (record,)
+
+
+def _build_empty_ui_app(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> t.Any:
+    """Build a streaming UI app with the search worker stubbed to a no-op."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(
+        agentgrep,
+        "run_search_query",
+        lambda *args, **kwargs: [],
+    )
+    query = agentgrep.SearchQuery(
+        terms=(),
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+    return agentgrep.build_streaming_ui_app(home, query, control=agentgrep.SearchControl())
+
+
+async def test_streaming_ui_app_mounts_cleanly(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Boot the Textual app via ``Pilot`` to surface CSS / mount errors in CI.
+
+    Also asserts the results widget is in the screen's focus chain — the
+    Textual API requires ``can_focus=True`` as a class keyword (not a class
+    attribute), and that detail is easy to get wrong on a dynamic-base
+    subclass.
+    """
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        focus_chain_ids = {getattr(w, "id", None) for w in app.screen.focus_chain}
+        assert "results" in focus_chain_ids, f"#results not in focus chain; chain={focus_chain_ids}"
+
+
+async def test_tab_moves_focus_from_filter_to_results(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tab on the filter input moves focus to the DataTable below it."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        # Filter starts focused (first focusable in the chain).
+        assert app.focused is not None
+        assert app.focused.id == "filter"
+        await pilot.press("tab")
+        await pilot.pause()
+        assert app.focused is not None
+        assert app.focused.id == "results"
+
+
+async def test_down_at_empty_filter_releases_focus_to_results(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``down`` arrow on an empty filter moves focus to the results table."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "filter"
+        await pilot.press("down")
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "results"
+
+
+async def test_up_at_results_top_row_releases_focus_to_filter(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``up`` when the results-list cursor is at row 0 moves focus to the filter."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "a.jsonl",
+        text="seed row",
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        # Seed one record so the list has a row 0 to be on.
+        app.all_records.append(record)
+        app.filtered_records.append(record)
+        app._results.append_records([record])
+        await pilot.pause()
+        # Move focus to the results list and confirm cursor is at row 0.
+        await pilot.press("tab")
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "results"
+        # Ensure highlight is on row 0 before pressing up.
+        assert app._results.highlighted in (None, 0)
+        await pilot.press("up")
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "filter"
+
+
+async def test_l_from_results_focuses_detail_pane(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Vim-style ``l`` (and right-arrow) from the results list focuses the detail pane."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "a.jsonl",
+        text="seed row",
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.all_records.append(record)
+        app.filtered_records.append(record)
+        app._results.append_records([record])
+        await pilot.pause()
+        await pilot.press("tab")
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "results"
+        await pilot.press("l")
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "detail-scroll"
+
+
+async def test_k_at_detail_top_focuses_filter_input(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``k`` / ``up`` on the detail pane at scroll_y=0 releases focus to the filter input."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "a.jsonl",
+        text="seed row",
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.all_records.append(record)
+        app.filtered_records.append(record)
+        app._results.append_records([record])
+        await pilot.pause()
+        app._detail_scroll.focus()
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "detail-scroll"
+        # Pre-condition: at the top of the (short) detail body.
+        assert app._detail_scroll.scroll_y <= 0
+        await pilot.press("k")
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "filter"
+
+
+async def test_h_from_detail_focuses_results_pane(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Vim-style ``h`` (and left-arrow) from the detail pane focuses the results list."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "a.jsonl",
+        text="seed row",
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.all_records.append(record)
+        app.filtered_records.append(record)
+        app._results.append_records([record])
+        await pilot.pause()
+        # Focus the detail-scroll widget directly, then bounce back via ``h``.
+        app._detail_scroll.focus()
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "detail-scroll"
+        await pilot.press("h")
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "results"
+
+
+def _seed_records(
+    agentgrep: t.Any,
+    tmp_path: pathlib.Path,
+    count: int,
+) -> list[t.Any]:
+    """Build ``count`` ``SearchRecord`` instances under ``tmp_path``."""
+    return [
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="codex.sessions",
+            adapter_id="codex.sessions_jsonl.v1",
+            path=tmp_path / f"r{idx}.jsonl",
+            text=f"row {idx}",
+        )
+        for idx in range(count)
+    ]
+
+
+async def test_g_on_results_jumps_to_top(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``g`` while the results list is focused snaps the cursor to row 0."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 5)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.all_records.extend(records)
+        app.filtered_records.extend(records)
+        app._results.append_records(records)
+        await pilot.pause()
+        await pilot.press("tab")
+        await pilot.pause()
+        app._results.highlighted = 3
+        await pilot.pause()
+        assert app._results.highlighted == 3
+        await pilot.press("g")
+        await pilot.pause()
+        assert app._results.highlighted == 0
+
+
+async def test_G_on_results_jumps_to_bottom(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``G`` while the results list is focused snaps the cursor to the last row."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 5)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.all_records.extend(records)
+        app.filtered_records.extend(records)
+        app._results.append_records(records)
+        await pilot.pause()
+        await pilot.press("tab")
+        await pilot.pause()
+        await pilot.press("G")
+        await pilot.pause()
+        assert app._results.highlighted == 4
+
+
+async def test_ctrl_d_on_results_advances_half_page(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``Ctrl-D`` on the results list advances the highlight by at least one row."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 20)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.all_records.extend(records)
+        app.filtered_records.extend(records)
+        app._results.append_records(records)
+        await pilot.pause()
+        await pilot.press("tab")
+        await pilot.pause()
+        app._results.highlighted = 0
+        await pilot.pause()
+        await pilot.press("ctrl+d")
+        await pilot.pause()
+        # Robust against tiny viewports during ``run_test`` — half-page may be
+        # as small as 1 if the simulated screen is shallow. Either way, the
+        # cursor must have moved forward and stayed within bounds.
+        assert app._results.highlighted is not None
+        assert app._results.highlighted > 0
+        assert app._results.highlighted <= len(records) - 1
+
+
+async def test_g_on_detail_scrolls_to_top(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``g`` on the detail pane jumps scroll_y back to 0."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    long_body = "\n".join(f"line {idx}" for idx in range(200))
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "long.jsonl",
+        text=long_body,
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.all_records.append(record)
+        app.filtered_records.append(record)
+        app._results.append_records([record])
+        await pilot.pause()
+        app.show_detail(record)
+        await pilot.pause()
+        app._detail_scroll.scroll_to(y=50, animate=False)
+        await pilot.pause()
+        assert app._detail_scroll.scroll_y > 0
+        app._detail_scroll.focus()
+        await pilot.pause()
+        await pilot.press("g")
+        await pilot.pause()
+        assert app._detail_scroll.scroll_y == 0
+
+
+async def test_G_on_detail_scrolls_to_bottom(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``G`` on the detail pane snaps scroll_y to (near) the maximum."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    long_body = "\n".join(f"line {idx}" for idx in range(200))
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "long.jsonl",
+        text=long_body,
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.all_records.append(record)
+        app.filtered_records.append(record)
+        app._results.append_records([record])
+        await pilot.pause()
+        app.show_detail(record)
+        await pilot.pause()
+        app._detail_scroll.focus()
+        await pilot.pause()
+        await pilot.press("G")
+        await pilot.pause()
+        assert app._detail_scroll.scroll_y >= app._detail_scroll.max_scroll_y - 0.5
+
+
+async def test_ctrl_f_on_detail_pages_down(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``Ctrl-F`` on the detail pane scrolls down by approximately one page."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    long_body = "\n".join(f"line {idx}" for idx in range(200))
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "long.jsonl",
+        text=long_body,
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.all_records.append(record)
+        app.filtered_records.append(record)
+        app._results.append_records([record])
+        await pilot.pause()
+        app.show_detail(record)
+        await pilot.pause()
+        app._detail_scroll.focus()
+        await pilot.pause()
+        before = app._detail_scroll.scroll_y
+        await pilot.press("ctrl+f")
+        await pilot.pause()
+        # Scrolled forward; exact delta depends on viewport size, just assert
+        # something happened in the right direction.
+        assert app._detail_scroll.scroll_y > before
+
+
+async def test_ctrl_j_from_filter_focuses_results(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``Ctrl-J`` while the filter input has focus moves focus to the results list."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 3)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.all_records.extend(records)
+        app.filtered_records.extend(records)
+        app._results.append_records(records)
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "filter"
+        await pilot.press("ctrl+j")
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "results"
+
+
+async def test_ctrl_l_from_results_focuses_detail(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``Ctrl-L`` from the results list moves focus rightward to the detail pane."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 3)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.all_records.extend(records)
+        app.filtered_records.extend(records)
+        app._results.append_records(records)
+        await pilot.pause()
+        await pilot.press("tab")
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "results"
+        await pilot.press("ctrl+l")
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "detail-scroll"
+
+
+async def test_ctrl_h_from_detail_focuses_results(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``Ctrl-H`` from the detail pane moves focus leftward to the results list."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 3)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.all_records.extend(records)
+        app.filtered_records.extend(records)
+        app._results.append_records(records)
+        await pilot.pause()
+        app._detail_scroll.focus()
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "detail-scroll"
+        await pilot.press("ctrl+h")
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "results"
+
+
+async def test_ctrl_k_from_results_focuses_filter(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``Ctrl-K`` from the results list moves focus up to the filter input."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 3)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.all_records.extend(records)
+        app.filtered_records.extend(records)
+        app._results.append_records(records)
+        await pilot.pause()
+        await pilot.press("tab")
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "results"
+        await pilot.press("ctrl+k")
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "filter"
+
+
+async def test_ctrl_k_from_detail_focuses_filter(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``Ctrl-K`` from the detail pane jumps focus all the way back to the filter."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 3)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.all_records.extend(records)
+        app.filtered_records.extend(records)
+        app._results.append_records(records)
+        await pilot.pause()
+        app._detail_scroll.focus()
+        await pilot.pause()
+        await pilot.press("ctrl+k")
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "filter"
+
+
+async def test_backspace_from_detail_focuses_results(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Backspace aliases ``Ctrl-H`` in many terminals — should focus results from detail."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 3)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.all_records.extend(records)
+        app.filtered_records.extend(records)
+        app._results.append_records(records)
+        await pilot.pause()
+        app._detail_scroll.focus()
+        await pilot.pause()
+        await pilot.press("backspace")
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "results"
+
+
+async def test_backspace_in_filter_still_deletes_a_character(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The backspace alias must NOT steal backspace from the filter input."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "filter"
+        await pilot.press("a")
+        await pilot.press("b")
+        await pilot.press("c")
+        await pilot.pause()
+        assert app._filter_input.value == "abc"
+        await pilot.press("backspace")
+        await pilot.pause()
+        # Backspace deleted the last character; focus stayed on filter.
+        assert app._filter_input.value == "ab"
+        assert app.focused.id == "filter"
+
+
+async def test_ctrl_h_from_filter_is_a_noop(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``Ctrl-H`` on the filter does nothing (no pane to the left)."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 3)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.all_records.extend(records)
+        app.filtered_records.extend(records)
+        app._results.append_records(records)
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "filter"
+        await pilot.press("ctrl+h")
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "filter"
+
+
+async def test_search_results_list_append_under_load(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Appending 1000 records to the results list completes within a generous bound.
+
+    Smoke test against accidental O(N²) regressions. Bound is intentionally
+    loose because ``OptionList.add_options`` is O(M) per call (vs the prior
+    custom widget's O(1)) — we're trading per-record speed for proven
+    correctness (visible cursor + Tab focus). If the bound trips on real
+    hardware, the escalation path is ``textual-fastdatatable``.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = [
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="codex.sessions",
+            adapter_id="codex.sessions_jsonl.v1",
+            path=tmp_path / f"r{idx}.jsonl",
+            text=f"row {idx}",
+        )
+        for idx in range(1000)
+    ]
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        start = time.monotonic()
+        app._results.append_records(records)
+        elapsed = time.monotonic() - start
+        await pilot.pause()
+        assert len(app._results._records) == 1000
+        assert elapsed < 2.0, f"append_records(1000) took {elapsed:.3f}s; expected < 2.0s"
+
+
+def test_format_compact_path_passes_short_paths_through(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Paths that already fit the width budget are returned unchanged."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    monkeypatch.setattr(agentgrep.pathlib.Path, "home", classmethod(lambda cls: tmp_path))
+    short = tmp_path / "a" / "b.txt"
+    assert agentgrep.format_compact_path(short, max_width=80) == "~/a/b.txt"
+
+
+def test_format_compact_path_middle_elides_long_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Long paths get a ``…/`` middle elide, preserving the hidden-dir root."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    monkeypatch.setattr(agentgrep.pathlib.Path, "home", classmethod(lambda cls: tmp_path))
+    long_path = tmp_path / ".codex" / "sessions" / "2024" / "02" / "14" / "uuid.jsonl"
+    result = agentgrep.format_compact_path(long_path, max_width=30)
+    assert result == "~/.codex/…/14/uuid.jsonl"
+    assert len(result) <= 30
+
+
+def test_format_compact_path_drops_root_when_tight(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    """When even the rooted elide doesn't fit, drop the root: ``…/parent/file``."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    monkeypatch.setattr(agentgrep.pathlib.Path, "home", classmethod(lambda cls: tmp_path))
+    long_path = tmp_path / ".codex" / "sessions" / "2024" / "02" / "14" / "verylongfilename.jsonl"
+    result = agentgrep.format_compact_path(long_path, max_width=20)
+    # Either tier-2 (root dropped) or tier-3 (filename only) — whichever fits.
+    assert len(result) <= 20
+    assert "verylongfilename" in result or "…" in result
+
+
+def test_truncate_lines_passes_short_text_through() -> None:
+    """Short text is returned unchanged."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    text = "a\nb\nc"
+    assert agentgrep.truncate_lines(text, max_lines=10) == text
+
+
+def test_truncate_lines_appends_overflow_marker() -> None:
+    """Long text is truncated and a ``+N more`` marker is appended."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    text = "\n".join(f"line {i}" for i in range(50))
+    result = agentgrep.truncate_lines(text, max_lines=5)
+    assert result.startswith("line 0\nline 1\nline 2\nline 3\nline 4\n")
+    assert "(+45 more lines)" in result
+
+
+async def test_show_detail_caps_body_at_max_lines(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``show_detail`` caps the body so giant records render instantly.
+
+    The body is now wrapped in a ``VerticalScroll`` so the cap is a generous
+    sanity bound (default 1000 lines), not the visible-height. Test the cap.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    cap = agentgrep.DETAIL_BODY_MAX_LINES
+    huge_body = "\n".join(f"body line {i}" for i in range(cap + 1000))
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "a.jsonl",
+        text=huge_body,
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.show_detail(record)
+        await pilot.pause()
+        # ``Static.content`` is the original Group we passed to update().
+        # For this plain-text body, the body renderable is a ``Text``.
+        group = app._detail.content
+        body_text = next(
+            item
+            for item in group.renderables
+            if hasattr(item, "plain") and "body line" in item.plain
+        )
+        assert "more lines" in body_text.plain
+        assert body_text.plain.count("body line") == cap
+
+
+def test_find_first_match_line_returns_index_of_first_match() -> None:
+    """Returns the line index of the first matching line; case-insensitive by default."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    text = "alpha\nbeta\nFOO bar\nbaz"
+    assert agentgrep.find_first_match_line(text, ("foo",)) == 2
+    assert agentgrep.find_first_match_line(text, ("foo",), case_sensitive=True) is None
+    assert agentgrep.find_first_match_line(text, ("FOO",), case_sensitive=True) == 2
+    assert agentgrep.find_first_match_line("", ("foo",)) is None
+    assert agentgrep.find_first_match_line(text, ()) is None
+    # Regex mode
+    assert agentgrep.find_first_match_line(text, (r"b\w+",), regex=True) == 1
+
+
+def test_find_first_match_line_skips_malformed_regex() -> None:
+    """Malformed regex patterns are silently skipped; valid siblings still match."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    text = "alpha\nbeta gamma\ndelta"
+    # ``[`` is unbalanced; should be ignored. ``gamma`` should still match.
+    assert agentgrep.find_first_match_line(text, ("[", "gamma"), regex=True) == 1
+
+
+def test_highlight_matches_styles_each_occurrence() -> None:
+    """``highlight_matches`` adds a styled span for every occurrence of every term."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    rich_text = agentgrep.highlight_matches("foo foo bar", ("foo",))
+    # Two spans for two occurrences.
+    assert sum(1 for span in rich_text.spans if "bold yellow" in str(span.style)) == 2
+
+
+def test_highlight_matches_combines_terms() -> None:
+    """Multiple terms each get their own styled spans."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    rich_text = agentgrep.highlight_matches("alpha beta alpha gamma", ("alpha", "gamma"))
+    styled = [str(span.style) for span in rich_text.spans if "bold yellow" in str(span.style)]
+    assert len(styled) == 3  # 2 alpha + 1 gamma
+
+
+async def test_show_detail_scrolls_to_first_match(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the record body contains a match, the detail-scroll jumps so the match centers."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(
+        agentgrep,
+        "run_search_query",
+        lambda *args, **kwargs: [],
+    )
+    # Build the app with a query that has terms; default _build_empty_ui_app
+    # uses ``terms=()``, which would make first_match always return None.
+    query = agentgrep.SearchQuery(
+        terms=("needle",),
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+    control = agentgrep.SearchControl()
+    app = agentgrep.build_streaming_ui_app(home, query, control=control)
+    # Match lands at line 50 of the body; record_at_match.
+    body = "\n".join(["padding"] * 50 + ["this needle is the match"] + ["padding"] * 50)
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "match.jsonl",
+        text=body,
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.show_detail(record)
+        await pilot.pause()
+        # Match at body line 50 + 8 header lines = ~line 58; centered into a
+        # multi-row viewport, scroll_y should be > 0.
+        assert app._detail_scroll.scroll_y > 0
+
+
+def test_detect_content_format_recognizes_json() -> None:
+    """``detect_content_format`` returns ``"json"`` for parseable JSON objects/arrays."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    assert agentgrep.detect_content_format('{"a": 1, "b": 2}') == "json"
+    assert agentgrep.detect_content_format("[1, 2, 3]") == "json"
+    # Whitespace + pretty-printed JSON.
+    assert agentgrep.detect_content_format('  {\n  "x": 1\n}') == "json"
+
+
+def test_detect_content_format_falls_back_to_text_for_malformed_json() -> None:
+    """A leading ``{`` that doesn't parse falls through to ``"text"``, not ``"json"``."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    assert agentgrep.detect_content_format('{"missing": ') == "text"
+    assert agentgrep.detect_content_format("{not even json}") == "text"
+
+
+def test_detect_content_format_recognizes_markdown() -> None:
+    """ATX headings and fenced code blocks at line-start trip markdown mode."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    assert agentgrep.detect_content_format("# Heading\n\nbody") == "markdown"
+    assert agentgrep.detect_content_format("intro\n\n## Subhead\n\nrest") == "markdown"
+    assert agentgrep.detect_content_format("intro\n\n```python\nprint(1)\n```") == "markdown"
+
+
+def test_detect_content_format_leans_false_negative_for_weak_markdown() -> None:
+    """Bullet-style or inline-bold chat content is intentionally NOT classified as markdown."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    # A chat message starting with "- " should keep its match highlight.
+    assert agentgrep.detect_content_format("- not really markdown") == "text"
+    # Inline **bold** alone isn't enough either.
+    assert agentgrep.detect_content_format("plain message with **emphasis** inline") == "text"
+
+
+def test_detect_content_format_handles_empty_and_plain_text() -> None:
+    """Empty body and plain chat prose both return ``"text"``."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    assert agentgrep.detect_content_format("") == "text"
+    assert agentgrep.detect_content_format("just a plain prompt") == "text"
+    assert agentgrep.detect_content_format("multi\nline\nplain\nbody") == "text"
+
+
+async def test_show_detail_renders_json_with_syntax(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A JSON record body produces a ``Syntax`` renderable in the detail Group."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    rich_syntax = importlib.import_module("rich.syntax")
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "json.jsonl",
+        text='{"alpha": 1, "beta": "two"}',
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.show_detail(record)
+        await pilot.pause()
+        rendered = app._detail.content
+        renderables = list(rendered.renderables)
+        assert any(isinstance(item, rich_syntax.Syntax) for item in renderables)
+
+
+async def test_show_detail_renders_markdown_with_markdown(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A markdown body produces a ``Markdown`` renderable in the detail Group."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    rich_markdown = importlib.import_module("rich.markdown")
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "md.jsonl",
+        text="# Heading\n\nbody paragraph\n",
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.show_detail(record)
+        await pilot.pause()
+        rendered = app._detail.content
+        renderables = list(rendered.renderables)
+        assert any(isinstance(item, rich_markdown.Markdown) for item in renderables)
+
+
+async def test_show_detail_keeps_text_highlighting_for_plain_body(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Plain-text bodies still get yellow ``highlight_regex`` spans for matches."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    rich_text_module = importlib.import_module("rich.text")
+    home = tmp_path / "home"
+    home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(agentgrep, "run_search_query", lambda *args, **kwargs: [])
+    query = agentgrep.SearchQuery(
+        terms=("libtmux",),
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+    control = agentgrep.SearchControl()
+    app = agentgrep.build_streaming_ui_app(home, query, control=control)
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "plain.jsonl",
+        text="plain prose mentioning libtmux exactly once",
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.show_detail(record)
+        await pilot.pause()
+        rendered = app._detail.content
+        renderables = list(rendered.renderables)
+        # Two Text instances: the header and the body. The body is the one
+        # carrying the highlight spans (header is bold labels only).
+        text_bodies = [
+            item
+            for item in renderables
+            if isinstance(item, rich_text_module.Text) and "libtmux" in item.plain
+        ]
+        assert text_bodies, "expected the body Text containing 'libtmux'"
+        styled = [str(span.style) for span in text_bodies[0].spans]
+        assert any("bold yellow" in style for style in styled)
+
+
+def test_pydantic_payloads_reject_wrong_types(tmp_path: pathlib.Path) -> None:
+    """Payload models validate field types at construction time."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "a.jsonl",
+        text="hi",
+    )
+
+    # Happy path constructs cleanly
+    rap = agentgrep.RecordsAppendedPayload(records=(record,), total=1)
+    assert rap.records == (record,)
+    assert rap.total == 1
+
+    sfp = agentgrep.SearchFinishedPayload(outcome="complete", total=1, elapsed=0.5)
+    assert sfp.error_message is None
+
+    fcp = agentgrep.FilterCompletedPayload(text="abc", matching=(record,))
+    assert fcp.text == "abc"
+
+    # Wrong types raise ValidationError
+    with pytest.raises(agentgrep.pydantic.ValidationError):
+        agentgrep.SearchFinishedPayload(outcome="not-a-valid-outcome", total=0, elapsed=0.0)
+    with pytest.raises(agentgrep.pydantic.ValidationError):
+        agentgrep.FilterRequestedPayload(text=None)  # type: ignore[arg-type]
 
 
 def test_collect_search_records_returns_partial_results_on_answer_now(
@@ -711,6 +1906,9 @@ def test_run_search_query_interrupts_progress_on_keyboard_interrupt(
 
         def result_added(self, count: int) -> None:
             self.events.append("result_added")
+
+        def record_added(self, record: object) -> None:
+            self.events.append("record_added")
 
         def finish(self, result_count: int) -> None:
             self.events.append("finish")
