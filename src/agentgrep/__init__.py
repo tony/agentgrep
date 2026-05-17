@@ -4233,7 +4233,7 @@ def build_streaming_ui_app(
             with horizontal(id="body"):
                 yield SearchResultsList(id="results")
                 with DetailScroll(id="detail-scroll"):
-                    yield static_type("Streaming results…", id="detail")
+                    yield static_type("", id="detail")
             yield footer()
 
         def on_mount(self) -> None:
