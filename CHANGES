@@ -57,7 +57,7 @@ reference page.
 
 ### What's new
 
-#### Gemini CLI search support
+#### Gemini CLI search support (#4)
 
 A new `--agent gemini` selector searches Google Gemini CLI
 sessions at `${GEMINI_CLI_HOME or ${HOME}/.gemini}/tmp/<project_hash>/chats/session-*.jsonl`
@@ -70,7 +70,7 @@ helper {func}`~agentgrep.store_catalog.gemini_project_hash`
 reproduces Gemini CLI's `sha256(absolute_path)` derivation so
 consumers can map a working directory to its tmp shard.
 
-#### Cursor CLI agent search support
+#### Cursor CLI agent search support (#4)
 
 `--agent cursor` now searches the Cursor CLI agent's
 per-project transcripts at
@@ -81,7 +81,7 @@ file's mtime as a session-level timestamp. Sibling project files
 (`repo.json`, `mcp-approvals.json`, `terminals/`, `canvases/`)
 are explicitly excluded from search so transcripts stay the focus.
 
-#### Storage catalogue
+#### Storage catalogue (#4)
 
 A new {mod}`agentgrep.stores` module exposes
 {class}`~agentgrep.stores.StoreDescriptor` and
@@ -98,7 +98,7 @@ captured by editing one row and bumping the catalogue version.
 
 ### Fixes
 
-#### Search beneath dotfile `.gitignore`
+#### Search beneath dotfile `.gitignore` (#4)
 
 `agentgrep search` no longer reports "No matches found." when
 `~/.claude`, `~/.codex`, or `~/.cursor` lives inside a
@@ -109,7 +109,7 @@ discovered.
 
 ### Documentation
 
-#### New storage-catalog reference page
+#### New storage-catalog reference page (#4)
 
 A new {ref}`storage-catalog` page walks through the per-agent
 storage layouts, names the upstream-pinned schemas where they
