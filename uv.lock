@@ -37,7 +37,7 @@ wheels = [
 
 [[package]]
 name = "agentgrep"
-version = "0.1.0a0"
+version = "0.1.0a1"
 source = { editable = "." }
 dependencies = [
     { name = "fastmcp" },

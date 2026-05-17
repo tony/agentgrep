@@ -36,11 +36,53 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a1 (Yet to be released)
+## agentgrep 0.1.0a2 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 _Notes on the upcoming release will go here._
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a1 (2026-05-17)
+
+agentgrep 0.1.0a1 ships the first interactive surface for the
+package. `agentgrep search --ui` now mounts a Textual app
+immediately and streams results as they're discovered, with
+vim-style navigation, format-aware rendering for JSON and Markdown
+chat content in the detail pane, and a smart `Ctrl-C` that cancels
+an in-flight search before quitting the app.
+
+### What's new
+
+#### Live-streaming `--ui` mode (#2)
+
+`agentgrep search <query> --ui` no longer blocks on the search
+before opening the UI. The Textual app mounts up front, the search
+runs in a background worker, and records stream into the results
+list as they're discovered. A filter input on top of the results
+list debounces typing and runs the substring filter on a worker
+thread, so typing stays instant regardless of how many records are
+loaded. The chrome above the filter shows the same
+spinner / scanning-N/M-sources / matches / elapsed line the CLI
+spinner uses, themed for the dark-terminal palette.
+
+The detail pane on the right is format-aware: JSON bodies render
+through Rich's syntax highlighter with the line containing the
+first search-term match emphasized, Markdown bodies render through
+Rich's Markdown renderable (headings, fenced code blocks, lists),
+and plain-text bodies keep the bold-yellow match highlighting from
+the CLI output. When the first match is deep inside a body the pane
+opens centered on it instead of at the top.
+
+Navigation borrows from vim and less. `j` / `k` move the cursor in
+the results list and scroll the detail pane; `g` / `G` jump
+top / bottom; `Ctrl-D` / `Ctrl-U` half-page; `Ctrl-F` / `Ctrl-B`
+full-page in the detail pane; `Ctrl-hjkl` switch focus between the
+filter input, the results list, and the detail pane tmux-style
+(`Backspace` aliases `Ctrl-H` for terminals that fold the two). `q`
+quits, `Esc` cancels an in-flight search, and `Ctrl-C` cancels the
+search on first press then quits on the next. Running `--ui`
+without query terms doubles as an interactive browse-everything
+mode.
 
 ### Development
 
