@@ -3448,6 +3448,52 @@ def test_search_gemini_chat_session_drops_metadata_records(
     assert chat_records[0].role == "user"
 
 
+def test_search_gemini_chat_session_metadata_with_future_type_field(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SessionMetadataRecord with a hypothetical ``type`` field stays classified.
+
+    Upstream discriminates metadata records by ``kind``; agentgrep's parser
+    must too, so a future Gemini schema that adds a ``type`` field to the
+    session-metadata line cannot silently misclassify it as a turn.
+    """
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    session = home / ".gemini" / "tmp" / "h0" / "chats" / "session-x.jsonl"
+    write_jsonl(
+        session,
+        [
+            {
+                "sessionId": "sess-1",
+                "projectHash": "h0",
+                "startTime": "2026-05-17T12:00:00Z",
+                "lastUpdated": "2026-05-17T12:00:00Z",
+                "kind": "main",
+                # Hypothetical forward-compat: upstream adds `type`.
+                "type": "session_meta",
+            },
+            {
+                "id": "m1",
+                "timestamp": "2026-05-17T12:00:05Z",
+                "type": "user",
+                "content": [{"text": "remind me about libtmux"}],
+            },
+        ],
+    )
+
+    query = _make_query(agentgrep, ("gemini",), ("libtmux",))
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("gemini",), backends)
+    records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
+
+    chat_records = [r for r in records if r.store == "gemini.tmp_chats"]
+    assert len(chat_records) == 1
+    assert chat_records[0].role == "user"
+    assert chat_records[0].session_id == "sess-1"
+
+
 def test_search_gemini_logs_returns_user_message(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

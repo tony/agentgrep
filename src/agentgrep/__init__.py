@@ -3005,7 +3005,11 @@ def parse_gemini_chat_file(
         mapping = t.cast("dict[str, object]", event)
         if "$set" in mapping:
             continue
-        if "startTime" in mapping and "type" not in mapping:
+        if "kind" in mapping:
+            # SessionMetadataRecord: upstream discriminates by ``kind``
+            # (e.g. ``"main"``) rather than by the absence of ``type``,
+            # so this stays correct even if a future schema adds a
+            # ``type`` field to the metadata record.
             session_id = as_optional_str(mapping.get("sessionId"))
             continue
         role = as_optional_str(mapping.get("type"))
