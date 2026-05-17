@@ -2287,8 +2287,15 @@ def discover_codex_sources(
     home: pathlib.Path,
     backends: BackendSelection,
 ) -> list[SourceHandle]:
-    """Discover Codex sessions and command history."""
-    root = home / ".codex"
+    """Discover Codex sessions and command history.
+
+    Honours the ``CODEX_HOME`` environment variable (see upstream
+    ``codex-rs/utils/home-dir/src/lib.rs``) and the catalogue's
+    ``env_overrides`` declaration. Falls back to ``${HOME}/.codex`` when
+    the env var is unset or empty.
+    """
+    codex_home = os.environ.get("CODEX_HOME")
+    root = pathlib.Path(codex_home) if codex_home else home / ".codex"
     sources: list[SourceHandle] = []
     if not root.exists():
         return sources
@@ -2443,11 +2450,16 @@ def discover_gemini_sources(
     """Discover Gemini CLI sessions and prompt logs under ``~/.gemini/tmp``.
 
     Yields one source per ``tmp/<project_hash>/chats/session-*.jsonl`` and
-    one per ``tmp/<project_hash>/logs.json``. Mirrors the ``gemini.tmp.chats``
-    and ``gemini.tmp.logs`` rows in
-    :data:`agentgrep.store_catalog.CATALOG`.
+    one per ``tmp/<project_hash>/logs.json``. Honours the
+    ``GEMINI_CLI_HOME`` environment variable (see upstream
+    ``packages/cli/index.ts``) and the catalogue's ``env_overrides``
+    declaration. Falls back to ``${HOME}/.gemini`` when the env var is
+    unset or empty. Mirrors the ``gemini.tmp.chats`` and ``gemini.tmp.logs``
+    rows in :data:`agentgrep.store_catalog.CATALOG`.
     """
-    root = home / ".gemini" / "tmp"
+    gemini_home = os.environ.get("GEMINI_CLI_HOME")
+    base = pathlib.Path(gemini_home) if gemini_home else home / ".gemini"
+    root = base / "tmp"
     if not root.exists():
         return []
     sources: list[SourceHandle] = [

@@ -3177,6 +3177,84 @@ def _make_query(agentgrep: object, agents: tuple[AgentName, ...], terms: tuple[s
     )
 
 
+def test_discover_codex_sources_honours_codex_home_env(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``CODEX_HOME`` overrides ``${HOME}/.codex`` per the catalogue contract."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    decoy_home = tmp_path / "home"
+    alt_root = tmp_path / "elsewhere"
+    monkeypatch.setenv("HOME", str(decoy_home))
+    monkeypatch.setenv("CODEX_HOME", str(alt_root))
+    # Decoy entry under ${HOME}/.codex that should NOT be discovered.
+    decoy_history = decoy_home / ".codex" / "history.jsonl"
+    decoy_history.parent.mkdir(parents=True, exist_ok=True)
+    _ = decoy_history.write_text(
+        '{"session_id":"x","ts":1,"text":"decoy"}\n',
+        encoding="utf-8",
+    )
+    # Real entry under ${CODEX_HOME}.
+    history_path = alt_root / "history.jsonl"
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    _ = history_path.write_text(
+        '{"session_id":"s","ts":1,"text":"libtmux from env"}\n',
+        encoding="utf-8",
+    )
+
+    backends = agentgrep.BackendSelection(None, None, None)
+    sources = agentgrep.discover_codex_sources(decoy_home, backends)
+
+    paths = {s.path for s in sources}
+    assert history_path in paths
+    assert decoy_history not in paths
+
+
+def test_discover_gemini_sources_honours_gemini_cli_home_env(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``GEMINI_CLI_HOME`` overrides ``${HOME}/.gemini`` per the catalogue contract."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    decoy_home = tmp_path / "home"
+    alt_root = tmp_path / "elsewhere"
+    monkeypatch.setenv("HOME", str(decoy_home))
+    monkeypatch.setenv("GEMINI_CLI_HOME", str(alt_root))
+    decoy_session = decoy_home / ".gemini" / "tmp" / "h0" / "chats" / "session-decoy.jsonl"
+    write_jsonl(
+        decoy_session,
+        [
+            {
+                "sessionId": "decoy",
+                "projectHash": "h0",
+                "startTime": "2026-05-17T12:00:00Z",
+                "lastUpdated": "2026-05-17T12:00:00Z",
+                "kind": "main",
+            },
+        ],
+    )
+    session = alt_root / "tmp" / "h0" / "chats" / "session-real.jsonl"
+    write_jsonl(
+        session,
+        [
+            {
+                "sessionId": "real",
+                "projectHash": "h0",
+                "startTime": "2026-05-17T12:00:00Z",
+                "lastUpdated": "2026-05-17T12:00:00Z",
+                "kind": "main",
+            },
+        ],
+    )
+
+    backends = agentgrep.BackendSelection(None, None, None)
+    sources = agentgrep.discover_gemini_sources(decoy_home, backends)
+
+    paths = {s.path for s in sources}
+    assert session in paths
+    assert decoy_session not in paths
+
+
 def test_search_cursor_cli_transcript_user_prompt(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
