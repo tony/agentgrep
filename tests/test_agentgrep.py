@@ -1006,14 +1006,19 @@ def test_truncate_lines_appends_overflow_marker() -> None:
     assert "(+45 more lines)" in result
 
 
-async def test_show_detail_truncates_long_record_body(
+async def test_show_detail_caps_body_at_max_lines(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``show_detail`` caps the body length so giant records render instantly."""
+    """``show_detail`` caps the body so giant records render instantly.
+
+    The body is now wrapped in a ``VerticalScroll`` so the cap is a generous
+    sanity bound (default 1000 lines), not the visible-height. Test the cap.
+    """
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
-    huge_body = "\n".join(f"body line {i}" for i in range(2000))
+    cap = agentgrep.DETAIL_BODY_MAX_LINES
+    huge_body = "\n".join(f"body line {i}" for i in range(cap + 1000))
     record = agentgrep.SearchRecord(
         kind="prompt",
         agent="codex",
@@ -1028,8 +1033,90 @@ async def test_show_detail_truncates_long_record_body(
         await pilot.pause()
         rendered = str(app._detail.render())
         assert "more lines" in rendered
-        # Render should be bounded — well under the 2000-line full body.
-        assert rendered.count("body line") < 200
+        # Body should be capped at DETAIL_BODY_MAX_LINES, not the full 2000.
+        assert rendered.count("body line") == cap
+
+
+def test_find_first_match_line_returns_index_of_first_match() -> None:
+    """Returns the line index of the first matching line; case-insensitive by default."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    text = "alpha\nbeta\nFOO bar\nbaz"
+    assert agentgrep.find_first_match_line(text, ("foo",)) == 2
+    assert agentgrep.find_first_match_line(text, ("foo",), case_sensitive=True) is None
+    assert agentgrep.find_first_match_line(text, ("FOO",), case_sensitive=True) == 2
+    assert agentgrep.find_first_match_line("", ("foo",)) is None
+    assert agentgrep.find_first_match_line(text, ()) is None
+    # Regex mode
+    assert agentgrep.find_first_match_line(text, (r"b\w+",), regex=True) == 1
+
+
+def test_find_first_match_line_skips_malformed_regex() -> None:
+    """Malformed regex patterns are silently skipped; valid siblings still match."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    text = "alpha\nbeta gamma\ndelta"
+    # ``[`` is unbalanced; should be ignored. ``gamma`` should still match.
+    assert agentgrep.find_first_match_line(text, ("[", "gamma"), regex=True) == 1
+
+
+def test_highlight_matches_styles_each_occurrence() -> None:
+    """``highlight_matches`` adds a styled span for every occurrence of every term."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    rich_text = agentgrep.highlight_matches("foo foo bar", ("foo",))
+    # Two spans for two occurrences.
+    assert sum(1 for span in rich_text.spans if "bold yellow" in str(span.style)) == 2
+
+
+def test_highlight_matches_combines_terms() -> None:
+    """Multiple terms each get their own styled spans."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    rich_text = agentgrep.highlight_matches("alpha beta alpha gamma", ("alpha", "gamma"))
+    styled = [str(span.style) for span in rich_text.spans if "bold yellow" in str(span.style)]
+    assert len(styled) == 3  # 2 alpha + 1 gamma
+
+
+async def test_show_detail_scrolls_to_first_match(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the record body contains a match, the detail-scroll jumps so the match centers."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(
+        agentgrep,
+        "run_search_query",
+        lambda *args, **kwargs: [],
+    )
+    # Build the app with a query that has terms; default _build_empty_ui_app
+    # uses ``terms=()``, which would make first_match always return None.
+    query = agentgrep.SearchQuery(
+        terms=("needle",),
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+    control = agentgrep.SearchControl()
+    app = agentgrep.build_streaming_ui_app(home, query, control=control)
+    # Match lands at line 50 of the body; record_at_match.
+    body = "\n".join(["padding"] * 50 + ["this needle is the match"] + ["padding"] * 50)
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "match.jsonl",
+        text=body,
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.show_detail(record)
+        await pilot.pause()
+        # Match at body line 50 + 8 header lines = ~line 58; centered into a
+        # multi-row viewport, scroll_y should be > 0.
+        assert app._detail_scroll.scroll_y > 0
 
 
 def test_pydantic_payloads_reject_wrong_types(tmp_path: pathlib.Path) -> None:

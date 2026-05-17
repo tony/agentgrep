@@ -52,6 +52,7 @@ import time
 import typing as t
 
 import pydantic
+from rich.text import Text as _RichText
 
 if t.TYPE_CHECKING:
     import collections.abc as cabc
@@ -324,6 +325,95 @@ def truncate_lines(text: str, max_lines: int) -> str:
     visible = lines[:max_lines]
     remaining = len(lines) - max_lines
     return "\n".join(visible) + f"\n… (+{remaining} more lines)"
+
+
+DETAIL_BODY_MAX_LINES = 1000
+"""Hard cap on lines rendered in the detail-pane body.
+
+The detail pane wraps the body ``Static`` in a ``VerticalScroll`` so the user
+can scroll within the pane. The cap exists purely as a defence against
+multi-megabyte session logs that would otherwise stall ``Static.update``.
+"""
+
+
+def find_first_match_line(
+    text: str,
+    terms: cabc.Sequence[str],
+    *,
+    case_sensitive: bool = False,
+    regex: bool = False,
+) -> int | None:
+    """Return the 0-based line index of the first line containing any term.
+
+    Parameters
+    ----------
+    text : str
+        The body to scan.
+    terms : Sequence[str]
+        Query terms (substring or regex) to search for. Empty → no match.
+    case_sensitive : bool, default False
+        When False, matching is case-folded.
+    regex : bool, default False
+        When False, each term is escaped before regex compilation. When True,
+        each term is compiled as-is.
+
+    Returns
+    -------
+    int | None
+        The line index of the first match, or ``None`` if no line matches.
+        Malformed regex patterns are silently skipped.
+    """
+    if not text or not terms:
+        return None
+    flags = 0 if case_sensitive else re.IGNORECASE
+    patterns: list[str] = []
+    for term in terms:
+        if not term:
+            continue
+        compiled_source = term if regex else re.escape(term)
+        try:
+            re.compile(compiled_source, flags)
+        except re.error:
+            continue
+        patterns.append(f"(?:{compiled_source})")
+    if not patterns:
+        return None
+    combined = re.compile("|".join(patterns), flags)
+    for idx, line in enumerate(text.split("\n")):
+        if combined.search(line):
+            return idx
+    return None
+
+
+def highlight_matches(
+    text: str,
+    terms: cabc.Sequence[str],
+    *,
+    case_sensitive: bool = False,
+    regex: bool = False,
+    style: str = "bold yellow",
+) -> _RichText:
+    """Build a Rich ``Text`` with every occurrence of any term styled.
+
+    Stacks one ``highlight_regex`` pass per term so the per-pass complexity
+    is linear; total cost is O(N * T) for text length N and T terms.
+    Malformed regex patterns are silently skipped (mirrors
+    :func:`find_first_match_line`).
+    """
+    rich = _RichText(text, no_wrap=False)
+    if not text or not terms:
+        return rich
+    flags = 0 if case_sensitive else re.IGNORECASE
+    for term in terms:
+        if not term:
+            continue
+        pattern_source = term if regex else re.escape(term)
+        try:
+            compiled = re.compile(pattern_source, flags)
+        except re.error:
+            continue
+        rich.highlight_regex(compiled, style=style)
+    return rich
 
 
 class SearchRecordPayload(t.TypedDict):
@@ -702,6 +792,7 @@ class TextualContainersModule(t.Protocol):
 
     Horizontal: cabc.Callable[..., t.ContextManager[object]]
     Vertical: cabc.Callable[..., t.ContextManager[object]]
+    VerticalScroll: cabc.Callable[..., t.ContextManager[object]]
 
 
 class TextualAppModule(t.Protocol):
@@ -3539,7 +3630,7 @@ def build_streaming_ui_app(
     option_type = textual_option_list_internals.Option
     rich_text = rich_text_module
     horizontal = textual_containers.Horizontal
-    vertical = textual_containers.Vertical
+    vertical_scroll = textual_containers.VerticalScroll
     footer = textual_widgets.Footer
     header = textual_widgets.Header
     input_widget = textual_widgets.Input
@@ -3866,9 +3957,12 @@ def build_streaming_ui_app(
         #body {
             height: 1fr;
         }
+        #detail-scroll {
+            overflow-y: auto;
+            overflow-x: hidden;
+        }
         #detail {
             padding: 0 1 0 0;
-            overflow-y: auto;
         }
         #results {
             height: 1fr;
@@ -3924,6 +4018,7 @@ def build_streaming_ui_app(
             self._filter_input: FilterInput | None = None
             self._resize_debounce_timer: object | None = None
             self._current_detail_record: SearchRecord | None = None
+            self._detail_scroll: t.Any = None
 
         def _get_start_time(self) -> float | None:
             return self._started_at
@@ -3942,7 +4037,7 @@ def build_streaming_ui_app(
             yield FilterInput(placeholder="Filter by keyword", id="filter")
             with horizontal(id="body"):
                 yield SearchResultsList(id="results")
-                with vertical():
+                with vertical_scroll(id="detail-scroll"):
                     yield static_type("Streaming results…", id="detail")
             yield footer()
 
@@ -3957,6 +4052,7 @@ def build_streaming_ui_app(
                 "StaticLike",
                 streaming.query_one("#detail", static_type),
             )
+            self._detail_scroll = streaming.query_one("#detail-scroll")
             self._status_widget = t.cast(
                 "StaticLike",
                 streaming.query_one("#chrome-status", static_type),
@@ -4128,15 +4224,24 @@ def build_streaming_ui_app(
             if 0 <= row_index < len(self.filtered_records):
                 self.show_detail(self.filtered_records[row_index])
 
+        # Constant — keep in sync with the label list in ``show_detail`` below.
+        # 7 label rows (Agent / Kind / Store / Adapter / Timestamp / Model / Path)
+        # plus 1 blank separator = 8 lines of header before the body starts.
+        _DETAIL_HEADER_LINES: t.ClassVar[int] = 8
+
         def show_detail(self, record: SearchRecord) -> None:
-            """Render ``record`` in the detail Static with colored labels + truncated body."""
+            """Render ``record`` with colored labels + highlighted matches + scroll-to-match.
+
+            The body is truncated to :data:`DETAIL_BODY_MAX_LINES` lines (the
+            ``VerticalScroll`` wrapper handles letting the user scroll within
+            the visible window). If any of the current search query's terms
+            occurs in the body the pane is scrolled so that line lands
+            vertically centered in the viewport.
+            """
             if self._detail is None:
                 return
             self._current_detail_record = record
             width = max(20, self._detail.size.width or 80)
-            # Reserve ~7 lines for the metadata header + blank separator;
-            # render the rest of the visible height as record-body lines.
-            available_lines = max(1, (self._detail.size.height or 24) - 8)
             agent_color = SearchResultsList._AGENT_COLORS.get(record.agent or "", "")
             kind_color = SearchResultsList._KIND_COLORS.get(record.kind or "", "")
             text = rich_text.Text(no_wrap=False)
@@ -4156,8 +4261,40 @@ def build_streaming_ui_app(
                 text.append(f"{label} ", style="bold")
                 text.append(f"{value}\n", style=value_style)
             text.append("\n")
-            text.append(truncate_lines(record.text, available_lines))
+            body_truncated = truncate_lines(record.text, DETAIL_BODY_MAX_LINES)
+            query_terms = list(self.query.terms)
+            highlighted = highlight_matches(
+                body_truncated,
+                query_terms,
+                case_sensitive=self.query.case_sensitive,
+                regex=self.query.regex,
+            )
+            text.append(highlighted)
             self._detail.update(text)
+            self._scroll_detail_to_first_match(record, query_terms)
+
+        def _scroll_detail_to_first_match(
+            self,
+            record: SearchRecord,
+            query_terms: cabc.Sequence[str],
+        ) -> None:
+            """Jump ``_detail_scroll`` so the first match lands at the viewport center."""
+            if self._detail_scroll is None:
+                return
+            scroll: t.Any = self._detail_scroll
+            match_line = find_first_match_line(
+                record.text,
+                query_terms,
+                case_sensitive=self.query.case_sensitive,
+                regex=self.query.regex,
+            )
+            if match_line is None:
+                scroll.scroll_to(y=0, animate=False)
+                return
+            target_line = self._DETAIL_HEADER_LINES + match_line
+            viewport_h = int(getattr(scroll.size, "height", 0) or 0)
+            center_offset = max(0, target_line - viewport_h // 2)
+            scroll.scroll_to(y=center_offset, animate=False)
 
         def on_resize(self, event: object) -> None:
             """Debounce rapid resize bursts (e.g. tiling-WM live drag)."""
@@ -4168,11 +4305,9 @@ def build_streaming_ui_app(
             self._resize_debounce_timer = self.set_timer(0.05, self._after_resize)
 
         def _after_resize(self) -> None:
-            """Refresh chrome + re-render the detail pane at the new height."""
+            """Refresh chrome; the detail pane scroll wrapper handles its own reflow."""
             if self._matches_widget is not None:
                 self._matches_widget.refresh()
-            if self._current_detail_record is not None:
-                self.show_detail(self._current_detail_record)
 
         def action_stop_search(self) -> None:
             """``Esc``: cooperative early-exit of the worker (no-op when finished)."""
