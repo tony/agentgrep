@@ -3867,8 +3867,7 @@ def build_streaming_ui_app(
             height: 1fr;
         }
         #detail {
-            border: round $accent;
-            padding: 1 2;
+            padding: 0 1 0 0;
             overflow-y: auto;
         }
         #results {
