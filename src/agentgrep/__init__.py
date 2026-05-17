@@ -243,6 +243,89 @@ def format_display_path(path: pathlib.Path | str, *, directory: bool = False) ->
     return display
 
 
+def format_compact_path(path: pathlib.Path | str, *, max_width: int) -> str:
+    """Trim a long display path with middle-elision, fish-style adapted for our shapes.
+
+    Our paths are date-segmented (`~/.codex/sessions/2024/02/14/uuid.jsonl`) so
+    fish-shell's first-letter abbreviation (`~/.c/s/2/0/1/uuid.jsonl`) loses
+    information. Instead we preserve the leading hidden-dir context, the
+    filename, and the immediate parent dir; the middle is elided with `…/`.
+
+    Parameters
+    ----------
+    path : pathlib.Path | str
+        Source path; passed through :func:`format_display_path` first so the
+        privacy-rewriting and ``~`` prefix logic stay consistent with the CLI.
+    max_width : int
+        Maximum number of display columns.
+
+    Returns
+    -------
+    str
+        A path string of at most ``max_width`` columns (best-effort; if even
+        the filename exceeds the budget the filename is hard-truncated with
+        ``…``).
+    """
+    display = format_display_path(path)
+    if max_width <= 0 or len(display) <= max_width:
+        return display
+    # Split preserving leading ``~`` / ``/`` so we can rebuild correctly.
+    if display.startswith("~/"):
+        prefix = "~/"
+        body = display[2:]
+    elif display.startswith("/"):
+        prefix = "/"
+        body = display[1:]
+    else:
+        prefix = ""
+        body = display
+    segments = body.split("/")
+    if len(segments) <= 2:
+        return _hard_truncate(display, max_width)
+    root = segments[0]
+    filename = segments[-1]
+    parent = segments[-2]
+    # Tier 1: keep root + …/ + parent + / + filename
+    candidate = f"{prefix}{root}/…/{parent}/{filename}"
+    if len(candidate) <= max_width:
+        return candidate
+    # Tier 2: drop root, keep …/ + parent + / + filename
+    candidate = f"…/{parent}/{filename}"
+    if len(candidate) <= max_width:
+        return candidate
+    # Tier 3: keep just the filename, possibly truncated.
+    return _hard_truncate(filename, max_width)
+
+
+def _hard_truncate(text: str, max_width: int) -> str:
+    """Truncate ``text`` to fit ``max_width``, appending ``…`` if shortened."""
+    if max_width <= 0:
+        return ""
+    if len(text) <= max_width:
+        return text
+    if max_width == 1:
+        return "…"
+    return text[: max_width - 1] + "…"
+
+
+def truncate_lines(text: str, max_lines: int) -> str:
+    """Return the first ``max_lines`` lines of ``text``, with an overflow marker.
+
+    Used by the TUI detail pane so a record body of any size renders in
+    microseconds — only the lines that fit on screen are passed to the
+    ``Static`` widget. The overflow marker (``… (+N more lines)``) tells the
+    user that more content exists.
+    """
+    if max_lines <= 0 or not text:
+        return ""
+    lines = text.split("\n")
+    if len(lines) <= max_lines:
+        return text
+    visible = lines[:max_lines]
+    remaining = len(lines) - max_lines
+    return "\n".join(visible) + f"\n… (+{remaining} more lines)"
+
+
 class SearchRecordPayload(t.TypedDict):
     """JSON payload for search records."""
 
@@ -3637,17 +3720,33 @@ def build_streaming_ui_app(
             self._records = []
             self.clear_options()
 
+        _AGENT_COLORS: t.ClassVar[dict[str, str]] = {
+            "codex": "cyan",
+            "claude": "magenta",
+            "cursor": "yellow",
+        }
+        _KIND_COLORS: t.ClassVar[dict[str, str]] = {
+            "prompt": "green",
+            "history": "blue",
+        }
+
         def _render_record(self, record: SearchRecord) -> object:
-            agent = (record.agent or "").ljust(8)[:8]
-            kind = (record.kind or "").ljust(10)[:10]
-            timestamp = (record.timestamp or "").ljust(20)[:20]
-            title = (record.title or "").ljust(40)[:40]
-            path = format_display_path(record.path)
-            return rich_text.Text(
-                f"{agent}  {kind}  {timestamp}  {title}  {path}",
-                no_wrap=True,
-                overflow="ellipsis",
-            )
+            agent_text = (record.agent or "").ljust(8)[:8]
+            kind_text = (record.kind or "").ljust(10)[:10]
+            timestamp_text = (record.timestamp or "").ljust(20)[:20]
+            title_text = (record.title or "").ljust(40)[:40]
+            path_text = format_compact_path(record.path, max_width=60)
+            text = rich_text.Text(no_wrap=True, overflow="ellipsis")
+            text.append(agent_text, style=self._AGENT_COLORS.get(record.agent or "", ""))
+            text.append("  ")
+            text.append(kind_text, style=self._KIND_COLORS.get(record.kind or "", ""))
+            text.append("  ")
+            text.append(timestamp_text, style="dim")
+            text.append("  ")
+            text.append(title_text, style="bold")
+            text.append("  ")
+            text.append(path_text, style="grey50")
+            return text
 
         def action_cursor_up(self) -> None:
             """Release focus to the filter input when the cursor is at row 0."""
@@ -3812,6 +3911,7 @@ def build_streaming_ui_app(
             self._elapsed_widget: ElapsedWidget | None = None
             self._filter_input: FilterInput | None = None
             self._resize_debounce_timer: object | None = None
+            self._current_detail_record: SearchRecord | None = None
 
         def _get_start_time(self) -> float | None:
             return self._started_at
@@ -4017,21 +4117,35 @@ def build_streaming_ui_app(
                 self.show_detail(self.filtered_records[row_index])
 
         def show_detail(self, record: SearchRecord) -> None:
-            """Render ``record`` in the detail Static."""
+            """Render ``record`` in the detail Static with colored labels + truncated body."""
             if self._detail is None:
                 return
-            details = [
-                f"Agent: {record.agent}",
-                f"Kind: {record.kind}",
-                f"Store: {record.store}",
-                f"Adapter: {record.adapter_id}",
-                f"Timestamp: {record.timestamp or 'unknown'}",
-                f"Model: {record.model or 'unknown'}",
-                f"Path: {format_display_path(record.path)}",
-                "",
-                record.text,
-            ]
-            self._detail.update("\n".join(details))
+            self._current_detail_record = record
+            width = max(20, self._detail.size.width or 80)
+            # Reserve ~7 lines for the metadata header + blank separator;
+            # render the rest of the visible height as record-body lines.
+            available_lines = max(1, (self._detail.size.height or 24) - 8)
+            agent_color = SearchResultsList._AGENT_COLORS.get(record.agent or "", "")
+            kind_color = SearchResultsList._KIND_COLORS.get(record.kind or "", "")
+            text = rich_text.Text(no_wrap=False)
+            for label, value, value_style in (
+                ("Agent:", record.agent or "", agent_color),
+                ("Kind:", record.kind or "", kind_color),
+                ("Store:", record.store or "", "dim"),
+                ("Adapter:", record.adapter_id or "", "dim"),
+                ("Timestamp:", record.timestamp or "unknown", "dim"),
+                ("Model:", record.model or "unknown", "magenta"),
+                (
+                    "Path:",
+                    format_compact_path(record.path, max_width=width - 8),
+                    "grey50",
+                ),
+            ):
+                text.append(f"{label} ", style="bold")
+                text.append(f"{value}\n", style=value_style)
+            text.append("\n")
+            text.append(truncate_lines(record.text, available_lines))
+            self._detail.update(text)
 
         def on_resize(self, event: object) -> None:
             """Debounce rapid resize bursts (e.g. tiling-WM live drag)."""
@@ -4042,9 +4156,11 @@ def build_streaming_ui_app(
             self._resize_debounce_timer = self.set_timer(0.05, self._after_resize)
 
         def _after_resize(self) -> None:
-            """Idempotent post-resize chrome refresh; cheap (no DataTable rebuild)."""
+            """Refresh chrome + re-render the detail pane at the new height."""
             if self._matches_widget is not None:
                 self._matches_widget.refresh()
+            if self._current_detail_record is not None:
+                self.show_detail(self._current_detail_record)
 
         def action_stop_search(self) -> None:
             """``Esc``: cooperative early-exit of the worker (no-op when finished)."""

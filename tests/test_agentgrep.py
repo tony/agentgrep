@@ -952,6 +952,86 @@ async def test_search_results_list_append_under_load(
         assert elapsed < 2.0, f"append_records(1000) took {elapsed:.3f}s; expected < 2.0s"
 
 
+def test_format_compact_path_passes_short_paths_through(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Paths that already fit the width budget are returned unchanged."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    monkeypatch.setattr(agentgrep.pathlib.Path, "home", classmethod(lambda cls: tmp_path))
+    short = tmp_path / "a" / "b.txt"
+    assert agentgrep.format_compact_path(short, max_width=80) == "~/a/b.txt"
+
+
+def test_format_compact_path_middle_elides_long_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Long paths get a ``…/`` middle elide, preserving the hidden-dir root."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    monkeypatch.setattr(agentgrep.pathlib.Path, "home", classmethod(lambda cls: tmp_path))
+    long_path = tmp_path / ".codex" / "sessions" / "2024" / "02" / "14" / "uuid.jsonl"
+    result = agentgrep.format_compact_path(long_path, max_width=30)
+    assert result == "~/.codex/…/14/uuid.jsonl"
+    assert len(result) <= 30
+
+
+def test_format_compact_path_drops_root_when_tight(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    """When even the rooted elide doesn't fit, drop the root: ``…/parent/file``."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    monkeypatch.setattr(agentgrep.pathlib.Path, "home", classmethod(lambda cls: tmp_path))
+    long_path = tmp_path / ".codex" / "sessions" / "2024" / "02" / "14" / "verylongfilename.jsonl"
+    result = agentgrep.format_compact_path(long_path, max_width=20)
+    # Either tier-2 (root dropped) or tier-3 (filename only) — whichever fits.
+    assert len(result) <= 20
+    assert "verylongfilename" in result or "…" in result
+
+
+def test_truncate_lines_passes_short_text_through() -> None:
+    """Short text is returned unchanged."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    text = "a\nb\nc"
+    assert agentgrep.truncate_lines(text, max_lines=10) == text
+
+
+def test_truncate_lines_appends_overflow_marker() -> None:
+    """Long text is truncated and a ``+N more`` marker is appended."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    text = "\n".join(f"line {i}" for i in range(50))
+    result = agentgrep.truncate_lines(text, max_lines=5)
+    assert result.startswith("line 0\nline 1\nline 2\nline 3\nline 4\n")
+    assert "(+45 more lines)" in result
+
+
+async def test_show_detail_truncates_long_record_body(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``show_detail`` caps the body length so giant records render instantly."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    huge_body = "\n".join(f"body line {i}" for i in range(2000))
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "a.jsonl",
+        text=huge_body,
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.show_detail(record)
+        await pilot.pause()
+        rendered = str(app._detail.render())
+        assert "more lines" in rendered
+        # Render should be bounded — well under the 2000-line full body.
+        assert rendered.count("body line") < 200
+
+
 def test_pydantic_payloads_reject_wrong_types(tmp_path: pathlib.Path) -> None:
     """Payload models validate field types at construction time."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
