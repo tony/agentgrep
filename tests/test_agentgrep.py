@@ -917,6 +917,65 @@ async def test_up_at_results_top_row_releases_focus_to_filter(
         assert app.focused is not None and app.focused.id == "filter"
 
 
+async def test_l_from_results_focuses_detail_pane(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Vim-style ``l`` (and right-arrow) from the results list focuses the detail pane."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "a.jsonl",
+        text="seed row",
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.all_records.append(record)
+        app.filtered_records.append(record)
+        app._results.append_records([record])
+        await pilot.pause()
+        await pilot.press("tab")
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "results"
+        await pilot.press("l")
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "detail-scroll"
+
+
+async def test_h_from_detail_focuses_results_pane(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Vim-style ``h`` (and left-arrow) from the detail pane focuses the results list."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "a.jsonl",
+        text="seed row",
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.all_records.append(record)
+        app.filtered_records.append(record)
+        app._results.append_records([record])
+        await pilot.pause()
+        # Focus the detail-scroll widget directly, then bounce back via ``h``.
+        app._detail_scroll.focus()
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "detail-scroll"
+        await pilot.press("h")
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "results"
+
+
 async def test_search_results_list_append_under_load(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

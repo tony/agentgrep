@@ -3778,6 +3778,8 @@ def build_streaming_ui_app(
         BINDINGS: t.ClassVar[list[tuple[str, str, str]]] = [
             ("k", "cursor_up", "Up"),
             ("j", "cursor_down", "Down"),
+            ("l", "focus_detail", "Detail"),
+            ("right", "focus_detail", ""),
         ]
 
         def __init__(
@@ -3845,6 +3847,40 @@ def build_streaming_ui_app(
                 self.app.action_focus_previous()
             else:
                 super().action_cursor_up()
+
+        def action_focus_detail(self) -> None:
+            """Move focus rightward to the detail-scroll pane (vim-style ``l``)."""
+            detail = self.app.query_one("#detail-scroll")
+            t.cast("t.Any", detail).focus()
+
+    vertical_scroll_base = t.cast("type[object]", vertical_scroll)
+
+    class DetailScroll(
+        vertical_scroll_base,  # ty: ignore[unsupported-base]
+        can_focus=True,
+    ):
+        """``VerticalScroll`` subclass for the right-side detail pane.
+
+        Adds vim-style bindings: ``h`` / left-arrow releases focus back to the
+        results list, and ``j`` / ``k`` mirror the stock ``down`` / ``up``
+        scroll bindings so navigation stays consistent with
+        :class:`SearchResultsList`. ``can_focus=True`` is set via the
+        class-keyword form — Textual reads it during ``__init_subclass__``,
+        so the plain class-attribute form silently fails to enroll the widget
+        in the focus chain.
+        """
+
+        BINDINGS: t.ClassVar[list[tuple[str, str, str]]] = [
+            ("k", "scroll_up", "Up"),
+            ("j", "scroll_down", "Down"),
+            ("h", "focus_results", "Results"),
+            ("left", "focus_results", ""),
+        ]
+
+        def action_focus_results(self) -> None:
+            """Move focus leftward back to the results list (vim-style ``h``)."""
+            results = self.app.query_one("#results")
+            t.cast("t.Any", results).focus()
 
     class FilterInput(input_widget):  # ty: ignore[unsupported-base]
         """``Input`` subclass with debounced filter + cursor-or-focus arrows.
@@ -3960,6 +3996,14 @@ def build_streaming_ui_app(
         #detail-scroll {
             overflow-y: auto;
             overflow-x: hidden;
+            /* Reserve the border cell up-front (transparent) so toggling
+               focus only repaints the perimeter — no layout shift, no
+               extra padding when the border appears. Mirrors the
+               OptionList default CSS pattern. */
+            border: tall transparent;
+        }
+        #detail-scroll:focus {
+            border: tall $border;
         }
         #detail {
             padding: 0 1 0 0;
@@ -4037,7 +4081,7 @@ def build_streaming_ui_app(
             yield FilterInput(placeholder="Filter by keyword", id="filter")
             with horizontal(id="body"):
                 yield SearchResultsList(id="results")
-                with vertical_scroll(id="detail-scroll"):
+                with DetailScroll(id="detail-scroll"):
                     yield static_type("Streaming results…", id="detail")
             yield footer()
 
