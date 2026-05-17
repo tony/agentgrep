@@ -946,6 +946,37 @@ async def test_l_from_results_focuses_detail_pane(
         assert app.focused is not None and app.focused.id == "detail-scroll"
 
 
+async def test_k_at_detail_top_focuses_filter_input(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``k`` / ``up`` on the detail pane at scroll_y=0 releases focus to the filter input."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "a.jsonl",
+        text="seed row",
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.all_records.append(record)
+        app.filtered_records.append(record)
+        app._results.append_records([record])
+        await pilot.pause()
+        app._detail_scroll.focus()
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "detail-scroll"
+        # Pre-condition: at the top of the (short) detail body.
+        assert app._detail_scroll.scroll_y <= 0
+        await pilot.press("k")
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "filter"
+
+
 async def test_h_from_detail_focuses_results_pane(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

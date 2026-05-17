@@ -3882,6 +3882,21 @@ def build_streaming_ui_app(
             results = self.app.query_one("#results")
             t.cast("t.Any", results).focus()
 
+        def action_scroll_up(self) -> None:
+            """Release focus to the filter input when already scrolled to the top.
+
+            Mirrors :meth:`SearchResultsList.action_cursor_up` — when the
+            widget has nothing left to give in that direction, hand focus off
+            to the neighbor instead of swallowing the keystroke. Catches both
+            ``k`` (our binding) and ``up`` (inherited from
+            ``ScrollableContainer``).
+            """
+            scroll_y = t.cast("float", getattr(self, "scroll_y", 0))
+            if scroll_y <= 0:
+                self.app.query_one("#filter").focus()
+            else:
+                super().action_scroll_up()
+
     class FilterInput(input_widget):  # ty: ignore[unsupported-base]
         """``Input`` subclass with debounced filter + cursor-or-focus arrows.
 
