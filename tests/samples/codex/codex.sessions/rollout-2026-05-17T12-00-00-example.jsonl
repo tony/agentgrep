@@ -1,0 +1,6 @@
+{"type":"session_meta","payload":{"id":"00000000-0000-0000-0000-000000000100","timestamp":"2026-05-17T12:00:00Z","cwd":"/work/example","originator":"codex_cli_rs","cli_version":"0.0.0","source":"cli","git":{"branch":"main","commit":"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"}}}
+{"type":"turn_context","payload":{"model":"o4-mini"}}
+{"type":"response_item","payload":{"role":"user","content":[{"type":"input_text","text":"<redacted user prompt>"}],"timestamp":"2026-05-17T12:00:01Z"}}
+{"type":"response_item","payload":{"role":"assistant","content":[{"type":"output_text","text":"<redacted assistant reply>"}],"timestamp":"2026-05-17T12:00:03Z"}}
+{"type":"event_msg","payload":{"type":"ExecCommandBegin","command":["echo","example"],"call_id":"call_000"}}
+{"type":"event_msg","payload":{"type":"ExecCommandEnd","exit_code":0,"call_id":"call_000"}}
