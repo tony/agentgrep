@@ -2864,6 +2864,7 @@ def iter_source_records(
         return
     if source.adapter_id == "gemini.tmp_logs_json.v1":
         yield from parse_gemini_logs_file(source)
+        return
 
 
 def parse_codex_session_file(
