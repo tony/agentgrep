@@ -766,6 +766,110 @@ def test_streaming_search_progress_translates_progress_callbacks(
     assert finished[0].elapsed >= 0.0
 
 
+def test_compute_filter_matches_returns_substring_matches(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The filter worker's pure helper matches by case-folded substring."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    blissful = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "bliss.jsonl",
+        text="serene BLISS abounds",
+    )
+    other = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "other.jsonl",
+        text="unrelated text",
+    )
+
+    matches = agentgrep.compute_filter_matches([blissful, other], "bliss")
+    assert matches == (blissful,)
+
+    no_matches = agentgrep.compute_filter_matches([blissful, other], "xyz")
+    assert no_matches == ()
+
+
+def test_compute_filter_matches_empty_text_returns_all(tmp_path: pathlib.Path) -> None:
+    """Whitespace-only or empty filter text returns every record unchanged."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "a.jsonl",
+        text="anything",
+    )
+    assert agentgrep.compute_filter_matches([record], "") == (record,)
+    assert agentgrep.compute_filter_matches([record], "   ") == (record,)
+
+
+async def test_streaming_ui_app_mounts_cleanly(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Boot the Textual app via ``Pilot`` to surface CSS / mount errors in CI."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    home.mkdir(parents=True, exist_ok=True)
+    # Quiet the search worker so it doesn't try to walk a real codex/claude/cursor tree
+    monkeypatch.setattr(
+        agentgrep,
+        "run_search_query",
+        lambda *args, **kwargs: [],
+    )
+    query = agentgrep.SearchQuery(
+        terms=(),
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+    control = agentgrep.SearchControl()
+    app = agentgrep.build_streaming_ui_app(home, query, control=control)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        # If we got here, CSS parsed and on_mount completed without raising.
+
+
+def test_pydantic_payloads_reject_wrong_types(tmp_path: pathlib.Path) -> None:
+    """Payload models validate field types at construction time."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "a.jsonl",
+        text="hi",
+    )
+
+    # Happy path constructs cleanly
+    rap = agentgrep.RecordsAppendedPayload(records=(record,), total=1)
+    assert rap.records == (record,)
+    assert rap.total == 1
+
+    sfp = agentgrep.SearchFinishedPayload(outcome="complete", total=1, elapsed=0.5)
+    assert sfp.error_message is None
+
+    fcp = agentgrep.FilterCompletedPayload(text="abc", matching=(record,))
+    assert fcp.text == "abc"
+
+    # Wrong types raise ValidationError
+    with pytest.raises(agentgrep.pydantic.ValidationError):
+        agentgrep.SearchFinishedPayload(outcome="not-a-valid-outcome", total=0, elapsed=0.0)
+    with pytest.raises(agentgrep.pydantic.ValidationError):
+        agentgrep.FilterRequestedPayload(text=None)  # type: ignore[arg-type]
+
+
 def test_collect_search_records_returns_partial_results_on_answer_now(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

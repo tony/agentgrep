@@ -31,6 +31,7 @@ False
 from __future__ import annotations
 
 import argparse
+import asyncio
 import contextlib
 import dataclasses
 import importlib
@@ -49,6 +50,8 @@ import textwrap
 import threading
 import time
 import typing as t
+
+import pydantic
 
 if t.TYPE_CHECKING:
     import collections.abc as cabc
@@ -671,6 +674,16 @@ class DataTableLike(t.Protocol):
         """Add columns."""
         ...
 
+    def add_column(
+        self,
+        label: str,
+        *,
+        width: int | None = None,
+        key: str | None = None,
+    ) -> None:
+        """Add one column with an explicit width to bypass dynamic measurement."""
+        ...
+
     def clear(self) -> None:
         """Clear rows."""
         ...
@@ -710,7 +723,7 @@ class TextualWidgetsModule(t.Protocol):
     DataTable: cabc.Callable[..., object]
     Footer: cabc.Callable[[], object]
     Header: cabc.Callable[[], object]
-    Input: cabc.Callable[..., object]
+    Input: type[object]
     Static: type[object]
 
 
@@ -1418,6 +1431,51 @@ class StreamingSearchFinished:
     total: int
     elapsed: float
     error: BaseException | None = None
+
+
+class RecordsAppendedPayload(pydantic.BaseModel):
+    """Pydantic payload for the ``RecordsAppended`` Textual message."""
+
+    model_config = pydantic.ConfigDict(arbitrary_types_allowed=True, frozen=True)
+
+    records: tuple[SearchRecord, ...]
+    total: int
+
+
+class ProgressUpdatedPayload(pydantic.BaseModel):
+    """Pydantic payload for the ``ProgressUpdated`` Textual message."""
+
+    model_config = pydantic.ConfigDict(arbitrary_types_allowed=True, frozen=True)
+
+    snapshot: ProgressSnapshot
+
+
+class SearchFinishedPayload(pydantic.BaseModel):
+    """Pydantic payload for the ``SearchFinished`` Textual message."""
+
+    model_config = pydantic.ConfigDict(frozen=True)
+
+    outcome: t.Literal["complete", "interrupted", "error"]
+    total: int
+    elapsed: float
+    error_message: str | None = None
+
+
+class FilterRequestedPayload(pydantic.BaseModel):
+    """Pydantic payload for a debounced filter-text-changed Textual message."""
+
+    model_config = pydantic.ConfigDict(frozen=True)
+
+    text: str
+
+
+class FilterCompletedPayload(pydantic.BaseModel):
+    """Pydantic payload for a worker-completed filter result Textual message."""
+
+    model_config = pydantic.ConfigDict(arbitrary_types_allowed=True, frozen=True)
+
+    text: str
+    matching: tuple[SearchRecord, ...]
 
 
 class StreamingSearchProgress:
@@ -3023,6 +3081,36 @@ def build_search_haystack(record: SearchRecord) -> str:
     return "\n".join(part for part in parts if part)
 
 
+def compute_filter_matches(
+    records: cabc.Sequence[SearchRecord],
+    text: str,
+) -> tuple[SearchRecord, ...]:
+    """Return the subset of ``records`` whose haystack contains ``text`` (case-fold).
+
+    Used by the TUI's filter worker. Pure function so the filter logic is
+    directly unit-testable without spinning up a Textual app.
+
+    Parameters
+    ----------
+    records : Sequence[SearchRecord]
+        Records to test.
+    text : str
+        Filter text. Whitespace-trimmed and case-folded before matching.
+        An empty (or whitespace-only) ``text`` returns all records.
+
+    Returns
+    -------
+    tuple[SearchRecord, ...]
+        Matching records in input order.
+    """
+    normalized = text.strip().casefold()
+    if not normalized:
+        return tuple(records)
+    return tuple(
+        record for record in records if normalized in build_search_haystack(record).casefold()
+    )
+
+
 def matches_text(text: str, query: SearchQuery) -> bool:
     """Return whether ``text`` matches the query."""
     if not query.terms:
@@ -3293,10 +3381,38 @@ def run_ui(
 ) -> None:
     """Launch the streaming Textual explorer for ``query``.
 
-    The UI mounts immediately and a background worker thread runs the
-    search, streaming matching records into the table as they are
-    discovered. The chrome above the filter input shows the same
-    pipe-separated progress summary as the CLI spinner.
+    Thin wrapper that builds the app via :func:`build_streaming_ui_app` and
+    calls ``app.run()``. The factory split lets tests construct the app for
+    a Textual ``Pilot`` smoke test without entering the blocking run loop.
+
+    Parameters
+    ----------
+    home : pathlib.Path
+        User home directory, passed through to :func:`run_search_query`.
+    query : SearchQuery
+        Search to run. Empty ``terms`` means "all records" (browse mode).
+    control : SearchControl
+        Shared cooperative-cancel flag; ``Esc`` / ``Ctrl-C`` call
+        ``request_answer_now`` to nudge the worker to wrap up.
+    """
+    app = build_streaming_ui_app(home, query, control=control)
+    t.cast("RunnableAppLike", app).run()
+
+
+def build_streaming_ui_app(
+    home: pathlib.Path,
+    query: SearchQuery,
+    *,
+    control: SearchControl,
+) -> object:
+    """Construct the streaming Textual app without entering its run loop.
+
+    Returns the constructed ``AgentGrepApp`` instance (typed ``object`` because
+    the actual class is defined dynamically inside this factory). Callers can
+    invoke ``.run()`` for a real session or ``.run_test()`` for a Pilot smoke
+    test. The full app body — message subclasses, ``SpinnerWidget``,
+    ``ElapsedWidget``, ``FilterInput``, ``AgentGrepApp`` — lives here so the
+    Textual imports stay lazy.
 
     Parameters
     ----------
@@ -3342,34 +3458,37 @@ def run_ui(
     class RecordsAppended(message_type):  # ty: ignore[unsupported-base]
         """Batch of newly deduped records ready for the table."""
 
-        def __init__(self, records: tuple[SearchRecord, ...], total: int) -> None:
+        def __init__(self, payload: RecordsAppendedPayload) -> None:
             super().__init__()
-            self.records = records
-            self.total = total
+            self.payload = payload
 
     class ProgressUpdated(message_type):  # ty: ignore[unsupported-base]
         """Search-progress snapshot bound for the chrome line."""
 
-        def __init__(self, snapshot: ProgressSnapshot) -> None:
+        def __init__(self, payload: ProgressUpdatedPayload) -> None:
             super().__init__()
-            self.snapshot = snapshot
+            self.payload = payload
 
     class SearchFinished(message_type):  # ty: ignore[unsupported-base]
         """Terminal event for the background search worker."""
 
-        def __init__(
-            self,
-            outcome: t.Literal["complete", "interrupted", "error"],
-            *,
-            total: int,
-            elapsed: float,
-            error: BaseException | None = None,
-        ) -> None:
+        def __init__(self, payload: SearchFinishedPayload) -> None:
             super().__init__()
-            self.outcome = outcome
-            self.total = total
-            self.elapsed = elapsed
-            self.error = error
+            self.payload = payload
+
+    class FilterRequested(message_type):  # ty: ignore[unsupported-base]
+        """Debounced filter-text-changed event from :class:`FilterInput`."""
+
+        def __init__(self, payload: FilterRequestedPayload) -> None:
+            super().__init__()
+            self.payload = payload
+
+    class FilterCompleted(message_type):  # ty: ignore[unsupported-base]
+        """Worker-completed filter result posted back to the main thread."""
+
+        def __init__(self, payload: FilterCompletedPayload) -> None:
+            super().__init__()
+            self.payload = payload
 
     def make_emit(app: StreamingAppLike) -> cabc.Callable[[object], None]:
         """Build an ``emit`` callback that wraps streaming events in Textual messages."""
@@ -3377,17 +3496,26 @@ def run_ui(
         def emit(event: object) -> None:
             if isinstance(event, StreamingRecordsBatch):
                 app.post_message(
-                    RecordsAppended(records=event.records, total=event.total),
+                    RecordsAppended(
+                        payload=RecordsAppendedPayload(
+                            records=event.records,
+                            total=event.total,
+                        ),
+                    ),
                 )
             elif isinstance(event, ProgressSnapshot):
-                app.post_message(ProgressUpdated(snapshot=event))
+                app.post_message(
+                    ProgressUpdated(payload=ProgressUpdatedPayload(snapshot=event)),
+                )
             elif isinstance(event, StreamingSearchFinished):
                 app.post_message(
                     SearchFinished(
-                        event.outcome,
-                        total=event.total,
-                        elapsed=event.elapsed,
-                        error=event.error,
+                        payload=SearchFinishedPayload(
+                            outcome=event.outcome,
+                            total=event.total,
+                            elapsed=event.elapsed,
+                            error_message=str(event.error) if event.error else None,
+                        ),
                     ),
                 )
 
@@ -3461,6 +3589,40 @@ def run_ui(
             self.auto_refresh = None
             self.refresh()
 
+    class FilterInput(input_widget):  # ty: ignore[unsupported-base]
+        """``Input`` subclass that posts a debounced ``FilterRequested`` message.
+
+        The base ``Input.Changed`` event still fires immediately on each
+        keystroke so the cursor, selection, and validation feedback stay
+        instant. The expensive filter operation is deferred onto a
+        :class:`FilterRequested` message which is only posted after 150 ms of
+        typing inactivity, letting a worker run the actual filter without
+        blocking the input itself.
+        """
+
+        _DEBOUNCE_SECONDS: t.ClassVar[float] = 0.15
+
+        def __init__(
+            self,
+            *,
+            placeholder: str = "",
+            id: str | None = None,  # noqa: A002 -- forwarded to Textual's ``id`` kwarg
+        ) -> None:
+            super().__init__(placeholder=placeholder, id=id)
+            self._debounce_timer: object | None = None
+
+        def _watch_value(self, value: str) -> None:
+            """Post normal ``Input.Changed`` and arm a debounced ``FilterRequested``."""
+            super()._watch_value(value)
+            if self._debounce_timer is not None:
+                self._debounce_timer.stop()
+            self._debounce_timer = self.set_timer(
+                self._DEBOUNCE_SECONDS,
+                lambda: self.post_message(
+                    FilterRequested(payload=FilterRequestedPayload(text=value)),
+                ),
+            )
+
     class AgentGrepApp(app_type):  # ty: ignore[unsupported-base]
         """Streaming read-only explorer for normalized search records."""
 
@@ -3479,16 +3641,18 @@ def run_ui(
         }
         #chrome-status {
             width: 1fr;
-            color: $text-primary;
+            color: ansi_bright_cyan;
+            text-style: bold;
         }
         #chrome-matches {
             width: auto;
             color: $warning;
+            text-style: bold;
             padding: 0 1;
         }
         #chrome-elapsed {
             width: auto;
-            color: $text-muted;
+            color: #d8d8d8;
         }
         #body {
             height: 1fr;
@@ -3534,6 +3698,8 @@ def run_ui(
             self._matches_widget: StaticLike | None = None
             self._spinner_widget: SpinnerWidget | None = None
             self._elapsed_widget: ElapsedWidget | None = None
+            self._filter_input: FilterInput | None = None
+            self._resize_debounce_timer: object | None = None
 
         def _get_start_time(self) -> float | None:
             return self._started_at
@@ -3549,7 +3715,7 @@ def run_ui(
                     start_provider=self._get_start_time,
                     id="chrome-elapsed",
                 )
-            yield input_widget(placeholder="Filter by keyword", id="filter")
+            yield FilterInput(placeholder="Filter by keyword", id="filter")
             with horizontal(id="body"):
                 yield data_table_type(id="results")
                 with vertical():
@@ -3564,7 +3730,11 @@ def run_ui(
                 streaming.query_one("#results", data_table_type),
             )
             self._table.cursor_type = "row"
-            self._table.add_columns("Agent", "Kind", "Timestamp", "Title", "Path")
+            self._table.add_column("Agent", width=8, key="agent")
+            self._table.add_column("Kind", width=10, key="kind")
+            self._table.add_column("Timestamp", width=20, key="timestamp")
+            self._table.add_column("Title", width=40, key="title")
+            self._table.add_column("Path", width=80, key="path")
             self._detail = t.cast(
                 "StaticLike",
                 streaming.query_one("#detail", static_type),
@@ -3584,6 +3754,10 @@ def run_ui(
             self._elapsed_widget = t.cast(
                 "ElapsedWidget",
                 streaming.query_one("#chrome-elapsed"),
+            )
+            self._filter_input = t.cast(
+                "FilterInput",
+                streaming.query_one("#filter"),
             )
             self._status_widget.update(
                 f"Searching {' '.join(self.query.terms) if self.query.terms else 'all records'}",
@@ -3611,42 +3785,48 @@ def run_ui(
                 streaming = t.cast("StreamingAppLike", t.cast("object", self))
                 streaming.post_message(
                     SearchFinished(
-                        "error",
-                        total=len(self.all_records),
-                        elapsed=0.0,
-                        error=exc,
+                        payload=SearchFinishedPayload(
+                            outcome="error",
+                            total=len(self.all_records),
+                            elapsed=0.0,
+                            error_message=str(exc),
+                        ),
                     ),
                 )
 
-        def on_records_appended(self, message: object) -> None:
-            """Bulk-insert matching rows for the batch; coalesces N invalidations into 1."""
-            records = t.cast(
-                "tuple[SearchRecord, ...]",
-                getattr(message, "records", ()),
-            )
-            total = int(getattr(message, "total", 0))
-            self.all_records.extend(records)
-            matching = [r for r in records if self._matches_filter(r)]
-            if matching and self._table is not None:
-                with self.batch_update():
-                    for record in matching:
-                        self._table.add_row(
-                            record.agent,
-                            record.kind,
-                            record.timestamp or "",
-                            record.title or "",
-                            format_display_path(record.path),
-                            key=str(id(record)),
-                        )
-                    self.filtered_records.extend(matching)
-            if self._matches_widget is not None:
-                self._matches_widget.update(format_match_count(total))
+        async def on_records_appended(self, message: RecordsAppended) -> None:
+            """Chunked async insert: yields control between batches of 20 rows.
 
-        def on_progress_updated(self, message: object) -> None:
+            Each chunk fits in a ``batch_update`` so the layout invalidates
+            once per chunk. ``await asyncio.sleep(0)`` between chunks lets the
+            spinner's per-widget refresh timer fire and keeps keystrokes
+            responsive.
+            """
+            payload = message.payload
+            self.all_records.extend(payload.records)
+            matching = [r for r in payload.records if self._matches_filter(r)]
+            chunk_size = 20
+            for start in range(0, len(matching), chunk_size):
+                chunk = matching[start : start + chunk_size]
+                if self._table is not None:
+                    with self.batch_update():
+                        for record in chunk:
+                            self._table.add_row(
+                                record.agent,
+                                record.kind,
+                                record.timestamp or "",
+                                record.title or "",
+                                format_display_path(record.path),
+                                key=str(id(record)),
+                            )
+                        self.filtered_records.extend(chunk)
+                await asyncio.sleep(0)
+            if self._matches_widget is not None:
+                self._matches_widget.update(format_match_count(payload.total))
+
+        def on_progress_updated(self, message: ProgressUpdated) -> None:
             """Update the status widget from the latest snapshot."""
-            snapshot = getattr(message, "snapshot", None)
-            if not isinstance(snapshot, ProgressSnapshot):
-                return
+            snapshot = message.payload.snapshot
             self._last_snapshot = snapshot
             if self._started_at is None:
                 self._started_at = time.monotonic()
@@ -3663,29 +3843,28 @@ def run_ui(
             if self._status_widget is not None:
                 self._status_widget.update(status)
 
-        def on_search_finished(self, message: object) -> None:
+        def on_search_finished(self, message: SearchFinished) -> None:
             """Freeze chrome widgets and render the terminal status line."""
             self._search_done = True
-            outcome = str(getattr(message, "outcome", "complete"))
-            total = int(getattr(message, "total", len(self.all_records)))
-            elapsed = float(getattr(message, "elapsed", 0.0))
-            error = t.cast("BaseException | None", getattr(message, "error", None))
+            payload = message.payload
             glyphs = {"complete": "✓", "interrupted": "■", "error": "✗"}
             if self._spinner_widget is not None:
-                self._spinner_widget.freeze(glyphs.get(outcome, "·"))
+                self._spinner_widget.freeze(glyphs.get(payload.outcome, "·"))
             if self._elapsed_widget is not None:
-                self._elapsed_widget.freeze(elapsed)
+                self._elapsed_widget.freeze(payload.elapsed)
             if self._status_widget is not None:
-                if outcome == "error":
-                    self._status_widget.update(f"Search failed: {error}")
-                elif outcome == "interrupted":
+                if payload.outcome == "error":
                     self._status_widget.update(
-                        f"Stopped at {format_match_count(total)} "
+                        f"Search failed: {payload.error_message}",
+                    )
+                elif payload.outcome == "interrupted":
+                    self._status_widget.update(
+                        f"Stopped at {format_match_count(payload.total)} "
                         f"across {self._sources_label()} sources",
                     )
                 else:
                     self._status_widget.update(
-                        f"Search complete: {format_match_count(total)}",
+                        f"Search complete: {format_match_count(payload.total)}",
                     )
 
         def _sources_label(self) -> str:
@@ -3694,14 +3873,42 @@ def run_ui(
                 return "?"
             return f"{snap.current}/{snap.total}"
 
-        def on_input_changed(self, event: object) -> None:
-            """Re-apply the filter substring and rebuild the table."""
-            value = str(getattr(event, "value", "")).strip().casefold()
-            self._filter_text = value
-            self.filtered_records = [
-                record for record in self.all_records if self._matches_filter(record)
-            ]
-            self.refresh_table()
+        def on_filter_requested(self, message: FilterRequested) -> None:
+            """Spawn a worker to recompute the filter; exclusive cancels any in-flight one."""
+            text = message.payload.text
+            self._filter_text = text.strip().casefold()
+            streaming = t.cast("StreamingAppLike", t.cast("object", self))
+            streaming.run_worker(
+                lambda captured_text=text: self._run_filter_worker(captured_text),
+                name="filter",
+                group="filter",
+                thread=True,
+                exclusive=True,
+            )
+
+        def _run_filter_worker(self, text: str) -> None:
+            """Compute the filtered list on a background thread; post a ``FilterCompleted``.
+
+            Runs in a worker thread; safe to scan ``self.all_records`` since
+            list reads under CPython are GIL-protected. The main thread guards
+            against stale results by comparing the captured text against the
+            current input value in :meth:`on_filter_completed`.
+            """
+            matching = compute_filter_matches(self.all_records, text)
+            streaming = t.cast("StreamingAppLike", t.cast("object", self))
+            streaming.post_message(
+                FilterCompleted(
+                    payload=FilterCompletedPayload(text=text, matching=matching),
+                ),
+            )
+
+        async def on_filter_completed(self, message: FilterCompleted) -> None:
+            """Apply the worker's filter result if it matches the current input."""
+            payload = message.payload
+            if self._filter_input is not None and payload.text != self._filter_input.value:
+                return
+            self.filtered_records = list(payload.matching)
+            await self.refresh_table()
 
         def on_data_table_row_highlighted(self, event: object) -> None:
             """Update the detail pane when the cursor moves."""
@@ -3726,26 +3933,44 @@ def run_ui(
             ]
             self._detail.update("\n".join(details))
 
-        def refresh_table(self) -> None:
-            """Clear and re-add rows for the current ``filtered_records``."""
+        async def refresh_table(self) -> None:
+            """Clear and re-add rows for ``filtered_records`` in chunks of 20."""
             if self._table is None:
                 return
             self._table.clear()
-            for record in self.filtered_records:
-                self._table.add_row(
-                    record.agent,
-                    record.kind,
-                    record.timestamp or "",
-                    record.title or "",
-                    format_display_path(record.path),
-                    key=str(id(record)),
-                )
+            chunk_size = 20
+            for start in range(0, len(self.filtered_records), chunk_size):
+                chunk = self.filtered_records[start : start + chunk_size]
+                with self.batch_update():
+                    for record in chunk:
+                        self._table.add_row(
+                            record.agent,
+                            record.kind,
+                            record.timestamp or "",
+                            record.title or "",
+                            format_display_path(record.path),
+                            key=str(id(record)),
+                        )
+                await asyncio.sleep(0)
             if self.filtered_records:
                 self.show_detail(self.filtered_records[0])
             elif self._detail is not None:
                 self._detail.update(
                     "No results." if self._search_done else "No matches yet.",
                 )
+
+        def on_resize(self, event: object) -> None:
+            """Debounce rapid resize bursts (e.g. tiling-WM live drag)."""
+            del event
+            if self._resize_debounce_timer is not None:
+                timer = t.cast("t.Any", self._resize_debounce_timer)
+                timer.stop()
+            self._resize_debounce_timer = self.set_timer(0.05, self._after_resize)
+
+        def _after_resize(self) -> None:
+            """Idempotent post-resize chrome refresh; cheap (no DataTable rebuild)."""
+            if self._matches_widget is not None:
+                self._matches_widget.refresh()
 
         def action_stop_search(self) -> None:
             """``Esc``: cooperative early-exit of the worker (no-op when finished)."""
@@ -3781,11 +4006,7 @@ def run_ui(
                 return True
             return self._filter_text in build_search_haystack(record).casefold()
 
-    app = t.cast(
-        "RunnableAppLike",
-        t.cast("object", AgentGrepApp(home=home, query=query, control=control)),
-    )
-    app.run()
+    return AgentGrepApp(home=home, query=query, control=control)
 
 
 def run_search_command(args: SearchArgs) -> int:
