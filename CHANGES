@@ -44,16 +44,15 @@ _Notes on the upcoming release will go here._
 
 agentgrep 0.1.0a2 fixes silent "No matches found." failures for
 users whose `~/.claude`, `~/.codex`, or `~/.cursor` sits inside a
-dotfile-managed tree, broadens search to two stores agentgrep
-previously did not parse — the Cursor CLI agent's per-project
-transcripts and Google Gemini CLI's session and prompt-log files
-— and lands the first public storage catalogue, a
-Pydantic-modelled registry of every prompt and history store
-agentgrep knows about, with version provenance baked into each
-entry. `agentgrep search --agent gemini` is now a valid CLI
-invocation; `--agent cursor` returns CLI-agent matches alongside
-Cursor IDE results. See {ref}`storage-catalog` for the new
-reference page.
+dotfile-managed tree, adds search support for the Cursor CLI
+agent's per-project transcripts and Google Gemini CLI's session
+and prompt-log files, and lands the first public storage
+catalogue — a Pydantic-modelled registry of every prompt and
+history store agentgrep knows about, with version provenance
+baked into each entry. `agentgrep search --agent gemini` is now
+a valid CLI invocation; `--agent cursor` returns CLI-agent
+matches alongside Cursor IDE results. See {ref}`storage-catalog`
+for the new reference page.
 
 ### What's new
 

@@ -102,9 +102,10 @@ Schemas are pinned directly to the upstream Rust types:
   `Compacted`, `TurnContext`, `EventMsg`
   ([`codex-rs/protocol/src/protocol.rs:2783`](https://github.com/openai/codex/blob/4c89772/codex-rs/protocol/src/protocol.rs#L2783)).
 
-The two `_N.sqlite` files in `~/.codex/` (`state_5.sqlite`,
-`logs_2.sqlite`) belong to Codex, not Cursor — earlier exploratory
-notes mis-attributed them.
+The two `_N.sqlite` files at the Codex root — `state_5.sqlite` and
+`logs_2.sqlite` — belong to the Codex CLI. Their filenames come from
+`STATE_DB_FILENAME` and `LOGS_DB_FILENAME` in
+[`codex-rs/state/src/lib.rs`](https://github.com/openai/codex/blob/4c89772/codex-rs/state/src/lib.rs#L70-L71).
 
 ### Gemini CLI
 

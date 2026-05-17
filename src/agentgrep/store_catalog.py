@@ -401,8 +401,9 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         observed_at=OBSERVED_AT,
         upstream_ref="github.com/openai/codex@4c89772/codex-rs/state/src/lib.rs#L71",
         schema_notes=(
-            "Codex logs DB (`LOGS_DB_FILENAME`). Note: the `_N.sqlite` files belong "
-            "to codex, not Cursor — earlier exploration mis-attributed them."
+            "Codex logs DB (`LOGS_DB_FILENAME` in `codex-rs/state/src/lib.rs`). "
+            "The `_N.sqlite` files at the Codex root (`logs_2.sqlite`, "
+            "`state_5.sqlite`) belong to the Codex CLI, not Cursor."
         ),
     ),
     StoreDescriptor(
