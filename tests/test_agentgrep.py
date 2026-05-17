@@ -839,11 +839,18 @@ async def test_streaming_ui_app_mounts_cleanly(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Boot the Textual app via ``Pilot`` to surface CSS / mount errors in CI."""
+    """Boot the Textual app via ``Pilot`` to surface CSS / mount errors in CI.
+
+    Also asserts the results widget is in the screen's focus chain — the
+    Textual API requires ``can_focus=True`` as a class keyword (not a class
+    attribute), and that detail is easy to get wrong on a dynamic-base
+    subclass.
+    """
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test() as pilot:
         await pilot.pause()
-        # If we got here, CSS parsed and on_mount completed without raising.
+        focus_chain_ids = {getattr(w, "id", None) for w in app.screen.focus_chain}
+        assert "results" in focus_chain_ids, f"#results not in focus chain; chain={focus_chain_ids}"
 
 
 async def test_tab_moves_focus_from_filter_to_results(
@@ -881,7 +888,7 @@ async def test_up_at_results_top_row_releases_focus_to_filter(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``up`` arrow when the DataTable cursor is on row 0 moves focus to the filter."""
+    """``up`` when the results-list cursor is at row 0 moves focus to the filter."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     record = agentgrep.SearchRecord(
@@ -894,24 +901,55 @@ async def test_up_at_results_top_row_releases_focus_to_filter(
     )
     async with app.run_test() as pilot:
         await pilot.pause()
-        # Seed one row so the table has a row 0 to be on.
+        # Seed one record so the list has a row 0 to be on.
         app.all_records.append(record)
         app.filtered_records.append(record)
-        app._table.add_row(
-            record.agent,
-            record.kind,
-            "",
-            "",
-            agentgrep.format_display_path(record.path),
-            key="seed",
-        )
-        # Move focus to the table and confirm cursor is at row 0.
+        app._results.append_records([record])
+        await pilot.pause()
+        # Move focus to the results list and confirm cursor is at row 0.
         await pilot.press("tab")
         await pilot.pause()
         assert app.focused is not None and app.focused.id == "results"
+        # Ensure highlight is on row 0 before pressing up.
+        assert app._results.highlighted in (None, 0)
         await pilot.press("up")
         await pilot.pause()
         assert app.focused is not None and app.focused.id == "filter"
+
+
+async def test_search_results_list_append_under_load(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Appending 1000 records to the results list completes within a generous bound.
+
+    Smoke test against accidental O(N²) regressions. Bound is intentionally
+    loose because ``OptionList.add_options`` is O(M) per call (vs the prior
+    custom widget's O(1)) — we're trading per-record speed for proven
+    correctness (visible cursor + Tab focus). If the bound trips on real
+    hardware, the escalation path is ``textual-fastdatatable``.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = [
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="codex.sessions",
+            adapter_id="codex.sessions_jsonl.v1",
+            path=tmp_path / f"r{idx}.jsonl",
+            text=f"row {idx}",
+        )
+        for idx in range(1000)
+    ]
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        start = time.monotonic()
+        app._results.append_records(records)
+        elapsed = time.monotonic() - start
+        await pilot.pause()
+        assert len(app._results._records) == 1000
+        assert elapsed < 2.0, f"append_records(1000) took {elapsed:.3f}s; expected < 2.0s"
 
 
 def test_pydantic_payloads_reject_wrong_types(tmp_path: pathlib.Path) -> None:

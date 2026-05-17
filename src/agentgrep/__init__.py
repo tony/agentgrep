@@ -633,11 +633,30 @@ class TextualMessageModule(t.Protocol):
     Message: type[object]
 
 
+class RichTextModule(t.Protocol):
+    """Minimal Rich text module surface."""
+
+    Text: cabc.Callable[..., t.Any]
+
+
 class StreamingAppLike(t.Protocol):
-    """App methods needed by the streaming TUI: workers, timers, message bus."""
+    """App methods needed by the streaming TUI: workers, timers, cross-thread calls."""
 
     def post_message(self, message: object) -> bool:
         """Post a message to the app's queue (thread-safe)."""
+        ...
+
+    def call_from_thread(
+        self,
+        callback: cabc.Callable[..., object],
+        *args: object,
+        **kwargs: object,
+    ) -> object:
+        """Invoke ``callback(*args, **kwargs)`` on the event loop from a worker thread.
+
+        Bypasses the message queue, so high-frequency data updates don't
+        starve keystroke and timer events.
+        """
         ...
 
     def query_one(self, selector: object, expect_type: object | None = None) -> object:
@@ -662,34 +681,6 @@ class StreamingAppLike(t.Protocol):
         callback: cabc.Callable[[], object],
     ) -> object:
         """Register a recurring callback."""
-        ...
-
-
-class DataTableLike(t.Protocol):
-    """Minimal DataTable surface used by the TUI."""
-
-    cursor_type: str
-
-    def add_columns(self, *labels: str) -> None:
-        """Add columns."""
-        ...
-
-    def add_column(
-        self,
-        label: str,
-        *,
-        width: int | None = None,
-        key: str | None = None,
-    ) -> None:
-        """Add one column with an explicit width to bypass dynamic measurement."""
-        ...
-
-    def clear(self) -> None:
-        """Clear rows."""
-        ...
-
-    def add_row(self, *values: str, key: str | None = None) -> None:
-        """Add one row."""
         ...
 
 
@@ -720,11 +711,17 @@ class RunnableAppLike(t.Protocol):
 class TextualWidgetsModule(t.Protocol):
     """Minimal Textual widgets module surface."""
 
-    DataTable: type[object]
     Footer: cabc.Callable[[], object]
     Header: cabc.Callable[[], object]
     Input: type[object]
+    OptionList: type[object]
     Static: type[object]
+
+
+class TextualOptionListInternalsModule(t.Protocol):
+    """Minimal Textual option_list module surface for the ``Option`` class."""
+
+    Option: t.Any
 
 
 @dataclasses.dataclass(slots=True)
@@ -3441,40 +3438,34 @@ def build_streaming_ui_app(
             "TextualMessageModule",
             t.cast("object", importlib.import_module("textual.message")),
         )
+        textual_option_list_internals = t.cast(
+            "TextualOptionListInternalsModule",
+            t.cast("object", importlib.import_module("textual.widgets.option_list")),
+        )
+        rich_text_module = t.cast(
+            "RichTextModule",
+            t.cast("object", importlib.import_module("rich.text")),
+        )
     except ImportError as error:
         msg = "Textual is required for --ui. Install with `uv pip install --editable .`."
         raise RuntimeError(msg) from error
 
     app_type = textual_app.App
     message_type = textual_message.Message
+    option_list_type = textual_widgets.OptionList
+    option_type = textual_option_list_internals.Option
+    rich_text = rich_text_module
     horizontal = textual_containers.Horizontal
     vertical = textual_containers.Vertical
-    data_table_type = textual_widgets.DataTable
     footer = textual_widgets.Footer
     header = textual_widgets.Header
     input_widget = textual_widgets.Input
     static_type = textual_widgets.Static
 
-    class RecordsAppended(message_type):  # ty: ignore[unsupported-base]
-        """Batch of newly deduped records ready for the table."""
-
-        def __init__(self, payload: RecordsAppendedPayload) -> None:
-            super().__init__()
-            self.payload = payload
-
-    class ProgressUpdated(message_type):  # ty: ignore[unsupported-base]
-        """Search-progress snapshot bound for the chrome line."""
-
-        def __init__(self, payload: ProgressUpdatedPayload) -> None:
-            super().__init__()
-            self.payload = payload
-
-    class SearchFinished(message_type):  # ty: ignore[unsupported-base]
-        """Terminal event for the background search worker."""
-
-        def __init__(self, payload: SearchFinishedPayload) -> None:
-            super().__init__()
-            self.payload = payload
+    # FilterRequested / FilterCompleted stay on the Textual message bus — they
+    # fire at typing speed, not streaming speed, so the FIFO queue is fine for
+    # them. Records / progress / search-finished events bypass the message bus
+    # entirely (see ``make_emit`` below) so they never queue behind keystrokes.
 
     class FilterRequested(message_type):  # ty: ignore[unsupported-base]
         """Debounced filter-text-changed event from :class:`FilterInput`."""
@@ -3491,32 +3482,34 @@ def build_streaming_ui_app(
             self.payload = payload
 
     def make_emit(app: StreamingAppLike) -> cabc.Callable[[object], None]:
-        """Build an ``emit`` callback that wraps streaming events in Textual messages."""
+        """Build an ``emit`` callback that dispatches streaming events via ``call_from_thread``.
+
+        ``call_from_thread`` schedules the callback directly on the event loop
+        rather than enqueuing a ``Message`` — so high-frequency record batches
+        don't compete with keystroke / timer events for FIFO message dispatch.
+        Vibe-tmux uses the same pattern (``call_from_thread(_rebuild_tree, snap)``)
+        and Textual's own ``Log`` widget mutates state directly without a per-
+        write message. This is the canonical Textual pattern for "many small
+        updates from a worker thread."
+        """
+        typed_app = t.cast("t.Any", app)
 
         def emit(event: object) -> None:
             if isinstance(event, StreamingRecordsBatch):
-                app.post_message(
-                    RecordsAppended(
-                        payload=RecordsAppendedPayload(
-                            records=event.records,
-                            total=event.total,
-                        ),
-                    ),
+                typed_app.call_from_thread(
+                    typed_app._apply_records_batch,
+                    event.records,
+                    event.total,
                 )
             elif isinstance(event, ProgressSnapshot):
-                app.post_message(
-                    ProgressUpdated(payload=ProgressUpdatedPayload(snapshot=event)),
-                )
+                typed_app.call_from_thread(typed_app._apply_progress, event)
             elif isinstance(event, StreamingSearchFinished):
-                app.post_message(
-                    SearchFinished(
-                        payload=SearchFinishedPayload(
-                            outcome=event.outcome,
-                            total=event.total,
-                            elapsed=event.elapsed,
-                            error_message=str(event.error) if event.error else None,
-                        ),
-                    ),
+                typed_app.call_from_thread(
+                    typed_app._apply_finished,
+                    event.outcome,
+                    event.total,
+                    event.elapsed,
+                    str(event.error) if event.error else None,
                 )
 
         return emit
@@ -3589,13 +3582,23 @@ def build_streaming_ui_app(
             self.auto_refresh = None
             self.refresh()
 
-    class SmartDataTable(data_table_type):  # ty: ignore[unsupported-base]
-        """``DataTable`` with vim-style ``j`` / ``k`` aliases and edge-focus release.
+    class SearchResultsList(
+        option_list_type,  # ty: ignore[unsupported-base]
+        can_focus=True,
+    ):
+        """``OptionList`` subclass for streaming agentgrep search records.
 
-        Pressing ``up`` (or ``k``) when ``cursor_row == 0`` releases focus to
-        the previous widget in the focus chain (the filter input). Pressing
-        ``down`` / ``j`` at the last row stays at the last row — there's no
-        useful widget below the table.
+        ``OptionList`` is Textual's proven cursor-navigable virtual list. It
+        ships with working Tab focus, a visible cursor highlight via the
+        ``option-list--option-highlighted`` CSS class, and posts an
+        ``OptionHighlighted`` message on cursor movement — all the things our
+        previous custom widget had to wire up manually and failed at in the
+        real terminal.
+
+        Adding records via ``append_records`` / ``set_records`` runs on the
+        event-loop thread because the worker uses ``app.call_from_thread`` to
+        invoke these methods. That keeps the streaming transport off the
+        Textual message bus so keystroke + timer events never queue behind it.
         """
 
         BINDINGS: t.ClassVar[list[tuple[str, str, str]]] = [
@@ -3603,17 +3606,55 @@ def build_streaming_ui_app(
             ("j", "cursor_down", "Down"),
         ]
 
-        async def _on_key(self, event: object) -> None:
-            """Release focus to filter when ``up``/``k`` is pressed at row 0."""
-            key = str(getattr(event, "key", ""))
-            cursor_row = int(getattr(self, "cursor_row", 0))
-            if key in {"up", "k"} and cursor_row == 0:
-                stop = getattr(event, "stop", None)
-                if callable(stop):
-                    stop()
-                self.app.action_focus_previous()
+        def __init__(
+            self,
+            *,
+            id: str | None = None,  # noqa: A002 -- forwarded to Textual's ``id`` kwarg
+        ) -> None:
+            super().__init__(id=id)
+            self._records: list[SearchRecord] = []
+
+        def append_records(self, records: cabc.Sequence[SearchRecord]) -> None:
+            """Append a batch of records — invoked via ``app.call_from_thread``."""
+            if not records:
                 return
-            await super()._on_key(event)
+            self._records.extend(records)
+            self.add_options(
+                [option_type(self._render_record(r), id=str(id(r))) for r in records],
+            )
+
+        def set_records(self, records: cabc.Sequence[SearchRecord]) -> None:
+            """Atomic swap of the backing list (used after a filter completes)."""
+            self._records = list(records)
+            self.clear_options()
+            if self._records:
+                self.add_options(
+                    [option_type(self._render_record(r), id=str(id(r))) for r in self._records],
+                )
+
+        def clear(self) -> None:
+            """Empty the list."""
+            self._records = []
+            self.clear_options()
+
+        def _render_record(self, record: SearchRecord) -> object:
+            agent = (record.agent or "").ljust(8)[:8]
+            kind = (record.kind or "").ljust(10)[:10]
+            timestamp = (record.timestamp or "").ljust(20)[:20]
+            title = (record.title or "").ljust(40)[:40]
+            path = format_display_path(record.path)
+            return rich_text.Text(
+                f"{agent}  {kind}  {timestamp}  {title}  {path}",
+                no_wrap=True,
+                overflow="ellipsis",
+            )
+
+        def action_cursor_up(self) -> None:
+            """Release focus to the filter input when the cursor is at row 0."""
+            if self.highlighted in (None, 0):
+                self.app.action_focus_previous()
+            else:
+                super().action_cursor_up()
 
     class FilterInput(input_widget):  # ty: ignore[unsupported-base]
         """``Input`` subclass with debounced filter + cursor-or-focus arrows.
@@ -3731,8 +3772,9 @@ def build_streaming_ui_app(
             padding: 1 2;
             overflow-y: auto;
         }
-        DataTable {
+        #results {
             height: 1fr;
+            overflow-x: hidden;
         }
         """
         BINDINGS: t.ClassVar[list[tuple[str, str, str]]] = [
@@ -3762,7 +3804,7 @@ def build_streaming_ui_app(
             self._search_done = False
             self._started_at: float | None = None
             self._last_snapshot: ProgressSnapshot | None = None
-            self._table: DataTableLike | None = None
+            self._results: SearchResultsList | None = None
             self._detail: StaticLike | None = None
             self._status_widget: StaticLike | None = None
             self._matches_widget: StaticLike | None = None
@@ -3787,7 +3829,7 @@ def build_streaming_ui_app(
                 )
             yield FilterInput(placeholder="Filter by keyword", id="filter")
             with horizontal(id="body"):
-                yield SmartDataTable(id="results")
+                yield SearchResultsList(id="results")
                 with vertical():
                     yield static_type("Streaming results…", id="detail")
             yield footer()
@@ -3795,16 +3837,10 @@ def build_streaming_ui_app(
         def on_mount(self) -> None:
             """Cache widget references, start the worker, and seed the chrome."""
             streaming = t.cast("StreamingAppLike", t.cast("object", self))
-            self._table = t.cast(
-                "DataTableLike",
-                streaming.query_one("#results", data_table_type),
+            self._results = t.cast(
+                "SearchResultsList",
+                streaming.query_one("#results"),
             )
-            self._table.cursor_type = "row"
-            self._table.add_column("Agent", width=8, key="agent")
-            self._table.add_column("Kind", width=10, key="kind")
-            self._table.add_column("Timestamp", width=20, key="timestamp")
-            self._table.add_column("Title", width=40, key="title")
-            self._table.add_column("Path", width=80, key="path")
             self._detail = t.cast(
                 "StaticLike",
                 streaming.query_one("#detail", static_type),
@@ -3853,50 +3889,30 @@ def build_streaming_ui_app(
                 )
             except BaseException as exc:
                 streaming = t.cast("StreamingAppLike", t.cast("object", self))
-                streaming.post_message(
-                    SearchFinished(
-                        payload=SearchFinishedPayload(
-                            outcome="error",
-                            total=len(self.all_records),
-                            elapsed=0.0,
-                            error_message=str(exc),
-                        ),
-                    ),
+                streaming.call_from_thread(
+                    self._apply_finished,
+                    "error",
+                    len(self.all_records),
+                    0.0,
+                    str(exc),
                 )
 
-        async def on_records_appended(self, message: RecordsAppended) -> None:
-            """Chunked async insert: yields control between batches of 20 rows.
-
-            Each chunk fits in a ``batch_update`` so the layout invalidates
-            once per chunk. ``await asyncio.sleep(0)`` between chunks lets the
-            spinner's per-widget refresh timer fire and keeps keystrokes
-            responsive.
-            """
-            payload = message.payload
-            self.all_records.extend(payload.records)
-            matching = [r for r in payload.records if self._matches_filter(r)]
-            chunk_size = 20
-            for start in range(0, len(matching), chunk_size):
-                chunk = matching[start : start + chunk_size]
-                if self._table is not None:
-                    with self.batch_update():
-                        for record in chunk:
-                            self._table.add_row(
-                                record.agent,
-                                record.kind,
-                                record.timestamp or "",
-                                record.title or "",
-                                format_display_path(record.path),
-                                key=str(id(record)),
-                            )
-                        self.filtered_records.extend(chunk)
-                await asyncio.sleep(0)
+        def _apply_records_batch(
+            self,
+            records: cabc.Sequence[SearchRecord],
+            total: int,
+        ) -> None:
+            """Append a streaming records batch — invoked via ``call_from_thread``."""
+            self.all_records.extend(records)
+            matching = [r for r in records if self._matches_filter(r)]
+            if matching and self._results is not None:
+                self._results.append_records(matching)
+                self.filtered_records.extend(matching)
             if self._matches_widget is not None:
-                self._matches_widget.update(format_match_count(payload.total))
+                self._matches_widget.update(format_match_count(total))
 
-        def on_progress_updated(self, message: ProgressUpdated) -> None:
-            """Update the status widget from the latest snapshot."""
-            snapshot = message.payload.snapshot
+        def _apply_progress(self, snapshot: ProgressSnapshot) -> None:
+            """Update the status widget — invoked via ``call_from_thread``."""
             self._last_snapshot = snapshot
             if self._started_at is None:
                 self._started_at = time.monotonic()
@@ -3913,28 +3929,31 @@ def build_streaming_ui_app(
             if self._status_widget is not None:
                 self._status_widget.update(status)
 
-        def on_search_finished(self, message: SearchFinished) -> None:
-            """Freeze chrome widgets and render the terminal status line."""
+        def _apply_finished(
+            self,
+            outcome: str,
+            total: int,
+            elapsed: float,
+            error_message: str | None,
+        ) -> None:
+            """Freeze chrome widgets — invoked via ``call_from_thread``."""
             self._search_done = True
-            payload = message.payload
             glyphs = {"complete": "✓", "interrupted": "■", "error": "✗"}
             if self._spinner_widget is not None:
-                self._spinner_widget.freeze(glyphs.get(payload.outcome, "·"))
+                self._spinner_widget.freeze(glyphs.get(outcome, "·"))
             if self._elapsed_widget is not None:
-                self._elapsed_widget.freeze(payload.elapsed)
+                self._elapsed_widget.freeze(elapsed)
             if self._status_widget is not None:
-                if payload.outcome == "error":
+                if outcome == "error":
+                    self._status_widget.update(f"Search failed: {error_message}")
+                elif outcome == "interrupted":
                     self._status_widget.update(
-                        f"Search failed: {payload.error_message}",
-                    )
-                elif payload.outcome == "interrupted":
-                    self._status_widget.update(
-                        f"Stopped at {format_match_count(payload.total)} "
+                        f"Stopped at {format_match_count(total)} "
                         f"across {self._sources_label()} sources",
                     )
                 else:
                     self._status_widget.update(
-                        f"Search complete: {format_match_count(payload.total)}",
+                        f"Search complete: {format_match_count(total)}",
                     )
 
         def _sources_label(self) -> str:
@@ -3972,17 +3991,28 @@ def build_streaming_ui_app(
                 ),
             )
 
-        async def on_filter_completed(self, message: FilterCompleted) -> None:
+        def on_filter_completed(self, message: FilterCompleted) -> None:
             """Apply the worker's filter result if it matches the current input."""
             payload = message.payload
             if self._filter_input is not None and payload.text != self._filter_input.value:
                 return
             self.filtered_records = list(payload.matching)
-            await self.refresh_table()
+            if self._results is not None:
+                self._results.set_records(payload.matching)
+            if self._detail is not None:
+                if self.filtered_records:
+                    self.show_detail(self.filtered_records[0])
+                else:
+                    self._detail.update(
+                        "No results." if self._search_done else "No matches yet.",
+                    )
 
-        def on_data_table_row_highlighted(self, event: object) -> None:
-            """Update the detail pane when the cursor moves."""
-            row_index = int(getattr(event, "cursor_row", -1))
+        def on_option_list_option_highlighted(self, event: object) -> None:
+            """Update the detail pane when the OptionList cursor moves."""
+            option_index = getattr(event, "option_index", None)
+            if option_index is None:
+                return
+            row_index = int(option_index)
             if 0 <= row_index < len(self.filtered_records):
                 self.show_detail(self.filtered_records[row_index])
 
@@ -4002,32 +4032,6 @@ def build_streaming_ui_app(
                 record.text,
             ]
             self._detail.update("\n".join(details))
-
-        async def refresh_table(self) -> None:
-            """Clear and re-add rows for ``filtered_records`` in chunks of 20."""
-            if self._table is None:
-                return
-            self._table.clear()
-            chunk_size = 20
-            for start in range(0, len(self.filtered_records), chunk_size):
-                chunk = self.filtered_records[start : start + chunk_size]
-                with self.batch_update():
-                    for record in chunk:
-                        self._table.add_row(
-                            record.agent,
-                            record.kind,
-                            record.timestamp or "",
-                            record.title or "",
-                            format_display_path(record.path),
-                            key=str(id(record)),
-                        )
-                await asyncio.sleep(0)
-            if self.filtered_records:
-                self.show_detail(self.filtered_records[0])
-            elif self._detail is not None:
-                self._detail.update(
-                    "No results." if self._search_done else "No matches yet.",
-                )
 
         def on_resize(self, event: object) -> None:
             """Debounce rapid resize bursts (e.g. tiling-WM live drag)."""
