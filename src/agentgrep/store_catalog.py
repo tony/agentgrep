@@ -191,15 +191,20 @@ _CURSOR_STORES: tuple[StoreDescriptor, ...] = (
         upstream_ref="cursor.com/docs/cli/overview",
         schema_notes=(
             "JSONL Anthropic-style: `role`, `message.content[]` with "
-            "`text`/`tool_use`/`tool_result`/`bubbleId`. No native timestamp — infer "
-            "from session-directory mtime. Tool outputs sometimes `[REDACTED]` in "
-            "older `cursor-agent` versions."
+            "`text`/`tool_use`/`tool_result`. No native timestamp — agentgrep "
+            "infers from the file's mtime. Tool outputs sometimes `[REDACTED]` "
+            "in older `cursor-agent` versions. Adapter `store` field uses the "
+            "underscore-flattened form ``cursor.cli_transcripts``."
         ),
         sample_record=(
             '{"role":"user","message":{"content":'
             '[{"type":"text","text":"<user_query>...</user_query>"}]}}'
         ),
         distinguishes_from=("cursor.ide.state_vscdb",),
+        search_by_default=True,
+        search_notes=(
+            "Parsed by agentgrep via `parse_cursor_cli_transcript` (`cursor.cli_jsonl.v1`)."
+        ),
     ),
     StoreDescriptor(
         agent="cursor",
@@ -432,14 +437,26 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
             "packages/core/src/services/chatRecordingTypes.ts#L12"
         ),
         schema_notes=(
-            "JSONL with mixed record types: `MessageRecord` (`id`, `timestamp`, "
-            "`type` ∈ user/info/error/warning/gemini, `content`: PartListUnion, "
-            "optional `toolCalls`, `thoughts`, `tokens`, `model`); `RewindRecord` "
-            "(`{$rewindTo}`); `MetadataUpdateRecord` (`{$set: ...}`); "
-            "`PartialMetadataRecord` (initial session metadata)."
+            "JSONL with mixed record types. Line 1 is a SessionMetadataRecord "
+            "(`sessionId`, `projectHash`, `startTime`, `lastUpdated`, `kind`). "
+            "Subsequent lines are `MessageRecord` turns (`id`, `timestamp`, "
+            "`type`, `content`, optional `toolCalls`/`thoughts`/`tokens`/`model`) "
+            "interleaved with `MetadataUpdateRecord` updates (`{$set: ...}`). "
+            "Upstream types also declare `RewindRecord` and `PartialMetadataRecord` "
+            "plus `type` values `info`/`error`/`warning` — these are valid in the "
+            "schema but do not appear in observed real-world session files; only "
+            "`user` and `gemini` `type` values were seen in v1 adapter sampling. "
+            "Adapter `store` field uses the underscore-flattened form "
+            "``gemini.tmp_chats``."
         ),
         sample_record='{"id":"...","timestamp":"2026-05-17T...","type":"user","content":[{"text":"<redacted>"}]}',
         search_by_default=True,
+        search_notes=(
+            "Parsed by agentgrep via `parse_gemini_chat_file` "
+            "(`gemini.tmp_chats_jsonl.v1`). Gemini-typed records with empty "
+            "`content` are dropped for v1 — surfacing `thoughts[*].description` "
+            "is a clean follow-up."
+        ),
     ),
     StoreDescriptor(
         agent="gemini",
@@ -477,9 +494,14 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
         ),
         schema_notes=(
             "JSON array of `LogEntry { sessionId, messageId, timestamp, type, "
-            "message }` — user-prompt audit log."
+            "message }` — user-prompt audit log. Adapter `store` field uses the "
+            "underscore-flattened form ``gemini.tmp_logs``."
         ),
         sample_record='[{"sessionId":"...","messageId":0,"timestamp":"...","type":"user","message":"<redacted>"}]',
+        search_by_default=True,
+        search_notes=(
+            "Parsed by agentgrep via `parse_gemini_logs_file` (`gemini.tmp_logs_json.v1`)."
+        ),
     ),
     StoreDescriptor(
         agent="gemini",
@@ -555,7 +577,7 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
 
 
 CATALOG = StoreCatalog(
-    catalog_version=1,
+    catalog_version=2,
     captured_at=OBSERVED_AT,
     stores=(*_CLAUDE_STORES, *_CURSOR_STORES, *_CODEX_STORES, *_GEMINI_STORES),
 )

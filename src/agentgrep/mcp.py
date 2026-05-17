@@ -30,7 +30,7 @@ import typing as t
 from fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
-AgentSelector = t.Literal["codex", "claude", "cursor", "all"]
+AgentSelector = t.Literal["codex", "claude", "cursor", "gemini", "all"]
 SearchTypeName = t.Literal["prompts", "history", "all"]
 
 SERVER_VERSION = "0.1.0"
@@ -181,7 +181,7 @@ class SearchRecordModel(AgentGrepModel):
 
     schema_version: str = agentgrep.SCHEMA_VERSION
     kind: t.Literal["prompt", "history"]
-    agent: t.Literal["codex", "claude", "cursor"]
+    agent: t.Literal["codex", "claude", "cursor", "gemini"]
     store: str
     adapter_id: str
     path: str
@@ -205,7 +205,7 @@ class FindRecordModel(AgentGrepModel):
 
     schema_version: str = agentgrep.SCHEMA_VERSION
     kind: t.Literal["find"]
-    agent: t.Literal["codex", "claude", "cursor"]
+    agent: t.Literal["codex", "claude", "cursor", "gemini"]
     store: str
     adapter_id: str
     path: str
@@ -222,7 +222,7 @@ class SourceRecordModel(AgentGrepModel):
     """Discovered source summary payload."""
 
     schema_version: str = agentgrep.SCHEMA_VERSION
-    agent: t.Literal["codex", "claude", "cursor"]
+    agent: t.Literal["codex", "claude", "cursor", "gemini"]
     store: str
     adapter_id: str
     path: str
@@ -288,7 +288,7 @@ class CapabilitiesModel(AgentGrepModel):
     name: str = "agentgrep"
     version: str = SERVER_VERSION
     read_only: bool = True
-    agents: list[t.Literal["codex", "claude", "cursor"]]
+    agents: list[t.Literal["codex", "claude", "cursor", "gemini"]]
     search_types: list[SearchTypeName]
     adapters: list[str]
     tools: list[str]

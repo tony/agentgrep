@@ -34,6 +34,7 @@ import argparse
 import asyncio
 import contextlib
 import dataclasses
+import datetime
 import importlib
 import itertools
 import json
@@ -64,7 +65,7 @@ if t.TYPE_CHECKING:
 else:
     PrivatePathBase = type(pathlib.Path())
 
-AgentName = t.Literal["codex", "claude", "cursor"]
+AgentName = t.Literal["codex", "claude", "cursor", "gemini"]
 OutputMode = t.Literal["text", "json", "ndjson", "ui"]
 ProgressMode = t.Literal["auto", "always", "never"]
 PathKind = t.Literal["history_file", "session_file", "sqlite_db"]
@@ -76,7 +77,7 @@ type JSONValue = JSONScalar | list[JSONValue] | dict[str, JSONValue]
 type SummaryRow = tuple[object, object, object, object, object, object, object, object]
 type KeyValueRow = tuple[object, object]
 
-AGENT_CHOICES: tuple[AgentName, ...] = ("codex", "claude", "cursor")
+AGENT_CHOICES: tuple[AgentName, ...] = ("codex", "claude", "cursor", "gemini")
 JSON_FILE_SUFFIXES: frozenset[str] = frozenset({".json", ".jsonl"})
 SCHEMA_VERSION: str = "agentgrep.v1"
 USER_ROLES: frozenset[str] = frozenset({"human", "user"})
@@ -2252,6 +2253,9 @@ def discover_sources(
             discovered.extend(discover_claude_sources(home, backends))
         elif agent == "cursor":
             discovered.extend(discover_cursor_sources(home, backends))
+            discovered.extend(discover_cursor_cli_sources(home, backends))
+        elif agent == "gemini":
+            discovered.extend(discover_gemini_sources(home, backends))
     discovered.sort(key=lambda item: (item.agent, item.store, str(item.path)))
     return discovered
 
@@ -2262,6 +2266,21 @@ def file_mtime_ns(path: pathlib.Path) -> int:
         return path.stat().st_mtime_ns
     except OSError:
         return 0
+
+
+def isoformat_from_mtime_ns(mtime_ns: int) -> str | None:
+    """Convert a nanosecond ``mtime`` to an ISO-8601 UTC timestamp.
+
+    Used as a timestamp fallback for stores whose records carry no native
+    timestamp — most notably Cursor CLI agent transcripts.
+    """
+    if mtime_ns <= 0:
+        return None
+    return (
+        datetime.datetime.fromtimestamp(mtime_ns / 1_000_000_000, tz=datetime.UTC)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 def discover_codex_sources(
@@ -2383,6 +2402,80 @@ def discover_cursor_sources(
                 mtime_ns=file_mtime_ns(path),
             ),
         )
+    return sources
+
+
+def discover_cursor_cli_sources(
+    home: pathlib.Path,
+    backends: BackendSelection,
+) -> list[SourceHandle]:
+    """Discover Cursor CLI agent transcripts under ``~/.cursor/projects``.
+
+    Mirrors the ``cursor.cli.transcripts`` row in
+    :data:`agentgrep.store_catalog.CATALOG`.
+    """
+    root = home / ".cursor" / "projects"
+    if not root.exists():
+        return []
+    sources: list[SourceHandle] = []
+    for path in list_files_matching(root, "*.jsonl", backends.find_tool):
+        if "agent-transcripts" not in path.parts:
+            continue
+        sources.append(
+            SourceHandle(
+                agent="cursor",
+                store="cursor.cli_transcripts",
+                adapter_id="cursor.cli_jsonl.v1",
+                path=path,
+                path_kind="session_file",
+                source_kind="jsonl",
+                search_root=root,
+                mtime_ns=file_mtime_ns(path),
+            ),
+        )
+    return sources
+
+
+def discover_gemini_sources(
+    home: pathlib.Path,
+    backends: BackendSelection,
+) -> list[SourceHandle]:
+    """Discover Gemini CLI sessions and prompt logs under ``~/.gemini/tmp``.
+
+    Yields one source per ``tmp/<project_hash>/chats/session-*.jsonl`` and
+    one per ``tmp/<project_hash>/logs.json``. Mirrors the ``gemini.tmp.chats``
+    and ``gemini.tmp.logs`` rows in
+    :data:`agentgrep.store_catalog.CATALOG`.
+    """
+    root = home / ".gemini" / "tmp"
+    if not root.exists():
+        return []
+    sources: list[SourceHandle] = [
+        SourceHandle(
+            agent="gemini",
+            store="gemini.tmp_chats",
+            adapter_id="gemini.tmp_chats_jsonl.v1",
+            path=path,
+            path_kind="session_file",
+            source_kind="jsonl",
+            search_root=root,
+            mtime_ns=file_mtime_ns(path),
+        )
+        for path in list_files_matching(root, "session-*.jsonl", backends.find_tool)
+    ]
+    sources.extend(
+        SourceHandle(
+            agent="gemini",
+            store="gemini.tmp_logs",
+            adapter_id="gemini.tmp_logs_json.v1",
+            path=path,
+            path_kind="history_file",
+            source_kind="json",
+            search_root=None,
+            mtime_ns=file_mtime_ns(path),
+        )
+        for path in list_files_matching(root, "logs.json", backends.find_tool)
+    )
     return sources
 
 
@@ -2750,6 +2843,15 @@ def iter_source_records(
         return
     if source.adapter_id in {"cursor.state_vscdb_modern.v1", "cursor.state_vscdb_legacy.v1"}:
         yield from parse_cursor_state_db(source)
+        return
+    if source.adapter_id == "cursor.cli_jsonl.v1":
+        yield from parse_cursor_cli_transcript(source)
+        return
+    if source.adapter_id == "gemini.tmp_chats_jsonl.v1":
+        yield from parse_gemini_chat_file(source)
+        return
+    if source.adapter_id == "gemini.tmp_logs_json.v1":
+        yield from parse_gemini_logs_file(source)
 
 
 def parse_codex_session_file(
@@ -2837,6 +2939,101 @@ def parse_claude_project_file(
                 continue
             seen.add(key)
             yield build_search_record(source, candidate)
+
+
+def parse_cursor_cli_transcript(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse a Cursor CLI agent transcript JSONL file.
+
+    Each line is ``{"role": "user" | "assistant", "message": {"content": [...]}}``;
+    ``iter_message_candidates`` handles the nested shape directly. Cursor
+    transcripts carry no native per-turn timestamp, so the file's mtime is
+    used as a session-level fallback.
+    """
+    conversation_id = source.path.stem
+    fallback_timestamp = isoformat_from_mtime_ns(source.mtime_ns)
+    seen: set[tuple[str | None, str, str | None, str | None]] = set()
+    for event in iter_jsonl(source.path):
+        for candidate in iter_message_candidates(
+            event,
+            fallback_conversation_id=conversation_id,
+        ):
+            if candidate.timestamp is None and fallback_timestamp is not None:
+                candidate = dataclasses.replace(candidate, timestamp=fallback_timestamp)
+            key = (
+                candidate.role,
+                candidate.text,
+                candidate.timestamp,
+                candidate.conversation_id,
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            yield build_search_record(source, candidate)
+
+
+def parse_gemini_chat_file(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse a Gemini CLI chat session JSONL file.
+
+    The file mixes record kinds: a leading ``SessionMetadataRecord``
+    (``{"sessionId", "projectHash", "startTime", "lastUpdated", "kind"}``),
+    ``MessageRecord`` turns (``{"id", "timestamp", "type": "user"|"gemini",
+    "content"}``), and ``MetadataUpdateRecord`` updates (``{"$set": {...}}``).
+    Gemini stores the role in a ``type`` key — not the ``role`` key the
+    shared ``extract_role`` helper recognises — so this adapter extracts
+    fields directly rather than going through ``iter_message_candidates``.
+    """
+    session_id: str | None = None
+    for event in iter_jsonl(source.path):
+        if not isinstance(event, dict):
+            continue
+        mapping = t.cast("dict[str, object]", event)
+        if "$set" in mapping:
+            continue
+        if "startTime" in mapping and "type" not in mapping:
+            session_id = as_optional_str(mapping.get("sessionId"))
+            continue
+        role = as_optional_str(mapping.get("type"))
+        text = flatten_content_value(t.cast("JSONValue | None", mapping.get("content")))
+        if not role or not text:
+            continue
+        candidate = MessageCandidate(
+            role=role,
+            text=text,
+            timestamp=as_optional_str(mapping.get("timestamp")),
+            model=as_optional_str(mapping.get("model")),
+            session_id=session_id or as_optional_str(mapping.get("sessionId")),
+            conversation_id=session_id,
+        )
+        yield build_search_record(source, candidate)
+
+
+def parse_gemini_logs_file(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse a Gemini CLI ``logs.json`` file (flat JSON array of LogEntry)."""
+    payload = read_json_file(source.path)
+    entries = payload if isinstance(payload, list) else []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        mapping = t.cast("dict[str, object]", entry)
+        message = as_optional_str(mapping.get("message"))
+        if not message:
+            continue
+        role = as_optional_str(mapping.get("type")) or "user"
+        candidate = MessageCandidate(
+            role=role,
+            text=message,
+            title="Gemini prompt history",
+            timestamp=as_optional_str(mapping.get("timestamp")),
+            session_id=as_optional_str(mapping.get("sessionId")),
+            conversation_id=as_optional_str(mapping.get("sessionId")),
+        )
+        yield build_search_record(source, candidate)
 
 
 def parse_cursor_ai_tracking_db(
