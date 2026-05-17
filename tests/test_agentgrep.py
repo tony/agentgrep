@@ -629,8 +629,13 @@ def test_collect_search_records_calls_record_added_with_each_unique_record(
 
 def test_streaming_search_progress_buffers_and_flushes_records(
     tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     agentgrep = t.cast("t.Any", load_agentgrep_module())
+    # Freeze the clock so the self-pacing auto-flush threshold (50 ms) never
+    # fires during the explicit-flush sequence; the test exercises the
+    # buffer/explicit-flush surface only.
+    monkeypatch.setattr(agentgrep.time, "monotonic", lambda: 0.0)
     emitted: list[object] = []
     progress = agentgrep.StreamingSearchProgress(emit=emitted.append)
     record_a = agentgrep.SearchRecord(
@@ -662,6 +667,44 @@ def test_streaming_search_progress_buffers_and_flushes_records(
 
     progress.flush()
     assert sum(1 for e in emitted if isinstance(e, agentgrep.StreamingRecordsBatch)) == 1
+
+
+def test_streaming_search_progress_self_paces_flush(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``record_added`` auto-flushes once the 50 ms batching window elapses."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    clock = {"now": 0.0}
+    monkeypatch.setattr(agentgrep.time, "monotonic", lambda: clock["now"])
+    emitted: list[object] = []
+    progress = agentgrep.StreamingSearchProgress(emit=emitted.append)
+    record_a = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "a.jsonl",
+        text="a",
+    )
+    record_b = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "b.jsonl",
+        text="b",
+    )
+
+    progress.record_added(record_a)
+    assert [e for e in emitted if isinstance(e, agentgrep.StreamingRecordsBatch)] == []
+
+    clock["now"] = agentgrep.StreamingSearchProgress._FLUSH_INTERVAL_SECONDS + 0.01
+    progress.record_added(record_b)
+
+    batches = [e for e in emitted if isinstance(e, agentgrep.StreamingRecordsBatch)]
+    assert len(batches) == 1
+    assert batches[0].records == (record_a, record_b)
 
 
 def test_streaming_search_progress_translates_progress_callbacks(
