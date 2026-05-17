@@ -2766,9 +2766,12 @@ def maybe_build_pydantic() -> tuple[
         return maybe_use_pydantic()
     except ImportError:
         return (
-            lambda record: dict(serialize_search_record(record)),
-            lambda record: dict(serialize_find_record(record)),
-            lambda command, query_data, results: dict(build_envelope(command, query_data, results)),
+            lambda record: t.cast("dict[str, object]", serialize_search_record(record)),
+            lambda record: t.cast("dict[str, object]", serialize_find_record(record)),
+            lambda command, query_data, results: t.cast(
+                "dict[str, object]",
+                build_envelope(command, query_data, results),
+            ),
         )
 
 
@@ -2964,7 +2967,7 @@ def run_ui(records: list[SearchRecord]) -> None:
     input_widget = textual_widgets.Input
     static_type = textual_widgets.Static
 
-    class AgentGrepApp(app_type):  # type: ignore[valid-type, misc]
+    class AgentGrepApp(app_type):  # ty: ignore[unsupported-base]
         """Read-only explorer for normalized search records."""
 
         CSS: t.ClassVar[str] = """

@@ -27,8 +27,8 @@ jobs:
         run: uv run ruff check .
       - name: Format check (ruff format)
         run: uv run ruff format --check .
-      - name: Type check (mypy)
-        run: uv run mypy
+      - name: Type check (ty)
+        run: uv run ty check --output-format github
       - name: Tests (pytest)
         run: uv run pytest
 

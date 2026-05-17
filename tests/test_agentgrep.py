@@ -1361,7 +1361,7 @@ def test_find_record_serialization_uses_private_paths(
     assert str(home) not in json.dumps(payload)
 
 
-def test_json_output_falls_back_without_pydantic() -> None:
+def test_json_output_falls_back_without_pydantic(monkeypatch: pytest.MonkeyPatch) -> None:
     agentgrep = load_agentgrep_module()
     record = agentgrep.SearchRecord(
         kind="prompt",
@@ -1386,12 +1386,12 @@ def test_json_output_falls_back_without_pydantic() -> None:
 
     original_import_module = agentgrep.importlib.import_module
 
-    def fake_import_module(name: str) -> object:
+    def fake_import_module(name: str, package: str | None = None) -> object:
         if name == "pydantic":
             raise ImportError
         return original_import_module(name)
 
-    agentgrep.importlib.import_module = fake_import_module  # type: ignore[method-assign]
+    monkeypatch.setattr(agentgrep.importlib, "import_module", fake_import_module)
     buffer = io.StringIO()
     with contextlib.redirect_stdout(buffer):
         agentgrep.print_search_results([record], args)
