@@ -959,6 +959,12 @@ class TextualOptionListInternalsModule(t.Protocol):
     Option: t.Any
 
 
+class TextualBindingModule(t.Protocol):
+    """Minimal Textual binding module surface for the ``Binding`` class."""
+
+    Binding: t.Any
+
+
 @dataclasses.dataclass(slots=True)
 class BackendSelection:
     """Selected optional subprocess backends."""
@@ -3677,6 +3683,10 @@ def build_streaming_ui_app(
             "TextualOptionListInternalsModule",
             t.cast("object", importlib.import_module("textual.widgets.option_list")),
         )
+        textual_binding = t.cast(
+            "TextualBindingModule",
+            t.cast("object", importlib.import_module("textual.binding")),
+        )
         rich_text_module = t.cast(
             "RichTextModule",
             t.cast("object", importlib.import_module("rich.text")),
@@ -3689,6 +3699,7 @@ def build_streaming_ui_app(
     message_type = textual_message.Message
     option_list_type = textual_widgets.OptionList
     option_type = textual_option_list_internals.Option
+    binding_type = textual_binding.Binding
     rich_text = rich_text_module
     horizontal = textual_containers.Horizontal
     vertical_scroll = textual_containers.VerticalScroll
@@ -4149,11 +4160,28 @@ def build_streaming_ui_app(
             text-style: $block-cursor-blurred-text-style;
         }
         """
-        BINDINGS: t.ClassVar[list[tuple[str, str, str]]] = [
+        # ``priority=True`` on the directional ``ctrl+hjkl`` bindings pushes
+        # them into Textual's priority dispatch lane so they win over any
+        # widget binding for the same key (e.g. ``Input``'s readline
+        # ``ctrl+k`` = kill-to-end-of-line). Trade-off accepted per user
+        # request: filter loses ``ctrl+k``; ``ctrl+u`` and ``ctrl+w`` are
+        # untouched and remain readline-compatible.
+        BINDINGS: t.ClassVar[list[t.Any]] = [
             ("tab", "focus_next", "Switch focus"),
             ("q", "quit", "Quit"),
             ("escape", "stop_search", "Stop search"),
             ("ctrl+c", "smart_quit", "Stop / Quit"),
+            binding_type("ctrl+h", "focus_pane_left", "← Pane", priority=True),
+            binding_type("ctrl+j", "focus_pane_down", "↓ Pane", priority=True),
+            binding_type("ctrl+k", "focus_pane_up", "↑ Pane", priority=True),
+            binding_type("ctrl+l", "focus_pane_right", "→ Pane", priority=True),
+            # Terminal-alias fallback: many terminals (and tmux without
+            # ``xterm-keys on``) send 0x08 for both Backspace and Ctrl-H, so
+            # Textual sees ``key="backspace"``, never ``ctrl+h``. NO priority
+            # here — the filter input's own backspace handler (delete prev
+            # char) must keep winning inside the input. In panes nothing
+            # else binds backspace, so this fires.
+            binding_type("backspace", "focus_pane_left", "", show=False),
         ]
         all_records: list[SearchRecord]
         filtered_records: list[SearchRecord]
@@ -4544,6 +4572,41 @@ def build_streaming_ui_app(
                 self._cancel_active_action()
             else:
                 self.exit()
+
+        # Directional pane focus (tmux-style ``ctrl+hjkl``). Edge moves (e.g.
+        # ``ctrl+j`` from the results pane — nothing below it) are no-ops.
+        # The three focusable regions are #filter (top), #results (bottom-
+        # left), and #detail-scroll (bottom-right).
+
+        def _focus_widget_by_id(self, widget_id: str) -> None:
+            try:
+                target = self.query_one(f"#{widget_id}")
+            except Exception:
+                return
+            t.cast("t.Any", target).focus()
+
+        def action_focus_pane_left(self) -> None:
+            """``Ctrl-H``: focus the pane to the left of the current one."""
+            if self.focused is not None and self.focused.id == "detail-scroll":
+                self._focus_widget_by_id("results")
+
+        def action_focus_pane_right(self) -> None:
+            """``Ctrl-L``: focus the pane to the right of the current one."""
+            if self.focused is not None and self.focused.id in ("results", "filter"):
+                self._focus_widget_by_id("detail-scroll")
+
+        def action_focus_pane_up(self) -> None:
+            """``Ctrl-K``: focus the pane above the current one (filter row)."""
+            if self.focused is not None and self.focused.id in (
+                "results",
+                "detail-scroll",
+            ):
+                self._focus_widget_by_id("filter")
+
+        def action_focus_pane_down(self) -> None:
+            """``Ctrl-J``: focus the pane below the current one (results)."""
+            if self.focused is not None and self.focused.id == "filter":
+                self._focus_widget_by_id("results")
 
         def _has_active_actions(self) -> bool:
             """Return True if any cancellable in-flight action exists.

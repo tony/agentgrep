@@ -1199,6 +1199,175 @@ async def test_ctrl_f_on_detail_pages_down(
         assert app._detail_scroll.scroll_y > before
 
 
+async def test_ctrl_j_from_filter_focuses_results(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``Ctrl-J`` while the filter input has focus moves focus to the results list."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 3)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.all_records.extend(records)
+        app.filtered_records.extend(records)
+        app._results.append_records(records)
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "filter"
+        await pilot.press("ctrl+j")
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "results"
+
+
+async def test_ctrl_l_from_results_focuses_detail(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``Ctrl-L`` from the results list moves focus rightward to the detail pane."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 3)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.all_records.extend(records)
+        app.filtered_records.extend(records)
+        app._results.append_records(records)
+        await pilot.pause()
+        await pilot.press("tab")
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "results"
+        await pilot.press("ctrl+l")
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "detail-scroll"
+
+
+async def test_ctrl_h_from_detail_focuses_results(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``Ctrl-H`` from the detail pane moves focus leftward to the results list."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 3)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.all_records.extend(records)
+        app.filtered_records.extend(records)
+        app._results.append_records(records)
+        await pilot.pause()
+        app._detail_scroll.focus()
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "detail-scroll"
+        await pilot.press("ctrl+h")
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "results"
+
+
+async def test_ctrl_k_from_results_focuses_filter(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``Ctrl-K`` from the results list moves focus up to the filter input."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 3)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.all_records.extend(records)
+        app.filtered_records.extend(records)
+        app._results.append_records(records)
+        await pilot.pause()
+        await pilot.press("tab")
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "results"
+        await pilot.press("ctrl+k")
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "filter"
+
+
+async def test_ctrl_k_from_detail_focuses_filter(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``Ctrl-K`` from the detail pane jumps focus all the way back to the filter."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 3)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.all_records.extend(records)
+        app.filtered_records.extend(records)
+        app._results.append_records(records)
+        await pilot.pause()
+        app._detail_scroll.focus()
+        await pilot.pause()
+        await pilot.press("ctrl+k")
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "filter"
+
+
+async def test_backspace_from_detail_focuses_results(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Backspace aliases ``Ctrl-H`` in many terminals — should focus results from detail."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 3)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.all_records.extend(records)
+        app.filtered_records.extend(records)
+        app._results.append_records(records)
+        await pilot.pause()
+        app._detail_scroll.focus()
+        await pilot.pause()
+        await pilot.press("backspace")
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "results"
+
+
+async def test_backspace_in_filter_still_deletes_a_character(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The backspace alias must NOT steal backspace from the filter input."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "filter"
+        await pilot.press("a")
+        await pilot.press("b")
+        await pilot.press("c")
+        await pilot.pause()
+        assert app._filter_input.value == "abc"
+        await pilot.press("backspace")
+        await pilot.pause()
+        # Backspace deleted the last character; focus stayed on filter.
+        assert app._filter_input.value == "ab"
+        assert app.focused.id == "filter"
+
+
+async def test_ctrl_h_from_filter_is_a_noop(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``Ctrl-H`` on the filter does nothing (no pane to the left)."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 3)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.all_records.extend(records)
+        app.filtered_records.extend(records)
+        app._results.append_records(records)
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "filter"
+        await pilot.press("ctrl+h")
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "filter"
+
+
 async def test_search_results_list_append_under_load(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1316,7 +1485,11 @@ async def test_show_detail_caps_body_at_max_lines(
         # ``Static.content`` is the original Group we passed to update().
         # For this plain-text body, the body renderable is a ``Text``.
         group = app._detail.content
-        body_text = next(item for item in group.renderables if hasattr(item, "plain") and "body line" in item.plain)
+        body_text = next(
+            item
+            for item in group.renderables
+            if hasattr(item, "plain") and "body line" in item.plain
+        )
         assert "more lines" in body_text.plain
         assert body_text.plain.count("body line") == cap
 
