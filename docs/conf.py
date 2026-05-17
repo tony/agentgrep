@@ -27,6 +27,7 @@ conf = merge_sphinx_config(
     version=project_metadata["version"],
     copyright="2026, Tony Narlock",
     source_repository="https://github.com/tony/agentgrep/",
+    docs_url="https://agentgrep.org/",
     source_branch="master",
     extra_extensions=[
         "sphinx_autodoc_api_style",
