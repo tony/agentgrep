@@ -525,6 +525,9 @@ def test_search_reports_source_and_match_progress(
         def result_added(self, count: int) -> None:
             self.events.append(("result_added", count))
 
+        def record_added(self, record: object) -> None:
+            self.events.append(("record_added", getattr(record, "kind", "?")))
+
         def finish(self, result_count: int) -> None:
             self.events.append(("finish", result_count))
 
@@ -547,6 +550,177 @@ def test_search_reports_source_and_match_progress(
     assert ("source_finished", 1) in progress.events
     assert ("result_added", 1) in progress.events
     assert progress.events[-2:] == [("finish", 1), ("close", 0)]
+
+
+def test_collect_search_records_calls_record_added_with_each_unique_record(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    source = agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "session.jsonl",
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=1,
+    )
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=source.path,
+        text="bliss",
+        session_id="abc",
+    )
+    query = agentgrep.SearchQuery(
+        terms=("bliss",),
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+
+    class CapturingProgress:
+        def __init__(self) -> None:
+            self.added: list[object] = []
+            self.counts: list[int] = []
+
+        def start(self, query: object) -> None: ...
+        def sources_discovered(self, count: int) -> None: ...
+        def prefilter_started(self, root: pathlib.Path) -> None: ...
+        def sources_planned(self, planned: int, total: int) -> None: ...
+        def source_started(self, index: int, total: int, source: object) -> None: ...
+        def source_finished(
+            self,
+            index: int,
+            total: int,
+            source: object,
+            records: int,
+            matches: int,
+        ) -> None: ...
+        def result_added(self, count: int) -> None:
+            self.counts.append(count)
+
+        def record_added(self, record: object) -> None:
+            self.added.append(record)
+
+        def finish(self, result_count: int) -> None: ...
+        def close(self) -> None: ...
+
+    def iter_records(source: object) -> cabc.Iterator[object]:
+        yield record
+        yield record  # same dedupe key — second insert must not fire record_added
+
+    monkeypatch.setattr(agentgrep, "iter_source_records", iter_records)
+    progress = CapturingProgress()
+
+    records = agentgrep.collect_search_records(query, [source], progress=progress)
+
+    assert records == [record]
+    assert progress.added == [record]
+    assert progress.counts == [1]
+
+
+def test_streaming_search_progress_buffers_and_flushes_records(
+    tmp_path: pathlib.Path,
+) -> None:
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    emitted: list[object] = []
+    progress = agentgrep.StreamingSearchProgress(emit=emitted.append)
+    record_a = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "a.jsonl",
+        text="a",
+    )
+    record_b = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "b.jsonl",
+        text="b",
+    )
+
+    progress.record_added(record_a)
+    progress.record_added(record_b)
+    progress.result_added(2)
+    progress.flush()
+
+    batches = [e for e in emitted if isinstance(e, agentgrep.StreamingRecordsBatch)]
+    assert len(batches) == 1
+    assert batches[0].records == (record_a, record_b)
+    assert batches[0].total == 2
+
+    progress.flush()
+    assert sum(1 for e in emitted if isinstance(e, agentgrep.StreamingRecordsBatch)) == 1
+
+
+def test_streaming_search_progress_translates_progress_callbacks(
+    tmp_path: pathlib.Path,
+) -> None:
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    emitted: list[object] = []
+    progress = agentgrep.StreamingSearchProgress(emit=emitted.append)
+    query = agentgrep.SearchQuery(
+        terms=("bliss",),
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+    source = agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "session.jsonl",
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=1,
+    )
+
+    progress.start(query)
+    progress.sources_discovered(10)
+    progress.sources_planned(7, 10)
+    progress.source_started(1, 7, source)
+    progress.source_finished(1, 7, source, records=5, matches=2)
+    progress.result_added(2)
+    progress.finish(2)
+
+    snapshots = [e for e in emitted if isinstance(e, agentgrep.ProgressSnapshot)]
+    finished = [e for e in emitted if isinstance(e, agentgrep.StreamingSearchFinished)]
+
+    assert len(snapshots) == 5
+    assert snapshots[0].phase == "discovering"
+    assert snapshots[0].query_label == "bliss"
+    assert snapshots[1].phase == "discovered"
+    assert snapshots[1].detail == "10 sources"
+    assert snapshots[2].phase == "planning"
+    assert snapshots[2].current == 7
+    assert snapshots[2].total == 10
+    assert snapshots[3].phase == "scanning"
+    assert snapshots[3].current == 1
+    assert snapshots[3].total == 7
+    assert snapshots[3].detail == "session.jsonl"
+    assert snapshots[4].phase == "scanning"
+    assert snapshots[4].detail is not None
+    assert "matches" in snapshots[4].detail
+
+    assert len(finished) == 1
+    assert finished[0].outcome == "complete"
+    assert finished[0].total == 2
+    assert finished[0].elapsed >= 0.0
 
 
 def test_collect_search_records_returns_partial_results_on_answer_now(
@@ -711,6 +885,9 @@ def test_run_search_query_interrupts_progress_on_keyboard_interrupt(
 
         def result_added(self, count: int) -> None:
             self.events.append("result_added")
+
+        def record_added(self, record: object) -> None:
+            self.events.append("record_added")
 
         def finish(self, result_count: int) -> None:
             self.events.append("finish")

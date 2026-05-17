@@ -418,6 +418,86 @@ class AnsiColors:
         return self.colorize(text, self.WHITE)
 
 
+class MarkupColors:
+    """Semantic Rich markup colors for Textual chrome.
+
+    Mirrors :class:`AnsiColors`'s public surface so the same progress-line
+    helper can render both the terminal CLI (ANSI escapes) and the in-app
+    Textual chrome (Rich markup tags interpreted by ``Static``).
+    """
+
+    def _wrap(self, text: str, style: str) -> str:
+        return f"[{style}]{text}[/{style}]"
+
+    def success(self, text: str) -> str:
+        """Wrap text in a Rich markup tag for success styling."""
+        return self._wrap(text, "green")
+
+    def warning(self, text: str) -> str:
+        """Wrap text in a Rich markup tag for warning styling."""
+        return self._wrap(text, "yellow")
+
+    def error(self, text: str) -> str:
+        """Wrap text in a Rich markup tag for error styling."""
+        return self._wrap(text, "red")
+
+    def info(self, text: str) -> str:
+        """Wrap text in a Rich markup tag for informational styling."""
+        return self._wrap(text, "cyan")
+
+    def heading(self, text: str) -> str:
+        """Wrap text in a Rich markup tag for status-heading styling."""
+        return self._wrap(text, "bold cyan")
+
+    def highlight(self, text: str) -> str:
+        """Wrap text in a Rich markup tag for highlight styling."""
+        return self._wrap(text, "magenta")
+
+    def muted(self, text: str) -> str:
+        """Wrap text in a Rich markup tag for muted styling."""
+        return self._wrap(text, "blue")
+
+    def white(self, text: str) -> str:
+        """Wrap text in a Rich markup tag for plain-white styling."""
+        return self._wrap(text, "white")
+
+
+class SearchColors(t.Protocol):
+    """Structural surface shared by :class:`AnsiColors` and :class:`MarkupColors`."""
+
+    def success(self, text: str) -> str:
+        """Style ``text`` as success."""
+        ...
+
+    def warning(self, text: str) -> str:
+        """Style ``text`` as warning."""
+        ...
+
+    def error(self, text: str) -> str:
+        """Style ``text`` as error."""
+        ...
+
+    def info(self, text: str) -> str:
+        """Style ``text`` as informational."""
+        ...
+
+    def heading(self, text: str) -> str:
+        """Style ``text`` as a status heading."""
+        ...
+
+    def highlight(self, text: str) -> str:
+        """Style ``text`` as highlighted."""
+        ...
+
+    def muted(self, text: str) -> str:
+        """Style ``text`` as muted."""
+        ...
+
+    def white(self, text: str) -> str:
+        """Style ``text`` as plain white."""
+        ...
+
+
 def should_enable_color(color_mode: ColorMode, stream: t.TextIO) -> bool:
     """Return whether output written to ``stream`` should use colors."""
     if os.environ.get("NO_COLOR"):
@@ -586,6 +666,44 @@ class TextualAppModule(t.Protocol):
     """Minimal Textual app module surface."""
 
     App: type[object]
+
+
+class TextualMessageModule(t.Protocol):
+    """Minimal Textual message module surface."""
+
+    Message: type[object]
+
+
+class StreamingAppLike(t.Protocol):
+    """App methods needed by the streaming TUI: workers, timers, message bus."""
+
+    def post_message(self, message: object) -> bool:
+        """Post a message to the app's queue (thread-safe)."""
+        ...
+
+    def query_one(self, selector: object, expect_type: object | None = None) -> object:
+        """Look up one widget."""
+        ...
+
+    def run_worker(
+        self,
+        work: cabc.Callable[..., object],
+        *,
+        name: str = ...,
+        group: str = ...,
+        thread: bool = ...,
+        exclusive: bool = ...,
+    ) -> object:
+        """Spawn a background worker."""
+        ...
+
+    def set_interval(
+        self,
+        interval: float,
+        callback: cabc.Callable[[], object],
+    ) -> object:
+        """Register a recurring callback."""
+        ...
 
 
 class DataTableLike(t.Protocol):
@@ -873,6 +991,10 @@ class SearchProgress(t.Protocol):
         """Report deduped result count."""
         ...
 
+    def record_added(self, record: SearchRecord) -> None:
+        """Report a newly deduped record (streaming consumers only)."""
+        ...
+
     def finish(self, result_count: int) -> None:
         """Report search completion."""
         ...
@@ -920,6 +1042,9 @@ class NoopSearchProgress:
 
     def result_added(self, count: int) -> None:
         """Ignore deduped result count."""
+
+    def record_added(self, record: SearchRecord) -> None:
+        """Ignore newly deduped record."""
 
     def finish(self, result_count: int) -> None:
         """Ignore search completion."""
@@ -1037,6 +1162,9 @@ class ConsoleSearchProgress:
         with self._lock:
             self._matches = count
         self._emit_heartbeat_if_due()
+
+    def record_added(self, record: SearchRecord) -> None:
+        """Ignore the per-record broadcast; counter is tracked via ``result_added``."""
 
     def set_status(
         self,
@@ -1191,16 +1319,24 @@ class ConsoleSearchProgress:
             pass
 
     def _summary(self) -> str:
+        return format_search_progress_line(
+            self._snapshot(),
+            colors=self._colors,
+            answer_now_hint=self._answer_now_hint,
+        )
+
+    def _snapshot(self) -> ProgressSnapshot:
         elapsed = self._elapsed_seconds()
-        parts = [
-            self._start_line(self._query_label),
-            self._status_text(),
-            self._colors.warning(format_match_count(self._matches)),
-            self._colors.muted(f"{elapsed:.1f}s"),
-        ]
-        if self._answer_now_hint:
-            parts.append(self._colors.white("[Press enter, answer now]"))
-        return " | ".join(parts)
+        with self._lock:
+            return ProgressSnapshot(
+                query_label=self._query_label,
+                phase=self._phase,
+                current=self._current,
+                total=self._total,
+                detail=self._detail,
+                matches=self._matches,
+                elapsed=elapsed,
+            )
 
     def _start_line(self, label: str) -> str:
         return f"{self._colors.heading('Searching')} {self._colors.highlight(label)}"
@@ -1250,9 +1386,249 @@ def format_match_count(count: int) -> str:
     return f"{count} {suffix}"
 
 
+@dataclasses.dataclass(frozen=True)
+class ProgressSnapshot:
+    """Immutable view of search-progress state for one render pass."""
+
+    query_label: str
+    phase: str
+    current: int | None
+    total: int | None
+    detail: str | None
+    matches: int
+    elapsed: float
+
+
+def format_search_progress_line(
+    snapshot: ProgressSnapshot,
+    *,
+    colors: SearchColors,
+    answer_now_hint: bool = False,
+) -> str:
+    """Format the single-line progress summary used by both the CLI and the TUI.
+
+    Parameters
+    ----------
+    snapshot : ProgressSnapshot
+        Frozen view of progress counters.
+    colors : SearchColors
+        Either an :class:`AnsiColors` (CLI) or :class:`MarkupColors` (TUI).
+    answer_now_hint : bool, default False
+        When ``True``, append the ``[Press enter, answer now]`` reminder.
+
+    Returns
+    -------
+    str
+        ``"Searching <q> | <phase> N/M sources | K matches | T.Ts"`` with
+        each segment styled through ``colors``.
+    """
+    label_part = f"{colors.heading('Searching')} {colors.highlight(snapshot.query_label)}"
+    if snapshot.current is not None and snapshot.total is not None:
+        count = colors.warning(f"{snapshot.current}/{snapshot.total}")
+        status_part = f"{colors.heading(snapshot.phase)} {count} {colors.muted('sources')}"
+    elif snapshot.detail:
+        status_part = f"{colors.heading(snapshot.phase)} {colors.muted(snapshot.detail)}"
+    else:
+        status_part = colors.heading(snapshot.phase)
+    parts = [
+        label_part,
+        status_part,
+        colors.warning(format_match_count(snapshot.matches)),
+        colors.muted(f"{snapshot.elapsed:.1f}s"),
+    ]
+    if answer_now_hint:
+        parts.append(colors.white("[Press enter, answer now]"))
+    return " | ".join(parts)
+
+
 def noop_search_progress() -> SearchProgress:
     """Return a silent search progress reporter."""
     return NoopSearchProgress()
+
+
+@dataclasses.dataclass(frozen=True)
+class StreamingRecordsBatch:
+    """Batch of newly deduped records emitted by :meth:`StreamingSearchProgress.flush`."""
+
+    records: tuple[SearchRecord, ...]
+    total: int
+
+
+@dataclasses.dataclass(frozen=True)
+class StreamingSearchFinished:
+    """Terminal event emitted by :class:`StreamingSearchProgress` when the search ends."""
+
+    outcome: t.Literal["complete", "interrupted", "error"]
+    total: int
+    elapsed: float
+    error: BaseException | None = None
+
+
+class StreamingSearchProgress:
+    """Search-progress reporter that emits structured events through an ``emit`` callback.
+
+    Records are buffered under a lock and released as a single
+    :class:`StreamingRecordsBatch` per :meth:`flush` (or on terminal events).
+    Progress callbacks emit :class:`ProgressSnapshot` instances directly.
+    The callback is invoked from whichever thread drives the search and is
+    expected to be safe to call cross-thread (e.g. Textual's ``post_message``).
+    """
+
+    def __init__(self, emit: cabc.Callable[[object], None]) -> None:
+        self._emit = emit
+        self._lock = threading.Lock()
+        self._buffer: list[SearchRecord] = []
+        self._query_label = "search"
+        self._phase = "starting"
+        self._detail: str | None = None
+        self._current: int | None = None
+        self._total: int | None = None
+        self._matches = 0
+        self._started_at: float | None = None
+
+    def start(self, query: SearchQuery) -> None:
+        """Record search start and emit the initial progress snapshot."""
+        label = " ".join(query.terms) if query.terms else "all records"
+        now = time.monotonic()
+        with self._lock:
+            self._query_label = label
+            self._phase = "discovering"
+            self._started_at = now
+        self._emit_progress()
+
+    def sources_discovered(self, count: int) -> None:
+        """Report discovered-source count."""
+        with self._lock:
+            self._phase = "discovered"
+            self._detail = f"{count} sources"
+        self._emit_progress()
+
+    def prefilter_started(self, root: pathlib.Path) -> None:
+        """Report root prefilter start."""
+        with self._lock:
+            self._phase = "prefiltering"
+            self._detail = format_display_path(root, directory=True)
+        self._emit_progress()
+
+    def sources_planned(self, planned: int, total: int) -> None:
+        """Report planned-source count."""
+        with self._lock:
+            self._phase = "planning"
+            self._current = planned
+            self._total = total
+            self._detail = "candidate sources"
+        self._emit_progress()
+
+    def source_started(self, index: int, total: int, source: SourceHandle) -> None:
+        """Report source-scan start."""
+        with self._lock:
+            self._phase = "scanning"
+            self._current = index
+            self._total = total
+            self._detail = source.path.name
+        self._emit_progress()
+
+    def source_finished(
+        self,
+        index: int,
+        total: int,
+        source: SourceHandle,
+        records: int,
+        matches: int,
+    ) -> None:
+        """Report source-scan completion."""
+        with self._lock:
+            self._phase = "scanning"
+            self._current = index
+            self._total = total
+            self._detail = f"{records} records, {format_match_count(matches)} in {source.path.name}"
+        self._emit_progress()
+
+    def result_added(self, count: int) -> None:
+        """Update the cumulative match counter."""
+        with self._lock:
+            self._matches = count
+
+    def record_added(self, record: SearchRecord) -> None:
+        """Buffer ``record`` for the next :meth:`flush`."""
+        with self._lock:
+            self._buffer.append(record)
+
+    def finish(self, result_count: int) -> None:
+        """Flush pending records and emit a successful terminal event."""
+        self.flush()
+        self._emit(
+            StreamingSearchFinished(
+                "complete",
+                total=result_count,
+                elapsed=self._elapsed(),
+            ),
+        )
+
+    def answer_now(self, result_count: int) -> None:
+        """Flush pending records and emit an interrupted terminal event."""
+        self.flush()
+        self._emit(
+            StreamingSearchFinished(
+                "interrupted",
+                total=result_count,
+                elapsed=self._elapsed(),
+            ),
+        )
+
+    def interrupt(self) -> None:
+        """Flush pending records and emit an interrupted terminal event."""
+        self.flush()
+        with self._lock:
+            matches = self._matches
+        self._emit(
+            StreamingSearchFinished(
+                "interrupted",
+                total=matches,
+                elapsed=self._elapsed(),
+            ),
+        )
+
+    def close(self) -> None:
+        """No-op: no resources to release."""
+
+    def flush(self) -> None:
+        """Drain the record buffer into a single :class:`StreamingRecordsBatch`."""
+        with self._lock:
+            if not self._buffer:
+                return
+            batch = tuple(self._buffer)
+            self._buffer.clear()
+            total = self._matches
+        self._emit(StreamingRecordsBatch(records=batch, total=total))
+
+    def _emit_progress(self) -> None:
+        self._emit(self._snapshot())
+
+    def _snapshot(self) -> ProgressSnapshot:
+        with self._lock:
+            current = self._current
+            total = self._total
+            detail = self._detail
+            phase = self._phase
+            label = self._query_label
+            matches = self._matches
+            started = self._started_at
+        elapsed = (time.monotonic() - started) if started is not None else 0.0
+        return ProgressSnapshot(
+            query_label=label,
+            phase=phase,
+            current=current,
+            total=total,
+            detail=detail,
+            matches=matches,
+            elapsed=elapsed,
+        )
+
+    def _elapsed(self) -> float:
+        with self._lock:
+            started = self._started_at
+        return (time.monotonic() - started) if started is not None else 0.0
 
 
 def select_backends() -> BackendSelection:
@@ -2021,6 +2397,7 @@ def collect_search_records(
             dedupe_key = record_dedupe_key(record)
             if dedupe_key not in deduped:
                 deduped[dedupe_key] = record
+                active_progress.record_added(record)
                 active_progress.result_added(len(deduped))
             if active_control.answer_now_requested() or (
                 query.limit is not None and len(deduped) >= query.limit
@@ -2939,8 +3316,29 @@ def print_find_results(records: list[FindRecord], args: FindArgs) -> None:
         print()
 
 
-def run_ui(records: list[SearchRecord]) -> None:
-    """Launch a small read-only Textual explorer."""
+def run_ui(
+    home: pathlib.Path,
+    query: SearchQuery,
+    *,
+    control: SearchControl,
+) -> None:
+    """Launch the streaming Textual explorer for ``query``.
+
+    The UI mounts immediately and a background worker thread runs the
+    search, streaming matching records into the table as they are
+    discovered. The chrome above the filter input shows the same
+    pipe-separated progress summary as the CLI spinner.
+
+    Parameters
+    ----------
+    home : pathlib.Path
+        User home directory, passed through to :func:`run_search_query`.
+    query : SearchQuery
+        Search to run. Empty ``terms`` means "all records" (browse mode).
+    control : SearchControl
+        Shared cooperative-cancel flag; ``Esc`` / ``Ctrl-C`` call
+        ``request_answer_now`` to nudge the worker to wrap up.
+    """
     try:
         textual_app = t.cast(
             "TextualAppModule",
@@ -2954,11 +3352,16 @@ def run_ui(records: list[SearchRecord]) -> None:
             "TextualWidgetsModule",
             t.cast("object", importlib.import_module("textual.widgets")),
         )
+        textual_message = t.cast(
+            "TextualMessageModule",
+            t.cast("object", importlib.import_module("textual.message")),
+        )
     except ImportError as error:
-        msg = "Textual is required for --ui. Run with `uv run py/agentgrep.py ... --ui`."
+        msg = "Textual is required for --ui. Install with `uv pip install --editable .`."
         raise RuntimeError(msg) from error
 
     app_type = textual_app.App
+    message_type = textual_message.Message
     horizontal = textual_containers.Horizontal
     vertical = textual_containers.Vertical
     data_table_type = textual_widgets.DataTable
@@ -2967,12 +3370,73 @@ def run_ui(records: list[SearchRecord]) -> None:
     input_widget = textual_widgets.Input
     static_type = textual_widgets.Static
 
+    class RecordsAppended(message_type):  # ty: ignore[unsupported-base]
+        """Batch of newly deduped records ready for the table."""
+
+        def __init__(self, records: tuple[SearchRecord, ...], total: int) -> None:
+            super().__init__()
+            self.records = records
+            self.total = total
+
+    class ProgressUpdated(message_type):  # ty: ignore[unsupported-base]
+        """Search-progress snapshot bound for the chrome line."""
+
+        def __init__(self, snapshot: ProgressSnapshot) -> None:
+            super().__init__()
+            self.snapshot = snapshot
+
+    class SearchFinished(message_type):  # ty: ignore[unsupported-base]
+        """Terminal event for the background search worker."""
+
+        def __init__(
+            self,
+            outcome: t.Literal["complete", "interrupted", "error"],
+            *,
+            total: int,
+            elapsed: float,
+            error: BaseException | None = None,
+        ) -> None:
+            super().__init__()
+            self.outcome = outcome
+            self.total = total
+            self.elapsed = elapsed
+            self.error = error
+
+    def make_emit(app: StreamingAppLike) -> cabc.Callable[[object], None]:
+        """Build an ``emit`` callback that wraps streaming events in Textual messages."""
+
+        def emit(event: object) -> None:
+            if isinstance(event, StreamingRecordsBatch):
+                app.post_message(
+                    RecordsAppended(records=event.records, total=event.total),
+                )
+            elif isinstance(event, ProgressSnapshot):
+                app.post_message(ProgressUpdated(snapshot=event))
+            elif isinstance(event, StreamingSearchFinished):
+                app.post_message(
+                    SearchFinished(
+                        event.outcome,
+                        total=event.total,
+                        elapsed=event.elapsed,
+                        error=event.error,
+                    ),
+                )
+
+        return emit
+
+    spinner_frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
     class AgentGrepApp(app_type):  # ty: ignore[unsupported-base]
-        """Read-only explorer for normalized search records."""
+        """Streaming read-only explorer for normalized search records."""
 
         CSS: t.ClassVar[str] = """
         Screen {
             layout: vertical;
+        }
+        #chrome {
+            height: 1;
+            padding: 0 1;
+            color: $accent;
         }
         #body {
             height: 1fr;
@@ -2986,47 +3450,155 @@ def run_ui(records: list[SearchRecord]) -> None:
             height: 1fr;
         }
         """
-        BINDINGS: t.ClassVar[list[tuple[str, str, str]]] = [("q", "quit", "Quit")]
+        BINDINGS: t.ClassVar[list[tuple[str, str, str]]] = [
+            ("q", "quit", "Quit"),
+            ("escape", "stop_search", "Stop"),
+            ("ctrl+c", "stop_search", "Stop"),
+        ]
         all_records: list[SearchRecord]
         filtered_records: list[SearchRecord]
 
-        def __init__(self, initial_records: list[SearchRecord]) -> None:
+        def __init__(
+            self,
+            *,
+            home: pathlib.Path,
+            query: SearchQuery,
+            control: SearchControl,
+        ) -> None:
             super().__init__()
-            self.all_records = initial_records
-            self.filtered_records = initial_records
+            self.home = home
+            self.query = query
+            self.control = control
+            self.all_records = []
+            self.filtered_records = []
+            self._filter_text = ""
+            self._spinner_index = 0
+            self._progress: StreamingSearchProgress | None = None
+            self._search_done = False
+            self._colors = MarkupColors()
+            self._snapshot = ProgressSnapshot(
+                query_label=" ".join(query.terms) if query.terms else "all records",
+                phase="starting",
+                current=None,
+                total=None,
+                detail=None,
+                matches=0,
+                elapsed=0.0,
+            )
 
         def compose(self) -> cabc.Iterator[object]:
+            """Build the widget tree (header → chrome → filter → body → footer)."""
             yield header()
+            yield static_type("", id="chrome")
             yield input_widget(placeholder="Filter by keyword", id="filter")
             with horizontal(id="body"):
                 yield data_table_type(id="results")
                 with vertical():
-                    yield static_type("Select a result to inspect full text.", id="detail")
+                    yield static_type("Streaming results…", id="detail")
             yield footer()
 
         def on_mount(self) -> None:
-            app = t.cast("QueryAppLike", t.cast("object", self))
-            table = t.cast("DataTableLike", app.query_one(data_table_type))
+            """Configure DataTable, start the search worker, and arm the chrome timers."""
+            streaming = t.cast("StreamingAppLike", t.cast("object", self))
+            table = t.cast("DataTableLike", streaming.query_one(data_table_type))
             table.cursor_type = "row"
             table.add_columns("Agent", "Kind", "Timestamp", "Title", "Path")
-            self.refresh_table()
+            self._progress = StreamingSearchProgress(emit=make_emit(streaming))
+            self._update_chrome()
+            streaming.run_worker(
+                self._run_search,
+                name="search",
+                thread=True,
+                exclusive=True,
+            )
+            streaming.set_interval(0.1, self._tick_spinner)
+            streaming.set_interval(0.05, self._flush_records)
+
+        def _run_search(self) -> None:
+            progress = self._progress
+            if progress is None:
+                return
+            try:
+                run_search_query(
+                    self.home,
+                    self.query,
+                    progress=progress,
+                    control=self.control,
+                )
+            except BaseException as exc:
+                streaming = t.cast("StreamingAppLike", t.cast("object", self))
+                streaming.post_message(
+                    SearchFinished(
+                        "error",
+                        total=len(self.all_records),
+                        elapsed=0.0,
+                        error=exc,
+                    ),
+                )
+
+        def on_records_appended(self, message: object) -> None:
+            """Extend ``all_records`` and append matching rows live."""
+            records = t.cast(
+                "tuple[SearchRecord, ...]",
+                getattr(message, "records", ()),
+            )
+            for record in records:
+                self.all_records.append(record)
+                if self._matches_filter(record):
+                    self._append_row(record)
+
+        def on_progress_updated(self, message: object) -> None:
+            """Cache the latest snapshot for ``_tick_spinner`` to render."""
+            snapshot = getattr(message, "snapshot", None)
+            if isinstance(snapshot, ProgressSnapshot):
+                self._snapshot = snapshot
+                self._update_chrome()
+
+        def on_search_finished(self, message: object) -> None:
+            """Render the final chrome line and freeze the worker state."""
+            self._search_done = True
+            outcome = str(getattr(message, "outcome", "complete"))
+            total = int(getattr(message, "total", len(self.all_records)))
+            elapsed = float(getattr(message, "elapsed", 0.0))
+            error = t.cast("BaseException | None", getattr(message, "error", None))
+            self._update_chrome_final(outcome, total, elapsed, error)
 
         def on_input_changed(self, event: object) -> None:
+            """Re-apply the filter substring and rebuild the table."""
             value = str(getattr(event, "value", "")).strip().casefold()
-            self.filtered_records = (
-                self.all_records
-                if not value
-                else [
-                    record
-                    for record in self.all_records
-                    if value in build_search_haystack(record).casefold()
-                ]
-            )
+            self._filter_text = value
+            self.filtered_records = [
+                record for record in self.all_records if self._matches_filter(record)
+            ]
             self.refresh_table()
 
+        def on_data_table_row_highlighted(self, event: object) -> None:
+            """Update the detail pane when the cursor moves."""
+            row_index = int(getattr(event, "cursor_row", -1))
+            if 0 <= row_index < len(self.filtered_records):
+                self.show_detail(self.filtered_records[row_index])
+
+        def show_detail(self, record: SearchRecord) -> None:
+            """Render ``record`` in the detail Static."""
+            details = [
+                f"Agent: {record.agent}",
+                f"Kind: {record.kind}",
+                f"Store: {record.store}",
+                f"Adapter: {record.adapter_id}",
+                f"Timestamp: {record.timestamp or 'unknown'}",
+                f"Model: {record.model or 'unknown'}",
+                f"Path: {format_display_path(record.path)}",
+                "",
+                record.text,
+            ]
+            streaming = t.cast("StreamingAppLike", t.cast("object", self))
+            detail = t.cast("StaticLike", streaming.query_one("#detail", static_type))
+            detail.update("\n".join(details))
+
         def refresh_table(self) -> None:
-            app = t.cast("QueryAppLike", t.cast("object", self))
-            table = t.cast("DataTableLike", app.query_one(data_table_type))
+            """Clear and re-add rows for the current ``filtered_records``."""
+            streaming = t.cast("StreamingAppLike", t.cast("object", self))
+            table = t.cast("DataTableLike", streaming.query_one(data_table_type))
             table.clear()
             for record in self.filtered_records:
                 table.add_row(
@@ -3040,31 +3612,98 @@ def run_ui(records: list[SearchRecord]) -> None:
             if self.filtered_records:
                 self.show_detail(self.filtered_records[0])
             else:
-                detail = t.cast("StaticLike", app.query_one("#detail", static_type))
-                detail.update("No results.")
+                detail = t.cast(
+                    "StaticLike",
+                    streaming.query_one("#detail", static_type),
+                )
+                detail.update(
+                    "No results." if self._search_done else "No matches yet.",
+                )
 
-        def on_data_table_row_highlighted(self, event: object) -> None:
-            row_index = int(getattr(event, "cursor_row", -1))
-            if 0 <= row_index < len(self.filtered_records):
-                self.show_detail(self.filtered_records[row_index])
+        def action_stop_search(self) -> None:
+            """``Esc`` / ``Ctrl-C``: request a cooperative early exit of the worker."""
+            if self._search_done:
+                return
+            self.control.request_answer_now()
 
-        def show_detail(self, record: SearchRecord) -> None:
-            details = [
-                f"Agent: {record.agent}",
-                f"Kind: {record.kind}",
-                f"Store: {record.store}",
-                f"Adapter: {record.adapter_id}",
-                f"Timestamp: {record.timestamp or 'unknown'}",
-                f"Model: {record.model or 'unknown'}",
-                f"Path: {format_display_path(record.path)}",
-                "",
-                record.text,
-            ]
-            app = t.cast("QueryAppLike", t.cast("object", self))
-            detail = t.cast("StaticLike", app.query_one("#detail", static_type))
-            detail.update("\n".join(details))
+        def _matches_filter(self, record: SearchRecord) -> bool:
+            if not self._filter_text:
+                return True
+            return self._filter_text in build_search_haystack(record).casefold()
 
-    app = t.cast("RunnableAppLike", t.cast("object", AgentGrepApp(records)))
+        def _append_row(self, record: SearchRecord) -> None:
+            streaming = t.cast("StreamingAppLike", t.cast("object", self))
+            table = t.cast("DataTableLike", streaming.query_one(data_table_type))
+            table.add_row(
+                record.agent,
+                record.kind,
+                record.timestamp or "",
+                record.title or "",
+                format_display_path(record.path),
+                key=str(id(record)),
+            )
+            self.filtered_records.append(record)
+            if len(self.filtered_records) == 1:
+                self.show_detail(record)
+
+        def _tick_spinner(self) -> None:
+            if self._search_done:
+                return
+            self._spinner_index = (self._spinner_index + 1) % len(spinner_frames)
+            self._update_chrome()
+
+        def _flush_records(self) -> None:
+            if self._progress is not None and not self._search_done:
+                self._progress.flush()
+
+        def _update_chrome(self) -> None:
+            frame = spinner_frames[self._spinner_index]
+            line = format_search_progress_line(self._snapshot, colors=self._colors)
+            streaming = t.cast("StreamingAppLike", t.cast("object", self))
+            chrome = t.cast(
+                "StaticLike",
+                streaming.query_one("#chrome", static_type),
+            )
+            chrome.update(f"[cyan]{frame}[/cyan] {line}")
+
+        def _update_chrome_final(
+            self,
+            outcome: str,
+            total: int,
+            elapsed: float,
+            error: BaseException | None,
+        ) -> None:
+            colors = self._colors
+            if outcome == "complete":
+                text = (
+                    f"[green]✓[/green] {colors.success('Search complete:')} "
+                    f"{colors.warning(format_match_count(total))} "
+                    f"({colors.muted(f'{elapsed:.1f}s elapsed')})"
+                )
+            elif outcome == "interrupted":
+                sources_label = (
+                    f"{self._snapshot.current}/{self._snapshot.total}"
+                    if self._snapshot.current is not None and self._snapshot.total is not None
+                    else "?"
+                )
+                text = (
+                    f"[yellow]■[/yellow] {colors.warning('Stopped at')} "
+                    f"{colors.warning(format_match_count(total))} "
+                    f"{colors.muted(f'across {sources_label} sources in {elapsed:.1f}s')}"
+                )
+            else:  # error
+                text = f"[red]✗[/red] {colors.error('Search failed:')} {colors.muted(str(error))}"
+            streaming = t.cast("StreamingAppLike", t.cast("object", self))
+            chrome = t.cast(
+                "StaticLike",
+                streaming.query_one("#chrome", static_type),
+            )
+            chrome.update(text)
+
+    app = t.cast(
+        "RunnableAppLike",
+        t.cast("object", AgentGrepApp(home=home, query=query, control=control)),
+    )
     app.run()
 
 
@@ -3074,6 +3713,9 @@ def run_search_command(args: SearchArgs) -> int:
         msg = "search requires at least one term unless --ui is used"
         raise SystemExit(msg)
     query = make_search_query(args)
+    if args.output_mode == "ui":
+        run_ui(pathlib.Path.home(), query, control=SearchControl())
+        return 0
     answer_now_enabled = should_enable_answer_now(args)
     control = SearchControl()
     listener = AnswerNowInputListener(control) if answer_now_enabled else None
@@ -3090,9 +3732,6 @@ def run_search_command(args: SearchArgs) -> int:
     finally:
         if listener is not None:
             listener.stop()
-    if args.output_mode == "ui":
-        run_ui(records)
-        return 0
     print_search_results(records, args)
     if records:
         return 0
