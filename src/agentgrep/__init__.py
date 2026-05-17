@@ -2395,7 +2395,16 @@ def list_files_matching(
     if not root.exists():
         return []
     if fd_program is not None:
-        command = [fd_program, "-a", "-t", "f", "--glob", glob_pattern, str(root)]
+        command = [
+            fd_program,
+            "-H",
+            "-I",
+            "-t",
+            "f",
+            "--glob",
+            glob_pattern,
+            str(root),
+        ]
         completed = run_readonly_command(command)
         if completed.returncode == 0:
             return [pathlib.Path(line) for line in completed.stdout.splitlines() if line.strip()]
@@ -2990,11 +2999,22 @@ def build_grep_command(
     regex: bool,
     case_sensitive: bool,
 ) -> list[str]:
-    """Build a read-only grep command for one term and target."""
-    command = [grep_program, "-l", term, str(target)]
+    """Build a read-only grep command for one term and target.
+
+    Always passes flags that disable ignore-file semantics — agent stores live
+    inside the user's ``$HOME`` and may sit beneath a ``.gitignore`` from a
+    dotfile manager (yadm, chezmoi, stow, bare-git). The grep tools would
+    otherwise silently skip everything.
+    """
+    if grep_program.endswith("rg"):
+        ignore_flags = ["--no-ignore", "--hidden"]
+        fixed_flag = "-F"
+    else:
+        ignore_flags = ["--unrestricted", "--hidden"]
+        fixed_flag = "-Q"
+    command = [grep_program, *ignore_flags, "-l", term, str(target)]
     if not regex:
-        fixed_flag = "-F" if grep_program.endswith("rg") else "-Q"
-        command.insert(2, fixed_flag)
+        command.insert(command.index("-l"), fixed_flag)
     if not case_sensitive:
         command.insert(1, "-i")
     return command

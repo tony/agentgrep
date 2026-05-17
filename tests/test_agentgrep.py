@@ -242,6 +242,24 @@ def test_select_backends_prefers_first_available(monkeypatch: pytest.MonkeyPatch
     assert backends.json_tool == "/tmp/jq"
 
 
+def test_list_files_matching_ignores_gitignore(tmp_path: pathlib.Path) -> None:
+    """Agent stores under ``$HOME`` must be discovered through ``.gitignore``.
+
+    Dotfile-managed setups whose root has ``.gitignore: *`` would otherwise
+    silently mask every session file.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    _ = (tmp_path / ".gitignore").write_text("*\n!keep.json\n", encoding="utf-8")
+    for name in ("a.jsonl", "b.jsonl"):
+        _ = (tmp_path / name).write_text("{}", encoding="utf-8")
+
+    backends = agentgrep.select_backends()
+
+    paths = agentgrep.list_files_matching(tmp_path, "*.jsonl", backends.find_tool)
+
+    assert {p.name for p in paths} == {"a.jsonl", "b.jsonl"}
+
+
 def test_cli_without_subcommand_prints_main_help() -> None:
     completed = run_agentgrep_cli()
 
