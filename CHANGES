@@ -42,6 +42,49 @@ $ uvx --from 'agentgrep' --prerelease allow python
 _Notes on the upcoming release will go here._
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+agentgrep 0.1.0a2 fixes silent "No matches found." failures for
+users whose `~/.claude`, `~/.codex`, or `~/.cursor` sits inside a
+dotfile-managed tree, and lands the first public storage catalogue
+— a Pydantic-modelled registry of every prompt and history store
+agentgrep knows about, with version provenance baked into each
+entry. See {ref}`storage-catalog` for the new reference page.
+
+### What's new
+
+#### Storage catalogue
+
+A new {mod}`agentgrep.stores` module exposes
+{class}`~agentgrep.stores.StoreDescriptor` and
+{class}`~agentgrep.stores.StoreCatalog` — frozen Pydantic models
+describing one on-disk location per row with role, format, path
+pattern, `observed_version`, `observed_at`, and a pointer to the
+upstream type definition where one is public.
+`agentgrep.store_catalog.CATALOG` ships an initial registry
+covering Claude Code, Cursor (IDE and CLI agent kept distinct),
+Codex, and Gemini CLI. The catalogue is descriptive — whether
+agentgrep searches a given store by default stays a per-store
+decision adapters consult — so future layout changes can be
+captured by editing one row and bumping the catalogue version.
+
+### Fixes
+
+#### Search beneath dotfile `.gitignore`
+
+`agentgrep search` no longer reports "No matches found." when
+`~/.claude`, `~/.codex`, or `~/.cursor` lives inside a
+dotfile-managed tree (yadm, chezmoi, stow, bare-git, mr). The
+underlying `fd` and `rg` invocations now bypass `.gitignore` and
+`.fdignore` semantics so agent stores under `$HOME` are always
+discovered.
+
+### Documentation
+
+#### New storage-catalog reference page
+
+A new {ref}`storage-catalog` page walks through the per-agent
+storage layouts, names the upstream-pinned schemas where they
+exist, and explains how to add or update a descriptor.
+
 ## agentgrep 0.1.0a1 (2026-05-17)
 
 agentgrep 0.1.0a1 ships the first interactive surface for the
