@@ -70,20 +70,23 @@ notes under `<encoded_project>/memory/`.
 
 ### Cursor
 
-Two distinct surfaces, both catalogued:
+Two distinct surfaces, both catalogued and both searched:
 
 - **Cursor CLI agent** (`cursor-agent`): transcripts live at
-  `${HOME}/.cursor/projects/<id>/agent-transcripts/<session_uuid>/<session_uuid>.jsonl`.
-  No native timestamp; tool outputs sometimes redacted. Schema is
-  Anthropic-style messages with `bubbleId` extensions.
-- **Cursor IDE**: parsed today by the existing adapter via
-  `state.vscdb` (SQLite). The catalogue entry preserves the IDE path
-  separately so future PRs do not confuse it with the CLI agent.
+  `${HOME}/.cursor/projects/<id>/agent-transcripts/<session_uuid>/<session_uuid>.jsonl`
+  and are parsed by `cursor.cli_jsonl.v1`. Records are
+  Anthropic-style `{role, message.content[]}` with `text` and
+  `tool_use` content blocks; tool outputs are sometimes `[REDACTED]`
+  in older `cursor-agent` builds. There is no native per-turn
+  timestamp, so agentgrep backfills the file's mtime.
+- **Cursor IDE**: parsed by `cursor.state_vscdb_modern.v1` /
+  `cursor.state_vscdb_legacy.v1` via `state.vscdb` (SQLite). The
+  catalogue keeps the IDE path separate from the CLI agent so the
+  two never collide.
 
 `cursor.cli.worktrees` is catalogued explicitly with
-`role=SOURCE_TREE` and `search_by_default=False` so future adapter
-PRs cannot accidentally index multi-gigabyte git working trees as chat
-history.
+`role=SOURCE_TREE` and `search_by_default=False` so the adapter
+does not index multi-gigabyte git working trees as chat history.
 
 ### Codex
 
@@ -106,16 +109,27 @@ notes mis-attributed them.
 ### Gemini CLI
 
 `observed_version`: ``gemini-cli v0.42.0`` stable (2026-05-12); types
-from `v0.44.0-nightly` HEAD `77e65c0d`.
+from `v0.44.0-nightly` HEAD `77e65c0d`. Parsed by
+`gemini.tmp_chats_jsonl.v1` and `gemini.tmp_logs_json.v1`.
 
-Three record types in `tmp/<project_hash>/chats/*.jsonl`:
+Each `tmp/<project_hash>/chats/session-*.jsonl` file opens with a
+`SessionMetadataRecord` line (`sessionId`, `projectHash`,
+`startTime`, `lastUpdated`, `kind`). Subsequent lines are
+`MessageRecord` turns interleaved with
+`MetadataUpdateRecord` updates:
 
-- `MessageRecord` — actual turn (`type` ∈
-  user/info/error/warning/gemini, with optional `toolCalls`,
-  `thoughts`, `tokens`, `model`).
-- `RewindRecord` — `{$rewindTo: <id>}` marker.
+- `MessageRecord` — `id`, `timestamp`, `type` (in real files: `user`
+  or `gemini`), `content`, with optional `toolCalls`, `thoughts`,
+  `tokens`, `model`. Upstream types also declare `info`, `error`,
+  `warning` plus `RewindRecord` and `PartialMetadataRecord`, but
+  those records did not appear in sampling.
 - `MetadataUpdateRecord` — `{$set: {…}}` partial updates of session
   metadata.
+
+The v1 adapter surfaces user prompts and any non-empty assistant
+`content`; gemini-typed records whose `content` is empty (reasoning
+lives in `thoughts[*]`) are dropped — surfacing those is a clean
+follow-up.
 
 A separate `tmp/<project_hash>/logs.json` is a JSON array of
 `LogEntry` (user-prompt audit).

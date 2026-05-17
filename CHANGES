@@ -44,12 +44,42 @@ _Notes on the upcoming release will go here._
 
 agentgrep 0.1.0a2 fixes silent "No matches found." failures for
 users whose `~/.claude`, `~/.codex`, or `~/.cursor` sits inside a
-dotfile-managed tree, and lands the first public storage catalogue
-— a Pydantic-modelled registry of every prompt and history store
+dotfile-managed tree, broadens search to two stores agentgrep
+previously did not parse — the Cursor CLI agent's per-project
+transcripts and Google Gemini CLI's session and prompt-log files
+— and lands the first public storage catalogue, a
+Pydantic-modelled registry of every prompt and history store
 agentgrep knows about, with version provenance baked into each
-entry. See {ref}`storage-catalog` for the new reference page.
+entry. `agentgrep search --agent gemini` is now a valid CLI
+invocation; `--agent cursor` returns CLI-agent matches alongside
+Cursor IDE results. See {ref}`storage-catalog` for the new
+reference page.
 
 ### What's new
+
+#### Gemini CLI search support
+
+A new `--agent gemini` selector searches Google Gemini CLI
+sessions at `${GEMINI_CLI_HOME or ${HOME}/.gemini}/tmp/<project_hash>/chats/session-*.jsonl`
+and the per-project `logs.json` prompt audit log. The chat parser
+handles Gemini's mixed-record JSONL — session metadata lines, user
+and gemini message records, and `{"$set": …}` metadata updates —
+and surfaces user prompts and assistant content. The logs parser
+walks the flat `LogEntry` array as a prompt-history store. The
+helper {func}`~agentgrep.store_catalog.gemini_project_hash`
+reproduces Gemini CLI's `sha256(absolute_path)` derivation so
+consumers can map a working directory to its tmp shard.
+
+#### Cursor CLI agent search support
+
+`--agent cursor` now searches the Cursor CLI agent's
+per-project transcripts at
+`${HOME}/.cursor/projects/<id>/agent-transcripts/<session_uuid>/<session_uuid>.jsonl`
+in addition to the existing Cursor IDE state store. Cursor
+transcripts carry no native timestamp; agentgrep backfills the
+file's mtime as a session-level timestamp. Sibling project files
+(`repo.json`, `mcp-approvals.json`, `terminals/`, `canvases/`)
+are explicitly excluded from search so transcripts stay the focus.
 
 #### Storage catalogue
 
