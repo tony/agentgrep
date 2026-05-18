@@ -39,7 +39,45 @@ $ uvx --from 'agentgrep' --prerelease allow python
 ## agentgrep 0.1.0a4 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
-_Notes on the upcoming release will go here._
+
+agentgrep 0.1.0a4 lifts the CLI to a first-class documentation
+surface. The docs site gains a `/cli/` section above Library in the
+sidebar, with per-subcommand reference pages auto-generated from the
+argparse tree and dedicated sections describing `--json` / `--ndjson`
+output for shell pipelines and non-MCP agents. A new `{cli-install}`
+widget sits next to the existing MCP installer on the homepage so
+terminal users see the right install snippet on first paint.
+
+### What's new
+
+#### CLI reference site
+
+The new `/cli/` section opens with a tabbed installer, a card grid
+linking to `agentgrep search` and `agentgrep find`, and an
+"Use from another agent" callout describing the `--json` / `--ndjson`
+contract for non-MCP consumers. Each subcommand page renders its
+option list from the live argparse tree via gp-sphinx's
+`sphinx-autodoc-argparse` extension, then documents the JSON record
+shape with cross-references to {class}`~agentgrep.SearchRecord` and
+{class}`~agentgrep.FindRecord`.
+
+#### CLI install widget
+
+A new `{cli-install}` Sphinx directive renders one row of install-
+method tabs (`uvx run` / `pipx run` / `uv add` / `pip install`) and,
+for each method, a panel pairing the install command with a runnable
+CLI usage snippet. The widget mirrors the existing
+`{library-install}` and `{mcp-install}` widgets — same prehydrate-
+driven first-paint behavior, same `localStorage` persistence across
+pages — so the homepage now carries three sibling installers, one per
+consumption surface.
+
+### Development
+
+The `sphinx-autodoc-argparse` Sphinx extension is added to the `dev`
+and `docs` dependency groups to drive the per-subcommand argparse
+rendering.
+
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
 ## agentgrep 0.1.0a3 (2026-05-17)
