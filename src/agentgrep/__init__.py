@@ -2417,8 +2417,17 @@ def discover_from_catalog(
     for descriptor in CATALOG.for_agent(agent):
         if descriptor.search_by_default is False:
             continue
+        # Per-descriptor dedup: a row whose discovery tuple has more than one
+        # spec (e.g. Cursor IDE state.vscdb with both modern platform_paths
+        # and a legacy ~/.cursor glob) must not yield the same file twice
+        # under different adapter ids on layouts where both specs match.
+        seen_paths: set[pathlib.Path] = set()
         for spec in descriptor.discovery:
-            sources.extend(handles_from_discovery(spec, agent, base, backends))
+            for handle in handles_from_discovery(spec, agent, base, backends):
+                if handle.path in seen_paths:
+                    continue
+                seen_paths.add(handle.path)
+                sources.append(handle)
     return sources
 
 

@@ -271,6 +271,66 @@ def test_discover_from_catalog_skips_search_by_default_false(
     assert skipped_file not in discovered_paths
 
 
+def test_discover_from_catalog_deduplicates_paths_within_descriptor(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two ``DiscoverySpec``s on one descriptor yield one handle per file.
+
+    Mirrors the Cursor IDE ``state.vscdb`` case: the modern
+    ``platform_paths`` spec and the legacy home-subpath glob can both
+    match a single file on non-standard layouts.
+    """
+    import agentgrep
+    import agentgrep.store_catalog as store_catalog
+
+    base = tmp_path / "base"
+    base.mkdir()
+    target = base / "state.vscdb"
+    _ = target.write_text("placeholder", encoding="utf-8")
+
+    fake_catalog = StoreCatalog(
+        catalog_version=999,
+        captured_at=OBSERVED_AT,
+        stores=(
+            StoreDescriptor(
+                agent="cursor",
+                store_id="cursor.test.shared",
+                role=StoreRole.PRIMARY_CHAT,
+                format=StoreFormat.SQLITE,
+                path_pattern="${HOME}/test/shared",
+                observed_version="test",
+                observed_at=OBSERVED_AT,
+                schema_notes="Test row with two specs hitting the same file.",
+                search_by_default=True,
+                discovery=(
+                    DiscoverySpec(
+                        store="cursor.shared",
+                        adapter_id="cursor.shared_first.v1",
+                        path_kind="sqlite_db",
+                        source_kind="sqlite",
+                        files=("state.vscdb",),
+                    ),
+                    DiscoverySpec(
+                        store="cursor.shared",
+                        adapter_id="cursor.shared_second.v1",
+                        path_kind="sqlite_db",
+                        source_kind="sqlite",
+                        files=("state.vscdb",),
+                    ),
+                ),
+            ),
+        ),
+    )
+    monkeypatch.setattr(store_catalog, "CATALOG", fake_catalog)
+
+    backends = agentgrep.BackendSelection(None, None, None)
+    sources = agentgrep.discover_from_catalog(tmp_path, "cursor", base, backends)
+
+    matching = [s for s in sources if s.path == target]
+    assert len(matching) == 1, [s.adapter_id for s in matching]
+
+
 def test_descriptor_round_trips_through_json() -> None:
     """Pydantic dump/load identity — guards against future field-name drift."""
     sample = CATALOG.stores[0]
