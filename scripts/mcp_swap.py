@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # /// script
-# requires-python = ">=3.10"
+# requires-python = ">=3.14"
 # dependencies = ["tomlkit>=0.13"]
 # ///
 """Swap MCP server configs across Claude / Codex / Cursor / Gemini CLIs.
@@ -148,7 +148,7 @@ def _parse_state_entry(v: dict[str, t.Any]) -> SwapEntry | None:
     try:
         v = {**v, "seq_no": int(v["seq_no"])}
         return SwapEntry(**v)
-    except (KeyError, TypeError, ValueError):
+    except KeyError, TypeError, ValueError:
         return None
 
 
