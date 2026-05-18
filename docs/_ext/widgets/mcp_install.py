@@ -293,7 +293,18 @@ def _tool_command(method: Method, cooldown: Cooldown) -> str:
     """
     if method.id == "uvx":
         if cooldown.id == "days":
-            return f"uvx --exclude-newer {_DURATION_SENTINEL} --from agentgrep agentgrep-mcp"
+            # ``--exclude-newer-package agentgrep=2099-01-01`` exempts
+            # agentgrep itself from the global cutoff so a recently-
+            # released agentgrep stays inside the resolver. Without this,
+            # the snippet emits ``no versions of agentgrep`` whenever the
+            # latest agentgrep release is newer than the cooldown window.
+            # pipx + pip have no per-package override, so their days
+            # panels carry a caveat note instead (see ``_cooldown_note``).
+            return (
+                f"uvx --exclude-newer {_DURATION_SENTINEL}"
+                " --exclude-newer-package agentgrep=2099-01-01"
+                " --from agentgrep agentgrep-mcp"
+            )
         if cooldown.id == "bypass":
             return "uvx --no-config --from agentgrep agentgrep-mcp"
         return "uvx --from agentgrep agentgrep-mcp"
@@ -347,8 +358,12 @@ def _json_body(method: Method, cooldown: Cooldown) -> str:
     if method.id == "uvx":
         command = "uvx"
         if cooldown.id == "days":
+            # See ``_tool_command`` for the rationale on the
+            # ``--exclude-newer-package agentgrep=2099-01-01`` exempt.
             args = (
-                f'"--exclude-newer", "{_DURATION_SENTINEL}", "--from", "agentgrep", "agentgrep-mcp"'
+                f'"--exclude-newer", "{_DURATION_SENTINEL}",'
+                ' "--exclude-newer-package", "agentgrep=2099-01-01",'
+                ' "--from", "agentgrep", "agentgrep-mcp"'
             )
         else:
             args = '"--from", "agentgrep", "agentgrep-mcp"'
@@ -392,8 +407,12 @@ def _toml_body(method: Method, cooldown: Cooldown) -> str:
     if method.id == "uvx":
         command, args_inner = "uvx", '"--from", "agentgrep", "agentgrep-mcp"'
         if cooldown.id == "days":
+            # See ``_tool_command`` for the rationale on the
+            # ``--exclude-newer-package agentgrep=2099-01-01`` exempt.
             args_inner = (
-                f'"--exclude-newer", "{_DURATION_SENTINEL}", "--from", "agentgrep", "agentgrep-mcp"'
+                f'"--exclude-newer", "{_DURATION_SENTINEL}",'
+                ' "--exclude-newer-package", "agentgrep=2099-01-01",'
+                ' "--from", "agentgrep", "agentgrep-mcp"'
             )
     elif method.id == "pipx":
         command, args_inner = "pipx", '"run", "--spec", "agentgrep", "agentgrep-mcp"'
@@ -417,20 +436,31 @@ def _toml_body(method: Method, cooldown: Cooldown) -> str:
 
 
 def _cooldown_note(method: Method, cooldown: Cooldown) -> str | None:
-    """Return a one-line caveat for cells where cooldown is a no-op."""
-    if cooldown.id != "bypass":
-        return None
-    if method.id == "pip":
+    """Return a one-line caveat for cells where the snippet has caveats."""
+    if cooldown.id == "days" and method.id in {"pipx", "pip"}:
+        # pip's --uploaded-prior-to is a global cutoff with no
+        # per-package override, so a cooldown shorter than agentgrep's
+        # most-recent-release age makes the install unresolvable. uv
+        # handles this via --exclude-newer-package on the uvx panels
+        # (see _tool_command / _json_body / _toml_body).
         return (
-            "pip has no global cooldown, so bypass is a no-op. Use this"
-            " when pairing the snippet with a uv-backed parent command."
+            "pip's `--uploaded-prior-to` is a global cutoff with no"
+            " per-package override. If the cooldown filters out a recent"
+            " release of agentgrep itself, switch to the uvx snippet —"
+            " it exempts agentgrep via `--exclude-newer-package`."
         )
-    if method.id == "pipx":
-        return (
-            "pipx's default backend (pip) has no global cooldown."
-            " For uv-style cooldown control, install `pipx[uv]` and set"
-            " `UV_NO_CONFIG=1` in your shell."
-        )
+    if cooldown.id == "bypass":
+        if method.id == "pip":
+            return (
+                "pip has no global cooldown, so bypass is a no-op. Use this"
+                " when pairing the snippet with a uv-backed parent command."
+            )
+        if method.id == "pipx":
+            return (
+                "pipx's default backend (pip) has no global cooldown."
+                " For uv-style cooldown control, install `pipx[uv]` and set"
+                " `UV_NO_CONFIG=1` in your shell."
+            )
     return None
 
 

@@ -93,6 +93,18 @@ has no per-package cutoff override, so the pipx and pip days panels
 carry a note pointing users at the uv-flavored snippets when the
 cooldown filters out a recent agentgrep release.
 
+### Fixes
+
+#### MCP install widget cooldown exempts agentgrep
+
+The mcp-install widget's `uvx`-flavored days-mode snippets now carry
+`--exclude-newer-package agentgrep=2099-01-01` so a security-conscious
+cooldown stays applied to transitive deps without filtering agentgrep
+itself out of the resolver. The pipx and pip days panels gain a
+caveat note pointing readers at the uvx snippet when the global
+cutoff bites a recent agentgrep release. Mirrors the same fix already
+shipped for `{cli-install}` in this release.
+
 ### Development
 
 The `sphinx-autodoc-argparse` Sphinx extension is added to the `dev`
