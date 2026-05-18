@@ -605,6 +605,53 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
     ),
     StoreDescriptor(
         agent="gemini",
+        store_id="gemini.tmp.chats_legacy",
+        role=StoreRole.SUPPLEMENTARY_CHAT,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern=(
+            "${GEMINI_CLI_HOME or ${HOME}/.gemini}/tmp/<project_hash>/chats/"
+            "session-<timestamp><id>.json"
+        ),
+        env_overrides=("GEMINI_CLI_HOME",),
+        observed_version="gemini-cli v0.42.0 stable; types from v0.44.0-nightly @77e65c0d",
+        observed_at=OBSERVED_AT,
+        upstream_ref=(
+            "github.com/google-gemini/gemini-cli@77e65c0d/"
+            "packages/core/src/services/chatRecordingService.ts#L941"
+        ),
+        schema_notes=(
+            "Pre-Feb 2026 single-file session format. JSON object with "
+            "top-level `sessionId`, `projectHash`, `startTime`, `lastUpdated`, "
+            "and a `messages` array carrying the same per-turn fields as the "
+            "current JSONL format. Upstream still reads this shape via the "
+            "`isLegacyRecord` discriminator. Adapter `store` field uses the "
+            "underscore-flattened form ``gemini.tmp_chats_legacy``."
+        ),
+        sample_record=(
+            '{"sessionId":"...","projectHash":"...","startTime":"...",'
+            '"messages":[{"id":"...","timestamp":"...","type":"user",'
+            '"content":[{"text":"<redacted>"}]}]}'
+        ),
+        distinguishes_from=("gemini.tmp.chats",),
+        search_by_default=True,
+        search_notes=(
+            "Parsed by agentgrep via `parse_gemini_chat_legacy_file` "
+            "(`gemini.tmp_chats_legacy_json.v1`). Covers sessions whose "
+            "files predate the JSONL migration; upstream still handles them."
+        ),
+        discovery=(
+            DiscoverySpec(
+                store="gemini.tmp_chats_legacy",
+                adapter_id="gemini.tmp_chats_legacy_json.v1",
+                path_kind="session_file",
+                source_kind="json",
+                home_subpath=("tmp",),
+                glob="session-*.json",
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="gemini",
         store_id="gemini.history",
         role=StoreRole.SUPPLEMENTARY_CHAT,
         format=StoreFormat.JSONL,

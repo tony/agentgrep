@@ -2863,6 +2863,9 @@ def iter_source_records(
     if source.adapter_id == "gemini.tmp_chats_jsonl.v1":
         yield from parse_gemini_chat_file(source)
         return
+    if source.adapter_id == "gemini.tmp_chats_legacy_json.v1":
+        yield from parse_gemini_chat_legacy_file(source)
+        return
     if source.adapter_id == "gemini.tmp_logs_json.v1":
         yield from parse_gemini_logs_file(source)
         return
@@ -2987,6 +2990,31 @@ def parse_cursor_cli_transcript(
             yield build_search_record(source, candidate)
 
 
+def _gemini_message_record_to_candidate(
+    mapping: dict[str, object],
+    session_id: str | None,
+) -> MessageCandidate | None:
+    """Extract a ``MessageCandidate`` from one Gemini MessageRecord.
+
+    Returns ``None`` for records that carry no searchable text — Gemini
+    stores the role in a ``type`` key (not ``role``) and may leave
+    ``content`` empty for assistant turns whose body lives in
+    ``thoughts[]`` or ``toolCalls[]`` (handled by a separate adapter).
+    """
+    role = as_optional_str(mapping.get("type"))
+    text = flatten_content_value(t.cast("JSONValue | None", mapping.get("content")))
+    if not role or not text:
+        return None
+    return MessageCandidate(
+        role=role,
+        text=text,
+        timestamp=as_optional_str(mapping.get("timestamp")),
+        model=as_optional_str(mapping.get("model")),
+        session_id=session_id or as_optional_str(mapping.get("sessionId")),
+        conversation_id=session_id,
+    )
+
+
 def parse_gemini_chat_file(
     source: SourceHandle,
 ) -> cabc.Iterator[SearchRecord]:
@@ -3014,18 +3042,39 @@ def parse_gemini_chat_file(
             # ``type`` field to the metadata record.
             session_id = as_optional_str(mapping.get("sessionId"))
             continue
-        role = as_optional_str(mapping.get("type"))
-        text = flatten_content_value(t.cast("JSONValue | None", mapping.get("content")))
-        if not role or not text:
+        candidate = _gemini_message_record_to_candidate(mapping, session_id)
+        if candidate is None:
             continue
-        candidate = MessageCandidate(
-            role=role,
-            text=text,
-            timestamp=as_optional_str(mapping.get("timestamp")),
-            model=as_optional_str(mapping.get("model")),
-            session_id=session_id or as_optional_str(mapping.get("sessionId")),
-            conversation_id=session_id,
-        )
+        yield build_search_record(source, candidate)
+
+
+def parse_gemini_chat_legacy_file(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse a pre-Feb 2026 Gemini CLI single-file ``.json`` chat session.
+
+    The legacy format is a JSON object with session metadata at the top
+    level and the full conversation under a ``messages`` array. Upstream
+    still reads this shape via the ``isLegacyRecord`` discriminator at
+    ``packages/core/src/services/chatRecordingService.ts``. Each entry of
+    ``messages`` carries the same per-turn fields the JSONL format uses,
+    so record extraction is shared with :func:`parse_gemini_chat_file`.
+    """
+    payload = read_json_file(source.path)
+    if not isinstance(payload, dict):
+        return
+    container = t.cast("dict[str, object]", payload)
+    session_id = as_optional_str(container.get("sessionId"))
+    messages = container.get("messages")
+    if not isinstance(messages, list):
+        return
+    for entry in messages:
+        if not isinstance(entry, dict):
+            continue
+        mapping = t.cast("dict[str, object]", entry)
+        candidate = _gemini_message_record_to_candidate(mapping, session_id)
+        if candidate is None:
+            continue
         yield build_search_record(source, candidate)
 
 

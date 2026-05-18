@@ -3403,6 +3403,48 @@ def test_search_cursor_cli_transcript_ignores_tool_use_blocks(
     assert all(r.text.strip() for r in records)  # no empty-text records leak through
 
 
+def test_search_gemini_chat_legacy_json_session(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pre-Feb 2026 .json single-file session: messages[] surface to search."""
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    legacy_session = home / ".gemini" / "tmp" / "h0" / "chats" / "session-legacy.json"
+    legacy_session.parent.mkdir(parents=True, exist_ok=True)
+    _ = legacy_session.write_text(
+        json.dumps(
+            {
+                "sessionId": "legacy-sess",
+                "projectHash": "h0",
+                "startTime": "2026-02-01T00:00:00Z",
+                "lastUpdated": "2026-02-01T00:01:00Z",
+                "messages": [
+                    {
+                        "id": "m1",
+                        "timestamp": "2026-02-01T00:00:30Z",
+                        "type": "user",
+                        "content": [{"text": "legacy libtmux trace"}],
+                    },
+                ],
+            },
+        ),
+        encoding="utf-8",
+    )
+
+    query = _make_query(agentgrep, ("gemini",), ("libtmux",))
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("gemini",), backends)
+    records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
+
+    legacy = [r for r in records if r.store == "gemini.tmp_chats_legacy"]
+    assert legacy, "expected at least one gemini.tmp_chats_legacy record"
+    assert legacy[0].text == "legacy libtmux trace"
+    assert legacy[0].session_id == "legacy-sess"
+    assert legacy[0].role == "user"
+
+
 def test_search_gemini_chat_session_user_prompt(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -44,6 +44,7 @@ KNOWN_ADAPTERS: tuple[str, ...] = (
     "cursor.state_vscdb_legacy.v1",
     "cursor.state_vscdb_modern.v1",
     "gemini.tmp_chats_jsonl.v1",
+    "gemini.tmp_chats_legacy_json.v1",
     "gemini.tmp_logs_json.v1",
 )
 READONLY_TAGS = {"readonly", "agentgrep"}
