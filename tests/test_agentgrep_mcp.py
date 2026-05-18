@@ -266,3 +266,25 @@ async def test_mcp_prompt_guides_search() -> None:
     assert "search" in rendered
     assert "serenity" in rendered
     assert "codex" in rendered
+
+
+def test_mcp_instructions_carry_every_segment_header() -> None:
+    """Server instructions must include each named ``_INSTR_*`` segment.
+
+    The instructions are composed from segments and an accidental deletion of
+    one would silently shorten what MCP clients see on handshake. Asserting on
+    segment-header sentinels catches that without locking in exact wording.
+    """
+    from agentgrep.mcp.instructions import _build_instructions
+
+    rendered = _build_instructions()
+    for marker in (
+        "agentgrep MCP server",
+        "TRIGGERS:",
+        "ANTI-TRIGGERS:",
+        "search vs discovery:",
+        "Defaults:",
+        "Resources:",
+        "Privacy:",
+    ):
+        assert marker in rendered, marker
