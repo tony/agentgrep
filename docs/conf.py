@@ -102,6 +102,9 @@ _gp_setup = conf.pop("setup")
 def setup(app: Sphinx) -> None:
     """Configure project-specific Sphinx hooks."""
     _gp_setup(app)
+    app.add_js_file("js/prompt-copy.js", loading_method="defer")
+    app.add_css_file("css/project-admonitions.css")
+    app.add_css_file("css/project-cards.css")
 
 
 globals().update(conf)
