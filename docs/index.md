@@ -25,10 +25,10 @@ Run a first search and inspect the result shape.
 Tools, resources, and prompts for MCP clients.
 :::
 
-:::{grid-item-card} Package
-:link: packages/agentgrep/index
+:::{grid-item-card} Library
+:link: library/index
 :link-type: doc
-Tutorial, how-to, reference, and examples for the Python package.
+Tutorial, how-to, reference, and examples for the Python library.
 :::
 
 :::{grid-item-card} API Reference
@@ -84,9 +84,9 @@ storage-catalog
 
 ```{toctree}
 :hidden:
-:caption: Package
+:caption: Library
 
-packages/index
+library/index
 ```
 
 ```{toctree}

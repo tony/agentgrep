@@ -1,8 +1,8 @@
-(package-agentgrep)=
+(library)=
 
-# agentgrep
+# Library
 
-The `agentgrep` package provides both the terminal CLI and the FastMCP server. The CLI and MCP tools share the same source discovery, parsing, matching, serialization, and path privacy behavior.
+Use `agentgrep` as a Python library from your own scripts and tools. The same search, discovery, parsing, serialization, and path-privacy layer powers the terminal CLI and the MCP server, so anything you can do from the command line you can drive directly in code.
 
 ::::{grid} 1 1 2 2
 :gutter: 2
