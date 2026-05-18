@@ -72,11 +72,36 @@ driven first-paint behavior, same `localStorage` persistence across
 pages — so the homepage now carries three sibling installers, one per
 consumption surface.
 
+#### CLI cooldowns
+
+The `{cli-install}` widget grows the same "Configure cooldowns"
+picker the MCP installer has carried since 0.1.0a3. Each method panel
+now exists in three variants (off / days / bypass) so a
+security-conscious terminal user can drive `uvx`'s `--exclude-newer`,
+`pipx`'s `--uploaded-prior-to`, or `uv add` / `pip install`'s
+cooldown equivalents straight from the docs site. Toggling cooldowns
+or changing the day count live-updates every duration / date sentinel
+in the visible snippet, the settings sub-view exposes a bypass radio
+for uv-backed installs, and saved state survives gp-sphinx SPA nav
+and is shared with any other `{cli-install}` widget on the page.
+
+uv-flavored days-mode snippets include `--exclude-newer-package
+agentgrep=2099-01-01` so the global cooldown applies to transitive
+deps without filtering agentgrep itself out of the resolver (a fresh
+release of agentgrep would otherwise be newer than the cutoff). pip
+has no per-package cutoff override, so the pipx and pip days panels
+carry a note pointing users at the uv-flavored snippets when the
+cooldown filters out a recent agentgrep release.
+
 ### Development
 
 The `sphinx-autodoc-argparse` Sphinx extension is added to the `dev`
 and `docs` dependency groups to drive the per-subcommand argparse
-rendering.
+rendering. The `make_cooldown_days_slot_filter` Jinja helper now
+emits the shared `ag-cooldown-days` class on cooldown-day spans
+instead of the mcp-prefixed variant — no visual change, but the
+filter output is widget-agnostic, so `{cli-install}` panels can reuse
+the same sentinel mechanism.
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
