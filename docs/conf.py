@@ -35,6 +35,7 @@ conf = merge_sphinx_config(
     html_extra_path=["manifest.json"],
     extra_extensions=[
         "sphinx_autodoc_api_style",
+        "sphinx_autodoc_argparse",
         "sphinx_autodoc_fastmcp",
         "docs._ext.widgets",
     ],
