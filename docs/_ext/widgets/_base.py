@@ -144,11 +144,11 @@ def make_cooldown_days_slot_filter() -> CooldownDaysSlotFilter:
 
     default_date = default_cooldown_date(DEFAULT_COOLDOWN_DAYS)
     duration_span = (
-        '<span class="lm-mcp-install__cooldown-days"'
+        '<span class="ag-mcp-install__cooldown-days"'
         f" data-cooldown-duration-slot>P{DEFAULT_COOLDOWN_DAYS}D</span>"
     )
     date_span = (
-        f'<span class="lm-mcp-install__cooldown-days" data-cooldown-date-slot>{default_date}</span>'
+        f'<span class="ag-mcp-install__cooldown-days" data-cooldown-date-slot>{default_date}</span>'
     )
 
     def _filter(html: object) -> markupsafe.Markup:

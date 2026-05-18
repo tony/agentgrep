@@ -67,11 +67,11 @@ if t.TYPE_CHECKING:
 # layer to fix the panel cascade against ``furo-tw``'s ``[hidden]``
 # preflight.
 _TAB_DEACTIVATE_RULE = (
-    "html[data-mcp-install-client] .lm-mcp-install__tab"
+    "html[data-mcp-install-client] .ag-mcp-install__tab"
     '[data-tab-kind="client"][aria-selected="true"],'
-    "html[data-mcp-install-method] .lm-mcp-install__tab"
+    "html[data-mcp-install-method] .ag-mcp-install__tab"
     '[data-tab-kind="method"][aria-selected="true"],'
-    "html[data-mcp-install-scope] .lm-mcp-install__tab"
+    "html[data-mcp-install-scope] .ag-mcp-install__tab"
     '[data-tab-kind="scope"][aria-selected="true"]'
     "{color:var(--color-foreground-muted) !important;"
     "border-bottom-color:transparent !important;"
@@ -85,7 +85,7 @@ _TAB_ACTIVE_DECL = (
 )
 
 _PANEL_HIDE_RULE = (
-    "html[data-mcp-install-client] .lm-mcp-install__panel:not([hidden]){display:none !important}"
+    "html[data-mcp-install-client] .ag-mcp-install__panel:not([hidden]){display:none !important}"
 )
 
 _PANEL_ACTIVE_DECL = "{display:block !important}"
@@ -106,7 +106,7 @@ _SCOPE_GROUP_ACTIVE_DECL = "{display:flex !important}"
 # sync is invisible because CSS already shows the right state.
 _COOLDOWN_TOGGLE_RULES = (
     # Reset native chrome and own the box.
-    ".lm-mcp-install__cooldown-toggle"
+    ".ag-mcp-install__cooldown-toggle"
     "{appearance:none !important;"
     "-webkit-appearance:none !important;"
     "width:0.95em !important;"
@@ -120,13 +120,13 @@ _COOLDOWN_TOGGLE_RULES = (
     "flex:0 0 auto !important}"
     # Checked appearance (brand-coloured fill + border).
     'html[data-mcp-install-cooldown-enabled="1"]'
-    " .lm-mcp-install__cooldown-toggle"
+    " .ag-mcp-install__cooldown-toggle"
     "{background:var(--color-brand-primary) !important;"
     "border-color:var(--color-brand-primary) !important}"
     # Check mark via a centred ``✓`` pseudo. White on brand blue is
     # legible in both light and dark modes (brand-primary stays blue).
     'html[data-mcp-install-cooldown-enabled="1"]'
-    " .lm-mcp-install__cooldown-toggle::after"
+    " .ag-mcp-install__cooldown-toggle::after"
     '{content:"✓" !important;'
     "position:absolute !important;"
     "inset:0 !important;"
@@ -138,7 +138,7 @@ _COOLDOWN_TOGGLE_RULES = (
     "font-weight:700 !important;"
     "line-height:1 !important}"
     # Focus ring — accessibility unchanged from native.
-    ".lm-mcp-install__cooldown-toggle:focus-visible"
+    ".ag-mcp-install__cooldown-toggle:focus-visible"
     "{outline:2px solid var(--color-brand-primary) !important;"
     "outline-offset:2px !important}"
 )
@@ -184,7 +184,7 @@ def _script() -> str:
 
 def _tab_active_selectors(kind: str, ids: tuple[str, ...]) -> str:
     return ",".join(
-        f'html[data-mcp-install-{kind}="{id_}"] .lm-mcp-install__tab'
+        f'html[data-mcp-install-{kind}="{id_}"] .ag-mcp-install__tab'
         f'[data-tab-kind="{kind}"][data-tab-value="{id_}"]'
         for id_ in ids
     )
@@ -201,7 +201,7 @@ def _scope_tab_active_selectors() -> str:
     return ",".join(
         f'html[data-mcp-install-client="{c.id}"]'
         f'[data-mcp-install-scope="{s.id}"]'
-        f' .lm-mcp-install__tab[data-tab-kind="scope"]'
+        f' .ag-mcp-install__tab[data-tab-kind="scope"]'
         f'[data-tab-client="{c.id}"][data-tab-value="{s.id}"]'
         for c in CLIENTS
         for s in c.scopes
@@ -216,7 +216,7 @@ def _scope_group_visible_selectors() -> str:
     """
     return ",".join(
         f'html[data-mcp-install-client="{c.id}"]'
-        f' .lm-mcp-install__scopes-group[data-scope-client="{c.id}"]'
+        f' .ag-mcp-install__scopes-group[data-scope-client="{c.id}"]'
         for c in CLIENTS
         if len(c.scopes) > 1
     )
@@ -247,7 +247,7 @@ def _panel_active_selectors() -> str:
                     f'[data-mcp-install-scope="{s.id}"]'
                 )
                 panel_base = (
-                    f" .lm-mcp-install__panel"
+                    f" .ag-mcp-install__panel"
                     f'[data-client="{c.id}"]'
                     f'[data-method="{m.id}"]'
                     f'[data-scope="{s.id}"]'
@@ -301,7 +301,7 @@ def _build_style() -> str:
     layered rules LOSE to *normal* unlayered rules — so every
     declaration here is ``!important``, including the tab
     active/inactive colours that competed (and won, unlayered) against
-    ``widget.css``'s ``.lm-mcp-install__tab[aria-selected="true"]``
+    ``widget.css``'s ``.ag-mcp-install__tab[aria-selected="true"]``
     purely on specificity. Drop the ``!important`` on a tab
     declaration and the active-tab indicator will flash from server
     default to saved state on first paint.
