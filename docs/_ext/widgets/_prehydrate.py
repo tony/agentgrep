@@ -380,3 +380,34 @@ def inject_library_install_prehydrate(
 ) -> None:
     """Inject the library-install prehydrate snippet into Furo's ``<head>``."""
     context["metatags"] = context.get("metatags", "") + _library_install_snippet()
+
+
+def _cli_install_snippet() -> str:
+    """Return the inline ``<script>`` that replays saved CLI install method.
+
+    The CSS rules that drive panel visibility from
+    ``html[data-cli-install-method=...]`` live in
+    ``docs/_widgets/cli-install/widget.css`` — both stylesheet and
+    widget JS read the same storage key.
+    """
+    from .cli_install import DEFAULT_METHOD
+
+    return (
+        '<script data-cfasync="false">(function(){'
+        "try{"
+        'var m=localStorage.getItem("agentgrep.cli-install.method")||"' + DEFAULT_METHOD + '";'
+        'document.documentElement.setAttribute("data-cli-install-method",m);'
+        "}catch(_){}"
+        "})();</script>"
+    )
+
+
+def inject_cli_install_prehydrate(
+    app: Sphinx,
+    pagename: str,
+    templatename: str,
+    context: dict[str, t.Any],
+    doctree: object,
+) -> None:
+    """Inject the cli-install prehydrate snippet into Furo's ``<head>``."""
+    context["metatags"] = context.get("metatags", "") + _cli_install_snippet()

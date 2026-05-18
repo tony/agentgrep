@@ -1,0 +1,132 @@
+/* CLI install widget — visual rhythm matches mcp-install / library-install.
+ *
+ * Re-uses the Furo color variables so dark/light mode follows the
+ * theme. CSS-driven visibility on the html[data-cli-install-method]
+ * attribute survives gp-sphinx SPA navigation between docs pages.
+ *
+ * Code blocks (``.highlight-console``) inherit Pygments + Furo styling
+ * directly — no per-widget code styling here, just spacing.
+ */
+
+.ag-cli-install {
+  border: 1px solid var(--color-background-border, var(--color-foreground-border, #ccc));
+  border-radius: 0.25rem;
+  background: var(--color-background-primary);
+  overflow: hidden;
+  margin: 1rem 0;
+  font-size: 0.95em;
+}
+
+.ag-cli-install__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+  background: var(--color-background-secondary);
+  border-bottom: 1px solid var(--color-background-border, var(--color-foreground-border, #ccc));
+}
+
+.ag-cli-install__tab {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--color-foreground-muted);
+  cursor: pointer;
+  font: inherit;
+  padding: 0.45rem 0.9rem;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.ag-cli-install__tab:hover {
+  color: var(--color-foreground-primary);
+  background: var(--color-background-hover, rgba(0, 0, 0, 0.04));
+}
+
+.ag-cli-install__tab:focus-visible {
+  outline: 2px solid var(--color-brand-primary);
+  outline-offset: -2px;
+}
+
+.ag-cli-install__tab[aria-selected="true"] {
+  color: var(--color-brand-primary);
+  border-bottom-color: var(--color-brand-primary);
+  background: var(--color-background-primary);
+}
+
+.ag-cli-install__body {
+  padding: 0.9rem 1rem;
+}
+
+.ag-cli-install__panel[hidden] {
+  display: none !important;
+}
+
+.ag-cli-install__panel:focus-visible {
+  outline: 2px solid var(--color-brand-primary);
+  outline-offset: 4px;
+  border-radius: 0.25rem;
+}
+
+.ag-cli-install__preamble {
+  margin: 0 0 0.4rem 0;
+  color: var(--color-foreground-secondary);
+  font-size: 0.93em;
+}
+
+.ag-cli-install__preamble a {
+  color: var(--color-brand-content, var(--color-brand-primary));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* Code blocks in this widget inherit Pygments/Furo margins, but their
+ * defaults stack visually flush. Add a small gap when a preamble
+ * follows a code block (the "Then run it..." line after the install
+ * snippet) and between consecutive usage commands so each is a
+ * distinct copyable unit. */
+.ag-cli-install__panel .highlight-console + .ag-cli-install__preamble {
+  margin-top: 0.8rem;
+}
+
+.ag-cli-install__panel .highlight-console + .highlight-console {
+  margin-top: 0.3rem;
+}
+
+/* Compact variant: tighter padding, smaller type. Used on index.md
+ * above-the-fold next to the {mcp-install} :variant: compact widget so
+ * both pickers share the same proportions. Mirrors
+ * ``.ag-mcp-install--compact``. */
+.ag-cli-install--compact .ag-cli-install__tab {
+  padding: 0.3rem 0.7rem;
+  font-size: 0.9em;
+}
+
+.ag-cli-install--compact .ag-cli-install__body {
+  padding: 0.7rem 0.8rem;
+}
+
+/* Prehydrate-driven panel visibility — keeps initial paint in sync
+ * with the saved method without waiting for widget.js to mutate
+ * [hidden]. */
+html[data-cli-install-method="uvx-run"]
+  .ag-cli-install__panel:not([data-method="uvx-run"]),
+html[data-cli-install-method="pipx-run"]
+  .ag-cli-install__panel:not([data-method="pipx-run"]),
+html[data-cli-install-method="uv-add"]
+  .ag-cli-install__panel:not([data-method="uv-add"]),
+html[data-cli-install-method="pip"]
+  .ag-cli-install__panel:not([data-method="pip"]) {
+  display: none !important;
+}
+
+html[data-cli-install-method="uvx-run"]
+  .ag-cli-install__panel[data-method="uvx-run"],
+html[data-cli-install-method="pipx-run"]
+  .ag-cli-install__panel[data-method="pipx-run"],
+html[data-cli-install-method="uv-add"]
+  .ag-cli-install__panel[data-method="uv-add"],
+html[data-cli-install-method="pip"]
+  .ag-cli-install__panel[data-method="pip"] {
+  display: block !important;
+}

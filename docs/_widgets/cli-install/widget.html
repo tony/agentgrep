@@ -1,0 +1,53 @@
+{#
+  CLI install widget: one row of method tabs, one panel per method.
+  Mirrors the mcp-install widget's structure — no wrapper divs around
+  ``.highlight``, so the visual rhythm matches.
+
+  The first panel is visible by default; widget.js mirrors localStorage
+  onto <html data-cli-install-method=...> and the CSS in widget.css
+  swaps panel visibility based on that attribute.
+
+  Each install body and usage command runs through Sphinx's Pygments
+  via the ``highlight`` Jinja filter so sphinx-copybutton's prompt-
+  strip regex picks it up automatically.
+#}
+<div class="ag-cli-install ag-cli-install--{{ variant }}">
+  <div class="ag-cli-install__tabs" role="tablist" aria-label="Install method">
+    {% for method in methods %}
+    <button type="button"
+            class="ag-cli-install__tab"
+            role="tab"
+            data-tab-kind="method"
+            data-tab-value="{{ method.id }}"
+            aria-selected="{{ 'true' if method.id == default_method else 'false' }}"
+            tabindex="{{ '0' if method.id == default_method else '-1' }}">
+      {{ method.label }}
+    </button>
+    {% endfor %}
+  </div>
+
+  <div class="ag-cli-install__body">
+    {% for panel in panels %}
+    <div class="ag-cli-install__panel"
+         role="tabpanel"
+         data-method="{{ panel.method.id }}"
+         tabindex="0"
+         {% if not panel.is_default %}hidden{% endif %}>
+
+      {% if panel.method.doc_url %}
+      <p class="ag-cli-install__preamble">
+        With <a href="{{ panel.method.doc_url }}" target="_blank" rel="noopener">{{ panel.method.label }}</a> installed:
+      </p>
+      {% endif %}
+
+      {{ panel.install_body | highlight("console") }}
+
+      <p class="ag-cli-install__preamble">Then run it from the terminal:</p>
+
+      {% for cmd in panel.usage_commands %}
+      {{ cmd | highlight("console") }}
+      {% endfor %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
