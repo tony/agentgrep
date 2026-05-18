@@ -79,6 +79,7 @@ quickstart
 installation
 clients
 configuration
+storage-catalog
 ```
 
 ```{toctree}

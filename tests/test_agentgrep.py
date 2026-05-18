@@ -26,7 +26,7 @@ import agentgrep as _agentgrep_module
 if t.TYPE_CHECKING:
     import collections.abc as cabc
 
-AgentName = t.Literal["codex", "claude", "cursor"]
+AgentName = t.Literal["codex", "claude", "cursor", "gemini"]
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
@@ -240,6 +240,24 @@ def test_select_backends_prefers_first_available(monkeypatch: pytest.MonkeyPatch
     assert backends.find_tool == "/tmp/fd"
     assert backends.grep_tool == "/tmp/rg"
     assert backends.json_tool == "/tmp/jq"
+
+
+def test_list_files_matching_ignores_gitignore(tmp_path: pathlib.Path) -> None:
+    """Agent stores under ``$HOME`` must be discovered through ``.gitignore``.
+
+    Dotfile-managed setups whose root has ``.gitignore: *`` would otherwise
+    silently mask every session file.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    _ = (tmp_path / ".gitignore").write_text("*\n!keep.json\n", encoding="utf-8")
+    for name in ("a.jsonl", "b.jsonl"):
+        _ = (tmp_path / name).write_text("{}", encoding="utf-8")
+
+    backends = agentgrep.select_backends()
+
+    paths = agentgrep.list_files_matching(tmp_path, "*.jsonl", backends.find_tool)
+
+    assert {p.name for p in paths} == {"a.jsonl", "b.jsonl"}
 
 
 def test_cli_without_subcommand_prints_main_help() -> None:
@@ -3143,3 +3161,557 @@ def test_exit_on_sigint_produces_wifsignaled_sigint() -> None:
         f"expected WIFSIGNALED(SIGINT) (-{int(signal.SIGINT)}), "
         f"got returncode={completed.returncode}; stderr={completed.stderr!r}"
     )
+
+
+def _make_query(agentgrep: object, agents: tuple[AgentName, ...], terms: tuple[str, ...]) -> object:
+    """Build a basic SearchQuery for adapter tests."""
+    mod = t.cast("t.Any", agentgrep)
+    return mod.SearchQuery(
+        terms=terms,
+        search_type="all",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=agents,
+        limit=None,
+    )
+
+
+def test_discover_codex_sources_honours_codex_home_env(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``CODEX_HOME`` overrides ``${HOME}/.codex`` per the catalogue contract."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    decoy_home = tmp_path / "home"
+    alt_root = tmp_path / "elsewhere"
+    monkeypatch.setenv("HOME", str(decoy_home))
+    monkeypatch.setenv("CODEX_HOME", str(alt_root))
+    # Decoy entry under ${HOME}/.codex that should NOT be discovered.
+    decoy_history = decoy_home / ".codex" / "history.jsonl"
+    decoy_history.parent.mkdir(parents=True, exist_ok=True)
+    _ = decoy_history.write_text(
+        '{"session_id":"x","ts":1,"text":"decoy"}\n',
+        encoding="utf-8",
+    )
+    # Real entry under ${CODEX_HOME}.
+    history_path = alt_root / "history.jsonl"
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    _ = history_path.write_text(
+        '{"session_id":"s","ts":1,"text":"libtmux from env"}\n',
+        encoding="utf-8",
+    )
+
+    backends = agentgrep.BackendSelection(None, None, None)
+    sources = agentgrep.discover_codex_sources(decoy_home, backends)
+
+    paths = {s.path for s in sources}
+    assert history_path in paths
+    assert decoy_history not in paths
+
+
+def test_discover_gemini_sources_honours_gemini_cli_home_env(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``GEMINI_CLI_HOME`` overrides ``${HOME}/.gemini`` per the catalogue contract."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    decoy_home = tmp_path / "home"
+    alt_root = tmp_path / "elsewhere"
+    monkeypatch.setenv("HOME", str(decoy_home))
+    monkeypatch.setenv("GEMINI_CLI_HOME", str(alt_root))
+    decoy_session = decoy_home / ".gemini" / "tmp" / "h0" / "chats" / "session-decoy.jsonl"
+    write_jsonl(
+        decoy_session,
+        [
+            {
+                "sessionId": "decoy",
+                "projectHash": "h0",
+                "startTime": "2026-05-17T12:00:00Z",
+                "lastUpdated": "2026-05-17T12:00:00Z",
+                "kind": "main",
+            },
+        ],
+    )
+    session = alt_root / "tmp" / "h0" / "chats" / "session-real.jsonl"
+    write_jsonl(
+        session,
+        [
+            {
+                "sessionId": "real",
+                "projectHash": "h0",
+                "startTime": "2026-05-17T12:00:00Z",
+                "lastUpdated": "2026-05-17T12:00:00Z",
+                "kind": "main",
+            },
+        ],
+    )
+
+    backends = agentgrep.BackendSelection(None, None, None)
+    sources = agentgrep.discover_gemini_sources(decoy_home, backends)
+
+    paths = {s.path for s in sources}
+    assert session in paths
+    assert decoy_session not in paths
+
+
+def test_resolve_env_root_warns_on_missing_path(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An env override set to a non-existent path logs a warning and falls back.
+
+    Structured ``extra=`` is checked via ``caplog.records`` per the project's
+    logging convention (no string matching).
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    default_path = tmp_path / "fallback"
+    default_path.mkdir()
+    bad_path = tmp_path / "does-not-exist"
+    monkeypatch.setenv("CODEX_HOME", str(bad_path))
+
+    with caplog.at_level("WARNING", logger="agentgrep"):
+        result = agentgrep.resolve_env_root("CODEX_HOME", default_path)
+
+    assert result == default_path
+    relevant = [r for r in caplog.records if getattr(r, "agentgrep_env_var", None) == "CODEX_HOME"]
+    assert relevant, "expected warning record with agentgrep_env_var"
+    assert relevant[0].levelname == "WARNING"
+    assert getattr(relevant[0], "agentgrep_env_path", None) == str(bad_path)
+    assert getattr(relevant[0], "agentgrep_env_path_status", None) == "not_found"
+
+
+def test_resolve_env_root_warns_when_env_path_is_file(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An env override pointing at a regular file logs ``not_a_directory``.
+
+    Distinguishing the file case from the missing case lets operators tell
+    a typo apart from an env var pointed at the wrong kind of inode.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    default_path = tmp_path / "fallback"
+    default_path.mkdir()
+    file_path = tmp_path / "i-am-a-file"
+    _ = file_path.write_text("not a directory", encoding="utf-8")
+    monkeypatch.setenv("CODEX_HOME", str(file_path))
+
+    with caplog.at_level("WARNING", logger="agentgrep"):
+        result = agentgrep.resolve_env_root("CODEX_HOME", default_path)
+
+    assert result == default_path
+    relevant = [r for r in caplog.records if getattr(r, "agentgrep_env_var", None) == "CODEX_HOME"]
+    assert relevant, "expected warning record with agentgrep_env_var"
+    assert getattr(relevant[0], "agentgrep_env_path_status", None) == "not_a_directory"
+    assert getattr(relevant[0], "agentgrep_env_path", None) == str(file_path)
+
+
+def test_resolve_env_root_returns_default_when_env_unset(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unset env var returns the default without warning."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    default_path = tmp_path / "fallback"
+    default_path.mkdir()
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+
+    result = agentgrep.resolve_env_root("CODEX_HOME", default_path)
+
+    assert result == default_path
+
+
+def test_search_cursor_cli_transcript_user_prompt(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cursor CLI agent transcripts: user-turn text is surfaced."""
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    transcript = home / ".cursor" / "projects" / "p" / "agent-transcripts" / "u" / "u.jsonl"
+    write_jsonl(
+        transcript,
+        [
+            {
+                "role": "user",
+                "message": {
+                    "content": [
+                        {"type": "text", "text": "<user_query>libtmux list windows</user_query>"},
+                    ],
+                },
+            },
+        ],
+    )
+
+    query = _make_query(agentgrep, ("cursor",), ("libtmux",))
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("cursor",), backends)
+    records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
+
+    assert any(r.agent == "cursor" and "libtmux" in r.text for r in records)
+    cursor_records = [r for r in records if r.agent == "cursor"]
+    assert cursor_records[0].timestamp is not None  # mtime-derived fallback
+
+
+def test_search_cursor_cli_transcript_assistant_text(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cursor CLI: assistant text turns surface as records too."""
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    transcript = home / ".cursor" / "projects" / "p" / "agent-transcripts" / "u" / "u.jsonl"
+    write_jsonl(
+        transcript,
+        [
+            {
+                "role": "user",
+                "message": {"content": [{"type": "text", "text": "ping libtmux"}]},
+            },
+            {
+                "role": "assistant",
+                "message": {
+                    "content": [{"type": "text", "text": "Here's the libtmux output."}],
+                },
+            },
+        ],
+    )
+
+    query = _make_query(agentgrep, ("cursor",), ("libtmux",))
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("cursor",), backends)
+    records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
+
+    roles = {r.role for r in records if r.agent == "cursor"}
+    assert "user" in roles
+    assert "assistant" in roles
+
+
+def test_search_cursor_cli_transcript_ignores_tool_use_blocks(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cursor CLI: ``tool_use`` blocks have no ``text`` payload and must not crash."""
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    transcript = home / ".cursor" / "projects" / "p" / "agent-transcripts" / "u" / "u.jsonl"
+    write_jsonl(
+        transcript,
+        [
+            {
+                "role": "user",
+                "message": {"content": [{"type": "text", "text": "libtmux ping"}]},
+            },
+            {
+                "role": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "name": "mcp_libtmux_list_windows",
+                            "input": {},
+                        },
+                    ],
+                },
+            },
+        ],
+    )
+
+    query = _make_query(agentgrep, ("cursor",), ("libtmux",))
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("cursor",), backends)
+    records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
+
+    assert all(r.text.strip() for r in records)  # no empty-text records leak through
+
+
+def test_search_gemini_chat_legacy_json_session(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pre-Feb 2026 .json single-file session: messages[] surface to search."""
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    legacy_session = home / ".gemini" / "tmp" / "h0" / "chats" / "session-legacy.json"
+    legacy_session.parent.mkdir(parents=True, exist_ok=True)
+    _ = legacy_session.write_text(
+        json.dumps(
+            {
+                "sessionId": "legacy-sess",
+                "projectHash": "h0",
+                "startTime": "2026-02-01T00:00:00Z",
+                "lastUpdated": "2026-02-01T00:01:00Z",
+                "messages": [
+                    {
+                        "id": "m1",
+                        "timestamp": "2026-02-01T00:00:30Z",
+                        "type": "user",
+                        "content": [{"text": "legacy libtmux trace"}],
+                    },
+                ],
+            },
+        ),
+        encoding="utf-8",
+    )
+
+    query = _make_query(agentgrep, ("gemini",), ("libtmux",))
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("gemini",), backends)
+    records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
+
+    legacy = [r for r in records if r.store == "gemini.tmp_chats_legacy"]
+    assert legacy, "expected at least one gemini.tmp_chats_legacy record"
+    assert legacy[0].text == "legacy libtmux trace"
+    assert legacy[0].session_id == "legacy-sess"
+    assert legacy[0].role == "user"
+
+
+def test_search_gemini_chat_session_user_prompt(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Gemini chat JSONL: user MessageRecord is surfaced with timestamp + sessionId."""
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    session = home / ".gemini" / "tmp" / "h0" / "chats" / "session-x.jsonl"
+    write_jsonl(
+        session,
+        [
+            {
+                "sessionId": "sess-1",
+                "projectHash": "h0",
+                "startTime": "2026-05-17T12:00:00Z",
+                "lastUpdated": "2026-05-17T12:00:00Z",
+                "kind": "main",
+            },
+            {
+                "id": "m1",
+                "timestamp": "2026-05-17T12:00:05Z",
+                "type": "user",
+                "content": [{"text": "remind me about libtmux"}],
+            },
+        ],
+    )
+
+    query = _make_query(agentgrep, ("gemini",), ("libtmux",))
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("gemini",), backends)
+    records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
+
+    assert any(r.agent == "gemini" and "libtmux" in r.text for r in records)
+    chat_records = [r for r in records if r.store == "gemini.tmp_chats"]
+    assert chat_records, "expected at least one gemini.tmp_chats record"
+    assert chat_records[0].session_id == "sess-1"
+    assert chat_records[0].timestamp == "2026-05-17T12:00:05Z"
+
+
+def test_search_gemini_chat_session_drops_textless_records(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``$set`` updates and content-free gemini records produce no record.
+
+    A gemini-typed record with empty ``content`` AND no ``thoughts`` or
+    ``toolCalls`` carries no searchable text — it should be skipped. A
+    gemini-typed record WITH ``thoughts`` or ``toolCalls`` is handled by
+    ``test_search_gemini_chat_session_surfaces_thoughts``.
+    """
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    session = home / ".gemini" / "tmp" / "h0" / "chats" / "session-x.jsonl"
+    write_jsonl(
+        session,
+        [
+            {
+                "sessionId": "sess-1",
+                "projectHash": "h0",
+                "startTime": "2026-05-17T12:00:00Z",
+                "lastUpdated": "2026-05-17T12:00:00Z",
+                "kind": "main",
+            },
+            {
+                "id": "m1",
+                "timestamp": "2026-05-17T12:00:05Z",
+                "type": "user",
+                "content": [{"text": "libtmux ping"}],
+            },
+            {"$set": {"lastUpdated": "2026-05-17T12:00:10Z"}},
+            {
+                "id": "m2",
+                "timestamp": "2026-05-17T12:00:11Z",
+                "type": "gemini",
+                "content": "",
+                "model": "gemini-3-flash-preview",
+            },
+        ],
+    )
+
+    query = _make_query(agentgrep, ("gemini",), ("libtmux",))
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("gemini",), backends)
+    records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
+
+    chat_records = [r for r in records if r.store == "gemini.tmp_chats"]
+    assert len(chat_records) == 1
+    assert chat_records[0].role == "user"
+
+
+def test_search_gemini_chat_session_surfaces_thoughts_and_tool_calls(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Gemini turns with empty ``content`` are surfaced via ``thoughts`` and ``toolCalls``."""
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    session = home / ".gemini" / "tmp" / "h0" / "chats" / "session-x.jsonl"
+    write_jsonl(
+        session,
+        [
+            {
+                "sessionId": "sess-1",
+                "projectHash": "h0",
+                "startTime": "2026-05-17T12:00:00Z",
+                "lastUpdated": "2026-05-17T12:00:00Z",
+                "kind": "main",
+            },
+            {
+                "id": "thought-turn",
+                "timestamp": "2026-05-17T12:00:11Z",
+                "type": "gemini",
+                "content": "",
+                "thoughts": [
+                    {
+                        "subject": "Analysing libtmux",
+                        "description": "The user wants the libtmux helper.",
+                        "timestamp": "2026-05-17T12:00:10Z",
+                    },
+                ],
+                "model": "gemini-3-flash-preview",
+            },
+            {
+                "id": "tool-turn",
+                "timestamp": "2026-05-17T12:00:13Z",
+                "type": "gemini",
+                "content": "",
+                "toolCalls": [
+                    {
+                        "id": "call_0",
+                        "name": "run_shell_command",
+                        "args": {"command": "rg libtmux"},
+                        "description": "Invoke a libtmux-related shell helper.",
+                    },
+                ],
+                "model": "gemini-3-flash-preview",
+            },
+        ],
+    )
+
+    query = _make_query(agentgrep, ("gemini",), ("libtmux",))
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("gemini",), backends)
+    records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
+
+    chat_records = [r for r in records if r.store == "gemini.tmp_chats"]
+    assert len(chat_records) == 2  # one thought turn + one tool-call turn
+    by_role = {r.role: r for r in chat_records}
+    assert "gemini" in by_role
+    texts = "\n".join(r.text for r in chat_records)
+    assert "Analysing libtmux" in texts
+    assert "libtmux helper" in texts
+    assert "run_shell_command" in texts
+    assert "libtmux-related shell helper" in texts
+
+
+def test_search_gemini_chat_session_metadata_with_future_type_field(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SessionMetadataRecord with a hypothetical ``type`` field stays classified.
+
+    Upstream discriminates metadata records by ``kind``; agentgrep's parser
+    must too, so a future Gemini schema that adds a ``type`` field to the
+    session-metadata line cannot silently misclassify it as a turn.
+    """
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    session = home / ".gemini" / "tmp" / "h0" / "chats" / "session-x.jsonl"
+    write_jsonl(
+        session,
+        [
+            {
+                "sessionId": "sess-1",
+                "projectHash": "h0",
+                "startTime": "2026-05-17T12:00:00Z",
+                "lastUpdated": "2026-05-17T12:00:00Z",
+                "kind": "main",
+                # Hypothetical forward-compat: upstream adds `type`.
+                "type": "session_meta",
+            },
+            {
+                "id": "m1",
+                "timestamp": "2026-05-17T12:00:05Z",
+                "type": "user",
+                "content": [{"text": "remind me about libtmux"}],
+            },
+        ],
+    )
+
+    query = _make_query(agentgrep, ("gemini",), ("libtmux",))
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("gemini",), backends)
+    records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
+
+    chat_records = [r for r in records if r.store == "gemini.tmp_chats"]
+    assert len(chat_records) == 1
+    assert chat_records[0].role == "user"
+    assert chat_records[0].session_id == "sess-1"
+
+
+def test_search_gemini_logs_returns_user_message(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Gemini logs.json: flat LogEntry array yields prompt-history records."""
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    logs = home / ".gemini" / "tmp" / "h0" / "logs.json"
+    logs.parent.mkdir(parents=True, exist_ok=True)
+    _ = logs.write_text(
+        json.dumps(
+            [
+                {
+                    "sessionId": "sess-1",
+                    "messageId": 0,
+                    "type": "user",
+                    "message": "libtmux trace",
+                    "timestamp": "2026-05-17T12:00:05Z",
+                },
+            ],
+        ),
+        encoding="utf-8",
+    )
+
+    query = _make_query(agentgrep, ("gemini",), ("libtmux",))
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("gemini",), backends)
+    records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
+
+    log_records = [r for r in records if r.store == "gemini.tmp_logs"]
+    assert log_records, "expected at least one gemini.tmp_logs record"
+    assert log_records[0].text == "libtmux trace"
+    assert log_records[0].role == "user"
+    assert log_records[0].kind == "history"
+    assert log_records[0].timestamp == "2026-05-17T12:00:05Z"
+    assert log_records[0].session_id == "sess-1"

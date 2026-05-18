@@ -34,9 +34,11 @@ import argparse
 import asyncio
 import contextlib
 import dataclasses
+import datetime
 import importlib
 import itertools
 import json
+import logging
 import os
 import pathlib
 import re
@@ -57,6 +59,15 @@ from rich.markdown import Markdown as _RichMarkdown
 from rich.syntax import Syntax as _RichSyntax
 from rich.text import Text as _RichText
 
+from agentgrep.stores import (
+    DiscoverySpec,
+    PathKind,
+    SourceKind,
+)
+
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
+
 if t.TYPE_CHECKING:
     import collections.abc as cabc
 
@@ -64,19 +75,17 @@ if t.TYPE_CHECKING:
 else:
     PrivatePathBase = type(pathlib.Path())
 
-AgentName = t.Literal["codex", "claude", "cursor"]
+AgentName = t.Literal["codex", "claude", "cursor", "gemini"]
 OutputMode = t.Literal["text", "json", "ndjson", "ui"]
 ProgressMode = t.Literal["auto", "always", "never"]
-PathKind = t.Literal["history_file", "session_file", "sqlite_db"]
 SearchType = t.Literal["prompts", "history", "all"]
-SourceKind = t.Literal["json", "jsonl", "sqlite"]
 ColorMode = t.Literal["auto", "always", "never"]
 type JSONScalar = str | int | float | bool | None
 type JSONValue = JSONScalar | list[JSONValue] | dict[str, JSONValue]
 type SummaryRow = tuple[object, object, object, object, object, object, object, object]
 type KeyValueRow = tuple[object, object]
 
-AGENT_CHOICES: tuple[AgentName, ...] = ("codex", "claude", "cursor")
+AGENT_CHOICES: tuple[AgentName, ...] = ("codex", "claude", "cursor", "gemini")
 JSON_FILE_SUFFIXES: frozenset[str] = frozenset({".json", ".jsonl"})
 SCHEMA_VERSION: str = "agentgrep.v1"
 USER_ROLES: frozenset[str] = frozenset({"human", "user"})
@@ -2252,6 +2261,8 @@ def discover_sources(
             discovered.extend(discover_claude_sources(home, backends))
         elif agent == "cursor":
             discovered.extend(discover_cursor_sources(home, backends))
+        elif agent == "gemini":
+            discovered.extend(discover_gemini_sources(home, backends))
     discovered.sort(key=lambda item: (item.agent, item.store, str(item.path)))
     return discovered
 
@@ -2264,126 +2275,223 @@ def file_mtime_ns(path: pathlib.Path) -> int:
         return 0
 
 
-def discover_codex_sources(
-    home: pathlib.Path,
+def resolve_env_root(env_var: str, default: pathlib.Path) -> pathlib.Path:
+    """Resolve a base directory from an environment variable, with safety.
+
+    When ``env_var`` is set to a non-empty path that is an existing directory,
+    return that path. When it is set but points to a non-existent or
+    non-directory location, emit a ``WARNING`` log and fall back to
+    ``default``. When unset or empty, return ``default``.
+
+    Parameters
+    ----------
+    env_var : str
+        Environment variable name (e.g. ``"CODEX_HOME"``).
+    default : pathlib.Path
+        Fallback path when the env var is unset, empty, or unusable.
+
+    Returns
+    -------
+    pathlib.Path
+        Resolved base directory.
+    """
+    value = os.environ.get(env_var)
+    if not value:
+        return default
+    candidate = pathlib.Path(value)
+    if candidate.is_dir():
+        return candidate
+    status = "not_a_directory" if candidate.exists() else "not_found"
+    logger.warning(
+        "env-override path unavailable, fell back to default",
+        extra={
+            "agentgrep_env_var": env_var,
+            "agentgrep_env_path": value,
+            "agentgrep_env_path_status": status,
+        },
+    )
+    return default
+
+
+def handles_from_discovery(
+    spec: DiscoverySpec,
+    agent: AgentName,
+    root: pathlib.Path,
     backends: BackendSelection,
 ) -> list[SourceHandle]:
-    """Discover Codex sessions and command history."""
-    root = home / ".codex"
-    sources: list[SourceHandle] = []
-    if not root.exists():
-        return sources
+    """Produce ``SourceHandle``s from a :class:`DiscoverySpec`.
 
-    for name in ("history.json", "history.jsonl"):
-        path = root / name
-        if path.is_file():
+    Applies the spec's ``home_subpath`` under ``root`` to derive the search
+    root, then enumerates source files via ``files`` (single-file lookups),
+    ``glob`` (recursive walk with optional ``path_parts_required`` filter),
+    and ``platform_paths`` (absolute paths).
+    """
+    sources: list[SourceHandle] = []
+    search_root = root.joinpath(*spec.home_subpath) if spec.home_subpath else root
+
+    for name in spec.files:
+        candidate = search_root / name
+        if candidate.is_file():
             sources.append(
                 SourceHandle(
-                    agent="codex",
-                    store="codex.history",
-                    adapter_id="codex.history_json.v1",
-                    path=path,
-                    path_kind="history_file",
-                    source_kind="jsonl" if path.suffix == ".jsonl" else "json",
+                    agent=agent,
+                    store=spec.store,
+                    adapter_id=spec.adapter_id,
+                    path=candidate,
+                    path_kind=spec.path_kind,
+                    source_kind=spec.source_kind,
                     search_root=None,
+                    mtime_ns=file_mtime_ns(candidate),
+                ),
+            )
+
+    if spec.glob is not None and search_root.exists():
+        required_parts = set(spec.path_parts_required)
+        for path in list_files_matching(search_root, spec.glob, backends.find_tool):
+            if required_parts and not required_parts.issubset(path.parts):
+                continue
+            sources.append(
+                SourceHandle(
+                    agent=agent,
+                    store=spec.store,
+                    adapter_id=spec.adapter_id,
+                    path=path,
+                    path_kind=spec.path_kind,
+                    source_kind=spec.source_kind,
+                    search_root=search_root,
                     mtime_ns=file_mtime_ns(path),
                 ),
             )
 
-    sessions_root = root / "sessions"
-    sources.extend(
-        SourceHandle(
-            agent="codex",
-            store="codex.sessions",
-            adapter_id="codex.sessions_jsonl.v1",
-            path=path,
-            path_kind="session_file",
-            source_kind="jsonl",
-            search_root=sessions_root,
-            mtime_ns=file_mtime_ns(path),
-        )
-        for path in list_files_matching(sessions_root, "*.jsonl", backends.find_tool)
-    )
+    for absolute_path_str in spec.platform_paths:
+        candidate = pathlib.Path(absolute_path_str).expanduser()
+        if candidate.is_file():
+            sources.append(
+                SourceHandle(
+                    agent=agent,
+                    store=spec.store,
+                    adapter_id=spec.adapter_id,
+                    path=candidate,
+                    path_kind=spec.path_kind,
+                    source_kind=spec.source_kind,
+                    search_root=None,
+                    mtime_ns=file_mtime_ns(candidate),
+                ),
+            )
+
     return sources
+
+
+def isoformat_from_mtime_ns(mtime_ns: int) -> str | None:
+    """Convert a nanosecond ``mtime`` to an ISO-8601 UTC timestamp.
+
+    Used as a timestamp fallback for stores whose records carry no native
+    timestamp — most notably Cursor CLI agent transcripts.
+    """
+    if mtime_ns <= 0:
+        return None
+    return (
+        datetime.datetime.fromtimestamp(mtime_ns / 1_000_000_000, tz=datetime.UTC)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
+def discover_from_catalog(
+    home: pathlib.Path,
+    agent: AgentName,
+    base: pathlib.Path,
+    backends: BackendSelection,
+) -> list[SourceHandle]:
+    """Walk every catalogue row for ``agent`` and emit ``SourceHandle``s.
+
+    Each row's :class:`agentgrep.stores.DiscoverySpec` entries drive
+    enumeration via :func:`handles_from_discovery`. Rows whose ``discovery``
+    tuple is empty are documentary-only and contribute no sources.
+    Rows whose ``search_by_default`` is exactly ``False`` are skipped so
+    the catalogue contract documented in
+    :mod:`agentgrep.store_catalog` is honoured at runtime;
+    ``True`` and ``None`` (decision-deferred) are searched.
+    """
+    from agentgrep.store_catalog import CATALOG
+
+    sources: list[SourceHandle] = []
+    for descriptor in CATALOG.for_agent(agent):
+        if descriptor.search_by_default is False:
+            continue
+        # Per-descriptor dedup: a row whose discovery tuple has more than one
+        # spec (e.g. Cursor IDE state.vscdb with both modern platform_paths
+        # and a legacy ~/.cursor glob) must not yield the same file twice
+        # under different adapter ids on layouts where both specs match.
+        seen_paths: set[pathlib.Path] = set()
+        for spec in descriptor.discovery:
+            for handle in handles_from_discovery(spec, agent, base, backends):
+                if handle.path in seen_paths:
+                    continue
+                seen_paths.add(handle.path)
+                sources.append(handle)
+    return sources
+
+
+def discover_codex_sources(
+    home: pathlib.Path,
+    backends: BackendSelection,
+) -> list[SourceHandle]:
+    """Discover Codex sessions and command history.
+
+    Honours the ``CODEX_HOME`` environment variable (see upstream
+    ``codex-rs/utils/home-dir/src/lib.rs``); falls back to ``${HOME}/.codex``
+    when unset or empty. Path roots, globs, file lists, and adapter metadata
+    come from the ``codex.*`` rows of
+    :data:`agentgrep.store_catalog.CATALOG`.
+    """
+    root = resolve_env_root("CODEX_HOME", home / ".codex")
+    if not root.exists():
+        return []
+    return discover_from_catalog(home, "codex", root, backends)
 
 
 def discover_claude_sources(
     home: pathlib.Path,
     backends: BackendSelection,
 ) -> list[SourceHandle]:
-    """Discover Claude Code project session files."""
-    root = home / ".claude" / "projects"
-    if not root.exists():
-        return []
-    return [
-        SourceHandle(
-            agent="claude",
-            store="claude.projects",
-            adapter_id="claude.projects_jsonl.v1",
-            path=path,
-            path_kind="session_file",
-            source_kind="jsonl",
-            search_root=root,
-            mtime_ns=file_mtime_ns(path),
-        )
-        for path in list_files_matching(root, "*.jsonl", backends.find_tool)
-    ]
+    """Discover Claude Code project session files.
+
+    Path roots, globs, and adapter metadata come from the ``claude.*`` rows
+    of :data:`agentgrep.store_catalog.CATALOG`.
+    """
+    return discover_from_catalog(home, "claude", home, backends)
 
 
 def discover_cursor_sources(
     home: pathlib.Path,
     backends: BackendSelection,
 ) -> list[SourceHandle]:
-    """Discover Cursor databases from both home-local and official roots."""
-    sources: list[SourceHandle] = []
-    tracking_db = home / ".cursor" / "ai-tracking" / "ai-code-tracking.db"
-    if tracking_db.is_file():
-        sources.append(
-            SourceHandle(
-                agent="cursor",
-                store="cursor.ai_tracking",
-                adapter_id="cursor.ai_tracking_sqlite.v1",
-                path=tracking_db,
-                path_kind="sqlite_db",
-                source_kind="sqlite",
-                search_root=None,
-                mtime_ns=file_mtime_ns(tracking_db),
-            ),
-        )
+    """Discover Cursor databases from both home-local and official roots.
 
-    seen_paths: set[pathlib.Path] = set()
-    for path in OFFICIAL_CURSOR_STATE_PATHS:
-        if path.is_file():
-            seen_paths.add(path)
-            sources.append(
-                SourceHandle(
-                    agent="cursor",
-                    store="cursor.state",
-                    adapter_id="cursor.state_vscdb_modern.v1",
-                    path=path,
-                    path_kind="sqlite_db",
-                    source_kind="sqlite",
-                    search_root=None,
-                    mtime_ns=file_mtime_ns(path),
-                ),
-            )
-    cursor_root = home / ".cursor"
-    for path in list_files_matching(cursor_root, "state.vscdb", backends.find_tool):
-        if path in seen_paths:
-            continue
-        sources.append(
-            SourceHandle(
-                agent="cursor",
-                store="cursor.state",
-                adapter_id="cursor.state_vscdb_legacy.v1",
-                path=path,
-                path_kind="sqlite_db",
-                source_kind="sqlite",
-                search_root=None,
-                mtime_ns=file_mtime_ns(path),
-            ),
-        )
-    return sources
+    Includes the AI-tracking SQLite, Cursor IDE platform-specific
+    ``state.vscdb`` locations, the legacy ``~/.cursor/state.vscdb`` glob,
+    and the Cursor CLI agent transcripts. Driven entirely by the
+    ``cursor.*`` catalogue rows.
+    """
+    return discover_from_catalog(home, "cursor", home, backends)
+
+
+def discover_gemini_sources(
+    home: pathlib.Path,
+    backends: BackendSelection,
+) -> list[SourceHandle]:
+    """Discover Gemini CLI sessions and prompt logs.
+
+    Honours the ``GEMINI_CLI_HOME`` environment variable (see upstream
+    ``packages/cli/index.ts``); falls back to ``${HOME}/.gemini`` when
+    unset or empty. Path roots, globs, and adapter metadata come from the
+    ``gemini.*`` rows of :data:`agentgrep.store_catalog.CATALOG`.
+    """
+    base = resolve_env_root("GEMINI_CLI_HOME", home / ".gemini")
+    if not base.exists():
+        return []
+    return discover_from_catalog(home, "gemini", base, backends)
 
 
 def list_files_matching(
@@ -2395,7 +2503,16 @@ def list_files_matching(
     if not root.exists():
         return []
     if fd_program is not None:
-        command = [fd_program, "-a", "-t", "f", "--glob", glob_pattern, str(root)]
+        command = [
+            fd_program,
+            "-H",
+            "-I",
+            "-t",
+            "f",
+            "--glob",
+            glob_pattern,
+            str(root),
+        ]
         completed = run_readonly_command(command)
         if completed.returncode == 0:
             return [pathlib.Path(line) for line in completed.stdout.splitlines() if line.strip()]
@@ -2741,6 +2858,19 @@ def iter_source_records(
         return
     if source.adapter_id in {"cursor.state_vscdb_modern.v1", "cursor.state_vscdb_legacy.v1"}:
         yield from parse_cursor_state_db(source)
+        return
+    if source.adapter_id == "cursor.cli_jsonl.v1":
+        yield from parse_cursor_cli_transcript(source)
+        return
+    if source.adapter_id == "gemini.tmp_chats_jsonl.v1":
+        yield from parse_gemini_chat_file(source)
+        return
+    if source.adapter_id == "gemini.tmp_chats_legacy_json.v1":
+        yield from parse_gemini_chat_legacy_file(source)
+        return
+    if source.adapter_id == "gemini.tmp_logs_json.v1":
+        yield from parse_gemini_logs_file(source)
+        return
 
 
 def parse_codex_session_file(
@@ -2828,6 +2958,220 @@ def parse_claude_project_file(
                 continue
             seen.add(key)
             yield build_search_record(source, candidate)
+
+
+def parse_cursor_cli_transcript(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse a Cursor CLI agent transcript JSONL file.
+
+    Each line is ``{"role": "user" | "assistant", "message": {"content": [...]}}``;
+    ``iter_message_candidates`` handles the nested shape directly. Cursor
+    transcripts carry no native per-turn timestamp, so the file's mtime is
+    used as a session-level fallback.
+    """
+    conversation_id = source.path.stem
+    fallback_timestamp = isoformat_from_mtime_ns(source.mtime_ns)
+    seen: set[tuple[str | None, str, str | None, str | None]] = set()
+    for event in iter_jsonl(source.path):
+        for candidate in iter_message_candidates(
+            event,
+            fallback_conversation_id=conversation_id,
+        ):
+            if candidate.timestamp is None and fallback_timestamp is not None:
+                candidate = dataclasses.replace(candidate, timestamp=fallback_timestamp)
+            key = (
+                candidate.role,
+                candidate.text,
+                candidate.timestamp,
+                candidate.conversation_id,
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            yield build_search_record(source, candidate)
+
+
+def _gemini_thoughts_text(thoughts: object) -> str:
+    """Flatten Gemini's ``thoughts[]`` into a single searchable string.
+
+    Each entry carries ``subject`` (short label) and ``description``
+    (multi-sentence reasoning). Concatenating them per-record keeps the
+    conversation-turn boundary intact while still surfacing the assistant's
+    output in the search corpus.
+    """
+    if not isinstance(thoughts, list):
+        return ""
+    parts: list[str] = []
+    for entry in thoughts:
+        if not isinstance(entry, dict):
+            continue
+        mapping = t.cast("dict[str, object]", entry)
+        subject = as_optional_str(mapping.get("subject"))
+        description = as_optional_str(mapping.get("description"))
+        if subject:
+            parts.append(subject)
+        if description:
+            parts.append(description)
+    return "\n".join(parts)
+
+
+def _gemini_tool_calls_text(tool_calls: object) -> str:
+    """Flatten Gemini's ``toolCalls[]`` into a searchable string.
+
+    ``name`` and ``description`` carry the human-readable text; ``args`` is
+    JSON-shaped and contributes lower-signal noise, so it is omitted.
+    """
+    if not isinstance(tool_calls, list):
+        return ""
+    parts: list[str] = []
+    for entry in tool_calls:
+        if not isinstance(entry, dict):
+            continue
+        mapping = t.cast("dict[str, object]", entry)
+        name = as_optional_str(mapping.get("name"))
+        description = as_optional_str(mapping.get("description"))
+        if name:
+            parts.append(name)
+        if description:
+            parts.append(description)
+    return "\n".join(parts)
+
+
+def _gemini_message_record_to_candidate(
+    mapping: dict[str, object],
+    session_id: str | None,
+) -> MessageCandidate | None:
+    """Extract a ``MessageCandidate`` from one Gemini MessageRecord.
+
+    For user records the searchable text is the ``content`` field. For
+    gemini-typed records the model's prose often lives in ``thoughts[]``
+    (with ``content`` empty) and tool invocations live in ``toolCalls[]``;
+    both are concatenated into the candidate's text. Returns ``None`` only
+    when no field carries any text.
+    """
+    role = as_optional_str(mapping.get("type"))
+    if not role:
+        return None
+    text_parts: list[str] = []
+    content_text = flatten_content_value(
+        t.cast("JSONValue | None", mapping.get("content")),
+    )
+    if content_text:
+        text_parts.append(content_text)
+    if role == "gemini":
+        thoughts_text = _gemini_thoughts_text(mapping.get("thoughts"))
+        if thoughts_text:
+            text_parts.append(thoughts_text)
+        tool_calls_text = _gemini_tool_calls_text(mapping.get("toolCalls"))
+        if tool_calls_text:
+            text_parts.append(tool_calls_text)
+    if not text_parts:
+        return None
+    return MessageCandidate(
+        role=role,
+        text="\n".join(text_parts),
+        timestamp=as_optional_str(mapping.get("timestamp")),
+        model=as_optional_str(mapping.get("model")),
+        session_id=session_id or as_optional_str(mapping.get("sessionId")),
+        conversation_id=session_id,
+    )
+
+
+def parse_gemini_chat_file(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse a Gemini CLI chat session JSONL file.
+
+    The file mixes record kinds: a leading ``SessionMetadataRecord``
+    (``{"sessionId", "projectHash", "startTime", "lastUpdated", "kind"}``),
+    ``MessageRecord`` turns (``{"id", "timestamp", "type": "user"|"gemini",
+    "content"}``), and ``MetadataUpdateRecord`` updates (``{"$set": {...}}``).
+    Gemini stores the role in a ``type`` key — not the ``role`` key the
+    shared ``extract_role`` helper recognises — so this adapter extracts
+    fields directly rather than going through ``iter_message_candidates``.
+    """
+    session_id: str | None = None
+    for event in iter_jsonl(source.path):
+        if not isinstance(event, dict):
+            continue
+        mapping = t.cast("dict[str, object]", event)
+        if "$set" in mapping:
+            continue
+        if "kind" in mapping:
+            # SessionMetadataRecord: upstream discriminates by ``kind``
+            # (e.g. ``"main"``) rather than by the absence of ``type``,
+            # so this stays correct even if a future schema adds a
+            # ``type`` field to the metadata record.
+            session_id = as_optional_str(mapping.get("sessionId"))
+            continue
+        candidate = _gemini_message_record_to_candidate(mapping, session_id)
+        if candidate is None:
+            continue
+        yield build_search_record(source, candidate)
+
+
+def parse_gemini_chat_legacy_file(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse a pre-Feb 2026 Gemini CLI single-file ``.json`` chat session.
+
+    The legacy format is a JSON object with session metadata at the top
+    level and the full conversation under a ``messages`` array. Upstream
+    still reads this shape via the ``isLegacyRecord`` discriminator at
+    ``packages/core/src/services/chatRecordingService.ts``. Each entry of
+    ``messages`` carries the same per-turn fields the JSONL format uses,
+    so record extraction is shared with :func:`parse_gemini_chat_file`.
+    """
+    payload = read_json_file(source.path)
+    if not isinstance(payload, dict):
+        return
+    container = t.cast("dict[str, object]", payload)
+    session_id = as_optional_str(container.get("sessionId"))
+    messages = container.get("messages")
+    if not isinstance(messages, list):
+        return
+    for entry in messages:
+        if not isinstance(entry, dict):
+            continue
+        mapping = t.cast("dict[str, object]", entry)
+        candidate = _gemini_message_record_to_candidate(mapping, session_id)
+        if candidate is None:
+            continue
+        yield build_search_record(source, candidate)
+
+
+def parse_gemini_logs_file(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse a Gemini CLI ``logs.json`` file (flat JSON array of LogEntry).
+
+    Records are emitted as ``kind="history"`` — the file is an audit log of
+    user prompts, the same role ``codex.history`` plays for Codex.
+    """
+    payload = read_json_file(source.path)
+    entries = payload if isinstance(payload, list) else []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        mapping = t.cast("dict[str, object]", entry)
+        message = as_optional_str(mapping.get("message"))
+        if not message:
+            continue
+        session_id = as_optional_str(mapping.get("sessionId"))
+        yield SearchRecord(
+            kind="history",
+            agent=source.agent,
+            store=source.store,
+            adapter_id=source.adapter_id,
+            path=source.path,
+            text=message,
+            title="Gemini prompt history",
+            role=as_optional_str(mapping.get("type")) or "user",
+            timestamp=as_optional_str(mapping.get("timestamp")),
+            session_id=session_id,
+            conversation_id=session_id,
+        )
 
 
 def parse_cursor_ai_tracking_db(
@@ -2990,11 +3334,22 @@ def build_grep_command(
     regex: bool,
     case_sensitive: bool,
 ) -> list[str]:
-    """Build a read-only grep command for one term and target."""
-    command = [grep_program, "-l", term, str(target)]
+    """Build a read-only grep command for one term and target.
+
+    Always passes flags that disable ignore-file semantics — agent stores live
+    inside the user's ``$HOME`` and may sit beneath a ``.gitignore`` from a
+    dotfile manager (yadm, chezmoi, stow, bare-git). The grep tools would
+    otherwise silently skip everything.
+    """
+    if grep_program.endswith("rg"):
+        ignore_flags = ["--no-ignore", "--hidden"]
+        fixed_flag = "-F"
+    else:
+        ignore_flags = ["--unrestricted", "--hidden"]
+        fixed_flag = "-Q"
+    command = [grep_program, *ignore_flags, "-l", term, str(target)]
     if not regex:
-        fixed_flag = "-F" if grep_program.endswith("rg") else "-Q"
-        command.insert(2, fixed_flag)
+        command.insert(command.index("-l"), fixed_flag)
     if not case_sensitive:
         command.insert(1, "-i")
     return command
