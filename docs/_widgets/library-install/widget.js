@@ -1,6 +1,6 @@
 /* Library install widget: persist method selection across the docs site.
  *
- * Storage key: agentgrep.library-install.method. Mirrors onto
+ * Storage key: agentgrep.library-install.method.v2. Mirrors onto
  * <html data-library-install-method=...> so the CSS in widget.css
  * drives panel visibility. The accompanying prehydrate snippet
  * (docs/_ext/widgets/_prehydrate.py) replays that attribute before
@@ -9,7 +9,7 @@
 (function () {
   "use strict";
 
-  var STORAGE_KEY = "agentgrep.library-install.method";
+  var STORAGE_KEY = "agentgrep.library-install.method.v2";
   var ATTR = "data-library-install-method";
   var SYNC_EVENT = "agentgrep:library-install:sync";
 

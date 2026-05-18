@@ -364,7 +364,7 @@ def _library_install_snippet() -> str:
     return (
         '<script data-cfasync="false">(function(){'
         "try{"
-        'var m=localStorage.getItem("agentgrep.library-install.method")||"' + DEFAULT_METHOD + '";'
+        'var m=localStorage.getItem("agentgrep.library-install.method.v2")||"' + DEFAULT_METHOD + '";'
         'document.documentElement.setAttribute("data-library-install-method",m);'
         "}catch(_){}"
         "})();</script>"
