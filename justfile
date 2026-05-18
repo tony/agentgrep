@@ -115,3 +115,25 @@ _entr-warn:
     @echo "Install entr(1) to automatically run tasks on file change."
     @echo "See https://eradman.com/entrproject/                      "
     @echo "----------------------------------------------------------"
+
+# ---- MCP dev workflow ----
+
+# Detect installed MCP-aware CLIs and their config files
+[group: 'mcp-swap']
+mcp-detect:
+    uv run scripts/mcp_swap.py detect
+
+# Show the current MCP server entry per CLI for this repo
+[group: 'mcp-swap']
+mcp-status:
+    uv run scripts/mcp_swap.py status --repo .
+
+# Rewrite installed CLI configs to run this local checkout (pass --scope user, etc.)
+[group: 'mcp-swap']
+mcp-use-local *args:
+    uv run scripts/mcp_swap.py use-local --repo . {{ args }}
+
+# Restore CLI configs from the timestamped backup written by mcp-use-local
+[group: 'mcp-swap']
+mcp-revert *args:
+    uv run scripts/mcp_swap.py revert {{ args }}

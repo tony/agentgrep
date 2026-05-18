@@ -36,6 +36,7 @@ conf = merge_sphinx_config(
     extra_extensions=[
         "sphinx_autodoc_api_style",
         "sphinx_autodoc_fastmcp",
+        "docs._ext.widgets",
     ],
     intersphinx_mapping={
         "python": ("https://docs.python.org/3/", None),
@@ -71,10 +72,27 @@ conf["fastmcp_model_classes"] = (
     "CapabilitiesModel",
     "SearchRequestModel",
     "FindRequestModel",
+    "StoreDescriptorModel",
+    "ListStoresRequest",
+    "ListStoresResponse",
+    "GetStoreDescriptorRequest",
+    "ListSourcesRequest",
+    "ListSourcesResponse",
+    "FilterSourcesRequest",
+    "DiscoverySummaryRequest",
+    "DiscoverySummaryResponse",
+    "ValidateQueryRequest",
+    "ValidateQueryResponse",
+    "RecentSessionsRequest",
+    "RecentSessionsResponse",
+    "InspectSampleRequest",
+    "InspectSampleResponse",
 )
 conf["fastmcp_section_badge_map"] = {
     "Search": "readonly",
     "Discovery": "readonly",
+    "Catalog": "readonly",
+    "Diagnostic": "readonly",
 }
 conf["fastmcp_section_badge_pages"] = ("mcp/tools", "mcp/index", "index")
 
@@ -84,6 +102,9 @@ _gp_setup = conf.pop("setup")
 def setup(app: Sphinx) -> None:
     """Configure project-specific Sphinx hooks."""
     _gp_setup(app)
+    app.add_js_file("js/prompt-copy.js", loading_method="defer")
+    app.add_css_file("css/project-admonitions.css")
+    app.add_css_file("css/project-cards.css")
 
 
 globals().update(conf)

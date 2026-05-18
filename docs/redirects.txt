@@ -1,1 +1,6 @@
-
+packages/index library/index
+packages/agentgrep/index library/index
+packages/agentgrep/tutorial library/tutorial
+packages/agentgrep/how-to library/how-to
+packages/agentgrep/reference library/reference
+packages/agentgrep/examples library/examples

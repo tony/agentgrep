@@ -10,6 +10,10 @@ agentgrep has two entry points: a terminal CLI for direct search, and a FastMCP 
 **Pre-alpha.** APIs may change. [Feedback welcome](https://github.com/tony/agentgrep/issues).
 ```
 
+```{mcp-install}
+:variant: compact
+```
+
 ::::{grid} 1 1 2 3
 :gutter: 2 2 3 3
 
@@ -25,10 +29,10 @@ Run a first search and inspect the result shape.
 Tools, resources, and prompts for MCP clients.
 :::
 
-:::{grid-item-card} Package
-:link: packages/agentgrep/index
+:::{grid-item-card} Library
+:link: library/index
 :link-type: doc
-Tutorial, how-to, reference, and examples for the Python package.
+Tutorial, how-to, reference, and examples for the Python library.
 :::
 
 :::{grid-item-card} API Reference
@@ -84,9 +88,9 @@ storage-catalog
 
 ```{toctree}
 :hidden:
-:caption: Package
+:caption: Library
 
-packages/index
+library/index
 ```
 
 ```{toctree}

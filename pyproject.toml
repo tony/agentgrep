@@ -61,6 +61,11 @@ dev = [
   # Lint / typecheck
   "ruff",
   "ty>=0.0.35",
+  # scripts/mcp_swap.py is a PEP 723 standalone with `tomlkit` as its only
+  # third-party dependency. The script is exercised by tests/test_mcp_swap.py,
+  # which doesn't run through PEP 723, so we install tomlkit in the dev group
+  # to make those tests importable.
+  "tomlkit>=0.13",
 ]
 docs = [
   "gp-sphinx==0.0.1a20",

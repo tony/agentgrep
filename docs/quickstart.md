@@ -58,6 +58,6 @@ See {ref}`clients` for MCP client snippets.
 
 ## Next steps
 
-- {doc}`packages/agentgrep/tutorial` walks through CLI search in more detail.
+- {doc}`library/tutorial` walks through CLI search in more detail.
 - {doc}`mcp/tools` documents the MCP tool payloads.
 - {doc}`configuration` explains output, progress, privacy, and source selection.

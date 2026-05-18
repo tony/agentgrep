@@ -1,0 +1,370 @@
+/* MCP install widget — Furo-var driven. Dark mode follows automatically.
+ *
+ * Code blocks (`.highlight-console`, `.highlight-json`) inherit the theme's
+ * Pygments styling so there's no per-widget code styling here — we only
+ * position/space them and draw the prereq accent.
+ */
+
+.ag-mcp-install {
+  border: 1px solid var(--color-background-border, var(--color-foreground-border, #ccc));
+  border-radius: 0.25rem;
+  background: var(--color-background-primary);
+  overflow: hidden;
+  margin: 1rem 0;
+  font-size: 0.95em;
+}
+
+.ag-mcp-install__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+  background: var(--color-background-secondary);
+  border-bottom: 1px solid var(--color-background-border, var(--color-foreground-border, #ccc));
+}
+
+.ag-mcp-install__tabs--methods {
+  background: color-mix(in srgb, var(--color-background-secondary) 60%, var(--color-background-primary));
+}
+
+.ag-mcp-install__tabs--scopes {
+  background: color-mix(in srgb, var(--color-background-secondary) 40%, var(--color-background-primary));
+}
+
+/* Scope groups are hidden by default; the prehydrate ``@layer`` rule
+ * makes the active client's group visible. Without that prehydrate rule
+ * no scope tabs would render — that's intentional, the widget shouldn't
+ * paint a scope row at all when JS is disabled, since clicks wouldn't
+ * persist anyway. */
+.ag-mcp-install__scopes-group {
+  display: none;
+  flex-wrap: wrap;
+  gap: 0;
+  width: 100%;
+}
+
+.ag-mcp-install__tab {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--color-foreground-muted);
+  cursor: pointer;
+  font: inherit;
+  padding: 0.45rem 0.9rem;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.ag-mcp-install__tab:hover {
+  color: var(--color-foreground-primary);
+  background: var(--color-background-hover, rgba(0, 0, 0, 0.04));
+}
+
+.ag-mcp-install__tab:focus-visible {
+  outline: 2px solid var(--color-brand-primary);
+  outline-offset: -2px;
+}
+
+.ag-mcp-install__tab[aria-selected="true"] {
+  color: var(--color-brand-primary);
+  border-bottom-color: var(--color-brand-primary);
+  background: var(--color-background-primary);
+}
+
+.ag-mcp-install__body {
+  padding: 0.9rem 1rem;
+}
+
+.ag-mcp-install__panel[hidden] {
+  display: none !important;
+}
+
+.ag-mcp-install__panel:focus-visible {
+  outline: 2px solid var(--color-brand-primary);
+  outline-offset: 4px;
+  border-radius: 0.25rem;
+}
+
+.ag-mcp-install__preamble {
+  margin: 0 0 0.4rem 0;
+  color: var(--color-foreground-secondary);
+  font-size: 0.93em;
+}
+
+.ag-mcp-install__preamble a {
+  color: var(--color-brand-content, var(--color-brand-primary));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* Prereq accent: blue left-border on the `pip install` prerequisite block. */
+.ag-mcp-install__code--prereq {
+  border-left: 3px solid var(--color-brand-primary);
+  margin: 0 0 0.6rem 0;
+}
+
+.ag-mcp-install__code--prereq .highlight {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.ag-mcp-install__config-file {
+  margin: 0.5rem 0 0 0;
+  color: var(--color-foreground-muted);
+  font-size: 0.85em;
+}
+
+.ag-mcp-install__config-file code {
+  font-size: 0.95em;
+}
+
+/* Compact variant: tighter padding, smaller type. Used on index.md above-the-fold. */
+.ag-mcp-install--compact .ag-mcp-install__tab {
+  padding: 0.3rem 0.7rem;
+  font-size: 0.9em;
+}
+
+.ag-mcp-install--compact .ag-mcp-install__body {
+  padding: 0.7rem 0.8rem;
+}
+
+/* Cooldown control: sits on the right edge of the method row. The
+ * ``margin-inline-start: auto`` is the modern flex-trick to push to
+ * the end without disturbing the preceding tabs. */
+.ag-mcp-install__cooldown-control {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-inline-start: auto;
+  padding: 0 0.7rem 0 0.5rem;
+  color: var(--color-foreground-secondary);
+  font-size: 0.9em;
+}
+
+/* The .ag-mcp-install__cooldown-toggle styling lives in
+ * docs/_ext/widgets/_prehydrate.py inside the @layer mcp-install-prehydrate
+ * block — the appearance reset + checked-state visual must paint from the
+ * inline <head> style so native unchecked → checked flicker disappears. */
+
+.ag-mcp-install__cooldown-label-text {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px dashed transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  margin: 0;
+}
+
+.ag-mcp-install__cooldown-label-text:hover {
+  color: var(--color-foreground-primary);
+  border-bottom-color: var(--color-foreground-muted);
+}
+
+.ag-mcp-install__cooldown-label-text:focus-visible {
+  outline: 2px solid var(--color-brand-primary);
+  outline-offset: 2px;
+  border-radius: 0.15rem;
+}
+
+.ag-mcp-install__cooldown-help {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--color-background-border, var(--color-foreground-border, #ccc));
+  border-radius: 999px;
+  width: 1.3em;
+  height: 1.3em;
+  padding: 0;
+  font: inherit;
+  font-size: 0.85em;
+  color: var(--color-foreground-secondary);
+  cursor: help;
+  line-height: 1;
+}
+
+.ag-mcp-install__cooldown-help:hover {
+  color: var(--color-brand-primary);
+  border-color: var(--color-brand-primary);
+}
+
+.ag-mcp-install__cooldown-help:focus-visible {
+  outline: 2px solid var(--color-brand-primary);
+  outline-offset: 2px;
+}
+
+/* Cooldown days slot inside snippets: inherits Pygments color from
+ * the surrounding string-literal span. Two ``data-*-slot`` attributes
+ * act as the JS hook for updating textContent on every cooldown-days
+ * change: ``data-cooldown-duration-slot`` (uvx + pip days bodies,
+ * carries ``P<N>D``) and ``data-cooldown-date-slot`` (pipx days bodies,
+ * carries ``YYYY-MM-DD``). */
+.ag-mcp-install__cooldown-days {
+  /* No own styling — the wrapping Pygments span carries the color. */
+}
+
+/* Cooldown caveat note rendered after snippets where bypass is a no-op. */
+.ag-mcp-install__cooldown-note {
+  margin: 0.5rem 0 0 0;
+  font-size: 0.85em;
+  font-style: italic;
+  color: var(--color-foreground-secondary);
+  border-left: 2px solid var(--color-background-border, var(--color-foreground-border, #ccc));
+  padding-left: 0.6rem;
+}
+
+.ag-mcp-install__cooldown-note code {
+  font-style: normal;
+}
+
+/* Settings sub-view: lives next to the install body and swaps in via
+ * the ``[data-mcp-install-view="settings"]`` attribute on ``<html>``.
+ * No transitions on the swap — same lesson as the tab rows (see commit
+ * f23d7d5: animations during theme resolve are visible flicker). */
+.ag-mcp-install__body--settings {
+  display: none;
+  padding: 1rem 1.2rem 1.2rem;
+}
+
+html[data-mcp-install-view="settings"] .ag-mcp-install__body--install {
+  display: none;
+}
+
+html[data-mcp-install-view="settings"] .ag-mcp-install__body--settings {
+  display: block;
+}
+
+/* Settings header: back button + title share one row, both flush to the
+ * top-left of the settings body's content area (the body's own padding
+ * supplies the gap to the widget edge). Sizes track the widget's base
+ * font scale (the host ``.ag-mcp-install`` is 0.95em). */
+.ag-mcp-install__settings-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0 0 0.8rem 0;
+}
+
+.ag-mcp-install__back {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--color-background-border, var(--color-foreground-border, #ccc));
+  border-radius: 0.25rem;
+  color: var(--color-foreground-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font: inherit;
+  font-size: 0.85em;
+  line-height: 1;
+  padding: 0.2rem 0.5rem;
+}
+
+.ag-mcp-install__back:hover {
+  color: var(--color-foreground-primary);
+  border-color: var(--color-foreground-secondary);
+  background: var(--color-background-hover, rgba(0, 0, 0, 0.04));
+}
+
+.ag-mcp-install__back:focus-visible {
+  outline: 2px solid var(--color-brand-primary);
+  outline-offset: 2px;
+}
+
+.ag-mcp-install__back-icon {
+  font-size: 1.1em;
+  line-height: 1;
+}
+
+.ag-mcp-install__settings-title {
+  margin: 0;
+  font-size: 1em;
+  font-weight: 600;
+  color: var(--color-foreground-primary);
+}
+
+.ag-mcp-install__settings-help {
+  margin: 0 0 0.8rem 0;
+  font-size: 0.9em;
+  color: var(--color-foreground-secondary);
+}
+
+.ag-mcp-install__settings-help em {
+  font-style: italic;
+}
+
+.ag-mcp-install__settings-modes {
+  border: 0;
+  padding: 0;
+  margin: 0 0 1rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.ag-mcp-install__settings-mode {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  padding: 0.25rem 0;
+}
+
+.ag-mcp-install__settings-mode input[type="radio"] {
+  cursor: pointer;
+}
+
+.ag-mcp-install__cooldown-days-input {
+  width: 4.5em;
+  padding: 0.15rem 0.35rem;
+  border: 1px solid var(--color-background-border, var(--color-foreground-border, #ccc));
+  border-radius: 0.2rem;
+  background: var(--color-background-primary);
+  color: var(--color-foreground-primary);
+  font: inherit;
+  font-size: 0.95em;
+}
+
+.ag-mcp-install__cooldown-explainer {
+  border-top: 1px solid var(--color-background-border, var(--color-foreground-border, #ccc));
+  padding-top: 0.7rem;
+  margin-top: 0.5rem;
+  color: var(--color-foreground-secondary);
+  font-size: 0.9em;
+}
+
+.ag-mcp-install__cooldown-explainer summary {
+  cursor: pointer;
+  color: var(--color-brand-content, var(--color-brand-primary));
+  margin-bottom: 0.5rem;
+}
+
+.ag-mcp-install__cooldown-explainer p {
+  margin: 0 0 0.5rem 0;
+}
+
+.ag-mcp-install__cooldown-explainer a {
+  color: var(--color-brand-content, var(--color-brand-primary));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.ag-mcp-install__sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Compact variant tightens the cooldown control too. */
+.ag-mcp-install--compact .ag-mcp-install__cooldown-control {
+  font-size: 0.85em;
+  padding: 0 0.5rem 0 0.4rem;
+}
