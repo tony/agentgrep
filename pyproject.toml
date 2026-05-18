@@ -1,6 +1,6 @@
 [project]
 name = "agentgrep"
-version = "0.1.0a1"
+version = "0.1.0a2"
 description = "Read-only search for local AI agent prompts and history (Codex, Claude, Cursor)"
 requires-python = ">=3.14,<4.0"
 authors = [
