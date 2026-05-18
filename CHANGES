@@ -59,15 +59,24 @@ for the new reference page.
 #### Gemini CLI search support (#4)
 
 A new `--agent gemini` selector searches Google Gemini CLI
-sessions at `${GEMINI_CLI_HOME or ${HOME}/.gemini}/tmp/<project_hash>/chats/session-*.jsonl`
-and the per-project `logs.json` prompt audit log. The chat parser
-handles Gemini's mixed-record JSONL — session metadata lines, user
-and gemini message records, and `{"$set": …}` metadata updates —
-and surfaces user prompts and assistant content. The logs parser
-walks the flat `LogEntry` array as a prompt-history store. The
-helper {func}`~agentgrep.store_catalog.gemini_project_hash`
-reproduces Gemini CLI's `sha256(absolute_path)` derivation so
-consumers can map a working directory to its tmp shard.
+sessions at `${GEMINI_CLI_HOME or ${HOME}/.gemini}/tmp/<project_hash>/chats/session-*.jsonl`,
+the pre-Feb 2026 single-file `.json` sessions upstream still
+reads, and the per-project `logs.json` prompt audit log. The chat
+parser handles Gemini's mixed-record JSONL — session metadata
+lines, user and gemini message records, and `{"$set": …}`
+metadata updates — surfaces user prompts and assistant `content`,
+and pulls searchable text from `thoughts[*]` and `toolCalls[*]`
+when an assistant turn's `content` is empty. The logs parser walks
+the flat `LogEntry` array as a prompt-history store. The helper
+{func}`~agentgrep.store_catalog.gemini_project_hash` reproduces
+Gemini CLI's `sha256(absolute_path)` derivation so consumers can
+map a working directory to its tmp shard.
+
+The `CODEX_HOME` and `GEMINI_CLI_HOME` environment overrides are
+honoured at discovery time; a non-existent path emits a
+`logging.WARNING` (via `agentgrep`'s module logger, structured
+with `agentgrep_env_var` / `agentgrep_env_path` `extra=` fields)
+and falls back to the default home root.
 
 #### Cursor CLI agent search support (#4)
 
@@ -90,10 +99,13 @@ pattern, `observed_version`, `observed_at`, and a pointer to the
 upstream type definition where one is public.
 `agentgrep.store_catalog.CATALOG` ships an initial registry
 covering Claude Code, Cursor (IDE and CLI agent kept distinct),
-Codex, and Gemini CLI. The catalogue is descriptive — whether
-agentgrep searches a given store by default stays a per-store
-decision adapters consult — so future layout changes can be
-captured by editing one row and bumping the catalogue version.
+Codex, and Gemini CLI. Each runtime-discovered row carries a
+{class}`~agentgrep.stores.DiscoverySpec` that drives
+:func:`~agentgrep.discover_sources` directly, so future upstream
+schema renames become a one-row edit. Rows whose backing files
+upstream does not write — Gemini's would-be `history/` archive
+and the Antigravity protobuf files (Antigravity is a separate
+Google IDE product, not Gemini CLI) — are not declared.
 
 ### Fixes
 

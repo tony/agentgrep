@@ -654,52 +654,6 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
     ),
     StoreDescriptor(
         agent="gemini",
-        store_id="gemini.history",
-        role=StoreRole.SUPPLEMENTARY_CHAT,
-        format=StoreFormat.JSONL,
-        path_pattern="${GEMINI_CLI_HOME or ${HOME}/.gemini}/history/<timestamp>/",
-        env_overrides=("GEMINI_CLI_HOME",),
-        observed_version="gemini-cli v0.42.0 stable; types from v0.44.0-nightly @77e65c0d",
-        observed_at=OBSERVED_AT,
-        schema_notes=(
-            "Archive subset of `tmp/` after retention prune. Same record schema as "
-            "`gemini.tmp.chats`. Defaults: `minRetention=1d`, `maxAge=30d`, "
-            "`maxCount` unbounded — see "
-            "`packages/cli/src/utils/sessionCleanup.ts:23`."
-        ),
-        distinguishes_from=("gemini.tmp.chats",),
-        search_notes="De-duplicate against `gemini.tmp.chats` by `sessionId`.",
-    ),
-    StoreDescriptor(
-        agent="gemini",
-        store_id="gemini.antigravity.brain",
-        role=StoreRole.PLAN,
-        format=StoreFormat.MARKDOWN_FRONTMATTER,
-        path_pattern="${GEMINI_CLI_HOME or ${HOME}/.gemini}/antigravity/brain/<uuid>/task.md*",
-        env_overrides=("GEMINI_CLI_HOME",),
-        observed_version="gemini-cli v0.42.0 stable",
-        observed_at=OBSERVED_AT,
-        schema_notes="Persistent task/plan storage. Markdown, not chat.",
-    ),
-    StoreDescriptor(
-        agent="gemini",
-        store_id="gemini.antigravity.conversations",
-        role=StoreRole.SUPPLEMENTARY_CHAT,
-        format=StoreFormat.PROTOBUF,
-        path_pattern="${GEMINI_CLI_HOME or ${HOME}/.gemini}/antigravity/conversations/*.pb",
-        env_overrides=("GEMINI_CLI_HOME",),
-        observed_version="gemini-cli v0.42.0 stable",
-        observed_at=OBSERVED_AT,
-        schema_notes=(
-            "Protobuf conversation blobs. No `.proto` definitions in the public "
-            "gemini-cli repo as of HEAD `77e65c0d` — schema is opaque; defer adapter "
-            "until upstream publishes definitions or the format is reverse-engineered."
-        ),
-        search_by_default=False,
-        search_notes="Opaque protobuf without public schema.",
-    ),
-    StoreDescriptor(
-        agent="gemini",
         store_id="gemini.skills",
         role=StoreRole.APP_STATE,
         format=StoreFormat.MARKDOWN_FRONTMATTER,
@@ -726,7 +680,7 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
 
 
 CATALOG = StoreCatalog(
-    catalog_version=2,
+    catalog_version=3,
     captured_at=OBSERVED_AT,
     stores=(*_CLAUDE_STORES, *_CURSOR_STORES, *_CODEX_STORES, *_GEMINI_STORES),
 )

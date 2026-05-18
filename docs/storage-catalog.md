@@ -110,36 +110,43 @@ The two `_N.sqlite` files at the Codex root — `state_5.sqlite` and
 ### Gemini CLI
 
 `observed_version`: ``gemini-cli v0.42.0`` stable (2026-05-12); types
-from `v0.44.0-nightly` HEAD `77e65c0d`. Parsed by
-`gemini.tmp_chats_jsonl.v1` and `gemini.tmp_logs_json.v1`.
+from `v0.44.0-nightly` HEAD `77e65c0d`. Three adapters cover the
+three on-disk shapes:
 
-Each `tmp/<project_hash>/chats/session-*.jsonl` file opens with a
-`SessionMetadataRecord` line (`sessionId`, `projectHash`,
-`startTime`, `lastUpdated`, `kind`). Subsequent lines are
-`MessageRecord` turns interleaved with
-`MetadataUpdateRecord` updates:
+- `gemini.tmp_chats_jsonl.v1` parses
+  `tmp/<project_hash>/chats/session-*.jsonl`. Each file opens with
+  a `SessionMetadataRecord` (`sessionId`, `projectHash`,
+  `startTime`, `lastUpdated`, `kind`); subsequent lines are
+  `MessageRecord` turns interleaved with
+  `MetadataUpdateRecord` updates (`{$set: {…}}`). Real files
+  surface `type` values `user` and `gemini`; upstream types also
+  declare `info`/`error`/`warning` plus `RewindRecord` and
+  `PartialMetadataRecord`, but those records did not appear in
+  sampling. `gemini`-typed turns whose `content` is empty have
+  their searchable text drawn from `thoughts[*].subject`/
+  `description` and `toolCalls[*].name`/`description`, joined
+  into one record per turn.
+- `gemini.tmp_chats_legacy_json.v1` parses pre-Feb 2026
+  `tmp/<project_hash>/chats/session-*.json` single-file sessions.
+  Upstream still reads this shape via the `isLegacyRecord`
+  discriminator at
+  [`chatRecordingService.ts:941`](https://github.com/google-gemini/gemini-cli/blob/77e65c0d/packages/core/src/services/chatRecordingService.ts#L941);
+  the legacy file holds session metadata at the top level and the
+  full conversation under a `messages` array.
+- `gemini.tmp_logs_json.v1` parses
+  `tmp/<project_hash>/logs.json` — a flat JSON array of
+  `LogEntry` records (user-prompt audit log).
 
-- `MessageRecord` — `id`, `timestamp`, `type` (in real files: `user`
-  or `gemini`), `content`, with optional `toolCalls`, `thoughts`,
-  `tokens`, `model`. Upstream types also declare `info`, `error`,
-  `warning` plus `RewindRecord` and `PartialMetadataRecord`, but
-  those records did not appear in sampling.
-- `MetadataUpdateRecord` — `{$set: {…}}` partial updates of session
-  metadata.
-
-The v1 adapter surfaces user prompts and any non-empty assistant
-`content`; gemini-typed records whose `content` is empty (reasoning
-lives in `thoughts[*]`) are dropped — surfacing those is a clean
-follow-up.
-
-A separate `tmp/<project_hash>/logs.json` is a JSON array of
-`LogEntry` (user-prompt audit).
-
-`gemini.history/` is a **post-retention archive** of `tmp/chats/`,
-not a strict duplicate — Gemini prunes `tmp/` by `minRetention` /
-`maxAge` defaults defined at
-`packages/cli/src/utils/sessionCleanup.ts:23-24`. When both
-exist, de-duplicate by `sessionId`.
+Gemini's
+[`sessionCleanup.ts`](https://github.com/google-gemini/gemini-cli/blob/77e65c0d/packages/cli/src/utils/sessionCleanup.ts)
+hard-deletes expired sessions via `fs.unlink()` — there is no
+`history/` archive. The Antigravity files some installs carry under
+`~/.gemini/antigravity/conversations/` are written by the
+[Antigravity IDE](https://github.com/google-gemini/gemini-cli/blob/77e65c0d/packages/core/src/ide/detect-ide.ts),
+a separate Google product — Gemini CLI only detects Antigravity as
+an IDE launcher and does not read or write the protobuf
+conversation files. Both stores are out of scope for the Gemini
+adapters.
 
 The `project_hash` is `sha256(absolute_project_root)`. agentgrep
 exposes a Python mirror via
