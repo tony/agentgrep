@@ -349,3 +349,34 @@ def inject_mcp_install_prehydrate(
     pages that use the directive.
     """
     context["metatags"] = context.get("metatags", "") + _snippet()
+
+
+def _library_install_snippet() -> str:
+    """Return the inline ``<script>`` that replays saved library method.
+
+    The CSS rules that drive panel visibility from
+    ``html[data-library-install-method=...]`` live in
+    ``docs/_widgets/library-install/widget.css`` — both stylesheet and
+    widget JS read the same storage key.
+    """
+    from .library_install import DEFAULT_METHOD
+
+    return (
+        '<script data-cfasync="false">(function(){'
+        "try{"
+        'var m=localStorage.getItem("agentgrep.library-install.method")||"' + DEFAULT_METHOD + '";'
+        'document.documentElement.setAttribute("data-library-install-method",m);'
+        "}catch(_){}"
+        "})();</script>"
+    )
+
+
+def inject_library_install_prehydrate(
+    app: Sphinx,
+    pagename: str,
+    templatename: str,
+    context: dict[str, t.Any],
+    doctree: object,
+) -> None:
+    """Inject the library-install prehydrate snippet into Furo's ``<head>``."""
+    context["metatags"] = context.get("metatags", "") + _library_install_snippet()

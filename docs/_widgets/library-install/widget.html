@@ -1,0 +1,52 @@
+{#
+  Library install widget: one row of method tabs, one panel per method.
+  The first panel is visible by default; widget.js mirrors localStorage
+  onto <html data-library-install-method=...> and the CSS in widget.css
+  swaps panel visibility based on that attribute.
+
+  Each install body runs through Sphinx's Pygments via the ``highlight``
+  Jinja filter so sphinx-copybutton's prompt-strip regex picks it up
+  automatically. The quickstart body is highlighted as ``python``.
+#}
+<div class="ag-library-install">
+  <div class="ag-library-install__tabs" role="tablist" aria-label="Install method">
+    {% for method in methods %}
+    <button type="button"
+            class="ag-library-install__tab"
+            role="tab"
+            data-tab-kind="method"
+            data-tab-value="{{ method.id }}"
+            aria-selected="{{ 'true' if method.id == default_method else 'false' }}"
+            tabindex="{{ '0' if method.id == default_method else '-1' }}">
+      {{ method.label }}
+    </button>
+    {% endfor %}
+  </div>
+
+  <div class="ag-library-install__body">
+    {% for panel in panels %}
+    <div class="ag-library-install__panel"
+         role="tabpanel"
+         data-method="{{ panel.method.id }}"
+         tabindex="0"
+         {% if not panel.is_default %}hidden{% endif %}>
+
+      {% if panel.method.doc_url %}
+      <p class="ag-library-install__preamble">
+        With <a href="{{ panel.method.doc_url }}" target="_blank" rel="noopener">{{ panel.method.label }}</a> installed:
+      </p>
+      {% endif %}
+
+      <div class="ag-library-install__install-block">
+        {{ panel.install_body | highlight("console") }}
+      </div>
+
+      <p class="ag-library-install__preamble">Then drive the library from Python:</p>
+
+      <div class="ag-library-install__quickstart-block">
+        {{ panel.quickstart_body | highlight("python") }}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>

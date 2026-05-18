@@ -1,0 +1,98 @@
+/* Library install widget — styling consistent with mcp-install.
+ *
+ * Re-uses the Furo color variables so dark/light mode follows the
+ * theme. CSS-driven visibility on the html[data-library-install-method]
+ * attribute survives gp-sphinx SPA navigation between docs pages.
+ */
+
+.ag-library-install {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin: 1rem 0 1.5rem;
+  border: 1px solid var(--color-background-border);
+  border-radius: 0.5rem;
+  padding: 1rem;
+  background: var(--color-background-secondary);
+}
+
+.ag-library-install__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  border-bottom: 1px solid var(--color-background-border);
+  padding-bottom: 0.5rem;
+}
+
+.ag-library-install__tab {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-foreground-secondary);
+  padding: 0.35rem 0.75rem;
+  border-radius: 0.35rem;
+  cursor: pointer;
+  font: inherit;
+  line-height: 1.2;
+  transition: background 0.1s ease, color 0.1s ease, border-color 0.1s ease;
+}
+
+.ag-library-install__tab:hover {
+  color: var(--color-foreground-primary);
+  background: var(--color-background-hover);
+}
+
+.ag-library-install__tab[aria-selected="true"] {
+  color: var(--color-brand-primary);
+  border-color: var(--color-brand-primary);
+  background: var(--color-background-primary);
+}
+
+.ag-library-install__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.ag-library-install__panel[hidden] {
+  display: none !important;
+}
+
+.ag-library-install__preamble {
+  margin: 0.25rem 0 0;
+  color: var(--color-foreground-secondary);
+}
+
+.ag-library-install__install-block,
+.ag-library-install__quickstart-block {
+  margin: 0.25rem 0;
+}
+
+.ag-library-install__install-block .highlight,
+.ag-library-install__quickstart-block .highlight {
+  border-radius: 0.35rem;
+  border: 1px solid var(--color-background-border);
+}
+
+/* Prehydrate-driven visibility — keeps initial paint in sync with
+ * the saved method without waiting for widget.js to mutate [hidden]. */
+html[data-library-install-method="uvx-run"]
+  .ag-library-install__panel:not([data-method="uvx-run"]),
+html[data-library-install-method="pipx-run"]
+  .ag-library-install__panel:not([data-method="pipx-run"]),
+html[data-library-install-method="uv-add"]
+  .ag-library-install__panel:not([data-method="uv-add"]),
+html[data-library-install-method="pip"]
+  .ag-library-install__panel:not([data-method="pip"]) {
+  display: none !important;
+}
+
+html[data-library-install-method="uvx-run"]
+  .ag-library-install__panel[data-method="uvx-run"],
+html[data-library-install-method="pipx-run"]
+  .ag-library-install__panel[data-method="pipx-run"],
+html[data-library-install-method="uv-add"]
+  .ag-library-install__panel[data-method="uv-add"],
+html[data-library-install-method="pip"]
+  .ag-library-install__panel[data-method="pip"] {
+  display: block !important;
+}

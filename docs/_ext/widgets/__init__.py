@@ -26,7 +26,10 @@ from ._base import (
 )
 from ._directive import make_widget_directive
 from ._discovery import discover
-from ._prehydrate import inject_mcp_install_prehydrate
+from ._prehydrate import (
+    inject_library_install_prehydrate,
+    inject_mcp_install_prehydrate,
+)
 
 if t.TYPE_CHECKING:
     from sphinx.application import Sphinx
@@ -58,6 +61,7 @@ def setup(app: Sphinx) -> dict[str, t.Any]:
         functools.partial(install_widget_assets, widgets=widgets),
     )
     app.connect("html-page-context", inject_mcp_install_prehydrate)
+    app.connect("html-page-context", inject_library_install_prehydrate)
 
     return {
         "version": __version__,
