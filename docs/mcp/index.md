@@ -4,6 +4,13 @@
 
 agentgrep's MCP server exposes a read-only search surface over stdio. It does not mutate local agent stores, open SQLite in write mode, or execute arbitrary shell commands.
 
+## Install
+
+Pick a client, install method, and config scope. The snippet copies directly into your terminal or config file.
+
+```{mcp-install}
+```
+
 ::::{grid} 1 1 3 3
 :gutter: 2
 

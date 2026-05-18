@@ -36,6 +36,7 @@ conf = merge_sphinx_config(
     extra_extensions=[
         "sphinx_autodoc_api_style",
         "sphinx_autodoc_fastmcp",
+        "docs._ext.widgets",
     ],
     intersphinx_mapping={
         "python": ("https://docs.python.org/3/", None),
