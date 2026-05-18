@@ -2301,11 +2301,13 @@ def resolve_env_root(env_var: str, default: pathlib.Path) -> pathlib.Path:
     candidate = pathlib.Path(value)
     if candidate.is_dir():
         return candidate
+    status = "not_a_directory" if candidate.exists() else "not_found"
     logger.warning(
-        "env-override path does not exist, falling back",
+        "env-override path unavailable, fell back to default",
         extra={
             "agentgrep_env_var": env_var,
             "agentgrep_env_path": value,
+            "agentgrep_env_path_status": status,
         },
     )
     return default

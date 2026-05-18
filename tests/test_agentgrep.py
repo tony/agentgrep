@@ -3279,6 +3279,34 @@ def test_resolve_env_root_warns_on_missing_path(
     assert relevant, "expected warning record with agentgrep_env_var"
     assert relevant[0].levelname == "WARNING"
     assert getattr(relevant[0], "agentgrep_env_path", None) == str(bad_path)
+    assert getattr(relevant[0], "agentgrep_env_path_status", None) == "not_found"
+
+
+def test_resolve_env_root_warns_when_env_path_is_file(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An env override pointing at a regular file logs ``not_a_directory``.
+
+    Distinguishing the file case from the missing case lets operators tell
+    a typo apart from an env var pointed at the wrong kind of inode.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    default_path = tmp_path / "fallback"
+    default_path.mkdir()
+    file_path = tmp_path / "i-am-a-file"
+    _ = file_path.write_text("not a directory", encoding="utf-8")
+    monkeypatch.setenv("CODEX_HOME", str(file_path))
+
+    with caplog.at_level("WARNING", logger="agentgrep"):
+        result = agentgrep.resolve_env_root("CODEX_HOME", default_path)
+
+    assert result == default_path
+    relevant = [r for r in caplog.records if getattr(r, "agentgrep_env_var", None) == "CODEX_HOME"]
+    assert relevant, "expected warning record with agentgrep_env_var"
+    assert getattr(relevant[0], "agentgrep_env_path_status", None) == "not_a_directory"
+    assert getattr(relevant[0], "agentgrep_env_path", None) == str(file_path)
 
 
 def test_resolve_env_root_returns_default_when_env_unset(
