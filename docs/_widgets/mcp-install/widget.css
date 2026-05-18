@@ -200,8 +200,11 @@
  * change: ``data-cooldown-duration-slot`` (uvx + pip days bodies,
  * carries ``P<N>D``) and ``data-cooldown-date-slot`` (pipx days bodies,
  * carries ``YYYY-MM-DD``). */
-.ag-mcp-install__cooldown-days {
-  /* No own styling — the wrapping Pygments span carries the color. */
+.ag-cooldown-days {
+  /* No own styling — the wrapping Pygments span carries the color.
+   * Shared class emitted by ``make_cooldown_days_slot_filter`` so the
+   * sentinel spans are widget-agnostic; the cli-install widget reuses
+   * the same selector. */
 }
 
 /* Cooldown caveat note rendered after snippets where bypass is a no-op. */
