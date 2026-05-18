@@ -3255,6 +3255,47 @@ def test_discover_gemini_sources_honours_gemini_cli_home_env(
     assert decoy_session not in paths
 
 
+def test_resolve_env_root_warns_on_missing_path(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An env override set to a non-existent path logs a warning and falls back.
+
+    Structured ``extra=`` is checked via ``caplog.records`` per the project's
+    logging convention (no string matching).
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    default_path = tmp_path / "fallback"
+    default_path.mkdir()
+    bad_path = tmp_path / "does-not-exist"
+    monkeypatch.setenv("CODEX_HOME", str(bad_path))
+
+    with caplog.at_level("WARNING", logger="agentgrep"):
+        result = agentgrep.resolve_env_root("CODEX_HOME", default_path)
+
+    assert result == default_path
+    relevant = [r for r in caplog.records if getattr(r, "agentgrep_env_var", None) == "CODEX_HOME"]
+    assert relevant, "expected warning record with agentgrep_env_var"
+    assert relevant[0].levelname == "WARNING"
+    assert getattr(relevant[0], "agentgrep_env_path", None) == str(bad_path)
+
+
+def test_resolve_env_root_returns_default_when_env_unset(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unset env var returns the default without warning."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    default_path = tmp_path / "fallback"
+    default_path.mkdir()
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+
+    result = agentgrep.resolve_env_root("CODEX_HOME", default_path)
+
+    assert result == default_path
+
+
 def test_search_cursor_cli_transcript_user_prompt(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

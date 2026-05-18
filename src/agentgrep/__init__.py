@@ -38,6 +38,7 @@ import datetime
 import importlib
 import itertools
 import json
+import logging
 import os
 import pathlib
 import re
@@ -58,6 +59,15 @@ from rich.markdown import Markdown as _RichMarkdown
 from rich.syntax import Syntax as _RichSyntax
 from rich.text import Text as _RichText
 
+from agentgrep.stores import (
+    DiscoverySpec,
+    PathKind,
+    SourceKind,
+)
+
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
+
 if t.TYPE_CHECKING:
     import collections.abc as cabc
 
@@ -68,9 +78,7 @@ else:
 AgentName = t.Literal["codex", "claude", "cursor", "gemini"]
 OutputMode = t.Literal["text", "json", "ndjson", "ui"]
 ProgressMode = t.Literal["auto", "always", "never"]
-PathKind = t.Literal["history_file", "session_file", "sqlite_db"]
 SearchType = t.Literal["prompts", "history", "all"]
-SourceKind = t.Literal["json", "jsonl", "sqlite"]
 ColorMode = t.Literal["auto", "always", "never"]
 type JSONScalar = str | int | float | bool | None
 type JSONValue = JSONScalar | list[JSONValue] | dict[str, JSONValue]
@@ -2253,7 +2261,6 @@ def discover_sources(
             discovered.extend(discover_claude_sources(home, backends))
         elif agent == "cursor":
             discovered.extend(discover_cursor_sources(home, backends))
-            discovered.extend(discover_cursor_cli_sources(home, backends))
         elif agent == "gemini":
             discovered.extend(discover_gemini_sources(home, backends))
     discovered.sort(key=lambda item: (item.agent, item.store, str(item.path)))
@@ -2266,6 +2273,111 @@ def file_mtime_ns(path: pathlib.Path) -> int:
         return path.stat().st_mtime_ns
     except OSError:
         return 0
+
+
+def resolve_env_root(env_var: str, default: pathlib.Path) -> pathlib.Path:
+    """Resolve a base directory from an environment variable, with safety.
+
+    When ``env_var`` is set to a non-empty path that is an existing directory,
+    return that path. When it is set but points to a non-existent or
+    non-directory location, emit a ``WARNING`` log and fall back to
+    ``default``. When unset or empty, return ``default``.
+
+    Parameters
+    ----------
+    env_var : str
+        Environment variable name (e.g. ``"CODEX_HOME"``).
+    default : pathlib.Path
+        Fallback path when the env var is unset, empty, or unusable.
+
+    Returns
+    -------
+    pathlib.Path
+        Resolved base directory.
+    """
+    value = os.environ.get(env_var)
+    if not value:
+        return default
+    candidate = pathlib.Path(value)
+    if candidate.is_dir():
+        return candidate
+    logger.warning(
+        "env-override path does not exist, falling back",
+        extra={
+            "agentgrep_env_var": env_var,
+            "agentgrep_env_path": value,
+        },
+    )
+    return default
+
+
+def handles_from_discovery(
+    spec: DiscoverySpec,
+    agent: AgentName,
+    root: pathlib.Path,
+    backends: BackendSelection,
+) -> list[SourceHandle]:
+    """Produce ``SourceHandle``s from a :class:`DiscoverySpec`.
+
+    Applies the spec's ``home_subpath`` under ``root`` to derive the search
+    root, then enumerates source files via ``files`` (single-file lookups),
+    ``glob`` (recursive walk with optional ``path_parts_required`` filter),
+    and ``platform_paths`` (absolute paths).
+    """
+    sources: list[SourceHandle] = []
+    search_root = root.joinpath(*spec.home_subpath) if spec.home_subpath else root
+
+    for name in spec.files:
+        candidate = search_root / name
+        if candidate.is_file():
+            sources.append(
+                SourceHandle(
+                    agent=agent,
+                    store=spec.store,
+                    adapter_id=spec.adapter_id,
+                    path=candidate,
+                    path_kind=spec.path_kind,
+                    source_kind=spec.source_kind,
+                    search_root=None,
+                    mtime_ns=file_mtime_ns(candidate),
+                ),
+            )
+
+    if spec.glob is not None and search_root.exists():
+        required_parts = set(spec.path_parts_required)
+        for path in list_files_matching(search_root, spec.glob, backends.find_tool):
+            if required_parts and not required_parts.issubset(path.parts):
+                continue
+            sources.append(
+                SourceHandle(
+                    agent=agent,
+                    store=spec.store,
+                    adapter_id=spec.adapter_id,
+                    path=path,
+                    path_kind=spec.path_kind,
+                    source_kind=spec.source_kind,
+                    search_root=search_root,
+                    mtime_ns=file_mtime_ns(path),
+                ),
+            )
+
+    for absolute_path_str in spec.platform_paths:
+        candidate = pathlib.Path(absolute_path_str).expanduser()
+        if candidate.is_file():
+            sources.append(
+                SourceHandle(
+                    agent=agent,
+                    store=spec.store,
+                    adapter_id=spec.adapter_id,
+                    path=candidate,
+                    path_kind=spec.path_kind,
+                    source_kind=spec.source_kind,
+                    search_root=None,
+                    mtime_ns=file_mtime_ns(candidate),
+                ),
+            )
+
+    return sources
 
 
 def isoformat_from_mtime_ns(mtime_ns: int) -> str | None:
@@ -2283,6 +2395,27 @@ def isoformat_from_mtime_ns(mtime_ns: int) -> str | None:
     )
 
 
+def discover_from_catalog(
+    home: pathlib.Path,
+    agent: AgentName,
+    base: pathlib.Path,
+    backends: BackendSelection,
+) -> list[SourceHandle]:
+    """Walk every catalogue row for ``agent`` and emit ``SourceHandle``s.
+
+    Each row's :class:`agentgrep.stores.DiscoverySpec` entries drive
+    enumeration via :func:`handles_from_discovery`. Rows whose ``discovery``
+    tuple is empty are documentary-only and contribute no sources.
+    """
+    from agentgrep.store_catalog import CATALOG
+
+    sources: list[SourceHandle] = []
+    for descriptor in CATALOG.for_agent(agent):
+        for spec in descriptor.discovery:
+            sources.extend(handles_from_discovery(spec, agent, base, backends))
+    return sources
+
+
 def discover_codex_sources(
     home: pathlib.Path,
     backends: BackendSelection,
@@ -2290,205 +2423,73 @@ def discover_codex_sources(
     """Discover Codex sessions and command history.
 
     Honours the ``CODEX_HOME`` environment variable (see upstream
-    ``codex-rs/utils/home-dir/src/lib.rs``) and the catalogue's
-    ``env_overrides`` declaration. Falls back to ``${HOME}/.codex`` when
-    the env var is unset or empty.
+    ``codex-rs/utils/home-dir/src/lib.rs``); falls back to ``${HOME}/.codex``
+    when unset or empty. Path roots, globs, file lists, and adapter metadata
+    come from the ``codex.*`` rows of
+    :data:`agentgrep.store_catalog.CATALOG`.
     """
-    codex_home = os.environ.get("CODEX_HOME")
-    root = pathlib.Path(codex_home) if codex_home else home / ".codex"
-    sources: list[SourceHandle] = []
+    root = resolve_env_root("CODEX_HOME", home / ".codex")
     if not root.exists():
-        return sources
-
-    for name in ("history.json", "history.jsonl"):
-        path = root / name
-        if path.is_file():
-            sources.append(
-                SourceHandle(
-                    agent="codex",
-                    store="codex.history",
-                    adapter_id="codex.history_json.v1",
-                    path=path,
-                    path_kind="history_file",
-                    source_kind="jsonl" if path.suffix == ".jsonl" else "json",
-                    search_root=None,
-                    mtime_ns=file_mtime_ns(path),
-                ),
-            )
-
-    sessions_root = root / "sessions"
-    sources.extend(
-        SourceHandle(
-            agent="codex",
-            store="codex.sessions",
-            adapter_id="codex.sessions_jsonl.v1",
-            path=path,
-            path_kind="session_file",
-            source_kind="jsonl",
-            search_root=sessions_root,
-            mtime_ns=file_mtime_ns(path),
-        )
-        for path in list_files_matching(sessions_root, "*.jsonl", backends.find_tool)
-    )
-    return sources
+        return []
+    return discover_from_catalog(home, "codex", root, backends)
 
 
 def discover_claude_sources(
     home: pathlib.Path,
     backends: BackendSelection,
 ) -> list[SourceHandle]:
-    """Discover Claude Code project session files."""
-    root = home / ".claude" / "projects"
-    if not root.exists():
-        return []
-    return [
-        SourceHandle(
-            agent="claude",
-            store="claude.projects",
-            adapter_id="claude.projects_jsonl.v1",
-            path=path,
-            path_kind="session_file",
-            source_kind="jsonl",
-            search_root=root,
-            mtime_ns=file_mtime_ns(path),
-        )
-        for path in list_files_matching(root, "*.jsonl", backends.find_tool)
-    ]
+    """Discover Claude Code project session files.
+
+    Path roots, globs, and adapter metadata come from the ``claude.*`` rows
+    of :data:`agentgrep.store_catalog.CATALOG`.
+    """
+    return discover_from_catalog(home, "claude", home, backends)
 
 
 def discover_cursor_sources(
     home: pathlib.Path,
     backends: BackendSelection,
 ) -> list[SourceHandle]:
-    """Discover Cursor databases from both home-local and official roots."""
-    sources: list[SourceHandle] = []
-    tracking_db = home / ".cursor" / "ai-tracking" / "ai-code-tracking.db"
-    if tracking_db.is_file():
-        sources.append(
-            SourceHandle(
-                agent="cursor",
-                store="cursor.ai_tracking",
-                adapter_id="cursor.ai_tracking_sqlite.v1",
-                path=tracking_db,
-                path_kind="sqlite_db",
-                source_kind="sqlite",
-                search_root=None,
-                mtime_ns=file_mtime_ns(tracking_db),
-            ),
-        )
+    """Discover Cursor databases from both home-local and official roots.
 
-    seen_paths: set[pathlib.Path] = set()
-    for path in OFFICIAL_CURSOR_STATE_PATHS:
-        if path.is_file():
-            seen_paths.add(path)
-            sources.append(
-                SourceHandle(
-                    agent="cursor",
-                    store="cursor.state",
-                    adapter_id="cursor.state_vscdb_modern.v1",
-                    path=path,
-                    path_kind="sqlite_db",
-                    source_kind="sqlite",
-                    search_root=None,
-                    mtime_ns=file_mtime_ns(path),
-                ),
-            )
-    cursor_root = home / ".cursor"
-    for path in list_files_matching(cursor_root, "state.vscdb", backends.find_tool):
-        if path in seen_paths:
-            continue
-        sources.append(
-            SourceHandle(
-                agent="cursor",
-                store="cursor.state",
-                adapter_id="cursor.state_vscdb_legacy.v1",
-                path=path,
-                path_kind="sqlite_db",
-                source_kind="sqlite",
-                search_root=None,
-                mtime_ns=file_mtime_ns(path),
-            ),
-        )
-    return sources
+    Includes the AI-tracking SQLite, Cursor IDE platform-specific
+    ``state.vscdb`` locations, the legacy ``~/.cursor/state.vscdb`` glob,
+    and the Cursor CLI agent transcripts. Driven entirely by the
+    ``cursor.*`` catalogue rows.
+    """
+    return discover_from_catalog(home, "cursor", home, backends)
 
 
 def discover_cursor_cli_sources(
     home: pathlib.Path,
     backends: BackendSelection,
 ) -> list[SourceHandle]:
-    """Discover Cursor CLI agent transcripts under ``~/.cursor/projects``.
+    """Compatibility alias for legacy importers.
 
-    Mirrors the ``cursor.cli.transcripts`` row in
-    :data:`agentgrep.store_catalog.CATALOG`.
+    Cursor CLI transcripts are now discovered through
+    :func:`discover_cursor_sources` (their catalogue row carries its own
+    ``DiscoverySpec``). Returns an empty list because the work has already
+    been done by the time anyone calls this directly.
     """
-    root = home / ".cursor" / "projects"
-    if not root.exists():
-        return []
-    sources: list[SourceHandle] = []
-    for path in list_files_matching(root, "*.jsonl", backends.find_tool):
-        if "agent-transcripts" not in path.parts:
-            continue
-        sources.append(
-            SourceHandle(
-                agent="cursor",
-                store="cursor.cli_transcripts",
-                adapter_id="cursor.cli_jsonl.v1",
-                path=path,
-                path_kind="session_file",
-                source_kind="jsonl",
-                search_root=root,
-                mtime_ns=file_mtime_ns(path),
-            ),
-        )
-    return sources
+    del home, backends
+    return []
 
 
 def discover_gemini_sources(
     home: pathlib.Path,
     backends: BackendSelection,
 ) -> list[SourceHandle]:
-    """Discover Gemini CLI sessions and prompt logs under ``~/.gemini/tmp``.
+    """Discover Gemini CLI sessions and prompt logs.
 
-    Yields one source per ``tmp/<project_hash>/chats/session-*.jsonl`` and
-    one per ``tmp/<project_hash>/logs.json``. Honours the
-    ``GEMINI_CLI_HOME`` environment variable (see upstream
-    ``packages/cli/index.ts``) and the catalogue's ``env_overrides``
-    declaration. Falls back to ``${HOME}/.gemini`` when the env var is
-    unset or empty. Mirrors the ``gemini.tmp.chats`` and ``gemini.tmp.logs``
-    rows in :data:`agentgrep.store_catalog.CATALOG`.
+    Honours the ``GEMINI_CLI_HOME`` environment variable (see upstream
+    ``packages/cli/index.ts``); falls back to ``${HOME}/.gemini`` when
+    unset or empty. Path roots, globs, and adapter metadata come from the
+    ``gemini.*`` rows of :data:`agentgrep.store_catalog.CATALOG`.
     """
-    gemini_home = os.environ.get("GEMINI_CLI_HOME")
-    base = pathlib.Path(gemini_home) if gemini_home else home / ".gemini"
-    root = base / "tmp"
-    if not root.exists():
+    base = resolve_env_root("GEMINI_CLI_HOME", home / ".gemini")
+    if not base.exists():
         return []
-    sources: list[SourceHandle] = [
-        SourceHandle(
-            agent="gemini",
-            store="gemini.tmp_chats",
-            adapter_id="gemini.tmp_chats_jsonl.v1",
-            path=path,
-            path_kind="session_file",
-            source_kind="jsonl",
-            search_root=root,
-            mtime_ns=file_mtime_ns(path),
-        )
-        for path in list_files_matching(root, "session-*.jsonl", backends.find_tool)
-    ]
-    sources.extend(
-        SourceHandle(
-            agent="gemini",
-            store="gemini.tmp_logs",
-            adapter_id="gemini.tmp_logs_json.v1",
-            path=path,
-            path_kind="history_file",
-            source_kind="json",
-            search_root=None,
-            mtime_ns=file_mtime_ns(path),
-        )
-        for path in list_files_matching(root, "logs.json", backends.find_tool)
-    )
-    return sources
+    return discover_from_catalog(home, "gemini", base, backends)
 
 
 def list_files_matching(

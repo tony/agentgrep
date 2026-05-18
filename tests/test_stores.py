@@ -164,6 +164,34 @@ def test_search_by_default_only_true_for_searchable_roles() -> None:
             assert store.role in searchable, (store.store_id, store.role)
 
 
+def test_runtime_adapter_ids_match_catalogue_discovery() -> None:
+    """Every runtime adapter id is declared by a catalogue DiscoverySpec.
+
+    Prevents drift between the discover/dispatch path and the catalogue.
+    """
+    import agentgrep.mcp as agentgrep_mcp
+
+    runtime_adapter_ids: set[str] = set()
+    for store in CATALOG.stores:
+        for spec in store.discovery:
+            runtime_adapter_ids.add(spec.adapter_id)
+
+    assert "claude.projects_jsonl.v1" in runtime_adapter_ids
+    assert "codex.history_json.v1" in runtime_adapter_ids
+    assert "codex.sessions_jsonl.v1" in runtime_adapter_ids
+    assert "cursor.ai_tracking_sqlite.v1" in runtime_adapter_ids
+    assert "cursor.state_vscdb_modern.v1" in runtime_adapter_ids
+    assert "cursor.state_vscdb_legacy.v1" in runtime_adapter_ids
+    assert "cursor.cli_jsonl.v1" in runtime_adapter_ids
+    assert "gemini.tmp_chats_jsonl.v1" in runtime_adapter_ids
+    assert "gemini.tmp_logs_json.v1" in runtime_adapter_ids
+
+    # No catalogue row claims an adapter id the MCP capabilities
+    # tuple doesn't advertise.
+    advertised = set(agentgrep_mcp.KNOWN_ADAPTERS)
+    assert runtime_adapter_ids.issubset(advertised), runtime_adapter_ids - advertised
+
+
 def test_descriptor_round_trips_through_json() -> None:
     """Pydantic dump/load identity — guards against future field-name drift."""
     sample = CATALOG.stores[0]

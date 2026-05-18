@@ -20,6 +20,7 @@ import hashlib
 import pathlib
 
 from agentgrep.stores import (
+    DiscoverySpec,
     StoreCatalog,
     StoreDescriptor,
     StoreFormat,
@@ -79,6 +80,16 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         ),
         sample_record='{"type":"user","uuid":"...","timestamp":"2026-05-17T...","message":{"role":"user","content":[{"type":"text","text":"<redacted>"}]}}',
         search_by_default=True,
+        discovery=(
+            DiscoverySpec(
+                store="claude.projects",
+                adapter_id="claude.projects_jsonl.v1",
+                path_kind="session_file",
+                source_kind="jsonl",
+                home_subpath=(".claude", "projects"),
+                glob="*.jsonl",
+            ),
+        ),
     ),
     StoreDescriptor(
         agent="claude",
@@ -205,6 +216,17 @@ _CURSOR_STORES: tuple[StoreDescriptor, ...] = (
         search_notes=(
             "Parsed by agentgrep via `parse_cursor_cli_transcript` (`cursor.cli_jsonl.v1`)."
         ),
+        discovery=(
+            DiscoverySpec(
+                store="cursor.cli_transcripts",
+                adapter_id="cursor.cli_jsonl.v1",
+                path_kind="session_file",
+                source_kind="jsonl",
+                home_subpath=(".cursor", "projects"),
+                glob="*.jsonl",
+                path_parts_required=("agent-transcripts",),
+            ),
+        ),
     ),
     StoreDescriptor(
         agent="cursor",
@@ -299,6 +321,16 @@ _CURSOR_STORES: tuple[StoreDescriptor, ...] = (
             "the table empty even when the CLI agent runs — the tracker may be "
             "disabled or unused; agentgrep tolerates that silently."
         ),
+        discovery=(
+            DiscoverySpec(
+                store="cursor.ai_tracking",
+                adapter_id="cursor.ai_tracking_sqlite.v1",
+                path_kind="sqlite_db",
+                source_kind="sqlite",
+                home_subpath=(".cursor", "ai-tracking"),
+                files=("ai-code-tracking.db",),
+            ),
+        ),
     ),
     StoreDescriptor(
         agent="cursor",
@@ -328,6 +360,27 @@ _CURSOR_STORES: tuple[StoreDescriptor, ...] = (
             "Cursor IDE store, parsed by the current `cursor.state_vscdb_modern.v1` "
             "adapter. Not the same as the Cursor CLI agent transcripts."
         ),
+        discovery=(
+            DiscoverySpec(
+                store="cursor.state",
+                adapter_id="cursor.state_vscdb_modern.v1",
+                path_kind="sqlite_db",
+                source_kind="sqlite",
+                platform_paths=(
+                    "~/.config/Cursor/User/globalStorage/state.vscdb",
+                    "~/Library/Application Support/Cursor/User/globalStorage/state.vscdb",
+                    "~/AppData/Roaming/Cursor/User/globalStorage/state.vscdb",
+                ),
+            ),
+            DiscoverySpec(
+                store="cursor.state",
+                adapter_id="cursor.state_vscdb_legacy.v1",
+                path_kind="sqlite_db",
+                source_kind="sqlite",
+                home_subpath=(".cursor",),
+                glob="state.vscdb",
+            ),
+        ),
     ),
 )
 
@@ -350,6 +403,22 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         sample_record='{"session_id":"...","ts":1747509826,"text":"<redacted>"}',
         distinguishes_from=("codex.sessions",),
         search_by_default=True,
+        discovery=(
+            DiscoverySpec(
+                store="codex.history",
+                adapter_id="codex.history_json.v1",
+                path_kind="history_file",
+                source_kind="json",
+                files=("history.json",),
+            ),
+            DiscoverySpec(
+                store="codex.history",
+                adapter_id="codex.history_json.v1",
+                path_kind="history_file",
+                source_kind="jsonl",
+                files=("history.jsonl",),
+            ),
+        ),
     ),
     StoreDescriptor(
         agent="codex",
@@ -376,6 +445,16 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         search_notes=(
             "Full per-thread transcript with tool calls; `codex.history` is the "
             "user-prompts-only audit log."
+        ),
+        discovery=(
+            DiscoverySpec(
+                store="codex.sessions",
+                adapter_id="codex.sessions_jsonl.v1",
+                path_kind="session_file",
+                source_kind="jsonl",
+                home_subpath=("sessions",),
+                glob="*.jsonl",
+            ),
         ),
     ),
     StoreDescriptor(
@@ -458,6 +537,16 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
             "`content` are dropped for v1 — surfacing `thoughts[*].description` "
             "is a clean follow-up."
         ),
+        discovery=(
+            DiscoverySpec(
+                store="gemini.tmp_chats",
+                adapter_id="gemini.tmp_chats_jsonl.v1",
+                path_kind="session_file",
+                source_kind="jsonl",
+                home_subpath=("tmp",),
+                glob="session-*.jsonl",
+            ),
+        ),
     ),
     StoreDescriptor(
         agent="gemini",
@@ -502,6 +591,16 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
         search_by_default=True,
         search_notes=(
             "Parsed by agentgrep via `parse_gemini_logs_file` (`gemini.tmp_logs_json.v1`)."
+        ),
+        discovery=(
+            DiscoverySpec(
+                store="gemini.tmp_logs",
+                adapter_id="gemini.tmp_logs_json.v1",
+                path_kind="history_file",
+                source_kind="json",
+                home_subpath=("tmp",),
+                glob="logs.json",
+            ),
         ),
     ),
     StoreDescriptor(

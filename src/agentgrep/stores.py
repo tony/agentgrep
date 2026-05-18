@@ -55,6 +55,64 @@ class StoreRole(enum.StrEnum):
 
 
 AgentName = t.Literal["claude", "cursor", "codex", "gemini"]
+PathKind = t.Literal["history_file", "session_file", "sqlite_db"]
+SourceKind = t.Literal["json", "jsonl", "sqlite"]
+
+
+class DiscoverySpec(pydantic.BaseModel):
+    """Runtime metadata for discovering one store's source files.
+
+    Catalogue rows whose store agentgrep actually scans at runtime carry a
+    ``DiscoverySpec``. Rows that are documentary (planned support, opaque
+    formats, source trees) leave ``StoreDescriptor.discovery`` as ``None``.
+
+    Path resolution
+    ---------------
+    The discover function for an agent resolves a *base* directory
+    (typically ``${HOME}/.<agent>`` or an env-override). The ``home_subpath``
+    segments are appended to that base. Two enumeration modes are then
+    available, used independently or together:
+
+    - ``files`` lists specific relative filenames to check via ``is_file()``.
+    - ``glob`` is a pattern walked under the resolved root via
+      :func:`agentgrep.list_files_matching`. ``path_parts_required``
+      filters glob results to those whose path contains every named
+      directory component (e.g., Cursor CLI transcripts must live under an
+      ``agent-transcripts`` segment).
+
+    ``platform_paths`` lists absolute paths to check unconditionally — used
+    for stores whose canonical location depends on the operating system
+    (Cursor IDE's ``state.vscdb``).
+    """
+
+    model_config = pydantic.ConfigDict(frozen=True)
+
+    store: str
+    """Runtime store key (e.g. ``"claude.projects"``)."""
+
+    adapter_id: str
+    """Runtime adapter identifier (e.g. ``"claude.projects_jsonl.v1"``)."""
+
+    path_kind: PathKind
+    """Kind of filesystem entry the records live in."""
+
+    source_kind: SourceKind
+    """Parse format (json / jsonl / sqlite)."""
+
+    home_subpath: tuple[str, ...] = ()
+    """Path segments appended to the agent's resolved base directory."""
+
+    platform_paths: tuple[str, ...] = ()
+    """Absolute paths to check unconditionally, e.g. Cursor IDE state."""
+
+    files: tuple[str, ...] = ()
+    """Specific relative filenames to check via ``is_file()``."""
+
+    glob: str | None = None
+    """Glob pattern walked under the resolved root."""
+
+    path_parts_required: tuple[str, ...] = ()
+    """Each named segment must appear in a glob result's ``path.parts``."""
 
 
 class StoreDescriptor(pydantic.BaseModel):
@@ -126,6 +184,16 @@ class StoreDescriptor(pydantic.BaseModel):
     search_notes: str | None = None
     """Free-text rationale for the search-policy decision, including de-duplication hints."""
 
+    discovery: tuple[DiscoverySpec, ...] = ()
+    """Runtime discovery specs for this store.
+
+    Empty tuple means the row is documentary-only. Most discovered stores
+    have exactly one entry; a few rows carry multiple specs because the
+    same logical store has more than one on-disk shape — e.g. Codex's
+    ``history.json`` and ``history.jsonl`` variants, or the modern vs.
+    legacy Cursor IDE state databases.
+    """
+
 
 class StoreCatalog(pydantic.BaseModel):
     """Versioned registry of every store agentgrep knows about."""
@@ -170,6 +238,9 @@ class StoreCatalog(pydantic.BaseModel):
 
 __all__ = (
     "AgentName",
+    "DiscoverySpec",
+    "PathKind",
+    "SourceKind",
     "StoreCatalog",
     "StoreDescriptor",
     "StoreFormat",
