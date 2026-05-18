@@ -93,7 +93,6 @@ quickstart
 installation
 clients
 configuration
-storage-catalog
 ```
 
 ```{toctree}
@@ -128,6 +127,7 @@ reference/api/index
 :hidden:
 :caption: Project
 
+storage-catalog
 history
 GitHub <https://github.com/tony/agentgrep>
 ```
