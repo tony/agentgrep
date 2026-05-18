@@ -3031,7 +3031,11 @@ def parse_gemini_chat_file(
 def parse_gemini_logs_file(
     source: SourceHandle,
 ) -> cabc.Iterator[SearchRecord]:
-    """Parse a Gemini CLI ``logs.json`` file (flat JSON array of LogEntry)."""
+    """Parse a Gemini CLI ``logs.json`` file (flat JSON array of LogEntry).
+
+    Records are emitted as ``kind="history"`` — the file is an audit log of
+    user prompts, the same role ``codex.history`` plays for Codex.
+    """
     payload = read_json_file(source.path)
     entries = payload if isinstance(payload, list) else []
     for entry in entries:
@@ -3041,16 +3045,20 @@ def parse_gemini_logs_file(
         message = as_optional_str(mapping.get("message"))
         if not message:
             continue
-        role = as_optional_str(mapping.get("type")) or "user"
-        candidate = MessageCandidate(
-            role=role,
+        session_id = as_optional_str(mapping.get("sessionId"))
+        yield SearchRecord(
+            kind="history",
+            agent=source.agent,
+            store=source.store,
+            adapter_id=source.adapter_id,
+            path=source.path,
             text=message,
             title="Gemini prompt history",
+            role=as_optional_str(mapping.get("type")) or "user",
             timestamp=as_optional_str(mapping.get("timestamp")),
-            session_id=as_optional_str(mapping.get("sessionId")),
-            conversation_id=as_optional_str(mapping.get("sessionId")),
+            session_id=session_id,
+            conversation_id=session_id,
         )
-        yield build_search_record(source, candidate)
 
 
 def parse_cursor_ai_tracking_db(

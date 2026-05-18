@@ -3528,4 +3528,6 @@ def test_search_gemini_logs_returns_user_message(
     assert log_records, "expected at least one gemini.tmp_logs record"
     assert log_records[0].text == "libtmux trace"
     assert log_records[0].role == "user"
+    assert log_records[0].kind == "history"
     assert log_records[0].timestamp == "2026-05-17T12:00:05Z"
+    assert log_records[0].session_id == "sess-1"
