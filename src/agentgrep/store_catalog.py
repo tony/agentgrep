@@ -533,9 +533,11 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
         search_by_default=True,
         search_notes=(
             "Parsed by agentgrep via `parse_gemini_chat_file` "
-            "(`gemini.tmp_chats_jsonl.v1`). Gemini-typed records with empty "
-            "`content` are dropped for v1 — surfacing `thoughts[*].description` "
-            "is a clean follow-up."
+            "(`gemini.tmp_chats_jsonl.v1`). When a `gemini`-typed record's "
+            "`content` is empty, the assistant's prose is drawn from "
+            "`thoughts[*].subject`/`description` and the tool-call context "
+            "from `toolCalls[*].name`/`description` — concatenated into one "
+            "SearchRecord per turn."
         ),
         discovery=(
             DiscoverySpec(

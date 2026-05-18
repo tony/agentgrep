@@ -2990,24 +2990,85 @@ def parse_cursor_cli_transcript(
             yield build_search_record(source, candidate)
 
 
+def _gemini_thoughts_text(thoughts: object) -> str:
+    """Flatten Gemini's ``thoughts[]`` into a single searchable string.
+
+    Each entry carries ``subject`` (short label) and ``description``
+    (multi-sentence reasoning). Concatenating them per-record keeps the
+    conversation-turn boundary intact while still surfacing the assistant's
+    output in the search corpus.
+    """
+    if not isinstance(thoughts, list):
+        return ""
+    parts: list[str] = []
+    for entry in thoughts:
+        if not isinstance(entry, dict):
+            continue
+        mapping = t.cast("dict[str, object]", entry)
+        subject = as_optional_str(mapping.get("subject"))
+        description = as_optional_str(mapping.get("description"))
+        if subject:
+            parts.append(subject)
+        if description:
+            parts.append(description)
+    return "\n".join(parts)
+
+
+def _gemini_tool_calls_text(tool_calls: object) -> str:
+    """Flatten Gemini's ``toolCalls[]`` into a searchable string.
+
+    ``name`` and ``description`` carry the human-readable text; ``args`` is
+    JSON-shaped and contributes lower-signal noise, so it is omitted.
+    """
+    if not isinstance(tool_calls, list):
+        return ""
+    parts: list[str] = []
+    for entry in tool_calls:
+        if not isinstance(entry, dict):
+            continue
+        mapping = t.cast("dict[str, object]", entry)
+        name = as_optional_str(mapping.get("name"))
+        description = as_optional_str(mapping.get("description"))
+        if name:
+            parts.append(name)
+        if description:
+            parts.append(description)
+    return "\n".join(parts)
+
+
 def _gemini_message_record_to_candidate(
     mapping: dict[str, object],
     session_id: str | None,
 ) -> MessageCandidate | None:
     """Extract a ``MessageCandidate`` from one Gemini MessageRecord.
 
-    Returns ``None`` for records that carry no searchable text — Gemini
-    stores the role in a ``type`` key (not ``role``) and may leave
-    ``content`` empty for assistant turns whose body lives in
-    ``thoughts[]`` or ``toolCalls[]`` (handled by a separate adapter).
+    For user records the searchable text is the ``content`` field. For
+    gemini-typed records the model's prose often lives in ``thoughts[]``
+    (with ``content`` empty) and tool invocations live in ``toolCalls[]``;
+    both are concatenated into the candidate's text. Returns ``None`` only
+    when no field carries any text.
     """
     role = as_optional_str(mapping.get("type"))
-    text = flatten_content_value(t.cast("JSONValue | None", mapping.get("content")))
-    if not role or not text:
+    if not role:
+        return None
+    text_parts: list[str] = []
+    content_text = flatten_content_value(
+        t.cast("JSONValue | None", mapping.get("content")),
+    )
+    if content_text:
+        text_parts.append(content_text)
+    if role == "gemini":
+        thoughts_text = _gemini_thoughts_text(mapping.get("thoughts"))
+        if thoughts_text:
+            text_parts.append(thoughts_text)
+        tool_calls_text = _gemini_tool_calls_text(mapping.get("toolCalls"))
+        if tool_calls_text:
+            text_parts.append(tool_calls_text)
+    if not text_parts:
         return None
     return MessageCandidate(
         role=role,
-        text=text,
+        text="\n".join(text_parts),
         timestamp=as_optional_str(mapping.get("timestamp")),
         model=as_optional_str(mapping.get("model")),
         session_id=session_id or as_optional_str(mapping.get("sessionId")),

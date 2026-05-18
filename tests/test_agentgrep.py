@@ -3485,11 +3485,17 @@ def test_search_gemini_chat_session_user_prompt(
     assert chat_records[0].timestamp == "2026-05-17T12:00:05Z"
 
 
-def test_search_gemini_chat_session_drops_metadata_records(
+def test_search_gemini_chat_session_drops_textless_records(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Gemini chat: ``$set`` updates and empty-content gemini records produce no record."""
+    """``$set`` updates and content-free gemini records produce no record.
+
+    A gemini-typed record with empty ``content`` AND no ``thoughts`` or
+    ``toolCalls`` carries no searchable text — it should be skipped. A
+    gemini-typed record WITH ``thoughts`` or ``toolCalls`` is handled by
+    ``test_search_gemini_chat_session_surfaces_thoughts``.
+    """
     agentgrep = load_agentgrep_module()
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
@@ -3529,6 +3535,73 @@ def test_search_gemini_chat_session_drops_metadata_records(
     chat_records = [r for r in records if r.store == "gemini.tmp_chats"]
     assert len(chat_records) == 1
     assert chat_records[0].role == "user"
+
+
+def test_search_gemini_chat_session_surfaces_thoughts_and_tool_calls(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Gemini turns with empty ``content`` are surfaced via ``thoughts`` and ``toolCalls``."""
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    session = home / ".gemini" / "tmp" / "h0" / "chats" / "session-x.jsonl"
+    write_jsonl(
+        session,
+        [
+            {
+                "sessionId": "sess-1",
+                "projectHash": "h0",
+                "startTime": "2026-05-17T12:00:00Z",
+                "lastUpdated": "2026-05-17T12:00:00Z",
+                "kind": "main",
+            },
+            {
+                "id": "thought-turn",
+                "timestamp": "2026-05-17T12:00:11Z",
+                "type": "gemini",
+                "content": "",
+                "thoughts": [
+                    {
+                        "subject": "Analysing libtmux",
+                        "description": "The user wants the libtmux helper.",
+                        "timestamp": "2026-05-17T12:00:10Z",
+                    },
+                ],
+                "model": "gemini-3-flash-preview",
+            },
+            {
+                "id": "tool-turn",
+                "timestamp": "2026-05-17T12:00:13Z",
+                "type": "gemini",
+                "content": "",
+                "toolCalls": [
+                    {
+                        "id": "call_0",
+                        "name": "run_shell_command",
+                        "args": {"command": "rg libtmux"},
+                        "description": "Invoke a libtmux-related shell helper.",
+                    },
+                ],
+                "model": "gemini-3-flash-preview",
+            },
+        ],
+    )
+
+    query = _make_query(agentgrep, ("gemini",), ("libtmux",))
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("gemini",), backends)
+    records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
+
+    chat_records = [r for r in records if r.store == "gemini.tmp_chats"]
+    assert len(chat_records) == 2  # one thought turn + one tool-call turn
+    by_role = {r.role: r for r in chat_records}
+    assert "gemini" in by_role
+    texts = "\n".join(r.text for r in chat_records)
+    assert "Analysing libtmux" in texts
+    assert "libtmux helper" in texts
+    assert "run_shell_command" in texts
+    assert "libtmux-related shell helper" in texts
 
 
 def test_search_gemini_chat_session_metadata_with_future_type_field(
