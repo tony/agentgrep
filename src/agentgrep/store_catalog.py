@@ -310,17 +310,19 @@ _CURSOR_STORES: tuple[StoreDescriptor, ...] = (
     StoreDescriptor(
         agent="cursor",
         store_id="cursor.ai_tracking",
-        role=StoreRole.APP_STATE,
+        role=StoreRole.SUPPLEMENTARY_CHAT,
         format=StoreFormat.SQLITE,
         path_pattern="${HOME}/.cursor/ai-tracking/ai-code-tracking.db",
         observed_version="cursor-agent (version not surfaced publicly)",
         observed_at=OBSERVED_AT,
         schema_notes=(
             "SQLite with `conversation_summaries(conversationId, title, tldr, "
-            "overview, summaryBullets, model, mode, updatedAt)`. Some installs have "
+            "overview, summaryBullets, model, mode, updatedAt)` — title and prose "
+            "summaries of CLI agent chats, not raw transcripts. Some installs have "
             "the table empty even when the CLI agent runs — the tracker may be "
             "disabled or unused; agentgrep tolerates that silently."
         ),
+        search_by_default=True,
         discovery=(
             DiscoverySpec(
                 store="cursor.ai_tracking",
@@ -360,6 +362,7 @@ _CURSOR_STORES: tuple[StoreDescriptor, ...] = (
             "Cursor IDE store, parsed by the current `cursor.state_vscdb_modern.v1` "
             "adapter. Not the same as the Cursor CLI agent transcripts."
         ),
+        search_by_default=True,
         discovery=(
             DiscoverySpec(
                 store="cursor.state",

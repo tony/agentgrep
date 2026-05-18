@@ -2406,11 +2406,17 @@ def discover_from_catalog(
     Each row's :class:`agentgrep.stores.DiscoverySpec` entries drive
     enumeration via :func:`handles_from_discovery`. Rows whose ``discovery``
     tuple is empty are documentary-only and contribute no sources.
+    Rows whose ``search_by_default`` is exactly ``False`` are skipped so
+    the catalogue contract documented in
+    :mod:`agentgrep.store_catalog` is honoured at runtime;
+    ``True`` and ``None`` (decision-deferred) are searched.
     """
     from agentgrep.store_catalog import CATALOG
 
     sources: list[SourceHandle] = []
     for descriptor in CATALOG.for_agent(agent):
+        if descriptor.search_by_default is False:
+            continue
         for spec in descriptor.discovery:
             sources.extend(handles_from_discovery(spec, agent, base, backends))
     return sources

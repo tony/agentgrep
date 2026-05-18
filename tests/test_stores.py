@@ -6,14 +6,16 @@ should be able to rely on. They run on the static catalogue data; no I/O.
 
 from __future__ import annotations
 
+import pathlib
 import re
 import typing as t
 
 import pytest
 
-from agentgrep.store_catalog import CATALOG, gemini_project_hash
+from agentgrep.store_catalog import CATALOG, OBSERVED_AT, gemini_project_hash
 from agentgrep.stores import (
     AgentName,
+    DiscoverySpec,
     StoreCatalog,
     StoreDescriptor,
     StoreFormat,
@@ -190,6 +192,83 @@ def test_runtime_adapter_ids_match_catalogue_discovery() -> None:
     # tuple doesn't advertise.
     advertised = set(agentgrep_mcp.KNOWN_ADAPTERS)
     assert runtime_adapter_ids.issubset(advertised), runtime_adapter_ids - advertised
+
+
+def test_discover_from_catalog_skips_search_by_default_false(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``discover_from_catalog`` must honour the catalogue contract.
+
+    The module docstring on :mod:`agentgrep.store_catalog` says the
+    discover functions "consult" ``search_by_default`` — rows with
+    ``False`` must be left untouched even if they carry a
+    ``DiscoverySpec``.
+    """
+    import agentgrep
+    import agentgrep.store_catalog as store_catalog
+
+    base = tmp_path / "base"
+    base.mkdir()
+    skipped_file = base / "skipped.jsonl"
+    _ = skipped_file.write_text("{}", encoding="utf-8")
+    searched_file = base / "searched.jsonl"
+    _ = searched_file.write_text("{}", encoding="utf-8")
+
+    fake_catalog = StoreCatalog(
+        catalog_version=999,
+        captured_at=OBSERVED_AT,
+        stores=(
+            StoreDescriptor(
+                agent="codex",
+                store_id="codex.test_skipped",
+                role=StoreRole.PRIMARY_CHAT,
+                format=StoreFormat.JSONL,
+                path_pattern="${HOME}/skipped",
+                observed_version="test",
+                observed_at=OBSERVED_AT,
+                schema_notes="Test row that must be skipped.",
+                search_by_default=False,
+                discovery=(
+                    DiscoverySpec(
+                        store="codex.test_skipped",
+                        adapter_id="codex.test_skipped.v1",
+                        path_kind="session_file",
+                        source_kind="jsonl",
+                        files=("skipped.jsonl",),
+                    ),
+                ),
+            ),
+            StoreDescriptor(
+                agent="codex",
+                store_id="codex.test_searched",
+                role=StoreRole.PRIMARY_CHAT,
+                format=StoreFormat.JSONL,
+                path_pattern="${HOME}/searched",
+                observed_version="test",
+                observed_at=OBSERVED_AT,
+                schema_notes="Test row that must be searched.",
+                search_by_default=True,
+                discovery=(
+                    DiscoverySpec(
+                        store="codex.test_searched",
+                        adapter_id="codex.test_searched.v1",
+                        path_kind="session_file",
+                        source_kind="jsonl",
+                        files=("searched.jsonl",),
+                    ),
+                ),
+            ),
+        ),
+    )
+    monkeypatch.setattr(store_catalog, "CATALOG", fake_catalog)
+
+    backends = agentgrep.BackendSelection(None, None, None)
+    sources = agentgrep.discover_from_catalog(tmp_path, "codex", base, backends)
+
+    discovered_paths = {s.path for s in sources}
+    assert searched_file in discovered_paths
+    assert skipped_file not in discovered_paths
 
 
 def test_descriptor_round_trips_through_json() -> None:
