@@ -2477,21 +2477,6 @@ def discover_cursor_sources(
     return discover_from_catalog(home, "cursor", home, backends)
 
 
-def discover_cursor_cli_sources(
-    home: pathlib.Path,
-    backends: BackendSelection,
-) -> list[SourceHandle]:
-    """Compatibility alias for legacy importers.
-
-    Cursor CLI transcripts are now discovered through
-    :func:`discover_cursor_sources` (their catalogue row carries its own
-    ``DiscoverySpec``). Returns an empty list because the work has already
-    been done by the time anyone calls this directly.
-    """
-    del home, backends
-    return []
-
-
 def discover_gemini_sources(
     home: pathlib.Path,
     backends: BackendSelection,
