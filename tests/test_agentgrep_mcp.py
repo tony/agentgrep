@@ -626,3 +626,61 @@ async def test_mcp_inspect_record_sample_returns_codex_history(
     data = tool_payload(result)
     assert data["error_message"] is None
     assert data["sample_count"] >= 1
+
+
+async def test_mcp_catalog_resource_returns_full_catalog() -> None:
+    """``agentgrep://catalog`` returns the StoreCatalog payload."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        text = extract_resource_text(await client.read_resource("agentgrep://catalog"))
+
+    data = t.cast("dict[str, t.Any]", json.loads(text))
+    assert "stores" in data
+    assert len(data["stores"]) >= 10
+    store_ids = {s["store_id"] for s in data["stores"]}
+    assert "claude.projects.session" in store_ids
+
+
+async def test_mcp_store_roles_resource() -> None:
+    """``agentgrep://store-roles`` lists every StoreRole with a description."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        text = extract_resource_text(await client.read_resource("agentgrep://store-roles"))
+
+    rows = t.cast("list[dict[str, str]]", json.loads(text))
+    values = {row["value"] for row in rows}
+    assert "primary_chat" in values
+    assert "prompt_history" in values
+    assert all(row["description"] for row in rows)
+
+
+async def test_mcp_store_formats_resource() -> None:
+    """``agentgrep://store-formats`` lists every StoreFormat with a description."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        text = extract_resource_text(await client.read_resource("agentgrep://store-formats"))
+
+    rows = t.cast("list[dict[str, str]]", json.loads(text))
+    values = {row["value"] for row in rows}
+    assert "jsonl" in values
+    assert "sqlite" in values
+    assert all(row["description"] for row in rows)
+
+
+async def test_mcp_capabilities_advertises_new_resources() -> None:
+    """The capabilities resource must list the three new resource URIs."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        text = extract_resource_text(await client.read_resource("agentgrep://capabilities"))
+
+    data = t.cast("dict[str, t.Any]", json.loads(text))
+    advertised = set(data["resources"])
+    assert {
+        "agentgrep://catalog",
+        "agentgrep://store-roles",
+        "agentgrep://store-formats",
+    } <= advertised
