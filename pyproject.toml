@@ -50,6 +50,7 @@ dev = [
   # Docs
   "gp-sphinx==0.0.1a20",
   "sphinx-autodoc-api-style==0.0.1a20",
+  "sphinx-autodoc-argparse==0.0.1a20",
   "sphinx-autodoc-fastmcp==0.0.1a20",
   "sphinx-autobuild",
   # Testing
@@ -70,6 +71,7 @@ dev = [
 docs = [
   "gp-sphinx==0.0.1a20",
   "sphinx-autodoc-api-style==0.0.1a20",
+  "sphinx-autodoc-argparse==0.0.1a20",
   "sphinx-autodoc-fastmcp==0.0.1a20",
   "sphinx-autobuild",
 ]
