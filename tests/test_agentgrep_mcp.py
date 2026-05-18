@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import pathlib
 import typing as t
 
@@ -266,6 +267,75 @@ async def test_mcp_prompt_guides_search() -> None:
     assert "search" in rendered
     assert "serenity" in rendered
     assert "codex" in rendered
+
+
+async def test_audit_middleware_emits_extras(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Every tool call emits an audit record with ``agentgrep_*`` extras."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+
+    with caplog.at_level(logging.INFO, logger="agentgrep.audit"):
+        async with Client(agentgrep_mcp.build_mcp_server()) as client:
+            _ = await client.call_tool(
+                "find",
+                {"pattern": "missing", "agent": "all", "limit": 5},
+            )
+
+    audit_records = [r for r in caplog.records if getattr(r, "agentgrep_tool", None) == "find"]
+    assert audit_records, "expected at least one audit record for the find tool"
+    record = audit_records[-1]
+    assert getattr(record, "agentgrep_outcome", None) == "ok"
+    duration = t.cast("float", getattr(record, "agentgrep_duration_ms", None))
+    assert duration >= 0.0
+
+
+async def test_audit_middleware_redacts_pattern(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Sensitive argument payloads are digested in the audit record."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+
+    secret = "secret-token-do-not-leak"
+    with caplog.at_level(logging.INFO, logger="agentgrep.audit"):
+        async with Client(agentgrep_mcp.build_mcp_server()) as client:
+            _ = await client.call_tool(
+                "find",
+                {"pattern": secret, "agent": "all", "limit": 1},
+            )
+
+    audit_records = [r for r in caplog.records if getattr(r, "agentgrep_tool", None) == "find"]
+    assert audit_records
+    summary = t.cast(
+        "dict[str, t.Any]",
+        getattr(audit_records[-1], "agentgrep_args_summary", None),
+    )
+    assert isinstance(summary["pattern"], dict)
+    assert set(summary["pattern"]) == {"len", "sha256_prefix"}
+    assert summary["pattern"]["len"] == len(secret)
+    # The literal secret must not appear anywhere in the structured record.
+    assert secret not in str(summary)
+
+
+def test_response_limit_middleware_is_wired() -> None:
+    """The server installs a ResponseLimitingMiddleware backstop."""
+    from fastmcp.server.middleware.response_limiting import ResponseLimitingMiddleware
+
+    from agentgrep.mcp.middleware import AgentgrepAuditMiddleware
+
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    server = agentgrep_mcp.build_mcp_server()
+    classes = {type(m) for m in server.middleware}
+    assert ResponseLimitingMiddleware in classes
+    assert AgentgrepAuditMiddleware in classes
 
 
 def test_mcp_instructions_carry_every_segment_header() -> None:
