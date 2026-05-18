@@ -10,7 +10,14 @@ if t.TYPE_CHECKING:
 
 def register_tools(mcp: FastMCP) -> None:
     """Register every ``agentgrep`` MCP tool on ``mcp``."""
-    from agentgrep.mcp.tools import discovery_tools, search_tools
+    from agentgrep.mcp.tools import (
+        catalog_tools,
+        diagnostic_tools,
+        discovery_tools,
+        search_tools,
+    )
 
     search_tools.register(mcp)
     discovery_tools.register(mcp)
+    catalog_tools.register(mcp)
+    diagnostic_tools.register(mcp)

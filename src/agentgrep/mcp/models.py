@@ -165,3 +165,144 @@ class FindRequestModel(AgentGrepModel):
     pattern: str | None = None
     agent: AgentSelector
     limit: int | None = None
+
+
+class StoreDescriptorModel(AgentGrepModel):
+    """Catalog descriptor for one on-disk agent store."""
+
+    schema_version: str = agentgrep.SCHEMA_VERSION
+    kind: t.Literal["store"] = "store"
+    agent: t.Literal["codex", "claude", "cursor", "gemini"]
+    store_id: str
+    role: str
+    format: str
+    path_pattern: str
+    env_overrides: list[str] = Field(default_factory=list)
+    platform_variants: dict[str, str] = Field(default_factory=dict)
+    observed_version: str | None = None
+    observed_at: str | None = None
+    upstream_ref: str | None = None
+    schema_notes: str | None = None
+    sample_record: str | None = None
+    search_by_default: bool | None = None
+    search_notes: str | None = None
+    distinguishes_from: list[str] = Field(default_factory=list)
+
+
+class ListStoresRequest(AgentGrepModel):
+    """Validated list-stores request payload."""
+
+    agent: AgentSelector = "all"
+    role_filter: str | None = None
+    search_default_only: bool = False
+
+
+class ListStoresResponse(AgentGrepModel):
+    """Structured response for the MCP list_stores tool."""
+
+    schema_version: str = agentgrep.SCHEMA_VERSION
+    stores: list[StoreDescriptorModel]
+    total: int
+
+
+class GetStoreDescriptorRequest(AgentGrepModel):
+    """Validated get-store-descriptor request payload."""
+
+    store_id: str = Field(
+        min_length=1,
+        description="Store id (e.g. 'claude.projects.session').",
+    )
+
+
+class ListSourcesRequest(AgentGrepModel):
+    """Validated list-sources request payload."""
+
+    agent: AgentSelector = "all"
+    path_kind_filter: t.Literal["history_file", "session_file", "sqlite_db"] | None = None
+    source_kind_filter: t.Literal["json", "jsonl", "sqlite"] | None = None
+    limit: int | None = Field(default=None, ge=1)
+
+
+class ListSourcesResponse(AgentGrepModel):
+    """Structured response for the MCP list_sources tool."""
+
+    schema_version: str = agentgrep.SCHEMA_VERSION
+    sources: list[SourceRecordModel]
+    total: int
+
+
+class FilterSourcesRequest(AgentGrepModel):
+    """Validated filter-sources request payload."""
+
+    pattern: str = Field(min_length=1)
+    agent: AgentSelector = "all"
+    limit: int | None = Field(default=50, ge=1)
+
+
+class DiscoverySummaryRequest(AgentGrepModel):
+    """Validated summarize-discovery request payload."""
+
+    agent: AgentSelector = "all"
+
+
+class DiscoverySummaryResponse(AgentGrepModel):
+    """Aggregate counts of discovered sources."""
+
+    schema_version: str = agentgrep.SCHEMA_VERSION
+    total_sources: int
+    sources_by_agent: dict[str, int]
+    sources_by_format: dict[str, int]
+    sources_by_kind: dict[str, int]
+
+
+class ValidateQueryRequest(AgentGrepModel):
+    """Validated validate-query request payload."""
+
+    terms: list[str] = Field(min_length=1)
+    regex: bool = False
+    case_sensitive: bool = False
+    any_term: bool = False
+    sample_text: str
+
+
+class ValidateQueryResponse(AgentGrepModel):
+    """Result of a dry-run query validation."""
+
+    schema_version: str = agentgrep.SCHEMA_VERSION
+    matches: bool
+    regex_valid: bool
+    error_message: str | None = None
+
+
+class RecentSessionsRequest(AgentGrepModel):
+    """Validated recent-sessions request payload."""
+
+    agent: AgentSelector = "all"
+    hours: int = Field(default=24, ge=1, le=24 * 30)
+    limit: int | None = Field(default=10, ge=1)
+
+
+class RecentSessionsResponse(AgentGrepModel):
+    """Recently modified sources."""
+
+    schema_version: str = agentgrep.SCHEMA_VERSION
+    cutoff_iso: str
+    sources: list[SourceRecordModel]
+
+
+class InspectSampleRequest(AgentGrepModel):
+    """Validated inspect-record-sample request payload."""
+
+    adapter_id: str = Field(min_length=1)
+    source_path: str = Field(min_length=1)
+    sample_size: int = Field(default=1, ge=1, le=20)
+
+
+class InspectSampleResponse(AgentGrepModel):
+    """Sample records read from one source."""
+
+    schema_version: str = agentgrep.SCHEMA_VERSION
+    adapter_id: str
+    sample_count: int
+    records: list[SearchRecordModel]
+    error_message: str | None = None

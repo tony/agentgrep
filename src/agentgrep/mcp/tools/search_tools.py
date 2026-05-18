@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import pathlib
+import time
 import typing as t
 
 from pydantic import Field
@@ -16,10 +18,13 @@ from agentgrep.mcp._library import (
     normalize_agent_selection,
 )
 from agentgrep.mcp.models import (
+    RecentSessionsRequest,
+    RecentSessionsResponse,
     SearchRecordModel,
     SearchRequestModel,
     SearchToolQuery,
     SearchToolResponse,
+    SourceRecordModel,
 )
 
 if t.TYPE_CHECKING:
@@ -49,6 +54,29 @@ def _search_sync(request: SearchRequestModel) -> SearchToolResponse:
             limit=request.limit,
         ),
         results=[SearchRecordModel.from_record(record) for record in records],
+    )
+
+
+def _recent_sessions_sync(request: RecentSessionsRequest) -> RecentSessionsResponse:
+    """Return recently modified sources sorted newest-first."""
+    backends = agentgrep.select_backends()
+    sources = agentgrep.discover_sources(
+        pathlib.Path.home(),
+        normalize_agent_selection(request.agent),
+        backends,
+    )
+    cutoff_ns = time.time_ns() - request.hours * 3600 * 1_000_000_000
+    recent = [source for source in sources if source.mtime_ns >= cutoff_ns]
+    recent.sort(key=lambda s: s.mtime_ns, reverse=True)
+    if request.limit is not None:
+        recent = recent[: request.limit]
+    cutoff_iso = datetime.datetime.fromtimestamp(
+        cutoff_ns / 1_000_000_000,
+        tz=datetime.UTC,
+    ).isoformat()
+    return RecentSessionsResponse(
+        cutoff_iso=cutoff_iso,
+        sources=[SourceRecordModel.from_source(source) for source in recent],
     )
 
 
@@ -109,3 +137,36 @@ def register(mcp: FastMCP) -> None:
         return await asyncio.to_thread(_search_sync, request)
 
     _ = search_tool
+
+    @mcp.tool(
+        name="recent_sessions",
+        tags=READONLY_TAGS | {"search"},
+        description="Return sources modified in the last N hours, newest-first.",
+    )
+    async def recent_sessions_tool(
+        agent: t.Annotated[
+            AgentSelector,
+            Field(description="Limit discovery to one agent or scan every agent."),
+        ] = "all",
+        hours: t.Annotated[
+            int,
+            Field(
+                default=24,
+                ge=1,
+                le=24 * 30,
+                description="Look back this many hours (max 30 days).",
+            ),
+        ] = 24,
+        limit: t.Annotated[
+            int | None,
+            Field(
+                default=10,
+                ge=1,
+                description="Maximum number of sources to return.",
+            ),
+        ] = 10,
+    ) -> RecentSessionsResponse:
+        request = RecentSessionsRequest(agent=agent, hours=hours, limit=limit)
+        return await asyncio.to_thread(_recent_sessions_sync, request)
+
+    _ = recent_sessions_tool

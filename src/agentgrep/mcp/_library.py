@@ -152,6 +152,17 @@ class AgentGrepModule(t.Protocol):
         source: SourceHandleLike,
     ) -> dict[str, object]: ...
 
+    def matches_text(
+        self,
+        text: str,
+        query: object,
+    ) -> bool: ...
+
+    def iter_source_records(
+        self,
+        source: SourceHandleLike,
+    ) -> t.Iterator[SearchRecordLike]: ...
+
 
 agentgrep = t.cast(
     "AgentGrepModule",

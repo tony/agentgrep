@@ -109,6 +109,21 @@ def extract_resource_text(contents: object) -> str:
     return items[0].text or ""
 
 
+class ToolResultLike(t.Protocol):
+    """Minimal MCP tool-call result surface for response decoding."""
+
+    content: object
+
+
+def tool_payload(result: object) -> dict[str, t.Any]:
+    """Decode a FastMCP tool result's JSON body into a dict."""
+    typed = t.cast("ToolResultLike", result)
+    content = t.cast("cabc.Sequence[ResourceTextLike]", typed.content)
+    assert content
+    text = content[0].text or ""
+    return t.cast("dict[str, t.Any]", json.loads(text))
+
+
 async def test_mcp_lists_tools_resources_prompts_and_templates() -> None:
     agentgrep_mcp = load_agentgrep_mcp_module()
 
@@ -121,7 +136,18 @@ async def test_mcp_lists_tools_resources_prompts_and_templates() -> None:
             await client.list_resource_templates(),
         )
 
-    assert {tool.name for tool in tools} == {"search", "find"}
+    assert {tool.name for tool in tools} == {
+        "search",
+        "find",
+        "list_sources",
+        "filter_sources",
+        "summarize_discovery",
+        "list_stores",
+        "get_store_descriptor",
+        "inspect_record_sample",
+        "validate_query",
+        "recent_sessions",
+    }
     assert any(str(resource.uri) == "agentgrep://capabilities" for resource in resources)
     assert any(str(resource.uri) == "agentgrep://sources" for resource in resources)
     assert any(prompt.name == "search_prompts" for prompt in prompts)
@@ -222,7 +248,10 @@ async def test_mcp_capabilities_resource_reports_read_only() -> None:
 
     data = t.cast("dict[str, object]", json.loads(text))
     assert data["read_only"] is True
-    assert data["tools"] == ["search", "find"]
+    tools_advertised = t.cast("list[str]", data["tools"])
+    assert "search" in tools_advertised
+    assert "find" in tools_advertised
+    assert "list_stores" in tools_advertised
     prompts = t.cast("list[str]", data["prompts"])
     assert "search_history" in prompts
 
@@ -358,3 +387,242 @@ def test_mcp_instructions_carry_every_segment_header() -> None:
         "Privacy:",
     ):
         assert marker in rendered, marker
+
+
+async def test_mcp_list_stores_returns_catalog_entries() -> None:
+    """``list_stores`` enumerates the StoreCatalog."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        result = await client.call_tool("list_stores", {"agent": "all"})
+
+    data = tool_payload(result)
+    assert data["total"] >= 10
+    assert {s["agent"] for s in data["stores"]} >= {"codex", "claude", "cursor", "gemini"}
+
+
+async def test_mcp_list_stores_filters_by_agent() -> None:
+    """``list_stores`` respects the ``agent`` filter."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        result = await client.call_tool("list_stores", {"agent": "cursor"})
+
+    data = tool_payload(result)
+    assert data["total"] >= 1
+    assert {s["agent"] for s in data["stores"]} == {"cursor"}
+
+
+async def test_mcp_get_store_descriptor_known_and_unknown() -> None:
+    """``get_store_descriptor`` returns one entry or raises for unknown ids."""
+    from fastmcp.exceptions import ToolError
+
+    agentgrep_mcp = load_agentgrep_mcp_module()
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        ok = await client.call_tool(
+            "get_store_descriptor",
+            {"store_id": "claude.projects.session"},
+        )
+        try:
+            _ = await client.call_tool(
+                "get_store_descriptor",
+                {"store_id": "definitely.not.a.real.store"},
+            )
+        except ToolError as exc:
+            error_message = str(exc)
+        else:
+            error_message = ""
+
+    data = tool_payload(ok)
+    assert data["store_id"] == "claude.projects.session"
+    assert error_message and "definitely.not.a.real.store" in error_message
+
+
+async def test_mcp_list_sources_with_filters(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``list_sources`` honors path_kind_filter."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+
+    state_db = home / ".cursor" / "state.vscdb"
+    state_db.parent.mkdir(parents=True, exist_ok=True)
+    state_db.touch()
+    history_path = home / ".codex" / "history.json"
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    _ = history_path.write_text("[]", encoding="utf-8")
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        result = await client.call_tool(
+            "list_sources",
+            {"path_kind_filter": "sqlite_db"},
+        )
+
+    data = tool_payload(result)
+    assert data["total"] >= 1
+    assert all(s["path_kind"] == "sqlite_db" for s in data["sources"])
+
+
+async def test_mcp_filter_sources_requires_pattern() -> None:
+    """``filter_sources`` rejects an empty pattern at the validation layer."""
+    from fastmcp.exceptions import ToolError
+
+    agentgrep_mcp = load_agentgrep_mcp_module()
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        try:
+            _ = await client.call_tool("filter_sources", {"pattern": ""})
+        except ToolError as exc:
+            error_message = str(exc)
+        else:
+            error_message = ""
+
+    assert error_message  # validation should refuse the empty pattern
+
+
+async def test_mcp_summarize_discovery_totals_match_list_sources(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``summarize_discovery.total_sources`` equals ``list_sources.total``."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+
+    state_db = home / ".cursor" / "state.vscdb"
+    state_db.parent.mkdir(parents=True, exist_ok=True)
+    state_db.touch()
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        summary = await client.call_tool("summarize_discovery", {})
+        listing = await client.call_tool("list_sources", {})
+
+    summary_data = tool_payload(summary)
+    listing_data = tool_payload(listing)
+    assert summary_data["total_sources"] == listing_data["total"]
+
+
+async def test_mcp_validate_query_invalid_regex() -> None:
+    """``validate_query`` reports ``regex_valid=False`` on unclosed character classes."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        result = await client.call_tool(
+            "validate_query",
+            {
+                "terms": ["[unclosed"],
+                "regex": True,
+                "sample_text": "anything",
+            },
+        )
+
+    data = tool_payload(result)
+    assert data["regex_valid"] is False
+    assert data["matches"] is False
+    assert data["error_message"]
+
+
+async def test_mcp_validate_query_substring_match() -> None:
+    """``validate_query`` returns ``matches=True`` for a literal hit."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        result = await client.call_tool(
+            "validate_query",
+            {"terms": ["foo"], "sample_text": "foobar baz"},
+        )
+
+    data = tool_payload(result)
+    assert data["regex_valid"] is True
+    assert data["matches"] is True
+
+
+async def test_mcp_recent_sessions_filters_by_mtime(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sources older than ``hours`` are excluded."""
+    import os
+
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+
+    state_db = home / ".cursor" / "state.vscdb"
+    state_db.parent.mkdir(parents=True, exist_ok=True)
+    state_db.touch()
+    # Backdate the file to 48 hours ago.
+    old = state_db.stat().st_mtime - (48 * 3600)
+    os.utime(state_db, (old, old))
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        recent = await client.call_tool("recent_sessions", {"hours": 24})
+        broad = await client.call_tool("recent_sessions", {"hours": 24 * 7})
+
+    recent_data = tool_payload(recent)
+    broad_data = tool_payload(broad)
+    # Paths come back with the home directory collapsed to '~', so compare
+    # by suffix rather than by the absolute tmp_path string.
+    suffix = ".cursor/state.vscdb"
+    assert not any(s["path"].endswith(suffix) for s in recent_data["sources"])
+    assert any(s["path"].endswith(suffix) for s in broad_data["sources"])
+    _ = state_db  # quiet F841 — kept for readability of the test setup
+
+
+async def test_mcp_inspect_record_sample_unknown_path(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unknown adapter+path returns an error_message and no records."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        result = await client.call_tool(
+            "inspect_record_sample",
+            {
+                "adapter_id": "codex.history_json.v1",
+                "source_path": str(tmp_path / "no_such_file.json"),
+                "sample_size": 1,
+            },
+        )
+
+    data = tool_payload(result)
+    assert data["sample_count"] == 0
+    assert data["records"] == []
+    assert data["error_message"] == "source not found"
+
+
+async def test_mcp_inspect_record_sample_returns_codex_history(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A known codex history file yields parsed sample records."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+
+    history_path = home / ".codex" / "history.json"
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    _ = history_path.write_text(
+        json.dumps([{"command": "echo alpha", "timestamp": "2026-01-01T00:00:00Z"}]),
+        encoding="utf-8",
+    )
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        result = await client.call_tool(
+            "inspect_record_sample",
+            {
+                "adapter_id": "codex.history_json.v1",
+                "source_path": str(history_path),
+                "sample_size": 1,
+            },
+        )
+
+    data = tool_payload(result)
+    assert data["error_message"] is None
+    assert data["sample_count"] >= 1
