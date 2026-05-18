@@ -42,6 +42,111 @@ $ uvx --from 'agentgrep' --prerelease allow python
 _Notes on the upcoming release will go here._
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+agentgrep 0.1.0a3 promotes the MCP server to a first-class
+product surface alongside the library. Eight new MCP tools and
+three new resources expose the full catalog and discovery layer
+to clients without dropping back to the CLI; a tabbed install
+widget on both the MCP and library landing pages picks the right
+snippet for each client, install method, and config scope. The
+docs sidebar now treats Library and MCP as top-level sections
+rather than members of a Packages group.
+
+### What's new
+
+#### Eight new MCP tools
+
+The MCP server gains {tooliconl}`list_stores`,
+{tooliconl}`get_store_descriptor`, {tooliconl}`inspect_record_sample`,
+{tooliconl}`list_sources`, {tooliconl}`filter_sources`,
+{tooliconl}`summarize_discovery`, {tooliconl}`recent_sessions`, and
+{tooliconl}`validate_query`. Together they let MCP clients
+introspect the canonical store catalog (role, format, upstream
+schema notes), filter discovered sources by path-kind and
+source-kind, summarize what's discoverable per agent, fetch a
+small sample of parsed records from one adapter+path, narrow
+recent activity by mtime window, and dry-run a regex against
+sample text before issuing a broad cross-agent search.
+
+#### Three new MCP resources
+
+`agentgrep://catalog` returns the full {class}`~agentgrep.stores.StoreCatalog`
+Pydantic payload (every store agentgrep knows about — including
+ones that aren't searched by default — with role, format,
+upstream reference, and schema notes). `agentgrep://store-roles`
+and `agentgrep://store-formats` enumerate the supporting enum
+values with one-line descriptions so an agent can build prompts
+or summaries without scraping the docs site.
+
+#### MCP server hardening
+
+The MCP server now runs through FastMCP's timing, response-size,
+and error-handling middleware plus an agentgrep-flavored audit
+log that records `agentgrep_tool` / `agentgrep_outcome` /
+`agentgrep_duration_ms` / `agentgrep_args_summary` on every call.
+Sensitive argument payloads (`terms`, `pattern`, `sample_text`)
+are redacted to `{len, sha256_prefix}` before logging so the
+audit stream stays operator-debuggable without leaking the
+caller's prompts. The server instructions are now composed from
+named segments (HEADER / SCOPE / SEARCH_VS_DISCOVERY / DEFAULTS /
+RESOURCES / PRIVACY) so future agent-context segments slot in
+without rewriting the base set.
+
+#### MCP install widget
+
+The MCP landing page hosts a tabbed installer that picks the
+right snippet across Claude Code, Claude Desktop, Codex, Gemini,
+and Cursor, three install methods (uvx / pipx / pip), each
+client's relevant config scopes, and an optional dependency
+cooldown (off / N-day cooldown / bypass-global). The widget
+remembers your selections across pages so the same snippet stays
+visible while you browse the docs.
+
+#### Library install + quickstart widget
+
+The library landing page hosts a sibling widget with one row of
+install-method tabs (uvx run, pipx run, uv add, pip install) and
+a runnable Python quickstart on every panel — install command on
+top, end-to-end search snippet below. The quickstart calls
+{func}`~agentgrep.run_search_query` directly so readers see the
+same shape the CLI uses.
+
+#### Sidebar: Library and MCP first-class
+
+The Packages group is gone. The left sidebar now lists Get
+started, Library, MCP, Reference, and Project as siblings, with
+{doc}`library/index` and {doc}`mcp/index` carrying the install
+widgets. Old `/packages/agentgrep/*` URLs redirect to
+`/library/*`.
+
+### Development
+
+#### `scripts/mcp_swap.py`
+
+A new dev-only script swaps the MCP server entry in every
+installed agent CLI (Claude, Codex, Cursor, Gemini) between a
+pinned release and the local checkout. `just mcp-detect` lists
+which CLIs are present, `just mcp-status` shows the current
+entry, `just mcp-use-local` rewrites configs to run
+`uv --directory <repo> run agentgrep-mcp`, and `just mcp-revert`
+restores from a timestamped backup. State and backups live in
+`$XDG_STATE_HOME/agentgrep-dev/swap/` so the script never edits
+the same file twice without a recoverable undo path.
+
+#### MCP server refactor
+
+`src/agentgrep/mcp.py` is now a `mcp/` subpackage with per-domain
+tool modules (`search_tools`, `discovery_tools`, `catalog_tools`,
+`diagnostic_tools`) plus separate `models.py`, `resources.py`,
+`prompts.py`, `instructions.py`, and `middleware.py`. The entry
+point `agentgrep-mcp = "agentgrep.mcp:main"` is preserved through
+`__init__.py` re-exports.
+
+#### Top-level README
+
+The project ships a top-level `README.md` for GitHub and PyPI,
+with the project pitch, a single-client install snippet, the
+library quickstart, and links to docs / source / issues.
+
 ## agentgrep 0.1.0a2 (2026-05-17)
 
 agentgrep 0.1.0a2 fixes silent "No matches found." failures for
