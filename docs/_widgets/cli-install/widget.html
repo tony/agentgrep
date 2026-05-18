@@ -1,18 +1,24 @@
 {#
-  CLI install widget: one row of method tabs, one panel per method.
-  Mirrors the mcp-install widget's structure — no wrapper divs around
-  ``.highlight``, so the visual rhythm matches.
+  CLI install widget: server-rendered method × cooldown matrix.
+  Mirrors the mcp-install widget's structure — same cooldown control
+  row, same settings sub-view, same prehydrate-driven panel visibility.
 
-  The first panel is visible by default; widget.js mirrors localStorage
-  onto <html data-cli-install-method=...> and the CSS in widget.css
-  swaps panel visibility based on that attribute.
-
-  Each install body and usage command runs through Sphinx's Pygments
-  via the ``highlight`` Jinja filter so sphinx-copybutton's prompt-
-  strip regex picks it up automatically.
+  Each code block runs through the `highlight` filter (defined in
+  docs._ext.widgets._base.make_highlight_filter) which wraps Sphinx's
+  PygmentsBridge — so the output is byte-identical to a native
+  ``.. code-block::`` block, meaning sphinx-copybutton + its prompt-strip
+  regex work automatically. The output is then run through
+  ``cooldown_days_slot`` (defined in
+  docs._ext.widgets._base.make_cooldown_days_slot_filter) which swaps
+  ``&lt;COOLDOWN_DURATION&gt;`` / ``&lt;COOLDOWN_DATE&gt;`` for
+  ``<span class="ag-cooldown-days" data-cooldown-*-slot>`` spans.
+  widget.js updates both kinds' textContent on every cooldown-days
+  input change.
 #}
 <div class="ag-cli-install ag-cli-install--{{ variant }}">
-  <div class="ag-cli-install__tabs" role="tablist" aria-label="Install method">
+  <div class="ag-cli-install__tabs ag-cli-install__tabs--methods"
+       role="tablist"
+       aria-label="Install method">
     {% for method in methods %}
     <button type="button"
             class="ag-cli-install__tab"
@@ -24,13 +30,31 @@
       {{ method.label }}
     </button>
     {% endfor %}
+
+    <div class="ag-cli-install__cooldown-control">
+      <input type="checkbox"
+             id="ag-cli-install__cooldown-toggle"
+             class="ag-cli-install__cooldown-toggle"
+             data-action="cooldown-toggle"
+             aria-label="Apply a dependency cooldown">
+      <button type="button"
+              class="ag-cli-install__cooldown-label-text"
+              data-action="cooldown-open"
+              aria-label="Toggle cooldown settings">Configure cooldowns</button>
+      <button type="button"
+              class="ag-cli-install__cooldown-help"
+              data-action="cooldown-help"
+              aria-label="What are cooldowns?"
+              title="What are cooldowns?">?</button>
+    </div>
   </div>
 
-  <div class="ag-cli-install__body">
+  <div class="ag-cli-install__body ag-cli-install__body--install">
     {% for panel in panels %}
     <div class="ag-cli-install__panel"
          role="tabpanel"
          data-method="{{ panel.method.id }}"
+         data-cooldown="{{ panel.cooldown.id }}"
          tabindex="0"
          {% if not panel.is_default %}hidden{% endif %}>
 
@@ -40,14 +64,78 @@
       </p>
       {% endif %}
 
-      {{ panel.install_body | highlight("console") }}
+      {{ (panel.install_body | highlight("console")) | cooldown_days_slot }}
 
       <p class="ag-cli-install__preamble">Then run it from the terminal:</p>
 
       {% for cmd in panel.usage_commands %}
-      {{ cmd | highlight("console") }}
+      {{ (cmd | highlight("console")) | cooldown_days_slot }}
       {% endfor %}
+
+      {% if panel.note %}
+      <p class="ag-cli-install__cooldown-note">
+        {{ panel.note }}
+      </p>
+      {% endif %}
     </div>
     {% endfor %}
+  </div>
+
+  <div class="ag-cli-install__body ag-cli-install__body--settings"
+       role="dialog"
+       aria-label="Cooldown settings">
+    <div class="ag-cli-install__settings-header">
+      <button type="button"
+              class="ag-cli-install__back"
+              data-action="cooldown-back"
+              aria-label="Back to installer">
+        <span class="ag-cli-install__back-icon" aria-hidden="true">&larr;</span>
+        <span class="ag-cli-install__back-text">Back</span>
+      </button>
+      <h3 class="ag-cli-install__settings-title">Dependency cooldowns</h3>
+    </div>
+    <p class="ag-cli-install__settings-help">
+      Use the <em>Configure cooldowns</em> checkbox above to enable or
+      disable. These settings choose how cooldown behaves once enabled.
+    </p>
+    <fieldset class="ag-cli-install__settings-modes">
+      <legend class="ag-cli-install__sr-only">Cooldown type</legend>
+      <label class="ag-cli-install__settings-mode">
+        <input type="radio" name="cooldown-mode" value="days"
+               data-action="cooldown-mode"
+               {{ 'checked' if default_cooldown_type == 'days' else '' }}>
+        <span>
+          Apply a cooldown of
+          <input type="number" min="1" max="365"
+                 value="{{ default_cooldown_days }}"
+                 class="ag-cli-install__cooldown-days-input"
+                 data-action="cooldown-days"
+                 aria-label="Cooldown in days">
+          days
+        </span>
+      </label>
+      <label class="ag-cli-install__settings-mode">
+        <input type="radio" name="cooldown-mode" value="bypass"
+               data-action="cooldown-mode"
+               {{ 'checked' if default_cooldown_type == 'bypass' else '' }}>
+        <span>Bypass any global cooldown <small>(uv only)</small></span>
+      </label>
+    </fieldset>
+    <details class="ag-cli-install__cooldown-explainer">
+      <summary>What are cooldowns?</summary>
+      <p>
+        Cooldowns delay picking up newly uploaded packages so the
+        community has time to spot supply-chain attacks before you
+        install. Most package managers don't apply one by default
+        &mdash; you opt in via a global setting in your tool's config.
+      </p>
+      <p>
+        Learn more at
+        <a href="https://cooldowns.dev/" target="_blank" rel="noopener">cooldowns.dev</a>
+        &middot;
+        <a href="https://securitylabs.datadoghq.com/articles/dependency-cooldowns/"
+           target="_blank" rel="noopener">Datadog Security Labs writeup</a>.
+      </p>
+    </details>
   </div>
 </div>

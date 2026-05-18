@@ -1,8 +1,12 @@
 /* CLI install widget — visual rhythm matches mcp-install / library-install.
  *
  * Re-uses the Furo color variables so dark/light mode follows the
- * theme. CSS-driven visibility on the html[data-cli-install-method]
- * attribute survives gp-sphinx SPA navigation between docs pages.
+ * theme. CSS-driven visibility on the html[data-cli-install-*]
+ * attributes survives gp-sphinx SPA navigation between docs pages.
+ * Panel visibility rules (method × cooldown matrix) live in
+ * docs/_ext/widgets/_prehydrate.py inside @layer cli-install-prehydrate
+ * — they need !important + layer priority to beat the gp-furo-theme
+ * preflight on [hidden].
  *
  * Code blocks (``.highlight-console``) inherit Pygments + Furo styling
  * directly — no per-widget code styling here, just spacing.
@@ -93,6 +97,231 @@
   margin-top: 0.3rem;
 }
 
+/* Cooldown control: sits on the right edge of the method row. The
+ * ``margin-inline-start: auto`` is the modern flex-trick to push to
+ * the end without disturbing the preceding tabs. */
+.ag-cli-install__cooldown-control {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-inline-start: auto;
+  padding: 0 0.7rem 0 0.5rem;
+  color: var(--color-foreground-secondary);
+  font-size: 0.9em;
+}
+
+/* The .ag-cli-install__cooldown-toggle styling lives in
+ * docs/_ext/widgets/_prehydrate.py inside the @layer cli-install-prehydrate
+ * block — the appearance reset + checked-state visual must paint from the
+ * inline <head> style so native unchecked → checked flicker disappears. */
+
+.ag-cli-install__cooldown-label-text {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px dashed transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  margin: 0;
+}
+
+.ag-cli-install__cooldown-label-text:hover {
+  color: var(--color-foreground-primary);
+  border-bottom-color: var(--color-foreground-muted);
+}
+
+.ag-cli-install__cooldown-label-text:focus-visible {
+  outline: 2px solid var(--color-brand-primary);
+  outline-offset: 2px;
+  border-radius: 0.15rem;
+}
+
+.ag-cli-install__cooldown-help {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--color-background-border, var(--color-foreground-border, #ccc));
+  border-radius: 999px;
+  width: 1.3em;
+  height: 1.3em;
+  padding: 0;
+  font: inherit;
+  font-size: 0.85em;
+  color: var(--color-foreground-secondary);
+  cursor: help;
+  line-height: 1;
+}
+
+.ag-cli-install__cooldown-help:hover {
+  color: var(--color-brand-primary);
+  border-color: var(--color-brand-primary);
+}
+
+.ag-cli-install__cooldown-help:focus-visible {
+  outline: 2px solid var(--color-brand-primary);
+  outline-offset: 2px;
+}
+
+/* Cooldown caveat note rendered after snippets where bypass is a no-op. */
+.ag-cli-install__cooldown-note {
+  margin: 0.5rem 0 0 0;
+  font-size: 0.85em;
+  font-style: italic;
+  color: var(--color-foreground-secondary);
+  border-left: 2px solid var(--color-background-border, var(--color-foreground-border, #ccc));
+  padding-left: 0.6rem;
+}
+
+.ag-cli-install__cooldown-note code {
+  font-style: normal;
+}
+
+/* Settings sub-view: lives next to the install body and swaps in via
+ * the ``[data-cli-install-view="settings"]`` attribute on ``<html>``.
+ * No transitions on the swap — same lesson as the tab rows: animations
+ * during view resolve are visible flicker. */
+.ag-cli-install__body--settings {
+  display: none;
+  padding: 1rem 1.2rem 1.2rem;
+}
+
+html[data-cli-install-view="settings"] .ag-cli-install__body--install {
+  display: none;
+}
+
+html[data-cli-install-view="settings"] .ag-cli-install__body--settings {
+  display: block;
+}
+
+/* Settings header: back button + title share one row, both flush to the
+ * top-left of the settings body's content area (the body's own padding
+ * supplies the gap to the widget edge). Sizes track the widget's base
+ * font scale (the host ``.ag-cli-install`` is 0.95em). */
+.ag-cli-install__settings-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0 0 0.8rem 0;
+}
+
+.ag-cli-install__back {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--color-background-border, var(--color-foreground-border, #ccc));
+  border-radius: 0.25rem;
+  color: var(--color-foreground-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font: inherit;
+  font-size: 0.85em;
+  line-height: 1;
+  padding: 0.2rem 0.5rem;
+}
+
+.ag-cli-install__back:hover {
+  color: var(--color-foreground-primary);
+  border-color: var(--color-foreground-secondary);
+  background: var(--color-background-hover, rgba(0, 0, 0, 0.04));
+}
+
+.ag-cli-install__back:focus-visible {
+  outline: 2px solid var(--color-brand-primary);
+  outline-offset: 2px;
+}
+
+.ag-cli-install__back-icon {
+  font-size: 1.1em;
+  line-height: 1;
+}
+
+.ag-cli-install__settings-title {
+  margin: 0;
+  font-size: 1em;
+  font-weight: 600;
+  color: var(--color-foreground-primary);
+}
+
+.ag-cli-install__settings-help {
+  margin: 0 0 0.8rem 0;
+  font-size: 0.9em;
+  color: var(--color-foreground-secondary);
+}
+
+.ag-cli-install__settings-help em {
+  font-style: italic;
+}
+
+.ag-cli-install__settings-modes {
+  border: 0;
+  padding: 0;
+  margin: 0 0 1rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.ag-cli-install__settings-mode {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  padding: 0.25rem 0;
+}
+
+.ag-cli-install__settings-mode input[type="radio"] {
+  cursor: pointer;
+}
+
+.ag-cli-install__cooldown-days-input {
+  width: 4.5em;
+  padding: 0.15rem 0.35rem;
+  border: 1px solid var(--color-background-border, var(--color-foreground-border, #ccc));
+  border-radius: 0.2rem;
+  background: var(--color-background-primary);
+  color: var(--color-foreground-primary);
+  font: inherit;
+  font-size: 0.95em;
+}
+
+.ag-cli-install__cooldown-explainer {
+  border-top: 1px solid var(--color-background-border, var(--color-foreground-border, #ccc));
+  padding-top: 0.7rem;
+  margin-top: 0.5rem;
+  color: var(--color-foreground-secondary);
+  font-size: 0.9em;
+}
+
+.ag-cli-install__cooldown-explainer summary {
+  cursor: pointer;
+  color: var(--color-brand-content, var(--color-brand-primary));
+  margin-bottom: 0.5rem;
+}
+
+.ag-cli-install__cooldown-explainer p {
+  margin: 0 0 0.5rem 0;
+}
+
+.ag-cli-install__cooldown-explainer a {
+  color: var(--color-brand-content, var(--color-brand-primary));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.ag-cli-install__sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* Compact variant: tighter padding, smaller type. Used on index.md
  * above-the-fold next to the {mcp-install} :variant: compact widget so
  * both pickers share the same proportions. Mirrors
@@ -106,27 +335,7 @@
   padding: 0.7rem 0.8rem;
 }
 
-/* Prehydrate-driven panel visibility — keeps initial paint in sync
- * with the saved method without waiting for widget.js to mutate
- * [hidden]. */
-html[data-cli-install-method="uvx-run"]
-  .ag-cli-install__panel:not([data-method="uvx-run"]),
-html[data-cli-install-method="pipx-run"]
-  .ag-cli-install__panel:not([data-method="pipx-run"]),
-html[data-cli-install-method="uv-add"]
-  .ag-cli-install__panel:not([data-method="uv-add"]),
-html[data-cli-install-method="pip"]
-  .ag-cli-install__panel:not([data-method="pip"]) {
-  display: none !important;
-}
-
-html[data-cli-install-method="uvx-run"]
-  .ag-cli-install__panel[data-method="uvx-run"],
-html[data-cli-install-method="pipx-run"]
-  .ag-cli-install__panel[data-method="pipx-run"],
-html[data-cli-install-method="uv-add"]
-  .ag-cli-install__panel[data-method="uv-add"],
-html[data-cli-install-method="pip"]
-  .ag-cli-install__panel[data-method="pip"] {
-  display: block !important;
+.ag-cli-install--compact .ag-cli-install__cooldown-control {
+  font-size: 0.85em;
+  padding: 0 0.5rem 0 0.4rem;
 }

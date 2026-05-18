@@ -364,7 +364,9 @@ def _library_install_snippet() -> str:
     return (
         '<script data-cfasync="false">(function(){'
         "try{"
-        'var m=localStorage.getItem("agentgrep.library-install.method.v2")||"' + DEFAULT_METHOD + '";'
+        'var m=localStorage.getItem("agentgrep.library-install.method.v2")||"'
+        + DEFAULT_METHOD
+        + '";'
         'document.documentElement.setAttribute("data-library-install-method",m);'
         "}catch(_){}"
         "})();</script>"
@@ -382,24 +384,171 @@ def inject_library_install_prehydrate(
     context["metatags"] = context.get("metatags", "") + _library_install_snippet()
 
 
-def _cli_install_snippet() -> str:
-    """Return the inline ``<script>`` that replays saved CLI install method.
+_CLI_TAB_DEACTIVATE_RULE = (
+    "html[data-cli-install-method] .ag-cli-install__tab"
+    '[data-tab-kind="method"][aria-selected="true"]'
+    "{color:var(--color-foreground-muted) !important;"
+    "border-bottom-color:transparent !important;"
+    "background:transparent !important}"
+)
 
-    The CSS rules that drive panel visibility from
-    ``html[data-cli-install-method=...]`` live in
-    ``docs/_widgets/cli-install/widget.css`` — both stylesheet and
-    widget JS read the same storage key.
+
+_CLI_TAB_ACTIVE_DECL = (
+    "{color:var(--color-brand-primary) !important;"
+    "border-bottom-color:var(--color-brand-primary) !important;"
+    "background:var(--color-background-primary) !important}"
+)
+
+
+_CLI_PANEL_HIDE_RULE = (
+    "html[data-cli-install-method] .ag-cli-install__panel:not([hidden]){display:none !important}"
+)
+
+
+_CLI_PANEL_ACTIVE_DECL = "{display:block !important}"
+
+
+# Cli-install checkbox styling — mirrors `_COOLDOWN_TOGGLE_RULES` for
+# mcp-install. Same `appearance: none` + ✓ pseudo pattern, keyed on
+# ``data-cli-install-cooldown-enabled="1"`` instead of the mcp attr.
+# Must paint before any JS to avoid the native unchecked → checked
+# flicker on every reload.
+_CLI_COOLDOWN_TOGGLE_RULES = (
+    ".ag-cli-install__cooldown-toggle"
+    "{appearance:none !important;"
+    "-webkit-appearance:none !important;"
+    "width:0.95em !important;"
+    "height:0.95em !important;"
+    "margin:0 !important;"
+    "border:1.5px solid var(--color-foreground-muted) !important;"
+    "border-radius:0.2em !important;"
+    "background:var(--color-background-primary) !important;"
+    "cursor:pointer !important;"
+    "position:relative !important;"
+    "flex:0 0 auto !important}"
+    'html[data-cli-install-cooldown-enabled="1"]'
+    " .ag-cli-install__cooldown-toggle"
+    "{background:var(--color-brand-primary) !important;"
+    "border-color:var(--color-brand-primary) !important}"
+    'html[data-cli-install-cooldown-enabled="1"]'
+    " .ag-cli-install__cooldown-toggle::after"
+    '{content:"✓" !important;'
+    "position:absolute !important;"
+    "inset:0 !important;"
+    "display:flex !important;"
+    "align-items:center !important;"
+    "justify-content:center !important;"
+    "color:#fff !important;"
+    "font-size:0.85em !important;"
+    "font-weight:700 !important;"
+    "line-height:1 !important}"
+    ".ag-cli-install__cooldown-toggle:focus-visible"
+    "{outline:2px solid var(--color-brand-primary) !important;"
+    "outline-offset:2px !important}"
+)
+
+
+def _cli_tab_active_selectors(method_ids: tuple[str, ...]) -> str:
+    """Return the comma-joined active-tab selectors keyed on html attrs."""
+    return ",".join(
+        f'html[data-cli-install-method="{id_}"] .ag-cli-install__tab'
+        f'[data-tab-kind="method"][data-tab-value="{id_}"]'
+        for id_ in method_ids
+    )
+
+
+def _cli_panel_active_selectors(method_ids: tuple[str, ...]) -> str:
+    """Return the 12-selector method x cooldown panel-active matrix.
+
+    Three cases per method:
+
+    * ``enabled=0`` -> show the ``data-cooldown="off"`` panel (type is
+      don't-care).
+    * ``enabled=1`` + ``type="days"`` -> show the days panel.
+    * ``enabled=1`` + ``type="bypass"`` -> show the bypass panel.
+
+    Enumerates 4 methods x 3 cases = 12 selectors.
+    """
+    selectors: list[str] = []
+    for method_id in method_ids:
+        base = f'[data-cli-install-method="{method_id}"]'
+        panel_base = f' .ag-cli-install__panel[data-method="{method_id}"]'
+        selectors.append(
+            f'html[data-cli-install-cooldown-enabled="0"]{base}{panel_base}[data-cooldown="off"]'
+        )
+        selectors.append(
+            f'html[data-cli-install-cooldown-enabled="1"]'
+            f'[data-cli-install-cooldown-type="days"]'
+            f"{base}{panel_base}"
+            f'[data-cooldown="days"]'
+        )
+        selectors.append(
+            f'html[data-cli-install-cooldown-enabled="1"]'
+            f'[data-cli-install-cooldown-type="bypass"]'
+            f"{base}{panel_base}"
+            f'[data-cooldown="bypass"]'
+        )
+    return ",".join(selectors)
+
+
+def _build_cli_install_style() -> str:
+    """Return the ``<style>`` block driving cli-install state from html attrs.
+
+    Wrapped in ``@layer cli-install-prehydrate`` — same rationale as the
+    mcp-install layer: ``gp-furo-theme``'s Tailwind preflight lives in
+    ``@layer base`` and per CSS Cascade Level 5 ``!important``
+    declarations in any layer outrank unlayered ``!important`` ones.
+    Without the layer the preflight's ``[hidden]`` rule would paint
+    every panel as ``display:none`` until ``widget.js`` ran.
+    """
+    from .cli_install import METHODS
+
+    method_ids = tuple(m.id for m in METHODS)
+    rules = [
+        _CLI_TAB_DEACTIVATE_RULE,
+        _cli_tab_active_selectors(method_ids) + _CLI_TAB_ACTIVE_DECL,
+        _CLI_PANEL_HIDE_RULE,
+        _cli_panel_active_selectors(method_ids) + _CLI_PANEL_ACTIVE_DECL,
+        _CLI_COOLDOWN_TOGGLE_RULES,
+    ]
+    return "<style>@layer cli-install-prehydrate{" + "".join(rules) + "}</style>"
+
+
+def _cli_install_script() -> str:
+    """Return the inline ``<head>`` script that mirrors localStorage onto ``<html>``.
+
+    Sets four attrs before first paint:
+    ``data-cli-install-method``, ``data-cli-install-cooldown-enabled``,
+    ``data-cli-install-cooldown-type``, ``data-cli-install-cooldown-days``.
     """
     from .cli_install import DEFAULT_METHOD
 
+    enabled_default = "1" if DEFAULT_COOLDOWN_ENABLED else "0"
     return (
         '<script data-cfasync="false">(function(){'
         "try{"
+        "var h=document.documentElement;"
         'var m=localStorage.getItem("agentgrep.cli-install.method")||"' + DEFAULT_METHOD + '";'
-        'document.documentElement.setAttribute("data-cli-install-method",m);'
+        'var ce=localStorage.getItem("agentgrep.cli-install.cooldown.enabled")||"'
+        + enabled_default
+        + '";'
+        'var ct=localStorage.getItem("agentgrep.cli-install.cooldown.type")||"'
+        + DEFAULT_COOLDOWN_TYPE
+        + '";'
+        'var cd=localStorage.getItem("agentgrep.cli-install.cooldown.days")||"'
+        + str(DEFAULT_COOLDOWN_DAYS)
+        + '";'
+        'h.setAttribute("data-cli-install-method",m);'
+        'h.setAttribute("data-cli-install-cooldown-enabled",ce);'
+        'h.setAttribute("data-cli-install-cooldown-type",ct);'
+        'h.setAttribute("data-cli-install-cooldown-days",cd);'
         "}catch(_){}"
         "})();</script>"
     )
+
+
+def _cli_install_snippet() -> str:
+    return _build_cli_install_style() + _cli_install_script()
 
 
 def inject_cli_install_prehydrate(
@@ -409,5 +558,5 @@ def inject_cli_install_prehydrate(
     context: dict[str, t.Any],
     doctree: object,
 ) -> None:
-    """Inject the cli-install prehydrate snippet into Furo's ``<head>``."""
+    """Inject the cli-install prehydrate ``<style>`` + ``<script>`` into Furo's ``<head>``."""
     context["metatags"] = context.get("metatags", "") + _cli_install_snippet()
