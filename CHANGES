@@ -36,11 +36,13 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a3 (Yet to be released)
+## agentgrep 0.1.0a4 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 _Notes on the upcoming release will go here._
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a3 (2026-05-17)
 
 agentgrep 0.1.0a3 promotes the MCP server to a first-class
 product surface alongside the library. Eight new MCP tools and
