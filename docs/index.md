@@ -10,6 +10,10 @@ agentgrep has two entry points: a terminal CLI for direct search, and a FastMCP 
 **Pre-alpha.** APIs may change. [Feedback welcome](https://github.com/tony/agentgrep/issues).
 ```
 
+```{mcp-install}
+:variant: compact
+```
+
 ::::{grid} 1 1 2 3
 :gutter: 2 2 3 3
 
