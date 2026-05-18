@@ -71,10 +71,27 @@ conf["fastmcp_model_classes"] = (
     "CapabilitiesModel",
     "SearchRequestModel",
     "FindRequestModel",
+    "StoreDescriptorModel",
+    "ListStoresRequest",
+    "ListStoresResponse",
+    "GetStoreDescriptorRequest",
+    "ListSourcesRequest",
+    "ListSourcesResponse",
+    "FilterSourcesRequest",
+    "DiscoverySummaryRequest",
+    "DiscoverySummaryResponse",
+    "ValidateQueryRequest",
+    "ValidateQueryResponse",
+    "RecentSessionsRequest",
+    "RecentSessionsResponse",
+    "InspectSampleRequest",
+    "InspectSampleResponse",
 )
 conf["fastmcp_section_badge_map"] = {
     "Search": "readonly",
     "Discovery": "readonly",
+    "Catalog": "readonly",
+    "Diagnostic": "readonly",
 }
 conf["fastmcp_section_badge_pages"] = ("mcp/tools", "mcp/index", "index")
 
