@@ -1014,11 +1014,11 @@ async def test_empty_query_focuses_search_input_and_marks_search_done(
         assert app._search_done is True
 
 
-async def test_search_input_posts_search_requested_after_debounce(
+async def test_search_input_posts_search_requested_only_on_enter(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Typing into the top search bar posts exactly one ``SearchRequested``.
+    """Typing alone posts nothing; pressing Enter posts one ``SearchRequested``.
 
     The ``SearchRequested`` class lives inside the streaming-app factory
     closure, so the test sniffs every posted message and filters to ones
@@ -1044,16 +1044,18 @@ async def test_search_input_posts_search_requested_after_debounce(
         await pilot.press("b")
         await pilot.press("l")
         await pilot.press("i")
-        # Let the 150 ms debounce elapse plus a little slack.
         await pilot.pause(0.4)
-        assert posts == ["bli"], f"expected one debounced post, got {posts}"
+        assert posts == [], f"keystrokes should not auto-post; got {posts}"
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        assert posts == ["bli"], f"expected one post on Enter, got {posts}"
 
 
 async def test_search_input_dispatch_spawns_search_group_worker(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Non-empty search text spawns a worker in the ``search`` group."""
+    """Pressing Enter on a non-empty search bar spawns a ``search`` worker."""
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     spawned: list[dict[str, object]] = []
 
@@ -1066,9 +1068,47 @@ async def test_search_input_dispatch_spawns_search_group_worker(
         app._search_input.focus()
         await pilot.pause()
         app._search_input.value = "bliss"
-        await pilot.pause(0.25)
+        await pilot.pause(0.1)
+        assert spawned == [], f"value change alone should not spawn; got {spawned}"
+        await pilot.press("enter")
+        await pilot.pause(0.1)
         groups = [t.cast("dict[str, object]", entry["kwargs"]).get("group") for entry in spawned]
         assert "search" in groups, f"expected a search-group worker, got {spawned}"
+
+
+async def test_search_input_enter_replaces_control_to_cancel_prior_search(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each new search signals the prior control and installs a fresh one.
+
+    The cooperative cancel contract is: the old worker thread keeps its
+    (now-signaled) ``SearchControl`` reference and bails out; the new
+    worker gets a fresh, un-signaled control.
+    """
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        # Stub run_worker so the app's worker bookkeeping doesn't fight us.
+        monkeypatch.setattr(app, "run_worker", lambda *a, **kw: None)
+        app._search_input.focus()
+        await pilot.pause()
+        app._search_input.value = "first"
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        first_control = app.control
+        assert first_control.answer_now_requested() is False
+        app._search_input.value = "second"
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        assert app.control is not first_control, "control should be replaced on new search"
+        assert first_control.answer_now_requested() is True, (
+            "prior control should be signaled to cancel"
+        )
+        assert app.control.answer_now_requested() is False, (
+            "fresh control should not carry over the cancel flag"
+        )
 
 
 async def test_tab_moves_focus_from_filter_to_results(

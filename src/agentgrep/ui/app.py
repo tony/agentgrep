@@ -681,17 +681,15 @@ def build_streaming_ui_app(
             self.app.action_focus_next()
 
     class SearchInput(input_widget):  # ty: ignore[unsupported-base]
-        """``Input`` subclass that fires a debounced :class:`SearchRequested`.
+        """``Input`` subclass that fires :class:`SearchRequested` on Enter.
 
         Keystrokes update the input text immediately so the cursor stays
-        instant; the expensive backend search runs only after 150 ms of
-        typing inactivity, mirroring :class:`FilterInput`. The Textual
-        ``@work(thread=True, exclusive=True, group="search")`` worker on
-        the app then auto-cancels any prior in-flight search, so fast
-        typing never piles up worker threads.
+        instant, but no backend search runs until the user presses
+        Enter. This makes the search explicit (no surprise dispatches
+        while typing) and gives the cancel-existing-search logic a
+        clean trigger to hang off of — every Enter cancels the prior
+        worker before spawning a fresh one.
         """
-
-        _DEBOUNCE_SECONDS: t.ClassVar[float] = 0.15
 
         BINDINGS: t.ClassVar[list[tuple[str, str, str]]] = [
             ("down", "release_down", "Filter"),
@@ -704,29 +702,16 @@ def build_streaming_ui_app(
             placeholder: str = "",
             id: str | None = None,  # noqa: A002 -- forwarded to Textual's ``id`` kwarg
         ) -> None:
-            # Set attribute BEFORE ``super().__init__`` because Textual's
-            # ``Input.__init__`` triggers ``_watch_value`` synchronously when
-            # ``value`` is non-empty.
-            self._debounce_timer: object | None = None
-            self._suppress_initial_dispatch: bool = bool(value)
             super().__init__(value=value, placeholder=placeholder, id=id)
 
-        def _watch_value(self, value: str) -> None:
-            """Post normal ``Input.Changed`` and arm a debounced ``SearchRequested``."""
-            super()._watch_value(value)
-            # Initial value injected via ``value=`` should not auto-dispatch
-            # a SearchRequested — the caller (app on_mount) decides whether
-            # to seed the initial search.
-            if self._suppress_initial_dispatch:
-                self._suppress_initial_dispatch = False
-                return
-            if self._debounce_timer is not None:
-                self._debounce_timer.stop()
-            self._debounce_timer = self.set_timer(
-                self._DEBOUNCE_SECONDS,
-                lambda: self.post_message(
-                    SearchRequested(payload=SearchRequestedPayload(text=value)),
-                ),
+        def on_input_submitted(self, event: object) -> None:
+            """Enter pressed — dispatch a :class:`SearchRequested` for the current value."""
+            stop = getattr(event, "stop", None)
+            if callable(stop):
+                stop()
+            value = str(getattr(self, "value", ""))
+            self.post_message(
+                SearchRequested(payload=SearchRequestedPayload(text=value)),
             )
 
         async def _on_key(self, event: object) -> None:
@@ -993,7 +978,7 @@ def build_streaming_ui_app(
                 # the search bar so the user can start typing immediately.
                 self._search_done = True
                 if self._status_widget is not None:
-                    self._status_widget.update("Type to search")
+                    self._status_widget.update("Press Enter to search")
                 if self._spinner_widget is not None:
                     self._spinner_widget.freeze(" ")
                 self._search_input.focus()
@@ -1018,8 +1003,16 @@ def build_streaming_ui_app(
             )
 
         def _reset_search_chrome(self) -> None:
-            """Wipe per-search state and chrome before a fresh search starts."""
-            self.control.reset()
+            """Wipe per-search state and chrome before a fresh search starts.
+
+            Swap ``self.control`` for a fresh :class:`SearchControl`
+            instead of resetting the existing one — any worker thread
+            still holding the previous reference will continue to see
+            its cancel flag set (signaled by ``on_search_requested``
+            before this call) and bail out cooperatively, while the
+            new worker starts with a clean slate.
+            """
+            self.control = SearchControl()
             clear_haystack_cache()
             self._detail_body_cache.clear()
             self._first_match_cache.clear()
@@ -1082,7 +1075,7 @@ def build_streaming_ui_app(
                 self._reset_search_chrome()
                 self._search_done = True
                 if self._status_widget is not None:
-                    self._status_widget.update("Type to search")
+                    self._status_widget.update("Press Enter to search")
                 if self._spinner_widget is not None:
                     self._spinner_widget.freeze(" ")
                 self.query = new_query
