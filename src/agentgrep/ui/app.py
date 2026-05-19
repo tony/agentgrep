@@ -1215,7 +1215,15 @@ def build_streaming_ui_app(
             )
 
         def on_filter_completed(self, message: FilterCompleted) -> None:
-            """Apply the worker's filter result if it matches the current input."""
+            """Apply the worker's filter result if it matches the current input.
+
+            Skips :meth:`show_detail` when the top filtered record is already
+            the one being displayed — ``set_records`` re-emits an
+            ``OptionHighlighted`` event during its rebuild which triggers a
+            detail re-render anyway, and detail rendering (Rich Text header,
+            JSON/Markdown body, scroll-to-match) is one of the heavier
+            main-thread units per filter pass.
+            """
             payload = message.payload
             if self._filter_input is not None and payload.text != self._filter_input.value:
                 return
@@ -1224,21 +1232,30 @@ def build_streaming_ui_app(
                 self._results.set_records(payload.matching)
             if self._detail is not None:
                 if self.filtered_records:
-                    self.show_detail(self.filtered_records[0])
+                    top = self.filtered_records[0]
+                    if top is not self._current_detail_record:
+                        self.show_detail(top)
                 else:
                     self._detail.update(
                         "No results." if self._search_done else "No matches yet.",
                     )
 
         def on_option_list_option_highlighted(self, event: object) -> None:
-            """Update the detail pane and footer on OptionList cursor move."""
+            """Update the detail pane and footer on OptionList cursor move.
+
+            Guards against the redundant re-render that fires when
+            ``set_records`` rebuilds the list and Textual re-emits the
+            highlight for the same row that's already in the detail pane.
+            """
             option_index = getattr(event, "option_index", None)
             if option_index is None:
                 self._refresh_results_status_right()
                 return
             row_index = int(option_index)
             if 0 <= row_index < len(self.filtered_records):
-                self.show_detail(self.filtered_records[row_index])
+                record = self.filtered_records[row_index]
+                if record is not self._current_detail_record:
+                    self.show_detail(record)
             self._refresh_results_status_right(
                 cursor=row_index,
                 visible=len(self.filtered_records),
