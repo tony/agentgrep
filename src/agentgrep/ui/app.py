@@ -101,7 +101,7 @@ def build_streaming_ui_app(
     the actual class is defined dynamically inside this factory). Callers can
     invoke ``.run()`` for a real session or ``.run_test()`` for a Pilot smoke
     test. The full app body — message subclasses, ``SpinnerWidget``,
-    ``ElapsedWidget``, ``FilterInput``, ``AgentGrepApp`` — lives here so the
+    ``FilterInput``, ``AgentGrepApp`` — lives here so the
     Textual imports stay lazy.
 
     Parameters
@@ -261,44 +261,6 @@ def build_streaming_ui_app(
             self._final_glyph = None
             self._started_at = time.monotonic()
             self.auto_refresh = 1.0 / self._FPS
-            self.refresh()
-
-    class ElapsedWidget(static_type):  # ty: ignore[unsupported-base]
-        """Self-refreshing elapsed-time display that ticks once per second."""
-
-        def __init__(
-            self,
-            *,
-            start_provider: cabc.Callable[[], float | None],
-            id: str | None = None,  # noqa: A002 -- forwarded to Textual's ``id`` kwarg
-        ) -> None:
-            super().__init__("", id=id)
-            self._start_provider = start_provider
-            self._frozen: float | None = None
-
-        def on_mount(self) -> None:
-            """Arm the 1 Hz refresh; widget keeps ticking until ``freeze`` is called."""
-            self.auto_refresh = 1.0
-
-        def render(self) -> str:
-            """Return ``Ts`` for the current elapsed value (or ``""`` until started)."""
-            if self._frozen is not None:
-                return f"{self._frozen:.1f}s"
-            started = self._start_provider()
-            if started is None:
-                return ""
-            return f"{time.monotonic() - started:.1f}s"
-
-        def freeze(self, final_elapsed: float) -> None:
-            """Stop refreshing and lock the displayed elapsed value."""
-            self._frozen = final_elapsed
-            self.auto_refresh = None
-            self.refresh()
-
-        def unfreeze(self) -> None:
-            """Resume per-second updates (called when a fresh search restarts)."""
-            self._frozen = None
-            self.auto_refresh = 1.0
             self.refresh()
 
     class SearchResultsList(
@@ -712,30 +674,6 @@ def build_streaming_ui_app(
         #search {
             height: 3;
         }
-        #chrome {
-            height: 1;
-            padding: 0 1;
-            layout: horizontal;
-        }
-        #chrome-spinner {
-            width: 2;
-            color: $accent;
-        }
-        #chrome-status {
-            width: 1fr;
-            color: ansi_bright_cyan;
-            text-style: bold;
-        }
-        #chrome-matches {
-            width: auto;
-            color: $warning;
-            text-style: bold;
-            padding: 0 1;
-        }
-        #chrome-elapsed {
-            width: auto;
-            color: #d8d8d8;
-        }
         #body {
             height: 1fr;
         }
@@ -743,10 +681,15 @@ def build_streaming_ui_app(
             width: 1fr;
             layout: vertical;
         }
+        #detail-column {
+            width: 1fr;
+            layout: vertical;
+        }
         #filter {
             height: 3;
         }
         #detail-scroll {
+            height: 1fr;
             overflow-y: auto;
             overflow-x: hidden;
             /* Reserve the border cell up-front (transparent) so toggling
@@ -764,6 +707,30 @@ def build_streaming_ui_app(
         #results {
             height: 1fr;
             overflow-x: hidden;
+        }
+        #results-statusline {
+            height: 1;
+            padding: 0;
+            layout: horizontal;
+        }
+        #status-spinner {
+            width: 2;
+            color: $accent;
+        }
+        #status-text {
+            width: 1fr;
+            color: ansi_bright_cyan;
+            text-style: bold;
+        }
+        #status-right {
+            width: auto;
+            color: $warning;
+            text-style: bold;
+        }
+        #detail-statusline {
+            height: 1;
+            padding: 0;
+            color: #d8d8d8;
         }
         /* Keep Textual's OptionList default of "border appears only on focus"
            (textual/widgets/_option_list.py:154 — ``border: tall $border``).
@@ -830,7 +797,7 @@ def build_streaming_ui_app(
             self._status_widget: StaticLike | None = None
             self._matches_widget: StaticLike | None = None
             self._spinner_widget: SpinnerWidget | None = None
-            self._elapsed_widget: ElapsedWidget | None = None
+            self._detail_statusline: StaticLike | None = None
             self._filter_input: FilterInput | None = None
             self._search_input: SearchInput | None = None
             self._resize_debounce_timer: object | None = None
@@ -854,10 +821,13 @@ def build_streaming_ui_app(
             return self._started_at
 
         def compose(self) -> cabc.Iterator[object]:
-            """Build the widget tree (header → search → chrome → body → footer).
+            """Build the widget tree (header → search → body[results-col, detail-col] → footer).
 
-            The body splits horizontally into a results column (sticky in-list
-            filter above the result list) and a detail pane.
+            Each body column has its own footer status line — the results
+            column carries the live chrome (spinner + status + match count
+            + scroll %) and the detail column carries the record path +
+            scroll %. There is intentionally no top-level chrome row; the
+            reactive state belongs to the pane it describes.
             """
             yield header()
             initial_search = " ".join(self.query.terms) if self.query.terms else ""
@@ -866,20 +836,18 @@ def build_streaming_ui_app(
                 placeholder="Search prompts and history",
                 id="search",
             )
-            with horizontal(id="chrome"):
-                yield SpinnerWidget(id="chrome-spinner")
-                yield static_type("", id="chrome-status")
-                yield static_type("", id="chrome-matches")
-                yield ElapsedWidget(
-                    start_provider=self._get_start_time,
-                    id="chrome-elapsed",
-                )
             with horizontal(id="body"):
                 with vertical(id="results-column"):
                     yield FilterInput(placeholder="Filter loaded results", id="filter")
                     yield SearchResultsList(id="results")
-                with DetailScroll(id="detail-scroll"):
-                    yield static_type("", id="detail")
+                    with horizontal(id="results-statusline"):
+                        yield SpinnerWidget(id="status-spinner")
+                        yield static_type("", id="status-text")
+                        yield static_type("", id="status-right")
+                with vertical(id="detail-column"):
+                    with DetailScroll(id="detail-scroll"):
+                        yield static_type("", id="detail")
+                    yield static_type("", id="detail-statusline")
             yield footer()
 
         def on_mount(self) -> None:
@@ -896,19 +864,19 @@ def build_streaming_ui_app(
             self._detail_scroll = streaming.query_one("#detail-scroll")
             self._status_widget = t.cast(
                 "StaticLike",
-                streaming.query_one("#chrome-status", static_type),
+                streaming.query_one("#status-text", static_type),
             )
             self._matches_widget = t.cast(
                 "StaticLike",
-                streaming.query_one("#chrome-matches", static_type),
+                streaming.query_one("#status-right", static_type),
             )
             self._spinner_widget = t.cast(
                 "SpinnerWidget",
-                streaming.query_one("#chrome-spinner"),
+                streaming.query_one("#status-spinner"),
             )
-            self._elapsed_widget = t.cast(
-                "ElapsedWidget",
-                streaming.query_one("#chrome-elapsed"),
+            self._detail_statusline = t.cast(
+                "StaticLike",
+                streaming.query_one("#detail-statusline", static_type),
             )
             self._filter_input = t.cast(
                 "FilterInput",
@@ -969,13 +937,13 @@ def build_streaming_ui_app(
                 self._detail.update("")
             if self._matches_widget is not None:
                 self._matches_widget.update("")
+            if self._detail_statusline is not None:
+                self._detail_statusline.update("")
             if self._status_widget is not None:
                 terms = " ".join(self.query.terms) if self.query.terms else "all records"
                 self._status_widget.update(f"Searching {terms}")
             if self._spinner_widget is not None:
                 self._spinner_widget.unfreeze()
-            if self._elapsed_widget is not None:
-                self._elapsed_widget.unfreeze()
             self._progress = StreamingSearchProgress(
                 emit=make_emit(
                     t.cast("StreamingAppLike", t.cast("object", self)),
@@ -1098,24 +1066,27 @@ def build_streaming_ui_app(
             elapsed: float,
             error_message: str | None,
         ) -> None:
-            """Freeze chrome widgets — invoked via ``call_from_thread``."""
+            """Freeze chrome widgets — invoked via ``call_from_thread``.
+
+            Elapsed time is folded into the final status string rather than
+            shown as a live-ticking sibling widget. The status line no
+            longer claims animation budget once a search is done.
+            """
             self._search_done = True
             glyphs = {"complete": "✓", "interrupted": "■", "error": "✗"}
             if self._spinner_widget is not None:
                 self._spinner_widget.freeze(glyphs.get(outcome, "·"))
-            if self._elapsed_widget is not None:
-                self._elapsed_widget.freeze(elapsed)
             if self._status_widget is not None:
                 if outcome == "error":
                     self._status_widget.update(f"Search failed: {error_message}")
                 elif outcome == "interrupted":
                     self._status_widget.update(
                         f"Stopped at {format_match_count(total)} "
-                        f"across {self._sources_label()} sources",
+                        f"across {self._sources_label()} sources in {elapsed:.1f}s",
                     )
                 else:
                     self._status_widget.update(
-                        f"Search complete: {format_match_count(total)}",
+                        f"Search complete: {format_match_count(total)} in {elapsed:.1f}s",
                     )
 
         def _sources_label(self) -> str:
