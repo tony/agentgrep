@@ -4122,6 +4122,7 @@ def build_streaming_ui_app(
     binding_type = textual_binding.Binding
     rich_text = rich_text_module
     horizontal = textual_containers.Horizontal
+    vertical = textual_containers.Vertical
     vertical_scroll = textual_containers.VerticalScroll
     footer = textual_widgets.Footer
     header = textual_widgets.Header
@@ -4520,6 +4521,9 @@ def build_streaming_ui_app(
         Screen {
             layout: vertical;
         }
+        #search {
+            height: 3;
+        }
         #chrome {
             height: 1;
             padding: 0 1;
@@ -4546,6 +4550,13 @@ def build_streaming_ui_app(
         }
         #body {
             height: 1fr;
+        }
+        #results-column {
+            width: 1fr;
+            layout: vertical;
+        }
+        #filter {
+            height: 3;
         }
         #detail-scroll {
             overflow-y: auto;
@@ -4639,8 +4650,18 @@ def build_streaming_ui_app(
             return self._started_at
 
         def compose(self) -> cabc.Iterator[object]:
-            """Build the widget tree (header → chrome row → filter → body → footer)."""
+            """Build the widget tree (header → search → chrome → body → footer).
+
+            The body splits horizontally into a results column (sticky in-list
+            filter above the result list) and a detail pane.
+            """
             yield header()
+            initial_search = " ".join(self.query.terms) if self.query.terms else ""
+            yield input_widget(
+                value=initial_search,
+                placeholder="Search prompts and history",
+                id="search",
+            )
             with horizontal(id="chrome"):
                 yield SpinnerWidget(id="chrome-spinner")
                 yield static_type("", id="chrome-status")
@@ -4649,9 +4670,10 @@ def build_streaming_ui_app(
                     start_provider=self._get_start_time,
                     id="chrome-elapsed",
                 )
-            yield FilterInput(placeholder="Filter by keyword", id="filter")
             with horizontal(id="body"):
-                yield SearchResultsList(id="results")
+                with vertical(id="results-column"):
+                    yield FilterInput(placeholder="Filter loaded results", id="filter")
+                    yield SearchResultsList(id="results")
                 with DetailScroll(id="detail-scroll"):
                     yield static_type("", id="detail")
             yield footer()
@@ -4698,6 +4720,10 @@ def build_streaming_ui_app(
                 thread=True,
                 exclusive=True,
             )
+            # Land focus on the filter so keys flow into the loaded-result
+            # filter by default. The top-level search bar becomes the
+            # default focus target once it dispatches live searches.
+            self._filter_input.focus()
 
         def _run_search(self) -> None:
             progress = self._progress
@@ -4994,9 +5020,10 @@ def build_streaming_ui_app(
                 self.exit()
 
         # Directional pane focus (tmux-style ``ctrl+hjkl``). Edge moves (e.g.
-        # ``ctrl+j`` from the results pane — nothing below it) are no-ops.
-        # The three focusable regions are #filter (top), #results (bottom-
-        # left), and #detail-scroll (bottom-right).
+        # ``ctrl+j`` from the detail pane — nothing below it) are no-ops.
+        # The focusable regions, top-to-bottom: #search (top), then in the
+        # body: #filter and #results (left column, sticky filter above the
+        # list) and #detail-scroll (right column).
 
         def _focus_widget_by_id(self, widget_id: str) -> None:
             try:
@@ -5012,20 +5039,32 @@ def build_streaming_ui_app(
 
         def action_focus_pane_right(self) -> None:
             """``Ctrl-L``: focus the pane to the right of the current one."""
-            if self.focused is not None and self.focused.id in ("results", "filter"):
+            if self.focused is not None and self.focused.id in (
+                "results",
+                "filter",
+                "search",
+            ):
                 self._focus_widget_by_id("detail-scroll")
 
         def action_focus_pane_up(self) -> None:
-            """``Ctrl-K``: focus the pane above the current one (filter row)."""
-            if self.focused is not None and self.focused.id in (
-                "results",
-                "detail-scroll",
-            ):
+            """``Ctrl-K``: focus the pane above the current one.
+
+            Inside the body, ``up`` lands on the body's top row (``#filter``).
+            From the body's top row, ``up`` leaves the body and lands on the
+            top-level search bar.
+            """
+            focused_id = self.focused.id if self.focused is not None else None
+            if focused_id in ("results", "detail-scroll"):
                 self._focus_widget_by_id("filter")
+            elif focused_id == "filter":
+                self._focus_widget_by_id("search")
 
         def action_focus_pane_down(self) -> None:
-            """``Ctrl-J``: focus the pane below the current one (results)."""
-            if self.focused is not None and self.focused.id == "filter":
+            """``Ctrl-J``: focus the pane below the current one."""
+            focused_id = self.focused.id if self.focused is not None else None
+            if focused_id == "search":
+                self._focus_widget_by_id("filter")
+            elif focused_id == "filter":
                 self._focus_widget_by_id("results")
 
         def _has_active_actions(self) -> bool:
