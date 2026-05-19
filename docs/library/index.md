@@ -40,11 +40,3 @@ CLI and MCP request examples.
 
 ::::
 
-```{toctree}
-:hidden:
-
-tutorial
-how-to
-reference
-examples
-```

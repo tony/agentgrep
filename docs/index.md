@@ -99,28 +99,39 @@ configuration
 :hidden:
 :caption: CLI
 
-cli/index
+Overview <cli/index>
+cli/search
+cli/find
 ```
 
 ```{toctree}
 :hidden:
 :caption: Library
 
-library/index
+Overview <library/index>
+library/tutorial
+library/how-to
+library/reference
+library/examples
 ```
 
 ```{toctree}
 :hidden:
 :caption: MCP
 
-mcp/index
+Overview <mcp/index>
+mcp/tools
+mcp/resources
+mcp/prompts
 ```
 
 ```{toctree}
 :hidden:
 :caption: Reference
 
-reference/api/index
+Overview <reference/api/index>
+reference/api/agentgrep
+reference/api/mcp
 ```
 
 ```{toctree}

@@ -88,10 +88,3 @@ $ agentgrep find cursor --json
     :nosubcommands:
     :nodescription:
 ```
-
-```{toctree}
-:hidden:
-
-search
-find
-```

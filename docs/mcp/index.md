@@ -42,10 +42,3 @@ Reusable client-side search recipes.
 
 <a class="reference internal" href="tools/#fastmcp-tool-find"><code>find</code></a>
 
-```{toctree}
-:hidden:
-
-tools
-resources
-prompts
-```
