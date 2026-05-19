@@ -337,6 +337,54 @@ def test_default_verb_works_after_global_color_flag(tmp_path: pathlib.Path) -> N
     assert completed.returncode == 1
 
 
+def test_inject_default_subcommand_empty_returns_ui() -> None:
+    """Bare ``agentgrep`` should default to the ``ui`` subcommand."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+
+    assert list(agentgrep.inject_default_subcommand([])) == ["ui"]
+
+
+def test_inject_default_subcommand_color_only_returns_ui() -> None:
+    """``agentgrep --color never`` should also default to ``ui``."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+
+    assert list(agentgrep.inject_default_subcommand(["--color", "never"])) == [
+        "--color",
+        "never",
+        "ui",
+    ]
+
+
+def test_parse_args_ui_subcommand_returns_ui_args() -> None:
+    """``agentgrep ui`` parses to a ``UIArgs`` with empty initial query."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+
+    args = agentgrep.parse_args(["ui"])
+
+    assert isinstance(args, agentgrep.UIArgs)
+    assert args.initial_query == ""
+
+
+def test_parse_args_ui_subcommand_with_initial_query() -> None:
+    """``agentgrep ui bliss`` populates ``initial_query``."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+
+    args = agentgrep.parse_args(["ui", "bliss"])
+
+    assert isinstance(args, agentgrep.UIArgs)
+    assert args.initial_query == "bliss"
+
+
+def test_parse_args_empty_argv_returns_ui_args() -> None:
+    """``parse_args([])`` returns a ``UIArgs`` via the default subcommand."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+
+    args = agentgrep.parse_args([])
+
+    assert isinstance(args, agentgrep.UIArgs)
+    assert args.initial_query == ""
+
+
 def test_search_progress_mode_parses_default_and_explicit() -> None:
     agentgrep = load_agentgrep_module()
 

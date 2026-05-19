@@ -147,13 +147,15 @@ CLI_DESCRIPTION = build_description(
     """
     Read-only search across Codex, Claude, and Cursor local stores.
 
-    ``search`` is the default subcommand. ``agentgrep bliss`` is
-    equivalent to ``agentgrep search bliss``.
+    Bare ``agentgrep`` launches the interactive Textual explorer
+    (``agentgrep ui``). ``agentgrep <terms>`` is shorthand for
+    ``agentgrep search <terms>``.
     """,
     (
         (
             "quick",
             (
+                "agentgrep",
                 "agentgrep bliss",
                 "agentgrep serene bliss --agent codex",
             ),
@@ -205,6 +207,22 @@ FIND_DESCRIPTION = build_description(
                 "agentgrep find codex",
                 "agentgrep find sessions --agent codex",
                 "agentgrep find cursor --json",
+            ),
+        ),
+    ),
+)
+UI_DESCRIPTION = build_description(
+    """
+    Launch the interactive Textual explorer. Bare ``agentgrep`` is
+    equivalent to ``agentgrep ui``.
+    """,
+    (
+        (
+            None,
+            (
+                "agentgrep",
+                "agentgrep ui",
+                "agentgrep ui bliss",
             ),
         ),
     ),
@@ -1007,6 +1025,14 @@ class FindArgs:
     agents: tuple[AgentName, ...]
     limit: int | None
     output_mode: OutputMode
+    color_mode: ColorMode
+
+
+@dataclasses.dataclass(slots=True)
+class UIArgs:
+    """Typed arguments for ``agentgrep ui``."""
+
+    initial_query: str
     color_mode: ColorMode
 
 
@@ -1988,19 +2014,20 @@ def normalize_color_mode(argv: cabc.Sequence[str] | None) -> ColorMode:
     return "auto"
 
 
-SUBCOMMANDS: frozenset[str] = frozenset({"search", "find"})
+SUBCOMMANDS: frozenset[str] = frozenset({"search", "find", "ui"})
 
 
 def inject_default_subcommand(
     argv: cabc.Sequence[str] | None,
 ) -> cabc.Sequence[str] | None:
-    """Prepend ``search`` to ``argv`` when no subcommand is supplied.
+    """Prepend a subcommand to ``argv`` when none is supplied.
 
     Walks ``argv`` skipping the global ``--color`` option and any help flag.
-    If the first remaining token is not a known subcommand, inserts
-    ``search`` at that position so ``agentgrep bliss`` parses identically
-    to ``agentgrep search bliss``. Returns the input unchanged when no
-    injection is needed.
+    Empty effective argv defaults to ``ui`` so ``agentgrep`` lands in the
+    Textual explorer. If the first remaining token is not a known
+    subcommand, inserts ``search`` at that position so ``agentgrep bliss``
+    parses identically to ``agentgrep search bliss``. Returns the input
+    unchanged when no injection is needed.
 
     Examples
     --------
@@ -2010,12 +2037,16 @@ def inject_default_subcommand(
     ['search', 'bliss']
     >>> inject_default_subcommand(["find", "codex"])
     ['find', 'codex']
+    >>> inject_default_subcommand(["ui"])
+    ['ui']
     >>> inject_default_subcommand(["--color", "never", "bliss"])
     ['--color', 'never', 'search', 'bliss']
+    >>> inject_default_subcommand(["--color", "never"])
+    ['--color', 'never', 'ui']
     >>> inject_default_subcommand(["--help"])
     ['--help']
     >>> inject_default_subcommand([])
-    []
+    ['ui']
     """
     effective = list(sys.argv[1:]) if argv is None else list(argv)
     index = 0
@@ -2033,7 +2064,8 @@ def inject_default_subcommand(
             return argv
         effective.insert(index, "search")
         return effective
-    return argv
+    effective.append("ui")
+    return effective
 
 
 @contextlib.contextmanager
@@ -2135,6 +2167,20 @@ def create_parser(
         help="Limit the number of results",
     )
     add_output_mode_options(find_parser, allow_ui=False)
+
+    ui_parser = subparsers.add_parser(
+        "ui",
+        help="Launch the interactive Textual explorer",
+        description=UI_DESCRIPTION,
+        formatter_class=formatter_class,
+        color=color_mode != "never",
+    )
+    _ = ui_parser.add_argument(
+        "initial_query",
+        nargs="?",
+        default="",
+        help="Optional initial search text to populate the search bar",
+    )
     return ParserBundle(parser=parser, search_parser=search_parser, find_parser=find_parser)
 
 
@@ -2152,7 +2198,7 @@ def build_docs_parser() -> argparse.ArgumentParser:
 
 def parse_args(
     argv: cabc.Sequence[str] | None = None,
-) -> SearchArgs | FindArgs | None:
+) -> SearchArgs | FindArgs | UIArgs | None:
     """Parse CLI arguments into typed dataclasses."""
     color_mode = normalize_color_mode(argv)
     argv = inject_default_subcommand(argv)
@@ -2163,6 +2209,14 @@ def parse_args(
         with configured_color_environment(color_mode):
             bundle.parser.print_help()
         return None
+
+    command = t.cast("str", namespace.command)
+    if command == "ui":
+        return UIArgs(
+            initial_query=t.cast("str", namespace.initial_query),
+            color_mode=color_mode,
+        )
+
     agents = parse_agents(t.cast("list[str]", namespace.agent))
     output_mode = parse_output_mode(namespace)
     limit = t.cast("int | None", namespace.limit)
@@ -2170,10 +2224,9 @@ def parse_args(
         with configured_color_environment(color_mode):
             bundle.parser.error("--limit must be greater than 0")
 
-    command = t.cast("str", namespace.command)
     if command == "search":
         terms = tuple(t.cast("list[str]", namespace.terms))
-        if not terms:
+        if not terms and output_mode != "ui":
             with configured_color_environment(color_mode):
                 bundle.search_parser.print_help()
             return None
@@ -5050,6 +5103,32 @@ def run_find_command(args: FindArgs) -> int:
     return 1
 
 
+def run_ui_command(args: UIArgs) -> int:
+    """Execute ``agentgrep ui``."""
+    initial_terms = tuple(args.initial_query.split()) if args.initial_query else ()
+    query = SearchQuery(
+        terms=initial_terms,
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=AGENT_CHOICES,
+        limit=None,
+    )
+    run_ui(pathlib.Path.home(), query, control=SearchControl())
+    return 0
+
+
+def _is_interactive_terminal() -> bool:
+    """Return ``True`` when both stdin and stdout are TTYs.
+
+    Bare ``agentgrep`` defaults to the TUI, but pipelines (``agentgrep |
+    cat``), redirected output, and CI subprocesses have no TTY — in those
+    cases the caller almost certainly wants ``--help`` instead.
+    """
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
 def _exit_on_sigint() -> t.NoReturn:
     """Terminate with Ctrl-C signal semantics where the platform supports them."""
     if sys.platform == "win32":
@@ -5068,12 +5147,20 @@ def _write_interrupt_notice() -> None:
 
 def main(argv: cabc.Sequence[str] | None = None) -> int:
     """Run the CLI."""
+    raw = list(sys.argv[1:]) if argv is None else list(argv)
+    if not raw and not _is_interactive_terminal():
+        color_mode = normalize_color_mode(argv)
+        with configured_color_environment(color_mode):
+            create_parser(color_mode).parser.print_help()
+        return 0
     try:
         parsed = parse_args(argv)
         if parsed is None:
             return 0
         if isinstance(parsed, SearchArgs):
             return run_search_command(parsed)
+        if isinstance(parsed, UIArgs):
+            return run_ui_command(parsed)
         return run_find_command(parsed)
     except KeyboardInterrupt:
         _write_interrupt_notice()
