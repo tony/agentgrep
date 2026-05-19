@@ -665,6 +665,15 @@ def build_streaming_ui_app(
                 with contextlib.suppress(Exception):
                     self.app.query_one("#search").focus()
                 return
+            if key == "right" and not value:
+                # Empty filter → release focus rightward to the detail pane.
+                # When the filter has text, fall through so the cursor can
+                # walk through it character-by-character.
+                if callable(stop):
+                    stop()
+                with contextlib.suppress(Exception):
+                    self.app.query_one("#detail-scroll").focus()
+                return
             await super()._on_key(event)
 
         def action_release_down(self) -> None:

@@ -1647,6 +1647,43 @@ async def test_up_on_filter_with_cursor_at_start_releases_focus_to_search(
         assert app.focused.id == "search"
 
 
+async def test_right_on_empty_filter_releases_focus_to_detail(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``right`` on an empty filter hands focus across to the detail pane."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._filter_input.focus()
+        await pilot.pause()
+        assert app._filter_input.value == ""
+        await pilot.press("right")
+        await pilot.pause()
+        assert app.focused is not None
+        assert app.focused.id == "detail-scroll"
+
+
+async def test_right_on_non_empty_filter_moves_cursor(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``right`` on a non-empty filter walks the cursor — does not release focus."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._filter_input.focus()
+        await pilot.pause()
+        app._filter_input.value = "abc"
+        app._filter_input.cursor_position = 0
+        await pilot.pause()
+        await pilot.press("right")
+        await pilot.pause()
+        # Focus stays on the filter; cursor advances by one.
+        assert app.focused is not None and app.focused.id == "filter"
+        assert app._filter_input.cursor_position == 1
+
+
 async def test_search_results_list_append_under_load(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
