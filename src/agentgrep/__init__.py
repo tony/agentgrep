@@ -3747,6 +3747,36 @@ def build_search_haystack(record: SearchRecord) -> str:
     return "\n".join(part for part in parts if part)
 
 
+_HAYSTACK_CACHE: dict[int, str] = {}
+
+
+def cached_haystack(record: SearchRecord) -> str:
+    """Return the casefolded haystack for ``record``, memoized by ``id``.
+
+    The filter worker scans every loaded record on every keystroke;
+    recomputing ``build_search_haystack(...).casefold()`` per record per
+    pass dominates filter latency once the result set grows past a few
+    thousand records. Memoizing by ``id`` is safe because the app
+    retains every record in ``AgentGrepApp.all_records`` for the
+    lifetime of one search, so Python cannot recycle a collected
+    record's id while its entry sits in :data:`_HAYSTACK_CACHE`.
+
+    Callers that need to invalidate (because a new search will allocate
+    new records) should call :func:`clear_haystack_cache`.
+    """
+    key = id(record)
+    cached = _HAYSTACK_CACHE.get(key)
+    if cached is None:
+        cached = build_search_haystack(record).casefold()
+        _HAYSTACK_CACHE[key] = cached
+    return cached
+
+
+def clear_haystack_cache() -> None:
+    """Drop every memoized haystack — call before allocating a new record set."""
+    _HAYSTACK_CACHE.clear()
+
+
 def compute_filter_matches(
     records: cabc.Sequence[SearchRecord],
     text: str,
@@ -3772,9 +3802,7 @@ def compute_filter_matches(
     normalized = text.strip().casefold()
     if not normalized:
         return tuple(records)
-    return tuple(
-        record for record in records if normalized in build_search_haystack(record).casefold()
-    )
+    return tuple(record for record in records if normalized in cached_haystack(record))
 
 
 def matches_text(text: str, query: SearchQuery) -> bool:
@@ -4316,10 +4344,17 @@ def build_streaming_ui_app(
             self._records: list[SearchRecord] = []
 
         def append_records(self, records: cabc.Sequence[SearchRecord]) -> None:
-            """Append a batch of records — invoked via ``app.call_from_thread``."""
+            """Append a batch of records — invoked via ``app.call_from_thread``.
+
+            Eagerly warms :func:`cached_haystack` for each new record so the
+            cost is paid during streaming (when the user is already watching
+            the spinner) rather than during the next filter keystroke.
+            """
             if not records:
                 return
             self._records.extend(records)
+            for record in records:
+                cached_haystack(record)
             self.add_options(
                 [option_type(self._render_record(r), id=str(id(r))) for r in records],
             )
@@ -4859,6 +4894,7 @@ def build_streaming_ui_app(
         def _reset_search_chrome(self) -> None:
             """Wipe per-search state and chrome before a fresh search starts."""
             self.control.reset()
+            clear_haystack_cache()
             self.all_records = []
             self.filtered_records = []
             self._search_done = False

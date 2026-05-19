@@ -889,6 +889,72 @@ def test_compute_filter_matches_empty_text_returns_all(tmp_path: pathlib.Path) -
     assert agentgrep.compute_filter_matches([record], "   ") == (record,)
 
 
+def test_cached_haystack_memoizes_per_record(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``cached_haystack`` calls ``build_search_haystack`` once per record."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    agentgrep.clear_haystack_cache()
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "a.jsonl",
+        text="serene bliss",
+    )
+    call_count = 0
+    real_build_search_haystack = agentgrep.build_search_haystack
+
+    def counting_build(rec: object) -> str:
+        nonlocal call_count
+        call_count += 1
+        return t.cast("str", real_build_search_haystack(rec))
+
+    monkeypatch.setattr(agentgrep, "build_search_haystack", counting_build)
+    first = agentgrep.cached_haystack(record)
+    second = agentgrep.cached_haystack(record)
+    assert first == second
+    assert first == "serene bliss\n" + str(record.path)
+    assert call_count == 1
+    agentgrep.clear_haystack_cache()
+    # Cache cleared — next call rebuilds.
+    _ = agentgrep.cached_haystack(record)
+    assert call_count == 2
+
+
+def test_compute_filter_matches_uses_cached_haystack(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The filter uses the cache: ``build_search_haystack`` not called once cached."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    agentgrep.clear_haystack_cache()
+    records = [
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="codex.sessions",
+            adapter_id="codex.sessions_jsonl.v1",
+            path=tmp_path / f"r{idx}.jsonl",
+            text=f"row {idx} alpha",
+        )
+        for idx in range(3)
+    ]
+    # Warm the cache.
+    for record in records:
+        agentgrep.cached_haystack(record)
+
+    def raise_if_called(_record: object) -> str:
+        msg = "build_search_haystack must not run after cache is warm"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(agentgrep, "build_search_haystack", raise_if_called)
+    matches = agentgrep.compute_filter_matches(records, "alpha")
+    assert len(matches) == 3
+
+
 def _build_empty_ui_app(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
