@@ -1887,6 +1887,116 @@ def test_highlight_matches_combines_terms() -> None:
     assert len(styled) == 3  # 2 alpha + 1 gamma
 
 
+async def test_show_detail_memoizes_body_formatting(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Re-rendering the same record + query reuses the cached body renderable."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    json_body = '{"alpha": 1, "beta": 2, "gamma": 3}'
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "j.jsonl",
+        text=json_body,
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.show_detail(record)
+        await pilot.pause()
+        # Replace json.loads so a real cache miss would explode loudly.
+        load_calls = 0
+        real_loads = json.loads
+
+        def counting_loads(*args: t.Any, **kwargs: t.Any) -> t.Any:
+            nonlocal load_calls
+            load_calls += 1
+            return real_loads(*args, **kwargs)
+
+        monkeypatch.setattr(json, "loads", counting_loads)
+        app.show_detail(record)
+        await pilot.pause()
+        assert load_calls == 0, "JSON should not be re-parsed for the same record + query"
+
+
+async def test_show_detail_memoizes_first_match_line(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``find_first_match_line`` is not called twice for the same record + query."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(
+        agentgrep,
+        "run_search_query",
+        lambda *args, **kwargs: [],
+    )
+    query = agentgrep.SearchQuery(
+        terms=("needle",),
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+    app = agentgrep.build_streaming_ui_app(home, query, control=agentgrep.SearchControl())
+    body = "\n".join(["padding"] * 5 + ["needle here"] + ["padding"] * 5)
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "n.jsonl",
+        text=body,
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.show_detail(record)
+        await pilot.pause()
+        match_calls = 0
+        real_match = agentgrep.find_first_match_line
+
+        def counting_match(*args: t.Any, **kwargs: t.Any) -> t.Any:
+            nonlocal match_calls
+            match_calls += 1
+            return real_match(*args, **kwargs)
+
+        monkeypatch.setattr(agentgrep, "find_first_match_line", counting_match)
+        app.show_detail(record)
+        await pilot.pause()
+        assert match_calls == 0, "first_match_line should be cached for repeat views"
+
+
+async def test_reset_search_chrome_invalidates_detail_caches(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Starting a new search clears any stale detail-pane caches."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "x.jsonl",
+        text='{"x": 1}',
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.show_detail(record)
+        await pilot.pause()
+        assert len(app._detail_body_cache) >= 1
+        app._reset_search_chrome()
+        assert len(app._detail_body_cache) == 0
+        assert len(app._first_match_cache) == 0
+
+
 async def test_show_detail_scrolls_to_first_match(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

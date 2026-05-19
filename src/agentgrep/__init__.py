@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import collections
 import contextlib
 import dataclasses
 import datetime
@@ -4805,6 +4806,8 @@ def build_streaming_ui_app(
         all_records: list[SearchRecord]
         filtered_records: list[SearchRecord]
 
+        _DETAIL_CACHE_MAX: t.ClassVar[int] = 1024
+
         def __init__(
             self,
             *,
@@ -4834,6 +4837,19 @@ def build_streaming_ui_app(
             self._resize_debounce_timer: object | None = None
             self._current_detail_record: SearchRecord | None = None
             self._detail_scroll: t.Any = None
+            # LRU caches for detail-pane work. Keyed by
+            # ``(id(record), query.terms, case_sensitive, regex)`` — the
+            # tuple of attributes that determines the rendered body and
+            # the highlighted match line. Bounded so a long browsing
+            # session can't grow them without limit.
+            self._detail_body_cache: collections.OrderedDict[
+                tuple[int, tuple[str, ...], bool, bool],
+                tuple[object, str],
+            ] = collections.OrderedDict()
+            self._first_match_cache: collections.OrderedDict[
+                tuple[int, tuple[str, ...], bool, bool],
+                int | None,
+            ] = collections.OrderedDict()
 
         def _get_start_time(self) -> float | None:
             return self._started_at
@@ -4940,6 +4956,8 @@ def build_streaming_ui_app(
             """Wipe per-search state and chrome before a fresh search starts."""
             self.control.reset()
             clear_haystack_cache()
+            self._detail_body_cache.clear()
+            self._first_match_cache.clear()
             self.all_records = []
             self.filtered_records = []
             self._search_done = False
@@ -5201,6 +5219,26 @@ def build_streaming_ui_app(
             )
             self._scroll_detail_to_first_match(body_for_scroll, query_terms)
 
+        def _detail_cache_key(
+            self,
+            query_terms: cabc.Sequence[str],
+        ) -> tuple[int, tuple[str, ...], bool, bool] | None:
+            """Compose the LRU key for the current record + query.
+
+            Returns ``None`` when there is no current record (e.g. detail
+            pane invoked before a record is highlighted) so callers know
+            to skip the cache entirely.
+            """
+            record = self._current_detail_record
+            if record is None:
+                return None
+            return (
+                id(record),
+                tuple(query_terms),
+                self.query.case_sensitive,
+                self.query.regex,
+            )
+
         def _build_detail_body(
             self,
             body_text: str,
@@ -5211,9 +5249,18 @@ def build_streaming_ui_app(
             The second tuple element is whatever text the caller's
             ``find_first_match_line`` should scan. For JSON we pretty-print
             and return the formatted text so the line index lines up with
-            what the user actually sees rendered.
+            what the user actually sees rendered. Result is memoized per
+            ``(record, query)`` so scrolling back to a previously-viewed
+            record never re-parses the JSON body.
             """
+            cache_key = self._detail_cache_key(query_terms)
+            if cache_key is not None:
+                cached = self._detail_body_cache.get(cache_key)
+                if cached is not None:
+                    self._detail_body_cache.move_to_end(cache_key)
+                    return cached
             fmt = detect_content_format(body_text)
+            result: tuple[object, str]
             if fmt == "json":
                 try:
                     formatted = json.dumps(
@@ -5237,34 +5284,59 @@ def build_streaming_ui_app(
                     word_wrap=True,
                     highlight_lines=highlight_lines,
                 )
-                return syntax, formatted
-            if fmt == "markdown":
-                return _RichMarkdown(body_text, code_theme="ansi_dark"), body_text
-            return (
-                highlight_matches(
+                result = (syntax, formatted)
+            elif fmt == "markdown":
+                result = (
+                    _RichMarkdown(body_text, code_theme="ansi_dark"),
                     body_text,
-                    query_terms,
-                    case_sensitive=self.query.case_sensitive,
-                    regex=self.query.regex,
-                ),
-                body_text,
-            )
+                )
+            else:
+                result = (
+                    highlight_matches(
+                        body_text,
+                        query_terms,
+                        case_sensitive=self.query.case_sensitive,
+                        regex=self.query.regex,
+                    ),
+                    body_text,
+                )
+            if cache_key is not None:
+                self._detail_body_cache[cache_key] = result
+                self._detail_body_cache.move_to_end(cache_key)
+                if len(self._detail_body_cache) > self._DETAIL_CACHE_MAX:
+                    self._detail_body_cache.popitem(last=False)
+            return result
 
         def _scroll_detail_to_first_match(
             self,
             body_text: str,
             query_terms: cabc.Sequence[str],
         ) -> None:
-            """Jump ``_detail_scroll`` so the first match lands at the viewport center."""
+            """Jump ``_detail_scroll`` so the first match lands at the viewport center.
+
+            Memoizes ``find_first_match_line`` per ``(record, query)`` so a
+            cursor parked on the same record across viewport refreshes does
+            not rescan the body each time.
+            """
             if self._detail_scroll is None:
                 return
             scroll: t.Any = self._detail_scroll
-            match_line = find_first_match_line(
-                body_text,
-                query_terms,
-                case_sensitive=self.query.case_sensitive,
-                regex=self.query.regex,
-            )
+            cache_key = self._detail_cache_key(query_terms)
+            if cache_key is not None and cache_key in self._first_match_cache:
+                match_line = self._first_match_cache[cache_key]
+                self._first_match_cache.move_to_end(cache_key)
+            else:
+                match_line = find_first_match_line(
+                    body_text,
+                    query_terms,
+                    case_sensitive=self.query.case_sensitive,
+                    regex=self.query.regex,
+                )
+                if cache_key is not None:
+                    self._first_match_cache[cache_key] = match_line
+                    self._first_match_cache.move_to_end(cache_key)
+                    if len(self._first_match_cache) > self._DETAIL_CACHE_MAX:
+                        self._first_match_cache.popitem(last=False)
             if match_line is None:
                 scroll.scroll_to(y=0, animate=False)
                 return
