@@ -95,15 +95,29 @@ cooldown filters out a recent agentgrep release.
 
 ### Fixes
 
-#### MCP install widget cooldown exempts agentgrep
+#### MCP install widget ships working cooldown snippets
 
-The mcp-install widget's `uvx`-flavored days-mode snippets now carry
-`--exclude-newer-package agentgrep=2099-01-01` so a security-conscious
-cooldown stays applied to transitive deps without filtering agentgrep
-itself out of the resolver. The pipx and pip days panels gain a
-caveat note pointing readers at the uvx snippet when the global
-cutoff bites a recent agentgrep release. Mirrors the same fix already
-shipped for `{cli-install}` in this release.
+The mcp-install widget's days-mode snippets now resolve for fresh
+agentgrep releases. The 0.1.0a3 shape emitted
+`uvx --exclude-newer <DURATION> --from agentgrep agentgrep-mcp`
+without a per-package override, so a cooldown shorter than agentgrep's
+most-recent-release age made the install unresolvable (uv emits
+`no versions of agentgrep`).
+
+**uvx days panels** now carry `--exclude-newer-package
+agentgrep=2099-01-01` so the cooldown stays applied to transitive
+deps without filtering agentgrep itself out of the resolver.
+
+**pipx and pip days/bypass panels** fall back to the bare install
+command. Verified against pip 26.1.1 source at
+`/_internal/cli/cmdoptions.py:463`: `--uploaded-prior-to` is a single
+global cutoff with no per-package override flag (pip issue #13674
+landed a relative-duration parser, but no per-package issue is open).
+pipx's `commands/run_uv.py` only translates a narrow whitelist of pip
+args to its uv backend and **does not include `--exclude-newer`**, so
+the uv backend path can't carry the cooldown either. The fallback
+ships a working command; the per-panel cooldown note redirects
+readers to the uvx tab when they need true cooldown enforcement.
 
 ### Development
 

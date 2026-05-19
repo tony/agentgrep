@@ -109,7 +109,12 @@ _USAGE_SUFFIXES: tuple[str, ...] = (
 
 
 _DURATION_SENTINEL = "<COOLDOWN_DURATION>"
-_DATE_SENTINEL = "<COOLDOWN_DATE>"
+# Note: the ``<COOLDOWN_DATE>`` sentinel that mcp_install uses for pipx
+# days panels is intentionally absent here. pipx and pip can't apply
+# per-package cooldown overrides, so their cli-install panels fall back
+# to the bare command across all cooldown modes (see ``_install_command``
+# and ``_cooldown_note``). The uvx and uv add panels use the duration
+# sentinel only.
 
 
 # uv's ``--exclude-newer`` cutoff also filters the target package, so
@@ -142,9 +147,15 @@ def _install_command(method: Method, cooldown: Cooldown) -> str:
             return "uvx --no-config agentgrep --help"
         return "uvx agentgrep --help"
     if method.id == "pipx-run":
-        if cooldown.id == "days":
-            return f"pipx run --pip-args=--uploaded-prior-to={_DATE_SENTINEL} agentgrep --help"
-        # off + bypass — pipx default backend (pip) has no global cooldown
+        # pipx's pip backend (pip 26.0.1 in pipx 1.8.0) accepts
+        # ``--uploaded-prior-to`` but has NO per-package override flag —
+        # a cooldown shorter than agentgrep's most-recent-release age
+        # makes the install unresolvable. pipx's ``--backend uv`` path
+        # also doesn't translate ``--uploaded-prior-to`` (see pipx's
+        # ``commands/run_uv.py::_UV_TRANSLATABLE_VALUE_FLAGS``). The
+        # honest answer is: pipx can't do per-package cooldowns, so all
+        # three modes emit the bare command. The per-cell cooldown note
+        # redirects users to the uvx snippet for true cooldown support.
         return "pipx run agentgrep --help"
     if method.id == "uv-add":
         if cooldown.id == "days":
@@ -152,10 +163,8 @@ def _install_command(method: Method, cooldown: Cooldown) -> str:
         if cooldown.id == "bypass":
             return "uv add --no-config agentgrep"
         return "uv add agentgrep"
-    # pip
-    if cooldown.id == "days":
-        return f"pip install --user --upgrade --uploaded-prior-to {_DURATION_SENTINEL} agentgrep"
-    # off + bypass — pip has no global cooldown to skip
+    # pip: same per-package-override limitation as pipx. All three
+    # modes emit the bare install line; the note redirects to uvx.
     return "pip install --user --upgrade agentgrep"
 
 
@@ -175,8 +184,8 @@ def _usage_prefix(method: Method, cooldown: Cooldown) -> str:
             return "uvx --no-config agentgrep"
         return "uvx agentgrep"
     if method.id == "pipx-run":
-        if cooldown.id == "days":
-            return f"pipx run --pip-args=--uploaded-prior-to={_DATE_SENTINEL} agentgrep"
+        # pipx can't apply per-package cooldowns (see ``_install_command``).
+        # Usage runs through bare ``pipx run`` regardless of cooldown mode.
         return "pipx run agentgrep"
     if method.id == "uv-add":
         return "uv run agentgrep"
@@ -185,31 +194,21 @@ def _usage_prefix(method: Method, cooldown: Cooldown) -> str:
 
 def _cooldown_note(method: Method, cooldown: Cooldown) -> str | None:
     """Return a one-line caveat for cells where the snippet has caveats."""
-    if cooldown.id == "days" and method.id in {"pipx-run", "pip"}:
-        # pip's --uploaded-prior-to is a global cutoff with no
-        # per-package override, so a cooldown shorter than agentgrep's
-        # most-recent-release age makes the install unresolvable. uv
-        # handles this via --exclude-newer-package on the uvx-run /
-        # uv-add panels (see _install_command).
+    if method.id in {"pipx-run", "pip"} and cooldown.id in {"days", "bypass"}:
+        # pip's ``--uploaded-prior-to`` has no per-package override (so
+        # ``days`` mode would filter the target package out of the
+        # resolver for fresh releases) and there's no global cooldown
+        # for pip to bypass either. Both modes fall back to the bare
+        # command; the note redirects users to the uvx snippet, which
+        # carries ``--exclude-newer-package`` for true per-package
+        # cooldown enforcement.
         return (
-            "pip's `--uploaded-prior-to` is a global cutoff with no"
-            " per-package override. If the cooldown filters out a recent"
-            " release of agentgrep itself, switch to the `uv add` or"
-            " `uvx run` snippets — they exempt agentgrep via"
-            " `--exclude-newer-package`."
+            "pip has no per-package cooldown override, so this snippet"
+            " runs without cooldown enforcement. Switch to the `uvx run`"
+            " or `uv add` tab — they apply the cooldown to transitive"
+            " deps via `--exclude-newer` while exempting agentgrep"
+            " itself via `--exclude-newer-package`."
         )
-    if cooldown.id == "bypass":
-        if method.id == "pipx-run":
-            return (
-                "pipx's default backend (pip) has no global cooldown."
-                " For uv-style cooldown control, install `pipx[uv]` and set"
-                " `UV_NO_CONFIG=1` in your shell."
-            )
-        if method.id == "pip":
-            return (
-                "pip has no global cooldown, so bypass is a no-op. Use this"
-                " when pairing the snippet with a uv-backed parent command."
-            )
     return None
 
 

@@ -107,16 +107,20 @@ def test_cli_install_panel_matrix() -> None:
     for method_id in ("uvx-run", "pipx-run", "uv-add", "pip"):
         assert notes[(method_id, "off")] is None
 
-    # Days panels embed the duration sentinel (or date sentinel for pipx).
-    duration_methods = ("uvx-run", "uv-add", "pip")
-    for method_id in duration_methods:
-        panel = next(p for p in panels if p.method.id == method_id and p.cooldown.id == "days")
-        assert "<COOLDOWN_DURATION>" in panel.install_body
-    pipx_days = next(p for p in panels if p.method.id == "pipx-run" and p.cooldown.id == "days")
-    assert "<COOLDOWN_DATE>" in pipx_days.install_body
-
-    # uv-flavored days panels exempt agentgrep from the cooldown so a
-    # fresh release of agentgrep itself stays resolvable.
+    # Only uv-flavored days panels embed the duration sentinel —
+    # pipx-run / pip days panels fall back to the bare command because
+    # pip has no per-package cooldown override (see _cooldown_note).
     for method_id in ("uvx-run", "uv-add"):
         panel = next(p for p in panels if p.method.id == method_id and p.cooldown.id == "days")
+        assert "<COOLDOWN_DURATION>" in panel.install_body
         assert "--exclude-newer-package agentgrep=" in panel.install_body
+
+    # pipx-run / pip never embed a cooldown sentinel: all three modes
+    # (off / days / bypass) emit the same bare install command.
+    for method_id in ("pipx-run", "pip"):
+        bodies = {p.cooldown.id: p.install_body for p in panels if p.method.id == method_id}
+        assert bodies["off"] == bodies["days"] == bodies["bypass"]
+        assert "<COOLDOWN_DURATION>" not in bodies["days"]
+        assert "<COOLDOWN_DATE>" not in bodies["days"]
+        assert "--uploaded-prior-to" not in bodies["days"]
+        assert "--pip-args" not in bodies["days"]
