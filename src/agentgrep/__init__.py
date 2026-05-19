@@ -4360,10 +4360,55 @@ def build_streaming_ui_app(
             )
 
         def set_records(self, records: cabc.Sequence[SearchRecord]) -> None:
-            """Atomic swap of the backing list (used after a filter completes)."""
+            """Apply a new filter result by patching the existing options.
+
+            For the common "user typed another character" narrowing case the
+            method removes the now-unmatched options without rebuilding the
+            list — keeps rendering O(removed) instead of O(total) and never
+            touches the haystack cache. Falls back to a full rebuild when
+            the new set introduces records not currently shown (widening) or
+            when more than half of the current options would be removed
+            (where ``remove_option_at_index`` would do worse than a single
+            ``clear_options`` + ``add_options`` pair).
+            """
+            new_records = list(records)
+            new_ids: set[int] = {id(record) for record in new_records}
+            current_records = self._records
+            if not current_records:
+                self._rebuild_options(new_records)
+                return
+            current_index_by_id: dict[int, int] = {
+                id(record): idx for idx, record in enumerate(current_records)
+            }
+            additions = [record for record in new_records if id(record) not in current_index_by_id]
+            if additions:
+                self._rebuild_options(new_records)
+                return
+            to_remove_indices = sorted(
+                (
+                    current_index_by_id[id(record)]
+                    for record in current_records
+                    if id(record) not in new_ids
+                ),
+                reverse=True,
+            )
+            if len(to_remove_indices) > len(current_records) // 2:
+                # More than half goes — a single clear+rebuild is cheaper
+                # than N ``remove_option_at_index`` calls (each shifts the
+                # internal options list).
+                self._rebuild_options(new_records)
+                return
+            for idx in to_remove_indices:
+                self.remove_option_at_index(idx)
+            self._records = new_records
+
+        def _rebuild_options(self, records: cabc.Sequence[SearchRecord]) -> None:
+            """Full clear + rebuild path. Used when delta-apply isn't safe."""
             self._records = list(records)
             self.clear_options()
             if self._records:
+                for record in self._records:
+                    cached_haystack(record)
                 self.add_options(
                     [option_type(self._render_record(r), id=str(id(r))) for r in self._records],
                 )

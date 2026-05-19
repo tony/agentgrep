@@ -1644,6 +1644,121 @@ async def test_search_results_list_append_under_load(
         assert elapsed < 2.0, f"append_records(1000) took {elapsed:.3f}s; expected < 2.0s"
 
 
+async def test_set_records_narrowing_avoids_clear_options(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A narrowing filter (subset of current records) must not full-rebuild the list."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = [
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="codex.sessions",
+            adapter_id="codex.sessions_jsonl.v1",
+            path=tmp_path / f"r{idx}.jsonl",
+            text=f"row {idx}",
+        )
+        for idx in range(10)
+    ]
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._results.append_records(records)
+        await pilot.pause()
+        clear_count = 0
+        original_clear = app._results.clear_options
+
+        def counting_clear() -> object:
+            nonlocal clear_count
+            clear_count += 1
+            return original_clear()
+
+        monkeypatch.setattr(app._results, "clear_options", counting_clear)
+        # Narrow to the first 7 records (drop 3). 3 / 10 <= 50% → delta path.
+        app._results.set_records(records[:7])
+        await pilot.pause()
+        assert clear_count == 0
+        assert len(app._results._records) == 7
+        assert [id(r) for r in app._results._records] == [id(r) for r in records[:7]]
+
+
+async def test_set_records_widening_triggers_full_rebuild(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Widening (introducing records not currently shown) rebuilds for order correctness."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = [
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="codex.sessions",
+            adapter_id="codex.sessions_jsonl.v1",
+            path=tmp_path / f"r{idx}.jsonl",
+            text=f"row {idx}",
+        )
+        for idx in range(5)
+    ]
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._results.append_records(records[:3])
+        await pilot.pause()
+        clear_count = 0
+        original_clear = app._results.clear_options
+
+        def counting_clear() -> object:
+            nonlocal clear_count
+            clear_count += 1
+            return original_clear()
+
+        monkeypatch.setattr(app._results, "clear_options", counting_clear)
+        # Widen to all 5 records — two of them weren't shown before.
+        app._results.set_records(records)
+        await pilot.pause()
+        assert clear_count == 1, "widening must rebuild to preserve record order"
+        assert len(app._results._records) == 5
+
+
+async def test_set_records_majority_removal_falls_back_to_rebuild(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Removing more than half of the current records uses the chunked rebuild path."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = [
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="codex.sessions",
+            adapter_id="codex.sessions_jsonl.v1",
+            path=tmp_path / f"r{idx}.jsonl",
+            text=f"row {idx}",
+        )
+        for idx in range(10)
+    ]
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._results.append_records(records)
+        await pilot.pause()
+        clear_count = 0
+        original_clear = app._results.clear_options
+
+        def counting_clear() -> object:
+            nonlocal clear_count
+            clear_count += 1
+            return original_clear()
+
+        monkeypatch.setattr(app._results, "clear_options", counting_clear)
+        # Drop 8 of 10 — well over the 50% threshold.
+        app._results.set_records(records[:2])
+        await pilot.pause()
+        assert clear_count == 1, "majority-removal must take the rebuild path"
+        assert len(app._results._records) == 2
+
+
 def test_format_compact_path_passes_short_paths_through(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: pathlib.Path,
