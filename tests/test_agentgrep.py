@@ -1929,6 +1929,42 @@ async def test_show_detail_caps_body_at_max_lines(
         assert body_text.plain.count("body line") == cap
 
 
+def test_format_timestamp_tig_renders_iso_with_offset_in_local_tz() -> None:
+    """ISO inputs with explicit offsets are localized to the system timezone."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    result = agentgrep.format_timestamp_tig("2026-05-17T11:59:12+00:00")
+    # Shape: ``YYYY-MM-DD HH:MM ±HHMM`` (22 chars)
+    assert len(result) == 22
+    assert result[4] == "-" and result[7] == "-"
+    assert result[10] == " "
+    assert result[13] == ":"
+    assert result[16] == " "
+    assert result[17] in {"+", "-"}
+
+
+def test_format_timestamp_tig_renders_zulu_input() -> None:
+    """``Z`` suffix is treated as ``+00:00`` (Python's ``fromisoformat`` requires the swap)."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    result = agentgrep.format_timestamp_tig("2026-05-17T11:59:12Z")
+    assert len(result) == 22
+
+
+def test_format_timestamp_tig_returns_empty_string_for_missing_input() -> None:
+    """``None`` / empty inputs render as the empty string so callers can pad."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    assert agentgrep.format_timestamp_tig(None) == ""
+    assert agentgrep.format_timestamp_tig("") == ""
+
+
+def test_format_timestamp_tig_falls_back_to_raw_on_parse_error() -> None:
+    """Unparseable inputs return the original string clipped to 22 chars."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    assert agentgrep.format_timestamp_tig("not-an-iso-timestamp") == "not-an-iso-timestamp"
+    # Long unparseable input is clipped.
+    long_input = "this-is-not-a-timestamp-but-it-is-too-long-anyway"
+    assert agentgrep.format_timestamp_tig(long_input) == long_input[:22]
+
+
 def test_find_first_match_line_returns_index_of_first_match() -> None:
     """Returns the line index of the first matching line; case-insensitive by default."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())

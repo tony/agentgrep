@@ -2471,6 +2471,41 @@ def isoformat_from_mtime_ns(mtime_ns: int) -> str | None:
     )
 
 
+def format_timestamp_tig(value: str | None) -> str:
+    """Render an ISO-8601 timestamp as ``YYYY-MM-DD HH:MM ±HHMM`` (tig style).
+
+    Localizes to the system timezone before formatting so the displayed
+    time matches what the user expects to see — tig's main view does the
+    same. Returns ``""`` for ``None`` / empty input and a clipped raw
+    string for unparseable input so callers can pad consistently.
+
+    Examples
+    --------
+    >>> format_timestamp_tig(None)
+    ''
+    >>> format_timestamp_tig("")
+    ''
+    >>> # An ISO timestamp with explicit timezone — formatted result keeps
+    >>> # the offset for the system's local timezone (whose exact value
+    >>> # varies by host, so we just check shape here).
+    >>> sample = format_timestamp_tig("2026-05-17T11:59:12+00:00")
+    >>> len(sample)
+    22
+    >>> sample[4], sample[7], sample[10], sample[13], sample[16]
+    ('-', '-', ' ', ':', ' ')
+    >>> format_timestamp_tig("not-a-real-timestamp")
+    'not-a-real-timestamp'
+    """
+    if not value:
+        return ""
+    candidate = value.replace("Z", "+00:00")
+    try:
+        moment = datetime.datetime.fromisoformat(candidate)
+    except ValueError:
+        return value[:22]
+    return moment.astimezone().strftime("%Y-%m-%d %H:%M %z")
+
+
 def discover_from_catalog(
     home: pathlib.Path,
     agent: AgentName,

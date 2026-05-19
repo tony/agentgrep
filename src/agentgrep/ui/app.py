@@ -56,6 +56,7 @@ from agentgrep import (
     find_first_match_line,
     format_compact_path,
     format_match_count,
+    format_timestamp_tig,
     highlight_matches,
     run_search_query,
     truncate_lines,
@@ -426,7 +427,7 @@ def build_streaming_ui_app(
         def _render_record(self, record: SearchRecord) -> object:
             agent_text = (record.agent or "").ljust(8)[:8]
             kind_text = (record.kind or "").ljust(10)[:10]
-            timestamp_text = (record.timestamp or "").ljust(20)[:20]
+            timestamp_text = format_timestamp_tig(record.timestamp).ljust(22)[:22]
             title_text = (record.title or "").ljust(40)[:40]
             path_text = format_compact_path(record.path, max_width=60)
             text = rich_text.Text(no_wrap=True, overflow="ellipsis")
