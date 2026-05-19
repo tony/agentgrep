@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import contextlib
 import importlib
 import json
 import pathlib
@@ -606,9 +607,13 @@ def build_streaming_ui_app(
                     if callable(stop):
                         stop()
                     return
-                # Empty or at start — no widget meaningfully above; eat the key
+                # Empty or at start — release focus up to the top search bar
+                # so plain ``up`` navigates filter → search without reaching
+                # for Ctrl-K. Mirrors the symmetric ``down`` → results path.
                 if callable(stop):
                     stop()
+                with contextlib.suppress(Exception):
+                    self.app.query_one("#search").focus()
                 return
             await super()._on_key(event)
 

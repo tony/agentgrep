@@ -1610,6 +1610,43 @@ async def test_ctrl_h_from_filter_is_a_noop(
         assert app.focused is not None and app.focused.id == "filter"
 
 
+async def test_up_on_empty_filter_releases_focus_to_search(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Plain ``up`` on an empty filter input lifts focus to the top search bar."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._filter_input.focus()
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "filter"
+        await pilot.press("up")
+        await pilot.pause()
+        assert app.focused is not None
+        assert app.focused.id == "search"
+
+
+async def test_up_on_filter_with_cursor_at_start_releases_focus_to_search(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``up`` on a non-empty filter whose cursor is at position 0 still escapes upward."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._filter_input.focus()
+        await pilot.pause()
+        # Type something, then move cursor back to start.
+        app._filter_input.value = "abc"
+        app._filter_input.cursor_position = 0
+        await pilot.pause()
+        await pilot.press("up")
+        await pilot.pause()
+        assert app.focused is not None
+        assert app.focused.id == "search"
+
+
 async def test_search_results_list_append_under_load(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
