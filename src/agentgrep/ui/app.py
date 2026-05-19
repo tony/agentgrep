@@ -919,11 +919,13 @@ def build_streaming_ui_app(
         def compose(self) -> cabc.Iterator[object]:
             """Build the widget tree (header → search → body[results-col, detail-col] → footer).
 
-            Each body column has its own footer status line — the results
-            column carries the live chrome (spinner + status + match count
-            + scroll %) and the detail column carries the record path +
-            scroll %. There is intentionally no top-level chrome row; the
-            reactive state belongs to the pane it describes.
+            The results column carries its live chrome (spinner + status
+            + match count + scroll %) as a header above the filter and
+            list, so the running search state sits next to the search
+            input that drives it. The detail column keeps its status
+            line at the bottom — record path + scroll % is contextual to
+            whatever's currently being read, so the natural place to
+            glance is the foot of the pane.
             """
             yield header()
             initial_search = " ".join(self.query.terms) if self.query.terms else ""
@@ -934,12 +936,12 @@ def build_streaming_ui_app(
             )
             with horizontal(id="body"):
                 with vertical(id="results-column"):
-                    yield FilterInput(placeholder="Filter loaded results", id="filter")
-                    yield SearchResultsList(id="results")
                     with horizontal(id="results-statusline"):
                         yield SpinnerWidget(id="status-spinner")
                         yield static_type("", id="status-text")
                         yield static_type("", id="status-right")
+                    yield FilterInput(placeholder="Filter loaded results", id="filter")
+                    yield SearchResultsList(id="results")
                 with vertical(id="detail-column"):
                     with DetailScroll(id="detail-scroll"):
                         yield static_type("", id="detail")
