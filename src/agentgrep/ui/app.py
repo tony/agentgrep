@@ -1227,13 +1227,19 @@ def build_streaming_ui_app(
                     )
 
         def on_option_list_option_highlighted(self, event: object) -> None:
-            """Update the detail pane when the OptionList cursor moves."""
+            """Update the detail pane and footer on OptionList cursor move."""
             option_index = getattr(event, "option_index", None)
             if option_index is None:
+                self._refresh_results_status_right()
                 return
             row_index = int(option_index)
             if 0 <= row_index < len(self.filtered_records):
                 self.show_detail(self.filtered_records[row_index])
+            self._refresh_results_status_right(
+                cursor=row_index,
+                visible=len(self.filtered_records),
+                percent=self._results._scroll_percent() if self._results is not None else None,
+            )
 
         def on_results_scroll_changed(self, message: ResultsScrollChanged) -> None:
             """Re-render the right side of the results status line."""
