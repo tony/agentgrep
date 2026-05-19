@@ -55,6 +55,7 @@ dev = [
     { name = "ruff" },
     { name = "sphinx-autobuild" },
     { name = "sphinx-autodoc-api-style" },
+    { name = "sphinx-autodoc-argparse" },
     { name = "sphinx-autodoc-fastmcp" },
     { name = "syrupy" },
     { name = "tomlkit" },
@@ -64,6 +65,7 @@ docs = [
     { name = "gp-sphinx" },
     { name = "sphinx-autobuild" },
     { name = "sphinx-autodoc-api-style" },
+    { name = "sphinx-autodoc-argparse" },
     { name = "sphinx-autodoc-fastmcp" },
 ]
 
@@ -84,6 +86,7 @@ dev = [
     { name = "ruff" },
     { name = "sphinx-autobuild" },
     { name = "sphinx-autodoc-api-style", specifier = "==0.0.1a20" },
+    { name = "sphinx-autodoc-argparse", specifier = "==0.0.1a20" },
     { name = "sphinx-autodoc-fastmcp", specifier = "==0.0.1a20" },
     { name = "syrupy", specifier = ">=5.1.0" },
     { name = "tomlkit", specifier = ">=0.13" },
@@ -93,6 +96,7 @@ docs = [
     { name = "gp-sphinx", specifier = "==0.0.1a20" },
     { name = "sphinx-autobuild" },
     { name = "sphinx-autodoc-api-style", specifier = "==0.0.1a20" },
+    { name = "sphinx-autodoc-argparse", specifier = "==0.0.1a20" },
     { name = "sphinx-autodoc-fastmcp", specifier = "==0.0.1a20" },
 ]
 
@@ -1422,6 +1426,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/11/14/d1f9f818e16082268495cd84ac9bf25af9a89fd537152249f85425d5dfb4/sphinx_autodoc_api_style-0.0.1a20.tar.gz", hash = "sha256:ecca02b7f9a5f3befddb50df4b33b2bb8ef53fcffa31062a7e8bab1e77a3bbbb", size = 8978, upload-time = "2026-05-17T22:10:59.466Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/21/93/86f7ee39b9c0ae971c409e33e83e241adf619549e31c6ddd702e1e5899fa/sphinx_autodoc_api_style-0.0.1a20-py3-none-any.whl", hash = "sha256:d222d9ff7782cbb73eeb1f48f44a907fd34cc349382278640b348875e64e9cfd", size = 9065, upload-time = "2026-05-17T22:10:38.78Z" },
+]
+
+[[package]]
+name = "sphinx-autodoc-argparse"
+version = "0.0.1a20"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "docutils" },
+    { name = "pygments" },
+    { name = "sphinx" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/32/2e/3a24edb83610b81c4169b59109b274327a66d689e290caf6b6f6b4d949e5/sphinx_autodoc_argparse-0.0.1a20.tar.gz", hash = "sha256:454384a8aea9ac1ee2ddbbc0f852d2bab8620cdf10eb853c4102cf30bd71efa7", size = 42456, upload-time = "2026-05-17T22:11:00.304Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1b/cb/4d3ad8db55e99b29301b98cd7f4203f82e55e9d3b56eaa8ccbbb1027372d/sphinx_autodoc_argparse-0.0.1a20-py3-none-any.whl", hash = "sha256:72c7cf29232fc0a8ff2335d039a8d13ae32e038d63dde4bf3f1f019a5b1c3902", size = 47273, upload-time = "2026-05-17T22:10:40.321Z" },
 ]
 
 [[package]]

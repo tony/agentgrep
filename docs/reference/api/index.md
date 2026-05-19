@@ -19,9 +19,3 @@ FastMCP server builder, payload models, and MCP helpers.
 
 ::::
 
-```{toctree}
-:hidden:
-
-agentgrep
-mcp
-```

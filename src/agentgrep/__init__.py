@@ -2138,6 +2138,18 @@ def create_parser(
     return ParserBundle(parser=parser, search_parser=search_parser, find_parser=find_parser)
 
 
+def build_docs_parser() -> argparse.ArgumentParser:
+    """Return the root parser with color disabled, for docs autogen.
+
+    ``sphinx-autodoc-argparse`` expects ``:func:`` to point at a
+    zero-arg callable returning :class:`argparse.ArgumentParser`.
+    :func:`create_parser` requires ``color_mode`` and returns a
+    :class:`ParserBundle`, so this thin adapter exists for the
+    documentation toolchain.
+    """
+    return create_parser("never").parser
+
+
 def parse_args(
     argv: cabc.Sequence[str] | None = None,
 ) -> SearchArgs | FindArgs | None:

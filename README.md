@@ -23,9 +23,34 @@ Claude Code, Cursor, and Gemini.
 $ uvx agentgrep --help
 ```
 
-Other install methods (pipx, uv add, pip install) and full MCP-client
-setup snippets live in the [installer widgets on agentgrep.org](https://agentgrep.org/library/)
-— one tabbed picker per surface.
+Other install methods (pipx, uv add, pip install) and full setup
+snippets live in the
+[installer widget on agentgrep.org/cli/](https://agentgrep.org/cli/).
+
+## CLI quickstart
+
+Search prompts and history across every configured agent:
+
+```console
+$ agentgrep search "deploy"
+```
+
+Stream JSON so a non-MCP agent or shell pipeline can consume the
+results:
+
+```console
+$ agentgrep find --json
+```
+
+Open the read-only Textual TUI for interactive browsing:
+
+```console
+$ agentgrep search --ui
+```
+
+`--json` and `--ndjson` make every command pipe-friendly. Agents that
+don't speak MCP can drive the CLI directly; see
+<https://agentgrep.org/cli/> for the per-subcommand reference.
 
 ## MCP server: quickest setup
 

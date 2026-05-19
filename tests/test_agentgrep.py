@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import contextlib
 import dataclasses
 import importlib
@@ -188,6 +189,8 @@ class AgentGrepModule(t.Protocol):
 
     def parse_args(self, argv: cabc.Sequence[str] | None = None) -> object | None: ...
 
+    def build_docs_parser(self) -> argparse.ArgumentParser: ...
+
 
 def load_agentgrep_module() -> AgentGrepModule:
     """Return the installed ``agentgrep`` package."""
@@ -299,6 +302,15 @@ def test_help_examples_are_present_for_help_flags() -> None:
     assert "search examples:" in root_help.stdout
     assert "agentgrep search serenity --json" in search_help.stdout
     assert "agentgrep find cursor --json" in find_help.stdout
+
+
+def test_build_docs_parser_returns_root_parser() -> None:
+    """Adapter for ``sphinx-autodoc-argparse`` exposes the root parser."""
+    agentgrep = load_agentgrep_module()
+    parser = agentgrep.build_docs_parser()
+
+    assert isinstance(parser, argparse.ArgumentParser)
+    assert parser.prog == "agentgrep"
 
 
 def test_search_is_default_verb(tmp_path: pathlib.Path) -> None:

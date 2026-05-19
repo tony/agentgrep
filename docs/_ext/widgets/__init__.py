@@ -27,6 +27,7 @@ from ._base import (
 from ._directive import make_widget_directive
 from ._discovery import discover
 from ._prehydrate import (
+    inject_cli_install_prehydrate,
     inject_library_install_prehydrate,
     inject_mcp_install_prehydrate,
 )
@@ -62,6 +63,7 @@ def setup(app: Sphinx) -> dict[str, t.Any]:
     )
     app.connect("html-page-context", inject_mcp_install_prehydrate)
     app.connect("html-page-context", inject_library_install_prehydrate)
+    app.connect("html-page-context", inject_cli_install_prehydrate)
 
     return {
         "version": __version__,

@@ -39,7 +39,96 @@ $ uvx --from 'agentgrep' --prerelease allow python
 ## agentgrep 0.1.0a4 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
-_Notes on the upcoming release will go here._
+
+agentgrep 0.1.0a4 lifts the CLI to a first-class documentation
+surface. The docs site gains a `/cli/` section above Library in the
+sidebar, with per-subcommand reference pages auto-generated from the
+argparse tree and dedicated sections describing `--json` / `--ndjson`
+output for shell pipelines and non-MCP agents. A new `{cli-install}`
+widget sits next to the existing MCP installer on the homepage so
+terminal users see the right install snippet on first paint.
+
+### What's new
+
+#### CLI reference site
+
+The new `/cli/` section opens with a tabbed installer, a card grid
+linking to `agentgrep search` and `agentgrep find`, and an
+"Use from another agent" callout describing the `--json` / `--ndjson`
+contract for non-MCP consumers. Each subcommand page renders its
+option list from the live argparse tree via gp-sphinx's
+`sphinx-autodoc-argparse` extension, then documents the JSON record
+shape with cross-references to {class}`~agentgrep.SearchRecord` and
+{class}`~agentgrep.FindRecord`.
+
+#### CLI install widget
+
+A new `{cli-install}` Sphinx directive renders one row of install-
+method tabs (`uvx run` / `pipx run` / `uv add` / `pip install`) and,
+for each method, a panel pairing the install command with a runnable
+CLI usage snippet. The widget mirrors the existing
+`{library-install}` and `{mcp-install}` widgets — same prehydrate-
+driven first-paint behavior, same `localStorage` persistence across
+pages — so the homepage now carries three sibling installers, one per
+consumption surface.
+
+#### CLI cooldowns
+
+The `{cli-install}` widget grows the same "Configure cooldowns"
+picker the MCP installer has carried since 0.1.0a3. Each method panel
+now exists in three variants (off / days / bypass) so a
+security-conscious terminal user can drive `uvx`'s `--exclude-newer`,
+`pipx`'s `--uploaded-prior-to`, or `uv add` / `pip install`'s
+cooldown equivalents straight from the docs site. Toggling cooldowns
+or changing the day count live-updates every duration / date sentinel
+in the visible snippet, the settings sub-view exposes a bypass radio
+for uv-backed installs, and saved state survives gp-sphinx SPA nav
+and is shared with any other `{cli-install}` widget on the page.
+
+uv-flavored days-mode snippets include `--exclude-newer-package
+agentgrep=2099-01-01` so the global cooldown applies to transitive
+deps without filtering agentgrep itself out of the resolver (a fresh
+release of agentgrep would otherwise be newer than the cutoff). pip
+has no per-package cutoff override, so the pipx and pip days panels
+carry a note pointing users at the uv-flavored snippets when the
+cooldown filters out a recent agentgrep release.
+
+### Fixes
+
+#### MCP install widget ships working cooldown snippets
+
+The mcp-install widget's days-mode snippets now resolve for fresh
+agentgrep releases. The 0.1.0a3 shape emitted
+`uvx --exclude-newer <DURATION> --from agentgrep agentgrep-mcp`
+without a per-package override, so a cooldown shorter than agentgrep's
+most-recent-release age made the install unresolvable (uv emits
+`no versions of agentgrep`).
+
+**uvx days panels** now carry `--exclude-newer-package
+agentgrep=2099-01-01` so the cooldown stays applied to transitive
+deps without filtering agentgrep itself out of the resolver.
+
+**pipx and pip days/bypass panels** fall back to the bare install
+command. Verified against pip 26.1.1 source at
+`/_internal/cli/cmdoptions.py:463`: `--uploaded-prior-to` is a single
+global cutoff with no per-package override flag (pip issue #13674
+landed a relative-duration parser, but no per-package issue is open).
+pipx's `commands/run_uv.py` only translates a narrow whitelist of pip
+args to its uv backend and **does not include `--exclude-newer`**, so
+the uv backend path can't carry the cooldown either. The fallback
+ships a working command; the per-panel cooldown note redirects
+readers to the uvx tab when they need true cooldown enforcement.
+
+### Development
+
+The `sphinx-autodoc-argparse` Sphinx extension is added to the `dev`
+and `docs` dependency groups to drive the per-subcommand argparse
+rendering. The `make_cooldown_days_slot_filter` Jinja helper now
+emits the shared `ag-cooldown-days` class on cooldown-day spans
+instead of the mcp-prefixed variant — no visual change, but the
+filter output is widget-agnostic, so `{cli-install}` panels can reuse
+the same sentinel mechanism.
+
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
 ## agentgrep 0.1.0a3 (2026-05-17)
