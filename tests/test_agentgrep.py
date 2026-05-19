@@ -1838,6 +1838,113 @@ async def test_set_records_majority_removal_falls_back_to_rebuild(
         assert len(app._results._records) == 2
 
 
+def test_scroll_percent_returns_full_when_nothing_scrolls() -> None:
+    """A pane that fits its viewport reports ``100%`` (tig convention)."""
+    from agentgrep.ui.app import scroll_percent
+
+    assert scroll_percent(0.0, 0.0) == 100
+
+
+def test_scroll_percent_clamps_to_bounds() -> None:
+    """Scroll percent is clamped to ``[0, 100]`` even for nonsense inputs."""
+    from agentgrep.ui.app import scroll_percent
+
+    assert scroll_percent(0.0, 100.0) == 0
+    assert scroll_percent(50.0, 100.0) == 50
+    assert scroll_percent(100.0, 100.0) == 100
+    # Overshoot past max — clamped to 100.
+    assert scroll_percent(500.0, 100.0) == 100
+    # Negative scroll — clamped to 0.
+    assert scroll_percent(-10.0, 100.0) == 0
+
+
+async def test_results_status_right_shows_match_count_cursor_and_percent(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``_format_results_right`` renders ``{N} matches  {cursor+1}/{visible}  {pct}%``."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        # No streaming results yet — empty right slot regardless of args.
+        assert app._format_results_right(cursor=None, visible=None, percent=None) == ""
+        # Seed streaming totals so the match count segment renders.
+        app.all_records.extend(_seed_records(agentgrep, tmp_path, 10))
+        # No cursor yet — match count + percent.
+        assert app._format_results_right(cursor=None, visible=10, percent=50) == "10 matches  50%"
+        # Cursor at row 0 of all 10 — full triple.
+        assert app._format_results_right(cursor=0, visible=10, percent=0) == "10 matches  1/10  0%"
+
+
+async def test_detail_statusline_shows_path_and_scroll_percent(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``show_detail`` populates the detail status line with path + scroll %."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "session.jsonl",
+        text="hello",
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        updates: list[str] = []
+        real_update = app._detail_statusline.update
+
+        def spy(content: t.Any = "", *args: t.Any, **kwargs: t.Any) -> None:
+            updates.append(str(content))
+            real_update(content, *args, **kwargs)
+
+        monkeypatch.setattr(app._detail_statusline, "update", spy)
+        app.show_detail(record)
+        await pilot.pause()
+        # Latest update should carry both the path's basename and a trailing ``%``.
+        rendered = updates[-1] if updates else ""
+        assert "session.jsonl" in rendered
+        assert rendered.rstrip().endswith("%")
+
+
+async def test_results_scroll_changed_updates_status_right(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The app handler updates ``#status-right`` when the OptionList scrolls."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 5)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        updates: list[str] = []
+        real_update = app._matches_widget.update
+
+        def spy(content: t.Any = "", *args: t.Any, **kwargs: t.Any) -> None:
+            updates.append(str(content))
+            real_update(content, *args, **kwargs)
+
+        monkeypatch.setattr(app._matches_widget, "update", spy)
+        # Pre-seed streaming records so the match count is non-zero.
+        app.all_records.extend(records)
+        app._results.append_records(records)
+        await pilot.pause()
+        # Explicitly land focus and move cursor to row 0 — the reactive
+        # ``highlighted`` watcher fires on change, so set it directly.
+        app._results.focus()
+        await pilot.pause()
+        app._results.highlighted = 0
+        await pilot.pause()
+        # The ``highlighted`` watcher posts ``ResultsScrollChanged`` which
+        # the app handler renders as ``5 matches  1/5  N%``.
+        assert any("1/5" in u and "matches" in u for u in updates), (
+            f"expected '5 matches  1/5  N%' in {updates!r}"
+        )
+
+
 def test_format_compact_path_passes_short_paths_through(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: pathlib.Path,

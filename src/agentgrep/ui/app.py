@@ -63,6 +63,18 @@ from agentgrep import (
 )
 
 
+def scroll_percent(scroll_y: float, max_scroll_y: float) -> int:
+    """Return an integer scroll percent clamped to ``[0, 100]``.
+
+    Returns ``100`` when there is no scrollable region (everything fits)
+    and ``0`` when scrolled to the very top. Mirrors tig's bottom-status
+    convention where a fully visible view reads as ``100%``.
+    """
+    if max_scroll_y <= 0:
+        return 100 if scroll_y <= 0 else 0
+    return min(100, max(0, round((scroll_y / max_scroll_y) * 100)))
+
+
 def run_ui(
     home: pathlib.Path,
     query: SearchQuery,
@@ -186,6 +198,28 @@ def build_streaming_ui_app(
         def __init__(self, payload: SearchRequestedPayload) -> None:
             super().__init__()
             self.payload = payload
+
+    class ResultsScrollChanged(message_type):  # ty: ignore[unsupported-base]
+        """Posted by :class:`SearchResultsList` when scroll or cursor moves.
+
+        The app handler renders the right side of the results status line
+        from this snapshot — cursor position out of total, plus the scroll
+        percent. Pre-shaped here so the widget never reaches into the app
+        directly.
+        """
+
+        def __init__(self, cursor: int | None, total: int, percent: int) -> None:
+            super().__init__()
+            self.cursor = cursor
+            self.total = total
+            self.percent = percent
+
+    class DetailScrollChanged(message_type):  # ty: ignore[unsupported-base]
+        """Posted by :class:`DetailScroll` when the detail-pane scrolls."""
+
+        def __init__(self, percent: int) -> None:
+            super().__init__()
+            self.percent = percent
 
     def make_emit(app: StreamingAppLike) -> cabc.Callable[[object], None]:
         """Build an ``emit`` callback that dispatches streaming events via ``call_from_thread``.
@@ -376,6 +410,45 @@ def build_streaming_ui_app(
             self._records = []
             self.clear_options()
 
+        def _scroll_percent(self) -> int:
+            """Compute the current scroll percent, clamped to ``[0, 100]``."""
+            return scroll_percent(
+                float(getattr(self, "scroll_y", 0) or 0),
+                float(getattr(self, "max_scroll_y", 0) or 0),
+            )
+
+        def _post_scroll_changed(self, cursor: int | None = None) -> None:
+            """Post a :class:`ResultsScrollChanged` snapshot to the app.
+
+            ``cursor`` defaults to the widget's current ``highlighted``
+            reactive but accepts an explicit override so watchers can pass
+            the freshly-set value through without racing the reactive
+            dispatch.
+            """
+            if cursor is None:
+                cursor = t.cast("int | None", getattr(self, "highlighted", None))
+            self.post_message(
+                ResultsScrollChanged(
+                    cursor=cursor,
+                    total=len(self._records),
+                    percent=self._scroll_percent(),
+                ),
+            )
+
+        def watch_scroll_y(self, old: float, new: float) -> None:
+            """Re-render the status line on scroll. Inherited base does the actual scroll."""
+            base = getattr(super(), "watch_scroll_y", None)
+            if callable(base):
+                base(old, new)
+            self._post_scroll_changed()
+
+        def watch_highlighted(self, highlighted: int | None) -> None:
+            """Re-render the status line on cursor move."""
+            base = getattr(super(), "watch_highlighted", None)
+            if callable(base):
+                base(highlighted)
+            self._post_scroll_changed(cursor=highlighted)
+
         _AGENT_COLORS: t.ClassVar[dict[str, str]] = {
             "codex": "cyan",
             "claude": "magenta",
@@ -502,6 +575,20 @@ def build_streaming_ui_app(
             """Scroll up by half the visible viewport (vim ``Ctrl-U``)."""
             half = max(1, self.size.height // 2)
             self.scroll_relative(y=-half, animate=True)
+
+        def watch_scroll_y(self, old: float, new: float) -> None:
+            """Re-render the detail status line on scroll."""
+            base = getattr(super(), "watch_scroll_y", None)
+            if callable(base):
+                base(old, new)
+            self.post_message(
+                DetailScrollChanged(
+                    percent=scroll_percent(
+                        float(new or 0),
+                        float(getattr(self, "max_scroll_y", 0) or 0),
+                    ),
+                ),
+            )
 
     class FilterInput(input_widget):  # ty: ignore[unsupported-base]
         """``Input`` subclass with debounced filter + cursor-or-focus arrows.
@@ -1038,8 +1125,7 @@ def build_streaming_ui_app(
                     self.filtered_records.extend(chunk)
                     if start + chunk_size < len(matching):
                         await asyncio.sleep(0)
-            if self._matches_widget is not None:
-                self._matches_widget.update(format_match_count(total))
+            self._refresh_results_status_right()
 
         def _apply_progress(self, snapshot: ProgressSnapshot) -> None:
             """Update the status widget — invoked via ``call_from_thread``."""
@@ -1149,6 +1235,83 @@ def build_streaming_ui_app(
             if 0 <= row_index < len(self.filtered_records):
                 self.show_detail(self.filtered_records[row_index])
 
+        def on_results_scroll_changed(self, message: ResultsScrollChanged) -> None:
+            """Re-render the right side of the results status line."""
+            self._refresh_results_status_right(
+                cursor=message.cursor,
+                visible=message.total,
+                percent=message.percent,
+            )
+
+        def on_detail_scroll_changed(self, message: DetailScrollChanged) -> None:
+            """Re-render the detail status line on detail-pane scroll."""
+            self._refresh_detail_statusline(message.percent)
+
+        def _refresh_results_status_right(
+            self,
+            *,
+            cursor: int | None = None,
+            visible: int | None = None,
+            percent: int | None = None,
+        ) -> None:
+            """Compose the results-status right slot from the most recent state.
+
+            Combines the streaming match count (from ``self.all_records``)
+            with the current cursor / scroll percent so the right slot is
+            always shaped ``{N} matches  [{cursor+1}/{visible}]  {pct}%``.
+            Each segment is omitted when its inputs are unknown.
+            """
+            if self._matches_widget is None:
+                return
+            if cursor is None and visible is None and percent is None and self._results is not None:
+                cursor = t.cast("int | None", getattr(self._results, "highlighted", None))
+                visible = len(self._results._records)
+                percent = self._results._scroll_percent()
+            self._matches_widget.update(
+                self._format_results_right(cursor, visible, percent),
+            )
+
+        def _format_results_right(
+            self,
+            cursor: int | None,
+            visible: int | None,
+            percent: int | None,
+        ) -> str:
+            """Render the right slot: ``{N} matches  {cursor+1}/{visible}  {pct}%`` (tig style)."""
+            total_matches = len(self.all_records)
+            parts: list[str] = []
+            if total_matches > 0:
+                parts.append(format_match_count(total_matches))
+            if visible and visible > 0 and cursor is not None:
+                parts.append(f"{cursor + 1}/{visible}")
+            if percent is not None and total_matches > 0:
+                parts.append(f"{percent}%")
+            return "  ".join(parts)
+
+        def _refresh_detail_statusline(self, percent: int | None = None) -> None:
+            """Update the detail status line with the current record path and scroll %."""
+            if self._detail_statusline is None:
+                return
+            record = self._current_detail_record
+            if record is None:
+                self._detail_statusline.update("")
+                return
+            pct = percent if percent is not None else self._current_detail_scroll_percent()
+            width = max(20, int(getattr(self._detail_statusline.size, "width", 80)))
+            path_text = format_compact_path(record.path, max_width=max(10, width - 6))
+            pad = max(1, width - len(path_text) - len(f"{pct}%"))
+            self._detail_statusline.update(f"{path_text}{' ' * pad}{pct}%")
+
+        def _current_detail_scroll_percent(self) -> int:
+            """Compute the detail pane's scroll percent on demand."""
+            if self._detail_scroll is None:
+                return 100
+            scroll = self._detail_scroll
+            return scroll_percent(
+                float(getattr(scroll, "scroll_y", 0) or 0),
+                float(getattr(scroll, "max_scroll_y", 0) or 0),
+            )
+
         # Constant — keep in sync with the label list in ``show_detail`` below.
         # 7 label rows (Agent / Kind / Store / Adapter / Timestamp / Model / Path)
         # plus 1 blank separator = 8 lines of header before the body starts.
@@ -1206,6 +1369,7 @@ def build_streaming_ui_app(
                 _RichGroup(header, t.cast("t.Any", body_renderable)),
             )
             self._scroll_detail_to_first_match(body_for_scroll, query_terms)
+            self._refresh_detail_statusline()
 
         def _detail_cache_key(
             self,
