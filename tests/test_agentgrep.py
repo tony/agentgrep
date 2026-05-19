@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import contextlib
 import dataclasses
 import importlib
@@ -1719,6 +1720,47 @@ async def test_set_records_widening_triggers_full_rebuild(
         await pilot.pause()
         assert clear_count == 1, "widening must rebuild to preserve record order"
         assert len(app._results._records) == 5
+
+
+async def test_apply_records_batch_yields_between_chunks(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Applying a large batch yields to the event loop every chunk_size records."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    chunk = app._APPLY_CHUNK_SIZE
+    # Three chunks worth — should yield twice (between chunk 0/1 and 1/2).
+    record_count = chunk * 3
+    records = [
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="codex.sessions",
+            adapter_id="codex.sessions_jsonl.v1",
+            path=tmp_path / f"r{idx}.jsonl",
+            text=f"row {idx}",
+        )
+        for idx in range(record_count)
+    ]
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        sleep_calls = 0
+        real_sleep = asyncio.sleep
+
+        async def counting_sleep(delay: float) -> None:
+            nonlocal sleep_calls
+            if delay == 0:
+                sleep_calls += 1
+            await real_sleep(delay)
+
+        monkeypatch.setattr(asyncio, "sleep", counting_sleep)
+        await app._apply_records_batch(records, record_count)
+        assert sleep_calls >= 2, (
+            f"expected >= 2 yields for {record_count} records in chunks of {chunk}, "
+            f"got {sleep_calls}"
+        )
+        assert len(app._results._records) == record_count
 
 
 async def test_set_records_majority_removal_falls_back_to_rebuild(

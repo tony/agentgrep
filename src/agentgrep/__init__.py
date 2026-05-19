@@ -5042,17 +5042,35 @@ def build_streaming_ui_app(
                 limit=self.query.limit,
             )
 
-        def _apply_records_batch(
+        _APPLY_CHUNK_SIZE: t.ClassVar[int] = 200
+
+        async def _apply_records_batch(
             self,
             records: cabc.Sequence[SearchRecord],
             total: int,
         ) -> None:
-            """Append a streaming records batch — invoked via ``call_from_thread``."""
+            """Append a streaming records batch — invoked via ``call_from_thread``.
+
+            Runs as a coroutine so the chunked loop can yield to the event
+            loop between each ``_APPLY_CHUNK_SIZE`` slice. ``call_from_thread``
+            blocks the worker for the full duration of this coroutine, which
+            gives natural backpressure (the worker can't queue up batches
+            faster than the UI can apply them) while ``await asyncio.sleep(0)``
+            gives the event loop a chance to process keystrokes, timers, and
+            renders between chunks — so a 5000-record batch can't freeze the
+            UI for the duration of a single apply.
+            """
             self.all_records.extend(records)
-            matching = [r for r in records if self._matches_filter(r)]
+            matching = [record for record in records if self._matches_filter(record)]
             if matching and self._results is not None:
-                self._results.append_records(matching)
-                self.filtered_records.extend(matching)
+                results = self._results
+                chunk_size = self._APPLY_CHUNK_SIZE
+                for start in range(0, len(matching), chunk_size):
+                    chunk = matching[start : start + chunk_size]
+                    results.append_records(chunk)
+                    self.filtered_records.extend(chunk)
+                    if start + chunk_size < len(matching):
+                        await asyncio.sleep(0)
             if self._matches_widget is not None:
                 self._matches_widget.update(format_match_count(total))
 
