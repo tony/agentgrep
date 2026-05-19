@@ -930,6 +930,78 @@ async def test_streaming_ui_app_mounts_cleanly(
         await pilot.pause()
         focus_chain_ids = {getattr(w, "id", None) for w in app.screen.focus_chain}
         assert "results" in focus_chain_ids, f"#results not in focus chain; chain={focus_chain_ids}"
+        # Both inputs and the detail pane should be focusable too.
+        assert {"search", "filter", "detail-scroll"}.issubset(focus_chain_ids)
+
+
+async def test_empty_query_focuses_search_input_and_marks_search_done(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With no initial query, the search bar takes focus and chrome is idle."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.focused is not None
+        assert app.focused.id == "search"
+        assert app._search_done is True
+
+
+async def test_search_input_posts_search_requested_after_debounce(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Typing into the top search bar posts exactly one ``SearchRequested``.
+
+    The ``SearchRequested`` class lives inside the streaming-app factory
+    closure, so the test sniffs every posted message and filters to ones
+    whose payload type matches :class:`SearchRequestedPayload`.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    posts: list[str] = []
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._search_input.focus()
+        await pilot.pause()
+        original_post_message = app._search_input.post_message
+
+        def capture(message: object) -> bool:
+            payload = getattr(message, "payload", None)
+            if isinstance(payload, agentgrep.SearchRequestedPayload):
+                posts.append(payload.text)
+            return original_post_message(message)
+
+        monkeypatch.setattr(app._search_input, "post_message", capture)
+        await pilot.press("b")
+        await pilot.press("l")
+        await pilot.press("i")
+        # Let the 150 ms debounce elapse plus a little slack.
+        await pilot.pause(0.4)
+        assert posts == ["bli"], f"expected one debounced post, got {posts}"
+
+
+async def test_search_input_dispatch_spawns_search_group_worker(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-empty search text spawns a worker in the ``search`` group."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    spawned: list[dict[str, object]] = []
+
+    def fake_worker(*args: object, **kwargs: object) -> None:
+        spawned.append({"args": args, "kwargs": kwargs})
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        monkeypatch.setattr(app, "run_worker", fake_worker)
+        app._search_input.focus()
+        await pilot.pause()
+        app._search_input.value = "bliss"
+        await pilot.pause(0.25)
+        groups = [t.cast("dict[str, object]", entry["kwargs"]).get("group") for entry in spawned]
+        assert "search" in groups, f"expected a search-group worker, got {spawned}"
 
 
 async def test_tab_moves_focus_from_filter_to_results(
@@ -940,7 +1012,10 @@ async def test_tab_moves_focus_from_filter_to_results(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test() as pilot:
         await pilot.pause()
-        # Filter starts focused (first focusable in the chain).
+        # On empty initial query the search bar takes initial focus, so
+        # manually move focus to the filter input for this test.
+        app._filter_input.focus()
+        await pilot.pause()
         assert app.focused is not None
         assert app.focused.id == "filter"
         await pilot.press("tab")
@@ -956,6 +1031,8 @@ async def test_down_at_empty_filter_releases_focus_to_results(
     """``down`` arrow on an empty filter moves focus to the results table."""
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test() as pilot:
+        await pilot.pause()
+        app._filter_input.focus()
         await pilot.pause()
         assert app.focused is not None and app.focused.id == "filter"
         await pilot.press("down")
@@ -985,7 +1062,9 @@ async def test_up_at_results_top_row_releases_focus_to_filter(
         app.filtered_records.append(record)
         app._results.append_records([record])
         await pilot.pause()
-        # Move focus to the results list and confirm cursor is at row 0.
+        # Land focus on the filter and tab to the results.
+        app._filter_input.focus()
+        await pilot.pause()
         await pilot.press("tab")
         await pilot.pause()
         assert app.focused is not None and app.focused.id == "results"
@@ -1016,6 +1095,8 @@ async def test_l_from_results_focuses_detail_pane(
         app.all_records.append(record)
         app.filtered_records.append(record)
         app._results.append_records([record])
+        await pilot.pause()
+        app._filter_input.focus()
         await pilot.pause()
         await pilot.press("tab")
         await pilot.pause()
@@ -1119,6 +1200,8 @@ async def test_g_on_results_jumps_to_top(
         app.filtered_records.extend(records)
         app._results.append_records(records)
         await pilot.pause()
+        app._filter_input.focus()
+        await pilot.pause()
         await pilot.press("tab")
         await pilot.pause()
         app._results.highlighted = 3
@@ -1143,6 +1226,8 @@ async def test_G_on_results_jumps_to_bottom(
         app.filtered_records.extend(records)
         app._results.append_records(records)
         await pilot.pause()
+        app._filter_input.focus()
+        await pilot.pause()
         await pilot.press("tab")
         await pilot.pause()
         await pilot.press("G")
@@ -1163,6 +1248,8 @@ async def test_ctrl_d_on_results_advances_half_page(
         app.all_records.extend(records)
         app.filtered_records.extend(records)
         app._results.append_records(records)
+        await pilot.pause()
+        app._filter_input.focus()
         await pilot.pause()
         await pilot.press("tab")
         await pilot.pause()
@@ -1291,6 +1378,8 @@ async def test_ctrl_j_from_filter_focuses_results(
         app.filtered_records.extend(records)
         app._results.append_records(records)
         await pilot.pause()
+        app._filter_input.focus()
+        await pilot.pause()
         assert app.focused is not None and app.focused.id == "filter"
         await pilot.press("ctrl+j")
         await pilot.pause()
@@ -1310,6 +1399,8 @@ async def test_ctrl_l_from_results_focuses_detail(
         app.all_records.extend(records)
         app.filtered_records.extend(records)
         app._results.append_records(records)
+        await pilot.pause()
+        app._filter_input.focus()
         await pilot.pause()
         await pilot.press("tab")
         await pilot.pause()
@@ -1354,6 +1445,8 @@ async def test_ctrl_k_from_results_focuses_filter(
         app.all_records.extend(records)
         app.filtered_records.extend(records)
         app._results.append_records(records)
+        await pilot.pause()
+        app._filter_input.focus()
         await pilot.pause()
         await pilot.press("tab")
         await pilot.pause()
@@ -1413,6 +1506,8 @@ async def test_backspace_in_filter_still_deletes_a_character(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test() as pilot:
         await pilot.pause()
+        app._filter_input.focus()
+        await pilot.pause()
         assert app.focused is not None and app.focused.id == "filter"
         await pilot.press("a")
         await pilot.press("b")
@@ -1439,6 +1534,8 @@ async def test_ctrl_h_from_filter_is_a_noop(
         app.all_records.extend(records)
         app.filtered_records.extend(records)
         app._results.append_records(records)
+        await pilot.pause()
+        app._filter_input.focus()
         await pilot.pause()
         assert app.focused is not None and app.focused.id == "filter"
         await pilot.press("ctrl+h")

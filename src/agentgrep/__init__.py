@@ -1742,6 +1742,14 @@ class FilterRequestedPayload(pydantic.BaseModel):
     text: str
 
 
+class SearchRequestedPayload(pydantic.BaseModel):
+    """Pydantic payload for a debounced search-bar-changed Textual message."""
+
+    model_config = pydantic.ConfigDict(frozen=True)
+
+    text: str
+
+
 class FilterCompletedPayload(pydantic.BaseModel):
     """Pydantic payload for a worker-completed filter result Textual message."""
 
@@ -4148,6 +4156,13 @@ def build_streaming_ui_app(
             super().__init__()
             self.payload = payload
 
+    class SearchRequested(message_type):  # ty: ignore[unsupported-base]
+        """Debounced search-text-changed event from :class:`SearchInput`."""
+
+        def __init__(self, payload: SearchRequestedPayload) -> None:
+            super().__init__()
+            self.payload = payload
+
     def make_emit(app: StreamingAppLike) -> cabc.Callable[[object], None]:
         """Build an ``emit`` callback that dispatches streaming events via ``call_from_thread``.
 
@@ -4217,6 +4232,13 @@ def build_streaming_ui_app(
             self.auto_refresh = None
             self.refresh()
 
+        def unfreeze(self) -> None:
+            """Resume animation (called when a fresh search restarts)."""
+            self._final_glyph = None
+            self._started_at = time.monotonic()
+            self.auto_refresh = 1.0 / self._FPS
+            self.refresh()
+
     class ElapsedWidget(static_type):  # ty: ignore[unsupported-base]
         """Self-refreshing elapsed-time display that ticks once per second."""
 
@@ -4247,6 +4269,12 @@ def build_streaming_ui_app(
             """Stop refreshing and lock the displayed elapsed value."""
             self._frozen = final_elapsed
             self.auto_refresh = None
+            self.refresh()
+
+        def unfreeze(self) -> None:
+            """Resume per-second updates (called when a fresh search restarts)."""
+            self._frozen = None
+            self.auto_refresh = 1.0
             self.refresh()
 
     class SearchResultsList(
@@ -4514,6 +4542,86 @@ def build_streaming_ui_app(
             """Footer-binding fallback (``_on_key`` handles the real release)."""
             self.app.action_focus_next()
 
+    class SearchInput(input_widget):  # ty: ignore[unsupported-base]
+        """``Input`` subclass that fires a debounced :class:`SearchRequested`.
+
+        Keystrokes update the input text immediately so the cursor stays
+        instant; the expensive backend search runs only after 150 ms of
+        typing inactivity, mirroring :class:`FilterInput`. The Textual
+        ``@work(thread=True, exclusive=True, group="search")`` worker on
+        the app then auto-cancels any prior in-flight search, so fast
+        typing never piles up worker threads.
+        """
+
+        _DEBOUNCE_SECONDS: t.ClassVar[float] = 0.15
+
+        BINDINGS: t.ClassVar[list[tuple[str, str, str]]] = [
+            ("down", "release_down", "Filter"),
+        ]
+
+        def __init__(
+            self,
+            *,
+            value: str = "",
+            placeholder: str = "",
+            id: str | None = None,  # noqa: A002 -- forwarded to Textual's ``id`` kwarg
+        ) -> None:
+            # Set attribute BEFORE ``super().__init__`` because Textual's
+            # ``Input.__init__`` triggers ``_watch_value`` synchronously when
+            # ``value`` is non-empty.
+            self._debounce_timer: object | None = None
+            self._suppress_initial_dispatch: bool = bool(value)
+            super().__init__(value=value, placeholder=placeholder, id=id)
+
+        def _watch_value(self, value: str) -> None:
+            """Post normal ``Input.Changed`` and arm a debounced ``SearchRequested``."""
+            super()._watch_value(value)
+            # Initial value injected via ``value=`` should not auto-dispatch
+            # a SearchRequested — the caller (app on_mount) decides whether
+            # to seed the initial search.
+            if self._suppress_initial_dispatch:
+                self._suppress_initial_dispatch = False
+                return
+            if self._debounce_timer is not None:
+                self._debounce_timer.stop()
+            self._debounce_timer = self.set_timer(
+                self._DEBOUNCE_SECONDS,
+                lambda: self.post_message(
+                    SearchRequested(payload=SearchRequestedPayload(text=value)),
+                ),
+            )
+
+        async def _on_key(self, event: object) -> None:
+            """``down`` releases focus to the filter; ``up`` is a no-op (top widget)."""
+            key = str(getattr(event, "key", ""))
+            cursor = int(getattr(self, "cursor_position", 0))
+            value = str(getattr(self, "value", ""))
+            stop = getattr(event, "stop", None)
+            if key == "down":
+                if value and cursor < len(value):
+                    self.cursor_position = len(value)
+                    if callable(stop):
+                        stop()
+                    return
+                if callable(stop):
+                    stop()
+                self.app.action_focus_next()
+                return
+            if key == "up":
+                if value and cursor > 0:
+                    self.cursor_position = 0
+                    if callable(stop):
+                        stop()
+                    return
+                if callable(stop):
+                    stop()
+                return
+            await super()._on_key(event)
+
+        def action_release_down(self) -> None:
+            """Footer-binding fallback (``_on_key`` handles the real release)."""
+            self.app.action_focus_next()
+
     class AgentGrepApp(app_type):  # ty: ignore[unsupported-base]
         """Streaming read-only explorer for normalized search records."""
 
@@ -4642,6 +4750,7 @@ def build_streaming_ui_app(
             self._spinner_widget: SpinnerWidget | None = None
             self._elapsed_widget: ElapsedWidget | None = None
             self._filter_input: FilterInput | None = None
+            self._search_input: SearchInput | None = None
             self._resize_debounce_timer: object | None = None
             self._current_detail_record: SearchRecord | None = None
             self._detail_scroll: t.Any = None
@@ -4657,7 +4766,7 @@ def build_streaming_ui_app(
             """
             yield header()
             initial_search = " ".join(self.query.terms) if self.query.terms else ""
-            yield input_widget(
+            yield SearchInput(
                 value=initial_search,
                 placeholder="Search prompts and history",
                 id="search",
@@ -4710,20 +4819,70 @@ def build_streaming_ui_app(
                 "FilterInput",
                 streaming.query_one("#filter"),
             )
-            self._status_widget.update(
-                f"Searching {' '.join(self.query.terms) if self.query.terms else 'all records'}",
+            self._search_input = t.cast(
+                "SearchInput",
+                streaming.query_one("#search"),
             )
             self._progress = StreamingSearchProgress(emit=make_emit(streaming))
+            if self.query.terms:
+                self._start_search_worker(self.query)
+                self._filter_input.focus()
+            else:
+                # No initial query — leave the chrome idle and land focus on
+                # the search bar so the user can start typing immediately.
+                self._search_done = True
+                if self._status_widget is not None:
+                    self._status_widget.update("Type to search")
+                if self._spinner_widget is not None:
+                    self._spinner_widget.freeze(" ")
+                self._search_input.focus()
+
+        def _start_search_worker(self, query: SearchQuery) -> None:
+            """Reset chrome and spawn a new search worker for ``query``.
+
+            ``exclusive=True`` with ``group="search"`` makes Textual cancel
+            any prior in-flight search worker before this one runs, which
+            is the canonical Textual pattern for "fire a backend search on
+            every debounced keystroke without piling up cancellations."
+            """
+            self.query = query
+            self._reset_search_chrome()
+            streaming = t.cast("StreamingAppLike", t.cast("object", self))
             streaming.run_worker(
                 self._run_search,
                 name="search",
+                group="search",
                 thread=True,
                 exclusive=True,
             )
-            # Land focus on the filter so keys flow into the loaded-result
-            # filter by default. The top-level search bar becomes the
-            # default focus target once it dispatches live searches.
-            self._filter_input.focus()
+
+        def _reset_search_chrome(self) -> None:
+            """Wipe per-search state and chrome before a fresh search starts."""
+            self.control.reset()
+            self.all_records = []
+            self.filtered_records = []
+            self._search_done = False
+            self._started_at = None
+            self._last_snapshot = None
+            self._current_detail_record = None
+            if self._results is not None:
+                self._results.set_records([])
+            if self._detail is not None:
+                self._detail.update("")
+            if self._matches_widget is not None:
+                self._matches_widget.update("")
+            if self._status_widget is not None:
+                terms = " ".join(self.query.terms) if self.query.terms else "all records"
+                self._status_widget.update(f"Searching {terms}")
+            if self._spinner_widget is not None:
+                self._spinner_widget.unfreeze()
+            if self._elapsed_widget is not None:
+                self._elapsed_widget.unfreeze()
+            self._progress = StreamingSearchProgress(
+                emit=make_emit(
+                    t.cast("StreamingAppLike", t.cast("object", self)),
+                ),
+            )
 
         def _run_search(self) -> None:
             progress = self._progress
@@ -4745,6 +4904,44 @@ def build_streaming_ui_app(
                     0.0,
                     str(exc),
                 )
+
+        def on_search_requested(self, message: SearchRequested) -> None:
+            """User changed the top search input; relaunch the backend search.
+
+            Treats whitespace-only / empty input as "no search" and just
+            resets the UI to an idle state without spawning a worker.
+            """
+            text = message.payload.text.strip()
+            new_query = self._build_search_query(text)
+            self.control.request_answer_now()
+            if not text:
+                self._reset_search_chrome()
+                self._search_done = True
+                if self._status_widget is not None:
+                    self._status_widget.update("Type to search")
+                if self._spinner_widget is not None:
+                    self._spinner_widget.freeze(" ")
+                self.query = new_query
+                return
+            self._start_search_worker(new_query)
+
+        def _build_search_query(self, text: str) -> SearchQuery:
+            """Build a fresh :class:`SearchQuery` from the search-bar text.
+
+            Preserves the agent and search-type filters from the current
+            query so the search bar lives on top of the existing filter
+            scope rather than resetting it.
+            """
+            terms = tuple(text.split()) if text else ()
+            return SearchQuery(
+                terms=terms,
+                search_type=self.query.search_type,
+                any_term=self.query.any_term,
+                regex=self.query.regex,
+                case_sensitive=self.query.case_sensitive,
+                agents=self.query.agents,
+                limit=self.query.limit,
+            )
 
         def _apply_records_batch(
             self,
