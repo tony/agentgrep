@@ -40,6 +40,110 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
+agentgrep 0.1.0a5 grows the CLI from three subcommands to five, with
+each new surface mirroring a tool users already know: `agentgrep
+grep` matches `rg` / `ag` for content search, `agentgrep find` grows
+fd-shaped flag grammar for store enumeration, and a new `agentgrep
+fuzzy` provides `fzf --filter`-style non-interactive fuzzy filtering
+over stdin. A new `--ui` overlay flag turns any subcommand into its
+TUI form — the `tig` model for git, applied to agentgrep. The
+existing `search` and `ui` subcommands are unchanged.
+
+### Breaking changes
+
+#### `agentgrep find` default pattern is now regex
+
+`agentgrep find <PATTERN>` now treats `PATTERN` as a regex by default
+to match fd's behavior. The previous behavior (literal substring) is
+available via `-F` / `--fixed-strings`. Plain alphanumeric patterns
+match identically under both modes; users whose patterns contain
+regex metacharacters should pass `-F`:
+
+```console
+# Before
+$ agentgrep find 'foo.bar'
+
+# After
+$ agentgrep find -F 'foo.bar'
+```
+
+### Dependencies
+
+Adds runtime dependency `rapidfuzz>=3.10.0`. The new `agentgrep
+fuzzy` subcommand *is* the fuzzy library — unlike the pydantic /
+textual / fastmcp pattern of optional deps with fallbacks, fuzzy has
+no useful fallback, so rapidfuzz is a hard dep.
+
+### What's new
+
+#### `agentgrep grep` content search
+
+A new `agentgrep grep` subcommand mirrors `ripgrep` and
+`the_silver_searcher`. The flag set carries the rg conventions
+users already type: `-F` / `-E` / `-w` for pattern mode, `-i` / `-s`
+/ `-S` for case (smart-case default), `-c` / `-l` / `-L` / `-o` /
+`-v` for output filtering, `-m` for match caps, `--vimgrep` and
+`--json` for output shapes, and `--no-dedupe` to drop session
+deduplication for the strictly rg-faithful raw view. Exit codes
+follow grep's 0/1/2 convention. See {ref}`cli-grep` for the
+walkthrough.
+
+#### `agentgrep fuzzy` non-interactive fuzzy filter
+
+A new `agentgrep fuzzy` subcommand provides fzf's `--filter` mode:
+read lines from stdin, score them with the v2 fuzzy algorithm
+(`--algo=v1` for the older quality-blend), and emit matches in
+descending score order. Supports fzf's extended-search syntax (`foo
+!bar`, `^foo`, `bar$`, `'foo`), `--read0` / `--print0` for
+NUL-delimited pipelines, `--delimiter` / `--nth` / `--with-nth` for
+field-scoped scoring, and `--print-query` for echoing the query.
+The no-argument behavior is strict — no QUERY and no piped stdin
+prints usage and exits `2` (no interactive TUI fallback; reach for
+`agentgrep ui` instead). See {ref}`cli-fuzzy`.
+
+#### fd-shaped flags on `agentgrep find`
+
+`agentgrep find` grows the fd flag set: `-g` / `--glob` for
+fnmatch-style patterns, `-F` for literal substring, `--exact` for
+adapter-id equality, `-t` / `--type` to filter by record kind
+(`prompts` / `history` / `sessions` / `all`), `-e` / `--extension`
+to filter by file extension (repeatable), `-i` / `-s` for case
+override (smart-case default), `-l` / `--list-details` for a long
+tab-separated format, `-0` / `--print0` for NUL-delimited output
+to feed `xargs -0`, and `-a` / `--absolute-path` (symbolic, paths
+are already absolute). See {ref}`cli-find` for the new examples.
+
+#### `--ui` overlay across all subcommands
+
+A new `--ui` flag on `grep`, `find`, and `fuzzy` (the existing
+`search --ui` is unchanged) opens the Textual explorer pre-filled
+with the same query the one-shot command would have run. This is
+the `tig`-shaped overlay model — `agentgrep grep -i foo --ui` is to
+`agentgrep grep -i foo` what `tig log` is to `git log`. Same args,
+same query semantics, different presentation.
+
+### Development
+
+#### `agentgrep.cli` subpackage
+
+The CLI surface — argument parsing, output rendering, subcommand
+dispatch — moves out of `src/agentgrep/__init__.py` into a new
+`src/agentgrep/cli/` subpackage with `parser.py`, `render.py`, and
+an entry-point shim. The console script `agentgrep` now resolves
+through `agentgrep.cli:main`. All previously public symbols
+(`parse_args`, `SearchArgs`, `run_search_command`, etc.) are
+re-exported from `agentgrep` for backward compatibility, so any
+external code or test importing them via the package namespace
+continues to work unchanged.
+
+#### `agentgrep.fuzzy` helper module
+
+A new `src/agentgrep/fuzzy.py` wraps `rapidfuzz` so the rest of the
+codebase never imports it directly. Exposes
+`resolve_case_sensitivity`, `fuzzy_score` (algo v1/v2),
+`extended_match` for fzf's token grammar, and `rank_lines` as a
+sorted iterator. Tests live in `tests/test_fuzzy.py`.
+
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
 ### Documentation
