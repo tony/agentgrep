@@ -570,7 +570,7 @@ def create_parser(
         metavar="N",
         help="Limit the number of results",
     )
-    add_output_mode_options(find_parser, allow_ui=False)
+    add_output_mode_options(find_parser, allow_ui=True)
 
     ui_parser = subparsers.add_parser(
         "ui",
