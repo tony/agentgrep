@@ -62,6 +62,14 @@ Silence the source-discovery spinner:
 $ agentgrep find --no-progress codex
 ```
 
+## Live streaming
+
+`find` consumes the {ref}`library-event-stream` directly — text,
+NDJSON, and `--print0` output emit each path as the engine discovers
+it, with stdout flushed when stdout is a TTY. `--json` and
+`--list-details` buffer because their output shape benefits from
+the full record list up front.
+
 ## Command
 
 ```{eval-rst}
