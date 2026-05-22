@@ -348,6 +348,47 @@ def test_parse_args_empty_argv_returns_none_and_prints_help(
     assert "{grep,search,find,fuzzy,ui}" in captured or "grep" in captured
 
 
+def test_main_with_empty_argv_prints_root_help(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``main([])`` prints the themed directory of choices and exits 0.
+
+    The vcspull/tmuxp-style banner must surface every subcommand's
+    example block — assert on the stable per-block headers rather than
+    on the full rendered text so wording tweaks don't churn this test.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+
+    exit_code = agentgrep.main([])
+
+    assert exit_code == 0
+    captured = capsys.readouterr().out
+    assert "grep examples:" in captured
+    assert "fuzzy examples:" in captured
+    assert "search examples:" in captured
+    assert "find examples:" in captured
+    assert "ui examples:" in captured
+
+
+def test_main_with_unknown_positional_errors(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``main(['bliss'])`` exits 2 with argparse 'invalid choice' (vcspull parity).
+
+    Locks in the deliberate removal of the implicit-search shorthand:
+    ``agentgrep bliss`` no longer becomes ``agentgrep search bliss``.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+
+    with pytest.raises(SystemExit) as exc_info:
+        _ = agentgrep.main(["bliss"])
+
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert "invalid choice" in captured.err
+    assert "bliss" in captured.err
+
+
 def test_search_progress_mode_parses_default_and_explicit() -> None:
     agentgrep = load_agentgrep_module()
 
