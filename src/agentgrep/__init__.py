@@ -228,6 +228,28 @@ UI_DESCRIPTION = build_description(
         ),
     ),
 )
+GREP_DESCRIPTION = build_description(
+    """
+    Content search across normalized records with rg/ag-shaped flags.
+
+    Defaults: smart-case, regex, session-deduped output. Pass
+    ``--no-dedupe`` for the raw rg view, ``-F`` for literal pattern
+    matching, ``-i`` / ``-s`` to override case, ``--json`` for an
+    rg-style event stream.
+    """,
+    (
+        (
+            None,
+            (
+                "agentgrep grep bliss",
+                "agentgrep grep -i 'serene bliss'",
+                "agentgrep grep -F --type history TODO",
+                "agentgrep grep --json design",
+                "agentgrep grep --vimgrep --no-dedupe foo",
+            ),
+        ),
+    ),
+)
 
 
 class PrivatePath(PrivatePathBase):
@@ -1013,6 +1035,7 @@ class SearchQuery:
     case_sensitive: bool
     agents: tuple[AgentName, ...]
     limit: int | None
+    dedupe: bool = True
 
 
 @dataclasses.dataclass(slots=True)
@@ -2520,10 +2543,15 @@ def collect_search_records(
     active_progress = noop_search_progress() if progress is None else progress
     active_control = SearchControl() if control is None else control
     deduped: dict[tuple[str, str, str, str, str], SearchRecord] = {}
+    raw: list[SearchRecord] = []
     total = len(sources)
+
+    def current_count() -> int:
+        return len(deduped) if query.dedupe else len(raw)
+
     for index, source in enumerate(sources, start=1):
         if active_control.answer_now_requested() or (
-            query.limit is not None and len(deduped) >= query.limit
+            query.limit is not None and current_count() >= query.limit
         ):
             break
         active_progress.source_started(index, total, source)
@@ -2540,16 +2568,21 @@ def collect_search_records(
         active_progress.source_finished(index, total, source, records_seen, matches_seen)
         matching_records.sort(key=search_record_sort_key, reverse=True)
         for record in matching_records:
-            dedupe_key = record_dedupe_key(record)
-            if dedupe_key not in deduped:
-                deduped[dedupe_key] = record
+            if query.dedupe:
+                dedupe_key = record_dedupe_key(record)
+                if dedupe_key not in deduped:
+                    deduped[dedupe_key] = record
+                    active_progress.record_added(record)
+                    active_progress.result_added(len(deduped))
+            else:
+                raw.append(record)
                 active_progress.record_added(record)
-                active_progress.result_added(len(deduped))
+                active_progress.result_added(len(raw))
             if active_control.answer_now_requested() or (
-                query.limit is not None and len(deduped) >= query.limit
+                query.limit is not None and current_count() >= query.limit
             ):
                 break
-    results = list(deduped.values())
+    results = list(deduped.values()) if query.dedupe else list(raw)
     results.sort(key=search_record_sort_key, reverse=True)
     return results
 
@@ -3682,6 +3715,8 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
         parsed = parse_args(argv)
         if parsed is None:
             return 0
+        if isinstance(parsed, GrepArgs):
+            return run_grep_command(parsed)
         if isinstance(parsed, SearchArgs):
             return run_search_command(parsed)
         if isinstance(parsed, UIArgs):
@@ -3694,8 +3729,11 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
 
 from agentgrep.cli.parser import (  # noqa: E402  (re-exports must follow main definition)
     SUBCOMMANDS,
+    CaseMode,
     FindArgs,
+    GrepArgs,
     ParserBundle,
+    PatternMode,
     SearchArgs,
     UIArgs,
     add_common_agent_options,
@@ -3711,13 +3749,18 @@ from agentgrep.cli.parser import (  # noqa: E402  (re-exports must follow main d
 )
 from agentgrep.cli.render import (  # noqa: E402  (re-exports must follow main definition)
     build_envelope,
+    build_grep_query,
+    format_grep_record,
     maybe_build_pydantic,
     print_find_results,
+    print_grep_results,
     print_search_results,
     run_find_command,
+    run_grep_command,
     run_search_command,
     run_ui_command,
     serialize_find_record,
+    serialize_grep_record,
     serialize_search_record,
     serialize_source_handle,
 )

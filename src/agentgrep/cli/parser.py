@@ -24,6 +24,7 @@ from agentgrep import (
     AGENT_CHOICES,
     CLI_DESCRIPTION,
     FIND_DESCRIPTION,
+    GREP_DESCRIPTION,
     SEARCH_DESCRIPTION,
     UI_DESCRIPTION,
     AgentName,
@@ -34,10 +35,16 @@ from agentgrep import (
     create_themed_formatter,
 )
 
+CaseMode = t.Literal["smart", "ignore", "respect"]
+PatternMode = t.Literal["regex", "fixed", "word"]
+
 __all__ = [
     "SUBCOMMANDS",
+    "CaseMode",
     "FindArgs",
+    "GrepArgs",
     "ParserBundle",
+    "PatternMode",
     "SearchArgs",
     "UIArgs",
     "add_common_agent_options",
@@ -53,7 +60,7 @@ __all__ = [
 ]
 
 
-SUBCOMMANDS: frozenset[str] = frozenset({"search", "find", "ui"})
+SUBCOMMANDS: frozenset[str] = frozenset({"grep", "search", "find", "ui"})
 
 
 @dataclasses.dataclass(slots=True)
@@ -92,12 +99,43 @@ class UIArgs:
 
 
 @dataclasses.dataclass(slots=True)
+class GrepArgs:
+    """Typed arguments for ``agentgrep grep``.
+
+    Mirrors the rg/ag flag surface. ``case_mode`` and ``pattern_mode``
+    are tri-state selectors rather than independent booleans so the
+    resolution order (``-s`` > ``-i`` > ``-S`` / ``-F`` > ``-w`` > ``-E``)
+    is enforced at parse time.
+    """
+
+    patterns: tuple[str, ...]
+    agents: tuple[AgentName, ...]
+    search_type: SearchType
+    case_mode: CaseMode
+    pattern_mode: PatternMode
+    invert_match: bool
+    count_only: bool
+    files_with_matches: bool
+    files_without_match: bool
+    only_matching: bool
+    no_dedupe: bool
+    line_number: bool | None
+    heading: bool | None
+    max_count: int | None
+    vimgrep: bool
+    output_mode: OutputMode
+    color_mode: ColorMode
+    progress_mode: ProgressMode
+
+
+@dataclasses.dataclass(slots=True)
 class ParserBundle:
     """CLI parsers used for root and subcommand help."""
 
     parser: argparse.ArgumentParser
     search_parser: argparse.ArgumentParser
     find_parser: argparse.ArgumentParser
+    grep_parser: argparse.ArgumentParser
 
 
 def normalize_color_mode(argv: cabc.Sequence[str] | None) -> ColorMode:
@@ -201,6 +239,148 @@ def create_parser(
     )
     subparsers = parser.add_subparsers(dest="command")
 
+    grep_parser = subparsers.add_parser(
+        "grep",
+        help="Content search with rg/ag-shaped flags and output",
+        description=GREP_DESCRIPTION,
+        formatter_class=formatter_class,
+        color=color_mode != "never",
+    )
+    add_common_agent_options(grep_parser)
+    _ = grep_parser.add_argument(
+        "patterns",
+        nargs="+",
+        metavar="PATTERN",
+        help="One or more patterns (regex by default; combined as AND)",
+    )
+    pattern_group = grep_parser.add_mutually_exclusive_group()
+    _ = pattern_group.add_argument(
+        "-F",
+        "--fixed-strings",
+        action="store_true",
+        help="Treat patterns as literal strings, not regex",
+    )
+    _ = pattern_group.add_argument(
+        "-E",
+        "--extended-regexp",
+        action="store_true",
+        help="Treat patterns as regex (default)",
+    )
+    _ = pattern_group.add_argument(
+        "-w",
+        "--word-regexp",
+        action="store_true",
+        help="Match the pattern only as a whole word",
+    )
+    case_group = grep_parser.add_mutually_exclusive_group()
+    _ = case_group.add_argument(
+        "-i",
+        "--ignore-case",
+        action="store_true",
+        help="Force case-insensitive matching",
+    )
+    _ = case_group.add_argument(
+        "-s",
+        "--case-sensitive",
+        action="store_true",
+        help="Force case-sensitive matching",
+    )
+    _ = case_group.add_argument(
+        "-S",
+        "--smart-case",
+        action="store_true",
+        help="Smart-case (default): case-sensitive when pattern has uppercase",
+    )
+    _ = grep_parser.add_argument(
+        "-c",
+        "--count",
+        action="store_true",
+        help="Print only the number of matches per (agent, store)",
+    )
+    _ = grep_parser.add_argument(
+        "-l",
+        "--files-with-matches",
+        action="store_true",
+        help="List source paths with at least one match",
+    )
+    _ = grep_parser.add_argument(
+        "-L",
+        "--files-without-match",
+        action="store_true",
+        help="List source paths with no matches",
+    )
+    _ = grep_parser.add_argument(
+        "-o",
+        "--only-matching",
+        action="store_true",
+        help="Print only the matched portion of each record",
+    )
+    _ = grep_parser.add_argument(
+        "-v",
+        "--invert-match",
+        action="store_true",
+        help="Print records that do NOT match",
+    )
+    _ = grep_parser.add_argument(
+        "--no-dedupe",
+        action="store_true",
+        help="Disable per-session dedup (raw rg-style view; default dedupes)",
+    )
+    line_number_group = grep_parser.add_mutually_exclusive_group()
+    _ = line_number_group.add_argument(
+        "-n",
+        "--line-number",
+        dest="line_number_on",
+        action="store_true",
+        help="Force line numbers in output",
+    )
+    _ = line_number_group.add_argument(
+        "-N",
+        "--no-line-number",
+        dest="line_number_off",
+        action="store_true",
+        help="Suppress line numbers",
+    )
+    heading_group = grep_parser.add_mutually_exclusive_group()
+    _ = heading_group.add_argument(
+        "--heading",
+        dest="heading_on",
+        action="store_true",
+        help="Force file-grouped headings (default on TTY)",
+    )
+    _ = heading_group.add_argument(
+        "--no-heading",
+        dest="heading_off",
+        action="store_true",
+        help="Suppress file-grouped headings (default on pipe)",
+    )
+    _ = grep_parser.add_argument(
+        "-m",
+        "--max-count",
+        type=int,
+        metavar="N",
+        help="Stop after N matches",
+    )
+    _ = grep_parser.add_argument(
+        "--vimgrep",
+        action="store_true",
+        help="Emit one match per line as path:line:col:text",
+    )
+    _ = grep_parser.add_argument(
+        "--type",
+        choices=["prompts", "history", "all"],
+        default="prompts",
+        dest="search_type",
+        help="Record type to search (default: prompts)",
+    )
+    _ = grep_parser.add_argument(
+        "--progress",
+        choices=["auto", "always", "never"],
+        default="auto",
+        help="Show search progress on stderr",
+    )
+    add_output_mode_options(grep_parser, allow_ui=True)
+
     search_parser = subparsers.add_parser(
         "search",
         help="Search normalized prompts or history",
@@ -280,7 +460,12 @@ def create_parser(
         default="",
         help="Optional initial search text to populate the search bar",
     )
-    return ParserBundle(parser=parser, search_parser=search_parser, find_parser=find_parser)
+    return ParserBundle(
+        parser=parser,
+        search_parser=search_parser,
+        find_parser=find_parser,
+        grep_parser=grep_parser,
+    )
 
 
 def build_docs_parser() -> argparse.ArgumentParser:
@@ -297,7 +482,7 @@ def build_docs_parser() -> argparse.ArgumentParser:
 
 def parse_args(
     argv: cabc.Sequence[str] | None = None,
-) -> SearchArgs | FindArgs | UIArgs | None:
+) -> SearchArgs | FindArgs | UIArgs | GrepArgs | None:
     """Parse CLI arguments into typed dataclasses."""
     color_mode = normalize_color_mode(argv)
     argv = inject_default_subcommand(argv)
@@ -318,6 +503,16 @@ def parse_args(
 
     agents = parse_agents(t.cast("list[str]", namespace.agent))
     output_mode = parse_output_mode(namespace)
+
+    if command == "grep":
+        return _build_grep_args(
+            namespace,
+            agents=agents,
+            output_mode=output_mode,
+            color_mode=color_mode,
+            bundle=bundle,
+        )
+
     limit = t.cast("int | None", namespace.limit)
     if limit is not None and limit < 1:
         with configured_color_environment(color_mode):
@@ -352,6 +547,70 @@ def parse_args(
         limit=limit,
         output_mode=output_mode,
         color_mode=color_mode,
+    )
+
+
+def _build_grep_args(
+    namespace: argparse.Namespace,
+    *,
+    agents: tuple[AgentName, ...],
+    output_mode: OutputMode,
+    color_mode: ColorMode,
+    bundle: ParserBundle,
+) -> GrepArgs:
+    """Build :class:`GrepArgs` from a parsed argparse namespace."""
+    max_count = t.cast("int | None", namespace.max_count)
+    if max_count is not None and max_count < 1:
+        with configured_color_environment(color_mode):
+            bundle.parser.error("--max-count must be greater than 0")
+
+    if t.cast("bool", namespace.ignore_case):
+        case_mode: CaseMode = "ignore"
+    elif t.cast("bool", namespace.case_sensitive):
+        case_mode = "respect"
+    else:
+        case_mode = "smart"
+
+    if t.cast("bool", namespace.fixed_strings):
+        pattern_mode: PatternMode = "fixed"
+    elif t.cast("bool", namespace.word_regexp):
+        pattern_mode = "word"
+    else:
+        pattern_mode = "regex"
+
+    if t.cast("bool", namespace.line_number_on):
+        line_number: bool | None = True
+    elif t.cast("bool", namespace.line_number_off):
+        line_number = False
+    else:
+        line_number = None
+
+    if t.cast("bool", namespace.heading_on):
+        heading: bool | None = True
+    elif t.cast("bool", namespace.heading_off):
+        heading = False
+    else:
+        heading = None
+
+    return GrepArgs(
+        patterns=tuple(t.cast("list[str]", namespace.patterns)),
+        agents=agents,
+        search_type=t.cast("SearchType", namespace.search_type),
+        case_mode=case_mode,
+        pattern_mode=pattern_mode,
+        invert_match=t.cast("bool", namespace.invert_match),
+        count_only=t.cast("bool", namespace.count),
+        files_with_matches=t.cast("bool", namespace.files_with_matches),
+        files_without_match=t.cast("bool", namespace.files_without_match),
+        only_matching=t.cast("bool", namespace.only_matching),
+        no_dedupe=t.cast("bool", namespace.no_dedupe),
+        line_number=line_number,
+        heading=heading,
+        max_count=max_count,
+        vimgrep=t.cast("bool", namespace.vimgrep),
+        output_mode=output_mode,
+        color_mode=color_mode,
+        progress_mode=t.cast("ProgressMode", namespace.progress),
     )
 
 
