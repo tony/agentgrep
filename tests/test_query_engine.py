@@ -680,6 +680,12 @@ def test_mangled_field_predicate_rejected_at_parse_time(
     assert exc_info.value.code == 2
     captured = capsys.readouterr()
     assert "looks like a field predicate" in captured.err
+    # Workaround list mentions only `--` and the `NOT` keyword.
+    # "quoted positional" used to be there too but doesn't actually
+    # work — the shell strips quotes before argparse runs.
+    assert "--" in captured.err
+    assert "NOT" in captured.err
+    assert "quoted positional" not in captured.err
 
 
 class MangledFieldFalsePositiveCase(t.NamedTuple):

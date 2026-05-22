@@ -863,7 +863,6 @@ def _check_for_mangled_field_predicate(
             f"argument {arg!r} looks like a field predicate but argparse "
             f"parses the leading '-' as combined short options. Use one of:\n"
             f"  --                  positional separator: agentgrep ... -- {arg}\n"
-            f"  quoted positional:  agentgrep ... '{arg}'\n"
             f"  keyword negation:   agentgrep ... 'NOT {arg[1:]}'"
         )
         with configured_color_environment(color_mode):
