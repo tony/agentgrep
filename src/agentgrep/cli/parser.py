@@ -42,6 +42,7 @@ from agentgrep.query import (
     QueryParseError,
     compile_query,
     default_registry,
+    fields_in_ast,
     parse_query,
 )
 
@@ -730,12 +731,48 @@ def build_docs_parser() -> argparse.ArgumentParser:
     return create_parser("never").parser
 
 
+def _search_explicit_flags(namespace: argparse.Namespace) -> dict[str, str]:
+    """Map query-field name → CLI flag name for `search` flag/field collisions.
+
+    Detects which flags the user explicitly set so the collision
+    check in :func:`_maybe_compile_query` can reject mixing them
+    with the equivalent ``field:`` syntax.
+    """
+    flags: dict[str, str] = {}
+    if t.cast("list[str]", namespace.agent):
+        flags["agent"] = "--agent"
+    if t.cast("str", namespace.search_type) != "prompts":
+        flags["type"] = "--type"
+    return flags
+
+
+def _grep_explicit_flags(namespace: argparse.Namespace) -> dict[str, str]:
+    """Map query-field name → CLI flag name for `grep` flag/field collisions."""
+    flags: dict[str, str] = {}
+    if t.cast("list[str]", namespace.agent):
+        flags["agent"] = "--agent"
+    if t.cast("str", namespace.search_type) != "prompts":
+        flags["type"] = "--type"
+    return flags
+
+
+def _find_explicit_flags(namespace: argparse.Namespace) -> dict[str, str]:
+    """Map query-field name → CLI flag name for `find` flag/field collisions."""
+    flags: dict[str, str] = {}
+    if t.cast("list[str]", namespace.agent):
+        flags["agent"] = "--agent"
+    if t.cast("str", namespace.find_type) != "all":
+        flags["type"] = "--type"
+    return flags
+
+
 def _maybe_compile_query(
     positionals: cabc.Sequence[str],
     *,
     bundle: ParserBundle,
     color_mode: ColorMode,
     subparser: argparse.ArgumentParser,
+    explicit_flags: dict[str, str] | None = None,
 ) -> tuple[CompiledQuery | None, tuple[str, ...]]:
     """Detect Lucene-style query syntax in positionals and compile if present.
 
@@ -745,10 +782,14 @@ def _maybe_compile_query(
     ``pattern`` field so the engine's existing text-matching path
     still has the user's text query.
 
+    ``explicit_flags`` maps field name → flag name. When a field also
+    has an explicitly-set flag (e.g. ``--agent`` set AND ``agent:``
+    in the query), the parser errors. Pass ``None`` to skip the
+    collision check (the bare-positional fast path).
+
     Parse / compile errors route through ``subparser.error()`` so the
     user sees an argparse-shaped message instead of a Python
-    traceback. The collision-detection layer in commit 8 plugs in
-    here too.
+    traceback.
     """
     if not any(":" in token for token in positionals):
         return None, tuple(positionals)
@@ -759,14 +800,21 @@ def _maybe_compile_query(
     except QueryParseError as exc:
         with configured_color_environment(color_mode):
             subparser.error(f"invalid query: {exc}")
+    if explicit_flags:
+        used_fields = fields_in_ast(ast)
+        for field_name, flag_name in explicit_flags.items():
+            if field_name in used_fields:
+                with configured_color_environment(color_mode):
+                    subparser.error(
+                        f"cannot combine {flag_name} flag with "
+                        f"{field_name}: field predicate; pick one syntax",
+                    )
     try:
         compiled = compile_query(ast, registry)
     except QueryCompileError as exc:
         with configured_color_environment(color_mode):
             subparser.error(f"invalid query: {exc}")
-    # ``subparser.error`` raises SystemExit, so the lines below only
-    # execute on the success path; keep the cast for ty narrowing.
-    _ = bundle  # kept available for the collision-check layer
+    _ = bundle  # kept available for future per-bundle checks
     return compiled, compiled.text_terms
 
 
@@ -827,6 +875,7 @@ def parse_args(
             bundle=bundle,
             color_mode=color_mode,
             subparser=bundle.search_parser,
+            explicit_flags=_search_explicit_flags(namespace),
         )
         return SearchArgs(
             terms=residual_terms,
@@ -848,6 +897,7 @@ def parse_args(
         bundle=bundle,
         color_mode=color_mode,
         subparser=bundle.find_parser,
+        explicit_flags=_find_explicit_flags(namespace),
     )
     pattern: str | None = (
         (" ".join(find_residual) if find_residual else None)
@@ -921,6 +971,7 @@ def _build_grep_args(
         bundle=bundle,
         color_mode=color_mode,
         subparser=bundle.grep_parser,
+        explicit_flags=_grep_explicit_flags(namespace),
     )
     patterns_list: list[str] = (
         list(residual_patterns) if grep_compiled is not None else patterns_list_raw

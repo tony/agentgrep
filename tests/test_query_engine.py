@@ -467,6 +467,76 @@ def test_cli_parsing_routes_query_syntax_to_compiled(
         assert compiled is None
 
 
+class FlagFieldCollisionCase(t.NamedTuple):
+    """Parametrized case for flag-vs-field collision rejection."""
+
+    test_id: str
+    argv: tuple[str, ...]
+    expected_message_fragment: str
+
+
+FLAG_FIELD_COLLISION_CASES: tuple[FlagFieldCollisionCase, ...] = (
+    FlagFieldCollisionCase(
+        test_id="search-agent-flag-and-field",
+        argv=("search", "--agent", "codex", "agent:claude", "bliss"),
+        expected_message_fragment="cannot combine --agent flag with agent: field",
+    ),
+    FlagFieldCollisionCase(
+        test_id="grep-agent-flag-and-field",
+        argv=("grep", "--agent", "codex", "agent:claude", "bliss"),
+        expected_message_fragment="cannot combine --agent flag with agent: field",
+    ),
+    FlagFieldCollisionCase(
+        test_id="find-agent-flag-and-field",
+        argv=("find", "--agent", "codex", "agent:claude"),
+        expected_message_fragment="cannot combine --agent flag with agent: field",
+    ),
+    FlagFieldCollisionCase(
+        test_id="search-type-flag-and-field",
+        argv=("search", "--type", "history", "type:prompts", "bliss"),
+        expected_message_fragment="cannot combine --type flag with type: field",
+    ),
+    FlagFieldCollisionCase(
+        test_id="grep-type-flag-and-field",
+        argv=("grep", "--type", "history", "type:prompts", "bliss"),
+        expected_message_fragment="cannot combine --type flag with type: field",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    FLAG_FIELD_COLLISION_CASES,
+    ids=[c.test_id for c in FLAG_FIELD_COLLISION_CASES],
+)
+def test_flag_field_collision_errors_at_parse_time(
+    case: FlagFieldCollisionCase,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Mixing a flag and the equivalent field predicate errors with exit 2."""
+    with pytest.raises(SystemExit) as exc_info:
+        _ = agentgrep.parse_args(list(case.argv))
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert case.expected_message_fragment in captured.err
+
+
+def test_no_collision_when_only_field_used() -> None:
+    """Bare `agent:codex` (no `--agent`) parses cleanly."""
+    args = agentgrep.parse_args(["search", "agent:codex", "bliss"])
+    assert args is not None
+    assert isinstance(args, agentgrep.SearchArgs)
+    assert args.compiled is not None
+
+
+def test_no_collision_when_only_flag_used() -> None:
+    """Bare `--agent codex` (no `agent:`) parses cleanly."""
+    args = agentgrep.parse_args(["search", "--agent", "codex", "bliss"])
+    assert args is not None
+    assert isinstance(args, agentgrep.SearchArgs)
+    assert args.compiled is None
+
+
 def test_grep_query_with_no_text_pattern_errors(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
