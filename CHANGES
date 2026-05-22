@@ -53,7 +53,11 @@ TUI is reachable through the explicit `agentgrep ui` subcommand.
 Output for `grep` is now line-aware (one row per matching line with
 the matched span highlighted) and `find` defaults to one path per
 line — both following rg's and fd's lead. A new `--no-progress`
-flag silences the stderr spinner in one keystroke.
+flag silences the stderr spinner in one keystroke. Under the
+covers, a new headless event-stream engine yields typed pydantic
+events as the search walks; the CLI consumes the stream live so
+the first matches appear within milliseconds instead of after the
+full scan finishes.
 
 ### Breaking changes
 
@@ -138,6 +142,26 @@ textual / fastmcp pattern of optional deps with fallbacks, fuzzy has
 no useful fallback, so rapidfuzz is a hard dep.
 
 ### What's new
+
+#### Headless event-stream engine
+
+agentgrep grows a typed event-stream engine that powers the CLI,
+TUI, and MCP server from one producer. Two new public iterators —
+{func}`agentgrep.iter_search_events` and
+{func}`agentgrep.iter_find_events` — yield pydantic-discriminated
+{data}`~agentgrep.events.SearchEvent` and
+{data}`~agentgrep.events.FindEvent` values as the engine walks
+sources, so consumers can react per-record instead of waiting for
+the full list.
+
+`agentgrep grep` and `agentgrep find` consume the stream live: text
+and NDJSON output rows appear within milliseconds of the first
+match, with stdout flushed per record when stdout is a TTY. The
+eager output modes (`--json`, `-c`, `-l`, `-L`, `--list-details`)
+keep using the existing list-return wrapper because their output
+shape needs the final tally or cross-record deduplication. See
+{ref}`library-event-stream` for the architecture walkthrough,
+event vocabulary, and consumer recipes.
 
 #### `--no-progress` flag and `find --progress`
 
