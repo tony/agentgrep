@@ -660,6 +660,41 @@ def test_grep_fixed_string_skips_regex_validation(
     assert args.pattern_mode == "fixed"
 
 
+# ----- empty-pattern argparse rejection -----------------------------------
+
+
+class EmptyPatternCase(t.NamedTuple):
+    """Parametrized case for empty-pattern rejection at parse time."""
+
+    test_id: str
+    argv: tuple[str, ...]
+
+
+EMPTY_PATTERN_CASES: tuple[EmptyPatternCase, ...] = (
+    EmptyPatternCase("single-empty", ("grep", "")),
+    EmptyPatternCase("empty-mixed-with-valid", ("grep", "valid", "")),
+    EmptyPatternCase("empty-under-fixed-strings", ("grep", "-F", "")),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    EMPTY_PATTERN_CASES,
+    ids=[c.test_id for c in EMPTY_PATTERN_CASES],
+)
+def test_grep_empty_pattern_exits_with_argparse_error(
+    case: EmptyPatternCase,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An empty pattern is refused at parse time with exit 2 (git-grep parity)."""
+    with pytest.raises(SystemExit) as exc_info:
+        _ = agentgrep.parse_args(list(case.argv))
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert "pattern cannot be empty" in captured.err
+    assert "Traceback" not in captured.err
+
+
 # ----- line-aware match helpers --------------------------------------------
 
 

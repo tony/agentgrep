@@ -830,6 +830,9 @@ def _build_grep_args(
         pattern_mode = "regex"
 
     patterns_list = t.cast("list[str]", namespace.patterns)
+    if any(not pattern for pattern in patterns_list):
+        with configured_color_environment(color_mode):
+            bundle.grep_parser.error("pattern cannot be empty")
     if pattern_mode != "fixed":
         case_sensitive = case_mode == "respect" or (
             case_mode == "smart" and any(any(ch.isupper() for ch in p) for p in patterns_list)
