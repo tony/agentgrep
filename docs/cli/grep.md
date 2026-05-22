@@ -155,6 +155,17 @@ emits partial output and never escapes as a Python traceback. `-F`
 (fixed-strings) skips the check — its patterns are literal substrings,
 not regex.
 
+Empty patterns are also rejected at parse time (git-grep parity):
+
+```console
+$ agentgrep grep ''
+usage: agentgrep grep [...]
+agentgrep grep: error: pattern cannot be empty
+```
+
+The check applies to every term — a valid pattern followed by an
+empty one (`agentgrep grep foo ''`) still fails.
+
 (cli-grep-dedupe)=
 
 ## Session deduplication
