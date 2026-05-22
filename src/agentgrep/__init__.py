@@ -146,19 +146,27 @@ def build_description(
 
 CLI_DESCRIPTION = build_description(
     """
-    Read-only search across Codex, Claude, and Cursor local stores.
-
-    Bare ``agentgrep`` launches the interactive Textual explorer
-    (``agentgrep ui``). ``agentgrep <terms>`` is shorthand for
-    ``agentgrep search <terms>``.
+    Read-only search across Codex, Claude, Cursor, and Gemini local
+    stores. Pick a subcommand from the list below: ``grep`` for
+    rg-shaped content search, ``fuzzy`` for fzf-style filtering,
+    ``find`` for store enumeration, ``search`` for sensible-defaults
+    search, ``ui`` for the interactive Textual explorer.
     """,
     (
         (
-            "quick",
+            "grep",
             (
-                "agentgrep",
-                "agentgrep bliss",
-                "agentgrep serene bliss --agent codex",
+                "agentgrep grep bliss",
+                "agentgrep grep -i 'serene bliss'",
+                "agentgrep grep -F --type history TODO",
+                "agentgrep grep --json design",
+            ),
+        ),
+        (
+            "fuzzy",
+            (
+                "agentgrep grep -F . | agentgrep fuzzy 'config bliss'",
+                "agentgrep fuzzy --exact -i 'design notes' < transcript.txt",
             ),
         ),
         (
@@ -174,8 +182,15 @@ CLI_DESCRIPTION = build_description(
             "find",
             (
                 "agentgrep find codex",
-                "agentgrep find sessions --agent codex",
+                "agentgrep find -t prompts -e jsonl",
                 "agentgrep find cursor --json",
+            ),
+        ),
+        (
+            "ui",
+            (
+                "agentgrep ui",
+                "agentgrep ui bliss",
             ),
         ),
     ),
@@ -214,14 +229,13 @@ FIND_DESCRIPTION = build_description(
 )
 UI_DESCRIPTION = build_description(
     """
-    Launch the interactive Textual explorer. Bare ``agentgrep`` is
-    equivalent to ``agentgrep ui``.
+    Launch the interactive Textual explorer for browsing prompts and
+    history across all configured agents.
     """,
     (
         (
             None,
             (
-                "agentgrep",
                 "agentgrep ui",
                 "agentgrep ui bliss",
             ),
