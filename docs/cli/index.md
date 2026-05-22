@@ -9,13 +9,20 @@ and history archives from a terminal. It wraps the same read-only
 discovery and parsing layer the MCP server exposes — search, find
 stores, filter by agent — and lets you pipe everything through
 `--json` or `--ndjson` so any script or non-MCP agent can consume the
-results.
+results. Bare `agentgrep` (no subcommand) lands in an interactive
+Textual explorer for browsing without piping.
 
 ```{cli-install}
 ```
 
-::::{grid} 1 2 2 2
+::::{grid} 1 2 2 3
 :gutter: 2 2 3 3
+
+:::{grid-item-card} agentgrep ui
+:link: ui
+:link-type: doc
+Browse prompts and history interactively in the Textual explorer.
+:::
 
 :::{grid-item-card} agentgrep search
 :link: search

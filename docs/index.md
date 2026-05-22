@@ -100,6 +100,7 @@ configuration
 :caption: CLI
 
 Overview <cli/index>
+cli/ui
 cli/search
 cli/find
 ```
@@ -131,6 +132,7 @@ mcp/prompts
 
 Overview <reference/api/index>
 reference/api/agentgrep
+reference/api/ui
 reference/api/mcp
 ```
 

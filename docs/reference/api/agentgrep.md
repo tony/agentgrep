@@ -23,6 +23,9 @@ and MCP server.
 .. autoclass:: agentgrep.FindArgs
    :members:
 
+.. autoclass:: agentgrep.UIArgs
+   :members:
+
 .. autoclass:: agentgrep.SearchQuery
    :members:
 
@@ -72,5 +75,17 @@ and MCP server.
 .. autofunction:: agentgrep.build_envelope
 .. autofunction:: agentgrep.run_search_command
 .. autofunction:: agentgrep.run_find_command
+.. autofunction:: agentgrep.run_ui_command
+.. autofunction:: agentgrep.run_ui
+.. autofunction:: agentgrep.build_streaming_ui_app
 .. autofunction:: agentgrep.main
+```
+
+## Filter and display helpers
+
+```{eval-rst}
+.. autofunction:: agentgrep.cached_haystack
+.. autofunction:: agentgrep.clear_haystack_cache
+.. autofunction:: agentgrep.compute_filter_matches
+.. autofunction:: agentgrep.format_timestamp_tig
 ```
