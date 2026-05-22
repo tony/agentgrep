@@ -833,6 +833,16 @@ def _build_grep_args(
     if any(not pattern for pattern in patterns_list):
         with configured_color_environment(color_mode):
             bundle.grep_parser.error("pattern cannot be empty")
+
+    invert_match = t.cast("bool", namespace.invert_match)
+    count_only = t.cast("bool", namespace.count)
+    files_without_match = t.cast("bool", namespace.files_without_match)
+    if invert_match and not (count_only or files_without_match):
+        with configured_color_environment(color_mode):
+            bundle.grep_parser.error(
+                "--invert-match for text output is not yet implemented "
+                "(see https://github.com/tony/agentgrep/issues/8); use -c or -L",
+            )
     if pattern_mode != "fixed":
         case_sensitive = case_mode == "respect" or (
             case_mode == "smart" and any(any(ch.isupper() for ch in p) for p in patterns_list)
@@ -861,15 +871,15 @@ def _build_grep_args(
         heading = None
 
     return GrepArgs(
-        patterns=tuple(t.cast("list[str]", namespace.patterns)),
+        patterns=tuple(patterns_list),
         agents=agents,
         search_type=t.cast("SearchType", namespace.search_type),
         case_mode=case_mode,
         pattern_mode=pattern_mode,
-        invert_match=t.cast("bool", namespace.invert_match),
-        count_only=t.cast("bool", namespace.count),
+        invert_match=invert_match,
+        count_only=count_only,
         files_with_matches=t.cast("bool", namespace.files_with_matches),
-        files_without_match=t.cast("bool", namespace.files_without_match),
+        files_without_match=files_without_match,
         only_matching=t.cast("bool", namespace.only_matching),
         no_dedupe=t.cast("bool", namespace.no_dedupe),
         line_number=line_number,

@@ -168,6 +168,23 @@ agentgrep grep: error: pattern cannot be empty
 The check applies to every term — a valid pattern followed by an
 empty one (`agentgrep grep foo ''`) still fails.
 
+`-v` / `--invert-match` for plain text output is not yet
+implemented and is refused at parse time:
+
+```console
+$ agentgrep grep -v bliss
+usage: agentgrep grep [...]
+agentgrep grep: error: --invert-match for text output is not yet
+implemented (see https://github.com/tony/agentgrep/issues/8); use
+-c or -L
+```
+
+The flag is still honored under `-c` (returns `0` if any record
+matched, `1` if none) and `-L` (lists sources with no matches),
+since both reduce to a "did anything match?" question that the
+engine's current output supports. Tracking issue:
+[tony/agentgrep#8](https://github.com/tony/agentgrep/issues/8).
+
 (cli-grep-dedupe)=
 
 ## Session deduplication
