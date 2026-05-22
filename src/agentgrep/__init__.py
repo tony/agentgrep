@@ -228,6 +228,26 @@ UI_DESCRIPTION = build_description(
         ),
     ),
 )
+FUZZY_DESCRIPTION = build_description(
+    """
+    Fuzzy match in fzf ``--filter`` mode: stdin lines are scored
+    against QUERY and emitted in descending-score order.
+
+    No QUERY and no piped stdin prints usage and exits 2 (strict, no
+    interactive fallback — use ``agentgrep ui`` or ``--ui`` for
+    interactive browsing).
+    """,
+    (
+        (
+            None,
+            (
+                "agentgrep grep -F . | agentgrep fuzzy 'config bliss'",
+                "agentgrep fuzzy --exact -i 'design notes' < transcript.txt",
+                "agentgrep fuzzy --algo=v1 --print-query foo",
+            ),
+        ),
+    ),
+)
 GREP_DESCRIPTION = build_description(
     """
     Content search across normalized records with rg/ag-shaped flags.
@@ -3717,6 +3737,8 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
             return 0
         if isinstance(parsed, GrepArgs):
             return run_grep_command(parsed)
+        if isinstance(parsed, FuzzyArgs):
+            return run_fuzzy_command(parsed)
         if isinstance(parsed, SearchArgs):
             return run_search_command(parsed)
         if isinstance(parsed, UIArgs):
@@ -3733,6 +3755,9 @@ from agentgrep.cli.parser import (  # noqa: E402  (re-exports must follow main d
     FindArgs,
     FindPatternMode,
     FindTypeFilter,
+    FuzzyAlgo,
+    FuzzyArgs,
+    FuzzyTiebreak,
     GrepArgs,
     ParserBundle,
     PatternMode,
@@ -3754,11 +3779,13 @@ from agentgrep.cli.render import (  # noqa: E402  (re-exports must follow main d
     build_grep_query,
     filter_find_records,
     format_grep_record,
+    fuzzy_filter_lines,
     maybe_build_pydantic,
     print_find_results,
     print_grep_results,
     print_search_results,
     run_find_command,
+    run_fuzzy_command,
     run_grep_command,
     run_search_command,
     run_ui_command,
