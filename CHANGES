@@ -63,6 +63,15 @@ full scan finishes. Output alignment lands deeper in this release:
 `path:N` per matching record, `grep --json` is now rg's per-line
 event stream with `submatches[*]` carrying byte offsets, and
 `find` with no positional pattern lists every source (fd parity).
+A combinatorial stress test against the rg/fd contract surfaced
+six more alignment gaps, all addressed in this release: `grep`
+now surfaces a clean error for invalid regex (no more Python
+tracebacks), refuses empty patterns at parse time, drops the
+trailing blank line under `-o`, and refuses `-v` for text output
+until engine-level line invert lands ([#8](https://github.com/tony/agentgrep/issues/8)); `grep -L` now
+lists sources with no matches (previously a stub); and `find -g`
+matches against the file basename by default with a new
+`--full-path` flag for absolute-path matching (fd's `-p`).
 
 ### Breaking changes
 
@@ -186,6 +195,33 @@ $ agentgrep find 'foo.bar'
 $ agentgrep find -F 'foo.bar'
 ```
 
+#### `agentgrep find -g` matches against the path basename
+
+`agentgrep find -g GLOB` previously applied the glob to a joined
+`agent store adapter_id path path_kind` haystack, so `*.jsonl`
+returned "No matching sources found" even though every store path
+ended in `.jsonl`. The new default matches the glob against the
+file basename (fd's default behavior); a new `--full-path` flag
+opts into matching the absolute path (fd's `-p`). Regex, fixed,
+and exact modes are unchanged — they still match the joined
+haystack so `agentgrep find sessions` continues to hit on the
+store fragment.
+
+```console
+# Before
+$ agentgrep find -g '*.jsonl'
+No matching sources found.
+
+# After (basename matching)
+$ agentgrep find -g '*.jsonl'
+~/.codex/sessions/2026/05/a.jsonl
+~/.codex/sessions/2026/05/b.jsonl
+
+# After + --full-path (absolute path matching)
+$ agentgrep find -g '*/sessions/*.jsonl' --full-path
+~/.codex/sessions/2026/05/a.jsonl
+```
+
 #### `agentgrep grep` text output is now line-aware
 
 `agentgrep grep` previously dumped each matching record's full text
@@ -292,6 +328,14 @@ the `tig`-shaped overlay model — `agentgrep grep -i foo --ui` is to
 `agentgrep grep -i foo` what `tig log` is to `git log`. Same args,
 same query semantics, different presentation.
 
+#### `find --full-path` for fd `-p` parity
+
+`agentgrep find -g GLOB` matches the path basename by default;
+`--full-path` switches the glob to the absolute path, matching
+fd's `-p` semantic. Useful when the basename alone isn't enough to
+disambiguate (e.g. you want every `*.jsonl` under `sessions/` but
+not under `history/`). See {ref}`cli-find` for examples.
+
 ### Fixes
 
 #### `agentgrep find` with no pattern lists every source
@@ -312,6 +356,91 @@ $ agentgrep find
 ~/.codex/.../a.jsonl
 ~/.codex/.../b.jsonl
 ~/.claude/.../session.jsonl
+```
+
+#### `agentgrep grep` invalid regex emits a clean error
+
+`agentgrep grep '['` previously dumped a Python traceback ending in
+`re/_parser.py` and exited 1 — the unprotected `re.search` call
+inside the engine had no boundary guard. `grep` now validates
+every pattern at the argparse layer (with the same case + word
+wrapping the engine uses) and surfaces an argparse-shaped error
+on failure:
+
+```console
+# Before
+$ agentgrep grep '['
+Traceback (most recent call last):
+  ...
+re.PatternError: unterminated character set at position 0
+
+# After
+$ agentgrep grep '['
+usage: agentgrep grep [...]
+agentgrep grep: error: invalid regex '[': unterminated character set at position 0
+```
+
+Exit code is now 2 (matching rg / grep convention for usage
+errors). `-F` (fixed strings) skips validation since literal
+patterns never reach `re.compile`.
+
+#### `agentgrep grep` rejects empty patterns
+
+`agentgrep grep ''` previously short-circuited through
+`iter_match_lines`'s zero-width-match filter and emitted a
+find-shaped `agent  [ts]  path` line — visually indistinguishable
+from `agentgrep find` output. The empty pattern is now refused at
+parse time with the standard argparse shape (git-grep parity):
+
+```console
+$ agentgrep grep ''
+usage: agentgrep grep [...]
+agentgrep grep: error: pattern cannot be empty
+```
+
+The check applies to every term, so `agentgrep grep foo ''` still
+fails.
+
+#### `agentgrep grep -o` no longer emits trailing blank lines
+
+`agentgrep grep -o PATTERN` was leaking the heading-mode blank-line
+separator after every record, so the output looked like
+`bliss\n\nbliss\n\n...` instead of rg's bare `bliss\nbliss\n...`.
+The separator is now suppressed under `-o`, restoring rg parity.
+
+#### `agentgrep grep -v` for text output is refused at parse time
+
+`agentgrep grep -v PATTERN` previously accepted the flag and then
+silently returned the records that *did* contain PATTERN —
+inversion was only honored under `-c` and `-L`. Until engine
+support for line-level invert lands
+([#8](https://github.com/tony/agentgrep/issues/8)), `-v` outside
+`-c`/`-L` is rejected at parse time with exit 2 so users get a
+clean error instead of wrong-but-plausible output.
+
+```console
+$ agentgrep grep -v bliss
+agentgrep grep: error: --invert-match for text output is not yet
+implemented (see https://github.com/tony/agentgrep/issues/8); use
+-c or -L
+```
+
+`-v -c` and `-v -L` still parse — both collapse to the
+"did anything match?" question the engine's existing surface can
+answer.
+
+#### `agentgrep grep -L` lists sources with no matches
+
+`agentgrep grep -L PATTERN` was a stub returning empty stdout
+regardless of input. The new implementation runs the same query
+the engine would run, collects matching paths from the event
+stream, and prints the complement against the engine's planned
+source set. Exit codes follow rg: `0` when at least one path is
+printed, `1` when every planned source matched.
+
+```console
+$ agentgrep grep -L bliss
+~/.codex/sessions/2026/05/b.jsonl
 ```
 
 ### Development
