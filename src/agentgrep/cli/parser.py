@@ -17,6 +17,7 @@ import collections.abc as cabc
 import contextlib
 import dataclasses
 import os
+import re
 import sys
 import typing as t
 
@@ -827,6 +828,20 @@ def _build_grep_args(
         pattern_mode = "word"
     else:
         pattern_mode = "regex"
+
+    patterns_list = t.cast("list[str]", namespace.patterns)
+    if pattern_mode != "fixed":
+        case_sensitive = case_mode == "respect" or (
+            case_mode == "smart" and any(any(ch.isupper() for ch in p) for p in patterns_list)
+        )
+        flags = 0 if case_sensitive else re.IGNORECASE
+        for pattern in patterns_list:
+            source = rf"\b{pattern}\b" if pattern_mode == "word" else pattern
+            try:
+                _ = re.compile(source, flags)
+            except re.error as exc:
+                with configured_color_environment(color_mode):
+                    bundle.grep_parser.error(f"invalid regex {pattern!r}: {exc}")
 
     if t.cast("bool", namespace.line_number_on):
         line_number: bool | None = True
