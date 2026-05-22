@@ -14,6 +14,7 @@ monkeypatch surface those tests rely on.
 from __future__ import annotations
 
 import io
+import pathlib
 import typing as t
 
 import pytest
@@ -512,3 +513,215 @@ def test_grep_help_renders_without_error(monkeypatch: pytest.MonkeyPatch) -> Non
     with pytest.raises(SystemExit) as exc_info:
         _ = agentgrep.parse_args(["grep", "--help"])
     assert exc_info.value.code == 0
+
+
+# ----- line-aware match helpers --------------------------------------------
+
+
+class LineExtractionCase(t.NamedTuple):
+    """Parametrized case for :func:`agentgrep.iter_match_lines`."""
+
+    test_id: str
+    record_text: str
+    args_overrides: dict[str, t.Any]
+    expected: tuple[tuple[int, str, tuple[tuple[int, int], ...]], ...]
+
+
+LINE_EXTRACTION_CASES: tuple[LineExtractionCase, ...] = (
+    LineExtractionCase(
+        "single-match-on-second-line",
+        "no match here\nfoo lives here\nstill no match",
+        {"patterns": ("foo",)},
+        ((2, "foo lives here", ((0, 3),)),),
+    ),
+    LineExtractionCase(
+        "two-matches-same-line-merged",
+        "foo and foo again on one line",
+        {"patterns": ("foo",)},
+        ((1, "foo and foo again on one line", ((0, 3), (8, 11))),),
+    ),
+    LineExtractionCase(
+        "multi-line-many-matches",
+        "alpha foo\nbar foo baz\nno hits",
+        {"patterns": ("foo",)},
+        (
+            (1, "alpha foo", ((6, 9),)),
+            (2, "bar foo baz", ((4, 7),)),
+        ),
+    ),
+    LineExtractionCase(
+        "smart-case-uppercase-pattern-is-strict",
+        "FOO once\nfoo twice",
+        {"patterns": ("FOO",)},
+        ((1, "FOO once", ((0, 3),)),),
+    ),
+    LineExtractionCase(
+        "ignore-case-matches-mixed",
+        "Foo once\nFOO twice",
+        {"patterns": ("foo",), "case_mode": "ignore"},
+        (
+            (1, "Foo once", ((0, 3),)),
+            (2, "FOO twice", ((0, 3),)),
+        ),
+    ),
+    LineExtractionCase(
+        "fixed-mode-treats-dot-as-literal",
+        "foo.bar matches\nfoo_bar does not",
+        {"patterns": ("foo.bar",), "pattern_mode": "fixed"},
+        ((1, "foo.bar matches", ((0, 7),)),),
+    ),
+    LineExtractionCase(
+        "word-mode-anchors-boundaries",
+        "foo bar\nfoolish bar",
+        {"patterns": ("foo",), "pattern_mode": "word"},
+        ((1, "foo bar", ((0, 3),)),),
+    ),
+    LineExtractionCase(
+        "multiple-patterns-or-at-line-level",
+        "alpha foo\nbeta bar\nneither",
+        {"patterns": ("foo", "bar")},
+        (
+            (1, "alpha foo", ((6, 9),)),
+            (2, "beta bar", ((5, 8),)),
+        ),
+    ),
+    LineExtractionCase(
+        "no-match-yields-nothing",
+        "completely disjoint text",
+        {"patterns": ("zzz",)},
+        (),
+    ),
+)
+
+
+def _make_grep_args_for_helpers(**overrides: t.Any) -> agentgrep.GrepArgs:
+    """Build a GrepArgs with helper-friendly defaults."""
+    base: dict[str, t.Any] = {
+        "patterns": ("foo",),
+        "agents": agentgrep.AGENT_CHOICES,
+        "search_type": "prompts",
+        "case_mode": "smart",
+        "pattern_mode": "regex",
+        "invert_match": False,
+        "count_only": False,
+        "files_with_matches": False,
+        "files_without_match": False,
+        "only_matching": False,
+        "no_dedupe": False,
+        "line_number": None,
+        "heading": None,
+        "max_count": None,
+        "vimgrep": False,
+        "output_mode": "text",
+        "color_mode": "never",
+        "progress_mode": "never",
+    }
+    base.update(overrides)
+    return agentgrep.GrepArgs(**base)
+
+
+@pytest.mark.parametrize(
+    "case",
+    LINE_EXTRACTION_CASES,
+    ids=[c.test_id for c in LINE_EXTRACTION_CASES],
+)
+def test_iter_match_lines_yields_matching_lines(case: LineExtractionCase) -> None:
+    """iter_match_lines splits text into lines and yields only matchers."""
+    from agentgrep.cli.render import iter_match_lines
+
+    args = _make_grep_args_for_helpers(**case.args_overrides)
+    actual = tuple(
+        (line_no, line, tuple(spans))
+        for line_no, line, spans in iter_match_lines(case.record_text, args)
+    )
+    assert actual == case.expected
+
+
+def test_format_grep_line_wraps_matches_in_ansi() -> None:
+    """format_grep_line emits line:col:text with ANSI on matched spans."""
+    from agentgrep.cli.render import format_grep_line
+
+    colors = agentgrep.AnsiColors(enabled=True)
+    rendered = format_grep_line(
+        12,
+        "the foo and the bar",
+        [(4, 7)],
+        colors=colors,
+    )
+    # Line number wrapped in green LINE_NUMBER color.
+    assert agentgrep.AnsiColors.LINE_NUMBER in rendered
+    assert ":12:" not in rendered  # the bare line-number isn't unstyled
+    assert "12" in rendered
+    # Column is 1-indexed (start=4 → col=5).
+    assert ":5:" in rendered
+    # Match itself wrapped in red+bold.
+    assert agentgrep.AnsiColors.MATCH in rendered
+    assert "foo" in rendered
+
+
+def test_format_grep_line_plain_when_colors_disabled() -> None:
+    """When colors are disabled, format_grep_line emits no ANSI escapes."""
+    from agentgrep.cli.render import format_grep_line
+
+    colors = agentgrep.AnsiColors(enabled=False)
+    rendered = format_grep_line(
+        12,
+        "the foo and the bar",
+        [(4, 7)],
+        colors=colors,
+    )
+    assert "\x1b[" not in rendered
+    assert rendered == "12:5:the foo and the bar"
+
+
+def test_format_grep_heading_includes_agent_path_timestamp() -> None:
+    """format_grep_heading surfaces agent, path, and timestamp."""
+    from agentgrep.cli.render import format_grep_heading
+
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/abc.jsonl"),
+        text="ignored",
+        timestamp="2026-05-22T12:00:00Z",
+    )
+    colors = agentgrep.AnsiColors(enabled=False)
+    rendered = format_grep_heading(record, colors=colors)
+    assert "codex" in rendered
+    assert "2026-05-22T12:00:00Z" in rendered
+    assert "/tmp/abc.jsonl" in rendered
+
+
+def test_format_grep_heading_skips_missing_timestamp() -> None:
+    """No timestamp → no stray separator in the heading."""
+    from agentgrep.cli.render import format_grep_heading
+
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/abc.jsonl"),
+        text="ignored",
+        timestamp=None,
+    )
+    colors = agentgrep.AnsiColors(enabled=False)
+    rendered = format_grep_heading(record, colors=colors)
+    assert rendered == "codex  /tmp/abc.jsonl"
+
+
+def test_ansi_colors_match_method_wraps_red_bold() -> None:
+    """AnsiColors.match wraps text in the red+bold MATCH escape."""
+    colors = agentgrep.AnsiColors(enabled=True)
+    wrapped = colors.match("hit")
+    assert wrapped.startswith(agentgrep.AnsiColors.MATCH)
+    assert wrapped.endswith(agentgrep.AnsiColors.RESET)
+    assert "hit" in wrapped
+
+
+def test_ansi_colors_match_method_passthrough_when_disabled() -> None:
+    """AnsiColors.match returns plain text when disabled."""
+    colors = agentgrep.AnsiColors(enabled=False)
+    assert colors.match("hit") == "hit"
