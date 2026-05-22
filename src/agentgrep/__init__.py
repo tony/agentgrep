@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import collections
 import contextlib
 import dataclasses
 import datetime
@@ -147,13 +148,15 @@ CLI_DESCRIPTION = build_description(
     """
     Read-only search across Codex, Claude, and Cursor local stores.
 
-    ``search`` is the default subcommand. ``agentgrep bliss`` is
-    equivalent to ``agentgrep search bliss``.
+    Bare ``agentgrep`` launches the interactive Textual explorer
+    (``agentgrep ui``). ``agentgrep <terms>`` is shorthand for
+    ``agentgrep search <terms>``.
     """,
     (
         (
             "quick",
             (
+                "agentgrep",
                 "agentgrep bliss",
                 "agentgrep serene bliss --agent codex",
             ),
@@ -205,6 +208,22 @@ FIND_DESCRIPTION = build_description(
                 "agentgrep find codex",
                 "agentgrep find sessions --agent codex",
                 "agentgrep find cursor --json",
+            ),
+        ),
+    ),
+)
+UI_DESCRIPTION = build_description(
+    """
+    Launch the interactive Textual explorer. Bare ``agentgrep`` is
+    equivalent to ``agentgrep ui``.
+    """,
+    (
+        (
+            None,
+            (
+                "agentgrep",
+                "agentgrep ui",
+                "agentgrep ui bliss",
             ),
         ),
     ),
@@ -1011,6 +1030,14 @@ class FindArgs:
 
 
 @dataclasses.dataclass(slots=True)
+class UIArgs:
+    """Typed arguments for ``agentgrep ui``."""
+
+    initial_query: str
+    color_mode: ColorMode
+
+
+@dataclasses.dataclass(slots=True)
 class SearchQuery:
     """Compiled search configuration."""
 
@@ -1716,6 +1743,14 @@ class FilterRequestedPayload(pydantic.BaseModel):
     text: str
 
 
+class SearchRequestedPayload(pydantic.BaseModel):
+    """Pydantic payload for a debounced search-bar-changed Textual message."""
+
+    model_config = pydantic.ConfigDict(frozen=True)
+
+    text: str
+
+
 class FilterCompletedPayload(pydantic.BaseModel):
     """Pydantic payload for a worker-completed filter result Textual message."""
 
@@ -1988,19 +2023,20 @@ def normalize_color_mode(argv: cabc.Sequence[str] | None) -> ColorMode:
     return "auto"
 
 
-SUBCOMMANDS: frozenset[str] = frozenset({"search", "find"})
+SUBCOMMANDS: frozenset[str] = frozenset({"search", "find", "ui"})
 
 
 def inject_default_subcommand(
     argv: cabc.Sequence[str] | None,
 ) -> cabc.Sequence[str] | None:
-    """Prepend ``search`` to ``argv`` when no subcommand is supplied.
+    """Prepend a subcommand to ``argv`` when none is supplied.
 
     Walks ``argv`` skipping the global ``--color`` option and any help flag.
-    If the first remaining token is not a known subcommand, inserts
-    ``search`` at that position so ``agentgrep bliss`` parses identically
-    to ``agentgrep search bliss``. Returns the input unchanged when no
-    injection is needed.
+    Empty effective argv defaults to ``ui`` so ``agentgrep`` lands in the
+    Textual explorer. If the first remaining token is not a known
+    subcommand, inserts ``search`` at that position so ``agentgrep bliss``
+    parses identically to ``agentgrep search bliss``. Returns the input
+    unchanged when no injection is needed.
 
     Examples
     --------
@@ -2010,12 +2046,16 @@ def inject_default_subcommand(
     ['search', 'bliss']
     >>> inject_default_subcommand(["find", "codex"])
     ['find', 'codex']
+    >>> inject_default_subcommand(["ui"])
+    ['ui']
     >>> inject_default_subcommand(["--color", "never", "bliss"])
     ['--color', 'never', 'search', 'bliss']
+    >>> inject_default_subcommand(["--color", "never"])
+    ['--color', 'never', 'ui']
     >>> inject_default_subcommand(["--help"])
     ['--help']
     >>> inject_default_subcommand([])
-    []
+    ['ui']
     """
     effective = list(sys.argv[1:]) if argv is None else list(argv)
     index = 0
@@ -2033,7 +2073,8 @@ def inject_default_subcommand(
             return argv
         effective.insert(index, "search")
         return effective
-    return argv
+    effective.append("ui")
+    return effective
 
 
 @contextlib.contextmanager
@@ -2135,6 +2176,20 @@ def create_parser(
         help="Limit the number of results",
     )
     add_output_mode_options(find_parser, allow_ui=False)
+
+    ui_parser = subparsers.add_parser(
+        "ui",
+        help="Launch the interactive Textual explorer",
+        description=UI_DESCRIPTION,
+        formatter_class=formatter_class,
+        color=color_mode != "never",
+    )
+    _ = ui_parser.add_argument(
+        "initial_query",
+        nargs="?",
+        default="",
+        help="Optional initial search text to populate the search bar",
+    )
     return ParserBundle(parser=parser, search_parser=search_parser, find_parser=find_parser)
 
 
@@ -2152,7 +2207,7 @@ def build_docs_parser() -> argparse.ArgumentParser:
 
 def parse_args(
     argv: cabc.Sequence[str] | None = None,
-) -> SearchArgs | FindArgs | None:
+) -> SearchArgs | FindArgs | UIArgs | None:
     """Parse CLI arguments into typed dataclasses."""
     color_mode = normalize_color_mode(argv)
     argv = inject_default_subcommand(argv)
@@ -2163,6 +2218,14 @@ def parse_args(
         with configured_color_environment(color_mode):
             bundle.parser.print_help()
         return None
+
+    command = t.cast("str", namespace.command)
+    if command == "ui":
+        return UIArgs(
+            initial_query=t.cast("str", namespace.initial_query),
+            color_mode=color_mode,
+        )
+
     agents = parse_agents(t.cast("list[str]", namespace.agent))
     output_mode = parse_output_mode(namespace)
     limit = t.cast("int | None", namespace.limit)
@@ -2170,10 +2233,9 @@ def parse_args(
         with configured_color_environment(color_mode):
             bundle.parser.error("--limit must be greater than 0")
 
-    command = t.cast("str", namespace.command)
     if command == "search":
         terms = tuple(t.cast("list[str]", namespace.terms))
-        if not terms:
+        if not terms and output_mode != "ui":
             with configured_color_environment(color_mode):
                 bundle.search_parser.print_help()
             return None
@@ -2407,6 +2469,41 @@ def isoformat_from_mtime_ns(mtime_ns: int) -> str | None:
         .isoformat()
         .replace("+00:00", "Z")
     )
+
+
+def format_timestamp_tig(value: str | None) -> str:
+    """Render an ISO-8601 timestamp as ``YYYY-MM-DD HH:MM ±HHMM`` (tig style).
+
+    Localizes to the system timezone before formatting so the displayed
+    time matches what the user expects to see — tig's main view does the
+    same. Returns ``""`` for ``None`` / empty input and a clipped raw
+    string for unparseable input so callers can pad consistently.
+
+    Examples
+    --------
+    >>> format_timestamp_tig(None)
+    ''
+    >>> format_timestamp_tig("")
+    ''
+    >>> # An ISO timestamp with explicit timezone — formatted result keeps
+    >>> # the offset for the system's local timezone (whose exact value
+    >>> # varies by host, so we just check shape here).
+    >>> sample = format_timestamp_tig("2026-05-17T11:59:12+00:00")
+    >>> len(sample)
+    22
+    >>> sample[4], sample[7], sample[10], sample[13], sample[16]
+    ('-', '-', ' ', ':', ' ')
+    >>> format_timestamp_tig("not-a-real-timestamp")
+    'not-a-real-timestamp'
+    """
+    if not value:
+        return ""
+    candidate = value.replace("Z", "+00:00")
+    try:
+        moment = datetime.datetime.fromisoformat(candidate)
+    except ValueError:
+        return value[:22]
+    return moment.astimezone().strftime("%Y-%m-%d %H:%M %z")
 
 
 def discover_from_catalog(
@@ -3686,6 +3783,36 @@ def build_search_haystack(record: SearchRecord) -> str:
     return "\n".join(part for part in parts if part)
 
 
+_HAYSTACK_CACHE: dict[int, str] = {}
+
+
+def cached_haystack(record: SearchRecord) -> str:
+    """Return the casefolded haystack for ``record``, memoized by ``id``.
+
+    The filter worker scans every loaded record on every keystroke;
+    recomputing ``build_search_haystack(...).casefold()`` per record per
+    pass dominates filter latency once the result set grows past a few
+    thousand records. Memoizing by ``id`` is safe because the app
+    retains every record in ``AgentGrepApp.all_records`` for the
+    lifetime of one search, so Python cannot recycle a collected
+    record's id while its entry sits in :data:`_HAYSTACK_CACHE`.
+
+    Callers that need to invalidate (because a new search will allocate
+    new records) should call :func:`clear_haystack_cache`.
+    """
+    key = id(record)
+    cached = _HAYSTACK_CACHE.get(key)
+    if cached is None:
+        cached = build_search_haystack(record).casefold()
+        _HAYSTACK_CACHE[key] = cached
+    return cached
+
+
+def clear_haystack_cache() -> None:
+    """Drop every memoized haystack — call before allocating a new record set."""
+    _HAYSTACK_CACHE.clear()
+
+
 def compute_filter_matches(
     records: cabc.Sequence[SearchRecord],
     text: str,
@@ -3711,9 +3838,7 @@ def compute_filter_matches(
     normalized = text.strip().casefold()
     if not normalized:
         return tuple(records)
-    return tuple(
-        record for record in records if normalized in build_search_haystack(record).casefold()
-    )
+    return tuple(record for record in records if normalized in cached_haystack(record))
 
 
 def matches_text(text: str, query: SearchQuery) -> bool:
@@ -3986,22 +4111,13 @@ def run_ui(
 ) -> None:
     """Launch the streaming Textual explorer for ``query``.
 
-    Thin wrapper that builds the app via :func:`build_streaming_ui_app` and
-    calls ``app.run()``. The factory split lets tests construct the app for
-    a Textual ``Pilot`` smoke test without entering the blocking run loop.
-
-    Parameters
-    ----------
-    home : pathlib.Path
-        User home directory, passed through to :func:`run_search_query`.
-    query : SearchQuery
-        Search to run. Empty ``terms`` means "all records" (browse mode).
-    control : SearchControl
-        Shared cooperative-cancel flag; ``Esc`` / ``Ctrl-C`` call
-        ``request_answer_now`` to nudge the worker to wrap up.
+    Thin wrapper that imports the real implementation from
+    :mod:`agentgrep.ui.app` lazily so a bare ``import agentgrep`` never
+    pulls in Textual.
     """
-    app = build_streaming_ui_app(home, query, control=control)
-    t.cast("RunnableAppLike", app).run()
+    from agentgrep.ui.app import run_ui as _run_ui
+
+    _run_ui(home, query, control=control)
 
 
 def build_streaming_ui_app(
@@ -4012,993 +4128,13 @@ def build_streaming_ui_app(
 ) -> object:
     """Construct the streaming Textual app without entering its run loop.
 
-    Returns the constructed ``AgentGrepApp`` instance (typed ``object`` because
-    the actual class is defined dynamically inside this factory). Callers can
-    invoke ``.run()`` for a real session or ``.run_test()`` for a Pilot smoke
-    test. The full app body — message subclasses, ``SpinnerWidget``,
-    ``ElapsedWidget``, ``FilterInput``, ``AgentGrepApp`` — lives here so the
-    Textual imports stay lazy.
-
-    Parameters
-    ----------
-    home : pathlib.Path
-        User home directory, passed through to :func:`run_search_query`.
-    query : SearchQuery
-        Search to run. Empty ``terms`` means "all records" (browse mode).
-    control : SearchControl
-        Shared cooperative-cancel flag; ``Esc`` / ``Ctrl-C`` call
-        ``request_answer_now`` to nudge the worker to wrap up.
+    Thin wrapper that imports the real factory from :mod:`agentgrep.ui.app`
+    lazily — Textual is only required at the moment the UI is actually
+    built, never at import time of the top-level package.
     """
-    try:
-        textual_app = t.cast(
-            "TextualAppModule",
-            t.cast("object", importlib.import_module("textual.app")),
-        )
-        textual_containers = t.cast(
-            "TextualContainersModule",
-            t.cast("object", importlib.import_module("textual.containers")),
-        )
-        textual_widgets = t.cast(
-            "TextualWidgetsModule",
-            t.cast("object", importlib.import_module("textual.widgets")),
-        )
-        textual_message = t.cast(
-            "TextualMessageModule",
-            t.cast("object", importlib.import_module("textual.message")),
-        )
-        textual_option_list_internals = t.cast(
-            "TextualOptionListInternalsModule",
-            t.cast("object", importlib.import_module("textual.widgets.option_list")),
-        )
-        textual_binding = t.cast(
-            "TextualBindingModule",
-            t.cast("object", importlib.import_module("textual.binding")),
-        )
-        rich_text_module = t.cast(
-            "RichTextModule",
-            t.cast("object", importlib.import_module("rich.text")),
-        )
-    except ImportError as error:
-        msg = "Textual is required for --ui. Install with `uv pip install --editable .`."
-        raise RuntimeError(msg) from error
+    from agentgrep.ui.app import build_streaming_ui_app as _build
 
-    app_type = textual_app.App
-    message_type = textual_message.Message
-    option_list_type = textual_widgets.OptionList
-    option_type = textual_option_list_internals.Option
-    binding_type = textual_binding.Binding
-    rich_text = rich_text_module
-    horizontal = textual_containers.Horizontal
-    vertical_scroll = textual_containers.VerticalScroll
-    footer = textual_widgets.Footer
-    header = textual_widgets.Header
-    input_widget = textual_widgets.Input
-    static_type = textual_widgets.Static
-
-    # FilterRequested / FilterCompleted stay on the Textual message bus — they
-    # fire at typing speed, not streaming speed, so the FIFO queue is fine for
-    # them. Records / progress / search-finished events bypass the message bus
-    # entirely (see ``make_emit`` below) so they never queue behind keystrokes.
-
-    class FilterRequested(message_type):  # ty: ignore[unsupported-base]
-        """Debounced filter-text-changed event from :class:`FilterInput`."""
-
-        def __init__(self, payload: FilterRequestedPayload) -> None:
-            super().__init__()
-            self.payload = payload
-
-    class FilterCompleted(message_type):  # ty: ignore[unsupported-base]
-        """Worker-completed filter result posted back to the main thread."""
-
-        def __init__(self, payload: FilterCompletedPayload) -> None:
-            super().__init__()
-            self.payload = payload
-
-    def make_emit(app: StreamingAppLike) -> cabc.Callable[[object], None]:
-        """Build an ``emit`` callback that dispatches streaming events via ``call_from_thread``.
-
-        ``call_from_thread`` schedules the callback directly on the event loop
-        rather than enqueuing a ``Message`` — so high-frequency record batches
-        don't compete with keystroke / timer events for FIFO message dispatch.
-        Vibe-tmux uses the same pattern (``call_from_thread(_rebuild_tree, snap)``)
-        and Textual's own ``Log`` widget mutates state directly without a per-
-        write message. This is the canonical Textual pattern for "many small
-        updates from a worker thread."
-        """
-        typed_app = t.cast("t.Any", app)
-
-        def emit(event: object) -> None:
-            if isinstance(event, StreamingRecordsBatch):
-                typed_app.call_from_thread(
-                    typed_app._apply_records_batch,
-                    event.records,
-                    event.total,
-                )
-            elif isinstance(event, ProgressSnapshot):
-                typed_app.call_from_thread(typed_app._apply_progress, event)
-            elif isinstance(event, StreamingSearchFinished):
-                typed_app.call_from_thread(
-                    typed_app._apply_finished,
-                    event.outcome,
-                    event.total,
-                    event.elapsed,
-                    str(event.error) if event.error else None,
-                )
-
-        return emit
-
-    class SpinnerWidget(static_type):  # ty: ignore[unsupported-base]
-        """Self-driving Braille spinner that animates regardless of event-loop load.
-
-        The widget pulls its frame index from ``time.monotonic()`` on every
-        ``render`` and lets Textual's per-widget ``auto_refresh`` reactor drive
-        the redraw. This decouples the spinner from any main-thread timer or
-        message handler — even if record-batch dispatch backs up, the spinner
-        keeps ticking.
-        """
-
-        _FRAMES: t.ClassVar[str] = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
-        _FPS: t.ClassVar[float] = 10.0
-
-        def __init__(self, *, id: str | None = None) -> None:  # noqa: A002 -- forwarded to Textual's ``id`` kwarg
-            super().__init__("", id=id)
-            self._final_glyph: str | None = None
-            self._started_at: float = time.monotonic()
-
-        def on_mount(self) -> None:
-            """Arm the per-widget refresh timer (Textual reads this after mount)."""
-            self.auto_refresh = 1.0 / self._FPS
-
-        def render(self) -> str:
-            """Return the current Braille frame from elapsed wall-clock time."""
-            if self._final_glyph is not None:
-                return self._final_glyph
-            elapsed = time.monotonic() - self._started_at
-            frame_index = int(elapsed * self._FPS) % len(self._FRAMES)
-            return self._FRAMES[frame_index]
-
-        def freeze(self, glyph: str) -> None:
-            """Stop animating and lock the displayed glyph (called on terminal events)."""
-            self._final_glyph = glyph
-            self.auto_refresh = None
-            self.refresh()
-
-    class ElapsedWidget(static_type):  # ty: ignore[unsupported-base]
-        """Self-refreshing elapsed-time display that ticks once per second."""
-
-        def __init__(
-            self,
-            *,
-            start_provider: cabc.Callable[[], float | None],
-            id: str | None = None,  # noqa: A002 -- forwarded to Textual's ``id`` kwarg
-        ) -> None:
-            super().__init__("", id=id)
-            self._start_provider = start_provider
-            self._frozen: float | None = None
-
-        def on_mount(self) -> None:
-            """Arm the 1 Hz refresh; widget keeps ticking until ``freeze`` is called."""
-            self.auto_refresh = 1.0
-
-        def render(self) -> str:
-            """Return ``Ts`` for the current elapsed value (or ``""`` until started)."""
-            if self._frozen is not None:
-                return f"{self._frozen:.1f}s"
-            started = self._start_provider()
-            if started is None:
-                return ""
-            return f"{time.monotonic() - started:.1f}s"
-
-        def freeze(self, final_elapsed: float) -> None:
-            """Stop refreshing and lock the displayed elapsed value."""
-            self._frozen = final_elapsed
-            self.auto_refresh = None
-            self.refresh()
-
-    class SearchResultsList(
-        option_list_type,  # ty: ignore[unsupported-base]
-        can_focus=True,
-    ):
-        """``OptionList`` subclass for streaming agentgrep search records.
-
-        ``OptionList`` is Textual's proven cursor-navigable virtual list. It
-        ships with working Tab focus, a visible cursor highlight via the
-        ``option-list--option-highlighted`` CSS class, and posts an
-        ``OptionHighlighted`` message on cursor movement — all the things our
-        previous custom widget had to wire up manually and failed at in the
-        real terminal.
-
-        Adding records via ``append_records`` / ``set_records`` runs on the
-        event-loop thread because the worker uses ``app.call_from_thread`` to
-        invoke these methods. That keeps the streaming transport off the
-        Textual message bus so keystroke + timer events never queue behind it.
-        """
-
-        BINDINGS: t.ClassVar[list[tuple[str, str, str]]] = [
-            ("k", "cursor_up", "Up"),
-            ("j", "cursor_down", "Down"),
-            ("l", "focus_detail", "Detail"),
-            ("right", "focus_detail", ""),
-            ("g", "cursor_top", "Top"),
-            ("G", "cursor_bottom", "Bottom"),
-            ("ctrl+d", "cursor_half_page_down", "½ Down"),
-            ("ctrl+u", "cursor_half_page_up", "½ Up"),
-        ]
-
-        def __init__(
-            self,
-            *,
-            id: str | None = None,  # noqa: A002 -- forwarded to Textual's ``id`` kwarg
-        ) -> None:
-            super().__init__(id=id)
-            self._records: list[SearchRecord] = []
-
-        def append_records(self, records: cabc.Sequence[SearchRecord]) -> None:
-            """Append a batch of records — invoked via ``app.call_from_thread``."""
-            if not records:
-                return
-            self._records.extend(records)
-            self.add_options(
-                [option_type(self._render_record(r), id=str(id(r))) for r in records],
-            )
-
-        def set_records(self, records: cabc.Sequence[SearchRecord]) -> None:
-            """Atomic swap of the backing list (used after a filter completes)."""
-            self._records = list(records)
-            self.clear_options()
-            if self._records:
-                self.add_options(
-                    [option_type(self._render_record(r), id=str(id(r))) for r in self._records],
-                )
-
-        def clear(self) -> None:
-            """Empty the list."""
-            self._records = []
-            self.clear_options()
-
-        _AGENT_COLORS: t.ClassVar[dict[str, str]] = {
-            "codex": "cyan",
-            "claude": "magenta",
-            "cursor": "yellow",
-        }
-        _KIND_COLORS: t.ClassVar[dict[str, str]] = {
-            "prompt": "green",
-            "history": "blue",
-        }
-
-        def _render_record(self, record: SearchRecord) -> object:
-            agent_text = (record.agent or "").ljust(8)[:8]
-            kind_text = (record.kind or "").ljust(10)[:10]
-            timestamp_text = (record.timestamp or "").ljust(20)[:20]
-            title_text = (record.title or "").ljust(40)[:40]
-            path_text = format_compact_path(record.path, max_width=60)
-            text = rich_text.Text(no_wrap=True, overflow="ellipsis")
-            text.append(agent_text, style=self._AGENT_COLORS.get(record.agent or "", ""))
-            text.append("  ")
-            text.append(kind_text, style=self._KIND_COLORS.get(record.kind or "", ""))
-            text.append("  ")
-            text.append(timestamp_text, style="italic")
-            text.append("  ")
-            text.append(title_text, style="bold")
-            text.append("  ")
-            text.append(path_text, style="grey50")
-            return text
-
-        def action_cursor_up(self) -> None:
-            """Release focus to the filter input when the cursor is at row 0."""
-            if self.highlighted in (None, 0):
-                self.app.action_focus_previous()
-            else:
-                super().action_cursor_up()
-
-        def action_focus_detail(self) -> None:
-            """Move focus rightward to the detail-scroll pane (vim-style ``l``)."""
-            detail = self.app.query_one("#detail-scroll")
-            t.cast("t.Any", detail).focus()
-
-        def action_cursor_top(self) -> None:
-            """Jump the highlight to the first row (vim-style ``g``)."""
-            self.action_first()
-
-        def action_cursor_bottom(self) -> None:
-            """Jump the highlight to the last row (vim-style ``G``)."""
-            self.action_last()
-
-        def _cursor_jump(self, delta: int) -> None:
-            """Move the highlight by ``delta`` rows, clamped to list bounds."""
-            row_count = len(self._records)
-            if row_count == 0:
-                return
-            current = self.highlighted if self.highlighted is not None else 0
-            target = max(0, min(row_count - 1, current + delta))
-            self.highlighted = target
-
-        def action_cursor_half_page_down(self) -> None:
-            """Advance the highlight by half the visible viewport height (vim ``Ctrl-D``)."""
-            half = max(1, self.size.height // 2)
-            self._cursor_jump(half)
-
-        def action_cursor_half_page_up(self) -> None:
-            """Move the highlight up by half the visible viewport height (vim ``Ctrl-U``)."""
-            half = max(1, self.size.height // 2)
-            self._cursor_jump(-half)
-
-    vertical_scroll_base = t.cast("type[object]", vertical_scroll)
-
-    class DetailScroll(
-        vertical_scroll_base,  # ty: ignore[unsupported-base]
-        can_focus=True,
-    ):
-        """``VerticalScroll`` subclass for the right-side detail pane.
-
-        Adds vim-style bindings: ``h`` / left-arrow releases focus back to the
-        results list, and ``j`` / ``k`` mirror the stock ``down`` / ``up``
-        scroll bindings so navigation stays consistent with
-        :class:`SearchResultsList`. ``can_focus=True`` is set via the
-        class-keyword form — Textual reads it during ``__init_subclass__``,
-        so the plain class-attribute form silently fails to enroll the widget
-        in the focus chain.
-        """
-
-        BINDINGS: t.ClassVar[list[tuple[str, str, str]]] = [
-            ("k", "scroll_up", "Up"),
-            ("j", "scroll_down", "Down"),
-            ("h", "focus_results", "Results"),
-            ("left", "focus_results", ""),
-            ("g", "scroll_home", "Top"),
-            ("G", "scroll_end", "Bottom"),
-            ("ctrl+d", "scroll_half_down", "½ Down"),
-            ("ctrl+u", "scroll_half_up", "½ Up"),
-            ("ctrl+f", "page_down", "Pg Down"),
-            ("ctrl+b", "page_up", "Pg Up"),
-        ]
-
-        def action_focus_results(self) -> None:
-            """Move focus leftward back to the results list (vim-style ``h``)."""
-            results = self.app.query_one("#results")
-            t.cast("t.Any", results).focus()
-
-        def action_scroll_up(self) -> None:
-            """Release focus to the filter input when already scrolled to the top.
-
-            Mirrors :meth:`SearchResultsList.action_cursor_up` — when the
-            widget has nothing left to give in that direction, hand focus off
-            to the neighbor instead of swallowing the keystroke. Catches both
-            ``k`` (our binding) and ``up`` (inherited from
-            ``ScrollableContainer``).
-            """
-            scroll_y = t.cast("float", getattr(self, "scroll_y", 0))
-            if scroll_y <= 0:
-                self.app.query_one("#filter").focus()
-            else:
-                super().action_scroll_up()
-
-        def action_scroll_half_down(self) -> None:
-            """Scroll down by half the visible viewport (vim ``Ctrl-D``)."""
-            half = max(1, self.size.height // 2)
-            self.scroll_relative(y=half, animate=True)
-
-        def action_scroll_half_up(self) -> None:
-            """Scroll up by half the visible viewport (vim ``Ctrl-U``)."""
-            half = max(1, self.size.height // 2)
-            self.scroll_relative(y=-half, animate=True)
-
-    class FilterInput(input_widget):  # ty: ignore[unsupported-base]
-        """``Input`` subclass with debounced filter + cursor-or-focus arrows.
-
-        The base ``Input.Changed`` event still fires immediately on each
-        keystroke so the cursor, selection, and validation feedback stay
-        instant. The expensive filter operation is deferred onto a
-        :class:`FilterRequested` message which is only posted after 150 ms of
-        typing inactivity, letting a worker run the actual filter without
-        blocking the input itself.
-
-        Up / down arrows are dual-purpose: when there's text in the input
-        they jump the cursor to the start / end; when the input is empty (or
-        the cursor is already at the relevant edge) they release focus to
-        the previous / next widget so the user can navigate into the results
-        table without reaching for Tab.
-        """
-
-        _DEBOUNCE_SECONDS: t.ClassVar[float] = 0.15
-
-        BINDINGS: t.ClassVar[list[tuple[str, str, str]]] = [
-            ("down", "release_down", "Results"),
-        ]
-
-        def __init__(
-            self,
-            *,
-            placeholder: str = "",
-            id: str | None = None,  # noqa: A002 -- forwarded to Textual's ``id`` kwarg
-        ) -> None:
-            super().__init__(placeholder=placeholder, id=id)
-            self._debounce_timer: object | None = None
-
-        def _watch_value(self, value: str) -> None:
-            """Post normal ``Input.Changed`` and arm a debounced ``FilterRequested``."""
-            super()._watch_value(value)
-            if self._debounce_timer is not None:
-                self._debounce_timer.stop()
-            self._debounce_timer = self.set_timer(
-                self._DEBOUNCE_SECONDS,
-                lambda: self.post_message(
-                    FilterRequested(payload=FilterRequestedPayload(text=value)),
-                ),
-            )
-
-        async def _on_key(self, event: object) -> None:
-            """Down/up route between cursor-jump and focus-release per spec."""
-            key = str(getattr(event, "key", ""))
-            cursor = int(getattr(self, "cursor_position", 0))
-            value = str(getattr(self, "value", ""))
-            stop = getattr(event, "stop", None)
-            if key == "down":
-                if value and cursor < len(value):
-                    self.cursor_position = len(value)
-                    if callable(stop):
-                        stop()
-                    return
-                # Empty or at end — release focus to next widget (DataTable)
-                if callable(stop):
-                    stop()
-                self.app.action_focus_next()
-                return
-            if key == "up":
-                if value and cursor > 0:
-                    self.cursor_position = 0
-                    if callable(stop):
-                        stop()
-                    return
-                # Empty or at start — no widget meaningfully above; eat the key
-                if callable(stop):
-                    stop()
-                return
-            await super()._on_key(event)
-
-        def action_release_down(self) -> None:
-            """Footer-binding fallback (``_on_key`` handles the real release)."""
-            self.app.action_focus_next()
-
-    class AgentGrepApp(app_type):  # ty: ignore[unsupported-base]
-        """Streaming read-only explorer for normalized search records."""
-
-        CSS: t.ClassVar[str] = """
-        Screen {
-            layout: vertical;
-        }
-        #chrome {
-            height: 1;
-            padding: 0 1;
-            layout: horizontal;
-        }
-        #chrome-spinner {
-            width: 2;
-            color: $accent;
-        }
-        #chrome-status {
-            width: 1fr;
-            color: ansi_bright_cyan;
-            text-style: bold;
-        }
-        #chrome-matches {
-            width: auto;
-            color: $warning;
-            text-style: bold;
-            padding: 0 1;
-        }
-        #chrome-elapsed {
-            width: auto;
-            color: #d8d8d8;
-        }
-        #body {
-            height: 1fr;
-        }
-        #detail-scroll {
-            overflow-y: auto;
-            overflow-x: hidden;
-            /* Reserve the border cell up-front (transparent) so toggling
-               focus only repaints the perimeter — no layout shift, no
-               extra padding when the border appears. Mirrors the
-               OptionList default CSS pattern. */
-            border: tall transparent;
-        }
-        #detail-scroll:focus {
-            border: tall $border;
-        }
-        #detail {
-            padding: 0 1 0 0;
-        }
-        #results {
-            height: 1fr;
-            overflow-x: hidden;
-        }
-        /* Keep Textual's OptionList default of "border appears only on focus"
-           (textual/widgets/_option_list.py:154 — ``border: tall $border``).
-           We only cancel the two parts of that focus rule that fight our
-           per-span semantic colors: the ``$foreground 5%`` background-tint
-           and the bright ``$block-cursor-*`` cursor-row recolor. */
-        #results:focus {
-            background-tint: $foreground 0%;
-        }
-        #results:focus > .option-list--option-highlighted {
-            color: $block-cursor-blurred-foreground;
-            background: $block-cursor-blurred-background;
-            text-style: $block-cursor-blurred-text-style;
-        }
-        """
-        # ``priority=True`` on the directional ``ctrl+hjkl`` bindings pushes
-        # them into Textual's priority dispatch lane so they win over any
-        # widget binding for the same key (e.g. ``Input``'s readline
-        # ``ctrl+k`` = kill-to-end-of-line). Trade-off accepted per user
-        # request: filter loses ``ctrl+k``; ``ctrl+u`` and ``ctrl+w`` are
-        # untouched and remain readline-compatible.
-        BINDINGS: t.ClassVar[list[t.Any]] = [
-            ("tab", "focus_next", "Switch focus"),
-            ("q", "quit", "Quit"),
-            ("escape", "stop_search", "Stop search"),
-            ("ctrl+c", "smart_quit", "Stop / Quit"),
-            binding_type("ctrl+h", "focus_pane_left", "← Pane", priority=True),
-            binding_type("ctrl+j", "focus_pane_down", "↓ Pane", priority=True),
-            binding_type("ctrl+k", "focus_pane_up", "↑ Pane", priority=True),
-            binding_type("ctrl+l", "focus_pane_right", "→ Pane", priority=True),
-            # Terminal-alias fallback: many terminals (and tmux without
-            # ``xterm-keys on``) send 0x08 for both Backspace and Ctrl-H, so
-            # Textual sees ``key="backspace"``, never ``ctrl+h``. NO priority
-            # here — the filter input's own backspace handler (delete prev
-            # char) must keep winning inside the input. In panes nothing
-            # else binds backspace, so this fires.
-            binding_type("backspace", "focus_pane_left", "", show=False),
-        ]
-        all_records: list[SearchRecord]
-        filtered_records: list[SearchRecord]
-
-        def __init__(
-            self,
-            *,
-            home: pathlib.Path,
-            query: SearchQuery,
-            control: SearchControl,
-        ) -> None:
-            super().__init__()
-            self.home = home
-            self.query = query
-            self.control = control
-            self.all_records = []
-            self.filtered_records = []
-            self._filter_text = ""
-            self._progress: StreamingSearchProgress | None = None
-            self._search_done = False
-            self._started_at: float | None = None
-            self._last_snapshot: ProgressSnapshot | None = None
-            self._results: SearchResultsList | None = None
-            self._detail: StaticLike | None = None
-            self._status_widget: StaticLike | None = None
-            self._matches_widget: StaticLike | None = None
-            self._spinner_widget: SpinnerWidget | None = None
-            self._elapsed_widget: ElapsedWidget | None = None
-            self._filter_input: FilterInput | None = None
-            self._resize_debounce_timer: object | None = None
-            self._current_detail_record: SearchRecord | None = None
-            self._detail_scroll: t.Any = None
-
-        def _get_start_time(self) -> float | None:
-            return self._started_at
-
-        def compose(self) -> cabc.Iterator[object]:
-            """Build the widget tree (header → chrome row → filter → body → footer)."""
-            yield header()
-            with horizontal(id="chrome"):
-                yield SpinnerWidget(id="chrome-spinner")
-                yield static_type("", id="chrome-status")
-                yield static_type("", id="chrome-matches")
-                yield ElapsedWidget(
-                    start_provider=self._get_start_time,
-                    id="chrome-elapsed",
-                )
-            yield FilterInput(placeholder="Filter by keyword", id="filter")
-            with horizontal(id="body"):
-                yield SearchResultsList(id="results")
-                with DetailScroll(id="detail-scroll"):
-                    yield static_type("", id="detail")
-            yield footer()
-
-        def on_mount(self) -> None:
-            """Cache widget references, start the worker, and seed the chrome."""
-            streaming = t.cast("StreamingAppLike", t.cast("object", self))
-            self._results = t.cast(
-                "SearchResultsList",
-                streaming.query_one("#results"),
-            )
-            self._detail = t.cast(
-                "StaticLike",
-                streaming.query_one("#detail", static_type),
-            )
-            self._detail_scroll = streaming.query_one("#detail-scroll")
-            self._status_widget = t.cast(
-                "StaticLike",
-                streaming.query_one("#chrome-status", static_type),
-            )
-            self._matches_widget = t.cast(
-                "StaticLike",
-                streaming.query_one("#chrome-matches", static_type),
-            )
-            self._spinner_widget = t.cast(
-                "SpinnerWidget",
-                streaming.query_one("#chrome-spinner"),
-            )
-            self._elapsed_widget = t.cast(
-                "ElapsedWidget",
-                streaming.query_one("#chrome-elapsed"),
-            )
-            self._filter_input = t.cast(
-                "FilterInput",
-                streaming.query_one("#filter"),
-            )
-            self._status_widget.update(
-                f"Searching {' '.join(self.query.terms) if self.query.terms else 'all records'}",
-            )
-            self._progress = StreamingSearchProgress(emit=make_emit(streaming))
-            streaming.run_worker(
-                self._run_search,
-                name="search",
-                thread=True,
-                exclusive=True,
-            )
-
-        def _run_search(self) -> None:
-            progress = self._progress
-            if progress is None:
-                return
-            try:
-                run_search_query(
-                    self.home,
-                    self.query,
-                    progress=progress,
-                    control=self.control,
-                )
-            except BaseException as exc:
-                streaming = t.cast("StreamingAppLike", t.cast("object", self))
-                streaming.call_from_thread(
-                    self._apply_finished,
-                    "error",
-                    len(self.all_records),
-                    0.0,
-                    str(exc),
-                )
-
-        def _apply_records_batch(
-            self,
-            records: cabc.Sequence[SearchRecord],
-            total: int,
-        ) -> None:
-            """Append a streaming records batch — invoked via ``call_from_thread``."""
-            self.all_records.extend(records)
-            matching = [r for r in records if self._matches_filter(r)]
-            if matching and self._results is not None:
-                self._results.append_records(matching)
-                self.filtered_records.extend(matching)
-            if self._matches_widget is not None:
-                self._matches_widget.update(format_match_count(total))
-
-        def _apply_progress(self, snapshot: ProgressSnapshot) -> None:
-            """Update the status widget — invoked via ``call_from_thread``."""
-            self._last_snapshot = snapshot
-            if self._started_at is None:
-                self._started_at = time.monotonic()
-            label = snapshot.query_label
-            if snapshot.current is not None and snapshot.total is not None:
-                status = (
-                    f"Searching {label} | "
-                    f"{snapshot.phase} {snapshot.current}/{snapshot.total} sources"
-                )
-            elif snapshot.detail:
-                status = f"Searching {label} | {snapshot.phase} {snapshot.detail}"
-            else:
-                status = f"Searching {label} | {snapshot.phase}"
-            if self._status_widget is not None:
-                self._status_widget.update(status)
-
-        def _apply_finished(
-            self,
-            outcome: str,
-            total: int,
-            elapsed: float,
-            error_message: str | None,
-        ) -> None:
-            """Freeze chrome widgets — invoked via ``call_from_thread``."""
-            self._search_done = True
-            glyphs = {"complete": "✓", "interrupted": "■", "error": "✗"}
-            if self._spinner_widget is not None:
-                self._spinner_widget.freeze(glyphs.get(outcome, "·"))
-            if self._elapsed_widget is not None:
-                self._elapsed_widget.freeze(elapsed)
-            if self._status_widget is not None:
-                if outcome == "error":
-                    self._status_widget.update(f"Search failed: {error_message}")
-                elif outcome == "interrupted":
-                    self._status_widget.update(
-                        f"Stopped at {format_match_count(total)} "
-                        f"across {self._sources_label()} sources",
-                    )
-                else:
-                    self._status_widget.update(
-                        f"Search complete: {format_match_count(total)}",
-                    )
-
-        def _sources_label(self) -> str:
-            snap = self._last_snapshot
-            if snap is None or snap.current is None or snap.total is None:
-                return "?"
-            return f"{snap.current}/{snap.total}"
-
-        def on_filter_requested(self, message: FilterRequested) -> None:
-            """Spawn a worker to recompute the filter; exclusive cancels any in-flight one."""
-            text = message.payload.text
-            self._filter_text = text.strip().casefold()
-            streaming = t.cast("StreamingAppLike", t.cast("object", self))
-            streaming.run_worker(
-                lambda captured_text=text: self._run_filter_worker(captured_text),
-                name="filter",
-                group="filter",
-                thread=True,
-                exclusive=True,
-            )
-
-        def _run_filter_worker(self, text: str) -> None:
-            """Compute the filtered list on a background thread; post a ``FilterCompleted``.
-
-            Runs in a worker thread; safe to scan ``self.all_records`` since
-            list reads under CPython are GIL-protected. The main thread guards
-            against stale results by comparing the captured text against the
-            current input value in :meth:`on_filter_completed`.
-            """
-            matching = compute_filter_matches(self.all_records, text)
-            streaming = t.cast("StreamingAppLike", t.cast("object", self))
-            streaming.post_message(
-                FilterCompleted(
-                    payload=FilterCompletedPayload(text=text, matching=matching),
-                ),
-            )
-
-        def on_filter_completed(self, message: FilterCompleted) -> None:
-            """Apply the worker's filter result if it matches the current input."""
-            payload = message.payload
-            if self._filter_input is not None and payload.text != self._filter_input.value:
-                return
-            self.filtered_records = list(payload.matching)
-            if self._results is not None:
-                self._results.set_records(payload.matching)
-            if self._detail is not None:
-                if self.filtered_records:
-                    self.show_detail(self.filtered_records[0])
-                else:
-                    self._detail.update(
-                        "No results." if self._search_done else "No matches yet.",
-                    )
-
-        def on_option_list_option_highlighted(self, event: object) -> None:
-            """Update the detail pane when the OptionList cursor moves."""
-            option_index = getattr(event, "option_index", None)
-            if option_index is None:
-                return
-            row_index = int(option_index)
-            if 0 <= row_index < len(self.filtered_records):
-                self.show_detail(self.filtered_records[row_index])
-
-        # Constant — keep in sync with the label list in ``show_detail`` below.
-        # 7 label rows (Agent / Kind / Store / Adapter / Timestamp / Model / Path)
-        # plus 1 blank separator = 8 lines of header before the body starts.
-        _DETAIL_HEADER_LINES: t.ClassVar[int] = 8
-
-        def show_detail(self, record: SearchRecord) -> None:
-            """Render ``record`` with colored labels + format-aware body + scroll-to-match.
-
-            The body is truncated to :data:`DETAIL_BODY_MAX_LINES` lines (the
-            ``VerticalScroll`` wrapper handles letting the user scroll within
-            the visible window). The body renderable is chosen by
-            :func:`detect_content_format`:
-
-            * JSON bodies are pretty-printed and rendered via
-              :class:`rich.syntax.Syntax` with ``ansi_dark`` theming.
-            * Markdown bodies render via :class:`rich.markdown.Markdown`.
-            * Everything else keeps the existing ``Text`` + ``highlight_regex``
-              flow so search-term matches stay bold-yellow.
-
-            If any current query term occurs in the body the pane is scrolled
-            so that line lands vertically centered in the viewport (line index
-            is recomputed against the formatted body for JSON so the jump is
-            still accurate).
-            """
-            if self._detail is None:
-                return
-            self._current_detail_record = record
-            width = max(20, self._detail.size.width or 80)
-            agent_color = SearchResultsList._AGENT_COLORS.get(record.agent or "", "")
-            kind_color = SearchResultsList._KIND_COLORS.get(record.kind or "", "")
-            header = rich_text.Text(no_wrap=False)
-            for label, value, value_style in (
-                ("Agent:", record.agent or "", agent_color),
-                ("Kind:", record.kind or "", kind_color),
-                ("Store:", record.store or "", "dim"),
-                ("Adapter:", record.adapter_id or "", "dim"),
-                ("Timestamp:", record.timestamp or "unknown", "dim"),
-                ("Model:", record.model or "unknown", "magenta"),
-                (
-                    "Path:",
-                    format_compact_path(record.path, max_width=width - 8),
-                    "grey50",
-                ),
-            ):
-                header.append(f"{label} ", style="bold")
-                header.append(f"{value}\n", style=value_style)
-            header.append("\n")
-            body_truncated = truncate_lines(record.text, DETAIL_BODY_MAX_LINES)
-            query_terms = list(self.query.terms)
-            body_renderable, body_for_scroll = self._build_detail_body(
-                body_truncated,
-                query_terms,
-            )
-            self._detail.update(
-                _RichGroup(header, t.cast("t.Any", body_renderable)),
-            )
-            self._scroll_detail_to_first_match(body_for_scroll, query_terms)
-
-        def _build_detail_body(
-            self,
-            body_text: str,
-            query_terms: cabc.Sequence[str],
-        ) -> tuple[object, str]:
-            """Return ``(renderable, body_text_for_match_search)`` for ``body_text``.
-
-            The second tuple element is whatever text the caller's
-            ``find_first_match_line`` should scan. For JSON we pretty-print
-            and return the formatted text so the line index lines up with
-            what the user actually sees rendered.
-            """
-            fmt = detect_content_format(body_text)
-            if fmt == "json":
-                try:
-                    formatted = json.dumps(
-                        json.loads(body_text),
-                        indent=2,
-                        ensure_ascii=False,
-                    )
-                except json.JSONDecodeError, ValueError:
-                    formatted = body_text
-                match_line = find_first_match_line(
-                    formatted,
-                    query_terms,
-                    case_sensitive=self.query.case_sensitive,
-                    regex=self.query.regex,
-                )
-                highlight_lines = {match_line + 1} if match_line is not None else None
-                syntax = _RichSyntax(
-                    formatted,
-                    "json",
-                    theme="ansi_dark",
-                    word_wrap=True,
-                    highlight_lines=highlight_lines,
-                )
-                return syntax, formatted
-            if fmt == "markdown":
-                return _RichMarkdown(body_text, code_theme="ansi_dark"), body_text
-            return (
-                highlight_matches(
-                    body_text,
-                    query_terms,
-                    case_sensitive=self.query.case_sensitive,
-                    regex=self.query.regex,
-                ),
-                body_text,
-            )
-
-        def _scroll_detail_to_first_match(
-            self,
-            body_text: str,
-            query_terms: cabc.Sequence[str],
-        ) -> None:
-            """Jump ``_detail_scroll`` so the first match lands at the viewport center."""
-            if self._detail_scroll is None:
-                return
-            scroll: t.Any = self._detail_scroll
-            match_line = find_first_match_line(
-                body_text,
-                query_terms,
-                case_sensitive=self.query.case_sensitive,
-                regex=self.query.regex,
-            )
-            if match_line is None:
-                scroll.scroll_to(y=0, animate=False)
-                return
-            target_line = self._DETAIL_HEADER_LINES + match_line
-            viewport_h = int(getattr(scroll.size, "height", 0) or 0)
-            center_offset = max(0, target_line - viewport_h // 2)
-            scroll.scroll_to(y=center_offset, animate=False)
-
-        def on_resize(self, event: object) -> None:
-            """Debounce rapid resize bursts (e.g. tiling-WM live drag)."""
-            del event
-            if self._resize_debounce_timer is not None:
-                timer = t.cast("t.Any", self._resize_debounce_timer)
-                timer.stop()
-            self._resize_debounce_timer = self.set_timer(0.05, self._after_resize)
-
-        def _after_resize(self) -> None:
-            """Refresh chrome; the detail pane scroll wrapper handles its own reflow."""
-            if self._matches_widget is not None:
-                self._matches_widget.refresh()
-
-        def action_stop_search(self) -> None:
-            """``Esc``: cooperative early-exit of the worker (no-op when finished)."""
-            self._cancel_active_action()
-
-        def action_smart_quit(self) -> None:
-            """``Ctrl-C``: cancel the topmost in-flight action; quit if there are none."""
-            if self._has_active_actions():
-                self._cancel_active_action()
-            else:
-                self.exit()
-
-        # Directional pane focus (tmux-style ``ctrl+hjkl``). Edge moves (e.g.
-        # ``ctrl+j`` from the results pane — nothing below it) are no-ops.
-        # The three focusable regions are #filter (top), #results (bottom-
-        # left), and #detail-scroll (bottom-right).
-
-        def _focus_widget_by_id(self, widget_id: str) -> None:
-            try:
-                target = self.query_one(f"#{widget_id}")
-            except Exception:
-                return
-            t.cast("t.Any", target).focus()
-
-        def action_focus_pane_left(self) -> None:
-            """``Ctrl-H``: focus the pane to the left of the current one."""
-            if self.focused is not None and self.focused.id == "detail-scroll":
-                self._focus_widget_by_id("results")
-
-        def action_focus_pane_right(self) -> None:
-            """``Ctrl-L``: focus the pane to the right of the current one."""
-            if self.focused is not None and self.focused.id in ("results", "filter"):
-                self._focus_widget_by_id("detail-scroll")
-
-        def action_focus_pane_up(self) -> None:
-            """``Ctrl-K``: focus the pane above the current one (filter row)."""
-            if self.focused is not None and self.focused.id in (
-                "results",
-                "detail-scroll",
-            ):
-                self._focus_widget_by_id("filter")
-
-        def action_focus_pane_down(self) -> None:
-            """``Ctrl-J``: focus the pane below the current one (results)."""
-            if self.focused is not None and self.focused.id == "filter":
-                self._focus_widget_by_id("results")
-
-        def _has_active_actions(self) -> bool:
-            """Return True if any cancellable in-flight action exists.
-
-            Extension point: when a second cancellable action lands (async
-            detail-fetch, debounced refilter, etc.), add its state here.
-            """
-            return not self._search_done
-
-        def _cancel_active_action(self) -> None:
-            """Cancel the topmost in-flight cancellable action.
-
-            Extension point: extend with future cancellable actions in
-            most-recently-started order so ``Ctrl-C`` peels them off one at a
-            time before exiting.
-            """
-            if not self._search_done:
-                self.control.request_answer_now()
-
-        def _matches_filter(self, record: SearchRecord) -> bool:
-            if not self._filter_text:
-                return True
-            return self._filter_text in build_search_haystack(record).casefold()
-
-    return AgentGrepApp(home=home, query=query, control=control)
+    return _build(home, query, control=control)
 
 
 def run_search_command(args: SearchArgs) -> int:
@@ -5050,6 +4186,32 @@ def run_find_command(args: FindArgs) -> int:
     return 1
 
 
+def run_ui_command(args: UIArgs) -> int:
+    """Execute ``agentgrep ui``."""
+    initial_terms = tuple(args.initial_query.split()) if args.initial_query else ()
+    query = SearchQuery(
+        terms=initial_terms,
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=AGENT_CHOICES,
+        limit=None,
+    )
+    run_ui(pathlib.Path.home(), query, control=SearchControl())
+    return 0
+
+
+def _is_interactive_terminal() -> bool:
+    """Return ``True`` when both stdin and stdout are TTYs.
+
+    Bare ``agentgrep`` defaults to the TUI, but pipelines (``agentgrep |
+    cat``), redirected output, and CI subprocesses have no TTY — in those
+    cases the caller almost certainly wants ``--help`` instead.
+    """
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
 def _exit_on_sigint() -> t.NoReturn:
     """Terminate with Ctrl-C signal semantics where the platform supports them."""
     if sys.platform == "win32":
@@ -5068,12 +4230,20 @@ def _write_interrupt_notice() -> None:
 
 def main(argv: cabc.Sequence[str] | None = None) -> int:
     """Run the CLI."""
+    raw = list(sys.argv[1:]) if argv is None else list(argv)
+    if not raw and not _is_interactive_terminal():
+        color_mode = normalize_color_mode(argv)
+        with configured_color_environment(color_mode):
+            create_parser(color_mode).parser.print_help()
+        return 0
     try:
         parsed = parse_args(argv)
         if parsed is None:
             return 0
         if isinstance(parsed, SearchArgs):
             return run_search_command(parsed)
+        if isinstance(parsed, UIArgs):
+            return run_ui_command(parsed)
         return run_find_command(parsed)
     except KeyboardInterrupt:
         _write_interrupt_notice()
