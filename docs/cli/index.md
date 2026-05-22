@@ -9,8 +9,10 @@ and history archives from a terminal. It wraps the same read-only
 discovery and parsing layer the MCP server exposes — search, find
 stores, filter by agent — and lets you pipe everything through
 `--json` or `--ndjson` so any script or non-MCP agent can consume the
-results. Bare `agentgrep` (no subcommand) lands in an interactive
-Textual explorer for browsing without piping.
+results. Bare `agentgrep` (no subcommand) prints a colorized
+directory of choices listing every subcommand with example
+invocations — the same `tmuxp` / `vcspull` pattern. To open the
+Textual explorer directly, use `agentgrep ui`.
 
 ```{cli-install}
 ```
@@ -80,17 +82,16 @@ surface, but exposed as MCP tools with typed schemas.
 
 ## Examples
 
-`search` is the default subcommand, so `agentgrep bliss` is equivalent
-to `agentgrep search bliss`:
+Search prompts with sensible defaults:
 
 ```console
-$ agentgrep bliss
+$ agentgrep search bliss
 ```
 
 Combine multiple terms with an agent filter:
 
 ```console
-$ agentgrep serene bliss --agent codex
+$ agentgrep search serene bliss --agent codex
 ```
 
 Stream history matches as NDJSON:
@@ -103,6 +104,12 @@ List stores for one agent as JSON:
 
 ```console
 $ agentgrep find cursor --json
+```
+
+Open the directory of choices:
+
+```console
+$ agentgrep
 ```
 
 ## Command: `agentgrep`
