@@ -21,6 +21,7 @@ and ``agentgrep.run_search_command``.
 
 from __future__ import annotations
 
+import collections.abc as cabc
 import fnmatch
 import json
 import pathlib
@@ -46,8 +47,11 @@ __all__ = [
     "build_envelope",
     "build_grep_query",
     "filter_find_records",
+    "format_grep_heading",
+    "format_grep_line",
     "format_grep_record",
     "fuzzy_filter_lines",
+    "iter_match_lines",
     "maybe_build_pydantic",
     "print_find_results",
     "print_grep_results",
@@ -396,6 +400,125 @@ def run_ui_command(args: UIArgs) -> int:
     )
     agentgrep.run_ui(pathlib.Path.home(), query, control=agentgrep.SearchControl())
     return 0
+
+
+def _compile_grep_patterns(args: GrepArgs) -> list[re.Pattern[str]]:
+    """Compile :class:`GrepArgs` patterns into regex objects honoring mode/case.
+
+    Mirrors the engine's pattern-mode resolution so the line-aware renderer
+    finds the same matches the search engine surfaced at the record level.
+    Malformed patterns are silently skipped (the engine handles its own
+    validation; this layer just refuses to crash on bad input).
+    """
+    case_sensitive = args.case_mode == "respect" or (
+        args.case_mode == "smart" and any(any(ch.isupper() for ch in p) for p in args.patterns)
+    )
+    flags = 0 if case_sensitive else re.IGNORECASE
+    compiled: list[re.Pattern[str]] = []
+    for pattern in args.patterns:
+        if args.pattern_mode == "fixed":
+            source = re.escape(pattern)
+        elif args.pattern_mode == "word":
+            source = rf"\b{pattern}\b"
+        else:
+            source = pattern
+        try:
+            compiled.append(re.compile(source, flags))
+        except re.error:
+            continue
+    return compiled
+
+
+def _merge_overlapping_spans(
+    spans: list[tuple[int, int]],
+) -> list[tuple[int, int]]:
+    """Collapse overlapping or adjacent spans so highlight doesn't double-color."""
+    if not spans:
+        return []
+    spans = sorted(spans)
+    merged: list[tuple[int, int]] = [spans[0]]
+    for start, end in spans[1:]:
+        last_start, last_end = merged[-1]
+        if start <= last_end:
+            merged[-1] = (last_start, max(last_end, end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def iter_match_lines(
+    record_text: str,
+    args: GrepArgs,
+) -> cabc.Iterator[tuple[int, str, list[tuple[int, int]]]]:
+    """Yield ``(line_number, line_text, match_spans)`` for each matching line.
+
+    Lines are 1-indexed from the start of ``record_text``, matching rg's
+    convention. ``match_spans`` are byte (string) offsets within the line,
+    sorted and merged so multiple-pattern overlap doesn't produce nested
+    ANSI escape sequences.
+
+    Returns nothing when no patterns compile or no lines match.
+    """
+    patterns = _compile_grep_patterns(args)
+    if not patterns:
+        return
+    for line_number, line in enumerate(record_text.split("\n"), start=1):
+        spans: list[tuple[int, int]] = []
+        for pattern in patterns:
+            for m in pattern.finditer(line):
+                if m.start() == m.end():
+                    continue  # skip zero-width matches (e.g. `\b` alone)
+                spans.append((m.start(), m.end()))
+        if spans:
+            yield line_number, line, _merge_overlapping_spans(spans)
+
+
+def format_grep_line(
+    line_number: int,
+    line_text: str,
+    match_spans: list[tuple[int, int]],
+    *,
+    colors: agentgrep.AnsiColors,
+) -> str:
+    """Format one matching line as ``line:col:text`` with ANSI highlights.
+
+    The line number is wrapped in the green LINE_NUMBER color and the
+    matched spans in red+bold MATCH. The column is the 1-indexed byte
+    offset of the first match within the line. Callers prepend the path
+    (`path:`) in flat-mode output; heading-mode callers emit
+    `format_grep_heading` once per record and rely on this helper's
+    `line:col:text` body alone.
+    """
+    column = (match_spans[0][0] + 1) if match_spans else 1
+    body_parts: list[str] = []
+    cursor = 0
+    for start, end in match_spans:
+        body_parts.append(line_text[cursor:start])
+        body_parts.append(colors.match(line_text[start:end]))
+        cursor = end
+    body_parts.append(line_text[cursor:])
+    body = "".join(body_parts)
+    return f"{colors.line_number(str(line_number))}:{column}:{body}"
+
+
+def format_grep_heading(
+    record: agentgrep.SearchRecord,
+    *,
+    colors: agentgrep.AnsiColors,
+) -> str:
+    """Format the per-record heading line for heading-mode grep output.
+
+    Shape: ``agent  [timestamp]  path``, all in muted gray except the
+    path which gets the rg-shaped magenta. Empty timestamps are
+    suppressed so synthetic records without one don't carry a stray
+    double-space.
+    """
+    path = agentgrep.format_display_path(record.path)
+    pieces = [colors.muted(record.agent)]
+    if record.timestamp:
+        pieces.append(colors.muted(record.timestamp))
+    pieces.append(colors.path(path))
+    return "  ".join(pieces)
 
 
 def build_grep_query(args: GrepArgs) -> agentgrep.SearchQuery:

@@ -691,6 +691,9 @@ class AnsiColors:
     INFO: t.ClassVar[str] = "\x1b[36m"
     HEADING: t.ClassVar[str] = "\x1b[1;36m"
     HIGHLIGHT: t.ClassVar[str] = "\x1b[35m"
+    MATCH: t.ClassVar[str] = "\x1b[1;31m"
+    LINE_NUMBER: t.ClassVar[str] = "\x1b[32m"
+    PATH: t.ClassVar[str] = "\x1b[35m"
     MUTED: t.ClassVar[str] = "\x1b[34m"
     WHITE: t.ClassVar[str] = "\x1b[37m"
     RESET: t.ClassVar[str] = "\x1b[0m"
@@ -729,6 +732,18 @@ class AnsiColors:
     def highlight(self, text: str) -> str:
         """Format text as highlighted."""
         return self.colorize(text, self.HIGHLIGHT)
+
+    def match(self, text: str) -> str:
+        """Format text as a matched span (rg-style red+bold)."""
+        return self.colorize(text, self.MATCH)
+
+    def line_number(self, text: str) -> str:
+        """Format text as a line-number prefix (rg-style green)."""
+        return self.colorize(text, self.LINE_NUMBER)
+
+    def path(self, text: str) -> str:
+        """Format text as a path prefix (rg-style magenta)."""
+        return self.colorize(text, self.PATH)
 
     def muted(self, text: str) -> str:
         """Format text as muted."""
