@@ -21,8 +21,10 @@ and ``agentgrep.run_search_command``.
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import pathlib
+import re
 import sys
 import typing as t
 
@@ -42,6 +44,7 @@ from agentgrep.cli.parser import FindArgs, GrepArgs, SearchArgs, UIArgs
 __all__ = [
     "build_envelope",
     "build_grep_query",
+    "filter_find_records",
     "format_grep_record",
     "maybe_build_pydantic",
     "print_find_results",
@@ -185,12 +188,21 @@ def print_search_results(records: list[SearchRecord], args: SearchArgs) -> None:
 
 
 def print_find_results(records: list[FindRecord], args: FindArgs) -> None:
-    """Emit find results in the requested format."""
+    """Emit find results in the requested format.
+
+    ``--list-details`` switches to a one-line-per-record long format with
+    agent / kind / store / adapter_id / path columns. ``--print0``
+    separates records with NUL instead of newline (for ``xargs -0``).
+    ``--json`` / ``--ndjson`` are unaffected by these flags.
+    """
     _, serialize_find, serialize_envelope = maybe_build_pydantic()
     query_data: dict[str, object] = {
         "pattern": args.pattern,
         "agents": list(args.agents),
         "limit": args.limit,
+        "pattern_mode": args.pattern_mode,
+        "type_filter": args.type_filter,
+        "extensions": list(args.extensions),
     }
     if args.output_mode == "json":
         payload = serialize_envelope(
@@ -204,10 +216,29 @@ def print_find_results(records: list[FindRecord], args: FindArgs) -> None:
         for record in records:
             print(json.dumps(serialize_find(record), ensure_ascii=False))
         return
+    if args.print0:
+        for record in records:
+            line = _format_find_text_line(record, args)
+            sys.stdout.write(line)
+            sys.stdout.write("\0")
+        sys.stdout.flush()
+        return
+    if args.list_details:
+        for record in records:
+            print(_format_find_text_line(record, args))
+        return
     for record in records:
         print(f"{record.agent} {record.path_kind} {record.store}")
         print(agentgrep.format_display_path(record.path))
         print()
+
+
+def _format_find_text_line(record: FindRecord, args: FindArgs) -> str:
+    """Compose one line for ``--list-details`` / ``--print0`` output."""
+    path = agentgrep.format_display_path(record.path)
+    if args.list_details:
+        return f"{record.agent}\t{record.path_kind}\t{record.store}\t{record.adapter_id}\t{path}"
+    return path
 
 
 def run_search_command(args: SearchArgs) -> int:
@@ -243,14 +274,85 @@ def run_search_command(args: SearchArgs) -> int:
     return 1
 
 
+def _resolve_find_case_sensitive(pattern: str | None, mode: agentgrep.CaseMode) -> bool:
+    """Apply fd's smart-case rule to a find pattern."""
+    if mode == "respect":
+        return True
+    if mode == "ignore":
+        return False
+    return pattern is not None and any(ch.isupper() for ch in pattern)
+
+
+def _pattern_matches(record: FindRecord, args: FindArgs) -> bool:
+    """Decide whether a find record satisfies the requested pattern mode."""
+    if args.pattern is None:
+        return True
+    case_sensitive = _resolve_find_case_sensitive(args.pattern, args.case_mode)
+    haystack = " ".join(
+        (record.agent, record.store, record.adapter_id, str(record.path), record.path_kind),
+    )
+    if not case_sensitive:
+        haystack = haystack.casefold()
+        needle = args.pattern.casefold()
+    else:
+        needle = args.pattern
+    if args.pattern_mode == "exact":
+        adapter_id = record.adapter_id if case_sensitive else record.adapter_id.casefold()
+        return adapter_id == needle
+    if args.pattern_mode == "fixed":
+        return needle in haystack
+    if args.pattern_mode == "glob":
+        return fnmatch.fnmatchcase(haystack, needle if case_sensitive else needle.casefold())
+    flags = 0 if case_sensitive else re.IGNORECASE
+    try:
+        return re.search(args.pattern, haystack, flags) is not None
+    except re.error:
+        return False
+
+
+def _type_matches(record: FindRecord, args: FindArgs) -> bool:
+    """Apply the ``-t/--type`` filter against the record's source kind."""
+    if args.type_filter == "all":
+        return True
+    source_kind = t.cast("str | None", record.metadata.get("source_kind"))
+    if source_kind is None:
+        return False
+    if args.type_filter == "sessions":
+        return "session" in source_kind
+    return args.type_filter in source_kind
+
+
+def _extensions_match(record: FindRecord, args: FindArgs) -> bool:
+    """Apply the ``-e/--extension`` filter."""
+    if not args.extensions:
+        return True
+    suffix = pathlib.Path(str(record.path)).suffix.lstrip(".")
+    return suffix.lower() in {ext.lstrip(".").lower() for ext in args.extensions}
+
+
+def filter_find_records(records: list[FindRecord], args: FindArgs) -> list[FindRecord]:
+    """Apply fd-shaped CLI filters (pattern/type/extension) to find results."""
+    filtered = [
+        record
+        for record in records
+        if _pattern_matches(record, args)
+        and _type_matches(record, args)
+        and _extensions_match(record, args)
+    ]
+    if args.limit is not None:
+        filtered = filtered[: args.limit]
+    return filtered
+
+
 def run_find_command(args: FindArgs) -> int:
     """Execute ``agentgrep find``."""
-    records = agentgrep.run_find_query(
+    raw_records = agentgrep.run_find_query(
         pathlib.Path.home(),
         args.agents,
-        pattern=args.pattern,
-        limit=args.limit,
+        pattern=None,
+        limit=None,
     )
+    records = filter_find_records(raw_records, args)
     print_find_results(records, args)
     if records:
         return 0

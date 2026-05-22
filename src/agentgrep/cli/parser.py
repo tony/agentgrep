@@ -37,11 +37,15 @@ from agentgrep import (
 
 CaseMode = t.Literal["smart", "ignore", "respect"]
 PatternMode = t.Literal["regex", "fixed", "word"]
+FindPatternMode = t.Literal["regex", "glob", "fixed", "exact"]
+FindTypeFilter = t.Literal["prompts", "history", "sessions", "all"]
 
 __all__ = [
     "SUBCOMMANDS",
     "CaseMode",
     "FindArgs",
+    "FindPatternMode",
+    "FindTypeFilter",
     "GrepArgs",
     "ParserBundle",
     "PatternMode",
@@ -81,13 +85,27 @@ class SearchArgs:
 
 @dataclasses.dataclass(slots=True)
 class FindArgs:
-    """Typed arguments for ``agentgrep find``."""
+    """Typed arguments for ``agentgrep find``.
+
+    fd-shaped: ``pattern_mode`` defaults to regex like fd does. ``-F``
+    selects literal-substring (which was the previous default before the
+    fd alignment landed); ``-g`` selects glob; ``--exact`` selects exact
+    adapter_id matching. ``type_filter`` constrains by record kind;
+    ``extensions`` restricts to paths with matching suffixes.
+    """
 
     pattern: str | None
     agents: tuple[AgentName, ...]
     limit: int | None
     output_mode: OutputMode
     color_mode: ColorMode
+    pattern_mode: FindPatternMode = "regex"
+    type_filter: FindTypeFilter = "all"
+    extensions: tuple[str, ...] = ()
+    case_mode: CaseMode = "smart"
+    list_details: bool = False
+    print0: bool = False
+    absolute_path: bool = False
 
 
 @dataclasses.dataclass(slots=True)
@@ -437,7 +455,78 @@ def create_parser(
     _ = find_parser.add_argument(
         "pattern",
         nargs="?",
-        help="Optional substring to match against discovered paths",
+        help="Optional pattern matched against agent/store/adapter/path",
+    )
+    find_pattern_group = find_parser.add_mutually_exclusive_group()
+    _ = find_pattern_group.add_argument(
+        "-g",
+        "--glob",
+        dest="find_glob",
+        action="store_true",
+        help="Treat PATTERN as a shell glob (fnmatch)",
+    )
+    _ = find_pattern_group.add_argument(
+        "-F",
+        "--fixed-strings",
+        dest="find_fixed",
+        action="store_true",
+        help="Treat PATTERN as a literal substring (legacy default)",
+    )
+    _ = find_pattern_group.add_argument(
+        "--exact",
+        dest="find_exact",
+        action="store_true",
+        help="Require PATTERN to equal the adapter_id exactly",
+    )
+    find_case_group = find_parser.add_mutually_exclusive_group()
+    _ = find_case_group.add_argument(
+        "-i",
+        "--ignore-case",
+        dest="find_ignore_case",
+        action="store_true",
+        help="Force case-insensitive matching (default smart-case)",
+    )
+    _ = find_case_group.add_argument(
+        "-s",
+        "--case-sensitive",
+        dest="find_case_sensitive",
+        action="store_true",
+        help="Force case-sensitive matching",
+    )
+    _ = find_parser.add_argument(
+        "-t",
+        "--type",
+        dest="find_type",
+        choices=["prompts", "history", "sessions", "all"],
+        default="all",
+        help="Restrict to a record kind (default: all)",
+    )
+    _ = find_parser.add_argument(
+        "-e",
+        "--extension",
+        dest="find_extensions",
+        action="append",
+        default=[],
+        metavar="EXT",
+        help="Filter by extension (repeatable, e.g. -e jsonl -e db)",
+    )
+    _ = find_parser.add_argument(
+        "-l",
+        "--list-details",
+        action="store_true",
+        help="Long format: agent, kind, store, adapter_id, path",
+    )
+    _ = find_parser.add_argument(
+        "-0",
+        "--print0",
+        action="store_true",
+        help="Separate output records with NUL instead of newline",
+    )
+    _ = find_parser.add_argument(
+        "-a",
+        "--absolute-path",
+        action="store_true",
+        help="Print absolute paths (already the default; flag is symbolic)",
     )
     _ = find_parser.add_argument(
         "--limit",
@@ -541,12 +630,33 @@ def parse_args(
         with configured_color_environment(color_mode):
             bundle.find_parser.print_help()
         return None
+    if t.cast("bool", namespace.find_glob):
+        pattern_mode: FindPatternMode = "glob"
+    elif t.cast("bool", namespace.find_fixed):
+        pattern_mode = "fixed"
+    elif t.cast("bool", namespace.find_exact):
+        pattern_mode = "exact"
+    else:
+        pattern_mode = "regex"
+    if t.cast("bool", namespace.find_ignore_case):
+        find_case_mode: CaseMode = "ignore"
+    elif t.cast("bool", namespace.find_case_sensitive):
+        find_case_mode = "respect"
+    else:
+        find_case_mode = "smart"
     return FindArgs(
         pattern=pattern,
         agents=agents,
         limit=limit,
         output_mode=output_mode,
         color_mode=color_mode,
+        pattern_mode=pattern_mode,
+        type_filter=t.cast("FindTypeFilter", namespace.find_type),
+        extensions=tuple(t.cast("list[str]", namespace.find_extensions)),
+        case_mode=find_case_mode,
+        list_details=t.cast("bool", namespace.list_details),
+        print0=t.cast("bool", namespace.print0),
+        absolute_path=t.cast("bool", namespace.absolute_path),
     )
 
 
