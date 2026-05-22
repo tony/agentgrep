@@ -7,6 +7,15 @@ records across every configured agent backend (Codex, Claude Code,
 Cursor, Gemini). Search is read-only — agentgrep never mutates the
 source stores.
 
+```{note}
+Versions before 0.1.0a5 made `agentgrep <terms>` an implicit
+shorthand for `agentgrep search <terms>`. That shortcut is gone.
+Spell `search` out so the available subcommands stay discoverable
+through `agentgrep --help`. Users who reach for raw substring or
+regex matching may prefer `agentgrep grep` (rg-shaped) over
+`agentgrep search` (sensible-defaults).
+```
+
 ## Examples
 
 A literal single-term search:
