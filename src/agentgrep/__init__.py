@@ -3744,16 +3744,28 @@ def run_ui(
     query: SearchQuery,
     *,
     control: SearchControl,
+    initial_search_text: str | None = None,
 ) -> None:
     """Launch the streaming Textual explorer for ``query``.
 
     Thin wrapper that imports the real implementation from
     :mod:`agentgrep.ui.app` lazily so a bare ``import agentgrep`` never
     pulls in Textual.
+
+    ``initial_search_text`` populates the TUI search box on open so a
+    launch like ``agentgrep search --ui agent:codex bliss`` shows the
+    full query string (not just the text terms). ``None`` falls back
+    to the space-joined ``query.terms`` for compatibility with the
+    pre-query-language callers.
     """
     from agentgrep.ui.app import run_ui as _run_ui
 
-    _run_ui(home, query, control=control)
+    _run_ui(
+        home,
+        query,
+        control=control,
+        initial_search_text=initial_search_text,
+    )
 
 
 def build_streaming_ui_app(
@@ -3761,6 +3773,7 @@ def build_streaming_ui_app(
     query: SearchQuery,
     *,
     control: SearchControl,
+    initial_search_text: str | None = None,
 ) -> object:
     """Construct the streaming Textual app without entering its run loop.
 
@@ -3770,7 +3783,12 @@ def build_streaming_ui_app(
     """
     from agentgrep.ui.app import build_streaming_ui_app as _build
 
-    return _build(home, query, control=control)
+    return _build(
+        home,
+        query,
+        control=control,
+        initial_search_text=initial_search_text,
+    )
 
 
 def _exit_on_sigint() -> t.NoReturn:

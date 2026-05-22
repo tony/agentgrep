@@ -43,7 +43,9 @@ from agentgrep.query.ast import (
 )
 from agentgrep.query.compile import (
     CompiledQuery,
+    QueryBuildResult,
     QueryCompileError,
+    build_query_from_input,
     compile_query,
     fields_in_ast,
 )
@@ -68,12 +70,14 @@ __all__ = [
     "FieldSpec",
     "NotNode",
     "OrNode",
+    "QueryBuildResult",
     "QueryCompileError",
     "QueryNode",
     "QueryParseError",
     "TermNode",
     "Token",
     "TokenKind",
+    "build_query_from_input",
     "compile_query",
     "default_registry",
     "fields_in_ast",

@@ -99,6 +99,7 @@ class SearchArgs:
     color_mode: ColorMode
     progress_mode: ProgressMode
     compiled: CompiledQuery | None = None
+    raw_query: str = ""
 
 
 @dataclasses.dataclass(slots=True)
@@ -127,6 +128,7 @@ class FindArgs:
     full_path: bool = False
     progress_mode: ProgressMode = "auto"
     compiled: CompiledQuery | None = None
+    raw_query: str = ""
 
 
 @dataclasses.dataclass(slots=True)
@@ -196,6 +198,7 @@ class GrepArgs:
     color_mode: ColorMode
     progress_mode: ProgressMode
     compiled: CompiledQuery | None = None
+    raw_query: str = ""
 
 
 @dataclasses.dataclass(slots=True)
@@ -944,6 +947,7 @@ def parse_args(
             color_mode=color_mode,
             progress_mode=t.cast("ProgressMode", namespace.progress),
             compiled=compiled,
+            raw_query=" ".join(raw_terms),
         )
     raw_pattern = t.cast("str | None", namespace.pattern)
     find_positionals = [raw_pattern] if raw_pattern is not None else []
@@ -989,6 +993,7 @@ def parse_args(
         full_path=t.cast("bool", namespace.full_path),
         progress_mode=t.cast("ProgressMode", namespace.progress),
         compiled=find_compiled,
+        raw_query=raw_pattern or "",
     )
 
 
@@ -1093,6 +1098,7 @@ def _build_grep_args(
         files_without_match=files_without_match,
         only_matching=t.cast("bool", namespace.only_matching),
         compiled=grep_compiled,
+        raw_query=" ".join(patterns_list_raw),
         no_dedupe=t.cast("bool", namespace.no_dedupe),
         line_number=line_number,
         heading=heading,

@@ -189,3 +189,45 @@ The one perf cliff is **OR-mixed**: an OR that straddles source-
 and record-level predicates can't push down past the source-prune
 boundary. The compiler degrades safely (lets the source through;
 the record pass decides) — it just costs the file read.
+
+## Known limitations
+
+### Leading `-` on a field predicate
+
+A field predicate that begins with a bare `-` (e.g.
+`-agent:claude` as the negation shortcut for `NOT agent:claude`)
+collides with argparse's short-option collapse rule. The argv
+token `-agent:claude` would otherwise parse as the combined short
+options `-a -g -e nt:claude` because each leading character
+matches a defined short flag, silently turning the user's intent
+into a totally different command.
+
+agentgrep rejects this argv shape at parse time with a clear
+error and three workarounds:
+
+```console
+$ agentgrep find -agent:claude
+agentgrep: error: argument '-agent:claude' looks like a field
+predicate but argparse parses the leading '-' as combined short
+options. Use one of:
+  --                  positional separator: agentgrep ... -- -agent:claude
+  quoted positional:  agentgrep ... '-agent:claude'
+  keyword negation:   agentgrep ... 'NOT agent:claude'
+```
+
+Pick the form that fits your scripting style. The `NOT` keyword
+is the most readable; `--` is the most surgical.
+
+### `field:` with no inline value
+
+The query `agent: bliss` parses as a single
+`FieldEq(agent, "bliss")` predicate, not as "missing value
+followed by separate term `bliss`". The tokenizer emits
+`ident("agent"), colon` and the next term token becomes the
+value. Defensible (the colon's `:` separator is a contiguous
+operator, the space after is just whitespace) but unintuitive
+when typing.
+
+If you want the bare term `bliss` plus a separate `agent`
+predicate, write `agent:codex bliss` (filled-in value) or
+`bliss` (no `agent:` predicate at all).
