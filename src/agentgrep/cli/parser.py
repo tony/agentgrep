@@ -763,10 +763,6 @@ def parse_args(
             progress_mode=t.cast("ProgressMode", namespace.progress),
         )
     pattern = t.cast("str | None", namespace.pattern)
-    if not pattern:
-        with configured_color_environment(color_mode):
-            bundle.find_parser.print_help()
-        return None
     if t.cast("bool", namespace.find_glob):
         pattern_mode: FindPatternMode = "glob"
     elif t.cast("bool", namespace.find_fixed):
