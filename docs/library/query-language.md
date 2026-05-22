@@ -203,7 +203,7 @@ matches a defined short flag, silently turning the user's intent
 into a totally different command.
 
 agentgrep rejects this argv shape at parse time with a clear
-error and three workarounds:
+error and two workarounds:
 
 ```console
 $ agentgrep find -agent:claude
@@ -211,12 +211,15 @@ agentgrep: error: argument '-agent:claude' looks like a field
 predicate but argparse parses the leading '-' as combined short
 options. Use one of:
   --                  positional separator: agentgrep ... -- -agent:claude
-  quoted positional:  agentgrep ... '-agent:claude'
   keyword negation:   agentgrep ... 'NOT agent:claude'
 ```
 
 Pick the form that fits your scripting style. The `NOT` keyword
-is the most readable; `--` is the most surgical.
+is the most readable; `--` is the most surgical. Note that
+shell-level quoting (`'-agent:claude'`) does **not** help — the
+shell strips quotes before argparse runs, so the quoted token
+arrives at argparse identically to the unquoted form and the
+pre-scan rejects both. Use `NOT` or `--`.
 
 ### `field:` with no inline value
 
