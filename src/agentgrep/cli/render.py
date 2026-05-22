@@ -66,6 +66,7 @@ __all__ = [
     "serialize_grep_record",
     "serialize_search_record",
     "serialize_source_handle",
+    "stream_find_results",
     "stream_grep_results",
 ]
 
@@ -351,8 +352,74 @@ def filter_find_records(records: list[FindRecord], args: FindArgs) -> list[FindR
     return filtered
 
 
+def _find_record_passes(record: FindRecord, args: FindArgs) -> bool:
+    """Return ``True`` when ``record`` survives every fd-shaped filter."""
+    return (
+        _pattern_matches(record, args)
+        and _type_matches(record, args)
+        and _extensions_match(record, args)
+    )
+
+
+def _find_path_is_eager(args: FindArgs) -> bool:
+    """Return ``True`` when find's output mode needs the full record list."""
+    return args.output_mode == "json" or args.list_details
+
+
+def stream_find_results(args: FindArgs) -> int:
+    """Stream find records to stdout as the engine emits them.
+
+    Consumes :func:`agentgrep.iter_find_events` and filters for
+    :class:`agentgrep.events.FindRecordEmitted`. Applies the fd-shaped
+    pattern / type / extension / case filters at the consumer level via
+    :func:`_find_record_passes` so the engine doesn't need to know about
+    those args. Honors ``args.limit`` by breaking the loop once the
+    surviving-record count reaches it.
+
+    Returns ``0`` when at least one record was emitted, ``1`` otherwise.
+    Eager output modes (``--json`` and ``-l``) route through
+    :func:`print_find_results` via :func:`run_find_command` instead.
+    """
+    is_tty = sys.stdout.isatty()
+    match_count = 0
+    serialize_find: t.Callable[[FindRecord], dict[str, object]] | None = None
+    if args.output_mode == "ndjson":
+        _, serialize_find, _ = maybe_build_pydantic()
+    for event in agentgrep.iter_find_events(
+        pathlib.Path.home(),
+        args.agents,
+        pattern=None,
+        limit=None,
+    ):
+        if not isinstance(event, events.FindRecordEmitted):
+            continue
+        if not _find_record_passes(event.record, args):
+            continue
+        if args.output_mode == "ndjson" and serialize_find is not None:
+            print(json.dumps(serialize_find(event.record), ensure_ascii=False))
+        elif args.print0:
+            sys.stdout.write(_format_find_text_line(event.record, args))
+            sys.stdout.write("\0")
+        else:
+            print(agentgrep.format_display_path(event.record.path))
+        if is_tty:
+            sys.stdout.flush()
+        match_count += 1
+        if args.limit is not None and match_count >= args.limit:
+            break
+    if match_count == 0 and args.output_mode == "text" and not args.print0:
+        print("No matching sources found.", file=sys.stderr)
+    return 0 if match_count > 0 else 1
+
+
 def run_find_command(args: FindArgs) -> int:
     """Execute ``agentgrep find``.
+
+    Routes through either the live streaming path
+    (:func:`stream_find_results`, used for text / NDJSON / ``--print0``)
+    or the eager list path (:func:`print_find_results`, used for
+    ``--json`` and ``--list-details``). See :func:`_find_path_is_eager`
+    for the routing decision.
 
     The ``--ui`` overlay translates the find filters into a
     :class:`SearchQuery` seeded with the same agent / type narrowing,
@@ -371,6 +438,8 @@ def run_find_command(args: FindArgs) -> int:
         )
         agentgrep.run_ui(pathlib.Path.home(), query, control=agentgrep.SearchControl())
         return 0
+    if not _find_path_is_eager(args):
+        return stream_find_results(args)
     raw_records = agentgrep.run_find_query(
         pathlib.Path.home(),
         args.agents,
