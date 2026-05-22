@@ -292,7 +292,14 @@ def _resolve_find_case_sensitive(pattern: str | None, mode: agentgrep.CaseMode) 
 
 
 def _pattern_matches(record: FindRecord, args: FindArgs) -> bool:
-    """Decide whether a find record satisfies the requested pattern mode."""
+    """Decide whether a find record satisfies the requested pattern mode.
+
+    Glob mode (`-g`) matches against the file basename by default, with
+    `--full-path` opting into matching against the absolute path —
+    mirroring fd's default vs. `-p` flag semantics. Regex, fixed, and
+    exact modes keep the joined `agent store adapter_id path path_kind`
+    haystack so substring matches against the metadata still work.
+    """
     if args.pattern is None:
         return True
     case_sensitive = _resolve_find_case_sensitive(args.pattern, args.case_mode)
@@ -310,7 +317,10 @@ def _pattern_matches(record: FindRecord, args: FindArgs) -> bool:
     if args.pattern_mode == "fixed":
         return needle in haystack
     if args.pattern_mode == "glob":
-        return fnmatch.fnmatchcase(haystack, needle if case_sensitive else needle.casefold())
+        glob_target = str(record.path) if args.full_path else record.path.name
+        if not case_sensitive:
+            glob_target = glob_target.casefold()
+        return fnmatch.fnmatchcase(glob_target, needle)
     flags = 0 if case_sensitive else re.IGNORECASE
     try:
         return re.search(args.pattern, haystack, flags) is not None

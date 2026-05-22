@@ -108,6 +108,7 @@ class FindArgs:
     list_details: bool = False
     print0: bool = False
     absolute_path: bool = False
+    full_path: bool = False
     progress_mode: ProgressMode = "auto"
 
 
@@ -531,6 +532,13 @@ def create_parser(
         help="Print absolute paths (already the default; flag is symbolic)",
     )
     _ = find_parser.add_argument(
+        "--full-path",
+        dest="full_path",
+        action="store_true",
+        help="With -g, match the glob against the absolute path "
+        "instead of the file basename (fd's -p)",
+    )
+    _ = find_parser.add_argument(
         "--limit",
         type=int,
         metavar="N",
@@ -797,6 +805,7 @@ def parse_args(
         list_details=t.cast("bool", namespace.list_details),
         print0=t.cast("bool", namespace.print0),
         absolute_path=t.cast("bool", namespace.absolute_path),
+        full_path=t.cast("bool", namespace.full_path),
         progress_mode=t.cast("ProgressMode", namespace.progress),
     )
 
