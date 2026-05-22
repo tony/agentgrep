@@ -300,6 +300,24 @@ def test_filter_find_records_applies_limit() -> None:
     assert len(filtered) == 2
 
 
+def test_print_find_results_default_emits_one_path_per_record(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """fd-faithful default: one path per record, no metadata header."""
+    records = [
+        _make_find_record(path="/tmp/a.jsonl"),
+        _make_find_record(path="/tmp/b.jsonl", store="other"),
+    ]
+    args = _make_find_args()
+    agentgrep.print_find_results(records, args)
+    captured = capsys.readouterr().out
+    rows = captured.splitlines()
+    assert rows == ["/tmp/a.jsonl", "/tmp/b.jsonl"]
+    # No agent/kind/store header line.
+    assert "codex" not in captured
+    assert "sessions" not in captured
+
+
 def test_print_find_results_list_details_uses_tabs(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
