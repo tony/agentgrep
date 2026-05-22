@@ -397,6 +397,87 @@ def test_find_pipeline_compiled_none_keeps_legacy_path(
     assert len(record_events) == 1
 
 
+class QueryPassesThroughCase(t.NamedTuple):
+    """Parametrized case verifying CLI parsing routes query syntax to compiled."""
+
+    test_id: str
+    argv: tuple[str, ...]
+    expect_compiled: bool
+
+
+QUERY_PASSES_THROUGH_CASES: tuple[QueryPassesThroughCase, ...] = (
+    QueryPassesThroughCase(
+        test_id="search-bare-term-legacy-path",
+        argv=("search", "bliss"),
+        expect_compiled=False,
+    ),
+    QueryPassesThroughCase(
+        test_id="search-field-syntax-compiled",
+        argv=("search", "agent:codex", "bliss"),
+        expect_compiled=True,
+    ),
+    QueryPassesThroughCase(
+        test_id="grep-bare-term-legacy-path",
+        argv=("grep", "bliss"),
+        expect_compiled=False,
+    ),
+    QueryPassesThroughCase(
+        test_id="grep-field-syntax-compiled",
+        argv=("grep", "agent:codex", "bliss"),
+        expect_compiled=True,
+    ),
+    QueryPassesThroughCase(
+        test_id="find-no-pattern-legacy-path",
+        argv=("find",),
+        expect_compiled=False,
+    ),
+    QueryPassesThroughCase(
+        test_id="find-bare-term-legacy-path",
+        argv=("find", "sessions"),
+        expect_compiled=False,
+    ),
+    QueryPassesThroughCase(
+        test_id="find-field-syntax-compiled",
+        argv=("find", "agent:codex"),
+        expect_compiled=True,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    QUERY_PASSES_THROUGH_CASES,
+    ids=[c.test_id for c in QUERY_PASSES_THROUGH_CASES],
+)
+def test_cli_parsing_routes_query_syntax_to_compiled(
+    case: QueryPassesThroughCase,
+) -> None:
+    """CLI parsing populates Args.compiled when (and only when) field syntax appears."""
+    args = agentgrep.parse_args(list(case.argv))
+    assert args is not None
+    assert hasattr(args, "compiled")
+    compiled = t.cast(
+        "agentgrep.CompiledQuery | None",
+        t.cast("t.Any", args).compiled,
+    )
+    if case.expect_compiled:
+        assert compiled is not None
+        assert compiled.is_pure_text is False
+    else:
+        assert compiled is None
+
+
+def test_grep_query_with_no_text_pattern_errors(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``agentgrep grep agent:codex`` (no text) errors with a steering message."""
+    with pytest.raises(SystemExit) as exc_info:
+        _ = agentgrep.parse_args(["grep", "agent:codex"])
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert "use 'agentgrep search'" in captured.err
+
+
 def test_compiled_none_falls_through_to_legacy_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -2049,7 +2049,12 @@ def run_readonly_command(
 
 
 def make_search_query(args: SearchArgs) -> SearchQuery:
-    """Convert parsed search arguments into a query object."""
+    """Convert parsed search arguments into a query object.
+
+    Carries any parsed-query :class:`~agentgrep.CompiledQuery` (set
+    when the positionals included Lucene-style field syntax) through
+    to the engine. ``None`` on the legacy fast path.
+    """
     return SearchQuery(
         terms=args.terms,
         search_type=args.search_type,
@@ -2058,6 +2063,7 @@ def make_search_query(args: SearchArgs) -> SearchQuery:
         case_sensitive=args.case_sensitive,
         agents=args.agents,
         limit=args.limit,
+        compiled=args.compiled,
     )
 
 

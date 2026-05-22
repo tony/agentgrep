@@ -400,6 +400,7 @@ def stream_find_results(args: FindArgs) -> int:
         args.agents,
         pattern=None,
         limit=None,
+        compiled=args.compiled,
     ):
         if not isinstance(event, events.FindRecordEmitted):
             continue
@@ -647,6 +648,7 @@ def build_grep_query(args: GrepArgs) -> agentgrep.SearchQuery:
         agents=args.agents,
         limit=args.max_count,
         dedupe=not args.no_dedupe,
+        compiled=args.compiled,
     )
 
 
