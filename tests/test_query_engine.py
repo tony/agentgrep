@@ -397,6 +397,91 @@ def test_find_pipeline_compiled_none_keeps_legacy_path(
     assert len(record_events) == 1
 
 
+class SearchSourcePruneCase(t.NamedTuple):
+    """Parametrized case proving the eager search path honors source_predicate."""
+
+    test_id: str
+    query: str
+    source_agents: tuple[str, ...]
+    expected_read_agents: tuple[str, ...]
+
+
+SEARCH_SOURCE_PRUNE_CASES: tuple[SearchSourcePruneCase, ...] = (
+    SearchSourcePruneCase(
+        test_id="single-agent-prune",
+        query="agent:codex bliss",
+        source_agents=("codex", "claude", "cursor"),
+        expected_read_agents=("codex",),
+    ),
+    SearchSourcePruneCase(
+        test_id="or-two-agents-prune",
+        query="(agent:codex OR agent:claude) bliss",
+        source_agents=("codex", "claude", "cursor", "gemini"),
+        expected_read_agents=("codex", "claude"),
+    ),
+    SearchSourcePruneCase(
+        test_id="negation-prune",
+        query="-agent:claude bliss",
+        source_agents=("codex", "claude", "cursor"),
+        expected_read_agents=("codex", "cursor"),
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    SEARCH_SOURCE_PRUNE_CASES,
+    ids=[c.test_id for c in SEARCH_SOURCE_PRUNE_CASES],
+)
+def test_eager_search_path_prunes_sources_before_reading(
+    case: SearchSourcePruneCase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The eager run_search_query path skips pruned sources without reading them."""
+    sources = [
+        _make_source(agent=t.cast("agentgrep.AgentName", agent), path=f"/tmp/{agent}.jsonl")
+        for agent in case.source_agents
+    ]
+    sources_read: list[str] = []
+
+    def _stub_iter(
+        source: agentgrep.SourceHandle,
+    ) -> t.Iterator[agentgrep.SearchRecord]:
+        sources_read.append(source.agent)
+        yield _make_record(
+            agent=source.agent,
+            text="bliss content",
+            path=str(source.path),
+        )
+
+    monkeypatch.setattr(
+        agentgrep,
+        "discover_sources",
+        lambda *args, **kwargs: list(sources),
+    )
+    monkeypatch.setattr(
+        agentgrep,
+        "plan_search_sources",
+        lambda query, sources_, backends, **kwargs: list(sources_),
+    )
+    monkeypatch.setattr(agentgrep, "iter_source_records", _stub_iter)
+
+    compiled = _compile_query(case.query)
+    query = agentgrep.SearchQuery(
+        terms=compiled.text_terms,
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=agentgrep.AGENT_CHOICES,
+        limit=None,
+        compiled=compiled,
+    )
+    records = agentgrep.run_search_query(pathlib.Path.home(), query)
+    assert tuple(sorted(sources_read)) == tuple(sorted(case.expected_read_agents))
+    assert tuple(sorted(r.agent for r in records)) == tuple(sorted(case.expected_read_agents))
+
+
 class QueryPassesThroughCase(t.NamedTuple):
     """Parametrized case verifying CLI parsing routes query syntax to compiled."""
 
