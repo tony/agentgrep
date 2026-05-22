@@ -471,35 +471,78 @@ def test_run_grep_command_ndjson_outputs_one_record_per_line(
     assert len(lines) == 3
 
 
-def test_run_grep_command_count_only_prints_match_count(
+class CountCase(t.NamedTuple):
+    """Parametrized case for ``grep -c`` rg-faithful per-record output."""
+
+    test_id: str
+    records: list[agentgrep.SearchRecord]
+    expected_stdout_lines: list[str]
+    expected_exit_code: int
+
+
+def _make_count_record(*, text: str, name: str = "fake.jsonl") -> agentgrep.SearchRecord:
+    """Build a SearchRecord with one-line ``text`` for count tests."""
+    return agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="sessions",
+        adapter_id="codex.sessions.jsonl",
+        path=pathlib.Path("/tmp") / name,
+        text=text,
+        timestamp=None,
+        session_id=name.removesuffix(".jsonl"),
+    )
+
+
+COUNT_CASES: tuple[CountCase, ...] = (
+    CountCase(
+        test_id="single-record-emits-bare-count",
+        records=[_make_count_record(text="foo line one\nfoo line two\nno match here")],
+        expected_stdout_lines=["2"],
+        expected_exit_code=0,
+    ),
+    CountCase(
+        test_id="multi-record-emits-path-colon-count",
+        records=[
+            _make_count_record(text="foo once\nno match", name="a.jsonl"),
+            _make_count_record(text="foo here\nfoo there\nfoo everywhere", name="b.jsonl"),
+        ],
+        expected_stdout_lines=["/tmp/a.jsonl:1", "/tmp/b.jsonl:3"],
+        expected_exit_code=0,
+    ),
+    CountCase(
+        test_id="zero-records-exits-one",
+        records=[],
+        expected_stdout_lines=[],
+        expected_exit_code=1,
+    ),
+    CountCase(
+        test_id="single-record-no-matching-lines-emits-zero",
+        records=[_make_count_record(text="completely disjoint text")],
+        expected_stdout_lines=["0"],
+        expected_exit_code=0,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    COUNT_CASES,
+    ids=[c.test_id for c in COUNT_CASES],
+)
+def test_run_grep_command_count_only_rg_shape(
+    case: CountCase,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """``-c`` prints just the count and uses rg exit code."""
-    records = [
-        agentgrep.SearchRecord(
-            kind="prompt",
-            agent="codex",
-            store="sessions",
-            adapter_id="codex.sessions.jsonl",
-            path=t.cast("t.Any", f"/tmp/fake-{i}.jsonl"),
-            text=f"match {i}",
-            title=None,
-            role="user",
-            timestamp=None,
-            model=None,
-            session_id=f"sess-{i}",
-            conversation_id=None,
-            metadata={},
-        )
-        for i in range(5)
-    ]
-    _fake_search_records(records, monkeypatch)
-    args = _make_grep_args(count_only=True)
+    """``-c`` emits rg-faithful path:N per record (or N alone for single record)."""
+    _fake_search_records(case.records, monkeypatch)
+    args = _make_grep_args(patterns=("foo",), count_only=True, color_mode="never")
     exit_code = agentgrep.run_grep_command(args)
     captured = capsys.readouterr()
-    assert exit_code == 0
-    assert captured.out.strip() == "5"
+    assert exit_code == case.expected_exit_code
+    actual_lines = [line for line in captured.out.splitlines() if line.strip()]
+    assert actual_lines == case.expected_stdout_lines
 
 
 def test_run_grep_command_files_with_matches_dedupes_by_path(

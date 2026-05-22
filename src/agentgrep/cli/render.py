@@ -728,7 +728,18 @@ def print_grep_results(records: list[agentgrep.SearchRecord], args: GrepArgs) ->
         return 0 if records else 1
 
     if args.count_only:
-        print(str(len(records)))
+        colors = agentgrep.AnsiColors.for_stream(args.color_mode, sys.stdout)
+        per_record_counts: list[tuple[agentgrep.SearchRecord, int]] = []
+        for record in records:
+            count = sum(1 for _ in iter_match_lines(record.text, args))
+            per_record_counts.append((record, count))
+        # rg parity: single-file emits just N; multi-file emits path:N per file.
+        if len(per_record_counts) == 1:
+            print(per_record_counts[0][1])
+        else:
+            for record, count in per_record_counts:
+                path = agentgrep.format_display_path(record.path)
+                print(f"{colors.path(path)}:{count}")
         return 0 if records else 1
     if args.files_with_matches:
         seen: set[str] = set()
