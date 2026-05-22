@@ -44,7 +44,6 @@ FuzzyAlgo = t.Literal["v1", "v2"]
 FuzzyTiebreak = t.Literal["length", "begin", "end", "index", "chunk"]
 
 __all__ = [
-    "SUBCOMMANDS",
     "CaseMode",
     "FindArgs",
     "FindPatternMode",
@@ -62,15 +61,11 @@ __all__ = [
     "build_docs_parser",
     "configured_color_environment",
     "create_parser",
-    "inject_default_subcommand",
     "normalize_color_mode",
     "parse_agents",
     "parse_args",
     "parse_output_mode",
 ]
-
-
-SUBCOMMANDS: frozenset[str] = frozenset({"grep", "search", "find", "fuzzy", "ui"})
 
 
 @dataclasses.dataclass(slots=True)
@@ -206,57 +201,6 @@ def normalize_color_mode(argv: cabc.Sequence[str] | None) -> ColorMode:
             if value in {"auto", "always", "never"}:
                 return t.cast("ColorMode", value)
     return "auto"
-
-
-def inject_default_subcommand(
-    argv: cabc.Sequence[str] | None,
-) -> cabc.Sequence[str] | None:
-    """Prepend a subcommand to ``argv`` when none is supplied.
-
-    Walks ``argv`` skipping the global ``--color`` option and any help flag.
-    Empty effective argv defaults to ``ui`` so ``agentgrep`` lands in the
-    Textual explorer. If the first remaining token is not a known
-    subcommand, inserts ``search`` at that position so ``agentgrep bliss``
-    parses identically to ``agentgrep search bliss``. Returns the input
-    unchanged when no injection is needed.
-
-    Examples
-    --------
-    >>> inject_default_subcommand(["bliss"])
-    ['search', 'bliss']
-    >>> inject_default_subcommand(["search", "bliss"])
-    ['search', 'bliss']
-    >>> inject_default_subcommand(["find", "codex"])
-    ['find', 'codex']
-    >>> inject_default_subcommand(["ui"])
-    ['ui']
-    >>> inject_default_subcommand(["--color", "never", "bliss"])
-    ['--color', 'never', 'search', 'bliss']
-    >>> inject_default_subcommand(["--color", "never"])
-    ['--color', 'never', 'ui']
-    >>> inject_default_subcommand(["--help"])
-    ['--help']
-    >>> inject_default_subcommand([])
-    ['ui']
-    """
-    effective = list(sys.argv[1:]) if argv is None else list(argv)
-    index = 0
-    while index < len(effective):
-        token = effective[index]
-        if token in {"-h", "--help"}:
-            return argv
-        if token == "--color" and index + 1 < len(effective):
-            index += 2
-            continue
-        if token.startswith("--color="):
-            index += 1
-            continue
-        if token in SUBCOMMANDS:
-            return argv
-        effective.insert(index, "search")
-        return effective
-    effective.append("ui")
-    return effective
 
 
 @contextlib.contextmanager
@@ -731,7 +675,6 @@ def parse_args(
 ) -> SearchArgs | FindArgs | UIArgs | GrepArgs | FuzzyArgs | None:
     """Parse CLI arguments into typed dataclasses."""
     color_mode = normalize_color_mode(argv)
-    argv = inject_default_subcommand(argv)
     with configured_color_environment(color_mode):
         bundle = create_parser(color_mode)
         namespace = bundle.parser.parse_args(argv)
