@@ -50,6 +50,10 @@ TUI form — the `tig` model for git, applied to agentgrep. Bare
 `agentgrep` now prints a colorized directory of choices listing
 every subcommand, matching the `tmuxp` / `vcspull` convention; the
 TUI is reachable through the explicit `agentgrep ui` subcommand.
+Output for `grep` is now line-aware (one row per matching line with
+the matched span highlighted) and `find` defaults to one path per
+line — both following rg's and fd's lead. A new `--no-progress`
+flag silences the stderr spinner in one keystroke.
 
 ### Breaking changes
 
@@ -104,6 +108,28 @@ $ agentgrep find 'foo.bar'
 $ agentgrep find -F 'foo.bar'
 ```
 
+#### `agentgrep grep` text output is now line-aware
+
+`agentgrep grep` previously dumped each matching record's full text
+field verbatim, which on a multi-line prompt or transcript could
+fill the terminal. The new default emits one line per matching line
+within a record — `line:col:text` rows with the matched span
+highlighted (red+bold). On TTY each record opens with a heading
+line (agent · timestamp · path); on pipe every match emits as
+`path:line:col:text` so the output stays grep-pipeline friendly.
+The format mirrors `rg` and `ag`. JSON, NDJSON, `--vimgrep`, `-c`,
+`-l`, and `-L` are unchanged; `--vimgrep` and `-o` now produce real
+line/col offsets (previously hardcoded `1:1`).
+
+#### `agentgrep find` default is one path per line
+
+`agentgrep find` previously printed three lines per record (agent
+header, path, blank). The new default emits one path per line,
+matching `fd`. The metadata (agent, kind, store, adapter_id) is
+still reachable through the existing `-l/--list-details` flag,
+which produces a tab-separated long format. `--json`, `--ndjson`,
+and `--print0` are unchanged.
+
 ### Dependencies
 
 Adds runtime dependency `rapidfuzz>=3.10.0`. The new `agentgrep
@@ -112,6 +138,15 @@ textual / fastmcp pattern of optional deps with fallbacks, fuzzy has
 no useful fallback, so rapidfuzz is a hard dep.
 
 ### What's new
+
+#### `--no-progress` flag and `find --progress`
+
+`grep`, `search`, and `find` now accept `--no-progress` as an alias
+for `--progress=never`, silencing the stderr spinner with one
+flag. `find` also gains the full `--progress {auto,always,never}`
+selector it previously lacked. Progress always writes to stderr, so
+piping (`agentgrep grep foo | less`) was never affected — the new
+flag is for interactive sessions where the spinner is noise.
 
 #### `agentgrep grep` content search
 

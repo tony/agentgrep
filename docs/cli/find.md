@@ -14,6 +14,10 @@ modifiers; `-t` filters by record kind; `-e` filters by file
 extension; `-l` switches to a long-format output; `-0` separates
 output with NUL for `xargs -0` consumers.
 
+The default output is **one path per line** — the fd-faithful
+shape. Use `-l/--list-details` to add metadata (agent, kind, store,
+adapter_id) as tab-separated columns.
+
 ## Examples
 
 List every store agentgrep can read for one agent:
@@ -50,6 +54,12 @@ Open the Textual explorer pre-filled with the find query:
 
 ```console
 $ agentgrep find -t prompts --ui
+```
+
+Silence the source-discovery spinner:
+
+```console
+$ agentgrep find --no-progress codex
 ```
 
 ## Command

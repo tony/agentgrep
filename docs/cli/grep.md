@@ -8,9 +8,14 @@ records with the flag grammar and output behavior of `ripgrep` and
 without thinking, the same flags work here against your AI history.
 
 Defaults follow rg: smart-case (case-insensitive unless the pattern
-contains uppercase), regex pattern interpretation, color on TTY. The
-one deliberate divergence is session deduplication — see
-{ref}`cli-grep-dedupe` below.
+contains uppercase), regex pattern interpretation, color on TTY,
+and line-aware output. Each matching record emits one row per
+matching line in the shape `line:col:text`, with the matched span
+highlighted (red+bold). On TTY a per-record heading line opens with
+agent · timestamp · path; on pipe each row is prefixed with the
+path so the output stays grep-pipeline friendly. The one deliberate
+divergence is session deduplication — see {ref}`cli-grep-dedupe`
+below.
 
 ## Examples
 
@@ -49,6 +54,47 @@ Open the Textual explorer pre-filled with the grep query:
 ```console
 $ agentgrep grep -i foo --ui
 ```
+
+Silence the stderr spinner:
+
+```console
+$ agentgrep grep --no-progress bliss
+```
+
+## Output format
+
+By default `grep` emits one stdout line per matching line within a
+record, with the matched substring highlighted. The format mirrors
+`rg`:
+
+- **On TTY** (heading mode, default): a per-record heading line
+  carries `agent · timestamp · path`, then each matching line
+  follows as `line:col:text` with ANSI highlights. Records are
+  separated by a blank line. Toggle off with `--no-heading`.
+- **On pipe** (flat mode, default when stdout isn't a TTY): every
+  match emits as `path:line:col:text` with no per-record heading,
+  so `agentgrep grep foo | jq` or `... | awk` see one line per
+  match. Toggle on with `--heading`.
+
+The `--vimgrep` flag forces flat mode and emits one row per match
+span (rather than one per match line), so a line with two hits
+produces two rows. `--only-matching` / `-o` collapses output to
+just the matched substrings, one per line. `-l` /
+`--files-with-matches` emits only the deduplicated paths.
+
+## Progress
+
+The stderr progress spinner (when stderr is a TTY) lets you know a
+search is still running on slow stores. Silence it with
+`--no-progress` or the equivalent `--progress=never`:
+
+```console
+$ agentgrep grep --no-progress bliss
+```
+
+Progress always writes to stderr, so it never collides with stdout
+output — `agentgrep grep foo | less` won't see the spinner in the
+piped buffer.
 
 ## Command
 
