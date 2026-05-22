@@ -46,10 +46,47 @@ grep` matches `rg` / `ag` for content search, `agentgrep find` grows
 fd-shaped flag grammar for store enumeration, and a new `agentgrep
 fuzzy` provides `fzf --filter`-style non-interactive fuzzy filtering
 over stdin. A new `--ui` overlay flag turns any subcommand into its
-TUI form — the `tig` model for git, applied to agentgrep. The
-existing `search` and `ui` subcommands are unchanged.
+TUI form — the `tig` model for git, applied to agentgrep. Bare
+`agentgrep` now prints a colorized directory of choices listing
+every subcommand, matching the `tmuxp` / `vcspull` convention; the
+TUI is reachable through the explicit `agentgrep ui` subcommand.
 
 ### Breaking changes
+
+#### Bare `agentgrep` no longer launches the TUI
+
+Bare `agentgrep` (with no subcommand) now prints a colorized
+directory of choices — the same pattern `tmuxp` and `vcspull` use —
+listing each subcommand with example invocations. The interactive
+Textual explorer is reachable only through the explicit `ui`
+subcommand:
+
+```console
+# Before
+$ agentgrep
+
+# After
+$ agentgrep ui
+```
+
+The behavior change aligns agentgrep with the tmuxp/vcspull
+conventions users coming from those tools already expect.
+
+#### `agentgrep <terms>` no longer auto-runs `search`
+
+The implicit shorthand that rewrote `agentgrep <terms>` as
+`agentgrep search <terms>` is removed. Bare positionals now produce
+argparse's standard `invalid choice` error so the available
+subcommands stay discoverable. Migration is to spell the subcommand
+out:
+
+```console
+# Before
+$ agentgrep bliss
+
+# After
+$ agentgrep search bliss
+```
 
 #### `agentgrep find` default pattern is now regex
 
