@@ -482,6 +482,88 @@ def test_eager_search_path_prunes_sources_before_reading(
     assert tuple(sorted(r.agent for r in records)) == tuple(sorted(case.expected_read_agents))
 
 
+class FindEagerSourcePruneCase(t.NamedTuple):
+    """Parametrized case for find's eager output modes honoring source predicates."""
+
+    test_id: str
+    argv: tuple[str, ...]
+    source_agents: tuple[str, ...]
+    expected_agents: tuple[str, ...]
+
+
+FIND_EAGER_SOURCE_PRUNE_CASES: tuple[FindEagerSourcePruneCase, ...] = (
+    FindEagerSourcePruneCase(
+        test_id="json-mode-agent-prune",
+        argv=("find", "--no-progress", "--json", "agent:codex"),
+        source_agents=("codex", "claude", "cursor", "gemini"),
+        expected_agents=("codex",),
+    ),
+    FindEagerSourcePruneCase(
+        test_id="json-mode-negated-prune",
+        argv=("find", "--no-progress", "--json", "NOT agent:claude"),
+        source_agents=("codex", "claude", "cursor"),
+        expected_agents=("codex", "cursor"),
+    ),
+    FindEagerSourcePruneCase(
+        test_id="list-details-agent-prune",
+        argv=("find", "--no-progress", "-l", "agent:codex"),
+        source_agents=("codex", "claude", "cursor", "gemini"),
+        expected_agents=("codex",),
+    ),
+    FindEagerSourcePruneCase(
+        test_id="list-details-or-prune",
+        argv=("find", "--no-progress", "-l", "(agent:codex OR agent:cursor)"),
+        source_agents=("codex", "claude", "cursor", "gemini"),
+        expected_agents=("codex", "cursor"),
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    FIND_EAGER_SOURCE_PRUNE_CASES,
+    ids=[c.test_id for c in FIND_EAGER_SOURCE_PRUNE_CASES],
+)
+def test_find_eager_path_honors_source_predicate(
+    case: FindEagerSourcePruneCase,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Both eager find output modes prune sources via the compiled query."""
+    sources = [
+        _make_source(agent=t.cast("agentgrep.AgentName", agent), path=f"/tmp/{agent}.jsonl")
+        for agent in case.source_agents
+    ]
+    monkeypatch.setattr(
+        agentgrep,
+        "discover_sources",
+        lambda *args, **kwargs: list(sources),
+    )
+
+    args = agentgrep.parse_args(list(case.argv))
+    assert args is not None
+    assert isinstance(args, agentgrep.FindArgs)
+    exit_code = agentgrep.run_find_command(args)
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    # Parse the agent set out of actual records, not a naive
+    # substring scan — the --json envelope carries the query's
+    # agent list as metadata and a substring check would falsely
+    # match successfully-pruned agents.
+    if "--json" in case.argv:
+        import json
+
+        payload = json.loads(captured.out)
+        emitted_agents = {record["agent"] for record in payload["results"]}
+    else:
+        # Long-format output: one record per line, agent in the
+        # first tab-separated column.
+        emitted_agents = {
+            line.split("\t", 1)[0] for line in captured.out.splitlines() if line.strip()
+        }
+    assert emitted_agents == set(case.expected_agents)
+
+
 class QueryPassesThroughCase(t.NamedTuple):
     """Parametrized case verifying CLI parsing routes query syntax to compiled."""
 
