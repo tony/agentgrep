@@ -72,12 +72,20 @@ def _build_env() -> dict[str, str]:
 
 
 def _ensure_venv() -> int:
-    """Bootstrap ``.venv-tachyon/`` if it doesn't exist; return uv's exit code.
+    """Bootstrap ``.venv-tachyon/`` if it doesn't exist; return 0 on success.
 
     Idempotent: subsequent calls short-circuit when the venv is already
     built. We don't try to detect a partially-built venv; running
     ``rm -rf .venv-tachyon`` and re-invoking the script is the supported
     recovery path.
+
+    The ``uv sync`` step is best-effort: as of 3.15.0b1, ``pydantic-core``
+    source builds fail against pyo3 0.28 (the pydantic-core repo was
+    archived 2026-04-11 with 3.15 marked "not planned"). When sync
+    fails we still return success because the bare venv is useful on
+    its own — the stdlib :mod:`profiling.sampling` module ships with
+    CPython, so tachyon can profile any stdlib-only target even when
+    project deps can't install.
     """
     python_path = VENV / "bin" / "python"
     if python_path.exists():
@@ -95,18 +103,30 @@ def _ensure_venv() -> int:
     ).returncode
     if rc != 0:
         return rc
-    return subprocess.run(
+    # uv sync is best-effort; see docstring.
+    sync_rc = subprocess.run(
         [
             "uv",
             "sync",
             "--all-extras",
             "--dev",
             "--prerelease=allow",
+            "--exclude-newer-package",
+            "pydantic=false",
+            "--exclude-newer-package",
+            "pydantic-core=false",
         ],
         env=env,
         cwd=REPO_ROOT,
         check=False,
     ).returncode
+    if sync_rc != 0:
+        sys.stderr.write(
+            "run_py315: project sync failed (likely pydantic-core source "
+            "build incompat with 3.15). The venv is still usable for "
+            "stdlib-only profiling targets.\n",
+        )
+    return 0
 
 
 def main(argv: list[str]) -> int:
