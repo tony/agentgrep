@@ -172,6 +172,7 @@ class GrepArgs:
     heading: bool | None
     max_count: int | None
     vimgrep: bool
+    column: bool
     output_mode: OutputMode
     color_mode: ColorMode
     progress_mode: ProgressMode
@@ -364,6 +365,11 @@ def create_parser(
         "--vimgrep",
         action="store_true",
         help="Emit one match per line as path:line:col:text",
+    )
+    _ = grep_parser.add_argument(
+        "--column",
+        action="store_true",
+        help="Show column numbers in output (implies -n)",
     )
     _ = grep_parser.add_argument(
         "--type",
@@ -852,6 +858,7 @@ def _build_grep_args(
         heading=heading,
         max_count=max_count,
         vimgrep=t.cast("bool", namespace.vimgrep),
+        column=t.cast("bool", namespace.column),
         output_mode=output_mode,
         color_mode=color_mode,
         progress_mode=t.cast("ProgressMode", namespace.progress),

@@ -141,6 +141,20 @@ def test_grep_vimgrep_flag_propagates() -> None:
     assert parsed.vimgrep is True
 
 
+def test_grep_column_flag_propagates() -> None:
+    """``--column`` reaches GrepArgs.column."""
+    parsed = agentgrep.parse_args(["grep", "--column", "foo"])
+    assert isinstance(parsed, agentgrep.GrepArgs)
+    assert parsed.column is True
+
+
+def test_grep_column_default_is_false() -> None:
+    """Without ``--column`` the column field defaults to False."""
+    parsed = agentgrep.parse_args(["grep", "foo"])
+    assert isinstance(parsed, agentgrep.GrepArgs)
+    assert parsed.column is False
+
+
 def test_grep_max_count_propagates() -> None:
     """``-m N`` propagates as max_count."""
     parsed = agentgrep.parse_args(["grep", "-m", "5", "foo"])
@@ -266,6 +280,7 @@ def test_build_grep_query_translates_modes(case: QueryTranslationCase) -> None:
         heading=None,
         max_count=None,
         vimgrep=False,
+        column=False,
         output_mode="text",
         color_mode="never",
         progress_mode="never",
@@ -295,6 +310,7 @@ def _make_grep_args(**overrides: object) -> agentgrep.GrepArgs:
         "heading": None,
         "max_count": None,
         "vimgrep": False,
+        "column": False,
         "output_mode": "text",
         "color_mode": "never",
         "progress_mode": "never",
@@ -689,6 +705,7 @@ def _make_grep_args_for_helpers(**overrides: t.Any) -> agentgrep.GrepArgs:
         "heading": None,
         "max_count": None,
         "vimgrep": False,
+        "column": False,
         "output_mode": "text",
         "color_mode": "never",
         "progress_mode": "never",
