@@ -143,3 +143,27 @@ $ agentgrep find --agent claude --agent codex
 
 Pass `--agent all` (or omit the flag) to enumerate every available
 backend.
+
+## Query language
+
+`find` accepts the same Lucene-style field syntax as the other
+subcommands. Source-level field predicates (`agent:`, `path:`,
+`store:`, `mtime:`) prune sources before they're emitted:
+
+```console
+$ agentgrep find agent:codex
+```
+
+```console
+$ agentgrep find 'path:~/.codex agent:codex'
+```
+
+```console
+$ agentgrep find 'mtime:>2026-01-01'
+```
+
+Record-level fields (`type:`, `timestamp:`, `model:`, `role:`)
+are accepted by the parser but don't filter find output since
+find emits one record per source. Use `agentgrep search` if you
+need record-level filtering. See {ref}`library-query-language`
+for the full grammar.

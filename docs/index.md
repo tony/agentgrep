@@ -115,6 +115,7 @@ Overview <library/index>
 library/tutorial
 library/how-to
 library/event-stream
+library/query-language
 library/reference
 library/examples
 ```

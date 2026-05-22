@@ -265,3 +265,24 @@ query — same flags, same results, different presentation. This is the
 ``agentgrep grep -i foo`` as ``tig log`` is to ``git log``.
 
 See {ref}`cli-ui` for the standalone explorer entry point.
+
+## Query language
+
+`grep` accepts the same Lucene-style field syntax `search` does —
+mix field predicates with text patterns inline:
+
+```console
+$ agentgrep grep agent:codex bliss
+```
+
+```console
+$ agentgrep grep '(agent:codex OR agent:cursor) AND deploy'
+```
+
+The text portion (`bliss`, `deploy`) feeds grep's existing line-
+aware matching; the field predicates (`agent:`, `path:`,
+`timestamp:`) prune sources and filter records around it. A query
+with only field predicates and no text errors out — `grep` needs
+text to match lines against, so steer to `agentgrep search` for
+record-level-only filtering. See {ref}`library-query-language` for
+the full grammar.
