@@ -443,6 +443,29 @@ tokens shaped like `-FIELD:VALUE` (where FIELD is a known query
 field) at parse time, with a clean error suggesting the
 workarounds: `--` separator, quoted positional, or `NOT` keyword.
 
+#### Query language: `find --json` and `find -l` honor source predicates
+
+`agentgrep find --json agent:codex` used to return every agent's
+sources (6,425 records in one local run) and `agentgrep find -l
+agent:codex` listed claude sources first — both eager output
+paths called the legacy `run_find_query` signature that doesn't
+accept the compiled query. The streaming text/NDJSON path
+prunes correctly. Both eager modes now share the streaming
+path's source-pruning logic, so source-level field predicates
+(`agent:`, `path:`, `store:`, `mtime:`) apply uniformly across
+every output mode.
+
+#### Query language: mangle-rejection error drops misleading workaround
+
+The argv-mangle rejection error used to list three workarounds:
+`--`, quoted positional, and `NOT`. The middle one didn't
+actually work — the shell strips quotes before argparse runs,
+so the quoted form arrives identically to the unquoted form and
+the pre-scan rejects both. The error message now lists only the
+two that survive: `--` and `NOT`. The query-language reference
+page picked up the same correction with an explicit note about
+why quoting can't circumvent the collapse.
+
 #### `agentgrep find` with no pattern lists every source
 
 `fd` with no positional pattern lists every file. `agentgrep find`
