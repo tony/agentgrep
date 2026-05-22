@@ -2385,6 +2385,13 @@ def search_sources(
     """Parse and filter search results across all selected sources."""
     active_progress = noop_search_progress() if progress is None else progress
     active_control = SearchControl() if control is None else control
+    # Apply the compiled-query source predicate before planning so the
+    # ripgrep prefilter (which is the heavy step in
+    # ``plan_search_sources``) runs on the smaller set. Without this
+    # the per-file prefilter runs against every discovered source even
+    # when ``agent:codex`` could rule most out from metadata alone.
+    if query.compiled is not None and query.compiled.source_predicate is not None:
+        sources = [s for s in sources if query.compiled.source_predicate(s)]
     planned_sources = plan_search_sources(
         query,
         sources,
@@ -2617,11 +2624,21 @@ def collect_search_records(
     def current_count() -> int:
         return len(deduped) if query.dedupe else len(raw)
 
+    source_predicate = query.compiled.source_predicate if query.compiled is not None else None
     for index, source in enumerate(sources, start=1):
         if active_control.answer_now_requested() or (
             query.limit is not None and current_count() >= query.limit
         ):
             break
+        # Compiled-query source pruning: when a field predicate like
+        # ``agent:codex`` can be decided from the SourceHandle alone,
+        # skip the source without opening it. Mirrors the same guard
+        # in ``iter_search_events``; without it the eager search path
+        # was paradoxically slower than its unfiltered counterpart
+        # because every source got read just to be rejected at the
+        # record-level predicate.
+        if source_predicate is not None and not source_predicate(source):
+            continue
         active_progress.source_started(index, total, source)
         records_seen = 0
         matches_seen = 0
