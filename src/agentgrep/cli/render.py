@@ -585,24 +585,52 @@ def serialize_grep_record(
 def format_grep_record(record: agentgrep.SearchRecord, args: GrepArgs) -> str:
     """Format one matching record for text-mode ``grep`` output.
 
-    Heading-grouped on TTY: ``[agent store path]`` on its own line, then
-    the matched text. ``--vimgrep`` collapses to a single
-    ``path:line:col:text`` line. ``-l`` / ``-L`` emit just the path.
-    ``-c`` is aggregated by the caller, not formatted per-record.
+    Default shape (line-aware, mirrors rg). On TTY in heading mode the
+    record opens with a `format_grep_heading` line and each matching
+    body line follows as `line:col:text` with ANSI highlights on the
+    matched span. On pipe (or with ``--no-heading``) every match emits
+    as `path:line:col:text` so the output is grep-pipeline friendly.
+
+    Other modes are unchanged: ``--vimgrep`` emits one row per match in
+    the same `path:line:col:text` shape (no heading); ``-o`` /
+    ``--only-matching`` emits only the matched substring; ``-l`` /
+    ``-L`` emit just the path.
     """
     path = agentgrep.format_display_path(record.path)
     if args.files_with_matches or args.files_without_match:
         return path
-    if args.vimgrep:
-        return f"{path}:1:1:{record.text}"
+    colors = agentgrep.AnsiColors.for_stream(args.color_mode, sys.stdout)
+    matches = list(iter_match_lines(record.text, args))
+
     if args.only_matching:
-        return record.text
+        chunks: list[str] = []
+        for _, line, spans in matches:
+            for start, end in spans:
+                chunks.append(line[start:end])
+        return "\n".join(chunks)
+
+    if args.vimgrep:
+        rows: list[str] = []
+        for line_no, line, spans in matches:
+            for start, _end in spans:
+                col = start + 1
+                rows.append(f"{path}:{line_no}:{col}:{line}")
+        return "\n".join(rows)
+
+    if not matches:
+        # Record matched at the engine level but no individual line carries
+        # the pattern (e.g. multi-line regex). Surface the heading anyway so
+        # the user sees there's a hit they can inspect.
+        return format_grep_heading(record, colors=colors)
+
     heading_on = args.heading if args.heading is not None else sys.stdout.isatty()
-    text = record.text
+    line_rows = [
+        format_grep_line(line_no, line, spans, colors=colors) for line_no, line, spans in matches
+    ]
     if heading_on:
-        return f"[{record.agent} {record.store} {path}]\n{text}"
-    prefix = f"{record.agent}:{record.store}:{path}"
-    return f"{prefix}:{text}"
+        return "\n".join([format_grep_heading(record, colors=colors), *line_rows])
+    path_prefix = colors.path(path)
+    return "\n".join(f"{path_prefix}:{row}" for row in line_rows)
 
 
 def print_grep_results(records: list[agentgrep.SearchRecord], args: GrepArgs) -> int:
