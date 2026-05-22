@@ -282,14 +282,23 @@ def test_search_without_terms_prints_help() -> None:
     assert "agentgrep search bliss" in completed.stdout
 
 
-def test_find_without_pattern_prints_help() -> None:
-    completed = run_agentgrep_cli("find")
+def test_find_without_pattern_lists_every_source(tmp_path: pathlib.Path) -> None:
+    """``agentgrep find`` with no pattern lists every discovered source (fd parity)."""
+    session_dir = tmp_path / ".codex" / "sessions" / "2026" / "05"
+    session_dir.mkdir(parents=True)
+    (session_dir / "alpha.jsonl").write_text(
+        '{"type":"response_item","payload":{"role":"user","content":"hi"}}\n',
+    )
+    (session_dir / "beta.jsonl").write_text(
+        '{"type":"response_item","payload":{"role":"user","content":"hi"}}\n',
+    )
+    completed = run_agentgrep_cli("find", "--no-progress", env={"HOME": str(tmp_path)})
 
     assert completed.returncode == 0
-    assert "usage: agentgrep find" in completed.stdout
-    assert "examples:" in completed.stdout
-    assert "agentgrep find codex" in completed.stdout
-    assert "codex history_file" not in completed.stdout
+    assert "alpha.jsonl" in completed.stdout
+    assert "beta.jsonl" in completed.stdout
+    # No help banner.
+    assert "usage: agentgrep find" not in completed.stdout
 
 
 def test_help_examples_are_present_for_help_flags() -> None:
