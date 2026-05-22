@@ -12,7 +12,9 @@ The flag grammar mirrors `fd`: the positional PATTERN is treated as a
 regex by default, with `-F` (literal), `-g` (glob), and `--exact`
 modifiers; `-t` filters by record kind; `-e` filters by file
 extension; `-l` switches to a long-format output; `-0` separates
-output with NUL for `xargs -0` consumers.
+output with NUL for `xargs -0` consumers. `-g` matches against the
+file basename by default; `--full-path` opts into matching the
+absolute path (fd's `-p`).
 
 The default output is **one path per line** — the fd-faithful
 shape. Use `-l/--list-details` to add metadata (agent, kind, store,
@@ -37,6 +39,18 @@ Filter by literal substring (the legacy default before fd alignment):
 
 ```console
 $ agentgrep find -F sessions
+```
+
+Glob the file basename:
+
+```console
+$ agentgrep find -g '*.jsonl'
+```
+
+Glob the absolute path (fd's `-p` parity):
+
+```console
+$ agentgrep find -g '*/sessions/*.jsonl' --full-path
 ```
 
 Restrict to one record kind and one file extension:

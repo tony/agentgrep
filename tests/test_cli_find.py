@@ -187,6 +187,7 @@ def _make_find_args(**overrides: object) -> agentgrep.FindArgs:
         "list_details": False,
         "print0": False,
         "absolute_path": False,
+        "full_path": False,
     }
     base.update(overrides)
     return agentgrep.FindArgs(**t.cast("t.Any", base))
@@ -298,6 +299,99 @@ def test_filter_find_records_applies_limit() -> None:
     args = _make_find_args(limit=2)
     filtered = agentgrep.filter_find_records(records, args)
     assert len(filtered) == 2
+
+
+class GlobBasenameCase(t.NamedTuple):
+    """Parametrized case for ``find -g`` matching against the path basename."""
+
+    test_id: str
+    pattern: str
+    path: str
+    expected_match: bool
+
+
+GLOB_BASENAME_CASES: tuple[GlobBasenameCase, ...] = (
+    GlobBasenameCase("star-jsonl-matches-basename", "*.jsonl", "/tmp/codex/a.jsonl", True),
+    GlobBasenameCase("exact-basename-matches", "a.jsonl", "/tmp/codex/a.jsonl", True),
+    GlobBasenameCase("wrong-extension-rejects", "*.txt", "/tmp/codex/a.jsonl", False),
+    GlobBasenameCase("prefix-glob-matches", "b.j*", "/tmp/codex/b.jsonl", True),
+    GlobBasenameCase("dir-fragment-not-matched-by-default", "*codex*", "/tmp/codex/a.jsonl", False),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    GLOB_BASENAME_CASES,
+    ids=[c.test_id for c in GLOB_BASENAME_CASES],
+)
+def test_find_glob_default_matches_basename(case: GlobBasenameCase) -> None:
+    """``find -g`` matches the glob against the path basename (fd parity)."""
+    record = _make_find_record(path=case.path)
+    args = _make_find_args(pattern=case.pattern, pattern_mode="glob")
+    actual = agentgrep.filter_find_records([record], args)
+    assert (len(actual) == 1) is case.expected_match
+
+
+class GlobFullPathCase(t.NamedTuple):
+    """Parametrized case for ``find -g --full-path`` matching the absolute path."""
+
+    test_id: str
+    pattern: str
+    path: str
+    expected_match: bool
+
+
+GLOB_FULL_PATH_CASES: tuple[GlobFullPathCase, ...] = (
+    GlobFullPathCase(
+        "full-path-glob-matches-sessions-dir",
+        "*/sessions/*.jsonl",
+        "/tmp/codex/sessions/a.jsonl",
+        True,
+    ),
+    GlobFullPathCase(
+        "full-path-glob-matches-codex-prefix",
+        "*/codex/*",
+        "/tmp/codex/sessions/a.jsonl",
+        True,
+    ),
+    GlobFullPathCase(
+        "wrong-directory-rejects",
+        "*/claude/*",
+        "/tmp/codex/sessions/a.jsonl",
+        False,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    GLOB_FULL_PATH_CASES,
+    ids=[c.test_id for c in GLOB_FULL_PATH_CASES],
+)
+def test_find_glob_full_path_matches_absolute(case: GlobFullPathCase) -> None:
+    """``--full-path`` switches glob matching to the absolute path (fd -p)."""
+    record = _make_find_record(path=case.path)
+    args = _make_find_args(
+        pattern=case.pattern,
+        pattern_mode="glob",
+        full_path=True,
+    )
+    actual = agentgrep.filter_find_records([record], args)
+    assert (len(actual) == 1) is case.expected_match
+
+
+def test_find_full_path_flag_parses() -> None:
+    """``--full-path`` is captured on FindArgs."""
+    parsed = agentgrep.parse_args(["find", "-g", "*.jsonl", "--full-path"])
+    assert isinstance(parsed, agentgrep.FindArgs)
+    assert parsed.full_path is True
+
+
+def test_find_full_path_default_is_false() -> None:
+    """Without ``--full-path`` the flag defaults to False."""
+    parsed = agentgrep.parse_args(["find", "-g", "*.jsonl"])
+    assert isinstance(parsed, agentgrep.FindArgs)
+    assert parsed.full_path is False
 
 
 def test_print_find_results_default_emits_one_path_per_record(
