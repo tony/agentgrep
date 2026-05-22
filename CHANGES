@@ -57,9 +57,83 @@ flag silences the stderr spinner in one keystroke. Under the
 covers, a new headless event-stream engine yields typed pydantic
 events as the search walks; the CLI consumes the stream live so
 the first matches appear within milliseconds instead of after the
-full scan finishes.
+full scan finishes. Output alignment lands deeper in this release:
+`grep`'s default pipe shape is now rg-faithful `path:text` (with
+`-n` / `--column` / `--vimgrep` opt-ins), `grep -c` emits
+`path:N` per matching record, `grep --json` is now rg's per-line
+event stream with `submatches[*]` carrying byte offsets, and
+`find` with no positional pattern lists every source (fd parity).
 
 ### Breaking changes
+
+#### `grep` default text shape is now `path:text` (rg-faithful)
+
+`agentgrep grep` previously emitted `path:line:col:text` for every
+match — essentially always-vimgrep, regardless of flags. The new
+default mirrors `rg`'s pipe shape: `path:text`. Opt back into
+prefixes with `-n` / `--line-number` for `path:line:text`, with
+the new `--column` flag for `path:line:col:text`, or with
+`--vimgrep` for the legacy one-row-per-match-span shape.
+
+```console
+# Before
+$ agentgrep grep bliss
+~/.codex/.../a.jsonl:1:5:The bliss primitive ships with serene defaults
+
+# After (rg-faithful)
+$ agentgrep grep bliss
+~/.codex/.../a.jsonl:The bliss primitive ships with serene defaults
+
+# After + --column (legacy shape)
+$ agentgrep grep --column bliss
+~/.codex/.../a.jsonl:1:5:The bliss primitive ships with serene defaults
+```
+
+#### `grep -c` emits `path:N` per matching record
+
+`agentgrep grep -c` previously emitted a single integer counting
+matching records. The new shape mirrors `rg -c`: `path:N` per
+matching record (counting matching *lines*), or just `N` when
+exactly one record matched.
+
+```console
+# Before
+$ agentgrep grep -c bliss
+2
+
+# After
+$ agentgrep grep -c bliss
+~/.codex/.../a.jsonl:3
+~/.codex/.../b.jsonl:1
+```
+
+#### `grep --json` is now an rg-shaped per-line event stream
+
+`agentgrep grep --json` previously emitted one `match` event per
+record with `line_number: null` and the full multi-line record
+text in `data.text`. The new shape mirrors `rg`'s `--json`
+contract: per matching line, an event with nested `path.text`,
+1-indexed `line_number`, `lines.text` (the matched line), and
+`submatches[*].{match: {text}, start, end}` carrying byte offsets.
+Each record is bookended with `begin` and `end` events; the
+envelope still closes with a `summary` event. Consumers built
+against `rg --json` can route agentgrep's stream through the same
+parser.
+
+```json
+// Before
+{"type":"match","data":{"path":"...","line_number":null,
+  "text":"...defaults\nno match...\nanother bliss..."}}
+
+// After
+{"type":"begin","data":{"path":{"text":"..."},...}}
+{"type":"match","data":{"path":{"text":"..."},"line_number":1,
+  "lines":{"text":"The bliss primitive..."},
+  "submatches":[{"match":{"text":"bliss"},"start":4,"end":9}]}}
+{"type":"end","data":{"path":{"text":"..."},
+  "stats":{"matched_lines":1,"matches":1}}}
+{"type":"summary","data":{"matches":1}}
+```
 
 #### Bare `agentgrep` no longer launches the TUI
 
@@ -217,6 +291,28 @@ with the same query the one-shot command would have run. This is
 the `tig`-shaped overlay model — `agentgrep grep -i foo --ui` is to
 `agentgrep grep -i foo` what `tig log` is to `git log`. Same args,
 same query semantics, different presentation.
+
+### Fixes
+
+#### `agentgrep find` with no pattern lists every source
+
+`fd` with no positional pattern lists every file. `agentgrep find`
+with no positional was printing `--help` and exiting because
+`parse_args` had an early-return for the missing pattern. The
+engine already accepts `pattern=None` as "no filter"; removing the
+early return restores fd-parity:
+
+```console
+# Before
+$ agentgrep find
+usage: agentgrep find [...]
+
+# After (fd-faithful)
+$ agentgrep find
+~/.codex/.../a.jsonl
+~/.codex/.../b.jsonl
+~/.claude/.../session.jsonl
+```
 
 ### Development
 
