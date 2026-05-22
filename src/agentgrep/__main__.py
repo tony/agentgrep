@@ -2,6 +2,6 @@
 
 from __future__ import annotations
 
-from agentgrep import main
+from agentgrep.cli import main
 
 raise SystemExit(main())
