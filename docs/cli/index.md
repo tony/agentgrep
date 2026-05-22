@@ -27,16 +27,36 @@ Browse prompts and history interactively in the Textual explorer.
 :::{grid-item-card} agentgrep search
 :link: search
 :link-type: doc
-Search prompts and history across every configured agent.
+Search prompts and history with sensible serene-DX defaults.
+:::
+
+:::{grid-item-card} agentgrep grep
+:link: grep
+:link-type: doc
+Content search with rg/ag-shaped flags, output, and exit codes.
 :::
 
 :::{grid-item-card} agentgrep find
 :link: find
 :link-type: doc
-Discover the on-disk stores agentgrep can read.
+Enumerate on-disk stores with fd-shaped flag grammar.
+:::
+
+:::{grid-item-card} agentgrep fuzzy
+:link: fuzzy
+:link-type: doc
+Non-interactive fuzzy match on stdin, shaped like `fzf --filter`.
 :::
 
 ::::
+
+## --ui overlay
+
+Every search-shaped subcommand accepts `--ui`: pass it to open the
+Textual explorer pre-filled with the same query you'd otherwise run
+as a one-shot. This is the `tig`-shaped overlay model — `agentgrep
+grep -i foo --ui` is to `agentgrep grep -i foo` what `tig log` is to
+`git log`. Same args, same query semantics, different presentation.
 
 ## Use from another agent
 

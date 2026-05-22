@@ -8,6 +8,12 @@ transcripts, Cursor SQLite databases, Gemini history. Use it to
 inspect what agentgrep sees before running a search, or to feed a
 catalog into another tool.
 
+The flag grammar mirrors `fd`: the positional PATTERN is treated as a
+regex by default, with `-F` (literal), `-g` (glob), and `--exact`
+modifiers; `-t` filters by record kind; `-e` filters by file
+extension; `-l` switches to a long-format output; `-0` separates
+output with NUL for `xargs -0` consumers.
+
 ## Examples
 
 List every store agentgrep can read for one agent:
@@ -16,16 +22,34 @@ List every store agentgrep can read for one agent:
 $ agentgrep find codex
 ```
 
-Filter by a path substring within an agent:
+Filter by literal substring (the legacy default before fd alignment):
 
 ```console
-$ agentgrep find sessions --agent codex
+$ agentgrep find -F sessions
 ```
 
-Emit the catalog as JSON for downstream tools:
+Restrict to one record kind and one file extension:
 
 ```console
-$ agentgrep find cursor --json
+$ agentgrep find -t prompts -e jsonl
+```
+
+Long format for column-aware downstream tools:
+
+```console
+$ agentgrep find -l
+```
+
+NUL-separated output for `xargs -0`:
+
+```console
+$ agentgrep find -0 | xargs -0 -n1 ls -l
+```
+
+Open the Textual explorer pre-filled with the find query:
+
+```console
+$ agentgrep find -t prompts --ui
 ```
 
 ## Command

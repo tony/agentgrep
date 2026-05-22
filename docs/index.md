@@ -102,7 +102,9 @@ configuration
 Overview <cli/index>
 cli/ui
 cli/search
+cli/grep
 cli/find
+cli/fuzzy
 ```
 
 ```{toctree}
