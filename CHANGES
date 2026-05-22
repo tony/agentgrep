@@ -40,558 +40,106 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
-agentgrep 0.1.0a5 grows the CLI from three subcommands to five, with
-each new surface mirroring a tool users already know: `agentgrep
-grep` matches `rg` / `ag` for content search, `agentgrep find` grows
-fd-shaped flag grammar for store enumeration, and a new `agentgrep
-fuzzy` provides `fzf --filter`-style non-interactive fuzzy filtering
-over stdin. A new `--ui` overlay flag turns any subcommand into its
-TUI form — the `tig` model for git, applied to agentgrep. Bare
-`agentgrep` now prints a colorized directory of choices listing
-every subcommand, matching the `tmuxp` / `vcspull` convention; the
-TUI is reachable through the explicit `agentgrep ui` subcommand.
-Output for `grep` is now line-aware (one row per matching line with
-the matched span highlighted) and `find` defaults to one path per
-line — both following rg's and fd's lead. A new `--no-progress`
-flag silences the stderr spinner in one keystroke. Under the
-covers, a new headless event-stream engine yields typed pydantic
-events as the search walks; the CLI consumes the stream live so
-the first matches appear within milliseconds instead of after the
-full scan finishes. Output alignment lands deeper in this release:
-`grep`'s default pipe shape is now rg-faithful `path:text` (with
-`-n` / `--column` / `--vimgrep` opt-ins), `grep -c` emits
-`path:N` per matching record, `grep --json` is now rg's per-line
-event stream with `submatches[*]` carrying byte offsets, and
-`find` with no positional pattern lists every source (fd parity).
-A new Lucene-style query language threads field predicates,
-boolean composition, and date ranges through `search`, `grep`,
-and `find` while keeping the legacy fast path zero-cost when
-the syntax isn't used: write `agentgrep search agent:codex bliss`
-or `agentgrep search '(agent:codex OR agent:cursor) AND deploy
-timestamp:>2026-01-01'` to mix source-level pruning with record-
-level filtering. A combinatorial stress test against the rg/fd
-contract surfaced six more alignment gaps, all addressed in this
-release: `grep` now surfaces a clean error for invalid regex (no
-more Python tracebacks), refuses empty patterns at parse time,
-drops the trailing blank line under `-o`, and refuses `-v` for
-text output until engine-level line invert lands ([#8](https://github.com/tony/agentgrep/issues/8)); `grep -L` now
-lists sources with no matches (previously a stub); and `find -g`
-matches against the file basename by default with a new
-`--full-path` flag for absolute-path matching (fd's `-p`).
+agentgrep 0.1.0a5 grows the CLI from three subcommands to five
+(`grep`, `fuzzy`, plus fd-shaped `find` flags), threads a
+Lucene-style query language through `search`/`grep`/`find`, and
+swaps the engine for a streaming event-stream producer the CLI
+and TUI consume live.
 
 ### Breaking changes
 
-#### `grep` default text shape is now `path:text` (rg-faithful)
+#### Bare `agentgrep <terms>` no longer auto-runs `search`
 
-`agentgrep grep` previously emitted `path:line:col:text` for every
-match — essentially always-vimgrep, regardless of flags. The new
-default mirrors `rg`'s pipe shape: `path:text`. Opt back into
-prefixes with `-n` / `--line-number` for `path:line:text`, with
-the new `--column` flag for `path:line:col:text`, or with
-`--vimgrep` for the legacy one-row-per-match-span shape.
+Spell the subcommand out: `agentgrep search bliss`. Bare
+`agentgrep` (no args) now prints a directory of subcommands.
 
-```console
-# Before
-$ agentgrep grep bliss
-~/.codex/.../a.jsonl:1:5:The bliss primitive ships with serene defaults
+#### `find <PATTERN>` is regex by default
 
-# After (rg-faithful)
-$ agentgrep grep bliss
-~/.codex/.../a.jsonl:The bliss primitive ships with serene defaults
+fd parity. Use `-F` for literal substring.
 
-# After + --column (legacy shape)
-$ agentgrep grep --column bliss
-~/.codex/.../a.jsonl:1:5:The bliss primitive ships with serene defaults
-```
+#### `grep` default text shape is `path:text`
 
-#### `grep -c` emits `path:N` per matching record
+rg parity (was `path:line:col:text`). Use `-n` / `--column` /
+`--vimgrep` for the prefixed shapes.
 
-`agentgrep grep -c` previously emitted a single integer counting
-matching records. The new shape mirrors `rg -c`: `path:N` per
-matching record (counting matching *lines*), or just `N` when
-exactly one record matched.
+#### `grep -c` emits `path:N` per record
 
-```console
-# Before
-$ agentgrep grep -c bliss
-2
+Counting matching lines per file (rg parity). Previously a
+single integer record count.
 
-# After
-$ agentgrep grep -c bliss
-~/.codex/.../a.jsonl:3
-~/.codex/.../b.jsonl:1
-```
+#### `grep --json` is a per-line event stream
 
-#### `grep --json` is now an rg-shaped per-line event stream
-
-`agentgrep grep --json` previously emitted one `match` event per
-record with `line_number: null` and the full multi-line record
-text in `data.text`. The new shape mirrors `rg`'s `--json`
-contract: per matching line, an event with nested `path.text`,
-1-indexed `line_number`, `lines.text` (the matched line), and
-`submatches[*].{match: {text}, start, end}` carrying byte offsets.
-Each record is bookended with `begin` and `end` events; the
-envelope still closes with a `summary` event. Consumers built
-against `rg --json` can route agentgrep's stream through the same
-parser.
-
-```json
-// Before
-{"type":"match","data":{"path":"...","line_number":null,
-  "text":"...defaults\nno match...\nanother bliss..."}}
-
-// After
-{"type":"begin","data":{"path":{"text":"..."},...}}
-{"type":"match","data":{"path":{"text":"..."},"line_number":1,
-  "lines":{"text":"The bliss primitive..."},
-  "submatches":[{"match":{"text":"bliss"},"start":4,"end":9}]}}
-{"type":"end","data":{"path":{"text":"..."},
-  "stats":{"matched_lines":1,"matches":1}}}
-{"type":"summary","data":{"matches":1}}
-```
-
-#### Bare `agentgrep` no longer launches the TUI
-
-Bare `agentgrep` (with no subcommand) now prints a colorized
-directory of choices — the same pattern `tmuxp` and `vcspull` use —
-listing each subcommand with example invocations. The interactive
-Textual explorer is reachable only through the explicit `ui`
-subcommand:
-
-```console
-# Before
-$ agentgrep
-
-# After
-$ agentgrep ui
-```
-
-The behavior change aligns agentgrep with the tmuxp/vcspull
-conventions users coming from those tools already expect.
-
-#### `agentgrep <terms>` no longer auto-runs `search`
-
-The implicit shorthand that rewrote `agentgrep <terms>` as
-`agentgrep search <terms>` is removed. Bare positionals now produce
-argparse's standard `invalid choice` error so the available
-subcommands stay discoverable. Migration is to spell the subcommand
-out:
-
-```console
-# Before
-$ agentgrep bliss
-
-# After
-$ agentgrep search bliss
-```
-
-#### `agentgrep find` default pattern is now regex
-
-`agentgrep find <PATTERN>` now treats `PATTERN` as a regex by default
-to match fd's behavior. The previous behavior (literal substring) is
-available via `-F` / `--fixed-strings`. Plain alphanumeric patterns
-match identically under both modes; users whose patterns contain
-regex metacharacters should pass `-F`:
-
-```console
-# Before
-$ agentgrep find 'foo.bar'
-
-# After
-$ agentgrep find -F 'foo.bar'
-```
-
-#### `agentgrep find -g` matches against the path basename
-
-`agentgrep find -g GLOB` previously applied the glob to a joined
-`agent store adapter_id path path_kind` haystack, so `*.jsonl`
-returned "No matching sources found" even though every store path
-ended in `.jsonl`. The new default matches the glob against the
-file basename (fd's default behavior); a new `--full-path` flag
-opts into matching the absolute path (fd's `-p`). Regex, fixed,
-and exact modes are unchanged — they still match the joined
-haystack so `agentgrep find sessions` continues to hit on the
-store fragment.
-
-```console
-# Before
-$ agentgrep find -g '*.jsonl'
-No matching sources found.
-
-# After (basename matching)
-$ agentgrep find -g '*.jsonl'
-~/.codex/sessions/2026/05/a.jsonl
-~/.codex/sessions/2026/05/b.jsonl
-
-# After + --full-path (absolute path matching)
-$ agentgrep find -g '*/sessions/*.jsonl' --full-path
-~/.codex/sessions/2026/05/a.jsonl
-```
-
-#### `agentgrep grep` text output is now line-aware
-
-`agentgrep grep` previously dumped each matching record's full text
-field verbatim, which on a multi-line prompt or transcript could
-fill the terminal. The new default emits one line per matching line
-within a record — `line:col:text` rows with the matched span
-highlighted (red+bold). On TTY each record opens with a heading
-line (agent · timestamp · path); on pipe every match emits as
-`path:line:col:text` so the output stays grep-pipeline friendly.
-The format mirrors `rg` and `ag`. JSON, NDJSON, `--vimgrep`, `-c`,
-`-l`, and `-L` are unchanged; `--vimgrep` and `-o` now produce real
-line/col offsets (previously hardcoded `1:1`).
-
-#### `agentgrep find` default is one path per line
-
-`agentgrep find` previously printed three lines per record (agent
-header, path, blank). The new default emits one path per line,
-matching `fd`. The metadata (agent, kind, store, adapter_id) is
-still reachable through the existing `-l/--list-details` flag,
-which produces a tab-separated long format. `--json`, `--ndjson`,
-and `--print0` are unchanged.
-
-### Dependencies
-
-Adds runtime dependency `rapidfuzz>=3.10.0`. The new `agentgrep
-fuzzy` subcommand *is* the fuzzy library — unlike the pydantic /
-textual / fastmcp pattern of optional deps with fallbacks, fuzzy has
-no useful fallback, so rapidfuzz is a hard dep.
+rg-shaped events with `lines.text` and `submatches`. Previously
+one event per record with the whole record text.
 
 ### What's new
 
+#### New subcommand: `grep`
+
+rg/ag-shaped content search. Flags: `--json` / `--ndjson` /
+`--vimgrep` / `--column` / `-c` / `-l` / `-L` / `-o` / `-n` /
+`-F` / `-E` / `-w`. grep-faithful exit codes.
+
+#### New subcommand: `fuzzy`
+
+`fzf --filter`-shaped non-interactive ranking over stdin.
+Extended-search syntax, `--algo` / `--tiebreak`, and
+field-scoped `--delimiter` / `--nth` / `--with-nth`.
+
+#### fd-shaped `find` flags
+
+`-g` / `-F` / `--exact`, `-t` / `--type`, `-e` / `--extension`,
+`-l` / `--list-details`, `-0` / `--print0`, `--full-path`. One
+path per line by default; `-g` matches basename.
+
+#### Query language across `search` / `grep` / `find`
+
+Field predicates (`agent:`, `path:`, `mtime:`, `timestamp:`,
+`model:`, `role:`, `type:`, `store:`, `adapter_id:`, `text:`),
+`AND` / `OR` / `NOT` with parens, comparison + range operators,
+ISO and relative date literals. Source-layer fields prune
+before file I/O.
+
+#### `--ui` overlay on every subcommand
+
+Opens the Textual explorer pre-filled with the same query; the
+explorer accepts the query language on re-search too. The TUI
+moves behind the explicit `agentgrep ui` subcommand.
+
+#### `--no-progress` everywhere
+
+Alias for `--progress=never` on every subcommand; `find` also
+gains the full `--progress {auto,always,never}` selector.
+
 #### Headless event-stream engine
 
-agentgrep grows a typed event-stream engine that powers the CLI,
-TUI, and MCP server from one producer. Two new public iterators —
-{func}`agentgrep.iter_search_events` and
-{func}`agentgrep.iter_find_events` — yield pydantic-discriminated
-{data}`~agentgrep.events.SearchEvent` and
-{data}`~agentgrep.events.FindEvent` values as the engine walks
-sources, so consumers can react per-record instead of waiting for
-the full list.
+`iter_search_events` and `iter_find_events` yield typed
+pydantic events. CLI text + NDJSON output is live-streaming.
 
-`agentgrep grep` and `agentgrep find` consume the stream live: text
-and NDJSON output rows appear within milliseconds of the first
-match, with stdout flushed per record when stdout is a TTY. The
-eager output modes (`--json`, `-c`, `-l`, `-L`, `--list-details`)
-keep using the existing list-return wrapper because their output
-shape needs the final tally or cross-record deduplication. See
-{ref}`library-event-stream` for the architecture walkthrough,
-event vocabulary, and consumer recipes.
+### Bug fixes
 
-#### `--no-progress` flag and `find --progress`
-
-`grep`, `search`, and `find` now accept `--no-progress` as an alias
-for `--progress=never`, silencing the stderr spinner with one
-flag. `find` also gains the full `--progress {auto,always,never}`
-selector it previously lacked. Progress always writes to stderr, so
-piping (`agentgrep grep foo | less`) was never affected — the new
-flag is for interactive sessions where the spinner is noise.
-
-#### `agentgrep grep` content search
-
-A new `agentgrep grep` subcommand mirrors `ripgrep` and
-`the_silver_searcher`. The flag set carries the rg conventions
-users already type: `-F` / `-E` / `-w` for pattern mode, `-i` / `-s`
-/ `-S` for case (smart-case default), `-c` / `-l` / `-L` / `-o` /
-`-v` for output filtering, `-m` for match caps, `--vimgrep` and
-`--json` for output shapes, and `--no-dedupe` to drop session
-deduplication for the strictly rg-faithful raw view. Exit codes
-follow grep's 0/1/2 convention. See {ref}`cli-grep` for the
-walkthrough.
-
-#### `agentgrep fuzzy` non-interactive fuzzy filter
-
-A new `agentgrep fuzzy` subcommand provides fzf's `--filter` mode:
-read lines from stdin, score them with the v2 fuzzy algorithm
-(`--algo=v1` for the older quality-blend), and emit matches in
-descending score order. Supports fzf's extended-search syntax (`foo
-!bar`, `^foo`, `bar$`, `'foo`), `--read0` / `--print0` for
-NUL-delimited pipelines, `--delimiter` / `--nth` / `--with-nth` for
-field-scoped scoring, and `--print-query` for echoing the query.
-The no-argument behavior is strict — no QUERY and no piped stdin
-prints usage and exits `2` (no interactive TUI fallback; reach for
-`agentgrep ui` instead). See {ref}`cli-fuzzy`.
-
-#### fd-shaped flags on `agentgrep find`
-
-`agentgrep find` grows the fd flag set: `-g` / `--glob` for
-fnmatch-style patterns, `-F` for literal substring, `--exact` for
-adapter-id equality, `-t` / `--type` to filter by record kind
-(`prompts` / `history` / `sessions` / `all`), `-e` / `--extension`
-to filter by file extension (repeatable), `-i` / `-s` for case
-override (smart-case default), `-l` / `--list-details` for a long
-tab-separated format, `-0` / `--print0` for NUL-delimited output
-to feed `xargs -0`, and `-a` / `--absolute-path` (symbolic, paths
-are already absolute). See {ref}`cli-find` for the new examples.
-
-#### `--ui` overlay across all subcommands
-
-A new `--ui` flag on `grep`, `find`, and `fuzzy` (the existing
-`search --ui` is unchanged) opens the Textual explorer pre-filled
-with the same query the one-shot command would have run. This is
-the `tig`-shaped overlay model — `agentgrep grep -i foo --ui` is to
-`agentgrep grep -i foo` what `tig log` is to `git log`. Same args,
-same query semantics, different presentation.
-
-#### `find --full-path` for fd `-p` parity
-
-`agentgrep find -g GLOB` matches the path basename by default;
-`--full-path` switches the glob to the absolute path, matching
-fd's `-p` semantic. Useful when the basename alone isn't enough to
-disambiguate (e.g. you want every `*.jsonl` under `sessions/` but
-not under `history/`). See {ref}`cli-find` for examples.
-
-#### Lucene-style query language across search/grep/find
-
-`agentgrep search`, `agentgrep grep`, and `agentgrep find` now
-accept inline Lucene-style field predicates, boolean composition,
-and date ranges as part of the positional arguments. Plain
-positionals (no `:`) keep the legacy fast path with zero overhead.
-
-```console
-$ agentgrep search agent:codex bliss
-$ agentgrep search '(agent:codex OR agent:cursor) AND deploy'
-$ agentgrep search '-agent:claude timestamp:>2026-01-01 bliss'
-$ agentgrep find 'path:~/.codex agent:codex'
-```
-
-The default field registry ships ten fields split across two
-evaluation layers. Source-level fields (`agent`, `store`,
-`adapter_id`, `path`, `mtime`) prune sources before any file is
-opened — `agent:codex` skips Claude / Cursor / Gemini sources
-entirely. Record-level fields (`type`, `timestamp`, `model`,
-`role`, `text`) filter parsed records after the source pass.
-Date literals accept ISO (`2026-05-22`, `2026-05`, `2026`,
-`2026-05-22T14:30:00`), relative (`today`, `yesterday`,
-`7d ago`, `2w ago`, `5d from now`), and unbounded (`*`) forms.
-Bare-day equality expands to a 24-hour half-open range; bare-month
-to the calendar month; bare-year to the calendar year.
-
-Boolean composition supports explicit `AND` / `OR` / `NOT` (case-
-insensitive whole-word keywords), the sigils `-` (NOT) and `+`
-(no-op, accepted for rg compatibility), and parens for grouping.
-The compiler uses three-valued logic during the source-prune
-pass so OR-mixed queries (source-layer OR'd with record-layer)
-degrade safely — the source is read and the record predicate
-decides.
-
-Mixing the new field syntax with the equivalent flag is rejected
-at parse time:
-
-```console
-$ agentgrep search --agent codex agent:claude bliss
-agentgrep search: error: cannot combine --agent flag with agent: field predicate; pick one syntax
-```
-
-Currently checked: `--agent` × `agent:`, `--type` × `type:`.
-Unknown field names error at parse time with the registered
-field list. Invalid regex / unparseable date / unknown enum
-value each produce a clean argparse-shaped error with exit 2,
-never a Python traceback.
-
-See {ref}`library-query-language` for the full grammar, field
-registry, and date literal reference.
-
-#### `--ui` overlay accepts the full query language
-
-Launching the TUI via `agentgrep search --ui agent:codex bliss`
-now opens with the full query string in the search box (not just
-the text terms), and editing the box re-parses field syntax on
-every keystroke — `agent:codex bliss` becomes
-`agent:claude deploy` becomes `timestamp:>2026-01 OR model:claude`
-without restarting the TUI. Field predicates that prune sources
-take effect on the next debounced re-search. Parse / compile
-errors keep the search box editable so users can correct typos
-in-flight.
-
-### Fixes
-
-#### Query language: invalid enum + date literals now error at parse time
-
-`agentgrep search agent:gpt4 bliss` used to scan 1,400+ sources for
-~20 seconds and silently return "No matches found." because enum
-validation lived in the source-side evaluation path, which the
-eager search path didn't trigger. The compiler now walks the AST
-once at parse time and rejects unknown enum values
-(`agent:gpt4`, `type:bogus`), unparseable date literals
-(`timestamp:>bogus`, `mtime:[bogus TO 2026]`), and the wrong-op-
-for-field combinations (`agent:>codex`, `type:[a TO b]`). Users
-see a clean argparse-shaped exit-2 error with the valid choices
-listed.
-
-#### Query language: `search`'s eager path now prunes sources
-
-`agentgrep search agent:codex bliss` was paradoxically *slower*
-than the unfiltered `agentgrep search bliss` because the eager
-path's `collect_search_records` never consulted the compiled
-query's source predicate — every source got opened just to be
-rejected at the record level. The source predicate now runs in
-`search_sources` *before* the ripgrep prefilter, so non-codex
-sources skip both planning and reading. The agent-filtered search
-is now faster than the unfiltered baseline, as it always should
-have been.
-
-#### Query language: `-agent:claude` no longer silently mangles into short flags
-
-`agentgrep find -agent:claude` (unquoted negation shortcut) used
-to silently parse as the combined short options `-a -g -e
-nt:claude` because each leading character matched a defined short
-flag — turning the user's negation intent into a glob-mode search
-with extension filter `nt:claude`. A pre-scan now rejects argv
-tokens shaped like `-FIELD:VALUE` (where FIELD is a known query
-field) at parse time, with a clean error suggesting the
-workarounds: `--` separator, quoted positional, or `NOT` keyword.
-
-#### Query language: `find --json` and `find -l` honor source predicates
-
-`agentgrep find --json agent:codex` used to return every agent's
-sources (6,425 records in one local run) and `agentgrep find -l
-agent:codex` listed claude sources first — both eager output
-paths called the legacy `run_find_query` signature that doesn't
-accept the compiled query. The streaming text/NDJSON path
-prunes correctly. Both eager modes now share the streaming
-path's source-pruning logic, so source-level field predicates
-(`agent:`, `path:`, `store:`, `mtime:`) apply uniformly across
-every output mode.
-
-#### Query language: mangle-rejection error drops misleading workaround
-
-The argv-mangle rejection error used to list three workarounds:
-`--`, quoted positional, and `NOT`. The middle one didn't
-actually work — the shell strips quotes before argparse runs,
-so the quoted form arrives identically to the unquoted form and
-the pre-scan rejects both. The error message now lists only the
-two that survive: `--` and `NOT`. The query-language reference
-page picked up the same correction with an explicit note about
-why quoting can't circumvent the collapse.
-
-#### `agentgrep find` with no pattern lists every source
-
-`fd` with no positional pattern lists every file. `agentgrep find`
-with no positional was printing `--help` and exiting because
-`parse_args` had an early-return for the missing pattern. The
-engine already accepts `pattern=None` as "no filter"; removing the
-early return restores fd-parity:
-
-```console
-# Before
-$ agentgrep find
-usage: agentgrep find [...]
-
-# After (fd-faithful)
-$ agentgrep find
-~/.codex/.../a.jsonl
-~/.codex/.../b.jsonl
-~/.claude/.../session.jsonl
-```
-
-#### `agentgrep grep` invalid regex emits a clean error
-
-`agentgrep grep '['` previously dumped a Python traceback ending in
-`re/_parser.py` and exited 1 — the unprotected `re.search` call
-inside the engine had no boundary guard. `grep` now validates
-every pattern at the argparse layer (with the same case + word
-wrapping the engine uses) and surfaces an argparse-shaped error
-on failure:
-
-```console
-# Before
-$ agentgrep grep '['
-Traceback (most recent call last):
-  ...
-re.PatternError: unterminated character set at position 0
-
-# After
-$ agentgrep grep '['
-usage: agentgrep grep [...]
-agentgrep grep: error: invalid regex '[': unterminated character set at position 0
-```
-
-Exit code is now 2 (matching rg / grep convention for usage
-errors). `-F` (fixed strings) skips validation since literal
-patterns never reach `re.compile`.
-
-#### `agentgrep grep` rejects empty patterns
-
-`agentgrep grep ''` previously short-circuited through
-`iter_match_lines`'s zero-width-match filter and emitted a
-find-shaped `agent  [ts]  path` line — visually indistinguishable
-from `agentgrep find` output. The empty pattern is now refused at
-parse time with the standard argparse shape (git-grep parity):
-
-```console
-$ agentgrep grep ''
-usage: agentgrep grep [...]
-agentgrep grep: error: pattern cannot be empty
-```
-
-The check applies to every term, so `agentgrep grep foo ''` still
-fails.
-
-#### `agentgrep grep -o` no longer emits trailing blank lines
-
-`agentgrep grep -o PATTERN` was leaking the heading-mode blank-line
-separator after every record, so the output looked like
-`bliss\n\nbliss\n\n...` instead of rg's bare `bliss\nbliss\n...`.
-The separator is now suppressed under `-o`, restoring rg parity.
-
-#### `agentgrep grep -v` for text output is refused at parse time
-
-`agentgrep grep -v PATTERN` previously accepted the flag and then
-silently returned the records that *did* contain PATTERN —
-inversion was only honored under `-c` and `-L`. Until engine
-support for line-level invert lands
-([#8](https://github.com/tony/agentgrep/issues/8)), `-v` outside
-`-c`/`-L` is rejected at parse time with exit 2 so users get a
-clean error instead of wrong-but-plausible output.
-
-```console
-$ agentgrep grep -v bliss
-agentgrep grep: error: --invert-match for text output is not yet
-implemented (see https://github.com/tony/agentgrep/issues/8); use
--c or -L
-```
-
-`-v -c` and `-v -L` still parse — both collapse to the
-"did anything match?" question the engine's existing surface can
-answer.
-
-#### `agentgrep grep -L` lists sources with no matches
-
-`agentgrep grep -L PATTERN` was a stub returning empty stdout
-regardless of input. The new implementation runs the same query
-the engine would run, collects matching paths from the event
-stream, and prints the complement against the engine's planned
-source set. Exit codes follow rg: `0` when at least one path is
-printed, `1` when every planned source matched.
-
-```console
-$ agentgrep grep -L bliss
-~/.codex/sessions/2026/05/b.jsonl
-```
+- `find` with no positional pattern lists every source (was:
+  printed `--help` and exited).
+- `grep` invalid regex exits 2 with a clean error (was: Python
+  traceback).
+- `grep ''` is rejected at parse time.
+- `grep -o` no longer emits trailing blank lines.
+- `grep -v` outside `-c` / `-L` exits 2 with a clear error.
+- `grep -L` lists sources without matches.
+- Query language: invalid enum / unparseable date /
+  wrong-op-for-field errors fire at parse time, not after
+  scanning every source.
+- `search` eager path prunes sources via the compiled query.
+- `find --json` and `find -l` honor source predicates.
+- `-FIELD:VALUE` argv tokens are rejected with workaround
+  hints (argparse would otherwise mangle them into combined
+  short options).
 
 ### Development
 
-#### `agentgrep.cli` subpackage
+- Source split: argparse into `agentgrep.cli.parser`, output
+  rendering into `agentgrep.cli.render`. Re-exports preserved.
 
-The CLI surface — argument parsing, output rendering, subcommand
-dispatch — moves out of `src/agentgrep/__init__.py` into a new
-`src/agentgrep/cli/` subpackage with `parser.py`, `render.py`, and
-an entry-point shim. The console script `agentgrep` now resolves
-through `agentgrep.cli:main`. All previously public symbols
-(`parse_args`, `SearchArgs`, `run_search_command`, etc.) are
-re-exported from `agentgrep` for backward compatibility, so any
-external code or test importing them via the package namespace
-continues to work unchanged.
-
-#### `agentgrep.fuzzy` helper module
-
-A new `src/agentgrep/fuzzy.py` wraps `rapidfuzz` so the rest of the
-codebase never imports it directly. Exposes
-`resolve_case_sensitivity`, `fuzzy_score` (algo v1/v2),
-`extended_match` for fzf's token grammar, and `rank_lines` as a
-sorted iterator. Tests live in `tests/test_fuzzy.py`.
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
