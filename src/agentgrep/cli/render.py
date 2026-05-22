@@ -235,9 +235,7 @@ def print_find_results(records: list[FindRecord], args: FindArgs) -> None:
             print(_format_find_text_line(record, args))
         return
     for record in records:
-        print(f"{record.agent} {record.path_kind} {record.store}")
         print(agentgrep.format_display_path(record.path))
-        print()
 
 
 def _format_find_text_line(record: FindRecord, args: FindArgs) -> str:
