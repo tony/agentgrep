@@ -256,7 +256,12 @@ def run_search_command(args: SearchArgs) -> int:
         raise SystemExit(msg)
     query = agentgrep.make_search_query(args)
     if args.output_mode == "ui":
-        agentgrep.run_ui(pathlib.Path.home(), query, control=agentgrep.SearchControl())
+        agentgrep.run_ui(
+            pathlib.Path.home(),
+            query,
+            control=agentgrep.SearchControl(),
+            initial_search_text=args.raw_query or None,
+        )
         return 0
     answer_now_enabled = agentgrep.should_enable_answer_now(args)
     control = agentgrep.SearchControl()
@@ -446,8 +451,14 @@ def run_find_command(args: FindArgs) -> int:
             case_sensitive=args.case_mode == "respect",
             agents=args.agents,
             limit=args.limit,
+            compiled=args.compiled,
         )
-        agentgrep.run_ui(pathlib.Path.home(), query, control=agentgrep.SearchControl())
+        agentgrep.run_ui(
+            pathlib.Path.home(),
+            query,
+            control=agentgrep.SearchControl(),
+            initial_search_text=args.raw_query or None,
+        )
         return 0
     if not _find_path_is_eager(args):
         return stream_find_results(args)
@@ -1067,7 +1078,12 @@ def run_fuzzy_command(args: FuzzyArgs) -> int:
             agents=args.agents,
             limit=None,
         )
-        agentgrep.run_ui(pathlib.Path.home(), query, control=agentgrep.SearchControl())
+        agentgrep.run_ui(
+            pathlib.Path.home(),
+            query,
+            control=agentgrep.SearchControl(),
+            initial_search_text=args.query or None,
+        )
         return 0
     separator = "\0" if args.read0 else "\n"
     raw = sys.stdin.read()
@@ -1160,7 +1176,12 @@ def run_grep_command(args: GrepArgs) -> int:
         raise SystemExit(msg)
     query = build_grep_query(args)
     if args.output_mode == "ui":
-        agentgrep.run_ui(pathlib.Path.home(), query, control=agentgrep.SearchControl())
+        agentgrep.run_ui(
+            pathlib.Path.home(),
+            query,
+            control=agentgrep.SearchControl(),
+            initial_search_text=args.raw_query or None,
+        )
         return 0
     if not _grep_path_is_eager(args):
         return stream_grep_results(args)

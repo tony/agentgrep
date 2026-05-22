@@ -25,7 +25,9 @@ def _capture_run_ui(monkeypatch: pytest.MonkeyPatch) -> list[agentgrep.SearchQue
         query: agentgrep.SearchQuery,
         *,
         control: object,
+        initial_search_text: str | None = None,
     ) -> None:
+        del initial_search_text  # accepted for signature compat; not asserted here
         captured.append(query)
 
     monkeypatch.setattr(agentgrep, "run_ui", _record)

@@ -50,6 +50,7 @@ from agentgrep.query.dates import (
     parse_date_literal,
     parse_range_bound,
 )
+from agentgrep.query.parser import QueryParseError, parse_query
 from agentgrep.query.registry import FieldRegistry, FieldSpec
 
 _Trilean = t.Literal["T", "F", "U"]
@@ -228,6 +229,91 @@ def _validate_range_bound(
     except DateParseError as exc:
         message = f"invalid date in {spec.name} range: {exc}"
         raise QueryCompileError(message) from exc
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class QueryBuildResult:
+    """Outcome of :func:`build_query_from_input`.
+
+    Either ``query`` is a fresh :class:`agentgrep.SearchQuery` and
+    ``error`` is ``None`` (success), or ``query`` is ``None`` and
+    ``error`` carries a user-facing message (parse / compile failure).
+    Frozen so consumers can pass the result across thread boundaries.
+    """
+
+    query: agentgrep.SearchQuery | None
+    error: str | None
+
+
+def build_query_from_input(
+    text: str,
+    base_query: agentgrep.SearchQuery,
+    registry: FieldRegistry,
+) -> QueryBuildResult:
+    """Translate a search-input string into a fresh :class:`SearchQuery`.
+
+    The TUI's search box uses this on every debounced change. The
+    helper bridges three input shapes:
+
+    - **Empty / whitespace-only**: returns an empty-terms query.
+    - **Bare terms** (no ``:``): split on whitespace; legacy path.
+    - **Field syntax** (`:` present): parse + compile, route the
+      compiled query through ``SearchQuery.compiled`` so source and
+      record predicates apply on the next search.
+
+    Inherits ``search_type``, ``any_term``, ``regex``,
+    ``case_sensitive``, ``agents``, ``limit``, and ``dedupe`` from
+    ``base_query`` so the search bar lives on top of the existing
+    filter scope rather than resetting it.
+
+    Returns a :class:`QueryBuildResult`. On parse/compile failure,
+    the caller can surface ``result.error`` in a status line and
+    keep the search box editable.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return QueryBuildResult(
+            query=_rebuild(base_query, terms=(), compiled=None),
+            error=None,
+        )
+    if ":" not in stripped:
+        terms = tuple(stripped.split())
+        return QueryBuildResult(
+            query=_rebuild(base_query, terms=terms, compiled=None),
+            error=None,
+        )
+    try:
+        ast = parse_query(stripped, registry)
+    except QueryParseError as exc:
+        return QueryBuildResult(query=None, error=str(exc))
+    try:
+        compiled = compile_query(ast, registry)
+    except QueryCompileError as exc:
+        return QueryBuildResult(query=None, error=str(exc))
+    return QueryBuildResult(
+        query=_rebuild(base_query, terms=compiled.text_terms, compiled=compiled),
+        error=None,
+    )
+
+
+def _rebuild(
+    base: agentgrep.SearchQuery,
+    *,
+    terms: tuple[str, ...],
+    compiled: CompiledQuery | None,
+) -> agentgrep.SearchQuery:
+    """Clone ``base`` with new ``terms`` / ``compiled``; carry the rest forward."""
+    return agentgrep.SearchQuery(
+        terms=terms,
+        search_type=base.search_type,
+        any_term=base.any_term,
+        regex=base.regex,
+        case_sensitive=base.case_sensitive,
+        agents=base.agents,
+        limit=base.limit,
+        dedupe=base.dedupe,
+        compiled=compiled,
+    )
 
 
 def fields_in_ast(node: QueryNode) -> set[str]:
