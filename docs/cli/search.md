@@ -48,6 +48,12 @@ Browse interactively in the Textual TUI:
 $ agentgrep search design --ui
 ```
 
+Silence the stderr progress spinner:
+
+```console
+$ agentgrep search --no-progress design
+```
+
 ## Command
 
 ```{eval-rst}
