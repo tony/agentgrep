@@ -913,14 +913,50 @@ def print_grep_results(records: list[agentgrep.SearchRecord], args: GrepArgs) ->
 
 
 def _print_files_without_match(args: GrepArgs) -> int:
-    """Print sources with no matches.
+    """Print sources whose records produced no matches (rg ``-L`` parity).
 
-    Engine support for inverted file enumeration isn't wired yet — this
-    stub keeps the CLI grammar valid and emits the rg-style "no matches"
-    exit code. A follow-up will compute the complement against
-    discovered sources.
+    Runs the same query the engine would run, collects the set of paths
+    that emitted at least one :class:`agentgrep.events.RecordEmitted`,
+    then prints the complement against the engine's planned-source list
+    so the user gets the file-level "no match" view rg's ``-L`` exposes.
+
+    Re-uses the public :func:`agentgrep.discover_sources` and
+    :func:`agentgrep.plan_search_sources` helpers so this consumer-layer
+    implementation tracks any future changes to the engine's source
+    selection logic without duplicating filter rules.
+
+    Returns ``0`` when at least one path is printed (the "no-match
+    file" is itself a positive result for ``-L``), ``1`` otherwise.
     """
-    return 0
+    query = build_grep_query(args)
+    home = pathlib.Path.home()
+
+    matched_paths: set[pathlib.Path] = set()
+    for event in agentgrep.iter_search_events(
+        home,
+        query,
+        control=agentgrep.SearchControl(),
+    ):
+        if isinstance(event, events.RecordEmitted):
+            matched_paths.add(event.record.path)
+
+    backends = agentgrep.select_backends()
+    discovered = agentgrep.discover_sources(home, args.agents, backends)
+    planned = agentgrep.plan_search_sources(query, discovered, backends)
+
+    colors = agentgrep.AnsiColors.for_stream(args.color_mode, sys.stdout)
+    seen: set[str] = set()
+    printed = 0
+    for source in planned:
+        if source.path in matched_paths:
+            continue
+        display = agentgrep.format_display_path(source.path)
+        if display in seen:
+            continue
+        seen.add(display)
+        print(colors.path(display))
+        printed += 1
+    return 0 if printed > 0 else 1
 
 
 def fuzzy_filter_lines(
