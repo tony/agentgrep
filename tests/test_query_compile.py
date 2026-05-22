@@ -424,24 +424,165 @@ def test_compile_query_record_predicate_filters(
 # ----- compile-time semantic errors ---------------------------------------
 
 
-def test_comparison_against_string_field_errors() -> None:
-    """Comparison operators on a string field error at evaluation time."""
+def test_comparison_against_string_field_errors_at_compile_time() -> None:
+    """Comparison operators on a string field raise at compile time, not eval."""
     ast = FieldCmpNode(field="agent", op="gt", value="codex")
-    compiled = compile_query(ast, default_registry())
-    record = _make_record()
-    assert compiled.record_predicate is not None
-    with pytest.raises(QueryCompileError):
-        _ = compiled.record_predicate(record)
+    with pytest.raises(QueryCompileError, match="does not support comparison"):
+        _ = compile_query(ast, default_registry())
 
 
-def test_unknown_enum_value_errors() -> None:
-    """An unknown enum value (e.g. agent:gpt4) errors at evaluation time."""
+def test_unknown_enum_value_errors_at_compile_time() -> None:
+    """An unknown enum value (e.g. agent:gpt4) raises at compile time."""
     ast = FieldEqNode(field="agent", value="gpt4")
-    compiled = compile_query(ast, default_registry())
-    source = _make_source(agent="codex")
-    assert compiled.source_predicate is not None
-    with pytest.raises(QueryCompileError):
-        _ = compiled.source_predicate(source)
+    with pytest.raises(QueryCompileError, match="invalid agent value 'gpt4'"):
+        _ = compile_query(ast, default_registry())
+
+
+# ----- compile-time semantic validation -----------------------------------
+
+
+class EnumValidationCase(t.NamedTuple):
+    """Parametrized case for enum-membership validation at compile time."""
+
+    test_id: str
+    query: str
+    expected_fragment: str
+
+
+ENUM_VALIDATION_CASES: tuple[EnumValidationCase, ...] = (
+    EnumValidationCase(
+        test_id="agent-unknown-model",
+        query="agent:gpt4 bliss",
+        expected_fragment="invalid agent value 'gpt4'",
+    ),
+    EnumValidationCase(
+        test_id="agent-typo",
+        query="agent:clauded bliss",
+        expected_fragment="invalid agent value 'clauded'",
+    ),
+    EnumValidationCase(
+        test_id="type-unknown-value",
+        query="type:bogus bliss",
+        expected_fragment="invalid type value 'bogus'",
+    ),
+    EnumValidationCase(
+        test_id="type-near-miss",
+        query="type:prompt bliss",
+        expected_fragment="invalid type value 'prompt'",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    ENUM_VALIDATION_CASES,
+    ids=[c.test_id for c in ENUM_VALIDATION_CASES],
+)
+def test_enum_value_validated_at_compile_time(case: EnumValidationCase) -> None:
+    """Unknown enum values raise QueryCompileError before predicates are built."""
+    ast = parse_query(case.query, default_registry())
+    with pytest.raises(QueryCompileError) as exc_info:
+        _ = compile_query(ast, default_registry())
+    assert case.expected_fragment in str(exc_info.value)
+
+
+class DateValidationCase(t.NamedTuple):
+    """Parametrized case for date-literal validation at compile time."""
+
+    test_id: str
+    query: str
+    expected_fragment: str
+
+
+DATE_VALIDATION_CASES: tuple[DateValidationCase, ...] = (
+    DateValidationCase(
+        test_id="timestamp-comparison-bad-date",
+        query="timestamp:>bogus bliss",
+        expected_fragment="invalid date in timestamp",
+    ),
+    DateValidationCase(
+        test_id="timestamp-range-bad-lo",
+        query="timestamp:[bogus TO 2026] bliss",
+        expected_fragment="invalid date in timestamp range",
+    ),
+    DateValidationCase(
+        test_id="timestamp-range-bad-hi",
+        query="timestamp:{2025 TO bogus} bliss",
+        expected_fragment="invalid date in timestamp range",
+    ),
+    DateValidationCase(
+        test_id="mtime-bad-comparison",
+        query="mtime:>not-a-date bliss",
+        expected_fragment="invalid date in mtime",
+    ),
+    DateValidationCase(
+        test_id="timestamp-eq-bad-date",
+        query="timestamp:nonsense bliss",
+        expected_fragment="invalid date in timestamp",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    DATE_VALIDATION_CASES,
+    ids=[c.test_id for c in DATE_VALIDATION_CASES],
+)
+def test_date_literal_validated_at_compile_time(case: DateValidationCase) -> None:
+    """Unparseable date literals raise QueryCompileError before predicates are built."""
+    ast = parse_query(case.query, default_registry())
+    with pytest.raises(QueryCompileError) as exc_info:
+        _ = compile_query(ast, default_registry())
+    assert case.expected_fragment in str(exc_info.value)
+
+
+class ComparisonOnStringFieldCase(t.NamedTuple):
+    """Parametrized case for comparison ops against non-comparable fields."""
+
+    test_id: str
+    query: str
+    expected_fragment: str
+
+
+COMPARISON_ON_STRING_CASES: tuple[ComparisonOnStringFieldCase, ...] = (
+    ComparisonOnStringFieldCase(
+        test_id="comparison-against-agent",
+        query="agent:>codex bliss",
+        expected_fragment="'agent' does not support comparison",
+    ),
+    ComparisonOnStringFieldCase(
+        test_id="range-against-type",
+        query="type:[prompts TO history] bliss",
+        expected_fragment="'type' does not support range",
+    ),
+    ComparisonOnStringFieldCase(
+        test_id="comparison-against-path",
+        query="path:<somewhere bliss",
+        expected_fragment="'path' does not support comparison",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    COMPARISON_ON_STRING_CASES,
+    ids=[c.test_id for c in COMPARISON_ON_STRING_CASES],
+)
+def test_comparison_or_range_on_non_supported_field(
+    case: ComparisonOnStringFieldCase,
+) -> None:
+    """Comparison / range operators against non-comparable fields raise at compile time."""
+    ast = parse_query(case.query, default_registry())
+    with pytest.raises(QueryCompileError) as exc_info:
+        _ = compile_query(ast, default_registry())
+    assert case.expected_fragment in str(exc_info.value)
+
+
+def test_validation_walks_into_or_and_not_branches() -> None:
+    """Validation finds bad predicates nested under OR / NOT / parens."""
+    ast = parse_query("(agent:codex OR agent:gpt4) bliss", default_registry())
+    with pytest.raises(QueryCompileError, match="invalid agent value 'gpt4'"):
+        _ = compile_query(ast, default_registry())
 
 
 def test_compiled_query_is_immutable_dataclass() -> None:

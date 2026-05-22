@@ -94,6 +94,15 @@ def compile_query(ast: QueryNode, registry: FieldRegistry) -> CompiledQuery:
     Pure-text queries short-circuit to the fast path; everything
     else gets a source-level conservative predicate plus an exact
     record-level predicate.
+
+    Field-level predicates are validated up-front so semantic
+    errors (unknown enum value, unparseable date, comparison
+    against a string field, range against an enum) raise
+    :class:`QueryCompileError` before the closures are
+    constructed. Without this walk the same errors would surface
+    only when the closures were evaluated — and the eager search
+    path's record-side closure dodges them entirely, so users see
+    silent zero-match runs instead of clean errors.
     """
     if _is_pure_text(ast):
         terms = _collect_text_terms(ast)
@@ -104,6 +113,7 @@ def compile_query(ast: QueryNode, registry: FieldRegistry) -> CompiledQuery:
             is_pure_text=True,
         )
 
+    _validate_ast(ast, registry)
     text_terms = tuple(_collect_text_terms(ast))
 
     def source_predicate(source: agentgrep.SourceHandle) -> bool:
@@ -118,6 +128,106 @@ def compile_query(ast: QueryNode, registry: FieldRegistry) -> CompiledQuery:
         text_terms=text_terms,
         is_pure_text=False,
     )
+
+
+def _validate_ast(node: QueryNode, registry: FieldRegistry) -> None:
+    """Walk the AST and raise :class:`QueryCompileError` on any field-level error.
+
+    Catches the four classes of semantic error the closures would
+    otherwise raise lazily during evaluation:
+
+    - **unknown enum value**: ``agent:gpt4`` when ``gpt4`` isn't
+      in the agent enum's ``enum_values``.
+    - **unparseable date literal**: ``timestamp:>bogus`` or
+      ``timestamp:[bogus TO 2026]`` against a date-kind field.
+    - **comparison against non-comparable field**: e.g.
+      ``agent:>codex`` (the agent enum doesn't support comparison).
+    - **range against non-range field**: e.g.
+      ``type:[prompts TO history]``.
+
+    The walk is O(nodes) and runs once before the closures are
+    built; the closures themselves keep their defensive raises so
+    direct callers (tests, library consumers) still see the same
+    errors at call time.
+    """
+    if isinstance(node, FieldEqNode):
+        _validate_field_value(node.field, node.value, registry)
+        return
+    if isinstance(node, FieldCmpNode):
+        spec = registry.get(node.field)
+        if spec is None:
+            return
+        if not spec.supports_comparison:
+            message = f"field {spec.name!r} does not support comparison operators"
+            raise QueryCompileError(message)
+        _validate_field_value(node.field, node.value, registry)
+        return
+    if isinstance(node, FieldRangeNode):
+        spec = registry.get(node.field)
+        if spec is None:
+            return
+        if not spec.supports_range:
+            message = f"field {spec.name!r} does not support range operators"
+            raise QueryCompileError(message)
+        _validate_range_bound(node.field, node.lo, registry)
+        _validate_range_bound(node.field, node.hi, registry)
+        return
+    if isinstance(node, NotNode):
+        _validate_ast(node.child, registry)
+        return
+    if isinstance(node, AndNode | OrNode):
+        for child in node.children:
+            _validate_ast(child, registry)
+
+
+def _validate_field_value(
+    field: str,
+    value: str,
+    registry: FieldRegistry,
+) -> None:
+    """Validate one ``field:value`` predicate against its :class:`FieldSpec`.
+
+    Enums: value must be in ``enum_values``. Dates: value must
+    parse via :func:`parse_date_literal`. Strings, paths, and
+    unknown fields pass through (unknown fields are caught at
+    parse time so this branch is mostly defensive).
+    """
+    spec = registry.get(field)
+    if spec is None:
+        return
+    if spec.kind == "enum" and spec.enum_values and value not in spec.enum_values:
+        choices = ", ".join(spec.enum_values)
+        message = f"invalid {spec.name} value {value!r}; valid choices: {choices}"
+        raise QueryCompileError(message)
+    if spec.kind == "date":
+        try:
+            _ = parse_date_literal(value)
+        except DateParseError as exc:
+            message = f"invalid date in {spec.name} predicate: {exc}"
+            raise QueryCompileError(message) from exc
+
+
+def _validate_range_bound(
+    field: str,
+    literal: str,
+    registry: FieldRegistry,
+) -> None:
+    """Validate one bound of a ``field:[lo TO hi]`` predicate.
+
+    Treats ``*`` as the legal unbounded marker (no parse needed).
+    Everything else must parse via :func:`parse_date_literal` when
+    the field is date-kind.
+    """
+    spec = registry.get(field)
+    if spec is None or spec.kind != "date":
+        return
+    if literal.strip() == "*":
+        return
+    try:
+        _ = parse_date_literal(literal)
+    except DateParseError as exc:
+        message = f"invalid date in {spec.name} range: {exc}"
+        raise QueryCompileError(message) from exc
 
 
 def fields_in_ast(node: QueryNode) -> set[str]:
