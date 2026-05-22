@@ -3697,16 +3697,6 @@ def build_streaming_ui_app(
     return _build(home, query, control=control)
 
 
-def _is_interactive_terminal() -> bool:
-    """Return ``True`` when both stdin and stdout are TTYs.
-
-    Bare ``agentgrep`` defaults to the TUI, but pipelines (``agentgrep |
-    cat``), redirected output, and CI subprocesses have no TTY — in those
-    cases the caller almost certainly wants ``--help`` instead.
-    """
-    return sys.stdin.isatty() and sys.stdout.isatty()
-
-
 def _exit_on_sigint() -> t.NoReturn:
     """Terminate with Ctrl-C signal semantics where the platform supports them."""
     if sys.platform == "win32":
@@ -3725,12 +3715,6 @@ def _write_interrupt_notice() -> None:
 
 def main(argv: cabc.Sequence[str] | None = None) -> int:
     """Run the CLI."""
-    raw = list(sys.argv[1:]) if argv is None else list(argv)
-    if not raw and not _is_interactive_terminal():
-        color_mode = normalize_color_mode(argv)
-        with configured_color_environment(color_mode):
-            create_parser(color_mode).parser.print_help()
-        return 0
     try:
         parsed = parse_args(argv)
         if parsed is None:
@@ -3750,7 +3734,6 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
 
 
 from agentgrep.cli.parser import (  # noqa: E402  (re-exports must follow main definition)
-    SUBCOMMANDS,
     CaseMode,
     FindArgs,
     FindPatternMode,
@@ -3768,7 +3751,6 @@ from agentgrep.cli.parser import (  # noqa: E402  (re-exports must follow main d
     build_docs_parser,
     configured_color_environment,
     create_parser,
-    inject_default_subcommand,
     normalize_color_mode,
     parse_agents,
     parse_args,

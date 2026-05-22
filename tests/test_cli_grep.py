@@ -145,11 +145,6 @@ def test_grep_max_count_propagates() -> None:
     assert parsed.max_count == 5
 
 
-def test_grep_subcommand_is_known_to_inject_default() -> None:
-    """``inject_default_subcommand`` recognizes grep as a real subcommand."""
-    assert agentgrep.inject_default_subcommand(["grep", "foo"]) == ["grep", "foo"]
-
-
 class QueryTranslationCase(t.NamedTuple):
     """Parametrized case for :func:`agentgrep.build_grep_query`."""
 

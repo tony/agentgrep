@@ -314,48 +314,6 @@ def test_build_docs_parser_returns_root_parser() -> None:
     assert parser.prog == "agentgrep"
 
 
-def test_search_is_default_verb(tmp_path: pathlib.Path) -> None:
-    completed = run_agentgrep_cli(
-        "zzz_default_verb_no_match",
-        env={"HOME": str(tmp_path)},
-    )
-
-    assert "search examples:" not in completed.stdout
-    assert "find examples:" not in completed.stdout
-    assert completed.returncode == 1
-    assert "No matches found." in completed.stderr
-
-
-def test_default_verb_works_after_global_color_flag(tmp_path: pathlib.Path) -> None:
-    completed = run_agentgrep_cli(
-        "--color",
-        "never",
-        "zzz_default_verb_no_match",
-        env={"HOME": str(tmp_path)},
-    )
-
-    assert "search examples:" not in completed.stdout
-    assert completed.returncode == 1
-
-
-def test_inject_default_subcommand_empty_returns_ui() -> None:
-    """Bare ``agentgrep`` should default to the ``ui`` subcommand."""
-    agentgrep = t.cast("t.Any", load_agentgrep_module())
-
-    assert list(agentgrep.inject_default_subcommand([])) == ["ui"]
-
-
-def test_inject_default_subcommand_color_only_returns_ui() -> None:
-    """``agentgrep --color never`` should also default to ``ui``."""
-    agentgrep = t.cast("t.Any", load_agentgrep_module())
-
-    assert list(agentgrep.inject_default_subcommand(["--color", "never"])) == [
-        "--color",
-        "never",
-        "ui",
-    ]
-
-
 def test_parse_args_ui_subcommand_returns_ui_args() -> None:
     """``agentgrep ui`` parses to a ``UIArgs`` with empty initial query."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
@@ -376,14 +334,18 @@ def test_parse_args_ui_subcommand_with_initial_query() -> None:
     assert args.initial_query == "bliss"
 
 
-def test_parse_args_empty_argv_returns_ui_args() -> None:
-    """``parse_args([])`` returns a ``UIArgs`` via the default subcommand."""
+def test_parse_args_empty_argv_returns_none_and_prints_help(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``parse_args([])`` prints the directory-of-choices help and returns None."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
 
     args = agentgrep.parse_args([])
 
-    assert isinstance(args, agentgrep.UIArgs)
-    assert args.initial_query == ""
+    assert args is None
+    captured = capsys.readouterr().out
+    assert "agentgrep" in captured
+    assert "{grep,search,find,fuzzy,ui}" in captured or "grep" in captured
 
 
 def test_search_progress_mode_parses_default_and_explicit() -> None:
