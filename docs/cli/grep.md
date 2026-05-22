@@ -82,6 +82,17 @@ produces two rows. `--only-matching` / `-o` collapses output to
 just the matched substrings, one per line. `-l` /
 `--files-with-matches` emits only the deduplicated paths.
 
+## Live streaming
+
+`grep` consumes the {ref}`library-event-stream` directly — text and
+NDJSON output emit each match as the engine finds it, then flush so
+your terminal sees rows live. On a slow store the first matches
+appear within milliseconds, not after the whole scan finishes.
+
+The eager output modes (`--json`, `-c`, `-l`, `-L`, `-v`) buffer
+because their output shape needs the final tally or cross-record
+deduplication.
+
 ## Progress
 
 The stderr progress spinner (when stderr is a TTY) lets you know a
