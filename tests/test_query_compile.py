@@ -1,0 +1,479 @@
+"""Tests for the agentgrep query AST compiler.
+
+Covers commit 4 of the query-language project — the compiler in
+:mod:`agentgrep.query.compile`. Verifies that:
+
+- pure-text queries short-circuit to the legacy fast path
+  (`CompiledQuery.is_pure_text=True`, both predicates ``None``)
+- source-level predicates correctly prune sources before file I/O
+- record-level predicates correctly filter parsed records
+- mixed predicates compose with the right three-valued semantics
+  (an OR-mixed query lets the source through but filters records)
+- comparison and range predicates against the `timestamp` field
+  produce the right matches against record timestamps
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import pathlib
+import typing as t
+
+import pytest
+
+import agentgrep
+from agentgrep.query import (
+    AndNode,
+    CompiledQuery,
+    FieldCmpNode,
+    FieldEqNode,
+    FieldRangeNode,
+    NotNode,
+    OrNode,
+    QueryNode,
+    TermNode,
+    compile_query,
+    default_registry,
+    parse_query,
+)
+from agentgrep.query.compile import QueryCompileError
+from agentgrep.query.dates import set_now_override
+
+
+@pytest.fixture(autouse=True)
+def _frozen_now() -> t.Iterator[None]:
+    """Pin "now" so relative-date tests are deterministic."""
+    set_now_override(
+        lambda: dt.datetime(2026, 5, 22, 14, 0, 0, tzinfo=dt.UTC),
+    )
+    try:
+        yield
+    finally:
+        set_now_override(None)
+
+
+def _make_source(
+    *,
+    agent: agentgrep.AgentName = "codex",
+    store: str = "sessions",
+    adapter_id: str = "codex.sessions_jsonl.v1",
+    path: str = "/tmp/codex/sessions/abc.jsonl",
+    mtime_ns: int = 0,
+) -> agentgrep.SourceHandle:
+    """Build a synthetic SourceHandle for compiler tests."""
+    return agentgrep.SourceHandle(
+        agent=agent,
+        store=store,
+        adapter_id=adapter_id,
+        path=pathlib.Path(path),
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=mtime_ns,
+    )
+
+
+def _make_record(
+    *,
+    agent: agentgrep.AgentName = "codex",
+    store: str = "sessions",
+    adapter_id: str = "codex.sessions_jsonl.v1",
+    path: str = "/tmp/codex/sessions/abc.jsonl",
+    text: str = "bliss prompt content",
+    title: str | None = None,
+    role: str | None = "user",
+    timestamp: str | None = None,
+    model: str | None = None,
+    kind: t.Literal["prompt", "history"] = "prompt",
+) -> agentgrep.SearchRecord:
+    """Build a synthetic SearchRecord for compiler tests."""
+    return agentgrep.SearchRecord(
+        kind=kind,
+        agent=agent,
+        store=store,
+        adapter_id=adapter_id,
+        path=pathlib.Path(path),
+        text=text,
+        title=title,
+        role=role,
+        timestamp=timestamp,
+        model=model,
+        session_id=None,
+        conversation_id=None,
+        metadata={},
+    )
+
+
+# ----- pure-text fast path -------------------------------------------------
+
+
+class PureTextFastPathCase(t.NamedTuple):
+    """Parametrized case for the legacy fast-path detection."""
+
+    test_id: str
+    query: str
+    expected_pure: bool
+    expected_terms: tuple[str, ...]
+
+
+PURE_TEXT_CASES: tuple[PureTextFastPathCase, ...] = (
+    PureTextFastPathCase(
+        test_id="single-term-is-pure",
+        query="bliss",
+        expected_pure=True,
+        expected_terms=("bliss",),
+    ),
+    PureTextFastPathCase(
+        test_id="implicit-and-terms-pure",
+        query="bliss codex deploy",
+        expected_pure=True,
+        expected_terms=("bliss", "codex", "deploy"),
+    ),
+    PureTextFastPathCase(
+        test_id="field-predicate-not-pure",
+        query="agent:codex bliss",
+        expected_pure=False,
+        expected_terms=("bliss",),
+    ),
+    PureTextFastPathCase(
+        test_id="negation-not-pure",
+        query="bliss NOT codex",
+        expected_pure=False,
+        expected_terms=("bliss", "codex"),
+    ),
+    PureTextFastPathCase(
+        test_id="or-not-pure",
+        query="bliss OR codex",
+        expected_pure=False,
+        expected_terms=("bliss", "codex"),
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    PURE_TEXT_CASES,
+    ids=[c.test_id for c in PURE_TEXT_CASES],
+)
+def test_compile_query_detects_pure_text_fast_path(
+    case: PureTextFastPathCase,
+) -> None:
+    """Pure-text queries route to the legacy fast path with no predicates."""
+    ast = parse_query(case.query, default_registry())
+    compiled = compile_query(ast, default_registry())
+    assert compiled.is_pure_text is case.expected_pure
+    assert compiled.text_terms == case.expected_terms
+    if case.expected_pure:
+        assert compiled.source_predicate is None
+        assert compiled.record_predicate is None
+    else:
+        assert compiled.source_predicate is not None
+        assert compiled.record_predicate is not None
+
+
+# ----- source-side conservative evaluation ---------------------------------
+
+
+class SourcePredicateCase(t.NamedTuple):
+    """Parametrized case for source-side conservative pruning."""
+
+    test_id: str
+    query: str
+    source_kwargs: dict[str, t.Any]
+    expected_passes: bool
+
+
+SOURCE_PREDICATE_CASES: tuple[SourcePredicateCase, ...] = (
+    SourcePredicateCase(
+        test_id="agent-match-passes",
+        query="agent:codex",
+        source_kwargs={"agent": "codex"},
+        expected_passes=True,
+    ),
+    SourcePredicateCase(
+        test_id="agent-mismatch-prunes",
+        query="agent:codex",
+        source_kwargs={"agent": "claude"},
+        expected_passes=False,
+    ),
+    SourcePredicateCase(
+        test_id="negated-agent-mismatch-passes",
+        query="-agent:claude",
+        source_kwargs={"agent": "codex"},
+        expected_passes=True,
+    ),
+    SourcePredicateCase(
+        test_id="negated-agent-match-prunes",
+        query="-agent:claude",
+        source_kwargs={"agent": "claude"},
+        expected_passes=False,
+    ),
+    SourcePredicateCase(
+        test_id="and-source-record-passes-when-source-ok",
+        query="agent:codex bliss",
+        source_kwargs={"agent": "codex"},
+        expected_passes=True,
+    ),
+    SourcePredicateCase(
+        test_id="and-source-record-prunes-when-source-fails",
+        query="agent:codex bliss",
+        source_kwargs={"agent": "claude"},
+        expected_passes=False,
+    ),
+    SourcePredicateCase(
+        test_id="or-mixed-record-passes-conservatively",
+        query="agent:codex OR bliss",
+        source_kwargs={"agent": "claude"},
+        expected_passes=True,
+    ),
+    SourcePredicateCase(
+        test_id="or-source-source-prunes-when-both-fail",
+        query="agent:codex OR agent:cursor",
+        source_kwargs={"agent": "claude"},
+        expected_passes=False,
+    ),
+    SourcePredicateCase(
+        test_id="or-source-source-passes-when-one-matches",
+        query="agent:codex OR agent:cursor",
+        source_kwargs={"agent": "cursor"},
+        expected_passes=True,
+    ),
+    SourcePredicateCase(
+        test_id="path-substring-passes",
+        query="path:codex",
+        source_kwargs={"path": "/tmp/codex/sessions/abc.jsonl"},
+        expected_passes=True,
+    ),
+    SourcePredicateCase(
+        test_id="path-substring-mismatch-prunes",
+        query="path:claude",
+        source_kwargs={"path": "/tmp/codex/sessions/abc.jsonl"},
+        expected_passes=False,
+    ),
+    SourcePredicateCase(
+        test_id="path-glob-prunes",
+        query="path:*.txt",
+        source_kwargs={"path": "/tmp/codex/sessions/abc.jsonl"},
+        expected_passes=False,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    SOURCE_PREDICATE_CASES,
+    ids=[c.test_id for c in SOURCE_PREDICATE_CASES],
+)
+def test_compile_query_source_predicate_prunes(
+    case: SourcePredicateCase,
+) -> None:
+    """The compiled source predicate prunes the right sources."""
+    ast = parse_query(case.query, default_registry())
+    compiled = compile_query(ast, default_registry())
+    assert compiled.source_predicate is not None
+    source = _make_source(**case.source_kwargs)
+    assert compiled.source_predicate(source) is case.expected_passes
+
+
+# ----- record-side exact evaluation ----------------------------------------
+
+
+class RecordPredicateCase(t.NamedTuple):
+    """Parametrized case for record-side exact evaluation."""
+
+    test_id: str
+    query: str
+    record_kwargs: dict[str, t.Any]
+    expected_matches: bool
+
+
+RECORD_PREDICATE_CASES: tuple[RecordPredicateCase, ...] = (
+    RecordPredicateCase(
+        test_id="agent-record-match",
+        query="agent:codex",
+        record_kwargs={"agent": "codex"},
+        expected_matches=True,
+    ),
+    RecordPredicateCase(
+        test_id="agent-record-mismatch",
+        query="agent:codex",
+        record_kwargs={"agent": "claude"},
+        expected_matches=False,
+    ),
+    RecordPredicateCase(
+        test_id="model-substring-match",
+        query="model:claude",
+        record_kwargs={"model": "claude-3-sonnet"},
+        expected_matches=True,
+    ),
+    RecordPredicateCase(
+        test_id="model-substring-mismatch",
+        query="model:gpt",
+        record_kwargs={"model": "claude-3-sonnet"},
+        expected_matches=False,
+    ),
+    RecordPredicateCase(
+        test_id="role-match",
+        query="role:assistant",
+        record_kwargs={"role": "assistant"},
+        expected_matches=True,
+    ),
+    RecordPredicateCase(
+        test_id="type-prompts-on-prompt-kind",
+        query="type:prompts",
+        record_kwargs={"kind": "prompt"},
+        expected_matches=True,
+    ),
+    RecordPredicateCase(
+        test_id="type-history-on-prompt-kind",
+        query="type:history",
+        record_kwargs={"kind": "prompt"},
+        expected_matches=False,
+    ),
+    RecordPredicateCase(
+        test_id="text-substring-match",
+        query="text:bliss",
+        record_kwargs={"text": "alpha bliss line"},
+        expected_matches=True,
+    ),
+    RecordPredicateCase(
+        test_id="text-substring-mismatch",
+        query="text:missing",
+        record_kwargs={"text": "alpha bliss line"},
+        expected_matches=False,
+    ),
+    RecordPredicateCase(
+        test_id="and-composition-match",
+        query="agent:codex bliss",
+        record_kwargs={"agent": "codex", "text": "alpha bliss line"},
+        expected_matches=True,
+    ),
+    RecordPredicateCase(
+        test_id="and-composition-fails",
+        query="agent:codex bliss",
+        record_kwargs={"agent": "claude", "text": "alpha bliss line"},
+        expected_matches=False,
+    ),
+    RecordPredicateCase(
+        test_id="or-composition-one-side-match",
+        query="agent:claude OR bliss",
+        record_kwargs={"agent": "codex", "text": "alpha bliss line"},
+        expected_matches=True,
+    ),
+    RecordPredicateCase(
+        test_id="negated-agent-records-pass",
+        query="-agent:claude",
+        record_kwargs={"agent": "codex"},
+        expected_matches=True,
+    ),
+    RecordPredicateCase(
+        test_id="negated-agent-records-fail",
+        query="-agent:claude",
+        record_kwargs={"agent": "claude"},
+        expected_matches=False,
+    ),
+    RecordPredicateCase(
+        test_id="timestamp-comparison-after",
+        query="timestamp:>2026-01-01",
+        record_kwargs={"timestamp": "2026-03-15T10:00:00Z"},
+        expected_matches=True,
+    ),
+    RecordPredicateCase(
+        test_id="timestamp-comparison-before-fails",
+        query="timestamp:>2026-06-01",
+        record_kwargs={"timestamp": "2026-03-15T10:00:00Z"},
+        expected_matches=False,
+    ),
+    RecordPredicateCase(
+        test_id="timestamp-range-inclusive",
+        query="timestamp:[2026-01-01 TO 2026-06-01]",
+        record_kwargs={"timestamp": "2026-03-15T10:00:00Z"},
+        expected_matches=True,
+    ),
+    RecordPredicateCase(
+        test_id="timestamp-range-outside",
+        query="timestamp:[2026-01-01 TO 2026-02-01]",
+        record_kwargs={"timestamp": "2026-03-15T10:00:00Z"},
+        expected_matches=False,
+    ),
+    RecordPredicateCase(
+        test_id="timestamp-no-timestamp-on-record-fails",
+        query="timestamp:>2026-01-01",
+        record_kwargs={"timestamp": None},
+        expected_matches=False,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    RECORD_PREDICATE_CASES,
+    ids=[c.test_id for c in RECORD_PREDICATE_CASES],
+)
+def test_compile_query_record_predicate_filters(
+    case: RecordPredicateCase,
+) -> None:
+    """The compiled record predicate accepts/rejects records exactly."""
+    ast = parse_query(case.query, default_registry())
+    compiled = compile_query(ast, default_registry())
+    assert compiled.record_predicate is not None
+    record = _make_record(**case.record_kwargs)
+    assert compiled.record_predicate(record) is case.expected_matches
+
+
+# ----- compile-time semantic errors ---------------------------------------
+
+
+def test_comparison_against_string_field_errors() -> None:
+    """Comparison operators on a string field error at evaluation time."""
+    ast = FieldCmpNode(field="agent", op="gt", value="codex")
+    compiled = compile_query(ast, default_registry())
+    record = _make_record()
+    assert compiled.record_predicate is not None
+    with pytest.raises(QueryCompileError):
+        _ = compiled.record_predicate(record)
+
+
+def test_unknown_enum_value_errors() -> None:
+    """An unknown enum value (e.g. agent:gpt4) errors at evaluation time."""
+    ast = FieldEqNode(field="agent", value="gpt4")
+    compiled = compile_query(ast, default_registry())
+    source = _make_source(agent="codex")
+    assert compiled.source_predicate is not None
+    with pytest.raises(QueryCompileError):
+        _ = compiled.source_predicate(source)
+
+
+def test_compiled_query_is_immutable_dataclass() -> None:
+    """CompiledQuery is frozen so consumers can pass it across boundaries."""
+    import dataclasses
+
+    ast = parse_query("bliss", default_registry())
+    compiled = compile_query(ast, default_registry())
+    assert dataclasses.is_dataclass(compiled)
+    params = t.cast("t.Any", type(compiled)).__dataclass_params__
+    assert params.frozen is True
+
+
+def test_compile_query_returns_compiled_query_type() -> None:
+    """Sanity check on the return type so library consumers can rely on it."""
+    ast: QueryNode = TermNode(value="bliss")
+    compiled = compile_query(ast, default_registry())
+    assert isinstance(compiled, CompiledQuery)
+
+
+def test_collect_terms_descends_through_or_and_not() -> None:
+    """Text terms nested under OR / NOT still show up in text_terms."""
+    ast = parse_query("bliss OR (deploy NOT codex)", default_registry())
+    compiled = compile_query(ast, default_registry())
+    assert set(compiled.text_terms) == {"bliss", "deploy", "codex"}
+
+
+def test_text_field_terms_show_up_in_text_terms() -> None:
+    """`text:foo` contributes 'foo' to text_terms just like a bare term."""
+    ast = parse_query("text:bliss agent:codex", default_registry())
+    compiled = compile_query(ast, default_registry())
+    assert "bliss" in compiled.text_terms
+
+
+_ = (AndNode, FieldRangeNode, NotNode, OrNode)  # used in case data; keep imports live

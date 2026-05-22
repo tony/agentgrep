@@ -1,0 +1,507 @@
+"""Compile a parsed query AST into predicate closures.
+
+The compiler produces two callables:
+
+- ``source_predicate(source)`` — conservative: returns ``False`` only
+  when the AST is definitely-false given just source-level facts;
+  ``True`` when it might still match (so the engine reads the
+  source). Drives source pruning before any file is opened.
+- ``record_predicate(record)`` — exact: returns the AST's actual
+  truth value evaluated against a parsed record. Drives the
+  per-record filter the engine runs after parsing.
+
+The compiler also separates out the pure text terms so the existing
+ripgrep prefilter and :func:`agentgrep.matches_text` paths still
+see the same input they always did.
+
+A bare positional query (e.g. ``"bliss"`` or ``"bliss codex"``)
+short-circuits to :attr:`CompiledQuery.is_pure_text` ``= True`` and
+both predicates are ``None``. The engine's existing code path runs
+unchanged in that case, with no overhead from this module.
+
+The source-side evaluation uses three-valued logic (T/F/Unknown)
+so OR-mixed and NOT-mixed nodes degrade safely to "let the source
+through, the record filter will decide". See the design doc at
+``/home/d/.claude/plans/study-our-cli-commands-spicy-sky.md``.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import datetime as dt
+import fnmatch
+import typing as t
+
+import agentgrep
+from agentgrep.query.ast import (
+    AndNode,
+    FieldCmpNode,
+    FieldEqNode,
+    FieldRangeNode,
+    NotNode,
+    OrNode,
+    QueryNode,
+    TermNode,
+)
+from agentgrep.query.dates import (
+    DateParseError,
+    DateRange,
+    equality_range,
+    parse_date_literal,
+    parse_range_bound,
+)
+from agentgrep.query.registry import FieldRegistry, FieldSpec
+
+_Trilean = t.Literal["T", "F", "U"]
+"""Three-valued logic state used during conservative source eval.
+
+- ``T`` — predicate is definitely satisfied by the source's known
+  facts.
+- ``F`` — predicate is definitely not satisfied. The source can be
+  pruned without reading any records.
+- ``U`` — depends on record-level facts. The source must be read.
+"""
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class CompiledQuery:
+    """Predicates plus text terms produced by :func:`compile_query`.
+
+    ``source_predicate`` and ``record_predicate`` are ``None`` when
+    the query is pure text — the engine routes through the legacy
+    fast path in that case. ``text_terms`` is always populated so
+    the rg prefilter and matches_text path see the right input.
+    """
+
+    source_predicate: t.Callable[[agentgrep.SourceHandle], bool] | None
+    record_predicate: t.Callable[[agentgrep.SearchRecord], bool] | None
+    text_terms: tuple[str, ...]
+    is_pure_text: bool
+
+
+class QueryCompileError(ValueError):
+    """Raised when a query AST can't be compiled.
+
+    Distinct from :class:`agentgrep.query.parser.QueryParseError` —
+    parse errors are syntactic, compile errors are semantic
+    (e.g. comparing against a string field, range against an enum).
+    """
+
+
+def compile_query(ast: QueryNode, registry: FieldRegistry) -> CompiledQuery:
+    """Compile an AST into a :class:`CompiledQuery`.
+
+    Pure-text queries short-circuit to the fast path; everything
+    else gets a source-level conservative predicate plus an exact
+    record-level predicate.
+    """
+    if _is_pure_text(ast):
+        terms = _collect_text_terms(ast)
+        return CompiledQuery(
+            source_predicate=None,
+            record_predicate=None,
+            text_terms=tuple(terms),
+            is_pure_text=True,
+        )
+
+    text_terms = tuple(_collect_text_terms(ast))
+
+    def source_predicate(source: agentgrep.SourceHandle) -> bool:
+        return _evaluate_source(ast, source, registry) != "F"
+
+    def record_predicate(record: agentgrep.SearchRecord) -> bool:
+        return _evaluate_record(ast, record, registry)
+
+    return CompiledQuery(
+        source_predicate=source_predicate,
+        record_predicate=record_predicate,
+        text_terms=text_terms,
+        is_pure_text=False,
+    )
+
+
+def _is_pure_text(node: QueryNode) -> bool:
+    """Return whether ``node`` contains only bare TermNodes under AND.
+
+    A pure-text query has no field predicates, no OR, no NOT — just
+    one term or an implicit-AND chain of terms.
+    """
+    if isinstance(node, TermNode):
+        return True
+    if isinstance(node, AndNode):
+        return all(_is_pure_text(child) for child in node.children)
+    return False
+
+
+def _collect_text_terms(node: QueryNode) -> list[str]:
+    """Walk the AST collecting every bare ``TermNode`` value in order.
+
+    Includes terms nested under AND/OR/NOT (the rg prefilter benefits
+    from knowing all terms even when boolean composition won't push
+    cleanly). Field-equality nodes against the ``text`` field also
+    contribute their value.
+    """
+    if isinstance(node, TermNode):
+        return [node.value]
+    if isinstance(node, FieldEqNode) and node.field == "text":
+        return [node.value]
+    if isinstance(node, AndNode | OrNode):
+        out: list[str] = []
+        for child in node.children:
+            out.extend(_collect_text_terms(child))
+        return out
+    if isinstance(node, NotNode):
+        return _collect_text_terms(node.child)
+    return []
+
+
+def _evaluate_source(
+    node: QueryNode,
+    source: agentgrep.SourceHandle,
+    registry: FieldRegistry,
+) -> _Trilean:
+    """Evaluate ``node`` against ``source`` using three-valued logic.
+
+    Source-level field nodes evaluate to T or F. Record-level field
+    nodes evaluate to U because we can't know the record outcome
+    before reading the file. AND/OR/NOT combine per Kleene's
+    semantics (see the module docstring).
+    """
+    if isinstance(node, TermNode):
+        return "U"
+    if isinstance(node, FieldEqNode | FieldCmpNode | FieldRangeNode):
+        spec = registry.get(node.field)
+        if spec is None or spec.layer == "record":
+            return "U"
+        result = _field_matches_source(node, source, spec)
+        return "T" if result else "F"
+    if isinstance(node, NotNode):
+        inner = _evaluate_source(node.child, source, registry)
+        if inner == "T":
+            return "F"
+        if inner == "F":
+            return "T"
+        return "U"
+    if isinstance(node, AndNode):
+        states = [_evaluate_source(c, source, registry) for c in node.children]
+        if "F" in states:
+            return "F"
+        if "U" in states:
+            return "U"
+        return "T"
+    if isinstance(node, OrNode):
+        states = [_evaluate_source(c, source, registry) for c in node.children]
+        if "T" in states:
+            return "T"
+        if "U" in states:
+            return "U"
+        return "F"
+    return "U"
+
+
+def _evaluate_record(
+    node: QueryNode,
+    record: agentgrep.SearchRecord,
+    registry: FieldRegistry,
+) -> bool:
+    """Evaluate ``node`` exactly against ``record``.
+
+    Source-level fields are read from the record's source metadata
+    (``record.agent``, ``record.store``, ``record.adapter_id``,
+    ``record.path``). Record-level fields read from the record
+    itself.
+    """
+    if isinstance(node, TermNode):
+        return _text_matches(record, node.value)
+    if isinstance(node, FieldEqNode):
+        spec = registry.get(node.field)
+        if spec is None:
+            return False
+        return _field_matches_record(node, record, spec)
+    if isinstance(node, FieldCmpNode):
+        spec = registry.get(node.field)
+        if spec is None:
+            return False
+        return _field_cmp_matches_record(node, record, spec)
+    if isinstance(node, FieldRangeNode):
+        spec = registry.get(node.field)
+        if spec is None:
+            return False
+        return _field_range_matches_record(node, record, spec)
+    if isinstance(node, NotNode):
+        return not _evaluate_record(node.child, record, registry)
+    if isinstance(node, AndNode):
+        return all(_evaluate_record(c, record, registry) for c in node.children)
+    if isinstance(node, OrNode):
+        return any(_evaluate_record(c, record, registry) for c in node.children)
+    return False
+
+
+def _field_matches_source(
+    node: FieldEqNode | FieldCmpNode | FieldRangeNode,
+    source: agentgrep.SourceHandle,
+    spec: FieldSpec,
+) -> bool:
+    """Decide whether ``source`` matches a source-layer field predicate."""
+    if spec.name == "agent":
+        return _enum_eq(source.agent, _eq_value(node), spec)
+    if spec.name == "store":
+        return _string_substring(source.store, _eq_value(node))
+    if spec.name == "adapter_id":
+        return _string_substring(source.adapter_id, _eq_value(node))
+    if spec.name == "path":
+        return _path_match(str(source.path), _eq_value(node))
+    if spec.name == "mtime":
+        return _date_predicate_matches(
+            node,
+            _mtime_as_datetime(source.mtime_ns),
+        )
+    return False
+
+
+def _field_matches_record(
+    node: FieldEqNode,
+    record: agentgrep.SearchRecord,
+    spec: FieldSpec,
+) -> bool:
+    """Decide whether ``record`` matches a record-layer FieldEqNode."""
+    if spec.layer == "source":
+        # Source-level fields can be read off the record too.
+        return _field_matches_record_via_source(node, record, spec)
+    if spec.name == "type":
+        target = "prompt" if node.value == "prompts" else "history"
+        return record.kind == target
+    if spec.name == "timestamp":
+        return _date_predicate_matches(
+            node,
+            _record_timestamp_as_datetime(record.timestamp),
+        )
+    if spec.name == "model":
+        return record.model is not None and node.value in record.model
+    if spec.name == "role":
+        return record.role is not None and node.value in record.role
+    if spec.name == "text":
+        return _text_matches(record, node.value)
+    return False
+
+
+def _field_matches_record_via_source(
+    node: FieldEqNode,
+    record: agentgrep.SearchRecord,
+    spec: FieldSpec,
+) -> bool:
+    """Evaluate a source-layer field against record metadata.
+
+    The record carries its own copies of agent / store / adapter_id
+    / path, so we can answer source-layer predicates at the record
+    level without re-fetching the :class:`SourceHandle`.
+    """
+    if spec.name == "agent":
+        return record.agent == node.value
+    if spec.name == "store":
+        return node.value in record.store
+    if spec.name == "adapter_id":
+        return node.value in record.adapter_id
+    if spec.name == "path":
+        return _path_match(str(record.path), node.value)
+    return False
+
+
+def _field_cmp_matches_record(
+    node: FieldCmpNode,
+    record: agentgrep.SearchRecord,
+    spec: FieldSpec,
+) -> bool:
+    """Decide whether ``record`` satisfies a comparison predicate."""
+    if not spec.supports_comparison:
+        message = f"field {spec.name!r} does not support comparison operators"
+        raise QueryCompileError(message)
+    if spec.name == "timestamp":
+        moment = _record_timestamp_as_datetime(record.timestamp)
+        if moment is None:
+            return False
+        try:
+            bound = parse_date_literal(node.value).value
+        except DateParseError as exc:
+            message = f"invalid date in {spec.name}:{node.op} predicate: {exc}"
+            raise QueryCompileError(message) from exc
+        return _compare(moment, node.op, bound)
+    return False
+
+
+def _field_range_matches_record(
+    node: FieldRangeNode,
+    record: agentgrep.SearchRecord,
+    spec: FieldSpec,
+) -> bool:
+    """Decide whether ``record`` satisfies a range predicate."""
+    if not spec.supports_range:
+        message = f"field {spec.name!r} does not support range operators"
+        raise QueryCompileError(message)
+    if spec.name == "timestamp":
+        moment = _record_timestamp_as_datetime(record.timestamp)
+        if moment is None:
+            return False
+        return _range_match(moment, node)
+    return False
+
+
+def _date_predicate_matches(
+    node: FieldEqNode | FieldCmpNode | FieldRangeNode,
+    moment: dt.datetime | None,
+) -> bool:
+    """Dispatch a date predicate against a single known moment."""
+    if moment is None:
+        return False
+    if isinstance(node, FieldEqNode):
+        try:
+            window = equality_range(node.value)
+        except DateParseError:
+            return False
+        return _within_range(moment, window)
+    if isinstance(node, FieldCmpNode):
+        try:
+            bound = parse_date_literal(node.value).value
+        except DateParseError:
+            return False
+        return _compare(moment, node.op, bound)
+    return _range_match(moment, node)
+
+
+def _range_match(moment: dt.datetime, node: FieldRangeNode) -> bool:
+    """Decide whether ``moment`` falls inside the range ``node`` describes."""
+    try:
+        lo = parse_range_bound(node.lo)
+        hi = parse_range_bound(node.hi)
+    except DateParseError:
+        return False
+    window = DateRange(
+        lo=lo,
+        hi=hi,
+        inclusive_lo=node.inclusive_lo,
+        inclusive_hi=node.inclusive_hi,
+    )
+    return _within_range(moment, window)
+
+
+def _within_range(moment: dt.datetime, window: DateRange) -> bool:
+    """Return whether ``moment`` falls inside ``window``."""
+    if window.lo is not None:
+        if window.inclusive_lo:
+            if moment < window.lo:
+                return False
+        elif moment <= window.lo:
+            return False
+    if window.hi is not None:
+        if window.inclusive_hi:
+            if moment > window.hi:
+                return False
+        elif moment >= window.hi:
+            return False
+    return True
+
+
+def _compare(
+    moment: dt.datetime,
+    op: t.Literal["gt", "lt", "gte", "lte"],
+    bound: dt.datetime,
+) -> bool:
+    """Pure comparison between two datetimes."""
+    if op == "gt":
+        return moment > bound
+    if op == "lt":
+        return moment < bound
+    if op == "gte":
+        return moment >= bound
+    return moment <= bound
+
+
+def _enum_eq(actual: str, expected: str, spec: FieldSpec) -> bool:
+    """Enum-membership check for fields with ``enum_values``.
+
+    If the spec declares enum values, an unknown value at compile
+    time raises QueryCompileError so users see typos. The actual
+    comparison is case-sensitive ASCII (all current enum domains
+    are lowercase ASCII).
+    """
+    if spec.enum_values and expected not in spec.enum_values:
+        choices = ", ".join(spec.enum_values)
+        message = f"invalid {spec.name} value {expected!r}; valid choices: {choices}"
+        raise QueryCompileError(message)
+    return actual == expected
+
+
+def _string_substring(haystack: str, needle: str) -> bool:
+    """Case-insensitive substring match used by ``store``/``adapter_id``."""
+    return needle.casefold() in haystack.casefold()
+
+
+def _path_match(path: str, pattern: str) -> bool:
+    """Match a path against a pattern; substring fallback for non-glob input.
+
+    Globs (`*`, `?`, `[...]`) trigger fnmatch; everything else
+    falls through to substring containment so users can write
+    `path:codex` without typing a leading `*`.
+    """
+    if any(ch in pattern for ch in "*?["):
+        return fnmatch.fnmatchcase(path, pattern)
+    return pattern in path
+
+
+def _text_matches(record: agentgrep.SearchRecord, needle: str) -> bool:
+    """Case-insensitive substring match against the record's text fields.
+
+    Mirrors :func:`agentgrep.matches_text` shape — we look at the
+    primary text plus title and role so a query like
+    `bliss` finds matches in any of them. The engine's existing
+    haystack helper produces the canonical surface; we recreate
+    the substring check here so the record predicate stays
+    self-contained.
+    """
+    needle_cf = needle.casefold()
+    if needle_cf in record.text.casefold():
+        return True
+    if record.title is not None and needle_cf in record.title.casefold():
+        return True
+    return record.role is not None and needle_cf in record.role.casefold()
+
+
+def _mtime_as_datetime(mtime_ns: int) -> dt.datetime | None:
+    """Convert a ``SourceHandle.mtime_ns`` into a UTC datetime."""
+    if mtime_ns <= 0:
+        return None
+    return dt.datetime.fromtimestamp(mtime_ns / 1_000_000_000, tz=dt.UTC)
+
+
+def _record_timestamp_as_datetime(timestamp: str | None) -> dt.datetime | None:
+    """Parse the record's stored timestamp string into a UTC datetime.
+
+    Records store timestamps as strings (varies by adapter); we try
+    a few common ISO shapes and return ``None`` on failure. Records
+    without a parseable timestamp silently fail any date predicate.
+    """
+    if timestamp is None:
+        return None
+    try:
+        moment = dt.datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=dt.UTC)
+    return moment.astimezone(dt.UTC)
+
+
+def _eq_value(
+    node: FieldEqNode | FieldCmpNode | FieldRangeNode,
+) -> str:
+    """Extract the raw value text for an equality-style predicate.
+
+    The source-side matcher only needs the value (comparison and
+    range nodes shouldn't reach here unless the field supports
+    them; the date path handles those directly).
+    """
+    if isinstance(node, FieldEqNode):
+        return node.value
+    if isinstance(node, FieldCmpNode):
+        return node.value
+    return node.lo

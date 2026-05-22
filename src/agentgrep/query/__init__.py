@@ -41,6 +41,7 @@ from agentgrep.query.ast import (
     Token,
     TokenKind,
 )
+from agentgrep.query.compile import CompiledQuery, QueryCompileError, compile_query
 from agentgrep.query.parser import QueryParseError, parse_query, tokenize
 from agentgrep.query.registry import (
     FieldKind,
@@ -52,6 +53,7 @@ from agentgrep.query.registry import (
 
 __all__ = [
     "AndNode",
+    "CompiledQuery",
     "FieldCmpNode",
     "FieldEqNode",
     "FieldKind",
@@ -61,11 +63,13 @@ __all__ = [
     "FieldSpec",
     "NotNode",
     "OrNode",
+    "QueryCompileError",
     "QueryNode",
     "QueryParseError",
     "TermNode",
     "Token",
     "TokenKind",
+    "compile_query",
     "default_registry",
     "parse_query",
     "tokenize",
