@@ -41,7 +41,12 @@ from agentgrep.query.ast import (
     Token,
     TokenKind,
 )
-from agentgrep.query.compile import CompiledQuery, QueryCompileError, compile_query
+from agentgrep.query.compile import (
+    CompiledQuery,
+    QueryCompileError,
+    compile_query,
+    fields_in_ast,
+)
 from agentgrep.query.parser import QueryParseError, parse_query, tokenize
 from agentgrep.query.registry import (
     FieldKind,
@@ -71,6 +76,7 @@ __all__ = [
     "TokenKind",
     "compile_query",
     "default_registry",
+    "fields_in_ast",
     "parse_query",
     "tokenize",
 ]

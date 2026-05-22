@@ -120,6 +120,27 @@ def compile_query(ast: QueryNode, registry: FieldRegistry) -> CompiledQuery:
     )
 
 
+def fields_in_ast(node: QueryNode) -> set[str]:
+    """Return the set of field names referenced anywhere in ``node``.
+
+    Used by the CLI layer to detect collisions between
+    ``--agent``-style flags and ``agent:`` query syntax: if the
+    user sets both, parse-time error rather than silently
+    intersect or override. Bare positional terms don't appear in
+    the result (they have no field name).
+    """
+    if isinstance(node, FieldEqNode | FieldCmpNode | FieldRangeNode):
+        return {node.field}
+    if isinstance(node, NotNode):
+        return fields_in_ast(node.child)
+    if isinstance(node, AndNode | OrNode):
+        result: set[str] = set()
+        for child in node.children:
+            result |= fields_in_ast(child)
+        return result
+    return set()
+
+
 def _is_pure_text(node: QueryNode) -> bool:
     """Return whether ``node`` contains only bare TermNodes under AND.
 
