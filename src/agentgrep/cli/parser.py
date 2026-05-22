@@ -36,6 +36,14 @@ from agentgrep import (
     SearchType,
     create_themed_formatter,
 )
+from agentgrep.query import (
+    CompiledQuery,
+    QueryCompileError,
+    QueryParseError,
+    compile_query,
+    default_registry,
+    parse_query,
+)
 
 CaseMode = t.Literal["smart", "ignore", "respect"]
 PatternMode = t.Literal["regex", "fixed", "word"]
@@ -71,7 +79,13 @@ __all__ = [
 
 @dataclasses.dataclass(slots=True)
 class SearchArgs:
-    """Typed arguments for ``agentgrep search``."""
+    """Typed arguments for ``agentgrep search``.
+
+    ``compiled`` carries a parsed-query :class:`~agentgrep.CompiledQuery`
+    when the positionals contained Lucene-style field syntax
+    (`agent:codex`, `path:~/.codex`, …). ``None`` otherwise — the
+    legacy code path runs with no query-module overhead.
+    """
 
     terms: tuple[str, ...]
     agents: tuple[AgentName, ...]
@@ -83,6 +97,7 @@ class SearchArgs:
     output_mode: OutputMode
     color_mode: ColorMode
     progress_mode: ProgressMode
+    compiled: CompiledQuery | None = None
 
 
 @dataclasses.dataclass(slots=True)
@@ -110,6 +125,7 @@ class FindArgs:
     absolute_path: bool = False
     full_path: bool = False
     progress_mode: ProgressMode = "auto"
+    compiled: CompiledQuery | None = None
 
 
 @dataclasses.dataclass(slots=True)
@@ -178,6 +194,7 @@ class GrepArgs:
     output_mode: OutputMode
     color_mode: ColorMode
     progress_mode: ProgressMode
+    compiled: CompiledQuery | None = None
 
 
 @dataclasses.dataclass(slots=True)
@@ -713,6 +730,46 @@ def build_docs_parser() -> argparse.ArgumentParser:
     return create_parser("never").parser
 
 
+def _maybe_compile_query(
+    positionals: cabc.Sequence[str],
+    *,
+    bundle: ParserBundle,
+    color_mode: ColorMode,
+    subparser: argparse.ArgumentParser,
+) -> tuple[CompiledQuery | None, tuple[str, ...]]:
+    """Detect Lucene-style query syntax in positionals and compile if present.
+
+    Returns ``(compiled, residual_terms)`` — ``compiled`` is ``None`` when
+    no positional contains ``:`` (legacy fast path); ``residual_terms``
+    is the tuple to feed back as the legacy ``terms`` / ``patterns`` /
+    ``pattern`` field so the engine's existing text-matching path
+    still has the user's text query.
+
+    Parse / compile errors route through ``subparser.error()`` so the
+    user sees an argparse-shaped message instead of a Python
+    traceback. The collision-detection layer in commit 8 plugs in
+    here too.
+    """
+    if not any(":" in token for token in positionals):
+        return None, tuple(positionals)
+    query_text = " ".join(positionals)
+    registry = default_registry()
+    try:
+        ast = parse_query(query_text, registry)
+    except QueryParseError as exc:
+        with configured_color_environment(color_mode):
+            subparser.error(f"invalid query: {exc}")
+    try:
+        compiled = compile_query(ast, registry)
+    except QueryCompileError as exc:
+        with configured_color_environment(color_mode):
+            subparser.error(f"invalid query: {exc}")
+    # ``subparser.error`` raises SystemExit, so the lines below only
+    # execute on the success path; keep the cast for ty narrowing.
+    _ = bundle  # kept available for the collision-check layer
+    return compiled, compiled.text_terms
+
+
 def parse_args(
     argv: cabc.Sequence[str] | None = None,
 ) -> SearchArgs | FindArgs | UIArgs | GrepArgs | FuzzyArgs | None:
@@ -760,13 +817,19 @@ def parse_args(
             bundle.parser.error("--limit must be greater than 0")
 
     if command == "search":
-        terms = tuple(t.cast("list[str]", namespace.terms))
-        if not terms and output_mode != "ui":
+        raw_terms = t.cast("list[str]", namespace.terms)
+        if not raw_terms and output_mode != "ui":
             with configured_color_environment(color_mode):
                 bundle.search_parser.print_help()
             return None
+        compiled, residual_terms = _maybe_compile_query(
+            raw_terms,
+            bundle=bundle,
+            color_mode=color_mode,
+            subparser=bundle.search_parser,
+        )
         return SearchArgs(
-            terms=terms,
+            terms=residual_terms,
             agents=agents,
             search_type=t.cast("SearchType", namespace.search_type),
             any_term=t.cast("bool", namespace.any),
@@ -776,8 +839,21 @@ def parse_args(
             output_mode=output_mode,
             color_mode=color_mode,
             progress_mode=t.cast("ProgressMode", namespace.progress),
+            compiled=compiled,
         )
-    pattern = t.cast("str | None", namespace.pattern)
+    raw_pattern = t.cast("str | None", namespace.pattern)
+    find_positionals = [raw_pattern] if raw_pattern is not None else []
+    find_compiled, find_residual = _maybe_compile_query(
+        find_positionals,
+        bundle=bundle,
+        color_mode=color_mode,
+        subparser=bundle.find_parser,
+    )
+    pattern: str | None = (
+        (" ".join(find_residual) if find_residual else None)
+        if find_compiled is not None
+        else raw_pattern
+    )
     if t.cast("bool", namespace.find_glob):
         pattern_mode: FindPatternMode = "glob"
     elif t.cast("bool", namespace.find_fixed):
@@ -807,6 +883,7 @@ def parse_args(
         absolute_path=t.cast("bool", namespace.absolute_path),
         full_path=t.cast("bool", namespace.full_path),
         progress_mode=t.cast("ProgressMode", namespace.progress),
+        compiled=find_compiled,
     )
 
 
@@ -838,10 +915,29 @@ def _build_grep_args(
     else:
         pattern_mode = "regex"
 
-    patterns_list = t.cast("list[str]", namespace.patterns)
+    patterns_list_raw = t.cast("list[str]", namespace.patterns)
+    grep_compiled, residual_patterns = _maybe_compile_query(
+        patterns_list_raw,
+        bundle=bundle,
+        color_mode=color_mode,
+        subparser=bundle.grep_parser,
+    )
+    patterns_list: list[str] = (
+        list(residual_patterns) if grep_compiled is not None else patterns_list_raw
+    )
     if any(not pattern for pattern in patterns_list):
         with configured_color_environment(color_mode):
             bundle.grep_parser.error("pattern cannot be empty")
+    if grep_compiled is not None and not patterns_list:
+        # Field-predicate-only grep would have no text to match line
+        # output against. Steer the user to ``search`` for record-
+        # level filtering and away from grep's line-aware shape.
+        with configured_color_environment(color_mode):
+            bundle.grep_parser.error(
+                "grep query needs at least one text pattern; "
+                "use 'agentgrep search' for record-level filtering "
+                "without text matching",
+            )
 
     invert_match = t.cast("bool", namespace.invert_match)
     count_only = t.cast("bool", namespace.count)
@@ -890,6 +986,7 @@ def _build_grep_args(
         files_with_matches=t.cast("bool", namespace.files_with_matches),
         files_without_match=files_without_match,
         only_matching=t.cast("bool", namespace.only_matching),
+        compiled=grep_compiled,
         no_dedupe=t.cast("bool", namespace.no_dedupe),
         line_number=line_number,
         heading=heading,
