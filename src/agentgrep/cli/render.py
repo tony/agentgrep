@@ -650,6 +650,11 @@ def serialize_grep_record(
     Mirrors rg's ``--json`` shape at a high level: a ``match`` event
     carries the source path, the matched text, optional line number,
     and origin metadata (agent / store / session).
+
+    Kept for backward compatibility (it's in the public re-export
+    surface). Live ``--json`` / ``--ndjson`` output uses the per-line
+    :func:`serialize_grep_begin`, :func:`serialize_grep_match_line`,
+    and :func:`serialize_grep_end` helpers instead.
     """
     return {
         "type": "match",
@@ -665,6 +670,109 @@ def serialize_grep_record(
             "conversation_id": record.conversation_id,
         },
     }
+
+
+def serialize_grep_begin(record: agentgrep.SearchRecord) -> dict[str, object]:
+    """Emit the ``begin`` event that opens each record in ``--json``.
+
+    Mirrors rg's per-file ``begin`` envelope, adapted for agentgrep —
+    carries the record's origin metadata so downstream consumers can
+    route events by agent / store / session without waiting for the
+    first ``match`` event.
+    """
+    return {
+        "type": "begin",
+        "data": {
+            "path": {"text": agentgrep.format_display_path(record.path)},
+            "agent": record.agent,
+            "store": record.store,
+            "adapter_id": record.adapter_id,
+            "timestamp": record.timestamp,
+            "session_id": record.session_id,
+            "conversation_id": record.conversation_id,
+        },
+    }
+
+
+def serialize_grep_match_line(
+    record: agentgrep.SearchRecord,
+    line_number: int,
+    line_text: str,
+    match_spans: list[tuple[int, int]],
+) -> dict[str, object]:
+    """Emit one rg-shaped ``match`` event per matching line.
+
+    Mirrors rg's ``--json`` per-line event vocabulary: nested
+    ``path.text`` and ``lines.text``, 1-indexed ``line_number``, and
+    ``submatches`` as ``[{"match": {"text": ...}, "start": int,
+    "end": int}, ...]`` carrying byte offsets within the line. Each
+    submatch's ``text`` is the substring sliced from ``line_text``.
+    """
+    submatches = [
+        {"match": {"text": line_text[start:end]}, "start": start, "end": end}
+        for start, end in match_spans
+    ]
+    return {
+        "type": "match",
+        "data": {
+            "path": {"text": agentgrep.format_display_path(record.path)},
+            "line_number": line_number,
+            "lines": {"text": line_text},
+            "submatches": submatches,
+        },
+    }
+
+
+def serialize_grep_end(
+    record: agentgrep.SearchRecord,
+    *,
+    matched_lines: int,
+    matches: int,
+) -> dict[str, object]:
+    """Emit the ``end`` event that closes each record in ``--json``.
+
+    Carries the per-record tallies (matched lines vs total match spans)
+    so downstream consumers can build summaries without re-counting.
+    """
+    return {
+        "type": "end",
+        "data": {
+            "path": {"text": agentgrep.format_display_path(record.path)},
+            "stats": {
+                "matched_lines": matched_lines,
+                "matches": matches,
+            },
+        },
+    }
+
+
+def _iter_grep_json_events(
+    records: list[agentgrep.SearchRecord],
+    args: GrepArgs,
+) -> cabc.Iterator[dict[str, object]]:
+    """Yield rg-shaped JSON events for each record in ``records``.
+
+    For each record, emits ``begin`` → 0+ ``match`` (one per matching
+    line) → ``end``. A trailing ``summary`` event is appended by the
+    caller (``json`` mode) or omitted (``ndjson`` mode).
+    """
+    for record in records:
+        matches = list(iter_match_lines(record.text, args))
+        yield serialize_grep_begin(record)
+        match_span_total = 0
+        for line_number, line_text, match_spans in matches:
+            yield serialize_grep_match_line(
+                record,
+                line_number,
+                line_text,
+                match_spans,
+            )
+            match_span_total += len(match_spans)
+        yield serialize_grep_end(
+            record,
+            matched_lines=len(matches),
+            matches=match_span_total,
+        )
 
 
 def _grep_show_line_col(args: GrepArgs) -> tuple[bool, bool]:
@@ -753,15 +861,18 @@ def print_grep_results(records: list[agentgrep.SearchRecord], args: GrepArgs) ->
             return _print_files_without_match(args)
 
     if args.output_mode == "json":
-        events: list[dict[str, object]] = [serialize_grep_record(record) for record in records]
-        summary: dict[str, object] = {"type": "summary", "data": {"matches": len(records)}}
-        events.append(summary)
+        events = list(_iter_grep_json_events(records, args))
+        total_match_count = sum(1 for event in events if event.get("type") == "match")
+        events.append({"type": "summary", "data": {"matches": total_match_count}})
         print(json.dumps({"command": "grep", "events": events}, ensure_ascii=False, indent=2))
-        return 0 if records else 1
+        return 0 if total_match_count > 0 else 1
     if args.output_mode == "ndjson":
-        for record in records:
-            print(json.dumps(serialize_grep_record(record), ensure_ascii=False))
-        return 0 if records else 1
+        emitted_matches = 0
+        for event in _iter_grep_json_events(records, args):
+            print(json.dumps(event, ensure_ascii=False))
+            if event.get("type") == "match":
+                emitted_matches += 1
+        return 0 if emitted_matches > 0 else 1
 
     if args.count_only:
         colors = agentgrep.AnsiColors.for_stream(args.color_mode, sys.stdout)
@@ -968,14 +1079,17 @@ def stream_grep_results(args: GrepArgs) -> int:
     ):
         if isinstance(event, events.RecordEmitted):
             if args.output_mode == "ndjson":
-                print(json.dumps(serialize_grep_record(event.record), ensure_ascii=False))
+                for json_event in _iter_grep_json_events([event.record], args):
+                    print(json.dumps(json_event, ensure_ascii=False))
+                    if json_event.get("type") == "match":
+                        match_count += 1
             else:
                 print(format_grep_record(event.record, args))
                 if args.heading is True or (args.heading is None and is_tty):
                     print()
+                match_count += 1
             if is_tty:
                 sys.stdout.flush()
-            match_count += 1
     if match_count == 0 and args.output_mode == "text":
         print("No matches found.", file=sys.stderr)
     return 0 if match_count > 0 else 1

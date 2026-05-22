@@ -455,11 +455,11 @@ def test_run_grep_command_json_output_emits_event_stream(
     assert any(event["type"] == "summary" for event in events)
 
 
-def test_run_grep_command_ndjson_outputs_one_record_per_line(
+def test_run_grep_command_ndjson_outputs_rg_shaped_events(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """``grep --ndjson`` emits one match event per line, no summary."""
+    """``grep --ndjson`` emits begin / match / end per record, rg-shaped."""
     records = [
         agentgrep.SearchRecord(
             kind="prompt",
@@ -467,7 +467,7 @@ def test_run_grep_command_ndjson_outputs_one_record_per_line(
             store="sessions",
             adapter_id="codex.sessions.jsonl",
             path=t.cast("t.Any", f"/tmp/fake-{i}.jsonl"),
-            text=f"match {i}",
+            text=f"foo line {i}",
             title=None,
             role="user",
             timestamp=None,
@@ -483,8 +483,12 @@ def test_run_grep_command_ndjson_outputs_one_record_per_line(
     exit_code = agentgrep.run_grep_command(args)
     captured = capsys.readouterr()
     assert exit_code == 0
-    lines = [line for line in captured.out.splitlines() if line.strip()]
-    assert len(lines) == 3
+    lines = [json.loads(line) for line in captured.out.splitlines() if line.strip()]
+    # 3 records x (begin + match + end) = 9 events.
+    assert len(lines) == 9
+    assert sum(1 for ev in lines if ev["type"] == "begin") == 3
+    assert sum(1 for ev in lines if ev["type"] == "match") == 3
+    assert sum(1 for ev in lines if ev["type"] == "end") == 3
 
 
 class CountCase(t.NamedTuple):
@@ -900,7 +904,7 @@ def test_run_grep_command_ndjson_streams_each_record(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """--ndjson now streams events through iter_search_events too."""
+    """--ndjson streams begin/match/end events through iter_search_events."""
     records = [
         agentgrep.SearchRecord(
             kind="prompt",
@@ -917,9 +921,12 @@ def test_run_grep_command_ndjson_streams_each_record(
     _fake_search_records(records, monkeypatch)
     args = _make_grep_args(patterns=("bliss",), output_mode="ndjson", color_mode="never")
     exit_code = agentgrep.run_grep_command(args)
-    captured = capsys.readouterr().out.splitlines()
+    captured = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
     assert exit_code == 0
-    assert len([line for line in captured if line.strip()]) == 2
+    # 2 records x (begin + match + end) = 6 events.
+    assert len(captured) == 6
+    match_events = [ev for ev in captured if ev["type"] == "match"]
+    assert len(match_events) == 2
 
 
 def test_run_grep_command_json_still_uses_eager_path(
@@ -957,6 +964,98 @@ def test_run_grep_command_json_still_uses_eager_path(
     payload = json.loads(captured)
     assert any(event["type"] == "match" for event in payload["events"])
     assert any(event["type"] == "summary" for event in payload["events"])
+
+
+class JsonEventShapeCase(t.NamedTuple):
+    """Parametrized case for ``grep --json`` per-line rg-shaped events."""
+
+    test_id: str
+    record_text: str
+    pattern: str
+    expected_match_lines: tuple[tuple[int, str, tuple[tuple[int, int], ...]], ...]
+
+
+JSON_EVENT_SHAPE_CASES: tuple[JsonEventShapeCase, ...] = (
+    JsonEventShapeCase(
+        test_id="single-match-single-line",
+        record_text="bliss is here",
+        pattern="bliss",
+        expected_match_lines=((1, "bliss is here", ((0, 5),)),),
+    ),
+    JsonEventShapeCase(
+        test_id="multi-match-same-line",
+        record_text="bliss and bliss on one row",
+        pattern="bliss",
+        expected_match_lines=((1, "bliss and bliss on one row", ((0, 5), (10, 15))),),
+    ),
+    JsonEventShapeCase(
+        test_id="multi-line-some-match",
+        record_text="bliss on first\nno hit middle\nbliss on third",
+        pattern="bliss",
+        expected_match_lines=(
+            (1, "bliss on first", ((0, 5),)),
+            (3, "bliss on third", ((0, 5),)),
+        ),
+    ),
+    JsonEventShapeCase(
+        test_id="no-match-record-emits-begin-and-end-only",
+        record_text="completely disjoint",
+        pattern="bliss",
+        expected_match_lines=(),
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    JSON_EVENT_SHAPE_CASES,
+    ids=[c.test_id for c in JSON_EVENT_SHAPE_CASES],
+)
+def test_run_grep_command_json_per_line_event_shape(
+    case: JsonEventShapeCase,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Grep --json emits rg-shaped begin/match/end events per matching line."""
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/event-shape.jsonl"),
+        text=case.record_text,
+        timestamp=None,
+        session_id="sess-1",
+    )
+
+    def _eager_stub(
+        home: object,
+        query: object,
+        *,
+        progress: object = None,
+        control: object = None,
+    ) -> list[agentgrep.SearchRecord]:
+        return [record]
+
+    monkeypatch.setattr(agentgrep, "run_search_query", _eager_stub)
+    args = _make_grep_args(patterns=(case.pattern,), output_mode="json", color_mode="never")
+    _ = agentgrep.run_grep_command(args)
+    captured = capsys.readouterr().out
+    payload = json.loads(captured)
+    events = t.cast("list[dict[str, t.Any]]", payload["events"])
+    match_events = [ev for ev in events if ev["type"] == "match"]
+    assert len(match_events) == len(case.expected_match_lines)
+    # Every record gets a begin and an end envelope.
+    assert any(ev["type"] == "begin" for ev in events)
+    assert any(ev["type"] == "end" for ev in events)
+    # Match events carry the rg-shaped lines.text + submatches.
+    for actual, (exp_line_no, exp_line_text, exp_spans) in zip(
+        match_events, case.expected_match_lines, strict=True
+    ):
+        assert actual["data"]["line_number"] == exp_line_no
+        assert actual["data"]["lines"]["text"] == exp_line_text
+        actual_spans = tuple((sm["start"], sm["end"]) for sm in actual["data"]["submatches"])
+        assert actual_spans == exp_spans
 
 
 def test_format_grep_record_default_emits_path_text_pipe_shape(
