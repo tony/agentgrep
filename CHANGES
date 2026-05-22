@@ -393,7 +393,55 @@ never a Python traceback.
 See {ref}`library-query-language` for the full grammar, field
 registry, and date literal reference.
 
+#### `--ui` overlay accepts the full query language
+
+Launching the TUI via `agentgrep search --ui agent:codex bliss`
+now opens with the full query string in the search box (not just
+the text terms), and editing the box re-parses field syntax on
+every keystroke — `agent:codex bliss` becomes
+`agent:claude deploy` becomes `timestamp:>2026-01 OR model:claude`
+without restarting the TUI. Field predicates that prune sources
+take effect on the next debounced re-search. Parse / compile
+errors keep the search box editable so users can correct typos
+in-flight.
+
 ### Fixes
+
+#### Query language: invalid enum + date literals now error at parse time
+
+`agentgrep search agent:gpt4 bliss` used to scan 1,400+ sources for
+~20 seconds and silently return "No matches found." because enum
+validation lived in the source-side evaluation path, which the
+eager search path didn't trigger. The compiler now walks the AST
+once at parse time and rejects unknown enum values
+(`agent:gpt4`, `type:bogus`), unparseable date literals
+(`timestamp:>bogus`, `mtime:[bogus TO 2026]`), and the wrong-op-
+for-field combinations (`agent:>codex`, `type:[a TO b]`). Users
+see a clean argparse-shaped exit-2 error with the valid choices
+listed.
+
+#### Query language: `search`'s eager path now prunes sources
+
+`agentgrep search agent:codex bliss` was paradoxically *slower*
+than the unfiltered `agentgrep search bliss` because the eager
+path's `collect_search_records` never consulted the compiled
+query's source predicate — every source got opened just to be
+rejected at the record level. The source predicate now runs in
+`search_sources` *before* the ripgrep prefilter, so non-codex
+sources skip both planning and reading. The agent-filtered search
+is now faster than the unfiltered baseline, as it always should
+have been.
+
+#### Query language: `-agent:claude` no longer silently mangles into short flags
+
+`agentgrep find -agent:claude` (unquoted negation shortcut) used
+to silently parse as the combined short options `-a -g -e
+nt:claude` because each leading character matched a defined short
+flag — turning the user's negation intent into a glob-mode search
+with extension filter `nt:claude`. A pre-scan now rejects argv
+tokens shaped like `-FIELD:VALUE` (where FIELD is a known query
+field) at parse time, with a clean error suggesting the
+workarounds: `--` separator, quoted positional, or `NOT` keyword.
 
 #### `agentgrep find` with no pattern lists every source
 
