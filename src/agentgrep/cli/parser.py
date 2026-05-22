@@ -24,6 +24,7 @@ from agentgrep import (
     AGENT_CHOICES,
     CLI_DESCRIPTION,
     FIND_DESCRIPTION,
+    FUZZY_DESCRIPTION,
     GREP_DESCRIPTION,
     SEARCH_DESCRIPTION,
     UI_DESCRIPTION,
@@ -39,6 +40,8 @@ CaseMode = t.Literal["smart", "ignore", "respect"]
 PatternMode = t.Literal["regex", "fixed", "word"]
 FindPatternMode = t.Literal["regex", "glob", "fixed", "exact"]
 FindTypeFilter = t.Literal["prompts", "history", "sessions", "all"]
+FuzzyAlgo = t.Literal["v1", "v2"]
+FuzzyTiebreak = t.Literal["length", "begin", "end", "index", "chunk"]
 
 __all__ = [
     "SUBCOMMANDS",
@@ -46,6 +49,9 @@ __all__ = [
     "FindArgs",
     "FindPatternMode",
     "FindTypeFilter",
+    "FuzzyAlgo",
+    "FuzzyArgs",
+    "FuzzyTiebreak",
     "GrepArgs",
     "ParserBundle",
     "PatternMode",
@@ -64,7 +70,7 @@ __all__ = [
 ]
 
 
-SUBCOMMANDS: frozenset[str] = frozenset({"grep", "search", "find", "ui"})
+SUBCOMMANDS: frozenset[str] = frozenset({"grep", "search", "find", "fuzzy", "ui"})
 
 
 @dataclasses.dataclass(slots=True)
@@ -117,6 +123,35 @@ class UIArgs:
 
 
 @dataclasses.dataclass(slots=True)
+class FuzzyArgs:
+    """Typed arguments for ``agentgrep fuzzy``.
+
+    Mirrors fzf's ``--filter`` mode: stdin lines are scored against
+    ``query`` and emitted in descending-score order. ``exact``
+    short-circuits the fuzzy algorithm to a substring predicate;
+    ``extended`` honors fzf's ``foo !bar`` / ``^foo`` / ``bar$``
+    token syntax.
+    """
+
+    query: str
+    agents: tuple[AgentName, ...]
+    case_mode: CaseMode
+    algo: FuzzyAlgo
+    tiebreak: FuzzyTiebreak
+    exact: bool
+    extended: bool
+    sort: bool
+    delimiter: str | None
+    nth: int | None
+    with_nth: int | None
+    print_query: bool
+    read0: bool
+    print0: bool
+    output_mode: OutputMode
+    color_mode: ColorMode
+
+
+@dataclasses.dataclass(slots=True)
 class GrepArgs:
     """Typed arguments for ``agentgrep grep``.
 
@@ -154,6 +189,7 @@ class ParserBundle:
     search_parser: argparse.ArgumentParser
     find_parser: argparse.ArgumentParser
     grep_parser: argparse.ArgumentParser
+    fuzzy_parser: argparse.ArgumentParser
 
 
 def normalize_color_mode(argv: cabc.Sequence[str] | None) -> ColorMode:
@@ -549,11 +585,132 @@ def create_parser(
         default="",
         help="Optional initial search text to populate the search bar",
     )
+    fuzzy_parser = subparsers.add_parser(
+        "fuzzy",
+        help="fzf --filter-shaped fuzzy match over stdin lines",
+        description=FUZZY_DESCRIPTION,
+        formatter_class=formatter_class,
+        color=color_mode != "never",
+    )
+    add_common_agent_options(fuzzy_parser)
+    _ = fuzzy_parser.add_argument(
+        "query",
+        nargs="?",
+        default=None,
+        help="Fuzzy query (also accepted via -f/--filter)",
+    )
+    _ = fuzzy_parser.add_argument(
+        "-f",
+        "--filter",
+        dest="fuzzy_filter",
+        default=None,
+        metavar="QUERY",
+        help="Explicit filter query (overrides the positional)",
+    )
+    fuzzy_case_group = fuzzy_parser.add_mutually_exclusive_group()
+    _ = fuzzy_case_group.add_argument(
+        "-i",
+        "--ignore-case",
+        dest="fuzzy_ignore_case",
+        action="store_true",
+        help="Force case-insensitive matching",
+    )
+    _ = fuzzy_case_group.add_argument(
+        "--no-ignore-case",
+        dest="fuzzy_respect_case",
+        action="store_true",
+        help="Force case-sensitive matching (fzf's ``+i``)",
+    )
+    _ = fuzzy_case_group.add_argument(
+        "--smart-case",
+        dest="fuzzy_smart_case",
+        action="store_true",
+        help="Smart-case (default): case-sensitive only when query has uppercase",
+    )
+    _ = fuzzy_parser.add_argument(
+        "-e",
+        "--exact",
+        dest="fuzzy_exact",
+        action="store_true",
+        help="Use exact substring matching instead of fuzzy",
+    )
+    _ = fuzzy_parser.add_argument(
+        "--no-extended",
+        dest="fuzzy_no_extended",
+        action="store_true",
+        help="Disable extended-search tokens (``foo !bar`` etc.)",
+    )
+    _ = fuzzy_parser.add_argument(
+        "--algo",
+        dest="fuzzy_algo",
+        choices=["v1", "v2"],
+        default="v2",
+        help="Fuzzy match algorithm (default: v2)",
+    )
+    _ = fuzzy_parser.add_argument(
+        "--tiebreak",
+        dest="fuzzy_tiebreak",
+        choices=["length", "begin", "end", "index", "chunk"],
+        default="length",
+        help="Score tiebreak rule (default: length)",
+    )
+    _ = fuzzy_parser.add_argument(
+        "--no-sort",
+        dest="fuzzy_no_sort",
+        action="store_true",
+        help="Preserve input order instead of sorting by score (fzf's ``+s``)",
+    )
+    _ = fuzzy_parser.add_argument(
+        "-d",
+        "--delimiter",
+        dest="fuzzy_delimiter",
+        default=None,
+        metavar="DELIM",
+        help="Field delimiter (default: whitespace)",
+    )
+    _ = fuzzy_parser.add_argument(
+        "-n",
+        "--nth",
+        dest="fuzzy_nth",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Limit matching to the Nth field (1-indexed)",
+    )
+    _ = fuzzy_parser.add_argument(
+        "--with-nth",
+        dest="fuzzy_with_nth",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Display only the Nth field",
+    )
+    _ = fuzzy_parser.add_argument(
+        "--print-query",
+        dest="fuzzy_print_query",
+        action="store_true",
+        help="Prepend the query as the first line of output",
+    )
+    _ = fuzzy_parser.add_argument(
+        "--read0",
+        dest="fuzzy_read0",
+        action="store_true",
+        help="Treat stdin as NUL-delimited",
+    )
+    _ = fuzzy_parser.add_argument(
+        "--print0",
+        dest="fuzzy_print0",
+        action="store_true",
+        help="Separate output records with NUL instead of newline",
+    )
+    add_output_mode_options(fuzzy_parser, allow_ui=True)
+
     return ParserBundle(
         parser=parser,
         search_parser=search_parser,
         find_parser=find_parser,
         grep_parser=grep_parser,
+        fuzzy_parser=fuzzy_parser,
     )
 
 
@@ -571,7 +728,7 @@ def build_docs_parser() -> argparse.ArgumentParser:
 
 def parse_args(
     argv: cabc.Sequence[str] | None = None,
-) -> SearchArgs | FindArgs | UIArgs | GrepArgs | None:
+) -> SearchArgs | FindArgs | UIArgs | GrepArgs | FuzzyArgs | None:
     """Parse CLI arguments into typed dataclasses."""
     color_mode = normalize_color_mode(argv)
     argv = inject_default_subcommand(argv)
@@ -595,6 +752,15 @@ def parse_args(
 
     if command == "grep":
         return _build_grep_args(
+            namespace,
+            agents=agents,
+            output_mode=output_mode,
+            color_mode=color_mode,
+            bundle=bundle,
+        )
+
+    if command == "fuzzy":
+        return _build_fuzzy_args(
             namespace,
             agents=agents,
             output_mode=output_mode,
@@ -721,6 +887,52 @@ def _build_grep_args(
         output_mode=output_mode,
         color_mode=color_mode,
         progress_mode=t.cast("ProgressMode", namespace.progress),
+    )
+
+
+def _build_fuzzy_args(
+    namespace: argparse.Namespace,
+    *,
+    agents: tuple[AgentName, ...],
+    output_mode: OutputMode,
+    color_mode: ColorMode,
+    bundle: ParserBundle,
+) -> FuzzyArgs | None:
+    """Build :class:`FuzzyArgs` from a parsed argparse namespace."""
+    explicit_filter = t.cast("str | None", namespace.fuzzy_filter)
+    positional_query = t.cast("str | None", namespace.query)
+    query = explicit_filter if explicit_filter is not None else positional_query
+    if query is None and sys.stdin.isatty():
+        with configured_color_environment(color_mode):
+            bundle.fuzzy_parser.print_help()
+        raise SystemExit(2)
+    if query is None:
+        query = ""
+
+    if t.cast("bool", namespace.fuzzy_ignore_case):
+        case_mode: CaseMode = "ignore"
+    elif t.cast("bool", namespace.fuzzy_respect_case):
+        case_mode = "respect"
+    else:
+        case_mode = "smart"
+
+    return FuzzyArgs(
+        query=query,
+        agents=agents,
+        case_mode=case_mode,
+        algo=t.cast("FuzzyAlgo", namespace.fuzzy_algo),
+        tiebreak=t.cast("FuzzyTiebreak", namespace.fuzzy_tiebreak),
+        exact=t.cast("bool", namespace.fuzzy_exact),
+        extended=not t.cast("bool", namespace.fuzzy_no_extended),
+        sort=not t.cast("bool", namespace.fuzzy_no_sort),
+        delimiter=t.cast("str | None", namespace.fuzzy_delimiter),
+        nth=t.cast("int | None", namespace.fuzzy_nth),
+        with_nth=t.cast("int | None", namespace.fuzzy_with_nth),
+        print_query=t.cast("bool", namespace.fuzzy_print_query),
+        read0=t.cast("bool", namespace.fuzzy_read0),
+        print0=t.cast("bool", namespace.fuzzy_print0),
+        output_mode=output_mode,
+        color_mode=color_mode,
     )
 
 
