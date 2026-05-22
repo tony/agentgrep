@@ -462,12 +462,25 @@ def run_find_command(args: FindArgs) -> int:
         return 0
     if not _find_path_is_eager(args):
         return stream_find_results(args)
-    raw_records = agentgrep.run_find_query(
-        pathlib.Path.home(),
-        args.agents,
-        pattern=None,
-        limit=None,
-    )
+    # Eager output modes (--json, --list-details) need the full
+    # record list up front. Drain :func:`agentgrep.iter_find_events`
+    # so source-level field predicates from the compiled query
+    # (``agent:``, ``path:``, ``store:``, ``mtime:``) prune sources
+    # the same way the streaming path does. The legacy
+    # :func:`run_find_query` call didn't accept ``compiled``, so a
+    # `find -l agent:codex` invocation used to silently return every
+    # agent's sources.
+    raw_records: list[FindRecord] = [
+        event.record
+        for event in agentgrep.iter_find_events(
+            pathlib.Path.home(),
+            args.agents,
+            pattern=None,
+            limit=None,
+            compiled=args.compiled,
+        )
+        if isinstance(event, events.FindRecordEmitted)
+    ]
     records = filter_find_records(raw_records, args)
     print_find_results(records, args)
     if records:
