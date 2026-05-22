@@ -93,6 +93,47 @@ has no per-package cutoff override, so the pipx and pip days panels
 carry a note pointing users at the uv-flavored snippets when the
 cooldown filters out a recent agentgrep release.
 
+#### Default to the Textual explorer (#7)
+
+Bare `agentgrep` now launches the interactive Textual explorer
+(equivalent to `agentgrep ui`); `agentgrep <terms>` remains shorthand
+for `agentgrep search <terms>`. The new `ui` subcommand accepts an
+optional initial-query argument, so `agentgrep ui bliss` seeds the
+search bar without leaving the explorer to run a one-shot CLI query.
+
+#### Live, cancellable search and sticky in-list filter (#7)
+
+The explorer's top input dispatches a backend search on `Enter` and
+signals any in-flight worker to wrap up before the next one starts,
+so re-querying mid-stream no longer piles up cancellations. A
+separate filter input below the results narrows what's already loaded
+on every keystroke without re-running the search. Plain `up` returns
+focus from the filter to the search bar; plain `right` on an empty
+filter releases focus to the detail pane, so the full arrow-key
+perimeter walks the three columns without reaching for `Ctrl-L`.
+
+#### Per-pane chrome with scroll indicators and tig-style timestamps (#7)
+
+The results and detail panes each carry a one-line footer that
+mirrors tig's chrome conventions. The results footer shows match
+count, cursor position, and a scroll percent that reads `100%` when
+the view fits; the detail footer shows the compact source path and
+the same scroll percent. Result-row timestamps render in the
+viewer's local timezone with offset (`YYYY-MM-DD HH:MM ±HHMM`) rather
+than the raw upstream ISO string clipped to 20 characters.
+
+#### Filter and detail responsiveness on large result sets (#7)
+
+Filter passes no longer recompute `build_search_haystack().casefold()`
+for every record on every keystroke — the casefolded haystack is
+memoized for the lifetime of one search. The filter applies
+adds/removes as deltas to the result list rather than rebuilding from
+scratch, the streaming batch-apply yields to the event loop between
+chunks so the UI stays interactive while a worker streams thousands
+of matches in, and the detail pane memoizes body formatting and the
+first-match line so re-visiting a record skips both Rich render
+passes.
+
 ### Fixes
 
 #### MCP install widget ships working cooldown snippets
@@ -128,6 +169,15 @@ emits the shared `ag-cooldown-days` class on cooldown-day spans
 instead of the mcp-prefixed variant — no visual change, but the
 filter output is widget-agnostic, so `{cli-install}` panels can reuse
 the same sentinel mechanism.
+
+#### `agentgrep.ui` subpackage (#7)
+
+The streaming Textual app moves out of `agentgrep.__init__` into a
+dedicated {mod}`agentgrep.ui` subpackage. {func}`~agentgrep.run_ui`
+and {func}`~agentgrep.ui.app.build_streaming_ui_app` live in
+{mod}`agentgrep.ui.app` with Textual deferred to
+`importlib.import_module` at factory-call time — bare
+`import agentgrep` does not pull Textual.
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
