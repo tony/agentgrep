@@ -818,14 +818,69 @@ def _maybe_compile_query(
     return compiled, compiled.text_terms
 
 
+def _check_for_mangled_field_predicate(
+    argv: cabc.Sequence[str],
+    *,
+    bundle: ParserBundle,
+    color_mode: ColorMode,
+) -> None:
+    """Reject `-field:value` argv tokens before argparse mangles them.
+
+    argparse collapses ``-agent:claude`` into combined short options
+    (``-a`` from ``--absolute-path``, ``-g`` from ``--glob``,
+    ``-e nt:claude`` from ``--extension``) because each leading
+    character matches a defined short flag. The user's intended
+    field-predicate negation is silently lost. This pre-scan catches
+    the pattern before argparse runs and emits a clear error that
+    points at the workarounds.
+
+    Scans for any argv element matching ``-IDENT:`` where ``IDENT`` is
+    a known field name in :func:`default_registry`. Skips tokens that
+    appear after a ``--`` separator (those are intentional
+    positionals, not options).
+    """
+    registry = default_registry()
+    after_double_dash = False
+    for arg in argv:
+        if after_double_dash:
+            continue
+        if arg == "--":
+            after_double_dash = True
+            continue
+        if not arg.startswith("-") or arg.startswith("--"):
+            continue
+        if ":" not in arg:
+            continue
+        field_part, _, _ = arg[1:].partition(":")
+        if not field_part:
+            continue
+        if registry.get(field_part) is None:
+            continue
+        message = (
+            f"argument {arg!r} looks like a field predicate but argparse "
+            f"parses the leading '-' as combined short options. Use one of:\n"
+            f"  --                  positional separator: agentgrep ... -- {arg}\n"
+            f"  quoted positional:  agentgrep ... '{arg}'\n"
+            f"  keyword negation:   agentgrep ... 'NOT {arg[1:]}'"
+        )
+        with configured_color_environment(color_mode):
+            bundle.parser.error(message)
+
+
 def parse_args(
     argv: cabc.Sequence[str] | None = None,
 ) -> SearchArgs | FindArgs | UIArgs | GrepArgs | FuzzyArgs | None:
     """Parse CLI arguments into typed dataclasses."""
     color_mode = normalize_color_mode(argv)
+    effective_argv = list(argv) if argv is not None else list(sys.argv[1:])
     with configured_color_environment(color_mode):
         bundle = create_parser(color_mode)
-        namespace = bundle.parser.parse_args(argv)
+        _check_for_mangled_field_predicate(
+            effective_argv,
+            bundle=bundle,
+            color_mode=color_mode,
+        )
+        namespace = bundle.parser.parse_args(effective_argv)
     if t.cast("str | None", getattr(namespace, "command", None)) is None:
         with configured_color_environment(color_mode):
             bundle.parser.print_help()

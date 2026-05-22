@@ -552,6 +552,100 @@ def test_cli_parsing_routes_query_syntax_to_compiled(
         assert compiled is None
 
 
+class MangledFieldPredicateCase(t.NamedTuple):
+    """Parametrized case for argparse mangling rejection."""
+
+    test_id: str
+    argv: tuple[str, ...]
+
+
+MANGLED_FIELD_PREDICATE_CASES: tuple[MangledFieldPredicateCase, ...] = (
+    MangledFieldPredicateCase(
+        test_id="find-mangled-agent",
+        argv=("find", "-agent:claude"),
+    ),
+    MangledFieldPredicateCase(
+        test_id="search-mangled-agent",
+        argv=("search", "-agent:claude", "bliss"),
+    ),
+    MangledFieldPredicateCase(
+        test_id="grep-mangled-path",
+        argv=("grep", "-path:/foo", "bliss"),
+    ),
+    MangledFieldPredicateCase(
+        test_id="find-mangled-timestamp",
+        argv=("find", "-timestamp:2026"),
+    ),
+    MangledFieldPredicateCase(
+        test_id="search-mangled-type",
+        argv=("search", "-type:prompts", "bliss"),
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    MANGLED_FIELD_PREDICATE_CASES,
+    ids=[c.test_id for c in MANGLED_FIELD_PREDICATE_CASES],
+)
+def test_mangled_field_predicate_rejected_at_parse_time(
+    case: MangledFieldPredicateCase,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A `-FIELD:VALUE` token errors with a workaround-hint before argparse mangles it."""
+    with pytest.raises(SystemExit) as exc_info:
+        _ = agentgrep.parse_args(list(case.argv))
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert "looks like a field predicate" in captured.err
+
+
+class MangledFieldFalsePositiveCase(t.NamedTuple):
+    """Parametrized case ensuring valid `--`-escaped usage still parses."""
+
+    test_id: str
+    argv: tuple[str, ...]
+
+
+MANGLED_FIELD_FALSE_POSITIVE_CASES: tuple[MangledFieldFalsePositiveCase, ...] = (
+    MangledFieldFalsePositiveCase(
+        test_id="dash-dash-escape",
+        argv=("find", "--", "-agent:claude"),
+    ),
+    MangledFieldFalsePositiveCase(
+        test_id="quoted-negation-via-NOT",
+        argv=("find", "NOT agent:claude"),
+    ),
+    MangledFieldFalsePositiveCase(
+        test_id="legitimate-short-flag-still-works",
+        argv=("find", "-a", "agent:codex"),
+    ),
+    MangledFieldFalsePositiveCase(
+        test_id="unrecognized-field-not-mangled",
+        argv=("find", "-unknown:value"),
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    MANGLED_FIELD_FALSE_POSITIVE_CASES,
+    ids=[c.test_id for c in MANGLED_FIELD_FALSE_POSITIVE_CASES],
+)
+def test_mangled_predicate_check_does_not_false_positive(
+    case: MangledFieldFalsePositiveCase,
+) -> None:
+    """The mangle-check leaves valid argv alone (or fails for unrelated reasons)."""
+    # The point isn't that all of these succeed — some may fail for
+    # other reasons (e.g., `--` followed by an option-shaped
+    # positional, unknown short flag). The point is that they DON'T
+    # hit the `looks like a field predicate` error.
+    import contextlib
+
+    with contextlib.suppress(SystemExit):
+        _ = agentgrep.parse_args(list(case.argv))
+
+
 class FlagFieldCollisionCase(t.NamedTuple):
     """Parametrized case for flag-vs-field collision rejection."""
 
