@@ -612,6 +612,54 @@ def test_grep_help_renders_without_error(monkeypatch: pytest.MonkeyPatch) -> Non
     assert exc_info.value.code == 0
 
 
+# ----- invalid-regex argparse rejection -----------------------------------
+
+
+class InvalidRegexCase(t.NamedTuple):
+    """Parametrized case for :func:`agentgrep.parse_args` regex validation."""
+
+    test_id: str
+    pattern: str
+    expected_msg_fragment: str
+
+
+INVALID_REGEX_CASES: tuple[InvalidRegexCase, ...] = (
+    InvalidRegexCase("unterminated-charset", "[", "unterminated character set"),
+    InvalidRegexCase("unclosed-paren", "(unclosed", "unterminated subpattern"),
+    InvalidRegexCase("bad-backref", r"\1", "invalid group reference"),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    INVALID_REGEX_CASES,
+    ids=[c.test_id for c in INVALID_REGEX_CASES],
+)
+def test_grep_invalid_regex_exits_with_clean_error(
+    case: InvalidRegexCase,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``agentgrep grep <bad-regex>`` exits 2 with a clean argparse-shaped error."""
+    with pytest.raises(SystemExit) as exc_info:
+        _ = agentgrep.parse_args(["grep", case.pattern])
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert "invalid regex" in captured.err
+    assert case.expected_msg_fragment in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_grep_fixed_string_skips_regex_validation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``-F`` patterns are literal substrings and bypass regex validation."""
+    args = agentgrep.parse_args(["grep", "-F", "["])
+    assert args is not None
+    assert isinstance(args, agentgrep.GrepArgs)
+    assert args.patterns == ("[",)
+    assert args.pattern_mode == "fixed"
+
+
 # ----- line-aware match helpers --------------------------------------------
 
 

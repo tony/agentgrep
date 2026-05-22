@@ -137,6 +137,24 @@ piped buffer.
 
 Use these in shell scripts the same way you'd use `rg`'s exit codes.
 
+(cli-grep-error-handling)=
+
+## Error handling
+
+Invalid regex patterns are caught at the argparse layer and surfaced
+with the standard argparse error shape, then exit 2:
+
+```console
+$ agentgrep grep '['
+usage: agentgrep grep [...]
+agentgrep grep: error: invalid regex '[': unterminated character set at position 0
+```
+
+The check runs before the engine starts so a malformed pattern never
+emits partial output and never escapes as a Python traceback. `-F`
+(fixed-strings) skips the check — its patterns are literal substrings,
+not regex.
+
 (cli-grep-dedupe)=
 
 ## Session deduplication
