@@ -41,18 +41,32 @@ from agentgrep.query.ast import (
     Token,
     TokenKind,
 )
-from agentgrep.query.parser import tokenize
+from agentgrep.query.parser import QueryParseError, parse_query, tokenize
+from agentgrep.query.registry import (
+    FieldKind,
+    FieldLayer,
+    FieldRegistry,
+    FieldSpec,
+    default_registry,
+)
 
 __all__ = [
     "AndNode",
     "FieldCmpNode",
     "FieldEqNode",
+    "FieldKind",
+    "FieldLayer",
     "FieldRangeNode",
+    "FieldRegistry",
+    "FieldSpec",
     "NotNode",
     "OrNode",
     "QueryNode",
+    "QueryParseError",
     "TermNode",
     "Token",
     "TokenKind",
+    "default_registry",
+    "parse_query",
     "tokenize",
 ]
