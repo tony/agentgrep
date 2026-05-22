@@ -39,6 +39,7 @@ from agentgrep import (
     SearchRecordPayload,
     SourceHandle,
     SourceHandlePayload,
+    events,
     fuzzy as _fuzzy_lib,
 )
 from agentgrep.cli.parser import FindArgs, FuzzyArgs, GrepArgs, SearchArgs, UIArgs
@@ -65,6 +66,7 @@ __all__ = [
     "serialize_grep_record",
     "serialize_search_record",
     "serialize_source_handle",
+    "stream_grep_results",
 ]
 
 
@@ -809,8 +811,68 @@ def run_fuzzy_command(args: FuzzyArgs) -> int:
     return 0 if ranked else 1
 
 
+def _grep_path_is_eager(args: GrepArgs) -> bool:
+    """Return ``True`` when grep's output mode needs the full record list.
+
+    The eager outputs need a final tally or cross-record deduplication that
+    only makes sense after every match is known. The streaming outputs
+    (text, NDJSON, vimgrep, only-matching) can emit per record as they
+    arrive.
+    """
+    return (
+        args.output_mode == "json"
+        or args.count_only
+        or args.files_with_matches
+        or args.files_without_match
+        or args.invert_match
+    )
+
+
+def stream_grep_results(args: GrepArgs) -> int:
+    """Stream grep matches to stdout as the engine emits them.
+
+    Consumes :func:`agentgrep.iter_search_events` and filters for
+    :class:`agentgrep.events.RecordEmitted`. Prints each match and flushes
+    stdout when stdout is a TTY so live terminals see rows as they arrive
+    rather than waiting for a block-buffer flush. Returns the rg-style
+    exit code (``0`` if any match was emitted, ``1`` otherwise).
+
+    Only the streaming-friendly output modes route here — :func:`run_grep_command`
+    picks :func:`print_grep_results` for JSON, ``-c``, ``-l``, ``-L``,
+    and ``-v`` paths that need the full record list up front.
+    """
+    query = build_grep_query(args)
+    control = agentgrep.SearchControl()
+    is_tty = sys.stdout.isatty()
+    match_count = 0
+    for event in agentgrep.iter_search_events(
+        pathlib.Path.home(),
+        query,
+        control=control,
+    ):
+        if isinstance(event, events.RecordEmitted):
+            if args.output_mode == "ndjson":
+                print(json.dumps(serialize_grep_record(event.record), ensure_ascii=False))
+            else:
+                print(format_grep_record(event.record, args))
+                if args.heading is True or (args.heading is None and is_tty):
+                    print()
+            if is_tty:
+                sys.stdout.flush()
+            match_count += 1
+    if match_count == 0 and args.output_mode == "text":
+        print("No matches found.", file=sys.stderr)
+    return 0 if match_count > 0 else 1
+
+
 def run_grep_command(args: GrepArgs) -> int:
-    """Execute ``agentgrep grep``."""
+    """Execute ``agentgrep grep``.
+
+    Routes the request through either the live streaming path
+    (:func:`stream_grep_results`) or the eager list path
+    (:func:`print_grep_results`), depending on the requested output mode.
+    See :func:`_grep_path_is_eager` for the routing decision.
+    """
     if not args.patterns:
         msg = "grep requires at least one pattern"
         raise SystemExit(msg)
@@ -818,6 +880,8 @@ def run_grep_command(args: GrepArgs) -> int:
     if args.output_mode == "ui":
         agentgrep.run_ui(pathlib.Path.home(), query, control=agentgrep.SearchControl())
         return 0
+    if not _grep_path_is_eager(args):
+        return stream_grep_results(args)
     control = agentgrep.SearchControl()
     progress = agentgrep.build_search_progress(
         # GrepArgs structurally matches what build_search_progress reads

@@ -14,12 +14,14 @@ monkeypatch surface those tests rely on.
 from __future__ import annotations
 
 import io
+import json
 import pathlib
 import typing as t
 
 import pytest
 
 import agentgrep
+from agentgrep import events as ag_events
 
 
 class ParseDefaultsCase(t.NamedTuple):
@@ -305,9 +307,15 @@ def _fake_search_records(
     records: list[agentgrep.SearchRecord],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Stub ``run_search_query`` so dispatcher tests don't touch the FS."""
+    """Stub the search engine surface so dispatcher tests don't touch the FS.
 
-    def _stub(
+    Patches both ``run_search_query`` (the eager list-return wrapper used
+    by --json / -c / -l / -L / --invert-match paths) and
+    ``iter_search_events`` (the streaming surface used by text and
+    NDJSON paths) so every dispatcher route is FS-isolated.
+    """
+
+    def _stub_list(
         home: object,
         query: object,
         *,
@@ -316,7 +324,33 @@ def _fake_search_records(
     ) -> list[agentgrep.SearchRecord]:
         return list(records)
 
-    monkeypatch.setattr(agentgrep, "run_search_query", _stub)
+    def _stub_iter(
+        home: object,
+        query: object,
+        *,
+        backends: object = None,
+        control: object = None,
+    ) -> t.Iterator[ag_events.SearchEvent]:
+        yield ag_events.SearchStarted(source_count=1)
+        yield ag_events.SourceStarted(
+            adapter_id="codex.test",
+            index=1,
+            total=1,
+        )
+        for record in records:
+            yield ag_events.RecordEmitted(record=record)
+        yield ag_events.SourceFinished(
+            adapter_id="codex.test",
+            records_seen=len(records),
+            matches_seen=len(records),
+        )
+        yield ag_events.SearchFinished(
+            match_count=len(records),
+            elapsed_seconds=0.0,
+        )
+
+    monkeypatch.setattr(agentgrep, "run_search_query", _stub_list)
+    monkeypatch.setattr(agentgrep, "iter_search_events", _stub_iter)
 
 
 class ExitCodeCase(t.NamedTuple):
@@ -725,6 +759,111 @@ def test_ansi_colors_match_method_passthrough_when_disabled() -> None:
     """AnsiColors.match returns plain text when disabled."""
     colors = agentgrep.AnsiColors(enabled=False)
     assert colors.match("hit") == "hit"
+
+
+# ----- streaming dispatch (slice 1 of the event-stream engine) ------------
+
+
+def test_run_grep_command_text_mode_consumes_event_stream(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The text path routes through iter_search_events, not run_search_query."""
+    records = [
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="sessions",
+            adapter_id="codex.test",
+            path=pathlib.Path("/tmp/demo.jsonl"),
+            text=f"bliss line {i}",
+            timestamp=None,
+        )
+        for i in range(3)
+    ]
+    _fake_search_records(records, monkeypatch)
+    args = _make_grep_args(patterns=("bliss",), color_mode="never")
+    exit_code = agentgrep.run_grep_command(args)
+    captured = capsys.readouterr().out
+    assert exit_code == 0
+    # All three records should appear in stdout.
+    assert captured.count("bliss line") == 3
+
+
+def test_run_grep_command_no_matches_streams_to_no_matches_line(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An empty stream produces the rg-style exit 1 + 'No matches found.' notice."""
+    _fake_search_records([], monkeypatch)
+    args = _make_grep_args(patterns=("bliss",), color_mode="never")
+    exit_code = agentgrep.run_grep_command(args)
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "No matches found." in captured.err
+
+
+def test_run_grep_command_ndjson_streams_each_record(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--ndjson now streams events through iter_search_events too."""
+    records = [
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="sessions",
+            adapter_id="codex.test",
+            path=pathlib.Path(f"/tmp/demo-{i}.jsonl"),
+            text=f"bliss {i}",
+            timestamp=None,
+            session_id=f"sess-{i}",
+        )
+        for i in range(2)
+    ]
+    _fake_search_records(records, monkeypatch)
+    args = _make_grep_args(patterns=("bliss",), output_mode="ndjson", color_mode="never")
+    exit_code = agentgrep.run_grep_command(args)
+    captured = capsys.readouterr().out.splitlines()
+    assert exit_code == 0
+    assert len([line for line in captured if line.strip()]) == 2
+
+
+def test_run_grep_command_json_still_uses_eager_path(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--json keeps using run_search_query because the summary needs a total."""
+    records = [
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="sessions",
+            adapter_id="codex.test",
+            path=pathlib.Path("/tmp/demo.jsonl"),
+            text="bliss once",
+            timestamp=None,
+            session_id="sess-1",
+        ),
+    ]
+
+    def _eager_stub(
+        home: object,
+        query: object,
+        *,
+        progress: object = None,
+        control: object = None,
+    ) -> list[agentgrep.SearchRecord]:
+        return records
+
+    monkeypatch.setattr(agentgrep, "run_search_query", _eager_stub)
+    args = _make_grep_args(patterns=("bliss",), output_mode="json")
+    exit_code = agentgrep.run_grep_command(args)
+    captured = capsys.readouterr().out
+    assert exit_code == 0
+    payload = json.loads(captured)
+    assert any(event["type"] == "match" for event in payload["events"])
+    assert any(event["type"] == "summary" for event in payload["events"])
 
 
 def test_format_grep_record_default_emits_line_aware_rows(

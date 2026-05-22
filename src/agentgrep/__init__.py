@@ -3808,6 +3808,7 @@ from agentgrep.cli.render import (  # noqa: E402  (re-exports must follow main d
     serialize_grep_record,
     serialize_search_record,
     serialize_source_handle,
+    stream_grep_results,
 )
 
 if __name__ == "__main__":
