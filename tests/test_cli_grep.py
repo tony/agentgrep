@@ -725,3 +725,90 @@ def test_ansi_colors_match_method_passthrough_when_disabled() -> None:
     """AnsiColors.match returns plain text when disabled."""
     colors = agentgrep.AnsiColors(enabled=False)
     assert colors.match("hit") == "hit"
+
+
+def test_format_grep_record_default_emits_line_aware_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default text mode emits one line per match, not the full record body."""
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/abc.jsonl"),
+        text="prelude line\nbliss appears here\nstill nothing\nbliss again",
+        timestamp=None,
+    )
+    args = _make_grep_args(patterns=("bliss",), color_mode="never", heading=False)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: False)
+    rendered = agentgrep.format_grep_record(record, args)
+    # Two matching lines, both with path prefix in flat mode.
+    rows = rendered.splitlines()
+    assert len(rows) == 2
+    assert all(row.startswith("/tmp/abc.jsonl:") for row in rows)
+    assert ":2:1:bliss appears here" in rows[0]
+    assert ":4:1:bliss again" in rows[1]
+    # No verbatim body dump (the unrelated "prelude line" must not appear).
+    assert "prelude line" not in rendered
+
+
+def test_format_grep_record_heading_mode_groups_matches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With heading on, record opens with a header then `line:col:text` rows."""
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/abc.jsonl"),
+        text="bliss line one\nno match\nbliss line three",
+        timestamp="2026-05-22T12:00:00Z",
+    )
+    args = _make_grep_args(patterns=("bliss",), color_mode="never", heading=True)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+    rendered = agentgrep.format_grep_record(record, args)
+    rows = rendered.splitlines()
+    # Heading on its own line, then two body rows.
+    assert "codex" in rows[0]
+    assert "/tmp/abc.jsonl" in rows[0]
+    assert rows[1] == "1:1:bliss line one"
+    assert rows[2] == "3:1:bliss line three"
+
+
+def test_format_grep_record_vimgrep_emits_one_row_per_match() -> None:
+    """``--vimgrep`` produces one path:line:col:text row per match span."""
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/abc.jsonl"),
+        text="bliss and bliss on one line\nlater bliss",
+        timestamp=None,
+    )
+    args = _make_grep_args(patterns=("bliss",), color_mode="never", vimgrep=True)
+    rendered = agentgrep.format_grep_record(record, args)
+    rows = rendered.splitlines()
+    # Three matches total: two on line 1, one on line 2.
+    assert len(rows) == 3
+    assert rows[0] == "/tmp/abc.jsonl:1:1:bliss and bliss on one line"
+    assert rows[1] == "/tmp/abc.jsonl:1:11:bliss and bliss on one line"
+    assert rows[2] == "/tmp/abc.jsonl:2:7:later bliss"
+
+
+def test_format_grep_record_only_matching_emits_just_spans() -> None:
+    """``-o`` / ``--only-matching`` emits only the matched substrings."""
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/abc.jsonl"),
+        text="alpha bliss beta\nblissful",
+        timestamp=None,
+    )
+    args = _make_grep_args(patterns=("bliss",), color_mode="never", only_matching=True)
+    rendered = agentgrep.format_grep_record(record, args)
+    assert rendered.splitlines() == ["bliss", "bliss"]
