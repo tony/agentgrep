@@ -107,6 +107,7 @@ class FindArgs:
     list_details: bool = False
     print0: bool = False
     absolute_path: bool = False
+    progress_mode: ProgressMode = "auto"
 
 
 @dataclasses.dataclass(slots=True)
@@ -377,6 +378,13 @@ def create_parser(
         default="auto",
         help="Show search progress on stderr",
     )
+    _ = grep_parser.add_argument(
+        "--no-progress",
+        dest="progress",
+        action="store_const",
+        const="never",
+        help="Silence the stderr progress spinner (alias for --progress=never)",
+    )
     add_output_mode_options(grep_parser, allow_ui=True)
 
     search_parser = subparsers.add_parser(
@@ -421,6 +429,13 @@ def create_parser(
         choices=["auto", "always", "never"],
         default="auto",
         help="Show search progress on stderr",
+    )
+    _ = search_parser.add_argument(
+        "--no-progress",
+        dest="progress",
+        action="store_const",
+        const="never",
+        help="Silence the stderr progress spinner (alias for --progress=never)",
     )
     add_output_mode_options(search_parser, allow_ui=True)
 
@@ -513,6 +528,19 @@ def create_parser(
         type=int,
         metavar="N",
         help="Limit the number of results",
+    )
+    _ = find_parser.add_argument(
+        "--progress",
+        choices=["auto", "always", "never"],
+        default="auto",
+        help="Show source-discovery progress on stderr",
+    )
+    _ = find_parser.add_argument(
+        "--no-progress",
+        dest="progress",
+        action="store_const",
+        const="never",
+        help="Silence the stderr progress spinner (alias for --progress=never)",
     )
     add_output_mode_options(find_parser, allow_ui=True)
 
@@ -766,6 +794,7 @@ def parse_args(
         list_details=t.cast("bool", namespace.list_details),
         print0=t.cast("bool", namespace.print0),
         absolute_path=t.cast("bool", namespace.absolute_path),
+        progress_mode=t.cast("ProgressMode", namespace.progress),
     )
 
 

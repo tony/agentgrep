@@ -798,6 +798,41 @@ def test_format_grep_record_vimgrep_emits_one_row_per_match() -> None:
     assert rows[2] == "/tmp/abc.jsonl:2:7:later bliss"
 
 
+def test_grep_no_progress_aliases_progress_never() -> None:
+    """``agentgrep grep --no-progress foo`` resolves progress_mode to "never"."""
+    parsed = agentgrep.parse_args(["grep", "--no-progress", "foo"])
+    assert isinstance(parsed, agentgrep.GrepArgs)
+    assert parsed.progress_mode == "never"
+
+
+def test_grep_progress_never_long_form_still_works() -> None:
+    """The explicit ``--progress never`` form continues to work."""
+    parsed = agentgrep.parse_args(["grep", "--progress", "never", "foo"])
+    assert isinstance(parsed, agentgrep.GrepArgs)
+    assert parsed.progress_mode == "never"
+
+
+def test_find_no_progress_aliases_progress_never() -> None:
+    """``agentgrep find --no-progress codex`` resolves progress_mode to "never"."""
+    parsed = agentgrep.parse_args(["find", "--no-progress", "codex"])
+    assert isinstance(parsed, agentgrep.FindArgs)
+    assert parsed.progress_mode == "never"
+
+
+def test_find_progress_default_is_auto() -> None:
+    """Find now carries progress_mode with auto default."""
+    parsed = agentgrep.parse_args(["find", "codex"])
+    assert isinstance(parsed, agentgrep.FindArgs)
+    assert parsed.progress_mode == "auto"
+
+
+def test_search_no_progress_aliases_progress_never() -> None:
+    """``agentgrep search --no-progress bliss`` resolves progress_mode to "never"."""
+    parsed = agentgrep.parse_args(["search", "--no-progress", "bliss"])
+    assert isinstance(parsed, agentgrep.SearchArgs)
+    assert parsed.progress_mode == "never"
+
+
 def test_format_grep_record_only_matching_emits_just_spans() -> None:
     """``-o`` / ``--only-matching`` emits only the matched substrings."""
     record = agentgrep.SearchRecord(
