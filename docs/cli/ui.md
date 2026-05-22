@@ -5,18 +5,12 @@
 The `agentgrep ui` command launches the interactive Textual explorer
 over the same Codex, Claude Code, Cursor, and Gemini stores the rest
 of the CLI walks. It is read-only — agentgrep never mutates the
-source stores. Bare `agentgrep` (no positional command) lands here
-too, so `agentgrep` and `agentgrep ui` are equivalent.
+source stores. Bare `agentgrep` prints the directory of choices, so
+the explorer always needs the explicit `ui` subcommand.
 
 ## Examples
 
 Open the explorer with no seed query:
-
-```console
-$ agentgrep
-```
-
-The same, spelled out:
 
 ```console
 $ agentgrep ui

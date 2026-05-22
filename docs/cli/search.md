@@ -97,9 +97,9 @@ interactively. `--ui` is mutually exclusive with `--json` and
 `--ndjson`.
 
 See {ref}`cli-ui` for the standalone explorer entry point. Bare
-`agentgrep` is equivalent to `agentgrep ui`, and `agentgrep ui
-<query>` seeds the search bar without leaving the explorer to run a
-one-shot CLI query.
+`agentgrep` prints the directory of choices; reach the explorer
+directly with `agentgrep ui`, and seed it with a query via
+`agentgrep ui <query>`.
 
 ## Filtering by agent
 
