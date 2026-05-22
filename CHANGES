@@ -36,9 +36,13 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a4 (Yet to be released)
+## agentgrep 0.1.0a5 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
+
+<!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a4 (2026-05-21)
 
 agentgrep 0.1.0a4 lifts the CLI to a first-class documentation
 surface. The docs site gains a `/cli/` section above Library in the
@@ -178,8 +182,6 @@ and {func}`~agentgrep.ui.app.build_streaming_ui_app` live in
 {mod}`agentgrep.ui.app` with Textual deferred to
 `importlib.import_module` at factory-call time — bare
 `import agentgrep` does not pull Textual.
-
-<!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
 ## agentgrep 0.1.0a3 (2026-05-17)
 
