@@ -695,6 +695,70 @@ def test_grep_empty_pattern_exits_with_argparse_error(
     assert "Traceback" not in captured.err
 
 
+# ----- -v / --invert-match parse-time refusal -----------------------------
+
+
+class InvertMatchRefusedCase(t.NamedTuple):
+    """Parametrized case for ``-v`` rejection outside ``-c`` / ``-L``."""
+
+    test_id: str
+    argv: tuple[str, ...]
+
+
+INVERT_MATCH_REFUSED_CASES: tuple[InvertMatchRefusedCase, ...] = (
+    InvertMatchRefusedCase("invert-alone", ("grep", "-v", "bliss")),
+    InvertMatchRefusedCase("invert-with-line-number", ("grep", "-v", "-n", "bliss")),
+    InvertMatchRefusedCase("invert-with-json", ("grep", "-v", "--json", "bliss")),
+    InvertMatchRefusedCase("invert-with-vimgrep", ("grep", "-v", "--vimgrep", "bliss")),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    INVERT_MATCH_REFUSED_CASES,
+    ids=[c.test_id for c in INVERT_MATCH_REFUSED_CASES],
+)
+def test_grep_invert_match_outside_count_or_files_without_is_refused(
+    case: InvertMatchRefusedCase,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``-v`` errors at parse time unless paired with ``-c`` or ``-L``."""
+    with pytest.raises(SystemExit) as exc_info:
+        _ = agentgrep.parse_args(list(case.argv))
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert "--invert-match for text output is not yet implemented" in captured.err
+    assert "issues/8" in captured.err
+
+
+class InvertMatchAllowedCase(t.NamedTuple):
+    """Parametrized case for ``-v`` paired with ``-c`` or ``-L`` (still permitted)."""
+
+    test_id: str
+    argv: tuple[str, ...]
+
+
+INVERT_MATCH_ALLOWED_CASES: tuple[InvertMatchAllowedCase, ...] = (
+    InvertMatchAllowedCase("invert-with-count", ("grep", "-v", "-c", "bliss")),
+    InvertMatchAllowedCase("invert-with-L", ("grep", "-v", "-L", "bliss")),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    INVERT_MATCH_ALLOWED_CASES,
+    ids=[c.test_id for c in INVERT_MATCH_ALLOWED_CASES],
+)
+def test_grep_invert_match_with_count_or_files_without_is_allowed(
+    case: InvertMatchAllowedCase,
+) -> None:
+    """``-v -c`` and ``-v -L`` still parse — those paths honor inversion."""
+    args = agentgrep.parse_args(list(case.argv))
+    assert args is not None
+    assert isinstance(args, agentgrep.GrepArgs)
+    assert args.invert_match is True
+
+
 # ----- -o / --only-matching trailing-blank suppression --------------------
 
 
