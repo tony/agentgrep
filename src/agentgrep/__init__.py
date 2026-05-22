@@ -3762,6 +3762,9 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
         _exit_on_sigint()
 
 
+from agentgrep._engine import (  # noqa: E402  (re-exports must follow main definition)
+    iter_search_events,
+)
 from agentgrep.cli.parser import (  # noqa: E402  (re-exports must follow main definition)
     CaseMode,
     FindArgs,
