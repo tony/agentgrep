@@ -348,7 +348,25 @@ def filter_find_records(records: list[FindRecord], args: FindArgs) -> list[FindR
 
 
 def run_find_command(args: FindArgs) -> int:
-    """Execute ``agentgrep find``."""
+    """Execute ``agentgrep find``.
+
+    The ``--ui`` overlay translates the find filters into a
+    :class:`SearchQuery` seeded with the same agent / type narrowing,
+    then opens the Textual explorer. This mirrors the ``tig`` model:
+    same query semantics, different presentation.
+    """
+    if args.output_mode == "ui":
+        query = agentgrep.SearchQuery(
+            terms=(args.pattern,) if args.pattern else (),
+            search_type="all",
+            any_term=False,
+            regex=args.pattern_mode == "regex",
+            case_sensitive=args.case_mode == "respect",
+            agents=args.agents,
+            limit=args.limit,
+        )
+        agentgrep.run_ui(pathlib.Path.home(), query, control=agentgrep.SearchControl())
+        return 0
     raw_records = agentgrep.run_find_query(
         pathlib.Path.home(),
         args.agents,
@@ -606,7 +624,23 @@ def run_fuzzy_command(args: FuzzyArgs) -> int:
     Reads lines from stdin (NUL- or newline-delimited per ``--read0``),
     applies the fzf-style filter, and prints matching lines to stdout.
     Exits 0 when at least one line matches, 1 when nothing matches.
+
+    The ``--ui`` overlay opens the Textual explorer pre-filled with the
+    fuzzy query so users can browse interactively from the same
+    invocation (the ``tig`` model).
     """
+    if args.output_mode == "ui":
+        query = agentgrep.SearchQuery(
+            terms=(args.query,) if args.query else (),
+            search_type="all",
+            any_term=False,
+            regex=False,
+            case_sensitive=args.case_mode == "respect",
+            agents=args.agents,
+            limit=None,
+        )
+        agentgrep.run_ui(pathlib.Path.home(), query, control=agentgrep.SearchControl())
+        return 0
     separator = "\0" if args.read0 else "\n"
     raw = sys.stdin.read()
     lines = [line for line in raw.split(separator) if line]
