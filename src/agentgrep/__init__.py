@@ -72,6 +72,8 @@ logger.addHandler(logging.NullHandler())
 if t.TYPE_CHECKING:
     import collections.abc as cabc
 
+    from agentgrep.query.compile import CompiledQuery
+
     PrivatePathBase = pathlib.Path
 else:
     PrivatePathBase = type(pathlib.Path())
@@ -1075,7 +1077,17 @@ class BackendSelection:
 
 @dataclasses.dataclass(slots=True)
 class SearchQuery:
-    """Compiled search configuration."""
+    """Compiled search configuration.
+
+    ``compiled`` carries the parsed-query predicates from
+    :mod:`agentgrep.query`. When ``None`` (the default), the engine
+    takes its legacy code path — pure-text queries and flag-only
+    invocations stay on the fast path with no extra evaluation
+    cost. When set, ``iter_search_events`` consults
+    ``compiled.source_predicate`` to prune sources before any file
+    is opened, and :func:`matches_record` consults
+    ``compiled.record_predicate`` after the existing text match.
+    """
 
     terms: tuple[str, ...]
     search_type: SearchType
@@ -1085,6 +1097,7 @@ class SearchQuery:
     agents: tuple[AgentName, ...]
     limit: int | None
     dedupe: bool = True
+    compiled: CompiledQuery | None = None
 
 
 @dataclasses.dataclass(slots=True)
@@ -3500,12 +3513,23 @@ def build_search_record(source: SourceHandle, candidate: MessageCandidate) -> Se
 
 
 def matches_record(record: SearchRecord, query: SearchQuery) -> bool:
-    """Return whether a normalized record should be included."""
+    """Return whether a normalized record should be included.
+
+    When ``query.compiled`` carries a record-level predicate, the
+    record must satisfy it in addition to the existing text + kind
+    checks. Pure-text queries skip the predicate evaluation since
+    the compiler leaves ``compiled = None`` for them.
+    """
     if query.search_type == "prompts" and record.kind != "prompt":
         return False
     if query.search_type == "history" and record.kind != "history":
         return False
-    return matches_text(build_search_haystack(record), query)
+    if not matches_text(build_search_haystack(record), query):
+        return False
+    compiled = query.compiled
+    if compiled is not None and compiled.record_predicate is not None:
+        return compiled.record_predicate(record)
+    return True
 
 
 def build_search_haystack(record: SearchRecord) -> str:

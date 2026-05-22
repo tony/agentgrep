@@ -1,0 +1,348 @@
+"""End-to-end tests for the query language wired into the search engine.
+
+Covers commit 5 of the query-language project — verifies that
+:func:`agentgrep.iter_search_events` consults
+:attr:`agentgrep.SearchQuery.compiled.source_predicate` to prune
+sources before any file is read, and that
+:func:`agentgrep.matches_record` consults
+:attr:`agentgrep.SearchQuery.compiled.record_predicate` after the
+existing text match.
+
+A call-tracking monkeypatch on :func:`agentgrep.iter_source_records`
+proves that pruned sources never enter the file-read loop — that's
+the architectural payoff of the source/record split.
+"""
+
+from __future__ import annotations
+
+import pathlib
+import typing as t
+
+import pytest
+
+import agentgrep
+from agentgrep import events as ag_events
+from agentgrep.query import compile_query, default_registry, parse_query
+
+
+def _make_source(
+    *,
+    agent: agentgrep.AgentName,
+    path: str,
+    adapter_id: str = "codex.sessions_jsonl.v1",
+) -> agentgrep.SourceHandle:
+    """Build a synthetic SourceHandle for engine tests."""
+    return agentgrep.SourceHandle(
+        agent=agent,
+        store="sessions",
+        adapter_id=adapter_id,
+        path=pathlib.Path(path),
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=0,
+    )
+
+
+def _make_record(
+    *,
+    agent: agentgrep.AgentName,
+    text: str,
+    path: str = "/tmp/codex/sessions/abc.jsonl",
+    timestamp: str | None = None,
+    model: str | None = None,
+) -> agentgrep.SearchRecord:
+    """Build a synthetic SearchRecord for engine tests."""
+    return agentgrep.SearchRecord(
+        kind="prompt",
+        agent=agent,
+        store="sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path(path),
+        text=text,
+        title=None,
+        role="user",
+        timestamp=timestamp,
+        model=model,
+        session_id=None,
+        conversation_id=None,
+        metadata={},
+    )
+
+
+def _compile_query(query_text: str) -> agentgrep.CompiledQuery:
+    """Parse + compile, returning the CompiledQuery for SearchQuery.compiled."""
+    ast = parse_query(query_text, default_registry())
+    return compile_query(ast, default_registry())
+
+
+def test_source_predicate_prunes_codex_sources_without_reading_records(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prune claude sources without reading their records.
+
+    Asserts via call-tracking on :func:`agentgrep.iter_source_records`
+    that pruned sources never enter the read loop.
+    """
+    codex_source = _make_source(agent="codex", path="/tmp/codex.jsonl")
+    claude_source = _make_source(agent="claude", path="/tmp/claude.jsonl")
+    codex_record = _make_record(agent="codex", text="bliss in codex")
+    claude_record = _make_record(agent="claude", text="bliss in claude")
+
+    sources_read: list[pathlib.Path] = []
+
+    def _stub_iter(
+        source: agentgrep.SourceHandle,
+    ) -> t.Iterator[agentgrep.SearchRecord]:
+        sources_read.append(source.path)
+        if source.agent == "codex":
+            yield codex_record
+        else:
+            yield claude_record
+
+    monkeypatch.setattr(
+        agentgrep,
+        "discover_sources",
+        lambda *args, **kwargs: [codex_source, claude_source],
+    )
+    monkeypatch.setattr(
+        agentgrep,
+        "plan_search_sources",
+        lambda query, sources, backends, **kwargs: list(sources),
+    )
+    monkeypatch.setattr(agentgrep, "iter_source_records", _stub_iter)
+
+    compiled = _compile_query("-agent:claude bliss")
+    query = agentgrep.SearchQuery(
+        terms=("bliss",),
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=agentgrep.AGENT_CHOICES,
+        limit=None,
+        compiled=compiled,
+    )
+
+    emitted = [
+        event.record
+        for event in agentgrep.iter_search_events(pathlib.Path.home(), query)
+        if isinstance(event, ag_events.RecordEmitted)
+    ]
+
+    assert sources_read == [codex_source.path]
+    assert [r.agent for r in emitted] == ["codex"]
+
+
+def test_record_predicate_filters_after_source_predicate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`agent:codex model:claude` reads codex sources, filters records by model."""
+    codex_source = _make_source(agent="codex", path="/tmp/codex.jsonl")
+    claude_source = _make_source(agent="claude", path="/tmp/claude.jsonl")
+    matching = _make_record(
+        agent="codex",
+        text="bliss content",
+        model="claude-3-sonnet",
+    )
+    non_matching = _make_record(
+        agent="codex",
+        text="bliss content",
+        model="gpt-4",
+    )
+
+    def _stub_iter(
+        source: agentgrep.SourceHandle,
+    ) -> t.Iterator[agentgrep.SearchRecord]:
+        yield from (matching, non_matching)
+
+    monkeypatch.setattr(
+        agentgrep,
+        "discover_sources",
+        lambda *args, **kwargs: [codex_source, claude_source],
+    )
+    monkeypatch.setattr(
+        agentgrep,
+        "plan_search_sources",
+        lambda query, sources, backends, **kwargs: list(sources),
+    )
+    monkeypatch.setattr(agentgrep, "iter_source_records", _stub_iter)
+
+    compiled = _compile_query("agent:codex model:claude bliss")
+    query = agentgrep.SearchQuery(
+        terms=("bliss",),
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=agentgrep.AGENT_CHOICES,
+        limit=None,
+        compiled=compiled,
+    )
+
+    emitted = [
+        event.record
+        for event in agentgrep.iter_search_events(pathlib.Path.home(), query)
+        if isinstance(event, ag_events.RecordEmitted)
+    ]
+
+    assert len(emitted) == 1
+    assert emitted[0].model == "claude-3-sonnet"
+
+
+class EngineRoundtripCase(t.NamedTuple):
+    """Parametrized case for end-to-end query → records via the engine."""
+
+    test_id: str
+    query: str
+    records: tuple[agentgrep.SearchRecord, ...]
+    expected_agents: tuple[str, ...]
+
+
+def _build_engine_records() -> tuple[agentgrep.SearchRecord, ...]:
+    """Build a small heterogeneous record set used by the roundtrip tests."""
+    return (
+        _make_record(
+            agent="codex",
+            text="bliss in codex",
+            timestamp="2026-03-15T10:00:00Z",
+            path="/tmp/codex/sessions/a.jsonl",
+        ),
+        _make_record(
+            agent="claude",
+            text="bliss in claude",
+            timestamp="2026-04-15T10:00:00Z",
+            path="/tmp/claude/sessions/b.jsonl",
+        ),
+        _make_record(
+            agent="cursor",
+            text="bliss in cursor",
+            timestamp="2025-12-15T10:00:00Z",
+            path="/tmp/cursor/sessions/c.jsonl",
+        ),
+    )
+
+
+ENGINE_ROUNDTRIP_CASES: tuple[EngineRoundtripCase, ...] = (
+    EngineRoundtripCase(
+        test_id="single-agent-filter",
+        query="agent:codex bliss",
+        records=_build_engine_records(),
+        expected_agents=("codex",),
+    ),
+    EngineRoundtripCase(
+        test_id="or-of-two-agents",
+        query="(agent:codex OR agent:claude) bliss",
+        records=_build_engine_records(),
+        expected_agents=("codex", "claude"),
+    ),
+    EngineRoundtripCase(
+        test_id="negated-agent",
+        query="-agent:cursor bliss",
+        records=_build_engine_records(),
+        expected_agents=("codex", "claude"),
+    ),
+    EngineRoundtripCase(
+        test_id="timestamp-range-filters-records",
+        query="timestamp:>2026-01-01 bliss",
+        records=_build_engine_records(),
+        expected_agents=("codex", "claude"),
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    ENGINE_ROUNDTRIP_CASES,
+    ids=[c.test_id for c in ENGINE_ROUNDTRIP_CASES],
+)
+def test_engine_routes_query_through_predicates(
+    case: EngineRoundtripCase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end: query string → engine → expected agent set."""
+    sources = [_make_source(agent=record.agent, path=str(record.path)) for record in case.records]
+
+    records_by_source = {
+        source.path: record for source, record in zip(sources, case.records, strict=False)
+    }
+
+    def _stub_iter(
+        source: agentgrep.SourceHandle,
+    ) -> t.Iterator[agentgrep.SearchRecord]:
+        record = records_by_source.get(source.path)
+        if record is not None:
+            yield record
+
+    monkeypatch.setattr(
+        agentgrep,
+        "discover_sources",
+        lambda *args, **kwargs: list(sources),
+    )
+    monkeypatch.setattr(
+        agentgrep,
+        "plan_search_sources",
+        lambda query, sources, backends, **kwargs: list(sources),
+    )
+    monkeypatch.setattr(agentgrep, "iter_source_records", _stub_iter)
+
+    compiled = _compile_query(case.query)
+    query = agentgrep.SearchQuery(
+        terms=compiled.text_terms,
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=agentgrep.AGENT_CHOICES,
+        limit=None,
+        compiled=compiled,
+    )
+
+    emitted_agents = [
+        event.record.agent
+        for event in agentgrep.iter_search_events(pathlib.Path.home(), query)
+        if isinstance(event, ag_events.RecordEmitted)
+    ]
+    assert tuple(sorted(emitted_agents)) == tuple(sorted(case.expected_agents))
+
+
+def test_compiled_none_falls_through_to_legacy_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When `compiled is None`, the engine takes its existing code path."""
+    source = _make_source(agent="codex", path="/tmp/codex.jsonl")
+    record = _make_record(agent="codex", text="bliss")
+
+    monkeypatch.setattr(
+        agentgrep,
+        "discover_sources",
+        lambda *args, **kwargs: [source],
+    )
+    monkeypatch.setattr(
+        agentgrep,
+        "plan_search_sources",
+        lambda query, sources, backends, **kwargs: list(sources),
+    )
+    monkeypatch.setattr(
+        agentgrep,
+        "iter_source_records",
+        lambda src: iter([record]),
+    )
+
+    query = agentgrep.SearchQuery(
+        terms=("bliss",),
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=agentgrep.AGENT_CHOICES,
+        limit=None,
+    )
+    assert query.compiled is None
+
+    emitted = [
+        event
+        for event in agentgrep.iter_search_events(pathlib.Path.home(), query)
+        if isinstance(event, ag_events.RecordEmitted)
+    ]
+    assert len(emitted) == 1
