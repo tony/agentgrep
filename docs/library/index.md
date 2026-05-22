@@ -47,6 +47,7 @@ CLI and MCP request examples.
 tutorial
 how-to
 event-stream
+query-language
 reference
 examples
 ```

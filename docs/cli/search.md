@@ -126,3 +126,25 @@ $ agentgrep search --agent claude --agent codex "deploy"
 
 Pass `--agent all` (or omit the flag) to search every available
 backend.
+
+## Query language
+
+`search` accepts Lucene-style field predicates, boolean
+composition, and date ranges inline with the positional terms:
+
+```console
+$ agentgrep search agent:codex bliss
+```
+
+```console
+$ agentgrep search '(agent:codex OR agent:cursor) AND deploy'
+```
+
+```console
+$ agentgrep search 'timestamp:>2026-01-01 -agent:claude bliss'
+```
+
+See {ref}`library-query-language` for the full grammar, field
+registry, and date literal forms. Mixing the new field syntax with
+the equivalent flag (`--agent codex agent:claude`) is rejected at
+parse time.
