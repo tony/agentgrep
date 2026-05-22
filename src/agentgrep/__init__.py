@@ -3731,6 +3731,8 @@ from agentgrep.cli.parser import (  # noqa: E402  (re-exports must follow main d
     SUBCOMMANDS,
     CaseMode,
     FindArgs,
+    FindPatternMode,
+    FindTypeFilter,
     GrepArgs,
     ParserBundle,
     PatternMode,
@@ -3750,6 +3752,7 @@ from agentgrep.cli.parser import (  # noqa: E402  (re-exports must follow main d
 from agentgrep.cli.render import (  # noqa: E402  (re-exports must follow main definition)
     build_envelope,
     build_grep_query,
+    filter_find_records,
     format_grep_record,
     maybe_build_pydantic,
     print_find_results,
