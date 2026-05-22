@@ -86,7 +86,9 @@ and other editors that consume the
 `file:line:col:message` format.
 
 `--only-matching` / `-o` collapses output to just the matched
-substrings, one per line. `-l` / `--files-with-matches` emits
+substrings, one per line — the per-record heading separator is
+suppressed under `-o`, so the stream is exactly bare matches
+back-to-back (`rg -o` parity). `-l` / `--files-with-matches` emits
 only the deduplicated paths. `-c` emits `path:N` per matching
 record with the count of matching lines (or just `N` when exactly
 one record matched), matching `rg -c`.

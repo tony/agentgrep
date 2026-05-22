@@ -695,6 +695,66 @@ def test_grep_empty_pattern_exits_with_argparse_error(
     assert "Traceback" not in captured.err
 
 
+# ----- -o / --only-matching trailing-blank suppression --------------------
+
+
+class OnlyMatchingTrailingBlankCase(t.NamedTuple):
+    """Parametrized case for ``-o`` heading-separator suppression."""
+
+    test_id: str
+    record_count: int
+    heading: bool | None
+
+
+ONLY_MATCHING_TRAILING_BLANK_CASES: tuple[OnlyMatchingTrailingBlankCase, ...] = (
+    OnlyMatchingTrailingBlankCase("single-record-default", 1, None),
+    OnlyMatchingTrailingBlankCase("two-records-default", 2, None),
+    OnlyMatchingTrailingBlankCase("two-records-heading-on", 2, True),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    ONLY_MATCHING_TRAILING_BLANK_CASES,
+    ids=[c.test_id for c in ONLY_MATCHING_TRAILING_BLANK_CASES],
+)
+def test_only_matching_suppresses_heading_blank_separator(
+    case: OnlyMatchingTrailingBlankCase,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``-o`` emits bare matched substrings with no blank-line separators."""
+    records = [
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="sessions",
+            adapter_id="codex.sessions.jsonl",
+            path=t.cast("t.Any", f"/tmp/fake-{index}.jsonl"),
+            text="alpha bliss line",
+            title=None,
+            role="user",
+            timestamp=None,
+            model=None,
+            session_id=None,
+            conversation_id=None,
+            metadata={},
+        )
+        for index in range(case.record_count)
+    ]
+    _fake_search_records(records, monkeypatch)
+    args = _make_grep_args(
+        patterns=("bliss",),
+        only_matching=True,
+        heading=case.heading,
+    )
+    exit_code = agentgrep.run_grep_command(args)
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "\n\n" not in captured.out
+    assert not captured.out.endswith("\n\n")
+
+
 # ----- line-aware match helpers --------------------------------------------
 
 
