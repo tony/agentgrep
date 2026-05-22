@@ -548,17 +548,27 @@ def format_grep_line(
     match_spans: list[tuple[int, int]],
     *,
     colors: agentgrep.AnsiColors,
+    show_line: bool = False,
+    show_column: bool = False,
 ) -> str:
-    """Format one matching line as ``line:col:text`` with ANSI highlights.
+    """Format one matching line for grep text output.
 
-    The line number is wrapped in the green LINE_NUMBER color and the
-    matched spans in red+bold MATCH. The column is the 1-indexed byte
-    offset of the first match within the line. Callers prepend the path
-    (`path:`) in flat-mode output; heading-mode callers emit
-    `format_grep_heading` once per record and rely on this helper's
-    `line:col:text` body alone.
+    Returns one of three shapes depending on ``show_line`` / ``show_column``:
+
+    - ``show_line=False, show_column=False`` → just ``text`` (rg's default
+      pipe shape; the path prefix is the caller's job).
+    - ``show_line=True, show_column=False`` → ``line:text`` (rg's ``-n``).
+    - ``show_line=True, show_column=True`` → ``line:col:text`` (rg's
+      ``--column`` and ``--vimgrep``).
+
+    Asking for ``show_column=True`` with ``show_line=False`` is treated as
+    ``show_line=True`` too — rg's ``--column`` implies ``-n``. The line
+    number is wrapped in the green LINE_NUMBER color and the matched
+    spans in red+bold MATCH. Column is the 1-indexed byte offset of the
+    first match span.
     """
-    column = (match_spans[0][0] + 1) if match_spans else 1
+    if show_column:
+        show_line = True
     body_parts: list[str] = []
     cursor = 0
     for start, end in match_spans:
@@ -567,7 +577,13 @@ def format_grep_line(
         cursor = end
     body_parts.append(line_text[cursor:])
     body = "".join(body_parts)
-    return f"{colors.line_number(str(line_number))}:{column}:{body}"
+    if not show_line:
+        return body
+    line_prefix = colors.line_number(str(line_number))
+    if not show_column:
+        return f"{line_prefix}:{body}"
+    column = (match_spans[0][0] + 1) if match_spans else 1
+    return f"{line_prefix}:{column}:{body}"
 
 
 def format_grep_heading(
@@ -651,19 +667,30 @@ def serialize_grep_record(
     }
 
 
+def _grep_show_line_col(args: GrepArgs) -> tuple[bool, bool]:
+    """Resolve whether to render line/column prefixes from grep flags.
+
+    Mirrors rg's resolution: default is text-only (``False, False``).
+    ``-n``/``--line-number`` opts into line numbers. ``--column`` adds
+    column numbers (and implies ``-n``). ``--vimgrep`` forces both on.
+    """
+    if args.vimgrep or args.column:
+        return True, True
+    if args.line_number is True:
+        return True, False
+    return False, False
+
+
 def format_grep_record(record: agentgrep.SearchRecord, args: GrepArgs) -> str:
     """Format one matching record for text-mode ``grep`` output.
 
-    Default shape (line-aware, mirrors rg). On TTY in heading mode the
-    record opens with a `format_grep_heading` line and each matching
-    body line follows as `line:col:text` with ANSI highlights on the
-    matched span. On pipe (or with ``--no-heading``) every match emits
-    as `path:line:col:text` so the output is grep-pipeline friendly.
+    Default shape (rg-faithful): ``path:text`` on pipe, ``text`` rows
+    grouped under a heading line on TTY. ``-n`` / ``--column`` /
+    ``--vimgrep`` add line and column prefixes per rg's resolution.
 
-    Other modes are unchanged: ``--vimgrep`` emits one row per match in
-    the same `path:line:col:text` shape (no heading); ``-o`` /
-    ``--only-matching`` emits only the matched substring; ``-l`` /
-    ``-L`` emit just the path.
+    ``--vimgrep`` emits one row per match span (one line can produce
+    multiple rows). ``-o`` / ``--only-matching`` emits only the matched
+    substrings; ``-l`` / ``-L`` emit just the path.
     """
     path = agentgrep.format_display_path(record.path)
     if args.files_with_matches or args.files_without_match:
@@ -683,7 +710,7 @@ def format_grep_record(record: agentgrep.SearchRecord, args: GrepArgs) -> str:
         for line_no, line, spans in matches:
             for start, _end in spans:
                 col = start + 1
-                rows.append(f"{path}:{line_no}:{col}:{line}")
+                rows.append(f"{colors.path(path)}:{line_no}:{col}:{line}")
         return "\n".join(rows)
 
     if not matches:
@@ -692,9 +719,18 @@ def format_grep_record(record: agentgrep.SearchRecord, args: GrepArgs) -> str:
         # the user sees there's a hit they can inspect.
         return format_grep_heading(record, colors=colors)
 
+    show_line, show_column = _grep_show_line_col(args)
     heading_on = args.heading if args.heading is not None else sys.stdout.isatty()
     line_rows = [
-        format_grep_line(line_no, line, spans, colors=colors) for line_no, line, spans in matches
+        format_grep_line(
+            line_no,
+            line,
+            spans,
+            colors=colors,
+            show_line=show_line,
+            show_column=show_column,
+        )
+        for line_no, line, spans in matches
     ]
     if heading_on:
         return "\n".join([format_grep_heading(record, colors=colors), *line_rows])

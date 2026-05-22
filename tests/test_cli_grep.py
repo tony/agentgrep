@@ -732,7 +732,7 @@ def test_iter_match_lines_yields_matching_lines(case: LineExtractionCase) -> Non
 
 
 def test_format_grep_line_wraps_matches_in_ansi() -> None:
-    """format_grep_line emits line:col:text with ANSI on matched spans."""
+    """format_grep_line wraps matches in ANSI with show_line+show_column."""
     from agentgrep.cli.render import format_grep_line
 
     colors = agentgrep.AnsiColors(enabled=True)
@@ -741,6 +741,8 @@ def test_format_grep_line_wraps_matches_in_ansi() -> None:
         "the foo and the bar",
         [(4, 7)],
         colors=colors,
+        show_line=True,
+        show_column=True,
     )
     # Line number wrapped in green LINE_NUMBER color.
     assert agentgrep.AnsiColors.LINE_NUMBER in rendered
@@ -754,7 +756,24 @@ def test_format_grep_line_wraps_matches_in_ansi() -> None:
 
 
 def test_format_grep_line_plain_when_colors_disabled() -> None:
-    """When colors are disabled, format_grep_line emits no ANSI escapes."""
+    """With colors disabled and full prefixes, format_grep_line emits line:col:text."""
+    from agentgrep.cli.render import format_grep_line
+
+    colors = agentgrep.AnsiColors(enabled=False)
+    rendered = format_grep_line(
+        12,
+        "the foo and the bar",
+        [(4, 7)],
+        colors=colors,
+        show_line=True,
+        show_column=True,
+    )
+    assert "\x1b[" not in rendered
+    assert rendered == "12:5:the foo and the bar"
+
+
+def test_format_grep_line_default_is_text_only() -> None:
+    """Without show_line/show_column, format_grep_line emits just the text."""
     from agentgrep.cli.render import format_grep_line
 
     colors = agentgrep.AnsiColors(enabled=False)
@@ -764,8 +783,22 @@ def test_format_grep_line_plain_when_colors_disabled() -> None:
         [(4, 7)],
         colors=colors,
     )
-    assert "\x1b[" not in rendered
-    assert rendered == "12:5:the foo and the bar"
+    assert rendered == "the foo and the bar"
+
+
+def test_format_grep_line_show_line_only_emits_line_text() -> None:
+    """show_line=True without column emits line:text (rg ``-n`` shape)."""
+    from agentgrep.cli.render import format_grep_line
+
+    colors = agentgrep.AnsiColors(enabled=False)
+    rendered = format_grep_line(
+        12,
+        "the foo and the bar",
+        [(4, 7)],
+        colors=colors,
+        show_line=True,
+    )
+    assert rendered == "12:the foo and the bar"
 
 
 def test_format_grep_heading_includes_agent_path_timestamp() -> None:
@@ -926,10 +959,10 @@ def test_run_grep_command_json_still_uses_eager_path(
     assert any(event["type"] == "summary" for event in payload["events"])
 
 
-def test_format_grep_record_default_emits_line_aware_rows(
+def test_format_grep_record_default_emits_path_text_pipe_shape(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Default text mode emits one line per match, not the full record body."""
+    """Default pipe shape is rg-faithful `path:text` (no line/col)."""
     record = agentgrep.SearchRecord(
         kind="prompt",
         agent="codex",
@@ -942,20 +975,18 @@ def test_format_grep_record_default_emits_line_aware_rows(
     args = _make_grep_args(patterns=("bliss",), color_mode="never", heading=False)
     monkeypatch.setattr("sys.stdout.isatty", lambda: False)
     rendered = agentgrep.format_grep_record(record, args)
-    # Two matching lines, both with path prefix in flat mode.
     rows = rendered.splitlines()
     assert len(rows) == 2
-    assert all(row.startswith("/tmp/abc.jsonl:") for row in rows)
-    assert ":2:1:bliss appears here" in rows[0]
-    assert ":4:1:bliss again" in rows[1]
-    # No verbatim body dump (the unrelated "prelude line" must not appear).
+    # No line:col in the default shape — just path:text.
+    assert rows[0] == "/tmp/abc.jsonl:bliss appears here"
+    assert rows[1] == "/tmp/abc.jsonl:bliss again"
     assert "prelude line" not in rendered
 
 
-def test_format_grep_record_heading_mode_groups_matches(
+def test_format_grep_record_heading_mode_groups_text_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """With heading on, record opens with a header then `line:col:text` rows."""
+    """With heading on, the record header lands above plain text rows."""
     record = agentgrep.SearchRecord(
         kind="prompt",
         agent="codex",
@@ -969,11 +1000,69 @@ def test_format_grep_record_heading_mode_groups_matches(
     monkeypatch.setattr("sys.stdout.isatty", lambda: True)
     rendered = agentgrep.format_grep_record(record, args)
     rows = rendered.splitlines()
-    # Heading on its own line, then two body rows.
+    # Heading on its own line, then plain text rows (no line:col).
     assert "codex" in rows[0]
     assert "/tmp/abc.jsonl" in rows[0]
-    assert rows[1] == "1:1:bliss line one"
-    assert rows[2] == "3:1:bliss line three"
+    assert rows[1] == "bliss line one"
+    assert rows[2] == "bliss line three"
+
+
+class ShapeCase(t.NamedTuple):
+    """Parametrized case for grep's default text shape matrix."""
+
+    test_id: str
+    overrides: dict[str, t.Any]
+    expected_first_row: str
+
+
+SHAPE_CASES: tuple[ShapeCase, ...] = (
+    ShapeCase(
+        test_id="default-pipe-emits-path-text",
+        overrides={"heading": False, "color_mode": "never"},
+        expected_first_row="/tmp/abc.jsonl:bliss line one",
+    ),
+    ShapeCase(
+        test_id="dash-n-adds-line-prefix",
+        overrides={"heading": False, "color_mode": "never", "line_number": True},
+        expected_first_row="/tmp/abc.jsonl:1:bliss line one",
+    ),
+    ShapeCase(
+        test_id="column-adds-line-and-col-prefix",
+        overrides={"heading": False, "color_mode": "never", "column": True},
+        expected_first_row="/tmp/abc.jsonl:1:1:bliss line one",
+    ),
+    ShapeCase(
+        test_id="vimgrep-includes-line-and-col",
+        overrides={"color_mode": "never", "vimgrep": True},
+        expected_first_row="/tmp/abc.jsonl:1:1:bliss line one",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    SHAPE_CASES,
+    ids=[c.test_id for c in SHAPE_CASES],
+)
+def test_format_grep_record_shape_matrix(
+    case: ShapeCase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The default-text shape switches between text / line:text / line:col:text."""
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/abc.jsonl"),
+        text="bliss line one\nno match",
+        timestamp=None,
+    )
+    monkeypatch.setattr("sys.stdout.isatty", lambda: False)
+    args = _make_grep_args(patterns=("bliss",), **case.overrides)
+    rendered = agentgrep.format_grep_record(record, args)
+    rows = rendered.splitlines()
+    assert rows[0] == case.expected_first_row
 
 
 def test_format_grep_record_vimgrep_emits_one_row_per_match() -> None:
