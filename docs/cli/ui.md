@@ -8,6 +8,14 @@ of the CLI walks. It is read-only — agentgrep never mutates the
 source stores. Bare `agentgrep` prints the directory of choices, so
 the explorer always needs the explicit `ui` subcommand.
 
+```{note}
+Versions before 0.1.0a5 made bare `agentgrep` equivalent to
+`agentgrep ui`. That shortcut is gone. Reach the explorer through
+the explicit `ui` subcommand, or use the `--ui` overlay on
+`agentgrep grep` / `find` / `fuzzy` / `search` to open it
+pre-filled with that subcommand's query.
+```
+
 ## Examples
 
 Open the explorer with no seed query:

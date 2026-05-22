@@ -14,6 +14,15 @@ directory of choices listing every subcommand with example
 invocations — the same `tmuxp` / `vcspull` pattern. To open the
 Textual explorer directly, use `agentgrep ui`.
 
+```{note}
+Versions before 0.1.0a5 silently rewrote `agentgrep <terms>` as
+`agentgrep search <terms>` and bare `agentgrep` as `agentgrep ui`.
+Both shortcuts are gone — every subcommand must be named
+explicitly. `agentgrep bliss` is now an `invalid choice` error
+rather than a search; reach for `agentgrep search bliss` or
+`agentgrep grep bliss` depending on the matching style you want.
+```
+
 ```{cli-install}
 ```
 
