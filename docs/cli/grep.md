@@ -10,12 +10,13 @@ without thinking, the same flags work here against your AI history.
 Defaults follow rg: smart-case (case-insensitive unless the pattern
 contains uppercase), regex pattern interpretation, color on TTY,
 and line-aware output. Each matching record emits one row per
-matching line in the shape `line:col:text`, with the matched span
-highlighted (red+bold). On TTY a per-record heading line opens with
-agent · timestamp · path; on pipe each row is prefixed with the
-path so the output stays grep-pipeline friendly. The one deliberate
-divergence is session deduplication — see {ref}`cli-grep-dedupe`
-below.
+matching line. By default each row is just `path:text` (rg's
+default pipe shape); pass `-n` / `--line-number` to add line
+numbers, `--column` to add column numbers (implies `-n`), and
+`--vimgrep` for the `path:line:col:text` shape with one row per
+match span. On TTY a per-record heading line opens with
+agent · timestamp · path. The one deliberate divergence is session
+deduplication — see {ref}`cli-grep-dedupe` below.
 
 ## Examples
 
@@ -64,23 +65,31 @@ $ agentgrep grep --no-progress bliss
 ## Output format
 
 By default `grep` emits one stdout line per matching line within a
-record, with the matched substring highlighted. The format mirrors
+record, with the matched substring highlighted. The shape mirrors
 `rg`:
 
 - **On TTY** (heading mode, default): a per-record heading line
   carries `agent · timestamp · path`, then each matching line
-  follows as `line:col:text` with ANSI highlights. Records are
-  separated by a blank line. Toggle off with `--no-heading`.
+  follows as `text` (or `line:text` with `-n`, or
+  `line:col:text` with `--column`). Records are separated by a
+  blank line. Toggle off with `--no-heading`.
 - **On pipe** (flat mode, default when stdout isn't a TTY): every
-  match emits as `path:line:col:text` with no per-record heading,
-  so `agentgrep grep foo | jq` or `... | awk` see one line per
-  match. Toggle on with `--heading`.
+  match emits as `path:text` (rg's default), so `agentgrep grep
+  foo | jq` or `... | awk` see one line per match. `-n` adds
+  `:line:` after the path; `--column` adds `:col:` (implies `-n`).
+  Toggle the heading on with `--heading`.
 
-The `--vimgrep` flag forces flat mode and emits one row per match
-span (rather than one per match line), so a line with two hits
-produces two rows. `--only-matching` / `-o` collapses output to
-just the matched substrings, one per line. `-l` /
-`--files-with-matches` emits only the deduplicated paths.
+The `--vimgrep` flag forces flat mode and emits `path:line:col:text`
+with one row per match span (rather than one per match line), so a
+line with two hits produces two rows — useful for `vim` `:cfile`
+and other editors that consume the
+`file:line:col:message` format.
+
+`--only-matching` / `-o` collapses output to just the matched
+substrings, one per line. `-l` / `--files-with-matches` emits
+only the deduplicated paths. `-c` emits `path:N` per matching
+record with the count of matching lines (or just `N` when exactly
+one record matched), matching `rg -c`.
 
 ## Live streaming
 
@@ -149,24 +158,37 @@ $ agentgrep grep --no-dedupe foo
 
 ## JSON output
 
-Pass `--json` to emit an rg-shaped event stream:
+Pass `--json` to emit an rg-shaped per-line event stream:
 
 ```console
 $ agentgrep grep --json deploy
 ```
 
 The output is a JSON document whose `events` array carries one
-`match` event per matching record plus a final `summary` event with
-the total count. Each `match` event carries the agent, store, path,
-session metadata, and the matched text. The shape is the same model
-`rg --json` follows, adapted for agentgrep records.
+`begin` event opening each matching record, one `match` event per
+matching line within that record, an `end` event closing the
+record, and a final `summary` event with the total match count.
+
+Each `match` event mirrors `rg`'s per-line shape:
+
+```json
+{"type":"match","data":{
+  "path":{"text":"~/.codex/.../sample.jsonl"},
+  "line_number":1,
+  "lines":{"text":"The bliss primitive ships with serene defaults"},
+  "submatches":[{"match":{"text":"bliss"},"start":4,"end":9}]}}
+```
+
+`submatches` carries byte offsets within the line so consumers can
+slice the matched substring directly. Tools written against `rg`'s
+JSON contract can consume agentgrep's stream with the same parser.
 
 ## NDJSON output
 
-Pass `--ndjson` for one match event per line:
+Pass `--ndjson` for one event per line:
 
 ```console
-$ agentgrep grep --ndjson foo | jq '.data.text'
+$ agentgrep grep --ndjson foo | jq 'select(.type == "match") | .data.lines.text'
 ```
 
 This mode is the right pick when piping into another CLI, into `jq`,

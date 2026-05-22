@@ -20,7 +20,14 @@ adapter_id) as tab-separated columns.
 
 ## Examples
 
-List every store agentgrep can read for one agent:
+List every store agentgrep can read (no positional pattern needed —
+fd parity):
+
+```console
+$ agentgrep find
+```
+
+Narrow to one agent:
 
 ```console
 $ agentgrep find codex
