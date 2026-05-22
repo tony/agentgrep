@@ -306,6 +306,97 @@ def test_engine_routes_query_through_predicates(
     assert tuple(sorted(emitted_agents)) == tuple(sorted(case.expected_agents))
 
 
+class FindPipelineCase(t.NamedTuple):
+    """Parametrized case for `iter_find_events` source pruning."""
+
+    test_id: str
+    query: str
+    expected_agents: tuple[str, ...]
+
+
+FIND_PIPELINE_CASES: tuple[FindPipelineCase, ...] = (
+    FindPipelineCase(
+        test_id="single-agent-find",
+        query="agent:codex",
+        expected_agents=("codex",),
+    ),
+    FindPipelineCase(
+        test_id="or-of-two-agents-find",
+        query="agent:codex OR agent:claude",
+        expected_agents=("claude", "codex"),
+    ),
+    FindPipelineCase(
+        test_id="negated-agent-find",
+        query="-agent:cursor",
+        expected_agents=("claude", "codex"),
+    ),
+    FindPipelineCase(
+        test_id="path-substring-find",
+        query="path:codex",
+        expected_agents=("codex",),
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    FIND_PIPELINE_CASES,
+    ids=[c.test_id for c in FIND_PIPELINE_CASES],
+)
+def test_find_pipeline_consumes_compiled_query(
+    case: FindPipelineCase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """iter_find_events prunes sources via CompiledQuery.source_predicate."""
+    sources = [
+        _make_source(agent="codex", path="/tmp/codex/a.jsonl"),
+        _make_source(agent="claude", path="/tmp/claude/b.jsonl"),
+        _make_source(agent="cursor", path="/tmp/cursor/c.jsonl"),
+    ]
+    monkeypatch.setattr(
+        agentgrep,
+        "discover_sources",
+        lambda *args, **kwargs: list(sources),
+    )
+
+    compiled = _compile_query(case.query)
+    emitted = [
+        event.record
+        for event in agentgrep.iter_find_events(
+            pathlib.Path.home(),
+            agentgrep.AGENT_CHOICES,
+            pattern=None,
+            limit=None,
+            compiled=compiled,
+        )
+        if isinstance(event, ag_events.FindRecordEmitted)
+    ]
+    assert tuple(sorted(r.agent for r in emitted)) == case.expected_agents
+
+
+def test_find_pipeline_compiled_none_keeps_legacy_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When ``compiled=None``, iter_find_events takes the existing path."""
+    sources = [_make_source(agent="codex", path="/tmp/codex.jsonl")]
+    monkeypatch.setattr(
+        agentgrep,
+        "discover_sources",
+        lambda *args, **kwargs: list(sources),
+    )
+
+    emitted = list(
+        agentgrep.iter_find_events(
+            pathlib.Path.home(),
+            agentgrep.AGENT_CHOICES,
+            pattern=None,
+            limit=None,
+        ),
+    )
+    record_events = [e for e in emitted if isinstance(e, ag_events.FindRecordEmitted)]
+    assert len(record_events) == 1
+
+
 def test_compiled_none_falls_through_to_legacy_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

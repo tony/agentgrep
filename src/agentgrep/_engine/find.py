@@ -29,6 +29,7 @@ from agentgrep import events as _events
 
 if t.TYPE_CHECKING:
     from agentgrep import AgentName, BackendSelection
+    from agentgrep.query.compile import CompiledQuery
 
 
 def iter_find_events(
@@ -38,6 +39,7 @@ def iter_find_events(
     pattern: str | None,
     limit: int | None,
     backends: BackendSelection | None = None,
+    compiled: CompiledQuery | None = None,
 ) -> cabc.Iterator[_events.FindEvent]:
     """Yield typed events as the find engine enumerates sources.
 
@@ -56,6 +58,14 @@ def iter_find_events(
     backends : agentgrep.BackendSelection or None
         Override the auto-detected backend selection (mainly used by
         tests). ``None`` selects via :func:`agentgrep.select_backends`.
+    compiled : agentgrep.CompiledQuery or None
+        Optional :class:`~agentgrep.CompiledQuery` from
+        :func:`agentgrep.query.parse_query` + ``compile_query``. When
+        set, its ``source_predicate`` prunes sources before they're
+        emitted as records. The ``record_predicate`` is not honored
+        — find emits one record per source by construction, and the
+        per-record query semantics only make sense for the search
+        pipeline.
 
     Yields
     ------
@@ -78,9 +88,15 @@ def iter_find_events(
     yield _events.FindStarted(source_count=len(sources))
 
     query = pattern.casefold() if pattern is not None else None
+    source_predicate = compiled.source_predicate if compiled is not None else None
     emitted = 0
 
     for source in sources:
+        # Compiled-query source pruning happens before the legacy
+        # substring filter so a field predicate like `agent:codex`
+        # short-circuits without even building the haystack.
+        if source_predicate is not None and not source_predicate(source):
+            continue
         record = agentgrep.FindRecord(
             kind="find",
             agent=source.agent,
