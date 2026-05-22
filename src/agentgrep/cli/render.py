@@ -905,7 +905,9 @@ def print_grep_results(records: list[agentgrep.SearchRecord], args: GrepArgs) ->
         return 1
     for record in records:
         print(format_grep_record(record, args))
-        if args.heading is True or (args.heading is None and sys.stdout.isatty()):
+        if not args.only_matching and (
+            args.heading is True or (args.heading is None and sys.stdout.isatty())
+        ):
             print()
     return 0
 
@@ -1085,7 +1087,9 @@ def stream_grep_results(args: GrepArgs) -> int:
                         match_count += 1
             else:
                 print(format_grep_record(event.record, args))
-                if args.heading is True or (args.heading is None and is_tty):
+                if not args.only_matching and (
+                    args.heading is True or (args.heading is None and is_tty)
+                ):
                     print()
                 match_count += 1
             if is_tty:
