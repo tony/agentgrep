@@ -42,7 +42,7 @@ dependencies = [
 Repository = "https://github.com/tony/agentgrep"
 
 [project.scripts]
-agentgrep = "agentgrep:main"
+agentgrep = "agentgrep.cli:main"
 agentgrep-mcp = "agentgrep.mcp:main"
 
 [dependency-groups]
