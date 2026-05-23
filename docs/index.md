@@ -22,7 +22,7 @@ agentgrep has two entry points: a terminal CLI for direct search, and a FastMCP 
 :gutter: 2 2 3 3
 
 :::{grid-item-card} Quickstart
-:link: quickstart
+:link: getting-started/index
 :link-type: doc
 Run a first search and inspect the result shape.
 :::
@@ -52,13 +52,13 @@ Curated Python and MCP API documentation.
 :::
 
 :::{grid-item-card} Client Setup
-:link: clients
+:link: getting-started/clients
 :link-type: doc
 Config snippets for local MCP clients.
 :::
 
 :::{grid-item-card} Configuration
-:link: configuration
+:link: getting-started/configuration
 :link-type: doc
 Search behavior, privacy, output, and progress controls.
 :::
@@ -87,60 +87,13 @@ Use prompts for common agent workflows:
 
 ```{toctree}
 :hidden:
-:caption: Get started
 
-quickstart
-installation
-clients
-configuration
-```
-
-```{toctree}
-:hidden:
-:caption: CLI
-
-Overview <cli/index>
-cli/ui
-cli/search
-cli/find
-```
-
-```{toctree}
-:hidden:
-:caption: Library
-
-Overview <library/index>
-library/tutorial
-library/how-to
-library/reference
-library/examples
-```
-
-```{toctree}
-:hidden:
-:caption: MCP
-
-Overview <mcp/index>
-mcp/tools
-mcp/resources
-mcp/prompts
-```
-
-```{toctree}
-:hidden:
-:caption: Reference
-
-Overview <reference/api/index>
-reference/api/agentgrep
-reference/api/ui
-reference/api/mcp
-```
-
-```{toctree}
-:hidden:
-:caption: Project
-
-storage-catalog
+getting-started/index
+cli/index
+library/index
+mcp/index
+reference/api/index
+dev/index
 history
 GitHub <https://github.com/tony/agentgrep>
 ```

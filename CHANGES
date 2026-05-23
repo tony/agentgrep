@@ -42,6 +42,21 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### Documentation
+
+- History page renders the changelog inline. (#9)
+- Sidebar groups pages by section with expandable children. (#9)
+- Getting Started section consolidates quickstart, installation, MCP-client setup, and configuration pages. (#9)
+- Development section at `/dev/` for internals references (benchmark harness, storage catalogue). (#9)
+
+### Development
+
+#### `scripts/benchmark.py` (#9)
+
+Cross-commit `hyperfine` benchmark harness for catching
+performance regressions on a branch. Dev-only; not shipped in
+the wheel. See {ref}`benchmark` for invocation recipes.
+
 ## agentgrep 0.1.0a4 (2026-05-21)
 
 agentgrep 0.1.0a4 lifts the CLI to a first-class documentation

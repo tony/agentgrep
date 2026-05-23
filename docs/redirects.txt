@@ -4,3 +4,9 @@ packages/agentgrep/tutorial library/tutorial
 packages/agentgrep/how-to library/how-to
 packages/agentgrep/reference library/reference
 packages/agentgrep/examples library/examples
+benchmark dev/benchmark
+storage-catalog dev/storage-catalog
+quickstart getting-started/index
+installation getting-started/installation
+clients getting-started/clients
+configuration getting-started/configuration

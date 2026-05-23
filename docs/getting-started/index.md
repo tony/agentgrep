@@ -1,6 +1,7 @@
+(getting-started)=
 (quickstart)=
 
-# Quickstart
+# Getting Started
 
 One path from a checkout to a useful search result.
 
@@ -58,6 +59,14 @@ See {ref}`clients` for MCP client snippets.
 
 ## Next steps
 
-- {doc}`library/tutorial` walks through CLI search in more detail.
-- {doc}`mcp/tools` documents the MCP tool payloads.
+- {doc}`../library/tutorial` walks through CLI search in more detail.
+- {doc}`../mcp/tools` documents the MCP tool payloads.
 - {doc}`configuration` explains output, progress, privacy, and source selection.
+
+```{toctree}
+:hidden:
+
+installation
+clients
+configuration
+```

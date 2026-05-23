@@ -209,3 +209,7 @@ __marimo__/
 # Playwright MCP test artifacts (console logs / snapshots written by
 # mcp__playwright when empirically verifying docs behavior)
 .playwright-mcp/
+
+# Per-machine overrides for scripts/benchmark.py (deep-merged on top of
+# the committed scripts/benchmark.toml).
+/scripts/benchmark.local.toml
