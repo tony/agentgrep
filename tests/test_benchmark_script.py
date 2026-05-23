@@ -744,3 +744,25 @@ def test_load_config_rejects_invalid_cli_overrides(
             local_path=tmp_path / "no-local.toml",
             cli_overrides=case.cli_overrides,
         )
+
+
+# ---------------------------------------------------------------------------
+# Regression: --output pre-flight rejects bad paths before git checkout
+# (was: FileNotFoundError / IsADirectoryError traceback at the end of a run)
+# ---------------------------------------------------------------------------
+
+
+def test_main_exits_2_when_output_parent_missing() -> None:
+    """``--output /nonexistent/dir/x.md`` is caught before any git interaction."""
+    rc = benchmark.main(
+        ["run", "--output", "/nonexistent/dir/x.md", "--no-progress"],
+    )
+    assert rc == 2
+
+
+def test_main_exits_2_when_output_is_directory(tmp_path: pathlib.Path) -> None:
+    """``--output <directory>`` is caught before any git interaction."""
+    rc = benchmark.main(
+        ["run", "--output", str(tmp_path), "--no-progress"],
+    )
+    assert rc == 2
