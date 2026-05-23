@@ -80,6 +80,7 @@ def run_ui(
     query: SearchQuery,
     *,
     control: SearchControl,
+    initial_search_text: str | None = None,
 ) -> None:
     """Launch the streaming Textual explorer for ``query``.
 
@@ -96,8 +97,19 @@ def run_ui(
     control : SearchControl
         Shared cooperative-cancel flag; ``Esc`` / ``Ctrl-C`` call
         ``request_answer_now`` to nudge the worker to wrap up.
+    initial_search_text : str | None
+        Initial value of the TUI search box. When ``None``, defaults
+        to the space-joined ``query.terms``. The CLI passes the raw
+        positional string here so a launch like
+        ``agentgrep search --ui agent:codex bliss`` opens with the
+        full query in the box (not just the text terms).
     """
-    app = build_streaming_ui_app(home, query, control=control)
+    app = build_streaming_ui_app(
+        home,
+        query,
+        control=control,
+        initial_search_text=initial_search_text,
+    )
     t.cast("RunnableAppLike", app).run()
 
 
@@ -106,6 +118,7 @@ def build_streaming_ui_app(
     query: SearchQuery,
     *,
     control: SearchControl,
+    initial_search_text: str | None = None,
 ) -> object:
     """Construct the streaming Textual app without entering its run loop.
 
@@ -861,11 +874,13 @@ def build_streaming_ui_app(
             home: pathlib.Path,
             query: SearchQuery,
             control: SearchControl,
+            initial_search_text: str | None = None,
         ) -> None:
             super().__init__()
             self.home = home
             self.query = query
             self.control = control
+            self.initial_search_text: str | None = initial_search_text
             self.all_records = []
             self.filtered_records = []
             self._filter_text = ""
@@ -913,7 +928,10 @@ def build_streaming_ui_app(
             glance is the foot of the pane.
             """
             yield header()
-            initial_search = " ".join(self.query.terms) if self.query.terms else ""
+            if self.initial_search_text is not None:
+                initial_search = self.initial_search_text
+            else:
+                initial_search = " ".join(self.query.terms) if self.query.terms else ""
             yield SearchInput(
                 value=initial_search,
                 placeholder="Search prompts and history",
@@ -1085,10 +1103,22 @@ def build_streaming_ui_app(
         def _build_search_query(self, text: str) -> SearchQuery:
             """Build a fresh :class:`SearchQuery` from the search-bar text.
 
-            Preserves the agent and search-type filters from the current
-            query so the search bar lives on top of the existing filter
-            scope rather than resetting it.
+            Routes through :func:`agentgrep.query.build_query_from_input`
+            so the search bar accepts the same Lucene-style field
+            predicates (`agent:codex`, `(agent:codex OR agent:cursor)`)
+            as the one-shot CLI. On parse / compile failure the helper
+            returns an error and we fall back to the legacy bare-term
+            split so the user can keep typing — a future commit can
+            surface the error in a status line.
             """
+            from agentgrep.query import build_query_from_input, default_registry
+
+            result = build_query_from_input(text, self.query, default_registry())
+            if result.query is not None:
+                return result.query
+            # Parse / compile error: degrade to legacy split so the
+            # search box stays editable. The error message stays
+            # accessible on the result for future UI surfacing.
             terms = tuple(text.split()) if text else ()
             return SearchQuery(
                 terms=terms,
@@ -1098,6 +1128,7 @@ def build_streaming_ui_app(
                 case_sensitive=self.query.case_sensitive,
                 agents=self.query.agents,
                 limit=self.query.limit,
+                dedupe=self.query.dedupe,
             )
 
         _APPLY_CHUNK_SIZE: t.ClassVar[int] = 200
@@ -1619,4 +1650,9 @@ def build_streaming_ui_app(
                 return True
             return self._filter_text in build_search_haystack(record).casefold()
 
-    return AgentGrepApp(home=home, query=query, control=control)
+    return AgentGrepApp(
+        home=home,
+        query=query,
+        control=control,
+        initial_search_text=initial_search_text,
+    )

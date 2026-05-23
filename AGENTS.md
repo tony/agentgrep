@@ -199,6 +199,17 @@ Key highlights:
   - This rule applies to Python standard library only; third-party packages may use `from X import Y`
 - **For typing**, use `import typing as t` and access via namespace: `t.NamedTuple`, etc.
 - **Use `from __future__ import annotations`** at the top of all Python files
+- **Lazy imports for CLI cold-start**: function-local imports are
+  acceptable when the target module is heavy (C extensions like
+  `rapidfuzz`, pydantic model registration, large AST parsing) and
+  the call site is only reached by a specific subcommand. This keeps
+  `agentgrep --help` under 250 ms. Use `if t.TYPE_CHECKING:` at the
+  top for type annotations referencing the lazy-imported module so
+  ty resolves the types without triggering the runtime import. The
+  current ruff config does not flag function-local imports (`PLC` is
+  not in `select`); if it is ever enabled, add the relevant paths to
+  `per-file-ignores`. Pattern follows CPython's own
+  `Lib/importlib/__init__.py`.
 
 ### Docstrings
 

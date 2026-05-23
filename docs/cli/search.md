@@ -7,6 +7,15 @@ records across every configured agent backend (Codex, Claude Code,
 Cursor, Gemini). Search is read-only — agentgrep never mutates the
 source stores.
 
+```{note}
+Versions before 0.1.0a5 made `agentgrep <terms>` an implicit
+shorthand for `agentgrep search <terms>`. That shortcut is gone.
+Spell `search` out so the available subcommands stay discoverable
+through `agentgrep --help`. Users who reach for raw substring or
+regex matching may prefer `agentgrep grep` (rg-shaped) over
+`agentgrep search` (sensible-defaults).
+```
+
 ## Examples
 
 A literal single-term search:
@@ -37,6 +46,12 @@ Browse interactively in the Textual TUI:
 
 ```console
 $ agentgrep search design --ui
+```
+
+Silence the stderr progress spinner:
+
+```console
+$ agentgrep search --no-progress design
 ```
 
 ## Command
@@ -97,9 +112,9 @@ interactively. `--ui` is mutually exclusive with `--json` and
 `--ndjson`.
 
 See {ref}`cli-ui` for the standalone explorer entry point. Bare
-`agentgrep` is equivalent to `agentgrep ui`, and `agentgrep ui
-<query>` seeds the search bar without leaving the explorer to run a
-one-shot CLI query.
+`agentgrep` prints the directory of choices; reach the explorer
+directly with `agentgrep ui`, and seed it with a query via
+`agentgrep ui <query>`.
 
 ## Filtering by agent
 
@@ -111,3 +126,25 @@ $ agentgrep search --agent claude --agent codex "deploy"
 
 Pass `--agent all` (or omit the flag) to search every available
 backend.
+
+## Query language
+
+`search` accepts Lucene-style field predicates, boolean
+composition, and date ranges inline with the positional terms:
+
+```console
+$ agentgrep search agent:codex bliss
+```
+
+```console
+$ agentgrep search '(agent:codex OR agent:cursor) AND deploy'
+```
+
+```console
+$ agentgrep search 'timestamp:>2026-01-01 -agent:claude bliss'
+```
+
+See {ref}`library-query-language` for the full grammar, field
+registry, and date literal forms. Mixing the new field syntax with
+the equivalent flag (`--agent codex agent:claude`) is rejected at
+parse time.

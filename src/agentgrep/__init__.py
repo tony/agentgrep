@@ -72,6 +72,8 @@ logger.addHandler(logging.NullHandler())
 if t.TYPE_CHECKING:
     import collections.abc as cabc
 
+    from agentgrep.query.compile import CompiledQuery
+
     PrivatePathBase = pathlib.Path
 else:
     PrivatePathBase = type(pathlib.Path())
@@ -146,19 +148,27 @@ def build_description(
 
 CLI_DESCRIPTION = build_description(
     """
-    Read-only search across Codex, Claude, and Cursor local stores.
-
-    Bare ``agentgrep`` launches the interactive Textual explorer
-    (``agentgrep ui``). ``agentgrep <terms>`` is shorthand for
-    ``agentgrep search <terms>``.
+    Read-only search across Codex, Claude, Cursor, and Gemini local
+    stores. Pick a subcommand from the list below: ``grep`` for
+    rg-shaped content search, ``fuzzy`` for fzf-style filtering,
+    ``find`` for store enumeration, ``search`` for sensible-defaults
+    search, ``ui`` for the interactive Textual explorer.
     """,
     (
         (
-            "quick",
+            "grep",
             (
-                "agentgrep",
-                "agentgrep bliss",
-                "agentgrep serene bliss --agent codex",
+                "agentgrep grep bliss",
+                "agentgrep grep -i 'serene bliss'",
+                "agentgrep grep -F --type history TODO",
+                "agentgrep grep --json design",
+            ),
+        ),
+        (
+            "fuzzy",
+            (
+                "agentgrep grep -F . | agentgrep fuzzy 'config bliss'",
+                "agentgrep fuzzy --exact -i 'design notes' < transcript.txt",
             ),
         ),
         (
@@ -174,8 +184,15 @@ CLI_DESCRIPTION = build_description(
             "find",
             (
                 "agentgrep find codex",
-                "agentgrep find sessions --agent codex",
+                "agentgrep find -t prompts -e jsonl",
                 "agentgrep find cursor --json",
+            ),
+        ),
+        (
+            "ui",
+            (
+                "agentgrep ui",
+                "agentgrep ui bliss",
             ),
         ),
     ),
@@ -214,16 +231,57 @@ FIND_DESCRIPTION = build_description(
 )
 UI_DESCRIPTION = build_description(
     """
-    Launch the interactive Textual explorer. Bare ``agentgrep`` is
-    equivalent to ``agentgrep ui``.
+    Launch the interactive Textual explorer for browsing prompts and
+    history across all configured agents.
     """,
     (
         (
             None,
             (
-                "agentgrep",
                 "agentgrep ui",
                 "agentgrep ui bliss",
+            ),
+        ),
+    ),
+)
+FUZZY_DESCRIPTION = build_description(
+    """
+    Fuzzy match in fzf ``--filter`` mode: stdin lines are scored
+    against QUERY and emitted in descending-score order.
+
+    No QUERY and no piped stdin prints usage and exits 2 (strict, no
+    interactive fallback — use ``agentgrep ui`` or ``--ui`` for
+    interactive browsing).
+    """,
+    (
+        (
+            None,
+            (
+                "agentgrep grep -F . | agentgrep fuzzy 'config bliss'",
+                "agentgrep fuzzy --exact -i 'design notes' < transcript.txt",
+                "agentgrep fuzzy --algo=v1 --print-query foo",
+            ),
+        ),
+    ),
+)
+GREP_DESCRIPTION = build_description(
+    """
+    Content search across normalized records with rg/ag-shaped flags.
+
+    Defaults: smart-case, regex, session-deduped output. Pass
+    ``--no-dedupe`` for the raw rg view, ``-F`` for literal pattern
+    matching, ``-i`` / ``-s`` to override case, ``--json`` for an
+    rg-style event stream.
+    """,
+    (
+        (
+            None,
+            (
+                "agentgrep grep bliss",
+                "agentgrep grep -i 'serene bliss'",
+                "agentgrep grep -F --type history TODO",
+                "agentgrep grep --json design",
+                "agentgrep grep --vimgrep --no-dedupe foo",
             ),
         ),
     ),
@@ -635,6 +693,9 @@ class AnsiColors:
     INFO: t.ClassVar[str] = "\x1b[36m"
     HEADING: t.ClassVar[str] = "\x1b[1;36m"
     HIGHLIGHT: t.ClassVar[str] = "\x1b[35m"
+    MATCH: t.ClassVar[str] = "\x1b[1;31m"
+    LINE_NUMBER: t.ClassVar[str] = "\x1b[32m"
+    PATH: t.ClassVar[str] = "\x1b[35m"
     MUTED: t.ClassVar[str] = "\x1b[34m"
     WHITE: t.ClassVar[str] = "\x1b[37m"
     RESET: t.ClassVar[str] = "\x1b[0m"
@@ -673,6 +734,18 @@ class AnsiColors:
     def highlight(self, text: str) -> str:
         """Format text as highlighted."""
         return self.colorize(text, self.HIGHLIGHT)
+
+    def match(self, text: str) -> str:
+        """Format text as a matched span (rg-style red+bold)."""
+        return self.colorize(text, self.MATCH)
+
+    def line_number(self, text: str) -> str:
+        """Format text as a line-number prefix (rg-style green)."""
+        return self.colorize(text, self.LINE_NUMBER)
+
+    def path(self, text: str) -> str:
+        """Format text as a path prefix (rg-style magenta)."""
+        return self.colorize(text, self.PATH)
 
     def muted(self, text: str) -> str:
         """Format text as muted."""
@@ -1003,43 +1076,18 @@ class BackendSelection:
 
 
 @dataclasses.dataclass(slots=True)
-class SearchArgs:
-    """Typed arguments for ``agentgrep search``."""
-
-    terms: tuple[str, ...]
-    agents: tuple[AgentName, ...]
-    search_type: SearchType
-    any_term: bool
-    regex: bool
-    case_sensitive: bool
-    limit: int | None
-    output_mode: OutputMode
-    color_mode: ColorMode
-    progress_mode: ProgressMode
-
-
-@dataclasses.dataclass(slots=True)
-class FindArgs:
-    """Typed arguments for ``agentgrep find``."""
-
-    pattern: str | None
-    agents: tuple[AgentName, ...]
-    limit: int | None
-    output_mode: OutputMode
-    color_mode: ColorMode
-
-
-@dataclasses.dataclass(slots=True)
-class UIArgs:
-    """Typed arguments for ``agentgrep ui``."""
-
-    initial_query: str
-    color_mode: ColorMode
-
-
-@dataclasses.dataclass(slots=True)
 class SearchQuery:
-    """Compiled search configuration."""
+    """Compiled search configuration.
+
+    ``compiled`` carries the parsed-query predicates from
+    :mod:`agentgrep.query`. When ``None`` (the default), the engine
+    takes its legacy code path — pure-text queries and flag-only
+    invocations stay on the fast path with no extra evaluation
+    cost. When set, ``iter_search_events`` consults
+    ``compiled.source_predicate`` to prune sources before any file
+    is opened, and :func:`matches_record` consults
+    ``compiled.record_predicate`` after the existing text match.
+    """
 
     terms: tuple[str, ...]
     search_type: SearchType
@@ -1048,6 +1096,8 @@ class SearchQuery:
     case_sensitive: bool
     agents: tuple[AgentName, ...]
     limit: int | None
+    dedupe: bool = True
+    compiled: CompiledQuery | None = None
 
 
 @dataclasses.dataclass(slots=True)
@@ -1998,318 +2048,13 @@ def run_readonly_command(
         return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
-@dataclasses.dataclass(slots=True)
-class ParserBundle:
-    """CLI parsers used for root and subcommand help."""
-
-    parser: argparse.ArgumentParser
-    search_parser: argparse.ArgumentParser
-    find_parser: argparse.ArgumentParser
-
-
-def normalize_color_mode(argv: cabc.Sequence[str] | None) -> ColorMode:
-    """Return the requested CLI color mode."""
-    if argv is None:
-        argv = sys.argv[1:]
-    for index, argument in enumerate(argv):
-        if argument == "--color" and index + 1 < len(argv):
-            value = argv[index + 1]
-            if value in {"auto", "always", "never"}:
-                return t.cast("ColorMode", value)
-        if argument.startswith("--color="):
-            value = argument.partition("=")[2]
-            if value in {"auto", "always", "never"}:
-                return t.cast("ColorMode", value)
-    return "auto"
-
-
-SUBCOMMANDS: frozenset[str] = frozenset({"search", "find", "ui"})
-
-
-def inject_default_subcommand(
-    argv: cabc.Sequence[str] | None,
-) -> cabc.Sequence[str] | None:
-    """Prepend a subcommand to ``argv`` when none is supplied.
-
-    Walks ``argv`` skipping the global ``--color`` option and any help flag.
-    Empty effective argv defaults to ``ui`` so ``agentgrep`` lands in the
-    Textual explorer. If the first remaining token is not a known
-    subcommand, inserts ``search`` at that position so ``agentgrep bliss``
-    parses identically to ``agentgrep search bliss``. Returns the input
-    unchanged when no injection is needed.
-
-    Examples
-    --------
-    >>> inject_default_subcommand(["bliss"])
-    ['search', 'bliss']
-    >>> inject_default_subcommand(["search", "bliss"])
-    ['search', 'bliss']
-    >>> inject_default_subcommand(["find", "codex"])
-    ['find', 'codex']
-    >>> inject_default_subcommand(["ui"])
-    ['ui']
-    >>> inject_default_subcommand(["--color", "never", "bliss"])
-    ['--color', 'never', 'search', 'bliss']
-    >>> inject_default_subcommand(["--color", "never"])
-    ['--color', 'never', 'ui']
-    >>> inject_default_subcommand(["--help"])
-    ['--help']
-    >>> inject_default_subcommand([])
-    ['ui']
-    """
-    effective = list(sys.argv[1:]) if argv is None else list(argv)
-    index = 0
-    while index < len(effective):
-        token = effective[index]
-        if token in {"-h", "--help"}:
-            return argv
-        if token == "--color" and index + 1 < len(effective):
-            index += 2
-            continue
-        if token.startswith("--color="):
-            index += 1
-            continue
-        if token in SUBCOMMANDS:
-            return argv
-        effective.insert(index, "search")
-        return effective
-    effective.append("ui")
-    return effective
-
-
-@contextlib.contextmanager
-def configured_color_environment(color_mode: ColorMode) -> cabc.Iterator[None]:
-    """Temporarily configure env vars for argparse help color handling."""
-    force_color = os.environ.get("FORCE_COLOR")
-    try:
-        if color_mode == "always" and not os.environ.get("NO_COLOR"):
-            os.environ["FORCE_COLOR"] = "1"
-        yield
-    finally:
-        if force_color is None:
-            _ = os.environ.pop("FORCE_COLOR", None)
-        else:
-            os.environ["FORCE_COLOR"] = force_color
-
-
-def create_parser(
-    color_mode: ColorMode,
-) -> ParserBundle:
-    """Create the root parser and subparsers."""
-    formatter_class = create_themed_formatter(color_mode)
-    parser = argparse.ArgumentParser(
-        prog="agentgrep",
-        description=CLI_DESCRIPTION,
-        formatter_class=formatter_class,
-        color=color_mode != "never",
-    )
-    _ = parser.add_argument(
-        "--color",
-        choices=["auto", "always", "never"],
-        default="auto",
-        help="when to use colors: auto (default), always, or never",
-    )
-    subparsers = parser.add_subparsers(dest="command")
-
-    search_parser = subparsers.add_parser(
-        "search",
-        help="Search normalized prompts or history",
-        description=SEARCH_DESCRIPTION,
-        formatter_class=formatter_class,
-        color=color_mode != "never",
-    )
-    add_common_agent_options(search_parser)
-    _ = search_parser.add_argument("terms", nargs="*", help="Keywords or regex patterns")
-    _ = search_parser.add_argument(
-        "--type",
-        choices=["prompts", "history", "all"],
-        default="prompts",
-        dest="search_type",
-        help="Record type to search (default: prompts)",
-    )
-    _ = search_parser.add_argument(
-        "--any",
-        action="store_true",
-        help="Match any term instead of requiring all terms",
-    )
-    _ = search_parser.add_argument(
-        "--regex",
-        action="store_true",
-        help="Treat terms as regular expressions",
-    )
-    _ = search_parser.add_argument(
-        "--case-sensitive",
-        action="store_true",
-        help="Perform case-sensitive matching",
-    )
-    _ = search_parser.add_argument(
-        "--limit",
-        type=int,
-        metavar="N",
-        help="Limit the number of results",
-    )
-    _ = search_parser.add_argument(
-        "--progress",
-        choices=["auto", "always", "never"],
-        default="auto",
-        help="Show search progress on stderr",
-    )
-    add_output_mode_options(search_parser, allow_ui=True)
-
-    find_parser = subparsers.add_parser(
-        "find",
-        help="Find known prompt/history stores and session files",
-        description=FIND_DESCRIPTION,
-        formatter_class=formatter_class,
-        color=color_mode != "never",
-    )
-    add_common_agent_options(find_parser)
-    _ = find_parser.add_argument(
-        "pattern",
-        nargs="?",
-        help="Optional substring to match against discovered paths",
-    )
-    _ = find_parser.add_argument(
-        "--limit",
-        type=int,
-        metavar="N",
-        help="Limit the number of results",
-    )
-    add_output_mode_options(find_parser, allow_ui=False)
-
-    ui_parser = subparsers.add_parser(
-        "ui",
-        help="Launch the interactive Textual explorer",
-        description=UI_DESCRIPTION,
-        formatter_class=formatter_class,
-        color=color_mode != "never",
-    )
-    _ = ui_parser.add_argument(
-        "initial_query",
-        nargs="?",
-        default="",
-        help="Optional initial search text to populate the search bar",
-    )
-    return ParserBundle(parser=parser, search_parser=search_parser, find_parser=find_parser)
-
-
-def build_docs_parser() -> argparse.ArgumentParser:
-    """Return the root parser with color disabled, for docs autogen.
-
-    ``sphinx-autodoc-argparse`` expects ``:func:`` to point at a
-    zero-arg callable returning :class:`argparse.ArgumentParser`.
-    :func:`create_parser` requires ``color_mode`` and returns a
-    :class:`ParserBundle`, so this thin adapter exists for the
-    documentation toolchain.
-    """
-    return create_parser("never").parser
-
-
-def parse_args(
-    argv: cabc.Sequence[str] | None = None,
-) -> SearchArgs | FindArgs | UIArgs | None:
-    """Parse CLI arguments into typed dataclasses."""
-    color_mode = normalize_color_mode(argv)
-    argv = inject_default_subcommand(argv)
-    with configured_color_environment(color_mode):
-        bundle = create_parser(color_mode)
-        namespace = bundle.parser.parse_args(argv)
-    if t.cast("str | None", getattr(namespace, "command", None)) is None:
-        with configured_color_environment(color_mode):
-            bundle.parser.print_help()
-        return None
-
-    command = t.cast("str", namespace.command)
-    if command == "ui":
-        return UIArgs(
-            initial_query=t.cast("str", namespace.initial_query),
-            color_mode=color_mode,
-        )
-
-    agents = parse_agents(t.cast("list[str]", namespace.agent))
-    output_mode = parse_output_mode(namespace)
-    limit = t.cast("int | None", namespace.limit)
-    if limit is not None and limit < 1:
-        with configured_color_environment(color_mode):
-            bundle.parser.error("--limit must be greater than 0")
-
-    if command == "search":
-        terms = tuple(t.cast("list[str]", namespace.terms))
-        if not terms and output_mode != "ui":
-            with configured_color_environment(color_mode):
-                bundle.search_parser.print_help()
-            return None
-        return SearchArgs(
-            terms=terms,
-            agents=agents,
-            search_type=t.cast("SearchType", namespace.search_type),
-            any_term=t.cast("bool", namespace.any),
-            regex=t.cast("bool", namespace.regex),
-            case_sensitive=t.cast("bool", namespace.case_sensitive),
-            limit=limit,
-            output_mode=output_mode,
-            color_mode=color_mode,
-            progress_mode=t.cast("ProgressMode", namespace.progress),
-        )
-    pattern = t.cast("str | None", namespace.pattern)
-    if not pattern:
-        with configured_color_environment(color_mode):
-            bundle.find_parser.print_help()
-        return None
-    return FindArgs(
-        pattern=pattern,
-        agents=agents,
-        limit=limit,
-        output_mode=output_mode,
-        color_mode=color_mode,
-    )
-
-
-def add_common_agent_options(parser: argparse.ArgumentParser) -> None:
-    """Attach shared agent selection flags."""
-    _ = parser.add_argument(
-        "--agent",
-        action="append",
-        choices=[*AGENT_CHOICES, "all"],
-        default=[],
-        help="Limit results to a specific agent; repeatable",
-    )
-
-
-def add_output_mode_options(
-    parser: argparse.ArgumentParser,
-    *,
-    allow_ui: bool,
-) -> None:
-    """Attach mutually exclusive output mode flags."""
-    group = parser.add_mutually_exclusive_group()
-    _ = group.add_argument("--json", action="store_true", help="Emit one JSON document")
-    _ = group.add_argument("--ndjson", action="store_true", help="Emit one JSON object per line")
-    if allow_ui:
-        _ = group.add_argument("--ui", action="store_true", help="Launch a read-only UI")
-
-
-def parse_agents(values: list[str]) -> tuple[AgentName, ...]:
-    """Normalize ``--agent`` selections."""
-    if not values or "all" in values:
-        return AGENT_CHOICES
-    ordered = tuple(t.cast("AgentName", value) for value in values if value != "all")
-    return ordered or AGENT_CHOICES
-
-
-def parse_output_mode(namespace: argparse.Namespace) -> OutputMode:
-    """Return the selected output mode."""
-    if getattr(namespace, "json", False):
-        return "json"
-    if getattr(namespace, "ndjson", False):
-        return "ndjson"
-    if getattr(namespace, "ui", False):
-        return "ui"
-    return "text"
-
-
 def make_search_query(args: SearchArgs) -> SearchQuery:
-    """Convert parsed search arguments into a query object."""
+    """Convert parsed search arguments into a query object.
+
+    Carries any parsed-query :class:`~agentgrep.CompiledQuery` (set
+    when the positionals included Lucene-style field syntax) through
+    to the engine. ``None`` on the legacy fast path.
+    """
     return SearchQuery(
         terms=args.terms,
         search_type=args.search_type,
@@ -2318,6 +2063,7 @@ def make_search_query(args: SearchArgs) -> SearchQuery:
         case_sensitive=args.case_sensitive,
         agents=args.agents,
         limit=args.limit,
+        compiled=args.compiled,
     )
 
 
@@ -2639,6 +2385,13 @@ def search_sources(
     """Parse and filter search results across all selected sources."""
     active_progress = noop_search_progress() if progress is None else progress
     active_control = SearchControl() if control is None else control
+    # Apply the compiled-query source predicate before planning so the
+    # ripgrep prefilter (which is the heavy step in
+    # ``plan_search_sources``) runs on the smaller set. Without this
+    # the per-file prefilter runs against every discovered source even
+    # when ``agent:codex`` could rule most out from metadata alone.
+    if query.compiled is not None and query.compiled.source_predicate is not None:
+        sources = [s for s in sources if query.compiled.source_predicate(s)]
     planned_sources = plan_search_sources(
         query,
         sources,
@@ -2865,12 +2618,27 @@ def collect_search_records(
     active_progress = noop_search_progress() if progress is None else progress
     active_control = SearchControl() if control is None else control
     deduped: dict[tuple[str, str, str, str, str], SearchRecord] = {}
+    raw: list[SearchRecord] = []
     total = len(sources)
+
+    def current_count() -> int:
+        return len(deduped) if query.dedupe else len(raw)
+
+    source_predicate = query.compiled.source_predicate if query.compiled is not None else None
     for index, source in enumerate(sources, start=1):
         if active_control.answer_now_requested() or (
-            query.limit is not None and len(deduped) >= query.limit
+            query.limit is not None and current_count() >= query.limit
         ):
             break
+        # Compiled-query source pruning: when a field predicate like
+        # ``agent:codex`` can be decided from the SourceHandle alone,
+        # skip the source without opening it. Mirrors the same guard
+        # in ``iter_search_events``; without it the eager search path
+        # was paradoxically slower than its unfiltered counterpart
+        # because every source got read just to be rejected at the
+        # record-level predicate.
+        if source_predicate is not None and not source_predicate(source):
+            continue
         active_progress.source_started(index, total, source)
         records_seen = 0
         matches_seen = 0
@@ -2885,16 +2653,21 @@ def collect_search_records(
         active_progress.source_finished(index, total, source, records_seen, matches_seen)
         matching_records.sort(key=search_record_sort_key, reverse=True)
         for record in matching_records:
-            dedupe_key = record_dedupe_key(record)
-            if dedupe_key not in deduped:
-                deduped[dedupe_key] = record
+            if query.dedupe:
+                dedupe_key = record_dedupe_key(record)
+                if dedupe_key not in deduped:
+                    deduped[dedupe_key] = record
+                    active_progress.record_added(record)
+                    active_progress.result_added(len(deduped))
+            else:
+                raw.append(record)
                 active_progress.record_added(record)
-                active_progress.result_added(len(deduped))
+                active_progress.result_added(len(raw))
             if active_control.answer_now_requested() or (
-                query.limit is not None and len(deduped) >= query.limit
+                query.limit is not None and current_count() >= query.limit
             ):
                 break
-    results = list(deduped.values())
+    results = list(deduped.values()) if query.dedupe else list(raw)
     results.sort(key=search_record_sort_key, reverse=True)
     return results
 
@@ -3763,12 +3536,23 @@ def build_search_record(source: SourceHandle, candidate: MessageCandidate) -> Se
 
 
 def matches_record(record: SearchRecord, query: SearchQuery) -> bool:
-    """Return whether a normalized record should be included."""
+    """Return whether a normalized record should be included.
+
+    When ``query.compiled`` carries a record-level predicate, the
+    record must satisfy it in addition to the existing text + kind
+    checks. Pure-text queries skip the predicate evaluation since
+    the compiler leaves ``compiled = None`` for them.
+    """
     if query.search_type == "prompts" and record.kind != "prompt":
         return False
     if query.search_type == "history" and record.kind != "history":
         return False
-    return matches_text(build_search_haystack(record), query)
+    if not matches_text(build_search_haystack(record), query):
+        return False
+    compiled = query.compiled
+    if compiled is not None and compiled.record_predicate is not None:
+        return compiled.record_predicate(record)
+    return True
 
 
 def build_search_haystack(record: SearchRecord) -> str:
@@ -3920,128 +3704,6 @@ def maybe_use_pydantic() -> tuple[
     return pydantic_search, pydantic_find, pydantic_envelope
 
 
-def maybe_build_pydantic() -> tuple[
-    t.Callable[[SearchRecord], dict[str, object]],
-    t.Callable[[FindRecord], dict[str, object]],
-    EnvelopeFactory,
-]:
-    """Return Pydantic serializers or plain fallbacks."""
-    try:
-        return maybe_use_pydantic()
-    except ImportError:
-        return (
-            lambda record: t.cast("dict[str, object]", serialize_search_record(record)),
-            lambda record: t.cast("dict[str, object]", serialize_find_record(record)),
-            lambda command, query_data, results: t.cast(
-                "dict[str, object]",
-                build_envelope(command, query_data, results),
-            ),
-        )
-
-
-def serialize_search_record(record: SearchRecord) -> SearchRecordPayload:
-    """Serialize a search record to a JSON-compatible mapping."""
-    return {
-        "schema_version": SCHEMA_VERSION,
-        "kind": record.kind,
-        "agent": record.agent,
-        "store": record.store,
-        "adapter_id": record.adapter_id,
-        "path": format_display_path(record.path),
-        "text": record.text,
-        "title": record.title,
-        "role": record.role,
-        "timestamp": record.timestamp,
-        "model": record.model,
-        "session_id": record.session_id,
-        "conversation_id": record.conversation_id,
-        "metadata": record.metadata,
-    }
-
-
-def serialize_find_record(record: FindRecord) -> FindRecordPayload:
-    """Serialize a find record to a JSON-compatible mapping."""
-    return {
-        "schema_version": SCHEMA_VERSION,
-        "kind": record.kind,
-        "agent": record.agent,
-        "store": record.store,
-        "adapter_id": record.adapter_id,
-        "path": format_display_path(record.path),
-        "path_kind": record.path_kind,
-        "metadata": record.metadata,
-    }
-
-
-def serialize_source_handle(source: SourceHandle) -> SourceHandlePayload:
-    """Serialize a source handle to a JSON-compatible mapping."""
-    return {
-        "schema_version": SCHEMA_VERSION,
-        "agent": source.agent,
-        "store": source.store,
-        "adapter_id": source.adapter_id,
-        "path": format_display_path(source.path),
-        "path_kind": source.path_kind,
-        "source_kind": source.source_kind,
-        "search_root": (
-            None
-            if source.search_root is None
-            else format_display_path(source.search_root, directory=True)
-        ),
-        "mtime_ns": source.mtime_ns,
-    }
-
-
-def build_envelope(
-    command: str,
-    query_data: dict[str, object],
-    results: list[dict[str, object]],
-) -> EnvelopePayload:
-    """Build a JSON envelope."""
-    return {
-        "schema_version": SCHEMA_VERSION,
-        "command": command,
-        "query": query_data,
-        "results": results,
-    }
-
-
-def print_search_results(records: list[SearchRecord], args: SearchArgs) -> None:
-    """Emit search results in the requested format."""
-    serialize_search, _, serialize_envelope = maybe_build_pydantic()
-    query_data: dict[str, object] = {
-        "terms": list(args.terms),
-        "agents": list(args.agents),
-        "type": args.search_type,
-        "any": args.any_term,
-        "regex": args.regex,
-        "case_sensitive": args.case_sensitive,
-        "limit": args.limit,
-    }
-    if args.output_mode == "json":
-        payload = serialize_envelope(
-            "search",
-            query_data,
-            [serialize_search(record) for record in records],
-        )
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
-        return
-    if args.output_mode == "ndjson":
-        for record in records:
-            print(json.dumps(serialize_search(record), ensure_ascii=False))
-        return
-    for index, record in enumerate(records, start=1):
-        heading = f"[{index}] {record.agent} {record.kind} {record.store}"
-        details = [record.timestamp, record.model, format_display_path(record.path)]
-        print(heading)
-        print(" | ".join(detail for detail in details if detail))
-        if record.title:
-            print(record.title)
-        print()
-        print(record.text)
-        print()
-
-
 def search_progress_enabled(args: SearchArgs) -> bool:
     """Return whether search progress should be shown for ``args``."""
     human_output = args.output_mode in {"text", "ui"}
@@ -4077,47 +3739,33 @@ def build_search_progress(args: SearchArgs, *, answer_now_hint: bool = False) ->
     )
 
 
-def print_find_results(records: list[FindRecord], args: FindArgs) -> None:
-    """Emit find results in the requested format."""
-    _, serialize_find, serialize_envelope = maybe_build_pydantic()
-    query_data: dict[str, object] = {
-        "pattern": args.pattern,
-        "agents": list(args.agents),
-        "limit": args.limit,
-    }
-    if args.output_mode == "json":
-        payload = serialize_envelope(
-            "find",
-            query_data,
-            [serialize_find(record) for record in records],
-        )
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
-        return
-    if args.output_mode == "ndjson":
-        for record in records:
-            print(json.dumps(serialize_find(record), ensure_ascii=False))
-        return
-    for record in records:
-        print(f"{record.agent} {record.path_kind} {record.store}")
-        print(format_display_path(record.path))
-        print()
-
-
 def run_ui(
     home: pathlib.Path,
     query: SearchQuery,
     *,
     control: SearchControl,
+    initial_search_text: str | None = None,
 ) -> None:
     """Launch the streaming Textual explorer for ``query``.
 
     Thin wrapper that imports the real implementation from
     :mod:`agentgrep.ui.app` lazily so a bare ``import agentgrep`` never
     pulls in Textual.
+
+    ``initial_search_text`` populates the TUI search box on open so a
+    launch like ``agentgrep search --ui agent:codex bliss`` shows the
+    full query string (not just the text terms). ``None`` falls back
+    to the space-joined ``query.terms`` for compatibility with the
+    pre-query-language callers.
     """
     from agentgrep.ui.app import run_ui as _run_ui
 
-    _run_ui(home, query, control=control)
+    _run_ui(
+        home,
+        query,
+        control=control,
+        initial_search_text=initial_search_text,
+    )
 
 
 def build_streaming_ui_app(
@@ -4125,6 +3773,7 @@ def build_streaming_ui_app(
     query: SearchQuery,
     *,
     control: SearchControl,
+    initial_search_text: str | None = None,
 ) -> object:
     """Construct the streaming Textual app without entering its run loop.
 
@@ -4134,82 +3783,12 @@ def build_streaming_ui_app(
     """
     from agentgrep.ui.app import build_streaming_ui_app as _build
 
-    return _build(home, query, control=control)
-
-
-def run_search_command(args: SearchArgs) -> int:
-    """Execute ``agentgrep search``."""
-    if not args.terms and args.output_mode != "ui":
-        msg = "search requires at least one term unless --ui is used"
-        raise SystemExit(msg)
-    query = make_search_query(args)
-    if args.output_mode == "ui":
-        run_ui(pathlib.Path.home(), query, control=SearchControl())
-        return 0
-    answer_now_enabled = should_enable_answer_now(args)
-    control = SearchControl()
-    listener = AnswerNowInputListener(control) if answer_now_enabled else None
-    progress = build_search_progress(args, answer_now_hint=answer_now_enabled)
-    if listener is not None:
-        listener.start()
-    try:
-        records = run_search_query(
-            pathlib.Path.home(),
-            query,
-            progress=progress,
-            control=control,
-        )
-    finally:
-        if listener is not None:
-            listener.stop()
-    print_search_results(records, args)
-    if records:
-        return 0
-    if args.output_mode == "text":
-        print("No matches found.", file=sys.stderr)
-    return 1
-
-
-def run_find_command(args: FindArgs) -> int:
-    """Execute ``agentgrep find``."""
-    records = run_find_query(
-        pathlib.Path.home(),
-        args.agents,
-        pattern=args.pattern,
-        limit=args.limit,
+    return _build(
+        home,
+        query,
+        control=control,
+        initial_search_text=initial_search_text,
     )
-    print_find_results(records, args)
-    if records:
-        return 0
-    if args.output_mode == "text":
-        print("No matching sources found.", file=sys.stderr)
-    return 1
-
-
-def run_ui_command(args: UIArgs) -> int:
-    """Execute ``agentgrep ui``."""
-    initial_terms = tuple(args.initial_query.split()) if args.initial_query else ()
-    query = SearchQuery(
-        terms=initial_terms,
-        search_type="prompts",
-        any_term=False,
-        regex=False,
-        case_sensitive=False,
-        agents=AGENT_CHOICES,
-        limit=None,
-    )
-    run_ui(pathlib.Path.home(), query, control=SearchControl())
-    return 0
-
-
-def _is_interactive_terminal() -> bool:
-    """Return ``True`` when both stdin and stdout are TTYs.
-
-    Bare ``agentgrep`` defaults to the TUI, but pipelines (``agentgrep |
-    cat``), redirected output, and CI subprocesses have no TTY — in those
-    cases the caller almost certainly wants ``--help`` instead.
-    """
-    return sys.stdin.isatty() and sys.stdout.isatty()
 
 
 def _exit_on_sigint() -> t.NoReturn:
@@ -4230,16 +3809,14 @@ def _write_interrupt_notice() -> None:
 
 def main(argv: cabc.Sequence[str] | None = None) -> int:
     """Run the CLI."""
-    raw = list(sys.argv[1:]) if argv is None else list(argv)
-    if not raw and not _is_interactive_terminal():
-        color_mode = normalize_color_mode(argv)
-        with configured_color_environment(color_mode):
-            create_parser(color_mode).parser.print_help()
-        return 0
     try:
         parsed = parse_args(argv)
         if parsed is None:
             return 0
+        if isinstance(parsed, GrepArgs):
+            return run_grep_command(parsed)
+        if isinstance(parsed, FuzzyArgs):
+            return run_fuzzy_command(parsed)
         if isinstance(parsed, SearchArgs):
             return run_search_command(parsed)
         if isinstance(parsed, UIArgs):
@@ -4249,6 +3826,56 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
         _write_interrupt_notice()
         _exit_on_sigint()
 
+
+from agentgrep._engine import (  # noqa: E402  (re-exports must follow main definition)
+    iter_find_events,
+    iter_search_events,
+)
+from agentgrep.cli.parser import (  # noqa: E402  (re-exports must follow main definition)
+    CaseMode,
+    FindArgs,
+    FindPatternMode,
+    FindTypeFilter,
+    FuzzyAlgo,
+    FuzzyArgs,
+    FuzzyTiebreak,
+    GrepArgs,
+    ParserBundle,
+    PatternMode,
+    SearchArgs,
+    UIArgs,
+    add_common_agent_options,
+    add_output_mode_options,
+    build_docs_parser,
+    configured_color_environment,
+    create_parser,
+    normalize_color_mode,
+    parse_agents,
+    parse_args,
+    parse_output_mode,
+)
+from agentgrep.cli.render import (  # noqa: E402  (re-exports must follow main definition)
+    build_envelope,
+    build_grep_query,
+    filter_find_records,
+    format_grep_record,
+    fuzzy_filter_lines,
+    maybe_build_pydantic,
+    print_find_results,
+    print_grep_results,
+    print_search_results,
+    run_find_command,
+    run_fuzzy_command,
+    run_grep_command,
+    run_search_command,
+    run_ui_command,
+    serialize_find_record,
+    serialize_grep_record,
+    serialize_search_record,
+    serialize_source_handle,
+    stream_find_results,
+    stream_grep_results,
+)
 
 if __name__ == "__main__":
     raise SystemExit(main())

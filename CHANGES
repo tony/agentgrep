@@ -40,6 +40,73 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
+The CLI grows from three subcommands to five (`grep`, `fuzzy`,
+plus fd-shaped `find` flags), threads a Lucene-style query
+language through `search`/`grep`/`find`, and swaps the engine
+for a streaming event-stream producer the CLI and TUI consume
+live.
+
+### Breaking changes
+
+#### Bare `agentgrep <terms>` no longer auto-runs `search`
+
+Spell the subcommand out: `agentgrep search bliss`. Bare
+`agentgrep` (no args) now prints a directory of subcommands.
+
+#### `find <PATTERN>` is regex by default
+
+fd parity. Use `-F` for literal substring.
+
+### What's new
+
+#### New subcommand: `grep`
+
+rg/ag-shaped content search. Flags: `--json` / `--ndjson` /
+`--vimgrep` / `--column` / `-c` / `-l` / `-L` / `-o` / `-n` /
+`-F` / `-E` / `-w`. grep-faithful exit codes.
+
+#### New subcommand: `fuzzy`
+
+`fzf --filter`-shaped non-interactive ranking over stdin.
+Extended-search syntax, `--algo` / `--tiebreak`, and
+field-scoped `--delimiter` / `--nth` / `--with-nth`.
+
+#### fd-shaped `find` flags
+
+`-g` / `-F` / `--exact`, `-t` / `--type`, `-e` / `--extension`,
+`-l` / `--list-details`, `-0` / `--print0`, `--full-path`. One
+path per line by default; `-g` matches basename.
+
+#### Query language across `search` / `grep` / `find`
+
+Field predicates (`agent:`, `path:`, `mtime:`, `timestamp:`,
+`model:`, `role:`, `type:`, `store:`, `adapter_id:`, `text:`),
+`AND` / `OR` / `NOT` with parens, comparison + range operators,
+ISO and relative date literals. Source-layer fields prune
+before file I/O.
+
+#### `--ui` overlay on every subcommand
+
+Opens the Textual explorer pre-filled with the same query; the
+explorer accepts the query language on re-search too. The TUI
+moves behind the explicit `agentgrep ui` subcommand.
+
+#### `--no-progress` everywhere
+
+Alias for `--progress=never` on every subcommand; `find` also
+gains the full `--progress {auto,always,never}` selector.
+
+#### Headless event-stream engine
+
+`iter_search_events` and `iter_find_events` yield typed
+pydantic events. CLI text + NDJSON output is live-streaming.
+
+### Development
+
+- Source split: argparse into `agentgrep.cli.parser`, output
+  rendering into `agentgrep.cli.render`. Re-exports preserved.
+
+
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
 ### Documentation

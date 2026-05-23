@@ -9,8 +9,19 @@ and history archives from a terminal. It wraps the same read-only
 discovery and parsing layer the MCP server exposes — search, find
 stores, filter by agent — and lets you pipe everything through
 `--json` or `--ndjson` so any script or non-MCP agent can consume the
-results. Bare `agentgrep` (no subcommand) lands in an interactive
-Textual explorer for browsing without piping.
+results. Bare `agentgrep` (no subcommand) prints a colorized
+directory of choices listing every subcommand with example
+invocations — the same `tmuxp` / `vcspull` pattern. To open the
+Textual explorer directly, use `agentgrep ui`.
+
+```{note}
+Versions before 0.1.0a5 silently rewrote `agentgrep <terms>` as
+`agentgrep search <terms>` and bare `agentgrep` as `agentgrep ui`.
+Both shortcuts are gone — every subcommand must be named
+explicitly. `agentgrep bliss` is now an `invalid choice` error
+rather than a search; reach for `agentgrep search bliss` or
+`agentgrep grep bliss` depending on the matching style you want.
+```
 
 ```{cli-install}
 ```
@@ -27,16 +38,36 @@ Browse prompts and history interactively in the Textual explorer.
 :::{grid-item-card} agentgrep search
 :link: search
 :link-type: doc
-Search prompts and history across every configured agent.
+Search prompts and history with sensible serene-DX defaults.
+:::
+
+:::{grid-item-card} agentgrep grep
+:link: grep
+:link-type: doc
+Content search with rg/ag-shaped flags, output, and exit codes.
 :::
 
 :::{grid-item-card} agentgrep find
 :link: find
 :link-type: doc
-Discover the on-disk stores agentgrep can read.
+Enumerate on-disk stores with fd-shaped flag grammar.
+:::
+
+:::{grid-item-card} agentgrep fuzzy
+:link: fuzzy
+:link-type: doc
+Non-interactive fuzzy match on stdin, shaped like `fzf --filter`.
 :::
 
 ::::
+
+## --ui overlay
+
+Every search-shaped subcommand accepts `--ui`: pass it to open the
+Textual explorer pre-filled with the same query you'd otherwise run
+as a one-shot. This is the `tig`-shaped overlay model — `agentgrep
+grep -i foo --ui` is to `agentgrep grep -i foo` what `tig log` is to
+`git log`. Same args, same query semantics, different presentation.
 
 ## Use from another agent
 
@@ -60,17 +91,16 @@ surface, but exposed as MCP tools with typed schemas.
 
 ## Examples
 
-`search` is the default subcommand, so `agentgrep bliss` is equivalent
-to `agentgrep search bliss`:
+Search prompts with sensible defaults:
 
 ```console
-$ agentgrep bliss
+$ agentgrep search bliss
 ```
 
 Combine multiple terms with an agent filter:
 
 ```console
-$ agentgrep serene bliss --agent codex
+$ agentgrep search serene bliss --agent codex
 ```
 
 Stream history matches as NDJSON:
@@ -83,6 +113,12 @@ List stores for one agent as JSON:
 
 ```console
 $ agentgrep find cursor --json
+```
+
+Open the directory of choices:
+
+```console
+$ agentgrep
 ```
 
 ## Command: `agentgrep`
@@ -101,5 +137,7 @@ $ agentgrep find cursor --json
 
 ui
 search
+grep
 find
+fuzzy
 ```

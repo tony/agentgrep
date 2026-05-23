@@ -282,14 +282,23 @@ def test_search_without_terms_prints_help() -> None:
     assert "agentgrep search bliss" in completed.stdout
 
 
-def test_find_without_pattern_prints_help() -> None:
-    completed = run_agentgrep_cli("find")
+def test_find_without_pattern_lists_every_source(tmp_path: pathlib.Path) -> None:
+    """``agentgrep find`` with no pattern lists every discovered source (fd parity)."""
+    session_dir = tmp_path / ".codex" / "sessions" / "2026" / "05"
+    session_dir.mkdir(parents=True)
+    (session_dir / "alpha.jsonl").write_text(
+        '{"type":"response_item","payload":{"role":"user","content":"hi"}}\n',
+    )
+    (session_dir / "beta.jsonl").write_text(
+        '{"type":"response_item","payload":{"role":"user","content":"hi"}}\n',
+    )
+    completed = run_agentgrep_cli("find", "--no-progress", env={"HOME": str(tmp_path)})
 
     assert completed.returncode == 0
-    assert "usage: agentgrep find" in completed.stdout
-    assert "examples:" in completed.stdout
-    assert "agentgrep find codex" in completed.stdout
-    assert "codex history_file" not in completed.stdout
+    assert "alpha.jsonl" in completed.stdout
+    assert "beta.jsonl" in completed.stdout
+    # No help banner.
+    assert "usage: agentgrep find" not in completed.stdout
 
 
 def test_help_examples_are_present_for_help_flags() -> None:
@@ -314,48 +323,6 @@ def test_build_docs_parser_returns_root_parser() -> None:
     assert parser.prog == "agentgrep"
 
 
-def test_search_is_default_verb(tmp_path: pathlib.Path) -> None:
-    completed = run_agentgrep_cli(
-        "zzz_default_verb_no_match",
-        env={"HOME": str(tmp_path)},
-    )
-
-    assert "search examples:" not in completed.stdout
-    assert "find examples:" not in completed.stdout
-    assert completed.returncode == 1
-    assert "No matches found." in completed.stderr
-
-
-def test_default_verb_works_after_global_color_flag(tmp_path: pathlib.Path) -> None:
-    completed = run_agentgrep_cli(
-        "--color",
-        "never",
-        "zzz_default_verb_no_match",
-        env={"HOME": str(tmp_path)},
-    )
-
-    assert "search examples:" not in completed.stdout
-    assert completed.returncode == 1
-
-
-def test_inject_default_subcommand_empty_returns_ui() -> None:
-    """Bare ``agentgrep`` should default to the ``ui`` subcommand."""
-    agentgrep = t.cast("t.Any", load_agentgrep_module())
-
-    assert list(agentgrep.inject_default_subcommand([])) == ["ui"]
-
-
-def test_inject_default_subcommand_color_only_returns_ui() -> None:
-    """``agentgrep --color never`` should also default to ``ui``."""
-    agentgrep = t.cast("t.Any", load_agentgrep_module())
-
-    assert list(agentgrep.inject_default_subcommand(["--color", "never"])) == [
-        "--color",
-        "never",
-        "ui",
-    ]
-
-
 def test_parse_args_ui_subcommand_returns_ui_args() -> None:
     """``agentgrep ui`` parses to a ``UIArgs`` with empty initial query."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
@@ -376,14 +343,59 @@ def test_parse_args_ui_subcommand_with_initial_query() -> None:
     assert args.initial_query == "bliss"
 
 
-def test_parse_args_empty_argv_returns_ui_args() -> None:
-    """``parse_args([])`` returns a ``UIArgs`` via the default subcommand."""
+def test_parse_args_empty_argv_returns_none_and_prints_help(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``parse_args([])`` prints the directory-of-choices help and returns None."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
 
     args = agentgrep.parse_args([])
 
-    assert isinstance(args, agentgrep.UIArgs)
-    assert args.initial_query == ""
+    assert args is None
+    captured = capsys.readouterr().out
+    assert "agentgrep" in captured
+    assert "{grep,search,find,fuzzy,ui}" in captured or "grep" in captured
+
+
+def test_main_with_empty_argv_prints_root_help(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``main([])`` prints the themed directory of choices and exits 0.
+
+    The vcspull/tmuxp-style banner must surface every subcommand's
+    example block — assert on the stable per-block headers rather than
+    on the full rendered text so wording tweaks don't churn this test.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+
+    exit_code = agentgrep.main([])
+
+    assert exit_code == 0
+    captured = capsys.readouterr().out
+    assert "grep examples:" in captured
+    assert "fuzzy examples:" in captured
+    assert "search examples:" in captured
+    assert "find examples:" in captured
+    assert "ui examples:" in captured
+
+
+def test_main_with_unknown_positional_errors(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``main(['bliss'])`` exits 2 with argparse 'invalid choice' (vcspull parity).
+
+    Locks in the deliberate removal of the implicit-search shorthand:
+    ``agentgrep bliss`` no longer becomes ``agentgrep search bliss``.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+
+    with pytest.raises(SystemExit) as exc_info:
+        _ = agentgrep.main(["bliss"])
+
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert "invalid choice" in captured.err
+    assert "bliss" in captured.err
 
 
 def test_search_progress_mode_parses_default_and_explicit() -> None:

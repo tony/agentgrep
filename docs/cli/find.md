@@ -8,25 +8,88 @@ transcripts, Cursor SQLite databases, Gemini history. Use it to
 inspect what agentgrep sees before running a search, or to feed a
 catalog into another tool.
 
+The flag grammar mirrors `fd`: the positional PATTERN is treated as a
+regex by default, with `-F` (literal), `-g` (glob), and `--exact`
+modifiers; `-t` filters by record kind; `-e` filters by file
+extension; `-l` switches to a long-format output; `-0` separates
+output with NUL for `xargs -0` consumers. `-g` matches against the
+file basename by default; `--full-path` opts into matching the
+absolute path (fd's `-p`).
+
+The default output is **one path per line** — the fd-faithful
+shape. Use `-l/--list-details` to add metadata (agent, kind, store,
+adapter_id) as tab-separated columns.
+
 ## Examples
 
-List every store agentgrep can read for one agent:
+List every store agentgrep can read (no positional pattern needed —
+fd parity):
+
+```console
+$ agentgrep find
+```
+
+Narrow to one agent:
 
 ```console
 $ agentgrep find codex
 ```
 
-Filter by a path substring within an agent:
+Filter by literal substring (the legacy default before fd alignment):
 
 ```console
-$ agentgrep find sessions --agent codex
+$ agentgrep find -F sessions
 ```
 
-Emit the catalog as JSON for downstream tools:
+Glob the file basename:
 
 ```console
-$ agentgrep find cursor --json
+$ agentgrep find -g '*.jsonl'
 ```
+
+Glob the absolute path (fd's `-p` parity):
+
+```console
+$ agentgrep find -g '*/sessions/*.jsonl' --full-path
+```
+
+Restrict to one record kind and one file extension:
+
+```console
+$ agentgrep find -t prompts -e jsonl
+```
+
+Long format for column-aware downstream tools:
+
+```console
+$ agentgrep find -l
+```
+
+NUL-separated output for `xargs -0`:
+
+```console
+$ agentgrep find -0 | xargs -0 -n1 ls -l
+```
+
+Open the Textual explorer pre-filled with the find query:
+
+```console
+$ agentgrep find -t prompts --ui
+```
+
+Silence the source-discovery spinner:
+
+```console
+$ agentgrep find --no-progress codex
+```
+
+## Live streaming
+
+`find` consumes the {ref}`library-event-stream` directly — text,
+NDJSON, and `--print0` output emit each path as the engine discovers
+it, with stdout flushed when stdout is a TTY. `--json` and
+`--list-details` buffer because their output shape benefits from
+the full record list up front.
 
 ## Command
 
@@ -80,3 +143,27 @@ $ agentgrep find --agent claude --agent codex
 
 Pass `--agent all` (or omit the flag) to enumerate every available
 backend.
+
+## Query language
+
+`find` accepts the same Lucene-style field syntax as the other
+subcommands. Source-level field predicates (`agent:`, `path:`,
+`store:`, `mtime:`) prune sources before they're emitted:
+
+```console
+$ agentgrep find agent:codex
+```
+
+```console
+$ agentgrep find 'path:~/.codex agent:codex'
+```
+
+```console
+$ agentgrep find 'mtime:>2026-01-01'
+```
+
+Record-level fields (`type:`, `timestamp:`, `model:`, `role:`)
+are accepted by the parser but don't filter find output since
+find emits one record per source. Use `agentgrep search` if you
+need record-level filtering. See {ref}`library-query-language`
+for the full grammar.
