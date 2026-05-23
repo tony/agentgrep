@@ -12,6 +12,7 @@ from __future__ import annotations
 import importlib.util
 import math
 import pathlib
+import subprocess
 import sys
 import typing as t
 
@@ -556,7 +557,6 @@ def test_select_targets_converts_git_error_to_bad_parameter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A failing ``git rev-parse`` surfaces as BadParameter, not a traceback."""
-    import subprocess
 
     def _fail(
         **_kwargs: t.Any,
