@@ -1,7 +1,7 @@
 [project]
 name = "agentgrep"
 version = "0.1.0a5"
-description = "Read-only search for local AI agent prompts and history (Codex, Claude, Cursor)"
+description = "Read-only search for local AI agent prompts and history (Codex, Claude Code, Cursor, Gemini)"
 requires-python = ">=3.14,<4.0"
 authors = [
   {name = "Tony Narlock", email = "tony@git-pull.com"}
