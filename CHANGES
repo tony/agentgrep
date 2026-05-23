@@ -40,11 +40,11 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
-agentgrep 0.1.0a5 grows the CLI from three subcommands to five
-(`grep`, `fuzzy`, plus fd-shaped `find` flags), threads a
-Lucene-style query language through `search`/`grep`/`find`, and
-swaps the engine for a streaming event-stream producer the CLI
-and TUI consume live.
+The CLI grows from three subcommands to five (`grep`, `fuzzy`,
+plus fd-shaped `find` flags), threads a Lucene-style query
+language through `search`/`grep`/`find`, and swaps the engine
+for a streaming event-stream producer the CLI and TUI consume
+live.
 
 ### Breaking changes
 
