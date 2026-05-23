@@ -887,16 +887,18 @@ def format_grep_record(record: agentgrep.SearchRecord, args: GrepArgs) -> str:
 def print_grep_results(records: list[agentgrep.SearchRecord], args: GrepArgs) -> int:
     """Emit grep results and return the rg-style exit code."""
     if args.invert_match:
-        # The engine returns matches; invert by recomputing against the raw
-        # candidate set is non-trivial. As a v1 simplification, --invert-match
-        # is honored only at the count-only / files-without-match level, where
-        # the question collapses to "did anything match?". A future commit
-        # can fold inversion deeper into the engine.
         if args.count_only:
             print("0" if records else "1")
             return 1 if records else 0
         if args.files_without_match:
             return _print_files_without_match(args)
+        print(
+            "error: --invert-match/-v is supported with -c and -L only; "
+            "engine-level line inversion is tracked at "
+            "https://github.com/tony/agentgrep/issues/8",
+            file=sys.stderr,
+        )
+        return 2
 
     if args.output_mode == "json":
         events = list(_iter_grep_json_events(records, args))
