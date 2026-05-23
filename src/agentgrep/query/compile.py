@@ -668,19 +668,23 @@ def _path_match(path: str, pattern: str) -> bool:
 def _text_matches(record: agentgrep.SearchRecord, needle: str) -> bool:
     """Case-insensitive substring match against the record's text fields.
 
-    Mirrors :func:`agentgrep.matches_text` shape — we look at the
-    primary text plus title and role so a query like
-    `bliss` finds matches in any of them. The engine's existing
-    haystack helper produces the canonical surface; we recreate
-    the substring check here so the record predicate stays
-    self-contained.
+    Checks text, title, role, model, and path — the same fields that
+    :func:`agentgrep.build_search_haystack` concatenates for the
+    legacy :func:`agentgrep.matches_text` path. Keeping the surfaces
+    aligned prevents a combined field+text query (``agent:codex bliss``)
+    from silently dropping records where the text term appears only in
+    ``model`` or ``path``.
     """
     needle_cf = needle.casefold()
     if needle_cf in record.text.casefold():
         return True
     if record.title is not None and needle_cf in record.title.casefold():
         return True
-    return record.role is not None and needle_cf in record.role.casefold()
+    if record.role is not None and needle_cf in record.role.casefold():
+        return True
+    if record.model is not None and needle_cf in record.model.casefold():
+        return True
+    return needle_cf in str(record.path).casefold()
 
 
 def _mtime_as_datetime(mtime_ns: int) -> dt.datetime | None:

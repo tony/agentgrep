@@ -190,6 +190,61 @@ def test_record_predicate_filters_after_source_predicate(
     assert emitted[0].model == "claude-3-sonnet"
 
 
+def test_text_matches_finds_needle_in_model_and_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Text term in a combined query matches against model and path fields.
+
+    ``_text_matches`` must check the same fields as
+    ``build_search_haystack``: text, title, role, model, and path.
+    A record with the term only in ``model`` should survive the
+    record predicate.
+    """
+    source = _make_source(agent="codex", path="/tmp/codex.jsonl")
+    # "sonnet" appears only in model, not in text/title/role
+    record = _make_record(
+        agent="codex",
+        text="nothing relevant here",
+        model="claude-sonnet",
+    )
+
+    def _stub_iter(
+        source: agentgrep.SourceHandle,
+    ) -> t.Iterator[agentgrep.SearchRecord]:
+        yield record
+
+    monkeypatch.setattr(
+        agentgrep,
+        "discover_sources",
+        lambda *args, **kwargs: [source],
+    )
+    monkeypatch.setattr(
+        agentgrep,
+        "plan_search_sources",
+        lambda query, sources, backends, **kwargs: list(sources),
+    )
+    monkeypatch.setattr(agentgrep, "iter_source_records", _stub_iter)
+
+    compiled = _compile_query("agent:codex sonnet")
+    query = agentgrep.SearchQuery(
+        terms=("sonnet",),
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=agentgrep.AGENT_CHOICES,
+        limit=None,
+        compiled=compiled,
+    )
+
+    emitted = [
+        event.record
+        for event in agentgrep.iter_search_events(pathlib.Path.home(), query)
+        if isinstance(event, ag_events.RecordEmitted)
+    ]
+    assert len(emitted) == 1, "_text_matches should find 'sonnet' in record.model"
+
+
 class EngineRoundtripCase(t.NamedTuple):
     """Parametrized case for end-to-end query → records via the engine."""
 
