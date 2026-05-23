@@ -36,9 +36,13 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a5 (Yet to be released)
+## agentgrep 0.1.0a6 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
+
+<!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a5 (2026-05-23)
 
 The CLI grows from three subcommands to five (`grep`, `fuzzy`,
 plus fd-shaped `find` flags), threads a Lucene-style query
@@ -101,14 +105,6 @@ gains the full `--progress {auto,always,never}` selector.
 `iter_search_events` and `iter_find_events` yield typed
 pydantic events. CLI text + NDJSON output is live-streaming.
 
-### Development
-
-- Source split: argparse into `agentgrep.cli.parser`, output
-  rendering into `agentgrep.cli.render`. Re-exports preserved.
-
-
-<!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
-
 ### Documentation
 
 - History page renders the changelog inline. (#9)
@@ -123,6 +119,9 @@ pydantic events. CLI text + NDJSON output is live-streaming.
 Cross-commit `hyperfine` benchmark harness for catching
 performance regressions on a branch. Dev-only; not shipped in
 the wheel. See {ref}`benchmark` for invocation recipes.
+
+- Source split: argparse into `agentgrep.cli.parser`, output
+  rendering into `agentgrep.cli.render`. Re-exports preserved.
 
 ## agentgrep 0.1.0a4 (2026-05-21)
 
