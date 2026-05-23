@@ -441,7 +441,6 @@ def test_measurement_with_no_samples_returns_nan_for_stats() -> None:
 
 # ---------------------------------------------------------------------------
 # Regression: _parse_percentile_labels + _select_bench_names reject bad input
-# (was: typer.MissingParameter AttributeError in the except clause)
 # ---------------------------------------------------------------------------
 
 
@@ -501,8 +500,6 @@ def test_md_escape_neutralises_pipe_in_subject() -> None:
 
 # ---------------------------------------------------------------------------
 # Regression: main() exit-code propagation
-# (was: standalone_mode=False converted typer.Exit to return value,
-# but main() never captured it — always returned 0)
 # ---------------------------------------------------------------------------
 
 
@@ -549,7 +546,6 @@ def test_main_returns_expected_exit_code(
 
 # ---------------------------------------------------------------------------
 # Regression: _select_targets converts CalledProcessError → BadParameter
-# (was: uncaught traceback on bad git refs)
 # ---------------------------------------------------------------------------
 
 
@@ -583,8 +579,6 @@ def test_select_targets_converts_git_error_to_bad_parameter(
 
 # ---------------------------------------------------------------------------
 # Regression: aggregate table has no duplicate max column
-# (was: render_rich added add_column("max") on top of the one from
-# percentile_labels, doubling the column in the header)
 # ---------------------------------------------------------------------------
 
 
@@ -629,7 +623,6 @@ def test_render_rich_no_duplicate_max_column() -> None:
 
 # ---------------------------------------------------------------------------
 # Regression: load_config rejects malformed TOML, extra keys, missing fields
-# (was: uncaught pydantic.ValidationError / tomllib.TOMLDecodeError tracebacks)
 # ---------------------------------------------------------------------------
 
 
@@ -679,8 +672,6 @@ def test_load_config_rejects_invalid_toml(
 
 # ---------------------------------------------------------------------------
 # Regression: Settings.runs=0 rejected by Field(ge=1)
-# (was: --runs 0 deadlocked the hyperfine path because the constraint
-# wasn't enforced — model_copy(update=...) skipped validators)
 # ---------------------------------------------------------------------------
 
 
@@ -700,7 +691,6 @@ def test_load_config_rejects_runs_zero_via_cli_overrides(
 
 # ---------------------------------------------------------------------------
 # Regression: cli_overrides bypass pydantic validators
-# (was: model_copy(update=...) silently skipped Field(ge=…) constraints)
 # ---------------------------------------------------------------------------
 
 
@@ -748,7 +738,6 @@ def test_load_config_rejects_invalid_cli_overrides(
 
 # ---------------------------------------------------------------------------
 # Regression: --output pre-flight rejects bad paths before git checkout
-# (was: FileNotFoundError / IsADirectoryError traceback at the end of a run)
 # ---------------------------------------------------------------------------
 
 
