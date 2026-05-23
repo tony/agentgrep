@@ -2,7 +2,7 @@
 
 # agentgrep
 
-Read-only search for local AI agent prompts and history across Codex, Claude Code, and Cursor.
+Read-only search for local AI agent prompts and history across Codex, Claude Code, Cursor, and Gemini.
 
 agentgrep has two entry points: a terminal CLI for direct search, and a FastMCP server for clients that want structured tools, resources, and prompts. Both surfaces use the same read-only discovery and parsing layer.
 
