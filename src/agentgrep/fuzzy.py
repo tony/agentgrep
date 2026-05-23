@@ -94,6 +94,24 @@ def fuzzy_score(
     simpler fallback. Both currently dispatch to :mod:`rapidfuzz`'s
     quality-blend ratio so they remain functionally equivalent until a
     user-visible behavioral difference is justified.
+
+    Parameters
+    ----------
+    query : str
+        The search query to match against ``line``.
+    line : str
+        The candidate text to score.
+    case : CaseSensitivity
+        Case handling: ``"smart"`` (case-insensitive unless query
+        contains uppercase), ``"ignore"``, or ``"respect"``.
+    algo : FuzzyAlgo
+        Algorithm selector: ``"v2"`` (WRatio) or ``"v1"``
+        (partial_ratio).
+
+    Returns
+    -------
+    float
+        Match quality in ``[0.0, 100.0]``.
     """
     if not query:
         return 0.0
@@ -120,6 +138,22 @@ def extended_match(
 
     A line matches when every positive token's predicate is satisfied
     AND no negative token's predicate is.
+
+    Parameters
+    ----------
+    query : str
+        Extended-search query string (whitespace-separated tokens
+        with optional ``!`` / ``^`` / ``$`` / ``'`` prefixes).
+    line : str
+        Candidate text to evaluate.
+    case : CaseSensitivity
+        Case handling mode (see :func:`fuzzy_score`).
+
+    Returns
+    -------
+    bool
+        ``True`` when all positive tokens match and no negative
+        tokens match.
 
     Examples
     --------
@@ -187,6 +221,30 @@ def rank_lines(
     With ``sort=True`` (default) the iterator yields the highest-scoring
     line first; otherwise it preserves the input order. ``limit`` caps
     the number of yielded results when set.
+
+    Parameters
+    ----------
+    query : str
+        The search query (plain or extended-search syntax).
+    lines : collections.abc.Iterable[str]
+        Candidate lines to score and filter.
+    case : CaseSensitivity
+        Case handling mode (see :func:`fuzzy_score`).
+    algo : FuzzyAlgo
+        Algorithm selector (see :func:`fuzzy_score`).
+    extended : bool
+        When ``True``, apply :func:`extended_match` as a pre-filter
+        before scoring. When ``False``, the fuzzy score alone gates.
+    sort : bool
+        When ``True``, yield highest-scoring lines first. When
+        ``False``, preserve the input order.
+    limit : int or None
+        Cap on the number of yielded results. ``None`` yields all.
+
+    Yields
+    ------
+    tuple[str, float]
+        ``(line, score)`` pairs with ``score > 0.0``.
     """
     candidates: list[tuple[str, float]] = []
     for line in lines:
