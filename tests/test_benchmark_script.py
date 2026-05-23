@@ -625,3 +625,53 @@ def test_render_rich_no_duplicate_max_column() -> None:
     agg_section = text[text.index("Distribution across") :]
     header_line = next(line for line in agg_section.splitlines() if "min" in line and "avg" in line)
     assert header_line.count("max") == 1
+
+
+# ---------------------------------------------------------------------------
+# Regression: load_config rejects malformed TOML, extra keys, missing fields
+# (was: uncaught pydantic.ValidationError / tomllib.TOMLDecodeError tracebacks)
+# ---------------------------------------------------------------------------
+
+
+class ConfigErrorCase(t.NamedTuple):
+    """One load_config error expectation."""
+
+    test_id: str
+    toml_content: str
+    match: str
+
+
+CONFIG_ERROR_CASES: tuple[ConfigErrorCase, ...] = (
+    ConfigErrorCase(
+        test_id="malformed-toml",
+        toml_content="[settings",
+        match="failed to parse",
+    ),
+    ConfigErrorCase(
+        test_id="extra-settings-key-rejected",
+        toml_content='[settings]\nmystery = "x"\n',
+        match="Extra inputs are not permitted",
+    ),
+    ConfigErrorCase(
+        test_id="missing-required-bench-field",
+        toml_content='[bench.grep]\ndefault_query = "x"\n',
+        match="Field required",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    CONFIG_ERROR_CASES,
+    ids=[c.test_id for c in CONFIG_ERROR_CASES],
+)
+def test_load_config_rejects_invalid_toml(
+    case: ConfigErrorCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Malformed TOML and schema violations surface as BadParameter."""
+    toml_file = tmp_path / "benchmark.toml"
+    toml_file.write_text(case.toml_content)
+    missing_local = tmp_path / "no-local.toml"
+    with pytest.raises(typer.BadParameter, match=case.match):
+        benchmark.load_config(config_path=toml_file, local_path=missing_local)
