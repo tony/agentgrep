@@ -36,15 +36,9 @@ from agentgrep import (
     SearchType,
     create_themed_formatter,
 )
-from agentgrep.query import (
-    CompiledQuery,
-    QueryCompileError,
-    QueryParseError,
-    compile_query,
-    default_registry,
-    fields_in_ast,
-    parse_query,
-)
+
+if t.TYPE_CHECKING:
+    from agentgrep.query import CompiledQuery
 
 CaseMode = t.Literal["smart", "ignore", "respect"]
 PatternMode = t.Literal["regex", "fixed", "word"]
@@ -796,6 +790,15 @@ def _maybe_compile_query(
     """
     if not any(":" in token for token in positionals):
         return None, tuple(positionals)
+    from agentgrep.query import (
+        QueryCompileError,
+        QueryParseError,
+        compile_query,
+        default_registry,
+        fields_in_ast,
+        parse_query,
+    )
+
     query_text = " ".join(positionals)
     registry = default_registry()
     try:
@@ -838,11 +841,11 @@ def _check_for_mangled_field_predicate(
     points at the workarounds.
 
     Scans for any argv element matching ``-IDENT:`` where ``IDENT`` is
-    a known field name in :func:`default_registry`. Skips tokens that
-    appear after a ``--`` separator (those are intentional
-    positionals, not options).
+    a known field name in :func:`~agentgrep.query.default_registry`.
+    Skips tokens that appear after a ``--`` separator (those are
+    intentional positionals, not options).
     """
-    registry = default_registry()
+    registry = None
     after_double_dash = False
     for arg in argv:
         if after_double_dash:
@@ -857,6 +860,10 @@ def _check_for_mangled_field_predicate(
         field_part, _, _ = arg[1:].partition(":")
         if not field_part:
             continue
+        if registry is None:
+            from agentgrep.query import default_registry
+
+            registry = default_registry()
         if registry.get(field_part) is None:
             continue
         message = (
