@@ -15,7 +15,7 @@ benchmark definitions live in ``scripts/benchmark.toml`` (committed) and may
 be overridden per-machine via ``scripts/benchmark.local.toml`` (gitignored).
 
 Run ``uv run scripts/benchmark.py --help`` for the subcommand list, or see
-``docs/library/benchmark.md`` for invocation recipes.
+``docs/dev/benchmark.md`` for invocation recipes.
 """
 
 from __future__ import annotations
@@ -639,10 +639,29 @@ def _checkout(sha: str, repo: pathlib.Path) -> None:
     )
 
 
-def _maybe_sync(settings: Settings, repo: pathlib.Path) -> None:
+def _maybe_sync(
+    settings: Settings,
+    repo: pathlib.Path,
+) -> subprocess.CompletedProcess[str] | None:
+    """Run the configured sync command.
+
+    Parameters
+    ----------
+    settings : Settings
+        Harness settings; ``sync_command`` is the shell command to run.
+    repo : pathlib.Path
+        Repository root (cwd for the subprocess).
+
+    Returns
+    -------
+    subprocess.CompletedProcess[str] or None
+        ``None`` when ``settings.sync_command`` is empty (sync disabled).
+        Otherwise the completed process so the caller can inspect
+        ``returncode`` and decide whether to abort the commit.
+    """
     if not settings.sync_command.strip():
-        return
-    subprocess.run(
+        return None
+    return subprocess.run(
         shlex.split(settings.sync_command),
         cwd=repo,
         check=False,
@@ -708,7 +727,36 @@ def _run_one_commit(
         return results
 
     if not no_sync and not dry_run:
-        _maybe_sync(config.settings, repo)
+        sync_result = _maybe_sync(config.settings, repo)
+        if sync_result is not None and sync_result.returncode != 0:
+            # `uv sync` (or whatever sync_command resolves to) failed —
+            # the venv may be in a half-resolved state, so don't run any
+            # benches against it. Mark every bench for this commit as
+            # sync_fail so the user sees the failure in the row instead
+            # of a misleading "ok" with stale samples.
+            error = (sync_result.stderr or sync_result.stdout or "").strip() or "sync failed"
+            notify(
+                f"[{commit.short_sha}] sync failed (exit "
+                f"{sync_result.returncode}); skipping benches.",
+            )
+            for name in bench_names:
+                bench = config.bench[name]
+                results.append(
+                    Measurement(
+                        sha=commit.sha,
+                        short_sha=commit.short_sha,
+                        subject=commit.subject,
+                        command_name=name,
+                        command_string=bench.command,
+                        samples=[],
+                        status="sync_fail",
+                        error=(
+                            f"`{config.settings.sync_command}` exited "
+                            f"{sync_result.returncode}: {error[:300]}"
+                        ),
+                    ),
+                )
+            return results
 
     venv = (repo / config.settings.venv).resolve()
     for name in bench_names:

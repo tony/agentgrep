@@ -12,10 +12,12 @@ from __future__ import annotations
 import importlib.util
 import math
 import pathlib
+import subprocess
 import sys
 import typing as t
 
 import pytest
+import typer
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 _SCRIPT = _REPO_ROOT / "scripts" / "benchmark.py"
@@ -437,6 +439,53 @@ def test_measurement_with_no_samples_returns_nan_for_stats() -> None:
     assert m.stddev_s == 0.0
 
 
+# ---------------------------------------------------------------------------
+# Regression: _parse_percentile_labels + _select_bench_names reject bad input
+# ---------------------------------------------------------------------------
+
+
+class ValidationRejectCase(t.NamedTuple):
+    """One argument-validation rejection expectation."""
+
+    test_id: str
+    fn_name: str
+    args: tuple[t.Any, ...]
+    match: str
+
+
+VALIDATION_REJECT_CASES: tuple[ValidationRejectCase, ...] = (
+    ValidationRejectCase(
+        test_id="bad-percentile-label",
+        fn_name="_parse_percentile_labels",
+        args=("min,wat,p99",),
+        match="unknown stat label",
+    ),
+    ValidationRejectCase(
+        test_id="unknown-bench-name",
+        fn_name="_select_bench_names",
+        args=(
+            benchmark.Config(
+                bench={"grep": benchmark.BenchCommand(command="echo x")},
+            ),
+            "bogus",
+        ),
+        match="unknown benchmark name",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    VALIDATION_REJECT_CASES,
+    ids=[c.test_id for c in VALIDATION_REJECT_CASES],
+)
+def test_validation_rejects_bad_input(case: ValidationRejectCase) -> None:
+    """Argument-validation helpers raise BadParameter on invalid input."""
+    fn = getattr(benchmark, case.fn_name)
+    with pytest.raises(typer.BadParameter, match=case.match):
+        fn(*case.args)
+
+
 def test_md_escape_neutralises_pipe_in_subject() -> None:
     """A subject containing a literal ``|`` would otherwise split the markdown row."""
     raw = "feat: support a|b switch with newline\nin subject"
@@ -447,3 +496,262 @@ def test_md_escape_neutralises_pipe_in_subject() -> None:
     # Backslashes themselves are doubled so they round-trip through the
     # markdown lexer.
     assert benchmark._md_escape("a\\b") == "a\\\\b"
+
+
+# ---------------------------------------------------------------------------
+# Regression: main() exit-code propagation
+# ---------------------------------------------------------------------------
+
+
+class MainExitCodeCase(t.NamedTuple):
+    """One main() exit-code expectation."""
+
+    test_id: str
+    argv: list[str]
+    expected_rc: int
+
+
+MAIN_EXIT_CODE_CASES: tuple[MainExitCodeCase, ...] = (
+    MainExitCodeCase(
+        test_id="show-config-returns-0",
+        argv=["show-config"],
+        expected_rc=0,
+    ),
+    MainExitCodeCase(
+        test_id="no-benches-returns-2",
+        argv=["run", "--config", "__EMPTY_TOML__", "--no-progress"],
+        expected_rc=2,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    MAIN_EXIT_CODE_CASES,
+    ids=[c.test_id for c in MAIN_EXIT_CODE_CASES],
+)
+def test_main_returns_expected_exit_code(
+    case: MainExitCodeCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """main() propagates typer.Exit(code=N) as an int return, not 0."""
+    argv = list(case.argv)
+    if "__EMPTY_TOML__" in argv:
+        empty = tmp_path / "empty.toml"
+        empty.write_text("")
+        argv[argv.index("__EMPTY_TOML__")] = str(empty)
+    rc = benchmark.main(argv)
+    assert rc == case.expected_rc
+
+
+# ---------------------------------------------------------------------------
+# Regression: _select_targets converts CalledProcessError → BadParameter
+# ---------------------------------------------------------------------------
+
+
+def test_select_targets_converts_git_error_to_bad_parameter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failing ``git rev-parse`` surfaces as BadParameter, not a traceback."""
+
+    def _fail(
+        **_kwargs: t.Any,
+    ) -> t.NoReturn:
+        raise subprocess.CalledProcessError(
+            returncode=128,
+            cmd=("git", "rev-parse", "bogus"),
+            stderr="fatal: ambiguous argument 'bogus'",
+        )
+
+    monkeypatch.setattr(benchmark, "resolve_target", _fail)
+    with pytest.raises(typer.BadParameter, match="git failed resolving target"):
+        benchmark._select_targets(
+            target="bogus",
+            range_spec=None,
+            lookback=None,
+            from_trunk_back=None,
+            tags=False,
+            commits=None,
+            head_vs_trunk=False,
+            trunk="master",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Regression: aggregate table has no duplicate max column
+# ---------------------------------------------------------------------------
+
+
+def _make_multi_commit_measurements() -> list[t.Any]:
+    """Two ok measurements for the same command — triggers the aggregate table."""
+    return [
+        benchmark.Measurement(
+            sha="a" * 40,
+            short_sha="aaaaaaa",
+            subject="first commit",
+            command_name="grep",
+            command_string="cmd",
+            samples=[0.5, 0.6],
+        ),
+        benchmark.Measurement(
+            sha="b" * 40,
+            short_sha="bbbbbbb",
+            subject="second commit",
+            command_name="grep",
+            command_string="cmd",
+            samples=[0.7, 0.8],
+        ),
+    ]
+
+
+def test_render_markdown_no_duplicate_max_column() -> None:
+    """render_markdown header row has exactly one ``max`` column."""
+    ms = _make_multi_commit_measurements()
+    md = benchmark.render_markdown(ms, ["min", "avg", "max"])
+    header_line = next(line for line in md.splitlines() if line.startswith("| sha"))
+    assert header_line.count("max") == 1
+
+
+def test_render_rich_no_duplicate_max_column() -> None:
+    """render_rich aggregate section has exactly one ``max`` header."""
+    ms = _make_multi_commit_measurements()
+    text = benchmark.render_rich(ms, ["min", "avg", "max"])
+    agg_section = text[text.index("Distribution across") :]
+    header_line = next(line for line in agg_section.splitlines() if "min" in line and "avg" in line)
+    assert header_line.count("max") == 1
+
+
+# ---------------------------------------------------------------------------
+# Regression: load_config rejects malformed TOML, extra keys, missing fields
+# ---------------------------------------------------------------------------
+
+
+class ConfigErrorCase(t.NamedTuple):
+    """One load_config error expectation."""
+
+    test_id: str
+    toml_content: str
+    match: str
+
+
+CONFIG_ERROR_CASES: tuple[ConfigErrorCase, ...] = (
+    ConfigErrorCase(
+        test_id="malformed-toml",
+        toml_content="[settings",
+        match="failed to parse",
+    ),
+    ConfigErrorCase(
+        test_id="extra-settings-key-rejected",
+        toml_content='[settings]\nmystery = "x"\n',
+        match="Extra inputs are not permitted",
+    ),
+    ConfigErrorCase(
+        test_id="missing-required-bench-field",
+        toml_content='[bench.grep]\ndefault_query = "x"\n',
+        match="Field required",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    CONFIG_ERROR_CASES,
+    ids=[c.test_id for c in CONFIG_ERROR_CASES],
+)
+def test_load_config_rejects_invalid_toml(
+    case: ConfigErrorCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Malformed TOML and schema violations surface as BadParameter."""
+    toml_file = tmp_path / "benchmark.toml"
+    toml_file.write_text(case.toml_content)
+    missing_local = tmp_path / "no-local.toml"
+    with pytest.raises(typer.BadParameter, match=case.match):
+        benchmark.load_config(config_path=toml_file, local_path=missing_local)
+
+
+# ---------------------------------------------------------------------------
+# Regression: Settings.runs=0 rejected by Field(ge=1)
+# ---------------------------------------------------------------------------
+
+
+def test_load_config_rejects_runs_zero_via_cli_overrides(
+    tmp_path: pathlib.Path,
+) -> None:
+    """``runs=0`` via cli_overrides is rejected by the pydantic ge=1 bound."""
+    valid = tmp_path / "benchmark.toml"
+    valid.write_text('[bench.echo]\ncommand = "echo"\n')
+    with pytest.raises(typer.BadParameter, match="greater than or equal to 1"):
+        benchmark.load_config(
+            config_path=valid,
+            local_path=tmp_path / "no-local.toml",
+            cli_overrides={"settings": {"runs": 0}},
+        )
+
+
+# ---------------------------------------------------------------------------
+# Regression: cli_overrides bypass pydantic validators
+# ---------------------------------------------------------------------------
+
+
+class CliOverrideRejectCase(t.NamedTuple):
+    """One invalid cli_overrides expectation."""
+
+    test_id: str
+    cli_overrides: dict[str, t.Any]
+    match: str
+
+
+CLI_OVERRIDE_REJECT_CASES: tuple[CliOverrideRejectCase, ...] = (
+    CliOverrideRejectCase(
+        test_id="warmup-negative",
+        cli_overrides={"settings": {"warmup": -1}},
+        match="greater than or equal to 0",
+    ),
+    CliOverrideRejectCase(
+        test_id="timeout-seconds-zero",
+        cli_overrides={"settings": {"timeout_seconds": 0}},
+        match="greater than or equal to 1",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    CLI_OVERRIDE_REJECT_CASES,
+    ids=[c.test_id for c in CLI_OVERRIDE_REJECT_CASES],
+)
+def test_load_config_rejects_invalid_cli_overrides(
+    case: CliOverrideRejectCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """CLI overrides route through model_validate so pydantic bounds fire."""
+    valid = tmp_path / "benchmark.toml"
+    valid.write_text('[bench.echo]\ncommand = "echo"\n')
+    with pytest.raises(typer.BadParameter, match=case.match):
+        benchmark.load_config(
+            config_path=valid,
+            local_path=tmp_path / "no-local.toml",
+            cli_overrides=case.cli_overrides,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Regression: --output pre-flight rejects bad paths before git checkout
+# ---------------------------------------------------------------------------
+
+
+def test_main_exits_2_when_output_parent_missing() -> None:
+    """``--output /nonexistent/dir/x.md`` is caught before any git interaction."""
+    rc = benchmark.main(
+        ["run", "--output", "/nonexistent/dir/x.md", "--no-progress"],
+    )
+    assert rc == 2
+
+
+def test_main_exits_2_when_output_is_directory(tmp_path: pathlib.Path) -> None:
+    """``--output <directory>`` is caught before any git interaction."""
+    rc = benchmark.main(
+        ["run", "--output", str(tmp_path), "--no-progress"],
+    )
+    assert rc == 2
