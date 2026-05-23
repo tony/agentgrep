@@ -1,0 +1,17 @@
+# Copy this file to `scripts/benchmark.local.toml` to override the committed
+# defaults from `scripts/benchmark.toml` for your machine. The override file
+# is gitignored; nothing here is shared.
+#
+# Layering: built-in defaults → benchmark.toml → benchmark.local.toml → CLI flags.
+# Deep-merge semantics — only the keys you set are replaced.
+
+# Bump runs/warmup for a noisier machine:
+# [settings]
+# runs = 5
+# warmup = 2
+
+# Add a project-specific bench without touching the committed file:
+# [bench.fuzzy]
+# description = "fzf-shaped ranker over stdin"
+# command = "echo libtmux | {venv}/bin/agentgrep fuzzy {query}"
+# default_query = "libtmux"

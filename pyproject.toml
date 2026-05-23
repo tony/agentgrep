@@ -202,6 +202,11 @@ convention = "numpy"
 
 [tool.ruff.lint.per-file-ignores]
 "*/__init__.py" = ["F401"]
+# typer.Option / typer.Argument calls are metadata, not real callables —
+# B008 does not apply. E501 is suppressed because a few error messages
+# (e.g. the mutually-exclusive-selector message in _select_targets) read
+# more naturally as one line than wrapped.
+"scripts/benchmark.py" = ["B008", "E501"]
 
 [tool.pytest.ini_options]
 addopts = [
