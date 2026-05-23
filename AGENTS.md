@@ -380,6 +380,15 @@ what:
 - Mark the dynamic Textual App base with the targeted ty unsupported-base suppression.
 - Use pytest monkeypatch for the importlib fallback test instead of assigning over the imported module function directly.
 ```
+#### Release commits
+
+Never create tags. Never push tags. The user handles tagging and tag
+pushes (tags trigger the CI publish workflow).
+
+Release commit subjects are plain and short: `Tag v<version>`. Put
+the detailed why/what in the commit body. Don't use the
+`Scope(type[detail]):` format for releases — don't bury the lede.
+
 For multi-line commits, use heredoc to preserve formatting:
 ```bash
 git commit -m "$(cat <<'EOF'
