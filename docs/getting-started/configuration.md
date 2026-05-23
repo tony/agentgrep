@@ -12,7 +12,7 @@ Use `--agent` one or more times to limit search or discovery:
 $ uv run agentgrep search "cache" --agent codex
 ```
 
-Supported agents are `codex`, `claude`, and `cursor`. Omitting `--agent` searches all supported agents.
+Supported agents are `codex`, `claude`, `cursor`, and `gemini`. Omitting `--agent` searches all supported agents.
 
 ## Search type
 
