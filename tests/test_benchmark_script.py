@@ -16,6 +16,7 @@ import sys
 import typing as t
 
 import pytest
+import typer
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 _SCRIPT = _REPO_ROOT / "scripts" / "benchmark.py"
@@ -435,6 +436,54 @@ def test_measurement_with_no_samples_returns_nan_for_stats() -> None:
     assert math.isnan(m.max_s)
     assert math.isnan(m.avg_s)
     assert m.stddev_s == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Regression: _parse_percentile_labels + _select_bench_names reject bad input
+# (was: typer.MissingParameter AttributeError in the except clause)
+# ---------------------------------------------------------------------------
+
+
+class ValidationRejectCase(t.NamedTuple):
+    """One argument-validation rejection expectation."""
+
+    test_id: str
+    fn_name: str
+    args: tuple[t.Any, ...]
+    match: str
+
+
+VALIDATION_REJECT_CASES: tuple[ValidationRejectCase, ...] = (
+    ValidationRejectCase(
+        test_id="bad-percentile-label",
+        fn_name="_parse_percentile_labels",
+        args=("min,wat,p99",),
+        match="unknown stat label",
+    ),
+    ValidationRejectCase(
+        test_id="unknown-bench-name",
+        fn_name="_select_bench_names",
+        args=(
+            benchmark.Config(
+                bench={"grep": benchmark.BenchCommand(command="echo x")},
+            ),
+            "bogus",
+        ),
+        match="unknown benchmark name",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    VALIDATION_REJECT_CASES,
+    ids=[c.test_id for c in VALIDATION_REJECT_CASES],
+)
+def test_validation_rejects_bad_input(case: ValidationRejectCase) -> None:
+    """Argument-validation helpers raise BadParameter on invalid input."""
+    fn = getattr(benchmark, case.fn_name)
+    with pytest.raises(typer.BadParameter, match=case.match):
+        fn(*case.args)
 
 
 def test_md_escape_neutralises_pipe_in_subject() -> None:
