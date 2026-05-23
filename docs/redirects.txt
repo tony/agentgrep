@@ -4,3 +4,5 @@ packages/agentgrep/tutorial library/tutorial
 packages/agentgrep/how-to library/how-to
 packages/agentgrep/reference library/reference
 packages/agentgrep/examples library/examples
+benchmark dev/benchmark
+storage-catalog dev/storage-catalog

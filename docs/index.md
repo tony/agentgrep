@@ -138,9 +138,16 @@ reference/api/mcp
 
 ```{toctree}
 :hidden:
+:caption: Development
+
+dev/benchmark
+dev/storage-catalog
+```
+
+```{toctree}
+:hidden:
 :caption: Project
 
-storage-catalog
 history
 GitHub <https://github.com/tony/agentgrep>
 ```
