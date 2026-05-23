@@ -468,10 +468,7 @@ def run_find_command(args: FindArgs) -> int:
     # record list up front. Drain :func:`agentgrep.iter_find_events`
     # so source-level field predicates from the compiled query
     # (``agent:``, ``path:``, ``store:``, ``mtime:``) prune sources
-    # the same way the streaming path does. The legacy
-    # :func:`run_find_query` call didn't accept ``compiled``, so a
-    # `find -l agent:codex` invocation used to silently return every
-    # agent's sources.
+    # the same way the streaming path does.
     raw_records: list[FindRecord] = [
         event.record
         for event in agentgrep.iter_find_events(
