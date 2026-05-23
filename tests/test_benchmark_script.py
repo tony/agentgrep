@@ -579,3 +579,49 @@ def test_select_targets_converts_git_error_to_bad_parameter(
             head_vs_trunk=False,
             trunk="master",
         )
+
+
+# ---------------------------------------------------------------------------
+# Regression: aggregate table has no duplicate max column
+# (was: render_rich added add_column("max") on top of the one from
+# percentile_labels, doubling the column in the header)
+# ---------------------------------------------------------------------------
+
+
+def _make_multi_commit_measurements() -> list[t.Any]:
+    """Two ok measurements for the same command — triggers the aggregate table."""
+    return [
+        benchmark.Measurement(
+            sha="a" * 40,
+            short_sha="aaaaaaa",
+            subject="first commit",
+            command_name="grep",
+            command_string="cmd",
+            samples=[0.5, 0.6],
+        ),
+        benchmark.Measurement(
+            sha="b" * 40,
+            short_sha="bbbbbbb",
+            subject="second commit",
+            command_name="grep",
+            command_string="cmd",
+            samples=[0.7, 0.8],
+        ),
+    ]
+
+
+def test_render_markdown_no_duplicate_max_column() -> None:
+    """render_markdown header row has exactly one ``max`` column."""
+    ms = _make_multi_commit_measurements()
+    md = benchmark.render_markdown(ms, ["min", "avg", "max"])
+    header_line = next(line for line in md.splitlines() if line.startswith("| sha"))
+    assert header_line.count("max") == 1
+
+
+def test_render_rich_no_duplicate_max_column() -> None:
+    """render_rich aggregate section has exactly one ``max`` header."""
+    ms = _make_multi_commit_measurements()
+    text = benchmark.render_rich(ms, ["min", "avg", "max"])
+    agg_section = text[text.index("Distribution across") :]
+    header_line = next(line for line in agg_section.splitlines() if "min" in line and "avg" in line)
+    assert header_line.count("max") == 1
