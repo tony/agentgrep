@@ -97,6 +97,9 @@ def iter_search_events(
     start_time = time.monotonic()
 
     sources = agentgrep.discover_sources(home, query.agents, active_backends)
+    source_predicate = query.compiled.source_predicate if query.compiled is not None else None
+    if source_predicate is not None:
+        sources = [s for s in sources if source_predicate(s)]
     planned_sources = agentgrep.plan_search_sources(
         query,
         sources,
@@ -113,20 +116,11 @@ def iter_search_events(
     def current_count() -> int:
         return len(deduped_keys) if query.dedupe else raw_count
 
-    source_predicate = query.compiled.source_predicate if query.compiled is not None else None
     for index, source in enumerate(planned_sources, start=1):
         if active_control.answer_now_requested() or (
             query.limit is not None and current_count() >= query.limit
         ):
             break
-
-        # Compiled-query source pruning: when a field predicate
-        # (`agent:codex`, `path:~/.codex`, …) can be decided from
-        # the SourceHandle alone, skip the source without reading
-        # any records. The compiler uses three-valued logic so OR-
-        # mixed predicates conservatively let the source through.
-        if source_predicate is not None and not source_predicate(source):
-            continue
 
         yield _events.SourceStarted(
             adapter_id=source.adapter_id,
