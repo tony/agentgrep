@@ -87,67 +87,16 @@ Use prompts for common agent workflows:
 
 ```{toctree}
 :hidden:
-:caption: Get started
 
 quickstart
 installation
 clients
 configuration
-```
-
-```{toctree}
-:hidden:
-:caption: CLI
-
-Overview <cli/index>
-cli/ui
-cli/search
-cli/find
-```
-
-```{toctree}
-:hidden:
-:caption: Library
-
-Overview <library/index>
-library/tutorial
-library/how-to
-library/reference
-library/examples
-```
-
-```{toctree}
-:hidden:
-:caption: MCP
-
-Overview <mcp/index>
-mcp/tools
-mcp/resources
-mcp/prompts
-```
-
-```{toctree}
-:hidden:
-:caption: Reference
-
-Overview <reference/api/index>
-reference/api/agentgrep
-reference/api/ui
-reference/api/mcp
-```
-
-```{toctree}
-:hidden:
-:caption: Development
-
-dev/benchmark
-dev/storage-catalog
-```
-
-```{toctree}
-:hidden:
-:caption: Project
-
+cli/index
+library/index
+mcp/index
+reference/api/index
+dev/index
 history
 GitHub <https://github.com/tony/agentgrep>
 ```
