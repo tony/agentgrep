@@ -25,10 +25,9 @@ import time
 import typing as t
 
 import agentgrep
-from agentgrep import events as _events
 
 if t.TYPE_CHECKING:
-    from agentgrep import AgentName, BackendSelection
+    from agentgrep import AgentName, BackendSelection, events as _events
     from agentgrep.query.compile import CompiledQuery
 
 
@@ -81,6 +80,8 @@ def iter_find_events(
             if isinstance(event, agentgrep.events.FindRecordEmitted):
                 print(event.record.path)
     """
+    from agentgrep import events as _events
+
     active_backends = agentgrep.select_backends() if backends is None else backends
     start_time = time.monotonic()
 

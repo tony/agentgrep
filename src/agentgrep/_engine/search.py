@@ -40,10 +40,15 @@ import time
 import typing as t
 
 import agentgrep
-from agentgrep import events as _events
 
 if t.TYPE_CHECKING:
-    from agentgrep import BackendSelection, SearchControl, SearchQuery, SearchRecord
+    from agentgrep import (
+        BackendSelection,
+        SearchControl,
+        SearchQuery,
+        SearchRecord,
+        events as _events,
+    )
 
 
 def iter_search_events(
@@ -85,6 +90,8 @@ def iter_search_events(
             if isinstance(event, agentgrep.events.RecordEmitted):
                 print(event.record.text)
     """
+    from agentgrep import events as _events
+
     active_backends = agentgrep.select_backends() if backends is None else backends
     active_control = agentgrep.SearchControl() if control is None else control
     start_time = time.monotonic()

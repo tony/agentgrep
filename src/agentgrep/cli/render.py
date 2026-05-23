@@ -39,8 +39,6 @@ from agentgrep import (
     SearchRecordPayload,
     SourceHandle,
     SourceHandlePayload,
-    events,
-    fuzzy as _fuzzy_lib,
 )
 from agentgrep.cli.parser import FindArgs, FuzzyArgs, GrepArgs, SearchArgs, UIArgs
 
@@ -395,6 +393,8 @@ def stream_find_results(args: FindArgs) -> int:
     Eager output modes (``--json`` and ``-l``) route through
     :func:`print_find_results` via :func:`run_find_command` instead.
     """
+    from agentgrep import events
+
     is_tty = sys.stdout.isatty()
     match_count = 0
     serialize_find: t.Callable[[FindRecord], dict[str, object]] | None = None
@@ -460,6 +460,8 @@ def run_find_command(args: FindArgs) -> int:
             initial_search_text=args.raw_query or None,
         )
         return 0
+    from agentgrep import events
+
     if not _find_path_is_eager(args):
         return stream_find_results(args)
     # Eager output modes (--json, --list-details) need the full
@@ -964,6 +966,8 @@ def _print_files_without_match(args: GrepArgs) -> int:
     Returns ``0`` when at least one path is printed (the "no-match
     file" is itself a positive result for ``-L``), ``1`` otherwise.
     """
+    from agentgrep import events
+
     query = build_grep_query(args)
     home = pathlib.Path.home()
 
@@ -1007,6 +1011,8 @@ def fuzzy_filter_lines(
     delimiter / nth / with-nth are applied before scoring so the
     user-facing fzf model holds.
     """
+    from agentgrep import fuzzy as _fuzzy_lib
+
     case_mode: _fuzzy_lib.CaseSensitivity = args.case_mode
     algo: _fuzzy_lib.FuzzyAlgo = args.algo
     transformed = _apply_field_selection(lines, args)
@@ -1147,6 +1153,8 @@ def stream_grep_results(args: GrepArgs) -> int:
     picks :func:`print_grep_results` for JSON, ``-c``, ``-l``, ``-L``,
     and ``-v`` paths that need the full record list up front.
     """
+    from agentgrep import events
+
     query = build_grep_query(args)
     control = agentgrep.SearchControl()
     is_tty = sys.stdout.isatty()
