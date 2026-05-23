@@ -643,11 +643,21 @@ def _maybe_sync(
     settings: Settings,
     repo: pathlib.Path,
 ) -> subprocess.CompletedProcess[str] | None:
-    """Run the configured sync command. Returns the completed process or None.
+    """Run the configured sync command.
 
-    Returns ``None`` when ``settings.sync_command`` is empty (sync disabled).
-    Otherwise returns the :class:`subprocess.CompletedProcess` so the caller
-    can inspect ``returncode`` and decide whether to abort the commit.
+    Parameters
+    ----------
+    settings : Settings
+        Harness settings; ``sync_command`` is the shell command to run.
+    repo : pathlib.Path
+        Repository root (cwd for the subprocess).
+
+    Returns
+    -------
+    subprocess.CompletedProcess[str] or None
+        ``None`` when ``settings.sync_command`` is empty (sync disabled).
+        Otherwise the completed process so the caller can inspect
+        ``returncode`` and decide whether to abort the commit.
     """
     if not settings.sync_command.strip():
         return None
