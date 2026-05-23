@@ -696,3 +696,51 @@ def test_load_config_rejects_runs_zero_via_cli_overrides(
             local_path=tmp_path / "no-local.toml",
             cli_overrides={"settings": {"runs": 0}},
         )
+
+
+# ---------------------------------------------------------------------------
+# Regression: cli_overrides bypass pydantic validators
+# (was: model_copy(update=...) silently skipped Field(ge=…) constraints)
+# ---------------------------------------------------------------------------
+
+
+class CliOverrideRejectCase(t.NamedTuple):
+    """One invalid cli_overrides expectation."""
+
+    test_id: str
+    cli_overrides: dict[str, t.Any]
+    match: str
+
+
+CLI_OVERRIDE_REJECT_CASES: tuple[CliOverrideRejectCase, ...] = (
+    CliOverrideRejectCase(
+        test_id="warmup-negative",
+        cli_overrides={"settings": {"warmup": -1}},
+        match="greater than or equal to 0",
+    ),
+    CliOverrideRejectCase(
+        test_id="timeout-seconds-zero",
+        cli_overrides={"settings": {"timeout_seconds": 0}},
+        match="greater than or equal to 1",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    CLI_OVERRIDE_REJECT_CASES,
+    ids=[c.test_id for c in CLI_OVERRIDE_REJECT_CASES],
+)
+def test_load_config_rejects_invalid_cli_overrides(
+    case: CliOverrideRejectCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """CLI overrides route through model_validate so pydantic bounds fire."""
+    valid = tmp_path / "benchmark.toml"
+    valid.write_text('[bench.echo]\ncommand = "echo"\n')
+    with pytest.raises(typer.BadParameter, match=case.match):
+        benchmark.load_config(
+            config_path=valid,
+            local_path=tmp_path / "no-local.toml",
+            cli_overrides=case.cli_overrides,
+        )
