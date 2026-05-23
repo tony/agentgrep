@@ -67,12 +67,25 @@ render in the viewer's local timezone with offset
 (`YYYY-MM-DD HH:MM ±HHMM`), formatted via
 {func}`~agentgrep.format_timestamp_tig`.
 
+::::{grid} 1 1 2 2
+:gutter: 2
+
+:::{grid-item-card} API Reference
+:link: reference
+:link-type: doc
+UIArgs, entry points, filter and display helpers.
+:::
+
+::::
+
 ## See also
 
 - {ref}`cli` — the `--ui` flag on any search-shaped subcommand opens
   the same explorer pre-seeded with that subcommand's query (e.g.
   `agentgrep search bliss --agent codex --ui`).
-- {ref}`api-agentgrep-ui` — Python API for the
-  {mod}`agentgrep.ui` subpackage, including
-  {func}`~agentgrep.ui.app.run_ui` and
-  {func}`~agentgrep.ui.app.build_streaming_ui_app`.
+
+```{toctree}
+:hidden:
+
+reference
+```

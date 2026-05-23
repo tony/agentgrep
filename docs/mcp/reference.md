@@ -1,9 +1,8 @@
-(api-agentgrep-mcp)=
+(mcp-reference)=
 
-# agentgrep.mcp
+# API Reference
 
-The MCP module exposes the FastMCP server factory, payload models, prompt
-helpers, resources, and tool adapters for agentgrep.
+FastMCP server factory, payload models, and MCP helpers.
 
 ## Payload models
 

@@ -49,12 +49,6 @@ Tools, resources, and prompts for MCP clients.
 Tutorial, how-to, reference, and examples for the Python library.
 :::
 
-:::{grid-item-card} API Reference
-:link: reference/api/index
-:link-type: doc
-Curated Python and MCP API documentation.
-:::
-
 :::{grid-item-card} Client Setup
 :link: getting-started/clients
 :link-type: doc
@@ -97,7 +91,6 @@ cli/index
 tui/index
 library/index
 mcp/index
-reference/api/index
 dev/index
 history
 GitHub <https://github.com/tony/agentgrep>

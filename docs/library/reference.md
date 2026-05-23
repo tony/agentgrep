@@ -1,14 +1,57 @@
 (package-agentgrep-reference)=
 
-# Reference
+# API Reference
 
-Use the curated API reference for object-level details:
+Core data types, discovery functions, and the search pipeline used by
+every surface (CLI, TUI, MCP).
 
-- {doc}`/reference/api/agentgrep`
-- {doc}`/reference/api/mcp`
+## Core data
 
-Use the MCP reference for protocol-facing tools, resources, and prompts:
+```{eval-rst}
+.. autoclass:: agentgrep.PrivatePath
+   :members:
 
-- {doc}`/mcp/tools`
-- {doc}`/mcp/resources`
-- {doc}`/mcp/prompts`
+.. autofunction:: agentgrep.format_display_path
+
+.. autoclass:: agentgrep.BackendSelection
+   :members:
+
+.. autoclass:: agentgrep.SearchQuery
+   :members:
+
+.. autoclass:: agentgrep.SourceHandle
+   :members:
+
+.. autoclass:: agentgrep.SearchRecord
+   :members:
+
+.. autoclass:: agentgrep.FindRecord
+   :members:
+```
+
+## Search control and progress
+
+```{eval-rst}
+.. autoclass:: agentgrep.SearchControl
+   :members:
+
+.. autoclass:: agentgrep.SearchProgress
+   :members:
+
+.. autoclass:: agentgrep.NoopSearchProgress
+   :members:
+
+.. autoclass:: agentgrep.ConsoleSearchProgress
+   :members:
+```
+
+## Discovery and search
+
+```{eval-rst}
+.. autofunction:: agentgrep.select_backends
+.. autofunction:: agentgrep.discover_sources
+.. autofunction:: agentgrep.run_search_query
+.. autofunction:: agentgrep.search_sources
+.. autofunction:: agentgrep.run_find_query
+.. autofunction:: agentgrep.find_sources
+```

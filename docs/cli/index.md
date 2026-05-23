@@ -53,6 +53,12 @@ Enumerate on-disk stores with fd-shaped flag grammar.
 Non-interactive fuzzy match on stdin, shaped like `fzf --filter`.
 :::
 
+:::{grid-item-card} API Reference
+:link: reference
+:link-type: doc
+CLI argument types, serialization helpers, and command entry points.
+:::
+
 ::::
 
 ## --ui overlay
@@ -131,4 +137,5 @@ search
 grep
 find
 fuzzy
+reference
 ```
