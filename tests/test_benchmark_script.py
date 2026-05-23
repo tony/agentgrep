@@ -675,3 +675,24 @@ def test_load_config_rejects_invalid_toml(
     missing_local = tmp_path / "no-local.toml"
     with pytest.raises(typer.BadParameter, match=case.match):
         benchmark.load_config(config_path=toml_file, local_path=missing_local)
+
+
+# ---------------------------------------------------------------------------
+# Regression: Settings.runs=0 rejected by Field(ge=1)
+# (was: --runs 0 deadlocked the hyperfine path because the constraint
+# wasn't enforced — model_copy(update=...) skipped validators)
+# ---------------------------------------------------------------------------
+
+
+def test_load_config_rejects_runs_zero_via_cli_overrides(
+    tmp_path: pathlib.Path,
+) -> None:
+    """``runs=0`` via cli_overrides is rejected by the pydantic ge=1 bound."""
+    valid = tmp_path / "benchmark.toml"
+    valid.write_text('[bench.echo]\ncommand = "echo"\n')
+    with pytest.raises(typer.BadParameter, match="greater than or equal to 1"):
+        benchmark.load_config(
+            config_path=valid,
+            local_path=tmp_path / "no-local.toml",
+            cli_overrides={"settings": {"runs": 0}},
+        )
