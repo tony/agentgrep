@@ -7,7 +7,7 @@
 Read-only search for local AI agent prompts and history across Codex,
 Claude Code, Cursor, and Gemini.
 
-`agentgrep` ships two surfaces over the same discovery + parsing layer:
+`agentgrep` provides a CLI and an MCP server over the same discovery + parsing layer:
 
 - **A terminal CLI** (`agentgrep`) with a Textual TUI for interactive
   browsing of normalized records.
