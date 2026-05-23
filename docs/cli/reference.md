@@ -28,5 +28,6 @@ CLI argument types, serialization helpers, and command entry points.
 ```{eval-rst}
 .. autofunction:: agentgrep.run_search_command
 .. autofunction:: agentgrep.run_find_command
+.. autofunction:: agentgrep.run_ui_command
 .. autofunction:: agentgrep.main
 ```

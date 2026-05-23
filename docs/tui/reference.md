@@ -25,7 +25,6 @@ use `agentgrep.run_ui()` without reaching into `agentgrep.ui.app`.
 ## Entry points
 
 ```{eval-rst}
-.. autofunction:: agentgrep.run_ui_command
 .. autofunction:: agentgrep.ui.app.run_ui
 .. autofunction:: agentgrep.ui.app.build_streaming_ui_app
 ```
