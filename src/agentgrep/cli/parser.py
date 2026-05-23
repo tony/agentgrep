@@ -983,6 +983,12 @@ def parse_args(
         find_case_mode = "respect"
     else:
         find_case_mode = "smart"
+    if pattern is not None and pattern_mode == "regex":
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            with configured_color_environment(color_mode):
+                bundle.find_parser.error(f"invalid regex: {exc}")
     return FindArgs(
         pattern=pattern,
         agents=agents,

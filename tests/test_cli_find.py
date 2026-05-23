@@ -438,3 +438,10 @@ def test_print_find_results_print0_uses_nul_separator(
     assert "\0" in captured
     # No standalone newlines when -0 is on.
     assert captured.count("\n") == 0
+
+
+def test_find_invalid_regex_errors_at_parse_time() -> None:
+    """An invalid regex pattern exits with a clean argparse error, not silent empty results."""
+    with pytest.raises(SystemExit) as exc_info:
+        agentgrep.parse_args(["find", "[invalid"])
+    assert exc_info.value.code == 2
