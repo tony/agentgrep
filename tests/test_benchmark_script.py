@@ -496,3 +496,51 @@ def test_md_escape_neutralises_pipe_in_subject() -> None:
     # Backslashes themselves are doubled so they round-trip through the
     # markdown lexer.
     assert benchmark._md_escape("a\\b") == "a\\\\b"
+
+
+# ---------------------------------------------------------------------------
+# Regression: main() exit-code propagation
+# (was: standalone_mode=False converted typer.Exit to return value,
+# but main() never captured it — always returned 0)
+# ---------------------------------------------------------------------------
+
+
+class MainExitCodeCase(t.NamedTuple):
+    """One main() exit-code expectation."""
+
+    test_id: str
+    argv: list[str]
+    expected_rc: int
+
+
+MAIN_EXIT_CODE_CASES: tuple[MainExitCodeCase, ...] = (
+    MainExitCodeCase(
+        test_id="show-config-returns-0",
+        argv=["show-config"],
+        expected_rc=0,
+    ),
+    MainExitCodeCase(
+        test_id="no-benches-returns-2",
+        argv=["run", "--config", "__EMPTY_TOML__", "--no-progress"],
+        expected_rc=2,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    MAIN_EXIT_CODE_CASES,
+    ids=[c.test_id for c in MAIN_EXIT_CODE_CASES],
+)
+def test_main_returns_expected_exit_code(
+    case: MainExitCodeCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """main() propagates typer.Exit(code=N) as an int return, not 0."""
+    argv = list(case.argv)
+    if "__EMPTY_TOML__" in argv:
+        empty = tmp_path / "empty.toml"
+        empty.write_text("")
+        argv[argv.index("__EMPTY_TOML__")] = str(empty)
+    rc = benchmark.main(argv)
+    assert rc == case.expected_rc
