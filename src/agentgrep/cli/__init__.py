@@ -4,10 +4,10 @@ The CLI surface (argument parsing, subcommand dispatch, output rendering)
 lives in this subpackage. The library surface (search/find engines,
 record types, source discovery) stays in :mod:`agentgrep`.
 
-This module currently re-exports :func:`agentgrep.main` so console-script
-and ``python -m agentgrep`` entry points can resolve through a single
-canonical path. The internals will migrate into ``cli/parser.py`` and
-``cli/render.py`` in subsequent commits.
+This module re-exports :func:`agentgrep.main` so the console-script
+entry point (``agentgrep.cli:main``) resolves through a single
+canonical path. Argument parsing lives in :mod:`agentgrep.cli.parser`;
+output rendering and subcommand dispatch in :mod:`agentgrep.cli.render`.
 """
 
 from __future__ import annotations
