@@ -65,7 +65,9 @@ CLI argument types, serialization helpers, and command entry points.
 
 Every search-shaped subcommand accepts `--ui`: pass it to open the
 {ref}`Textual explorer <tui>` pre-filled with the same query you'd
-otherwise run as a one-shot (`agentgrep grep -i foo --ui`).
+otherwise run as a one-shot. This is the `tig`-shaped overlay model —
+`agentgrep grep -i foo --ui` is to `agentgrep grep -i foo` what
+`tig log` is to `git log`.
 
 ## Use from another agent
 
