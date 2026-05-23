@@ -10,3 +10,8 @@ quickstart getting-started/index
 installation getting-started/installation
 clients getting-started/clients
 configuration getting-started/configuration
+reference/api/index library/reference
+reference/api/agentgrep library/reference
+reference/api/mcp mcp/reference
+reference/api/ui tui/reference
+cli/ui tui/index
