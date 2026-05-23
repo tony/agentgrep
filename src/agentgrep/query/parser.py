@@ -57,7 +57,7 @@ _KEYWORDS: dict[str, t.Literal["and", "or", "not", "to"]] = {
     "TO": "to",
 }
 
-_WORD_RE = re.compile(r"[\w\-./~*?@:]+", re.UNICODE)
+_WORD_RE = re.compile(r"[\w\-./~*?@:+]+", re.UNICODE)
 """Characters allowed in a bare term or identifier.
 
 ``\\w`` matches Unicode word characters (letters/digits/underscore in

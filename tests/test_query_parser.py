@@ -256,6 +256,12 @@ TOKENIZER_CASES: tuple[TokenizerCase, ...] = (
         expected_kinds=("term", "and", "term", "eof"),
         expected_values=("bliss", "AND", "codex", ""),
     ),
+    TokenizerCase(
+        test_id="timestamp-with-positive-tz-offset",
+        query="timestamp:2026-05-22T14:30:00+05:30",
+        expected_kinds=("ident", "colon", "term", "eof"),
+        expected_values=("timestamp", ":", "2026-05-22T14:30:00+05:30", ""),
+    ),
 )
 
 
