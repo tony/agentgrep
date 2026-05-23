@@ -97,6 +97,15 @@ conf["fastmcp_section_badge_map"] = {
 }
 conf["fastmcp_section_badge_pages"] = ("mcp/tools", "mcp/index", "index")
 
+# IBM Plex Mono 400 italic shows up on every page that has a syntax-
+# highlighted code block — Furo's Pygments style renders comment tokens
+# (.c / .c1 / .cm) italic, so every example with a `# comment` line
+# triggers a fetch. gp-sphinx's DEFAULT_SPHINX_FONT_PRELOAD covers Mono
+# 400/700 normal and Sans 400 italic, but not Mono italic; append it so
+# the browser fetches the face in parallel with the critical CSS
+# instead of lazy-loading on first encounter.
+conf["sphinx_font_preload"].append(("IBM Plex Mono", 400, "italic"))
+
 _gp_setup = conf.pop("setup")
 
 
