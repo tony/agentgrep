@@ -12,9 +12,8 @@ the moment the factory is called.
 The subpackage's `__init__` re-exports {func}`~agentgrep.ui.app.run_ui`
 and {func}`~agentgrep.ui.app.build_streaming_ui_app` at the
 `agentgrep.ui` namespace for convenience, and the top-level
-`agentgrep` package provides matching lazy wrappers — see
-{func}`agentgrep.run_ui` and {func}`agentgrep.build_streaming_ui_app`
-in the {ref}`library reference <package-agentgrep-reference>`.
+`agentgrep` package provides matching lazy wrappers so callers can
+use `agentgrep.run_ui()` without reaching into `agentgrep.ui.app`.
 
 ## Argument type
 
