@@ -544,3 +544,38 @@ def test_main_returns_expected_exit_code(
         argv[argv.index("__EMPTY_TOML__")] = str(empty)
     rc = benchmark.main(argv)
     assert rc == case.expected_rc
+
+
+# ---------------------------------------------------------------------------
+# Regression: _select_targets converts CalledProcessError → BadParameter
+# (was: uncaught traceback on bad git refs)
+# ---------------------------------------------------------------------------
+
+
+def test_select_targets_converts_git_error_to_bad_parameter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failing ``git rev-parse`` surfaces as BadParameter, not a traceback."""
+    import subprocess
+
+    def _fail(
+        **_kwargs: t.Any,
+    ) -> t.NoReturn:
+        raise subprocess.CalledProcessError(
+            returncode=128,
+            cmd=("git", "rev-parse", "bogus"),
+            stderr="fatal: ambiguous argument 'bogus'",
+        )
+
+    monkeypatch.setattr(benchmark, "resolve_target", _fail)
+    with pytest.raises(typer.BadParameter, match="git failed resolving target"):
+        benchmark._select_targets(
+            target="bogus",
+            range_spec=None,
+            lookback=None,
+            from_trunk_back=None,
+            tags=False,
+            commits=None,
+            head_vs_trunk=False,
+            trunk="master",
+        )
