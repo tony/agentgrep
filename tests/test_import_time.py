@@ -1,6 +1,6 @@
 """Import-chain regression test for agentgrep CLI cold-start.
 
-Verifies that ``import agentgrep.cli`` does NOT eagerly load heavy
+Verifies that ``import agentgrep`` does NOT eagerly load heavy
 submodules (query, events, fuzzy) — those should only load on first
 use of the subcommand that needs them. This is a deterministic
 module-presence check, not a flaky timing test: it asserts against
