@@ -551,6 +551,17 @@ def render_ndjson(measurements: list[Measurement], _labels: list[str]) -> str:
     return "\n".join(json.dumps(m.model_dump(mode="json")) for m in measurements)
 
 
+def _md_escape(text: str) -> str:
+    r"""Escape characters that break markdown table rendering.
+
+    A literal ``|`` inside a cell ends the cell early — escape it as
+    ``\|`` so the column count stays consistent. Backslashes are
+    doubled first so the escape itself doesn't get eaten. Embedded
+    newlines fold to spaces (a row must stay on one line).
+    """
+    return text.replace("\\", "\\\\").replace("|", "\\|").replace("\n", " ")
+
+
 def render_markdown(measurements: list[Measurement], percentile_labels: list[str]) -> str:
     """Markdown tables — mirrors the prototype ``performance.md`` shape."""
     out: list[str] = []
@@ -567,7 +578,7 @@ def render_markdown(measurements: list[Measurement], percentile_labels: list[str
                 f"`{m.short_sha}`",
                 *(_fmt_seconds(_percentile_value(m, label)) for label in percentile_labels),
                 m.status,
-                m.subject[:80],
+                _md_escape(m.subject[:80]),
             ]
             out.append("| " + " | ".join(cells) + " |")
         out.append("")

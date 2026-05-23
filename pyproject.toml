@@ -67,6 +67,11 @@ dev = [
   # which doesn't run through PEP 723, so we install tomlkit in the dev group
   # to make those tests importable.
   "tomlkit>=0.13",
+  # scripts/benchmark.py is another PEP 723 standalone; same rationale —
+  # tests/test_benchmark_script.py imports the script directly so its
+  # third-party deps (typer; pydantic and rich are already in the runtime
+  # graph via the project itself / textual) need to be project-importable.
+  "typer>=0.12",
 ]
 docs = [
   "gp-sphinx==0.0.1a20",
