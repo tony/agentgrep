@@ -259,12 +259,8 @@ or into a non-MCP agent that consumes results incrementally.
 
 ## Interactive UI
 
-Pass `--ui` to launch the Textual explorer pre-filled with the grep
-query — same flags, same results, different presentation. This is the
-`tig`-shaped overlay: ``agentgrep grep -i foo --ui`` is to
-``agentgrep grep -i foo`` as ``tig log`` is to ``git log``.
-
-See {ref}`cli-ui` for the standalone explorer entry point.
+Pass `--ui` to open the {ref}`Textual explorer <tui>` pre-filled
+with the grep query.
 
 ## Query language
 

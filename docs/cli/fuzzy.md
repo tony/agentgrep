@@ -104,7 +104,5 @@ embedded spaces.
 
 ## Interactive UI
 
-`--ui` opens the Textual explorer pre-filled with the fuzzy query.
-Same `tig`-shaped overlay as the other subcommands.
-
-See {ref}`cli-ui`.
+Pass `--ui` to open the {ref}`Textual explorer <tui>` pre-filled
+with the fuzzy query.

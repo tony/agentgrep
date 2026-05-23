@@ -31,6 +31,12 @@ Run a first search and inspect the result shape.
 Search and find from the terminal. Pipe `--json` / `--ndjson` for scripts and agents.
 :::
 
+:::{grid-item-card} TUI
+:link: tui/index
+:link-type: doc
+Interactive Textual explorer for browsing prompts and history.
+:::
+
 :::{grid-item-card} MCP
 :link: mcp/index
 :link-type: doc
@@ -88,6 +94,7 @@ Use prompts for common agent workflows:
 
 getting-started/index
 cli/index
+tui/index
 library/index
 mcp/index
 reference/api/index

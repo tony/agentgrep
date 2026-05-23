@@ -1,6 +1,6 @@
-(cli-ui)=
+(tui)=
 
-# agentgrep ui
+# TUI
 
 The `agentgrep ui` command launches the interactive Textual explorer
 over the same Codex, Claude Code, Cursor, and Gemini stores the rest
@@ -69,8 +69,8 @@ render in the viewer's local timezone with offset
 
 ## See also
 
-- {ref}`cli-search` — the `--ui` flag opens the same explorer
-  pre-seeded with a search-flag invocation (e.g.
+- {ref}`cli` — the `--ui` flag on any search-shaped subcommand opens
+  the same explorer pre-seeded with that subcommand's query (e.g.
   `agentgrep search bliss --agent codex --ui`).
 - {ref}`api-agentgrep-ui` — Python API for the
   {mod}`agentgrep.ui` subpackage, including

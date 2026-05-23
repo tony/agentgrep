@@ -11,8 +11,8 @@ stores, filter by agent — and lets you pipe everything through
 `--json` or `--ndjson` so any script or non-MCP agent can consume the
 results. Bare `agentgrep` (no subcommand) prints a colorized
 directory of choices listing every subcommand with example
-invocations — the same `tmuxp` / `vcspull` pattern. To open the
-Textual explorer directly, use `agentgrep ui`.
+invocations — the same `tmuxp` / `vcspull` pattern. See {ref}`tui`
+for the interactive Textual explorer.
 
 ```{note}
 Versions before 0.1.0a5 silently rewrote `agentgrep <terms>` as
@@ -28,12 +28,6 @@ rather than a search; reach for `agentgrep search bliss` or
 
 ::::{grid} 1 2 2 3
 :gutter: 2 2 3 3
-
-:::{grid-item-card} agentgrep ui
-:link: ui
-:link-type: doc
-Browse prompts and history interactively in the Textual explorer.
-:::
 
 :::{grid-item-card} agentgrep search
 :link: search
@@ -64,10 +58,8 @@ Non-interactive fuzzy match on stdin, shaped like `fzf --filter`.
 ## --ui overlay
 
 Every search-shaped subcommand accepts `--ui`: pass it to open the
-Textual explorer pre-filled with the same query you'd otherwise run
-as a one-shot. This is the `tig`-shaped overlay model — `agentgrep
-grep -i foo --ui` is to `agentgrep grep -i foo` what `tig log` is to
-`git log`. Same args, same query semantics, different presentation.
+{ref}`Textual explorer <tui>` pre-filled with the same query you'd
+otherwise run as a one-shot (`agentgrep grep -i foo --ui`).
 
 ## Use from another agent
 
@@ -135,7 +127,6 @@ $ agentgrep
 ```{toctree}
 :hidden:
 
-ui
 search
 grep
 find
