@@ -734,7 +734,7 @@ def _run_one_commit(
             # benches against it. Mark every bench for this commit as
             # sync_fail so the user sees the failure in the row instead
             # of a misleading "ok" with stale samples.
-            error = (sync_result.stderr or sync_result.stdout or "").strip()
+            error = (sync_result.stderr or sync_result.stdout or "").strip() or "sync failed"
             notify(
                 f"[{commit.short_sha}] sync failed (exit "
                 f"{sync_result.returncode}); skipping benches.",
