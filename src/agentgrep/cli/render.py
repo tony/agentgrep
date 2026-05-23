@@ -466,9 +466,9 @@ def run_find_command(args: FindArgs) -> int:
         return stream_find_results(args)
     # Eager output modes (--json, --list-details) need the full
     # record list up front. Drain :func:`agentgrep.iter_find_events`
-    # so source-level field predicates from the compiled query
-    # (``agent:``, ``path:``, ``store:``, ``mtime:``) prune sources
-    # the same way the streaming path does.
+    # with ``compiled`` so source-level field predicates
+    # (``agent:``, ``path:``, ``store:``, ``mtime:``) prune sources;
+    # without it, every agent's sources are returned unfiltered.
     raw_records: list[FindRecord] = [
         event.record
         for event in agentgrep.iter_find_events(
