@@ -23,7 +23,7 @@ Read `agentgrep://sources` to list every discovered source.
 ```{fastmcp-resource-template} agentgrep_sources_by_agent
 ```
 
-Read `agentgrep://sources/codex`, `agentgrep://sources/claude`, or `agentgrep://sources/cursor` to filter discovery by agent.
+Read `agentgrep://sources/codex`, `agentgrep://sources/claude`, `agentgrep://sources/cursor`, or `agentgrep://sources/gemini` to filter discovery by agent.
 
 ## Store catalog
 
