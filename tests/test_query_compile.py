@@ -256,6 +256,12 @@ SOURCE_PREDICATE_CASES: tuple[SourcePredicateCase, ...] = (
         source_kwargs={"path": "/tmp/codex/sessions/abc.jsonl"},
         expected_passes=False,
     ),
+    SourcePredicateCase(
+        test_id="unknown-mtime-passes-through-as-U",
+        query="mtime:>2026-01-01",
+        source_kwargs={"mtime_ns": 0},
+        expected_passes=True,
+    ),
 )
 
 

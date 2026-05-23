@@ -390,6 +390,12 @@ def _evaluate_source(
         spec = registry.get(node.field)
         if spec is None or spec.layer == "record":
             return "U"
+        # mtime with unknown data (stat failed, mtime_ns=0) is "U" — we
+        # don't KNOW the file's mtime, so we can't definitively exclude
+        # it.  Returning "F" here would violate the three-valued contract
+        # (F means "definitely false given known facts").
+        if spec.name == "mtime" and source.mtime_ns <= 0:
+            return "U"
         result = _field_matches_source(node, source, spec)
         return "T" if result else "F"
     if isinstance(node, NotNode):
