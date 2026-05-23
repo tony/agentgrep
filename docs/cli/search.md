@@ -99,22 +99,9 @@ non-MCP agent that consumes results incrementally.
 
 ## Interactive UI
 
-Pass `--ui` to launch the Textual TUI instead of streaming records to
-stdout:
-
-```console
-$ agentgrep search --ui "deploy"
-```
-
-The TUI is read-only — it renders the same records the JSON modes
-emit, but lets you scroll, filter, and inspect record bodies
-interactively. `--ui` is mutually exclusive with `--json` and
+Pass `--ui` to open the {ref}`Textual explorer <tui>` pre-filled
+with the search query. Mutually exclusive with `--json` and
 `--ndjson`.
-
-See {ref}`cli-ui` for the standalone explorer entry point. Bare
-`agentgrep` prints the directory of choices; reach the explorer
-directly with `agentgrep ui`, and seed it with a query via
-`agentgrep ui <query>`.
 
 ## Filtering by agent
 

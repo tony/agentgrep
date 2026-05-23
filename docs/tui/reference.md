@@ -1,6 +1,6 @@
-(api-agentgrep-ui)=
+(tui-reference)=
 
-# agentgrep.ui
+# API Reference
 
 The `agentgrep.ui` subpackage holds the streaming Textual explorer.
 Textual is imported lazily inside
@@ -12,9 +12,15 @@ the moment the factory is called.
 The subpackage's `__init__` re-exports {func}`~agentgrep.ui.app.run_ui`
 and {func}`~agentgrep.ui.app.build_streaming_ui_app` at the
 `agentgrep.ui` namespace for convenience, and the top-level
-`agentgrep` package provides matching lazy wrappers — see
-{func}`agentgrep.run_ui` and {func}`agentgrep.build_streaming_ui_app`
-in the top-level API reference.
+`agentgrep` package provides matching lazy wrappers so callers can
+use `agentgrep.run_ui()` without reaching into `agentgrep.ui.app`.
+
+## Argument type
+
+```{eval-rst}
+.. autoclass:: agentgrep.UIArgs
+   :members:
+```
 
 ## Entry points
 
@@ -23,8 +29,12 @@ in the top-level API reference.
 .. autofunction:: agentgrep.ui.app.build_streaming_ui_app
 ```
 
-## Internal helpers
+## Filter and display helpers
 
 ```{eval-rst}
+.. autofunction:: agentgrep.cached_haystack
+.. autofunction:: agentgrep.clear_haystack_cache
+.. autofunction:: agentgrep.compute_filter_matches
+.. autofunction:: agentgrep.format_timestamp_tig
 .. autofunction:: agentgrep.ui.app.scroll_percent
 ```

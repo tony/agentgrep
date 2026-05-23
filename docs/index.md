@@ -31,6 +31,12 @@ Run a first search and inspect the result shape.
 Search and find from the terminal. Pipe `--json` / `--ndjson` for scripts and agents.
 :::
 
+:::{grid-item-card} TUI
+:link: tui/index
+:link-type: doc
+Interactive Textual explorer for browsing prompts and history.
+:::
+
 :::{grid-item-card} MCP
 :link: mcp/index
 :link-type: doc
@@ -41,12 +47,6 @@ Tools, resources, and prompts for MCP clients.
 :link: library/index
 :link-type: doc
 Tutorial, how-to, reference, and examples for the Python library.
-:::
-
-:::{grid-item-card} API Reference
-:link: reference/api/index
-:link-type: doc
-Curated Python and MCP API documentation.
 :::
 
 :::{grid-item-card} Client Setup
@@ -88,9 +88,9 @@ Use prompts for common agent workflows:
 
 getting-started/index
 cli/index
+tui/index
 library/index
 mcp/index
-reference/api/index
 dev/index
 history
 GitHub <https://github.com/tony/agentgrep>

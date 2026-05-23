@@ -26,10 +26,10 @@ Run the CLI from first search to structured output.
 Common workflows for search, discovery, progress, and scripting.
 :::
 
-:::{grid-item-card} Reference
+:::{grid-item-card} API Reference
 :link: reference
 :link-type: doc
-Python API and MCP reference entry points.
+Core data types, discovery, search pipeline, and progress APIs.
 :::
 
 :::{grid-item-card} Examples

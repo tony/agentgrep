@@ -32,6 +32,12 @@ Read capabilities and source inventories.
 Reusable client-side search recipes.
 :::
 
+:::{grid-item-card} API Reference
+:link: reference
+:link-type: doc
+Payload models, server factory, and MCP helpers.
+:::
+
 ::::
 
 ## Search Tool
@@ -49,4 +55,5 @@ Reusable client-side search recipes.
 tools
 resources
 prompts
+reference
 ```
