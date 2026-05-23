@@ -21,7 +21,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 
-keywords = ["ai", "codex", "claude", "cursor", "mcp", "search", "agent-history"]
+keywords = ["ai", "codex", "claude", "cursor", "gemini", "mcp", "search", "agent-history"]
 packages = [
   { include = "*", from = "src" },
 ]
