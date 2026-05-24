@@ -12,7 +12,7 @@ the explorer always needs the explicit `ui` subcommand.
 Versions before 0.1.0a5 made bare `agentgrep` equivalent to
 `agentgrep ui`. That shortcut is gone. Reach the explorer through
 the explicit `ui` subcommand, or use the `--ui` overlay on
-`agentgrep grep` / `find` / `fuzzy` / `search` to open it
+`agentgrep grep` / `find` / `fuzzy` to open it
 pre-filled with that subcommand's query.
 ```
 
@@ -82,7 +82,7 @@ UIArgs, entry points, filter and display helpers.
 
 - {ref}`cli` — the `--ui` flag on any search-shaped subcommand opens
   the same explorer pre-seeded with that subcommand's query (e.g.
-  `agentgrep search bliss --agent codex --ui`).
+  `agentgrep grep bliss --agent codex --ui`).
 
 ```{toctree}
 :hidden:

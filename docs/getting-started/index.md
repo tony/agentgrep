@@ -18,13 +18,13 @@ $ uv sync --all-groups
 Search all supported stores:
 
 ```console
-$ uv run agentgrep search "release notes"
+$ uv run agentgrep grep "release notes"
 ```
 
 Search one agent's prompt records:
 
 ```console
-$ uv run agentgrep search "deploy docs" --agent codex --type prompts
+$ uv run agentgrep grep "deploy docs" --agent codex --type prompts
 ```
 
 ## 3. Inspect the stores

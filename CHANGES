@@ -42,6 +42,14 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### Breaking changes
+
+#### Remove `search` subcommand (#19)
+
+`agentgrep search` is removed. Use `agentgrep grep` for the same
+matching engine. `search` will return with rapidfuzz ranking,
+near-duplicate collapsing, and session grouping.
+
 ## agentgrep 0.1.0a5 (2026-05-23)
 
 The CLI grows from three subcommands to five (`grep`, `fuzzy`,

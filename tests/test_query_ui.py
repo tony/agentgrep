@@ -157,12 +157,7 @@ def test_build_query_inherits_base_filter_scope() -> None:
 
 
 def test_args_carry_raw_query_through() -> None:
-    """SearchArgs / GrepArgs / FindArgs all stash the original positionals."""
-    search_args = agentgrep.parse_args(["search", "agent:codex", "bliss"])
-    assert search_args is not None
-    assert isinstance(search_args, agentgrep.SearchArgs)
-    assert search_args.raw_query == "agent:codex bliss"
-
+    """GrepArgs / FindArgs all stash the original positionals."""
     grep_args = agentgrep.parse_args(["grep", "agent:codex", "bliss"])
     assert grep_args is not None
     assert isinstance(grep_args, agentgrep.GrepArgs)
@@ -176,7 +171,7 @@ def test_args_carry_raw_query_through() -> None:
 
 def test_bare_term_args_raw_query_matches_positionals() -> None:
     """Legacy bare-term invocations populate raw_query just like field-syntax."""
-    args = agentgrep.parse_args(["search", "bliss", "codex"])
+    args = agentgrep.parse_args(["grep", "bliss", "codex"])
     assert args is not None
-    assert isinstance(args, agentgrep.SearchArgs)
+    assert isinstance(args, agentgrep.GrepArgs)
     assert args.raw_query == "bliss codex"

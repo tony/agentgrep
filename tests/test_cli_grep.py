@@ -1564,13 +1564,6 @@ def test_find_progress_default_is_auto() -> None:
     assert parsed.progress_mode == "auto"
 
 
-def test_search_no_progress_aliases_progress_never() -> None:
-    """``agentgrep search --no-progress bliss`` resolves progress_mode to "never"."""
-    parsed = agentgrep.parse_args(["search", "--no-progress", "bliss"])
-    assert isinstance(parsed, agentgrep.SearchArgs)
-    assert parsed.progress_mode == "never"
-
-
 def test_format_grep_record_only_matching_emits_just_spans() -> None:
     """``-o`` / ``--only-matching`` emits only the matched substrings."""
     record = agentgrep.SearchRecord(

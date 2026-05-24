@@ -32,7 +32,7 @@ snippets live in the
 Search prompts and history across every configured agent:
 
 ```console
-$ agentgrep search "deploy"
+$ agentgrep grep "deploy"
 ```
 
 Stream JSON so a non-MCP agent or shell pipeline can consume the
@@ -45,7 +45,7 @@ $ agentgrep find --json
 Open the read-only Textual TUI for interactive browsing:
 
 ```console
-$ agentgrep search --ui
+$ agentgrep grep --ui
 ```
 
 `--json` and `--ndjson` make every command pipe-friendly. Agents that

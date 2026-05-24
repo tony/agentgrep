@@ -164,6 +164,6 @@ $ agentgrep find 'mtime:>2026-01-01'
 
 Record-level fields (`type:`, `timestamp:`, `model:`, `role:`)
 are accepted by the parser but don't filter find output since
-find emits one record per source. Use `agentgrep search` if you
+find emits one record per source. Use `agentgrep grep` if you
 need record-level filtering. See {ref}`library-query-language`
 for the full grammar.

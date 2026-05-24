@@ -6,7 +6,7 @@
 
 The `agentgrep` CLI is the fastest path to your local AI agent prompt
 and history archives from a terminal. It wraps the same read-only
-discovery and parsing layer the MCP server exposes — search, find
+discovery and parsing layer the MCP server exposes — grep, find
 stores, filter by agent — and lets you pipe everything through
 `--json` or `--ndjson` so any script or non-MCP agent can consume the
 results. Bare `agentgrep` (no subcommand) prints a colorized
@@ -16,11 +16,10 @@ for the interactive Textual explorer.
 
 ```{note}
 Versions before 0.1.0a5 silently rewrote `agentgrep <terms>` as
-`agentgrep search <terms>` and bare `agentgrep` as `agentgrep ui`.
+`agentgrep grep <terms>` and bare `agentgrep` as `agentgrep ui`.
 Both shortcuts are gone — every subcommand must be named
 explicitly. `agentgrep bliss` is now an `invalid choice` error
-rather than a search; reach for `agentgrep search bliss` or
-`agentgrep grep bliss` depending on the matching style you want.
+rather than a grep; reach for `agentgrep grep bliss`.
 ```
 
 ```{cli-install}
@@ -28,12 +27,6 @@ rather than a search; reach for `agentgrep search bliss` or
 
 ::::{grid} 1 2 2 3
 :gutter: 2 2 3 3
-
-:::{grid-item-card} agentgrep search
-:link: search
-:link-type: doc
-Search prompts and history with sensible serene-DX defaults.
-:::
 
 :::{grid-item-card} agentgrep grep
 :link: grep
@@ -81,9 +74,8 @@ MCP. Two flags govern machine-readable output:
   `jq`, into another CLI, or into an agent that consumes results
   incrementally.
 
-Both flags work on `search` and `find`. See
-[](#cli-search-json-output) and [](#cli-find-json-output) for the
-record shapes.
+Both flags work on `grep` and `find`. See
+[](#cli-find-json-output) for the record shapes.
 
 Agents that already speak MCP should prefer
 [`agentgrep-mcp`](../mcp/index.md) — same discovery and parsing
@@ -91,22 +83,22 @@ surface, but exposed as MCP tools with typed schemas.
 
 ## Examples
 
-Search prompts with sensible defaults:
+Search prompts with rg-shaped flags:
 
 ```console
-$ agentgrep search bliss
+$ agentgrep grep bliss
 ```
 
-Combine multiple terms with an agent filter:
+Combine multiple patterns with an agent filter:
 
 ```console
-$ agentgrep search serene bliss --agent codex
+$ agentgrep grep serene bliss --agent codex
 ```
 
 Stream history matches as NDJSON:
 
 ```console
-$ agentgrep search prompt history --type history --ndjson
+$ agentgrep grep prompt history --type history --ndjson
 ```
 
 List stores for one agent as JSON:
@@ -135,7 +127,6 @@ $ agentgrep
 ```{toctree}
 :hidden:
 
-search
 grep
 find
 fuzzy

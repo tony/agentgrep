@@ -17,7 +17,7 @@ $ uv run agentgrep find sessions --agent codex
 ## Cap result count
 
 ```console
-$ uv run agentgrep search "migration" --limit 5
+$ uv run agentgrep grep "migration" --limit 5
 ```
 
 ## Answer before the scan finishes
@@ -25,7 +25,7 @@ $ uv run agentgrep search "migration" --limit 5
 Interactive text searches show a progress line. Press Enter on a blank line to stop scanning and print the matches collected so far.
 
 ```console
-$ uv run agentgrep search "bliss"
+$ uv run agentgrep grep "bliss"
 ```
 
 ## Keep scripts quiet
@@ -33,7 +33,7 @@ $ uv run agentgrep search "bliss"
 Use structured output and disable progress:
 
 ```console
-$ uv run agentgrep search "release" --json --progress never
+$ uv run agentgrep grep "release" --json --progress never
 ```
 
 Progress, when enabled for JSON or NDJSON output, is written to stderr only.

@@ -2,14 +2,14 @@
 
 # Query language
 
-`agentgrep search`, `agentgrep grep`, and `agentgrep find` accept a
+`agentgrep grep`, `agentgrep grep`, and `agentgrep find` accept a
 Lucene-style query language for inline field predicates, boolean
 composition, and date ranges. The same syntax works across all three
 subcommands; each interprets the predicates against its natural
 record shape.
 
 The query language is **opt-in**: a bare positional like
-`agentgrep search bliss` keeps the legacy fast path with zero
+`agentgrep grep bliss` keeps the legacy fast path with zero
 overhead. Detection is a single-character scan for `:` in the
 positional tokens — if absent, the query module is never loaded.
 
@@ -31,7 +31,7 @@ exact-value  := TERM
 term         := TERM
 ```
 
-Implicit AND between bare terms is preserved: `agentgrep search foo bar`
+Implicit AND between bare terms is preserved: `agentgrep grep foo bar`
 matches records containing both `foo` and `bar`. Explicit `AND` /
 `OR` / `NOT` are case-insensitive and must be whole words.
 
@@ -112,34 +112,34 @@ For boolean composition:
 ## Examples
 
 ```console
-$ agentgrep search agent:codex bliss
+$ agentgrep grep agent:codex bliss
 ```
 
 Records from codex matching "bliss". Claude / cursor / gemini sources
 are never opened.
 
 ```console
-$ agentgrep search '(agent:codex OR agent:cursor) AND deploy'
+$ agentgrep grep '(agent:codex OR agent:cursor) AND deploy'
 ```
 
 Records from either codex or cursor mentioning "deploy". Claude /
 gemini are pruned at source level.
 
 ```console
-$ agentgrep search '-agent:claude bliss'
+$ agentgrep grep '-agent:claude bliss'
 ```
 
 Records from anyone except claude that mention "bliss".
 
 ```console
-$ agentgrep search 'timestamp:>2026-01-01 bliss'
+$ agentgrep grep 'timestamp:>2026-01-01 bliss'
 ```
 
 Records after 2026-01-01 mentioning "bliss". The timestamp filter
 runs at the record layer.
 
 ```console
-$ agentgrep search 'timestamp:[2026-01 TO 2026-03] model:claude'
+$ agentgrep grep 'timestamp:[2026-01 TO 2026-03] model:claude'
 ```
 
 Records in Q1 2026 from any claude-* model.
@@ -163,8 +163,8 @@ plain `agentgrep grep bliss`, but with the codex prefilter.
 field predicates:
 
 ```console
-$ agentgrep search --agent codex agent:claude bliss
-agentgrep search: error: cannot combine --agent flag with agent: field predicate; pick one syntax
+$ agentgrep grep --agent codex agent:claude bliss
+agentgrep grep: error: cannot combine --agent flag with agent: field predicate; pick one syntax
 ```
 
 Currently checked: `--agent` × `agent:`, `--type` × `type:`. Other

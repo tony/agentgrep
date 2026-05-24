@@ -121,12 +121,3 @@ def test_fuzzy_ui_with_case_sensitive_flag(monkeypatch: pytest.MonkeyPatch) -> N
     exit_code = agentgrep.main(["fuzzy", "--ui", "--no-ignore-case", "FOO"])
     assert exit_code == 0
     assert captured[0].case_sensitive is True
-
-
-def test_search_ui_overlay_still_works(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The pre-existing search --ui overlay continues to dispatch through run_ui."""
-    captured = _capture_run_ui(monkeypatch)
-    _stub_run_search_query(monkeypatch)
-    exit_code = agentgrep.main(["search", "--ui", "design"])
-    assert exit_code == 0
-    assert len(captured) == 1

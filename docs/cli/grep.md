@@ -279,6 +279,6 @@ The text portion (`bliss`, `deploy`) feeds grep's existing line-
 aware matching; the field predicates (`agent:`, `path:`,
 `timestamp:`) prune sources and filter records around it. A query
 with only field predicates and no text errors out — `grep` needs
-text to match lines against, so steer to `agentgrep search` for
-record-level-only filtering. See {ref}`library-query-language` for
+text to match lines against, so steer to `agentgrep find` for
+source-level enumeration. See {ref}`library-query-language` for
 the full grammar.

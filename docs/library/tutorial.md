@@ -7,13 +7,13 @@
 Search user prompts across all supported stores:
 
 ```console
-$ uv run agentgrep search "draft pr"
+$ uv run agentgrep grep "draft pr"
 ```
 
 Search only Codex prompts:
 
 ```console
-$ uv run agentgrep search "draft pr" --agent codex --type prompts
+$ uv run agentgrep grep "draft pr" --agent codex --type prompts
 ```
 
 ## Search history
@@ -21,13 +21,13 @@ $ uv run agentgrep search "draft pr" --agent codex --type prompts
 Search assistant and command history:
 
 ```console
-$ uv run agentgrep search "pytest" --type history
+$ uv run agentgrep grep "pytest" --type history
 ```
 
 Search prompts and history together:
 
 ```console
-$ uv run agentgrep search "docs" --type all
+$ uv run agentgrep grep "docs" --type all
 ```
 
 ## Combine terms
@@ -35,19 +35,19 @@ $ uv run agentgrep search "docs" --type all
 Require every term:
 
 ```console
-$ uv run agentgrep search docs deploy
+$ uv run agentgrep grep docs deploy
 ```
 
-Match any term:
+Match any term (all patterns use AND by default):
 
 ```console
-$ uv run agentgrep search docs deploy --any
+$ uv run agentgrep grep docs deploy
 ```
 
-Use regular expressions:
+Use regular expressions (regex is the default):
 
 ```console
-$ uv run agentgrep search "docs?.*deploy" --regex
+$ uv run agentgrep grep "docs?.*deploy"
 ```
 
 ## Return structured output
@@ -55,11 +55,11 @@ $ uv run agentgrep search "docs?.*deploy" --regex
 Pretty JSON:
 
 ```console
-$ uv run agentgrep search "release" --json
+$ uv run agentgrep grep "release" --json
 ```
 
 Line-delimited JSON:
 
 ```console
-$ uv run agentgrep search "release" --ndjson
+$ uv run agentgrep grep "release" --ndjson
 ```

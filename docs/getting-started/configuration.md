@@ -9,7 +9,7 @@ agentgrep is intentionally low-configuration. It reads known local agent stores 
 Use `--agent` one or more times to limit search or discovery:
 
 ```console
-$ uv run agentgrep search "cache" --agent codex
+$ uv run agentgrep grep "cache" --agent codex
 ```
 
 Supported agents are `codex`, `claude`, `cursor`, and `gemini`. Omitting `--agent` searches all supported agents.
@@ -19,7 +19,7 @@ Supported agents are `codex`, `claude`, `cursor`, and `gemini`. Omitting `--agen
 Use `--type` to choose records:
 
 ```console
-$ uv run agentgrep search "docs deploy" --type prompts
+$ uv run agentgrep grep "docs deploy" --type prompts
 ```
 
 Allowed values are `prompts`, `history`, and `all`.
@@ -29,17 +29,17 @@ Allowed values are `prompts`, `history`, and `all`.
 Text output is optimized for terminal reading:
 
 ```console
-$ uv run agentgrep search "release"
+$ uv run agentgrep grep "release"
 ```
 
 Use JSON or NDJSON for scripts:
 
 ```console
-$ uv run agentgrep search "release" --json
+$ uv run agentgrep grep "release" --json
 ```
 
 ```console
-$ uv run agentgrep search "release" --ndjson
+$ uv run agentgrep grep "release" --ndjson
 ```
 
 ## Progress and early answers
@@ -47,13 +47,13 @@ $ uv run agentgrep search "release" --ndjson
 Human text searches show progress by default. Press Enter on a blank line to return the matches collected so far.
 
 ```console
-$ uv run agentgrep search "bliss" --progress always
+$ uv run agentgrep grep "bliss" --progress always
 ```
 
 Disable progress when scripting:
 
 ```console
-$ uv run agentgrep search "bliss" --progress never
+$ uv run agentgrep grep "bliss" --progress never
 ```
 
 ## Privacy

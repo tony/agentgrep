@@ -5,7 +5,7 @@
 ## CLI search
 
 ```console
-$ uv run agentgrep search "database migration" --agent codex --limit 10
+$ uv run agentgrep grep "database migration" --agent codex --limit 10
 ```
 
 ## CLI discovery
