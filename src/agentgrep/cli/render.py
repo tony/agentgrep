@@ -461,6 +461,13 @@ def run_search_command(args: SearchArgs) -> int:
     progress_enabled = args.progress_mode == "always" or (
         args.progress_mode == "auto" and human_output
     )
+    answer_now_enabled = (
+        progress_enabled
+        and human_output
+        and bool(getattr(sys.stdin, "isatty", lambda: False)())
+        and bool(getattr(sys.stderr, "isatty", lambda: False)())
+    )
+    listener = agentgrep.AnswerNowInputListener(control) if answer_now_enabled else None
     progress: agentgrep.SearchProgress
     if not progress_enabled:
         progress = agentgrep.noop_search_progress()
@@ -468,14 +475,20 @@ def run_search_command(args: SearchArgs) -> int:
         progress = agentgrep.ConsoleSearchProgress(
             enabled=True,
             color_mode=args.color_mode,
-            answer_now_hint=False,
+            answer_now_hint=answer_now_enabled,
         )
-    records = agentgrep.run_search_query(
-        pathlib.Path.home(),
-        query,
-        progress=progress,
-        control=control,
-    )
+    if listener is not None:
+        listener.start()
+    try:
+        records = agentgrep.run_search_query(
+            pathlib.Path.home(),
+            query,
+            progress=progress,
+            control=control,
+        )
+    finally:
+        if listener is not None:
+            listener.stop()
     query_text = " ".join(args.terms)
     if args.no_rank:
         scored: list[tuple[agentgrep.SearchRecord, float]] = [(r, 0.0) for r in records]
