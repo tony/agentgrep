@@ -1303,8 +1303,8 @@ def stream_grep_results(args: GrepArgs) -> int:
                 ):
                     print()
                 match_count += 1
-            if summary is not None:
-                summary.add(event.record)
+                if summary is not None:
+                    summary.add(event.record)
             if is_tty:
                 sys.stdout.flush()
         elif isinstance(event, events.SearchFinished) and summary is not None:
