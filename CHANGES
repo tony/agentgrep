@@ -50,6 +50,15 @@ $ uvx --from 'agentgrep' --prerelease allow python
 matching engine. `search` will return with rapidfuzz ranking,
 near-duplicate collapsing, and session grouping.
 
+### What's new
+
+#### New flag: `--style=pretty` for `grep` (#18)
+
+Snippet-first output with warm-amber match highlights and a dim
+provenance line underneath. Relative timestamps ("3d ago") replace
+ISO strings. Use `--style=default` (or omit) for the existing
+rg-faithful output.
+
 ## agentgrep 0.1.0a5 (2026-05-23)
 
 The CLI grows from three subcommands to five (`grep`, `fuzzy`,

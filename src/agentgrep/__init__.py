@@ -83,6 +83,7 @@ OutputMode = t.Literal["text", "json", "ndjson", "ui"]
 ProgressMode = t.Literal["auto", "always", "never"]
 SearchType = t.Literal["prompts", "history", "all"]
 ColorMode = t.Literal["auto", "always", "never"]
+GrepStyle = t.Literal["default", "pretty"]
 type JSONScalar = str | int | float | bool | None
 type JSONValue = JSONScalar | list[JSONValue] | dict[str, JSONValue]
 type SummaryRow = tuple[object, object, object, object, object, object, object, object]
@@ -672,6 +673,8 @@ class AnsiColors:
     PATH: t.ClassVar[str] = "\x1b[35m"
     MUTED: t.ClassVar[str] = "\x1b[34m"
     WHITE: t.ClassVar[str] = "\x1b[37m"
+    ACCENT: t.ClassVar[str] = "\x1b[38;5;179m"
+    DIM: t.ClassVar[str] = "\x1b[2m"
     RESET: t.ClassVar[str] = "\x1b[0m"
 
     @classmethod
@@ -728,6 +731,14 @@ class AnsiColors:
     def white(self, text: str) -> str:
         """Format text as plain white."""
         return self.colorize(text, self.WHITE)
+
+    def accent(self, text: str) -> str:
+        """Format text as a warm-amber search accent."""
+        return self.colorize(text, self.ACCENT)
+
+    def dim(self, text: str) -> str:
+        """Format text as dim (reduced intensity)."""
+        return self.colorize(text, self.DIM)
 
 
 class SearchColors(t.Protocol):

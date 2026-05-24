@@ -30,6 +30,7 @@ from agentgrep import (
     UI_DESCRIPTION,
     AgentName,
     ColorMode,
+    GrepStyle,
     OutputMode,
     ProgressMode,
     SearchType,
@@ -165,6 +166,7 @@ class GrepArgs:
     output_mode: OutputMode
     color_mode: ColorMode
     progress_mode: ProgressMode
+    style: GrepStyle = "default"
     compiled: CompiledQuery | None = None
     raw_query: str = ""
 
@@ -380,6 +382,12 @@ def create_parser(
         action="store_const",
         const="never",
         help="Silence the stderr progress spinner (alias for --progress=never)",
+    )
+    _ = grep_parser.add_argument(
+        "--style",
+        choices=["default", "pretty"],
+        default="default",
+        help="Output style: default (rg-faithful) or pretty (snippet-first, amber highlights)",
     )
     add_output_mode_options(grep_parser, allow_ui=True)
 
@@ -996,6 +1004,7 @@ def _build_grep_args(
         output_mode=output_mode,
         color_mode=color_mode,
         progress_mode=t.cast("ProgressMode", namespace.progress),
+        style=t.cast("GrepStyle", namespace.style),
     )
 
 

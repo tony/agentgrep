@@ -16,6 +16,8 @@ compatibility.
 from __future__ import annotations
 
 import collections.abc as cabc
+import dataclasses
+import datetime
 import fnmatch
 import json
 import pathlib
@@ -37,13 +39,18 @@ from agentgrep import (
 from agentgrep.cli.parser import FindArgs, FuzzyArgs, GrepArgs, UIArgs
 
 __all__ = [
+    "GrepSummary",
     "build_envelope",
     "build_grep_query",
+    "extract_search_snippet",
     "filter_find_records",
     "format_grep_heading",
     "format_grep_line",
     "format_grep_record",
+    "format_grep_record_pretty",
+    "format_relative_time",
     "fuzzy_filter_lines",
+    "highlight_search_spans",
     "iter_match_lines",
     "maybe_build_pydantic",
     "print_find_results",
@@ -463,6 +470,93 @@ def _merge_overlapping_spans(
     return merged
 
 
+def extract_search_snippet(
+    text: str,
+    patterns: list[re.Pattern[str]],
+    *,
+    max_lines: int = 5,
+) -> tuple[str, int]:
+    """Extract a match-centered line window from record text.
+
+    Parameters
+    ----------
+    text : str
+        The full record text body.
+    patterns : list[re.Pattern[str]]
+        Compiled highlight patterns.  Used to find the match center.
+    max_lines : int
+        Maximum lines to include in the snippet.
+
+    Returns
+    -------
+    tuple[str, int]
+        ``(snippet_text, remaining_line_count)``.  When ``text`` is
+        empty, returns ``("", 0)``.
+    """
+    if not text:
+        return ("", 0)
+    lines = text.split("\n")
+    total = len(lines)
+    if total <= max_lines:
+        return (text, 0)
+    match_idx: int | None = None
+    if patterns:
+        for idx, line in enumerate(lines):
+            for pattern in patterns:
+                if pattern.search(line):
+                    match_idx = idx
+                    break
+            if match_idx is not None:
+                break
+    if match_idx is None:
+        snippet_lines = lines[:max_lines]
+    else:
+        start = max(0, match_idx - 1)
+        end = start + max_lines
+        if end > total:
+            end = total
+            start = max(0, end - max_lines)
+        snippet_lines = lines[start:end]
+    remaining = total - len(snippet_lines)
+    return ("\n".join(snippet_lines), remaining)
+
+
+def highlight_search_spans(
+    text: str,
+    patterns: list[re.Pattern[str]],
+    *,
+    colors: agentgrep.AnsiColors,
+) -> str:
+    """Apply warm-amber accent highlighting to match spans.
+
+    Uses :func:`_merge_overlapping_spans` to avoid nested ANSI
+    escape sequences from multi-pattern overlap.
+    """
+    if not text or not patterns:
+        return text
+    result_lines: list[str] = []
+    for line in text.split("\n"):
+        spans: list[tuple[int, int]] = []
+        for pattern in patterns:
+            for m in pattern.finditer(line):
+                if m.start() == m.end():
+                    continue
+                spans.append((m.start(), m.end()))
+        if not spans:
+            result_lines.append(line)
+            continue
+        merged = _merge_overlapping_spans(spans)
+        parts: list[str] = []
+        cursor = 0
+        for start, end in merged:
+            parts.append(line[cursor:start])
+            parts.append(colors.accent(line[start:end]))
+            cursor = end
+        parts.append(line[cursor:])
+        result_lines.append("".join(parts))
+    return "\n".join(result_lines)
+
+
 def iter_match_lines(
     record_text: str,
     args: GrepArgs,
@@ -738,6 +832,65 @@ def _grep_show_line_col(args: GrepArgs) -> tuple[bool, bool]:
     return False, False
 
 
+@dataclasses.dataclass(slots=True)
+class GrepSummary:
+    """Accumulates per-agent match counts for pretty-style grep footer."""
+
+    total: int = 0
+    per_agent: dict[str, int] = dataclasses.field(default_factory=dict)
+    elapsed: float = 0.0
+
+    def add(self, record: agentgrep.SearchRecord) -> None:
+        """Record one emitted search result."""
+        self.total += 1
+        self.per_agent[record.agent] = self.per_agent.get(record.agent, 0) + 1
+
+    def format(self, *, colors: agentgrep.AnsiColors) -> str:
+        """Format the summary footer line."""
+        if self.total == 0:
+            return ""
+        parts = [f"{self.total} records"]
+        for agent, count in sorted(self.per_agent.items()):
+            parts.append(f"{count} {agent}")
+        elapsed_str = f"{self.elapsed:.1f}s"
+        parts.append(elapsed_str)
+        line = " · ".join(parts)
+        return colors.dim(line)
+
+
+def format_grep_record_pretty(
+    record: agentgrep.SearchRecord,
+    args: GrepArgs,
+    *,
+    colors: agentgrep.AnsiColors,
+) -> str:
+    """Format one record in snippet-first pretty style.
+
+    Content first at full foreground with warm-amber match highlighting,
+    dim provenance line underneath.
+    """
+    lines: list[str] = []
+    patterns = _compile_grep_patterns(args)
+
+    if record.text:
+        snippet, remaining = extract_search_snippet(record.text, patterns)
+        highlighted = highlight_search_spans(snippet, patterns, colors=colors)
+        lines.append(highlighted)
+        if remaining > 0:
+            lines.append(colors.dim(f"  ... {remaining} more lines"))
+    provenance_parts: list[str] = [record.agent, record.kind]
+    if record.timestamp:
+        provenance_parts.append(format_relative_time(record.timestamp))
+    if record.model:
+        provenance_parts.append(record.model)
+    display_path = agentgrep.format_display_path(record.path)
+    provenance_parts.append(colors.path(display_path))
+    provenance = " · ".join(provenance_parts)
+    lines.append(colors.dim(f"  {provenance}"))
+
+    return "\n".join(lines)
+
+
 def format_grep_record(record: agentgrep.SearchRecord, args: GrepArgs) -> str:
     """Format one matching record for text-mode ``grep`` output.
 
@@ -769,6 +922,9 @@ def format_grep_record(record: agentgrep.SearchRecord, args: GrepArgs) -> str:
                 col = start + 1
                 rows.append(f"{colors.path(path)}:{line_no}:{col}:{line}")
         return "\n".join(rows)
+
+    if args.style == "pretty":
+        return format_grep_record_pretty(record, args, colors=colors)
 
     if not matches:
         # Record matched at the engine level but no individual line carries
@@ -1036,6 +1192,60 @@ def run_fuzzy_command(args: FuzzyArgs) -> int:
     return 0 if ranked else 1
 
 
+def format_relative_time(
+    iso_timestamp: str,
+    *,
+    now: datetime.datetime | None = None,
+) -> str:
+    """Convert an ISO 8601 timestamp to a human-scannable relative form.
+
+    Parameters
+    ----------
+    iso_timestamp : str
+        ISO 8601 timestamp string.  Assumed UTC when no timezone info
+        is present.
+    now : datetime.datetime | None
+        Reference time for delta computation.  Defaults to
+        ``datetime.datetime.now(datetime.UTC)``.
+
+    Returns
+    -------
+    str
+        Relative time such as ``now``, ``3m ago``, ``2d ago``.
+        Returns *iso_timestamp* verbatim when parsing fails.
+    """
+    try:
+        dt = datetime.datetime.fromisoformat(iso_timestamp)
+    except ValueError, TypeError:
+        return iso_timestamp
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.UTC)
+    ref = now if now is not None else datetime.datetime.now(datetime.UTC)
+    delta = ref - dt
+    total_seconds = int(delta.total_seconds())
+    if total_seconds < 0:
+        return iso_timestamp
+    if total_seconds < 60:
+        return "now"
+    minutes = total_seconds // 60
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours = total_seconds // 3600
+    if hours < 24:
+        return f"{hours}h ago"
+    days = total_seconds // 86400
+    if days < 7:
+        return f"{days}d ago"
+    if days < 30:
+        weeks = days // 7
+        return f"{weeks}w ago"
+    if days < 365:
+        months = days // 30
+        return f"{months}mo ago"
+    years = days // 365
+    return f"{years}y ago"
+
+
 def _grep_path_is_eager(args: GrepArgs) -> bool:
     """Return ``True`` when grep's output mode needs the full record list.
 
@@ -1072,6 +1282,8 @@ def stream_grep_results(args: GrepArgs) -> int:
     control = agentgrep.SearchControl()
     is_tty = sys.stdout.isatty()
     match_count = 0
+    pretty = args.style == "pretty"
+    summary = GrepSummary() if pretty else None
     for event in agentgrep.iter_search_events(
         pathlib.Path.home(),
         query,
@@ -1085,13 +1297,22 @@ def stream_grep_results(args: GrepArgs) -> int:
                         match_count += 1
             else:
                 print(format_grep_record(event.record, args))
-                if not args.only_matching and (
-                    args.heading is True or (args.heading is None and is_tty)
+                if pretty or (
+                    not args.only_matching
+                    and (args.heading is True or (args.heading is None and is_tty))
                 ):
                     print()
                 match_count += 1
+                if summary is not None:
+                    summary.add(event.record)
             if is_tty:
                 sys.stdout.flush()
+        elif isinstance(event, events.SearchFinished) and summary is not None:
+            summary.elapsed = event.elapsed_seconds
+    if is_tty and summary is not None and summary.total > 0:
+        footer = summary.format(colors=agentgrep.AnsiColors.for_stream(args.color_mode, sys.stderr))
+        if footer:
+            print(footer, file=sys.stderr)
     if match_count == 0 and args.output_mode == "text":
         print("No matches found.", file=sys.stderr)
     return 0 if match_count > 0 else 1
