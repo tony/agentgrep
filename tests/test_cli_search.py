@@ -250,6 +250,88 @@ def test_search_parse_agent_filter() -> None:
     assert parsed.agents == ("codex",)
 
 
+class SearchInvalidRegexCase(t.NamedTuple):
+    """Parametrized case for ``search --regex`` validation."""
+
+    test_id: str
+    pattern: str
+    expected_msg_fragment: str
+
+
+SEARCH_INVALID_REGEX_CASES: tuple[SearchInvalidRegexCase, ...] = (
+    SearchInvalidRegexCase(
+        test_id="unterminated-charset",
+        pattern="[",
+        expected_msg_fragment="unterminated character set",
+    ),
+    SearchInvalidRegexCase(
+        test_id="unclosed-paren",
+        pattern="(unclosed",
+        expected_msg_fragment="unterminated subpattern",
+    ),
+    SearchInvalidRegexCase(
+        test_id="bad-backref",
+        pattern=r"\1",
+        expected_msg_fragment="invalid group reference",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    SEARCH_INVALID_REGEX_CASES,
+    ids=[case.test_id for case in SEARCH_INVALID_REGEX_CASES],
+)
+def test_search_invalid_regex_exits_with_clean_error(
+    case: SearchInvalidRegexCase,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``agentgrep search --regex <bad-regex>`` exits before scanning."""
+    with pytest.raises(SystemExit) as exc_info:
+        _ = agentgrep.parse_args(("search", "--regex", case.pattern))
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert "invalid regex" in captured.err
+    assert case.expected_msg_fragment in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_search_type_field_broadens_coarse_search_type() -> None:
+    """A query-language ``type:`` predicate controls record-kind filtering."""
+    parsed = agentgrep.parse_args(("search", "type:history", "bliss"))
+    assert isinstance(parsed, agentgrep.SearchArgs)
+    assert parsed.search_type == "all"
+    assert parsed.terms == ("bliss",)
+    assert parsed.compiled is not None
+
+
+def test_search_type_field_history_record_reaches_compiled_predicate() -> None:
+    """``type:history`` must not be pre-filtered by the default prompts scope."""
+    parsed = agentgrep.parse_args(("search", "type:history", "bliss"))
+    assert isinstance(parsed, agentgrep.SearchArgs)
+    record = agentgrep.SearchRecord(
+        kind="history",
+        agent="codex",
+        store="history",
+        adapter_id="codex.history_json.v1",
+        path=pathlib.Path("/tmp/history.json"),
+        text="bliss command",
+    )
+    query = agentgrep.SearchQuery(
+        terms=parsed.terms,
+        search_type=parsed.search_type,
+        any_term=parsed.any_term,
+        regex=parsed.regex,
+        case_sensitive=parsed.case_sensitive,
+        agents=parsed.agents,
+        limit=parsed.limit,
+        compiled=parsed.compiled,
+    )
+
+    assert query.search_type == "all"
+    assert agentgrep.matches_record(record, query)
+
+
 # ---------------------------------------------------------------------------
 # Integration tests
 # ---------------------------------------------------------------------------

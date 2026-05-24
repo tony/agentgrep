@@ -395,7 +395,6 @@ def create_parser(
     _ = grep_parser.add_argument(
         "--type",
         choices=["prompts", "history", "all"],
-        default="prompts",
         dest="search_type",
         help="Record type to search (default: prompts)",
     )
@@ -474,7 +473,6 @@ def create_parser(
         "--type",
         dest="find_type",
         choices=["prompts", "history", "sessions", "all"],
-        default="all",
         help="Restrict to a record kind (default: all)",
     )
     _ = find_parser.add_argument(
@@ -682,7 +680,6 @@ def create_parser(
     _ = search_parser.add_argument(
         "--type",
         choices=["prompts", "history", "all"],
-        default="prompts",
         dest="search_type",
         help="Record type to search (default: prompts)",
     )
@@ -766,7 +763,7 @@ def _search_explicit_flags(namespace: argparse.Namespace) -> dict[str, str]:
     flags: dict[str, str] = {}
     if t.cast("list[str]", namespace.agent):
         flags["agent"] = "--agent"
-    if t.cast("str", namespace.search_type) != "prompts":
+    if t.cast("str | None", namespace.search_type) is not None:
         flags["type"] = "--type"
     return flags
 
@@ -776,7 +773,7 @@ def _grep_explicit_flags(namespace: argparse.Namespace) -> dict[str, str]:
     flags: dict[str, str] = {}
     if t.cast("list[str]", namespace.agent):
         flags["agent"] = "--agent"
-    if t.cast("str", namespace.search_type) != "prompts":
+    if t.cast("str | None", namespace.search_type) is not None:
         flags["type"] = "--type"
     return flags
 
@@ -786,9 +783,23 @@ def _find_explicit_flags(namespace: argparse.Namespace) -> dict[str, str]:
     flags: dict[str, str] = {}
     if t.cast("list[str]", namespace.agent):
         flags["agent"] = "--agent"
-    if t.cast("str", namespace.find_type) != "all":
+    if t.cast("str | None", namespace.find_type) is not None:
         flags["type"] = "--type"
     return flags
+
+
+def _effective_search_type(
+    namespace: argparse.Namespace,
+    *,
+    query_fields: set[str],
+) -> SearchType:
+    """Return the coarse search type after query-language reconciliation."""
+    explicit = t.cast("SearchType | None", namespace.search_type)
+    if explicit is not None:
+        return explicit
+    if "type" in query_fields:
+        return "all"
+    return "prompts"
 
 
 def _maybe_compile_query(
@@ -798,14 +809,15 @@ def _maybe_compile_query(
     color_mode: ColorMode,
     subparser: argparse.ArgumentParser,
     explicit_flags: dict[str, str] | None = None,
-) -> tuple[CompiledQuery | None, tuple[str, ...]]:
+) -> tuple[CompiledQuery | None, tuple[str, ...], set[str]]:
     """Detect Lucene-style query syntax in positionals and compile if present.
 
-    Returns ``(compiled, residual_terms)`` — ``compiled`` is ``None`` when
-    no positional contains ``:`` (legacy fast path); ``residual_terms``
+    Returns ``(compiled, residual_terms, fields)`` — ``compiled`` is ``None``
+    when no positional contains ``:`` (legacy fast path); ``residual_terms``
     is the tuple to feed back as the legacy ``terms`` / ``patterns`` /
     ``pattern`` field so the engine's existing text-matching path
-    still has the user's text query.
+    still has the user's text query. ``fields`` is populated only for
+    query-language input so callers can reconcile equivalent CLI flags.
 
     ``explicit_flags`` maps field name → flag name. When a field also
     has an explicitly-set flag (e.g. ``--agent`` set AND ``agent:``
@@ -817,7 +829,7 @@ def _maybe_compile_query(
     traceback.
     """
     if not any(":" in token for token in positionals):
-        return None, tuple(positionals)
+        return None, tuple(positionals), set()
     from agentgrep.query import (
         QueryCompileError,
         QueryParseError,
@@ -834,8 +846,8 @@ def _maybe_compile_query(
     except QueryParseError as exc:
         with configured_color_environment(color_mode):
             subparser.error(f"invalid query: {exc}")
+    used_fields = fields_in_ast(ast)
     if explicit_flags:
-        used_fields = fields_in_ast(ast)
         for field_name, flag_name in explicit_flags.items():
             if field_name in used_fields:
                 with configured_color_environment(color_mode):
@@ -849,7 +861,7 @@ def _maybe_compile_query(
         with configured_color_environment(color_mode):
             subparser.error(f"invalid query: {exc}")
     _ = bundle  # kept available for future per-bundle checks
-    return compiled, compiled.text_terms
+    return compiled, compiled.text_terms, used_fields
 
 
 def _check_for_mangled_field_predicate(
@@ -967,7 +979,7 @@ def parse_args(
 
     raw_pattern = t.cast("str | None", namespace.pattern)
     find_positionals = [raw_pattern] if raw_pattern is not None else []
-    find_compiled, find_residual = _maybe_compile_query(
+    find_compiled, find_residual, _find_query_fields = _maybe_compile_query(
         find_positionals,
         bundle=bundle,
         color_mode=color_mode,
@@ -1006,7 +1018,7 @@ def parse_args(
         output_mode=output_mode,
         color_mode=color_mode,
         pattern_mode=pattern_mode,
-        type_filter=t.cast("FindTypeFilter", namespace.find_type),
+        type_filter=t.cast("FindTypeFilter", namespace.find_type or "all"),
         extensions=tuple(t.cast("list[str]", namespace.find_extensions)),
         case_mode=find_case_mode,
         list_details=t.cast("bool", namespace.list_details),
@@ -1048,7 +1060,7 @@ def _build_grep_args(
         pattern_mode = "regex"
 
     patterns_list_raw = t.cast("list[str]", namespace.patterns)
-    grep_compiled, residual_patterns = _maybe_compile_query(
+    grep_compiled, residual_patterns, grep_query_fields = _maybe_compile_query(
         patterns_list_raw,
         bundle=bundle,
         color_mode=color_mode,
@@ -1109,7 +1121,10 @@ def _build_grep_args(
     return GrepArgs(
         patterns=tuple(patterns_list),
         agents=agents,
-        search_type=t.cast("SearchType", namespace.search_type),
+        search_type=_effective_search_type(
+            namespace,
+            query_fields=grep_query_fields,
+        ),
         case_mode=case_mode,
         pattern_mode=pattern_mode,
         invert_match=invert_match,
@@ -1157,7 +1172,7 @@ def _build_search_args(
                 "--threshold has no effect with --no-rank (ranking is disabled)",
             )
 
-    search_compiled, residual_terms = _maybe_compile_query(
+    search_compiled, residual_terms, search_query_fields = _maybe_compile_query(
         terms_list,
         bundle=bundle,
         color_mode=color_mode,
@@ -1167,14 +1182,27 @@ def _build_search_args(
     final_terms: tuple[str, ...] = (
         residual_terms if search_compiled is not None else tuple(terms_list)
     )
+    regex = t.cast("bool", namespace.regex)
+    case_sensitive = t.cast("bool", namespace.case_sensitive)
+    if regex:
+        flags = 0 if case_sensitive else re.IGNORECASE
+        for term in final_terms:
+            try:
+                _ = re.compile(term, flags)
+            except re.error as exc:
+                with configured_color_environment(color_mode):
+                    bundle.search_parser.error(f"invalid regex {term!r}: {exc}")
 
     return SearchArgs(
         terms=final_terms,
         agents=agents,
-        search_type=t.cast("SearchType", namespace.search_type),
+        search_type=_effective_search_type(
+            namespace,
+            query_fields=search_query_fields,
+        ),
         any_term=t.cast("bool", namespace.any_term),
-        regex=t.cast("bool", namespace.regex),
-        case_sensitive=t.cast("bool", namespace.case_sensitive),
+        regex=regex,
+        case_sensitive=case_sensitive,
         limit=limit,
         output_mode=output_mode,
         color_mode=color_mode,
