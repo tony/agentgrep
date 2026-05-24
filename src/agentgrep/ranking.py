@@ -6,7 +6,7 @@ them through the three-stage pipeline exposed here:
 1. :func:`rank_search_records` — score each record against the query
    text with rapidfuzz WRatio, filter by threshold, sort best-first.
 2. :func:`collapse_near_duplicates` — pairwise WRatio between record
-   bodies; records above the similarity ceiling are folded into the
+   bodies; records at or above the similarity ceiling are folded into the
    highest-scoring representative.
 3. :func:`group_by_session` — bucket the surviving records by
    ``session_id``, preserving score order within each group.
