@@ -150,7 +150,8 @@ def build_description(
 CLI_DESCRIPTION = build_description(
     """
     Read-only search across Codex, Claude, Cursor, and Gemini local
-    stores. Pick a subcommand from the list below: ``grep`` for
+    stores. Pick a subcommand from the list below: ``search`` for
+    ranked results with dedup and session grouping, ``grep`` for
     rg-shaped content search, ``fuzzy`` for fzf-style filtering,
     ``find`` for store enumeration, ``ui`` for the interactive
     Textual explorer.
