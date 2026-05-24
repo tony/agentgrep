@@ -430,10 +430,11 @@ def run_ui_command(args: UIArgs) -> int:
 def run_search_command(args: SearchArgs) -> int:
     """Execute ``agentgrep search`` with ranking and grouping.
 
-    Collects all matching records eagerly, scores them by rapidfuzz
-    relevance, collapses near-duplicates, groups by session, and
-    renders in the requested output format. Returns ``0`` when at
-    least one result survives ranking, ``1`` otherwise.
+    Collects all matching records eagerly, then applies a three-stage
+    pipeline: score by rapidfuzz relevance (skipped with ``--no-rank``),
+    collapse near-duplicates, and group by session (skipped with
+    ``--no-group``). Returns ``0`` when at least one result survives,
+    ``1`` otherwise.
     """
     if not args.terms and args.output_mode != "ui":
         msg = "search requires at least one term unless --ui is used"
