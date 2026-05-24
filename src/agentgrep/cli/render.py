@@ -22,6 +22,7 @@ and ``agentgrep.run_search_command``.
 from __future__ import annotations
 
 import collections.abc as cabc
+import dataclasses
 import datetime
 import fnmatch
 import json
@@ -44,6 +45,7 @@ from agentgrep import (
 from agentgrep.cli.parser import FindArgs, FuzzyArgs, GrepArgs, SearchArgs, UIArgs
 
 __all__ = [
+    "SearchSummary",
     "build_envelope",
     "build_grep_query",
     "extract_search_snippet",
@@ -52,6 +54,7 @@ __all__ = [
     "format_grep_line",
     "format_grep_record",
     "format_relative_time",
+    "format_search_record",
     "fuzzy_filter_lines",
     "highlight_search_spans",
     "iter_match_lines",
@@ -660,6 +663,65 @@ def highlight_search_spans(
         parts.append(line[cursor:])
         result_lines.append("".join(parts))
     return "\n".join(result_lines)
+
+
+@dataclasses.dataclass(slots=True)
+class SearchSummary:
+    """Accumulates per-agent match counts during streaming search."""
+
+    total: int = 0
+    per_agent: dict[str, int] = dataclasses.field(default_factory=dict)
+    elapsed: float = 0.0
+
+    def add(self, record: agentgrep.SearchRecord) -> None:
+        """Record one emitted search result."""
+        self.total += 1
+        self.per_agent[record.agent] = self.per_agent.get(record.agent, 0) + 1
+
+    def format(self, *, colors: agentgrep.AnsiColors) -> str:
+        """Format the summary footer line."""
+        if self.total == 0:
+            return ""
+        parts = [f"{self.total} records"]
+        for agent, count in sorted(self.per_agent.items()):
+            parts.append(f"{count} {agent}")
+        elapsed_str = f"{self.elapsed:.1f}s"
+        parts.append(elapsed_str)
+        line = " · ".join(parts)
+        return colors.dim(line)
+
+
+def format_search_record(
+    record: agentgrep.SearchRecord,
+    args: SearchArgs,
+    *,
+    colors: agentgrep.AnsiColors,
+    patterns: list[re.Pattern[str]],
+) -> str:
+    """Format one search result in snippet-first layout.
+
+    Produces a block with content first (full foreground, match spans
+    in warm amber) and a dim provenance line underneath.
+    """
+    lines: list[str] = []
+
+    if record.text:
+        snippet, remaining = extract_search_snippet(record.text, patterns)
+        highlighted = highlight_search_spans(snippet, patterns, colors=colors)
+        lines.append(highlighted)
+        if remaining > 0:
+            lines.append(colors.dim(f"  ... {remaining} more lines"))
+    provenance_parts: list[str] = [record.agent, record.kind]
+    if record.timestamp is not None:
+        provenance_parts.append(format_relative_time(record.timestamp))
+    if record.model is not None:
+        provenance_parts.append(record.model)
+    display_path = agentgrep.format_display_path(record.path)
+    provenance_parts.append(colors.path(display_path))
+    provenance = " · ".join(provenance_parts)
+    lines.append(colors.dim(f"  {provenance}"))
+
+    return "\n".join(lines)
 
 
 def iter_match_lines(
