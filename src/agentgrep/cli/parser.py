@@ -975,7 +975,7 @@ def parse_args(
     limit = t.cast("int | None", namespace.limit)
     if limit is not None and limit < 1:
         with configured_color_environment(color_mode):
-            bundle.parser.error("--limit must be greater than 0")
+            bundle.find_parser.error("--limit must be greater than 0")
 
     raw_pattern = t.cast("str | None", namespace.pattern)
     find_positionals = [raw_pattern] if raw_pattern is not None else []
@@ -1043,7 +1043,7 @@ def _build_grep_args(
     max_count = t.cast("int | None", namespace.max_count)
     if max_count is not None and max_count < 1:
         with configured_color_environment(color_mode):
-            bundle.parser.error("--max-count must be greater than 0")
+            bundle.grep_parser.error("--max-count must be greater than 0")
 
     if t.cast("bool", namespace.ignore_case):
         case_mode: CaseMode = "ignore"
@@ -1160,7 +1160,7 @@ def _build_search_args(
     limit = t.cast("int | None", namespace.limit)
     if limit is not None and limit < 1:
         with configured_color_environment(color_mode):
-            bundle.parser.error("--limit must be greater than 0")
+            bundle.search_parser.error("--limit must be greater than 0")
     threshold = t.cast("int", namespace.threshold)
     if threshold < 0 or threshold > 100:
         with configured_color_environment(color_mode):
