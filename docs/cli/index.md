@@ -16,7 +16,7 @@ for the interactive Textual explorer.
 
 ```{note}
 Versions before 0.1.0a5 silently rewrote `agentgrep <terms>` as
-`agentgrep search <terms>` and bare `agentgrep` as `agentgrep ui`.
+`agentgrep grep <terms>` and bare `agentgrep` as `agentgrep ui`.
 Both shortcuts are gone — every subcommand must be named
 explicitly. `agentgrep bliss` is now an `invalid choice` error
 rather than a grep; reach for `agentgrep grep bliss`.

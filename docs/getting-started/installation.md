@@ -27,7 +27,7 @@ $ uv sync --all-groups
 Run the CLI from the checkout:
 
 ```console
-$ uv run agentgrep search "bliss"
+$ uv run agentgrep grep "bliss"
 ```
 
 Run the MCP server:
