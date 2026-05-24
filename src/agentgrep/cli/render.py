@@ -906,8 +906,6 @@ def format_grep_record(record: agentgrep.SearchRecord, args: GrepArgs) -> str:
     if args.files_with_matches or args.files_without_match:
         return path
     colors = agentgrep.AnsiColors.for_stream(args.color_mode, sys.stdout)
-    if args.style == "pretty":
-        return format_grep_record_pretty(record, args, colors=colors)
     matches = list(iter_match_lines(record.text, args))
 
     if args.only_matching:
@@ -924,6 +922,9 @@ def format_grep_record(record: agentgrep.SearchRecord, args: GrepArgs) -> str:
                 col = start + 1
                 rows.append(f"{colors.path(path)}:{line_no}:{col}:{line}")
         return "\n".join(rows)
+
+    if args.style == "pretty":
+        return format_grep_record_pretty(record, args, colors=colors)
 
     if not matches:
         # Record matched at the engine level but no individual line carries

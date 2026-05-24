@@ -186,6 +186,22 @@ def test_style_pretty_dispatches_to_pretty_formatter() -> None:
     assert provenance[0].startswith("  ")
 
 
+def test_only_matching_overrides_pretty() -> None:
+    """--only-matching takes precedence over --style=pretty."""
+    record = _make_record(text="find the streaming needle here")
+    args = _make_grep_args(style="pretty", only_matching=True, pattern_mode="fixed")
+    result = format_grep_record(record, args)
+    assert result == "streaming"
+
+
+def test_vimgrep_overrides_pretty() -> None:
+    """--vimgrep takes precedence over --style=pretty."""
+    record = _make_record(text="streaming is great")
+    args = _make_grep_args(style="pretty", vimgrep=True, pattern_mode="fixed")
+    result = format_grep_record(record, args)
+    assert ":1:" in result
+
+
 # ---------------------------------------------------------------------------
 # GrepSummary
 # ---------------------------------------------------------------------------
