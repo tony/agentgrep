@@ -454,7 +454,6 @@ def test_search_no_rank_preserves_order(
     assert code == 0
     captured = capsys.readouterr()
     lines = captured.out.strip().splitlines()
-    # With no_rank, scores are 0 — all matching records appear
     score_lines = [line for line in lines if line.startswith("0")]
     assert len(score_lines) >= 1
 
