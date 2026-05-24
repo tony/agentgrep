@@ -85,6 +85,8 @@ def collapse_near_duplicates(
 
     if not scored:
         return []
+    if len(scored) > 500:
+        return [(r, s, 0) for r, s in scored]
     result: list[tuple[SearchRecord, float, int]] = []
     consumed: set[int] = set()
     for i, (record_i, score_i) in enumerate(scored):
