@@ -3485,8 +3485,6 @@ def _iter_jsonl(
                 decoded_lines += 1
                 if decoded_lines % _JSONL_YIELD_LINE_INTERVAL == 0:
                     time.sleep(0)
-                if skip_line is not None and skip_line(stripped):
-                    continue
                 try:
                     parsed = t.cast("object", json.loads(stripped))
                 except json.JSONDecodeError:
