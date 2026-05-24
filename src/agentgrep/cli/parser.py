@@ -27,6 +27,7 @@ from agentgrep import (
     FIND_DESCRIPTION,
     FUZZY_DESCRIPTION,
     GREP_DESCRIPTION,
+    SEARCH_DESCRIPTION,
     UI_DESCRIPTION,
     AgentName,
     ColorMode,
@@ -58,6 +59,7 @@ __all__ = [
     "GrepArgs",
     "ParserBundle",
     "PatternMode",
+    "SearchArgs",
     "UIArgs",
     "add_common_agent_options",
     "add_output_mode_options",
@@ -172,6 +174,32 @@ class GrepArgs:
 
 
 @dataclasses.dataclass(slots=True)
+class SearchArgs:
+    """Typed arguments for ``agentgrep search``.
+
+    Differentiates from ``grep`` by applying rapidfuzz relevance scoring,
+    near-duplicate collapsing (WRatio > 90), and session grouping to
+    produce a best-first result set.
+    """
+
+    terms: tuple[str, ...]
+    agents: tuple[AgentName, ...]
+    search_type: SearchType
+    any_term: bool
+    regex: bool
+    case_sensitive: bool
+    limit: int | None
+    output_mode: OutputMode
+    color_mode: ColorMode
+    progress_mode: ProgressMode
+    threshold: int = 0
+    no_group: bool = False
+    no_rank: bool = False
+    compiled: CompiledQuery | None = None
+    raw_query: str = ""
+
+
+@dataclasses.dataclass(slots=True)
 class ParserBundle:
     """CLI parsers used for root and subcommand help."""
 
@@ -179,6 +207,7 @@ class ParserBundle:
     find_parser: argparse.ArgumentParser
     grep_parser: argparse.ArgumentParser
     fuzzy_parser: argparse.ArgumentParser
+    search_parser: argparse.ArgumentParser
 
 
 def normalize_color_mode(argv: cabc.Sequence[str] | None) -> ColorMode:
@@ -636,11 +665,87 @@ def create_parser(
     )
     add_output_mode_options(fuzzy_parser, allow_ui=True)
 
+    search_parser = subparsers.add_parser(
+        "search",
+        help="Smart search with relevance ranking and deduplication",
+        description=SEARCH_DESCRIPTION,
+        formatter_class=formatter_class,
+        color=color_mode != "never",
+    )
+    add_common_agent_options(search_parser)
+    _ = search_parser.add_argument(
+        "terms",
+        nargs="*",
+        metavar="TERM",
+        help="Search terms (combined as AND by default)",
+    )
+    _ = search_parser.add_argument(
+        "--type",
+        choices=["prompts", "history", "all"],
+        default="prompts",
+        dest="search_type",
+        help="Record type to search (default: prompts)",
+    )
+    _ = search_parser.add_argument(
+        "--any",
+        action="store_true",
+        dest="any_term",
+        help="OR mode — match any term instead of all",
+    )
+    _ = search_parser.add_argument(
+        "--regex",
+        action="store_true",
+        help="Treat terms as regex patterns",
+    )
+    _ = search_parser.add_argument(
+        "--case-sensitive",
+        action="store_true",
+        help="Force case-sensitive matching",
+    )
+    _ = search_parser.add_argument(
+        "--limit",
+        type=int,
+        metavar="N",
+        help="Limit the number of results after ranking",
+    )
+    _ = search_parser.add_argument(
+        "--threshold",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Minimum fuzzy score 0-100 (default: 0 = show all matches)",
+    )
+    _ = search_parser.add_argument(
+        "--no-group",
+        action="store_true",
+        help="Flat results, no session grouping",
+    )
+    _ = search_parser.add_argument(
+        "--no-rank",
+        action="store_true",
+        help="Discovery order, no relevance scoring",
+    )
+    _ = search_parser.add_argument(
+        "--progress",
+        choices=["auto", "always", "never"],
+        default="auto",
+        help="Show search progress on stderr",
+    )
+    _ = search_parser.add_argument(
+        "--no-progress",
+        dest="progress",
+        action="store_const",
+        const="never",
+        help="Silence the stderr progress spinner (alias for --progress=never)",
+    )
+    add_output_mode_options(search_parser, allow_ui=True)
+
     return ParserBundle(
         parser=parser,
         find_parser=find_parser,
         grep_parser=grep_parser,
         fuzzy_parser=fuzzy_parser,
+        search_parser=search_parser,
     )
 
 
@@ -791,7 +896,7 @@ def _check_for_mangled_field_predicate(
 
 def parse_args(
     argv: cabc.Sequence[str] | None = None,
-) -> FindArgs | UIArgs | GrepArgs | FuzzyArgs | None:
+) -> FindArgs | UIArgs | GrepArgs | FuzzyArgs | SearchArgs | None:
     """Parse CLI arguments into typed dataclasses."""
     color_mode = normalize_color_mode(argv)
     effective_argv = list(argv) if argv is not None else list(sys.argv[1:])
@@ -820,6 +925,15 @@ def parse_args(
 
     if command == "grep":
         return _build_grep_args(
+            namespace,
+            agents=agents,
+            output_mode=output_mode,
+            color_mode=color_mode,
+            bundle=bundle,
+        )
+
+    if command == "search":
+        return _build_search_args(
             namespace,
             agents=agents,
             output_mode=output_mode,
@@ -1005,6 +1119,54 @@ def _build_grep_args(
         color_mode=color_mode,
         progress_mode=t.cast("ProgressMode", namespace.progress),
         style=t.cast("GrepStyle", namespace.style),
+    )
+
+
+def _build_search_args(
+    namespace: argparse.Namespace,
+    *,
+    agents: tuple[AgentName, ...],
+    output_mode: OutputMode,
+    color_mode: ColorMode,
+    bundle: ParserBundle,
+) -> SearchArgs:
+    """Build :class:`SearchArgs` from a parsed argparse namespace."""
+    terms_list = t.cast("list[str]", namespace.terms)
+    limit = t.cast("int | None", namespace.limit)
+    if limit is not None and limit < 1:
+        with configured_color_environment(color_mode):
+            bundle.parser.error("--limit must be greater than 0")
+    threshold = t.cast("int", namespace.threshold)
+    if threshold < 0 or threshold > 100:
+        with configured_color_environment(color_mode):
+            bundle.search_parser.error("--threshold must be between 0 and 100")
+
+    search_compiled, residual_terms = _maybe_compile_query(
+        terms_list,
+        bundle=bundle,
+        color_mode=color_mode,
+        subparser=bundle.search_parser,
+    )
+    final_terms: tuple[str, ...] = (
+        residual_terms if search_compiled is not None else tuple(terms_list)
+    )
+
+    return SearchArgs(
+        terms=final_terms,
+        agents=agents,
+        search_type=t.cast("SearchType", namespace.search_type),
+        any_term=t.cast("bool", namespace.any_term),
+        regex=t.cast("bool", namespace.regex),
+        case_sensitive=t.cast("bool", namespace.case_sensitive),
+        limit=limit,
+        output_mode=output_mode,
+        color_mode=color_mode,
+        progress_mode=t.cast("ProgressMode", namespace.progress),
+        threshold=threshold,
+        no_group=t.cast("bool", namespace.no_group),
+        no_rank=t.cast("bool", namespace.no_rank),
+        compiled=search_compiled,
+        raw_query=" ".join(terms_list),
     )
 
 

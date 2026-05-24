@@ -239,6 +239,23 @@ FUZZY_DESCRIPTION = build_description(
         ),
     ),
 )
+SEARCH_DESCRIPTION = build_description(
+    """
+    Smart search with relevance ranking, deduplication, and session grouping.
+    Uses rapidfuzz for scoring — results sorted by match quality.
+    """,
+    (
+        (
+            None,
+            (
+                "agentgrep search streaming parser",
+                "agentgrep search --threshold 70 migration",
+                "agentgrep search --no-rank --no-group caching",
+                "agentgrep search bliss --json",
+            ),
+        ),
+    ),
+)
 GREP_DESCRIPTION = build_description(
     """
     Content search across normalized records with rg/ag-shaped flags.
@@ -3746,6 +3763,8 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
             return 0
         if isinstance(parsed, GrepArgs):
             return run_grep_command(parsed)
+        if isinstance(parsed, SearchArgs):
+            return run_search_command(parsed)
         if isinstance(parsed, FuzzyArgs):
             return run_fuzzy_command(parsed)
         if isinstance(parsed, UIArgs):
@@ -3771,6 +3790,7 @@ from agentgrep.cli.parser import (  # noqa: E402  (re-exports must follow main d
     GrepArgs,
     ParserBundle,
     PatternMode,
+    SearchArgs,
     UIArgs,
     add_common_agent_options,
     add_output_mode_options,
@@ -3794,6 +3814,7 @@ from agentgrep.cli.render import (  # noqa: E402  (re-exports must follow main d
     run_find_command,
     run_fuzzy_command,
     run_grep_command,
+    run_search_command,
     run_ui_command,
     serialize_find_record,
     serialize_grep_record,

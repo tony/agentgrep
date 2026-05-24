@@ -36,7 +36,7 @@ from agentgrep import (
     SourceHandle,
     SourceHandlePayload,
 )
-from agentgrep.cli.parser import FindArgs, FuzzyArgs, GrepArgs, UIArgs
+from agentgrep.cli.parser import FindArgs, FuzzyArgs, GrepArgs, SearchArgs, UIArgs
 
 __all__ = [
     "GrepSummary",
@@ -58,6 +58,7 @@ __all__ = [
     "run_find_command",
     "run_fuzzy_command",
     "run_grep_command",
+    "run_search_command",
     "run_ui_command",
     "serialize_find_record",
     "serialize_grep_record",
@@ -424,6 +425,19 @@ def run_ui_command(args: UIArgs) -> int:
     )
     agentgrep.run_ui(pathlib.Path.home(), query, control=agentgrep.SearchControl())
     return 0
+
+
+def run_search_command(args: SearchArgs) -> int:
+    """Execute ``agentgrep search`` with ranking and grouping.
+
+    Collects all matching records eagerly, scores them by rapidfuzz
+    relevance, collapses near-duplicates, groups by session, and
+    renders in the requested output format. Returns ``0`` when at
+    least one result survives ranking, ``1`` otherwise.
+    """
+    _ = args
+    msg = "search command not yet wired — ranking engine pending"
+    raise SystemExit(msg)
 
 
 def _compile_grep_patterns(args: GrepArgs) -> list[re.Pattern[str]]:
