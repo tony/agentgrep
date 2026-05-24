@@ -492,13 +492,13 @@ def run_search_command(args: SearchArgs) -> int:
     query_text = " ".join(args.terms)
     if args.no_rank:
         scored: list[tuple[agentgrep.SearchRecord, float]] = [(r, 0.0) for r in records]
-        collapsed: list[tuple[agentgrep.SearchRecord, float, int]] = [(r, 0.0, 0) for r in records]
     else:
-        from agentgrep.ranking import collapse_near_duplicates, rank_search_records
+        from agentgrep.ranking import rank_search_records
 
         scored = rank_search_records(records, query_text, threshold=args.threshold)
-        collapsed = collapse_near_duplicates(scored)
-    from agentgrep.ranking import group_by_session
+    from agentgrep.ranking import collapse_near_duplicates, group_by_session
+
+    collapsed = collapse_near_duplicates(scored)
 
     if args.limit is not None:
         collapsed = collapsed[: args.limit]

@@ -67,12 +67,16 @@ def collapse_near_duplicates(
 ) -> list[tuple[SearchRecord, float, int]]:
     """Collapse near-duplicate records, keeping highest-scored representative.
 
+    Pairwise ``WRatio`` comparison between record texts (each call is
+    C-accelerated by rapidfuzz). Records at or above the similarity
+    threshold are folded into the highest-scoring representative.
+
     Parameters
     ----------
     scored : list[tuple[SearchRecord, float]]
         Pre-sorted ``(record, score)`` pairs (best-first).
     similarity_threshold : float
-        WRatio ceiling — record pairs scoring above this are
+        WRatio ceiling — record pairs scoring at or above this are
         considered near-duplicates.
 
     Returns
@@ -85,8 +89,6 @@ def collapse_near_duplicates(
 
     if not scored:
         return []
-    if len(scored) > 500:
-        return [(r, s, 0) for r, s in scored]
     result: list[tuple[SearchRecord, float, int]] = []
     consumed: set[int] = set()
     for i, (record_i, score_i) in enumerate(scored):
