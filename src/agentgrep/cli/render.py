@@ -40,12 +40,14 @@ from agentgrep.cli.parser import FindArgs, FuzzyArgs, GrepArgs, UIArgs
 __all__ = [
     "build_envelope",
     "build_grep_query",
+    "extract_search_snippet",
     "filter_find_records",
     "format_grep_heading",
     "format_grep_line",
     "format_grep_record",
     "format_relative_time",
     "fuzzy_filter_lines",
+    "highlight_search_spans",
     "iter_match_lines",
     "maybe_build_pydantic",
     "print_find_results",
@@ -463,6 +465,115 @@ def _merge_overlapping_spans(
         else:
             merged.append((start, end))
     return merged
+
+
+def _compile_highlight_patterns(
+    args: SearchArgs,
+) -> list[re.Pattern[str]]:
+    """Compile search terms to regex for snippet highlighting.
+
+    Skips terms that look like Lucene field predicates (contain ``:``)
+    so the highlighting layer does not color metadata tokens.
+    Malformed patterns are silently skipped.
+    """
+    flags = 0 if args.case_sensitive else re.IGNORECASE
+    compiled: list[re.Pattern[str]] = []
+    for term in args.terms:
+        if ":" in term:
+            continue
+        source = term if args.regex else re.escape(term)
+        try:
+            compiled.append(re.compile(source, flags))
+        except re.error:
+            continue
+    return compiled
+
+
+def extract_search_snippet(
+    text: str,
+    patterns: list[re.Pattern[str]],
+    *,
+    max_lines: int = 5,
+) -> tuple[str, int]:
+    """Extract a match-centered line window from record text.
+
+    Parameters
+    ----------
+    text : str
+        The full record text body.
+    patterns : list[re.Pattern[str]]
+        Compiled highlight patterns.  Used to find the match center.
+    max_lines : int
+        Maximum lines to include in the snippet.
+
+    Returns
+    -------
+    tuple[str, int]
+        ``(snippet_text, remaining_line_count)``.  When ``text`` is
+        empty, returns ``("", 0)``.
+    """
+    if not text:
+        return ("", 0)
+    lines = text.split("\n")
+    total = len(lines)
+    if total <= max_lines:
+        return (text, 0)
+    match_idx: int | None = None
+    if patterns:
+        for idx, line in enumerate(lines):
+            for pattern in patterns:
+                if pattern.search(line):
+                    match_idx = idx
+                    break
+            if match_idx is not None:
+                break
+    if match_idx is None:
+        snippet_lines = lines[:max_lines]
+    else:
+        start = max(0, match_idx - 1)
+        end = start + max_lines
+        if end > total:
+            end = total
+            start = max(0, end - max_lines)
+        snippet_lines = lines[start:end]
+    remaining = total - len(snippet_lines)
+    return ("\n".join(snippet_lines), remaining)
+
+
+def highlight_search_spans(
+    text: str,
+    patterns: list[re.Pattern[str]],
+    *,
+    colors: agentgrep.AnsiColors,
+) -> str:
+    """Apply warm-amber accent highlighting to match spans.
+
+    Uses :func:`_merge_overlapping_spans` to avoid nested ANSI
+    escape sequences from multi-pattern overlap.
+    """
+    if not text or not patterns:
+        return text
+    result_lines: list[str] = []
+    for line in text.split("\n"):
+        spans: list[tuple[int, int]] = []
+        for pattern in patterns:
+            for m in pattern.finditer(line):
+                if m.start() == m.end():
+                    continue
+                spans.append((m.start(), m.end()))
+        if not spans:
+            result_lines.append(line)
+            continue
+        merged = _merge_overlapping_spans(spans)
+        parts: list[str] = []
+        cursor = 0
+        for start, end in merged:
+            parts.append(line[cursor:start])
+            parts.append(colors.accent(line[start:end]))
+            cursor = end
+        parts.append(line[cursor:])
+        result_lines.append("".join(parts))
+    return "\n".join(result_lines)
 
 
 def iter_match_lines(
