@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
-import dataclasses
 import importlib
 import io
 import json
@@ -80,25 +79,6 @@ class SearchQueryFactory(t.Protocol):
     ) -> object: ...
 
 
-class SearchArgsFactory(t.Protocol):
-    """Factory protocol for argument construction."""
-
-    def __call__(
-        self,
-        *,
-        terms: tuple[str, ...],
-        agents: tuple[AgentName, ...],
-        search_type: str,
-        any_term: bool,
-        regex: bool,
-        case_sensitive: bool,
-        limit: int | None,
-        output_mode: str,
-        color_mode: str,
-        progress_mode: str,
-    ) -> object: ...
-
-
 class SearchRecordFactory(t.Protocol):
     """Factory protocol for constructing search records."""
 
@@ -143,7 +123,6 @@ class AgentGrepModule(t.Protocol):
     shutil: ShutilLike
     importlib: ImportlibLike
     SearchQuery: SearchQueryFactory
-    SearchArgs: SearchArgsFactory
     SearchRecord: SearchRecordFactory
     BackendSelection: BackendSelectionFactory
 
@@ -185,8 +164,6 @@ class AgentGrepModule(t.Protocol):
         sources: cabc.Sequence[SourceHandleLike],
         limit: int | None,
     ) -> list[FindRecordLike]: ...
-
-    def print_search_results(self, records: list[SearchRecordLike], args: object) -> None: ...
 
     def parse_args(self, argv: cabc.Sequence[str] | None = None) -> object | None: ...
 
@@ -269,17 +246,7 @@ def test_cli_without_subcommand_prints_main_help() -> None:
 
     assert completed.returncode == 0
     assert "usage: agentgrep" in completed.stdout
-    assert "search examples:" in completed.stdout
     assert "find examples:" in completed.stdout
-
-
-def test_search_without_terms_prints_help() -> None:
-    completed = run_agentgrep_cli("search")
-
-    assert completed.returncode == 0
-    assert "usage: agentgrep search" in completed.stdout
-    assert "examples:" in completed.stdout
-    assert "agentgrep search bliss" in completed.stdout
 
 
 def test_find_without_pattern_lists_every_source(tmp_path: pathlib.Path) -> None:
@@ -303,14 +270,10 @@ def test_find_without_pattern_lists_every_source(tmp_path: pathlib.Path) -> None
 
 def test_help_examples_are_present_for_help_flags() -> None:
     root_help = run_agentgrep_cli("--help")
-    search_help = run_agentgrep_cli("search", "--help")
     find_help = run_agentgrep_cli("find", "--help")
 
     assert root_help.returncode == 0
-    assert search_help.returncode == 0
     assert find_help.returncode == 0
-    assert "search examples:" in root_help.stdout
-    assert "agentgrep search serenity --json" in search_help.stdout
     assert "agentgrep find cursor --json" in find_help.stdout
 
 
@@ -374,7 +337,6 @@ def test_main_with_empty_argv_prints_root_help(
     captured = capsys.readouterr().out
     assert "grep examples:" in captured
     assert "fuzzy examples:" in captured
-    assert "search examples:" in captured
     assert "find examples:" in captured
     assert "ui examples:" in captured
 
@@ -398,72 +360,10 @@ def test_main_with_unknown_positional_errors(
     assert "bliss" in captured.err
 
 
-def test_search_progress_mode_parses_default_and_explicit() -> None:
-    agentgrep = load_agentgrep_module()
-
-    default_args = t.cast("t.Any", agentgrep.parse_args(["search", "bliss"]))
-    disabled_args = t.cast(
-        "t.Any",
-        agentgrep.parse_args(["search", "--progress", "never", "bliss"]),
-    )
-
-    assert default_args.progress_mode == "auto"
-    assert disabled_args.progress_mode == "never"
-
-
-def test_answer_now_enabled_only_for_interactive_text_progress() -> None:
-    agentgrep = t.cast("t.Any", load_agentgrep_module())
-
-    class TtyStream(io.StringIO):
-        def isatty(self) -> bool:
-            return True
-
-    class PlainStream(io.StringIO):
-        def isatty(self) -> bool:
-            return False
-
-    text_args = agentgrep.SearchArgs(
-        terms=("bliss",),
-        agents=("codex",),
-        search_type="prompts",
-        any_term=False,
-        regex=False,
-        case_sensitive=False,
-        limit=None,
-        output_mode="text",
-        color_mode="auto",
-        progress_mode="auto",
-    )
-    json_args = dataclasses.replace(text_args, output_mode="json")
-    no_progress_args = dataclasses.replace(text_args, progress_mode="never")
-
-    assert agentgrep.should_enable_answer_now(
-        text_args,
-        stdin=TtyStream(),
-        stderr=TtyStream(),
-    )
-    assert not agentgrep.should_enable_answer_now(
-        json_args,
-        stdin=TtyStream(),
-        stderr=TtyStream(),
-    )
-    assert not agentgrep.should_enable_answer_now(
-        no_progress_args,
-        stdin=TtyStream(),
-        stderr=TtyStream(),
-    )
-    assert not agentgrep.should_enable_answer_now(
-        text_args,
-        stdin=PlainStream(),
-        stderr=TtyStream(),
-    )
-
-
 def test_root_help_not_rewritten_by_default_verb() -> None:
     completed = run_agentgrep_cli("--help")
 
     assert completed.returncode == 0
-    assert "search examples:" in completed.stdout
     assert "find examples:" in completed.stdout
 
 
@@ -471,7 +371,8 @@ def test_force_color_colorizes_help_output() -> None:
     completed = run_agentgrep_cli(
         "--color",
         "always",
-        "search",
+        "find",
+        "--help",
         env={"FORCE_COLOR": "1", "NO_COLOR": ""},
     )
 
@@ -483,7 +384,8 @@ def test_no_color_overrides_color_always() -> None:
     completed = run_agentgrep_cli(
         "--color",
         "always",
-        "search",
+        "find",
+        "--help",
         env={"NO_COLOR": "1"},
     )
 
@@ -2576,61 +2478,6 @@ def test_collect_search_records_returns_partial_results_on_answer_now(
     assert control.answer_now_requested()
 
 
-def test_run_search_command_starts_and_stops_answer_now_listener(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    agentgrep = t.cast("t.Any", load_agentgrep_module())
-    events: list[str] = []
-    args = agentgrep.SearchArgs(
-        terms=("bliss",),
-        agents=("codex",),
-        search_type="prompts",
-        any_term=False,
-        regex=False,
-        case_sensitive=False,
-        limit=None,
-        output_mode="text",
-        color_mode="never",
-        progress_mode="auto",
-    )
-
-    class FakeListener:
-        def __init__(self, control: object) -> None:
-            self.control = t.cast("t.Any", control)
-
-        def start(self) -> None:
-            events.append("start")
-            self.control.request_answer_now()
-
-        def stop(self) -> None:
-            events.append("stop")
-
-    def fake_run_search_query(
-        home: pathlib.Path,
-        query: object,
-        *,
-        progress: object,
-        control: object,
-    ) -> list[object]:
-        typed_progress = t.cast("t.Any", progress)
-        typed_control = t.cast("t.Any", control)
-        assert typed_control.answer_now_requested()
-        typed_progress.answer_now(0)
-        return []
-
-    monkeypatch.setattr(agentgrep, "should_enable_answer_now", lambda args: True)
-    monkeypatch.setattr(agentgrep, "AnswerNowInputListener", FakeListener)
-    monkeypatch.setattr(agentgrep, "run_search_query", fake_run_search_query)
-    err = io.StringIO()
-
-    with contextlib.redirect_stderr(err):
-        exit_code = agentgrep.run_search_command(args)
-
-    assert exit_code == 1
-    assert events == ["start", "stop"]
-    assert "Answering now: 0 matches" in err.getvalue()
-
-
 def test_run_search_query_interrupts_progress_on_keyboard_interrupt(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -3195,11 +3042,11 @@ def test_display_path_collapses_home_and_marks_directories(
     )
 
 
-def test_search_json_output_uses_private_paths(
+def test_search_record_serialization_uses_private_paths(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    agentgrep = load_agentgrep_module()
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
     record = agentgrep.SearchRecord(
@@ -3210,27 +3057,11 @@ def test_search_json_output_uses_private_paths(
         path=home / ".codex" / "sessions" / "rollout.jsonl",
         text="serenity and bliss",
     )
-    args = agentgrep.SearchArgs(
-        terms=("serenity",),
-        agents=("codex",),
-        search_type="prompts",
-        any_term=False,
-        regex=False,
-        case_sensitive=False,
-        limit=None,
-        output_mode="json",
-        color_mode="auto",
-        progress_mode="auto",
-    )
 
-    buffer = io.StringIO()
-    with contextlib.redirect_stdout(buffer):
-        agentgrep.print_search_results([record], args)
+    payload = agentgrep.serialize_search_record(record)
 
-    payload = t.cast("dict[str, object]", json.loads(buffer.getvalue()))
-    results = t.cast("list[dict[str, object]]", payload["results"])
-    assert results[0]["path"] == "~/.codex/sessions/rollout.jsonl"
-    assert str(home) not in buffer.getvalue()
+    assert payload["path"] == "~/.codex/sessions/rollout.jsonl"
+    assert str(home) not in json.dumps(payload)
 
 
 def test_text_outputs_use_private_paths(
@@ -3240,14 +3071,6 @@ def test_text_outputs_use_private_paths(
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
-    search_record = agentgrep.SearchRecord(
-        kind="prompt",
-        agent="codex",
-        store="codex.sessions",
-        adapter_id="codex.sessions_jsonl.v1",
-        path=home / ".codex" / "sessions" / "rollout.jsonl",
-        text="serenity and bliss",
-    )
     find_record = agentgrep.FindRecord(
         kind="find",
         agent="codex",
@@ -3255,18 +3078,6 @@ def test_text_outputs_use_private_paths(
         adapter_id="codex.sessions_jsonl.v1",
         path=home / ".codex" / "sessions",
         path_kind="session_file",
-    )
-    search_args = agentgrep.SearchArgs(
-        terms=("serenity",),
-        agents=("codex",),
-        search_type="prompts",
-        any_term=False,
-        regex=False,
-        case_sensitive=False,
-        limit=None,
-        output_mode="text",
-        color_mode="auto",
-        progress_mode="auto",
     )
     find_args = agentgrep.FindArgs(
         pattern="sessions",
@@ -3276,16 +3087,11 @@ def test_text_outputs_use_private_paths(
         color_mode="auto",
     )
 
-    search_buffer = io.StringIO()
-    with contextlib.redirect_stdout(search_buffer):
-        agentgrep.print_search_results([search_record], search_args)
     find_buffer = io.StringIO()
     with contextlib.redirect_stdout(find_buffer):
         agentgrep.print_find_results([find_record], find_args)
 
-    assert "~/.codex/sessions/rollout.jsonl" in search_buffer.getvalue()
     assert "~/.codex/sessions" in find_buffer.getvalue()
-    assert str(home) not in search_buffer.getvalue()
     assert str(home) not in find_buffer.getvalue()
 
 
@@ -3337,7 +3143,7 @@ def test_find_record_serialization_uses_private_paths(
 
 
 def test_json_output_falls_back_without_pydantic(monkeypatch: pytest.MonkeyPatch) -> None:
-    agentgrep = load_agentgrep_module()
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
     record = agentgrep.SearchRecord(
         kind="prompt",
         agent="codex",
@@ -3345,18 +3151,6 @@ def test_json_output_falls_back_without_pydantic(monkeypatch: pytest.MonkeyPatch
         adapter_id="codex.sessions_jsonl.v1",
         path=pathlib.Path("/tmp/example.jsonl"),
         text="serenity and bliss",
-    )
-    args = agentgrep.SearchArgs(
-        terms=("serenity",),
-        agents=("codex",),
-        search_type="prompts",
-        any_term=False,
-        regex=False,
-        case_sensitive=False,
-        limit=None,
-        output_mode="json",
-        color_mode="auto",
-        progress_mode="auto",
     )
 
     original_import_module = agentgrep.importlib.import_module
@@ -3367,13 +3161,16 @@ def test_json_output_falls_back_without_pydantic(monkeypatch: pytest.MonkeyPatch
         return original_import_module(name)
 
     monkeypatch.setattr(agentgrep.importlib, "import_module", fake_import_module)
-    buffer = io.StringIO()
-    with contextlib.redirect_stdout(buffer):
-        agentgrep.print_search_results([record], args)
+    serialize_search, _, serialize_envelope = agentgrep.maybe_build_pydantic()
+    serialized = serialize_search(record)
+    envelope = serialize_envelope(
+        "grep",
+        {"patterns": ["serenity"]},
+        [serialized],
+    )
 
-    payload = t.cast("dict[str, object]", json.loads(buffer.getvalue()))
-    assert payload["schema_version"] == "agentgrep.v1"
-    results = t.cast("list[dict[str, object]]", payload["results"])
+    assert envelope["schema_version"] == "agentgrep.v1"
+    results = t.cast("list[dict[str, object]]", envelope["results"])
     assert results[0]["text"] == "serenity and bliss"
 
 
@@ -3385,11 +3182,11 @@ def test_json_output_default_does_not_emit_progress(tmp_path: pathlib.Path) -> N
         [{"type": "response_item", "payload": {"role": "user", "content": "bliss"}}],
     )
 
-    completed = run_agentgrep_cli("search", "bliss", "--json", env={"HOME": str(home)})
+    completed = run_agentgrep_cli("grep", "bliss", "--json", env={"HOME": str(home)})
 
     assert completed.returncode == 0
     payload = t.cast("dict[str, object]", json.loads(completed.stdout))
-    assert payload["command"] == "search"
+    assert payload["command"] == "grep"
     assert completed.stderr == ""
 
 
@@ -3402,7 +3199,7 @@ def test_json_output_progress_always_writes_stderr_only(tmp_path: pathlib.Path) 
     )
 
     completed = run_agentgrep_cli(
-        "search",
+        "grep",
         "bliss",
         "--json",
         "--progress",
@@ -3412,7 +3209,7 @@ def test_json_output_progress_always_writes_stderr_only(tmp_path: pathlib.Path) 
 
     assert completed.returncode == 0
     payload = t.cast("dict[str, object]", json.loads(completed.stdout))
-    assert payload["command"] == "search"
+    assert payload["command"] == "grep"
     assert "Searching bliss" in completed.stderr
     assert "Search complete: 1 match" in completed.stderr
 
@@ -3430,7 +3227,7 @@ def test_json_output_progress_color_always_colours_only_stderr(
     completed = run_agentgrep_cli(
         "--color",
         "always",
-        "search",
+        "grep",
         "bliss",
         "--json",
         "--progress",
@@ -3444,7 +3241,7 @@ def test_json_output_progress_color_always_colours_only_stderr(
 
     assert completed.returncode == 0
     payload = t.cast("dict[str, object]", json.loads(completed.stdout))
-    assert payload["command"] == "search"
+    assert payload["command"] == "grep"
     assert "\x1b[" not in completed.stdout
     assert "\x1b[" in completed.stderr
     assert "Search complete:" in strip_ansi(completed.stderr)
@@ -3804,14 +3601,23 @@ def test_main_handles_keyboard_interrupt_without_traceback(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     agentgrep = t.cast("t.Any", load_agentgrep_module())
-    args = agentgrep.SearchArgs(
-        terms=("bliss",),
+    args = agentgrep.GrepArgs(
+        patterns=("bliss",),
         agents=("codex",),
         search_type="prompts",
-        any_term=False,
-        regex=False,
-        case_sensitive=False,
-        limit=None,
+        case_mode="smart",
+        pattern_mode="regex",
+        invert_match=False,
+        count_only=False,
+        files_with_matches=False,
+        files_without_match=False,
+        only_matching=False,
+        no_dedupe=False,
+        line_number=None,
+        heading=None,
+        max_count=None,
+        vimgrep=False,
+        column=False,
         output_mode="text",
         color_mode="never",
         progress_mode="auto",
@@ -3820,18 +3626,18 @@ def test_main_handles_keyboard_interrupt_without_traceback(
     def parse_args(argv: cabc.Sequence[str] | None = None) -> object:
         return args
 
-    def run_search_command(args: object) -> int:
+    def run_grep_command(args: object) -> int:
         raise KeyboardInterrupt
 
     def exit_on_sigint() -> t.NoReturn:
         raise SystemExit(130)
 
     monkeypatch.setattr(agentgrep, "parse_args", parse_args)
-    monkeypatch.setattr(agentgrep, "run_search_command", run_search_command)
+    monkeypatch.setattr(agentgrep, "run_grep_command", run_grep_command)
     monkeypatch.setattr(agentgrep, "_exit_on_sigint", exit_on_sigint)
 
     with pytest.raises(SystemExit) as excinfo:
-        agentgrep.main(["search", "bliss"])
+        agentgrep.main(["grep", "bliss"])
 
     assert excinfo.value.code == 130
     captured = capsys.readouterr()

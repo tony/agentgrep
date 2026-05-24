@@ -1,13 +1,8 @@
 """CLI output rendering and subcommand dispatch for agentgrep.
 
-This module owns the eager-list rendering paths for the existing
-``search`` and ``find`` subcommands, plus the dispatcher functions that
-glue parsed arguments to the engine and the chosen output format.
-
-A streaming-aware printer for the upcoming ``grep`` subcommand will live
-alongside these helpers in a future commit; the existing ``search``
-deliberately keeps its eager-list path because it builds a summary
-header that needs the full record count.
+This module owns the rendering paths for the ``grep``, ``find``, and
+``fuzzy`` subcommands, plus the dispatcher functions that glue parsed
+arguments to the engine and the chosen output format.
 
 Runtime callables (engines, helpers, classes) are accessed through the
 ``agentgrep`` namespace at call time rather than imported by name, so
@@ -15,8 +10,7 @@ tests that monkeypatch attributes such as ``agentgrep.run_search_query``
 continue to see their patches honored when the dispatchers run.
 
 Symbols defined here are re-exported from :mod:`agentgrep` for backward
-compatibility with imports such as ``agentgrep.print_search_results``
-and ``agentgrep.run_search_command``.
+compatibility.
 """
 
 from __future__ import annotations
@@ -40,7 +34,7 @@ from agentgrep import (
     SourceHandle,
     SourceHandlePayload,
 )
-from agentgrep.cli.parser import FindArgs, FuzzyArgs, GrepArgs, SearchArgs, UIArgs
+from agentgrep.cli.parser import FindArgs, FuzzyArgs, GrepArgs, UIArgs
 
 __all__ = [
     "build_envelope",
@@ -54,11 +48,9 @@ __all__ = [
     "maybe_build_pydantic",
     "print_find_results",
     "print_grep_results",
-    "print_search_results",
     "run_find_command",
     "run_fuzzy_command",
     "run_grep_command",
-    "run_search_command",
     "run_ui_command",
     "serialize_find_record",
     "serialize_grep_record",
@@ -155,46 +147,6 @@ def build_envelope(
     }
 
 
-def print_search_results(records: list[SearchRecord], args: SearchArgs) -> None:
-    """Emit search results in the requested format."""
-    serialize_search, _, serialize_envelope = maybe_build_pydantic()
-    query_data: dict[str, object] = {
-        "terms": list(args.terms),
-        "agents": list(args.agents),
-        "type": args.search_type,
-        "any": args.any_term,
-        "regex": args.regex,
-        "case_sensitive": args.case_sensitive,
-        "limit": args.limit,
-    }
-    if args.output_mode == "json":
-        payload = serialize_envelope(
-            "search",
-            query_data,
-            [serialize_search(record) for record in records],
-        )
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
-        return
-    if args.output_mode == "ndjson":
-        for record in records:
-            print(json.dumps(serialize_search(record), ensure_ascii=False))
-        return
-    for index, record in enumerate(records, start=1):
-        heading = f"[{index}] {record.agent} {record.kind} {record.store}"
-        details = [
-            record.timestamp,
-            record.model,
-            agentgrep.format_display_path(record.path),
-        ]
-        print(heading)
-        print(" | ".join(detail for detail in details if detail))
-        if record.title:
-            print(record.title)
-        print()
-        print(record.text)
-        print()
-
-
 def print_find_results(records: list[FindRecord], args: FindArgs) -> None:
     """Emit find results in the requested format.
 
@@ -245,44 +197,6 @@ def _format_find_text_line(record: FindRecord, args: FindArgs) -> str:
     if args.list_details:
         return f"{record.agent}\t{record.path_kind}\t{record.store}\t{record.adapter_id}\t{path}"
     return path
-
-
-def run_search_command(args: SearchArgs) -> int:
-    """Execute ``agentgrep search``."""
-    if not args.terms and args.output_mode != "ui":
-        msg = "search requires at least one term unless --ui is used"
-        raise SystemExit(msg)
-    query = agentgrep.make_search_query(args)
-    if args.output_mode == "ui":
-        agentgrep.run_ui(
-            pathlib.Path.home(),
-            query,
-            control=agentgrep.SearchControl(),
-            initial_search_text=args.raw_query or None,
-        )
-        return 0
-    answer_now_enabled = agentgrep.should_enable_answer_now(args)
-    control = agentgrep.SearchControl()
-    listener = agentgrep.AnswerNowInputListener(control) if answer_now_enabled else None
-    progress = agentgrep.build_search_progress(args, answer_now_hint=answer_now_enabled)
-    if listener is not None:
-        listener.start()
-    try:
-        records = agentgrep.run_search_query(
-            pathlib.Path.home(),
-            query,
-            progress=progress,
-            control=control,
-        )
-    finally:
-        if listener is not None:
-            listener.stop()
-    print_search_results(records, args)
-    if records:
-        return 0
-    if args.output_mode == "text":
-        print("No matches found.", file=sys.stderr)
-    return 1
 
 
 def _resolve_find_case_sensitive(pattern: str | None, mode: agentgrep.CaseMode) -> bool:
@@ -1206,14 +1120,19 @@ def run_grep_command(args: GrepArgs) -> int:
     if not _grep_path_is_eager(args):
         return stream_grep_results(args)
     control = agentgrep.SearchControl()
-    progress = agentgrep.build_search_progress(
-        # GrepArgs structurally matches what build_search_progress reads
-        # (output_mode + progress_mode + color_mode). The dispatcher uses
-        # the cast rather than a parallel signature so the existing helper
-        # stays single-purpose.
-        t.cast("agentgrep.SearchArgs", args),
-        answer_now_hint=False,
+    human_output = args.output_mode in {"text", "ui"}
+    progress_enabled = args.progress_mode == "always" or (
+        args.progress_mode == "auto" and human_output
     )
+    progress: agentgrep.SearchProgress
+    if not progress_enabled:
+        progress = agentgrep.noop_search_progress()
+    else:
+        progress = agentgrep.ConsoleSearchProgress(
+            enabled=True,
+            color_mode=args.color_mode,
+            answer_now_hint=False,
+        )
     records = agentgrep.run_search_query(
         pathlib.Path.home(),
         query,

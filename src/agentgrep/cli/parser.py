@@ -1,13 +1,13 @@
 """argparse subcommands and arg-parsing entry points for agentgrep.
 
 This module owns the CLI grammar: the root parser, each subparser
-(``search``, ``find``, ``ui``), the typed argument dataclasses returned
-by :func:`parse_args`, and the helpers that resolve color mode and inject
-default subcommands.
+(``grep``, ``find``, ``fuzzy``, ``ui``), the typed argument dataclasses
+returned by :func:`parse_args`, and the helpers that resolve color mode
+and inject default subcommands.
 
 Symbols defined here are re-exported from :mod:`agentgrep` for backward
-compatibility, so existing imports such as ``agentgrep.parse_args`` and
-``agentgrep.SearchArgs`` continue to resolve.
+compatibility, so existing imports such as ``agentgrep.parse_args``
+continue to resolve.
 """
 
 from __future__ import annotations
@@ -27,7 +27,6 @@ from agentgrep import (
     FIND_DESCRIPTION,
     FUZZY_DESCRIPTION,
     GREP_DESCRIPTION,
-    SEARCH_DESCRIPTION,
     UI_DESCRIPTION,
     AgentName,
     ColorMode,
@@ -58,7 +57,6 @@ __all__ = [
     "GrepArgs",
     "ParserBundle",
     "PatternMode",
-    "SearchArgs",
     "UIArgs",
     "add_common_agent_options",
     "add_output_mode_options",
@@ -70,30 +68,6 @@ __all__ = [
     "parse_args",
     "parse_output_mode",
 ]
-
-
-@dataclasses.dataclass(slots=True)
-class SearchArgs:
-    """Typed arguments for ``agentgrep search``.
-
-    ``compiled`` carries a parsed-query :class:`~agentgrep.CompiledQuery`
-    when the positionals contained Lucene-style field syntax
-    (`agent:codex`, `path:~/.codex`, …). ``None`` otherwise — the
-    legacy code path runs with no query-module overhead.
-    """
-
-    terms: tuple[str, ...]
-    agents: tuple[AgentName, ...]
-    search_type: SearchType
-    any_term: bool
-    regex: bool
-    case_sensitive: bool
-    limit: int | None
-    output_mode: OutputMode
-    color_mode: ColorMode
-    progress_mode: ProgressMode
-    compiled: CompiledQuery | None = None
-    raw_query: str = ""
 
 
 @dataclasses.dataclass(slots=True)
@@ -200,7 +174,6 @@ class ParserBundle:
     """CLI parsers used for root and subcommand help."""
 
     parser: argparse.ArgumentParser
-    search_parser: argparse.ArgumentParser
     find_parser: argparse.ArgumentParser
     grep_parser: argparse.ArgumentParser
     fuzzy_parser: argparse.ArgumentParser
@@ -409,58 +382,6 @@ def create_parser(
         help="Silence the stderr progress spinner (alias for --progress=never)",
     )
     add_output_mode_options(grep_parser, allow_ui=True)
-
-    search_parser = subparsers.add_parser(
-        "search",
-        help="Search normalized prompts or history",
-        description=SEARCH_DESCRIPTION,
-        formatter_class=formatter_class,
-        color=color_mode != "never",
-    )
-    add_common_agent_options(search_parser)
-    _ = search_parser.add_argument("terms", nargs="*", help="Keywords or regex patterns")
-    _ = search_parser.add_argument(
-        "--type",
-        choices=["prompts", "history", "all"],
-        default="prompts",
-        dest="search_type",
-        help="Record type to search (default: prompts)",
-    )
-    _ = search_parser.add_argument(
-        "--any",
-        action="store_true",
-        help="Match any term instead of requiring all terms",
-    )
-    _ = search_parser.add_argument(
-        "--regex",
-        action="store_true",
-        help="Treat terms as regular expressions",
-    )
-    _ = search_parser.add_argument(
-        "--case-sensitive",
-        action="store_true",
-        help="Perform case-sensitive matching",
-    )
-    _ = search_parser.add_argument(
-        "--limit",
-        type=int,
-        metavar="N",
-        help="Limit the number of results",
-    )
-    _ = search_parser.add_argument(
-        "--progress",
-        choices=["auto", "always", "never"],
-        default="auto",
-        help="Show search progress on stderr",
-    )
-    _ = search_parser.add_argument(
-        "--no-progress",
-        dest="progress",
-        action="store_const",
-        const="never",
-        help="Silence the stderr progress spinner (alias for --progress=never)",
-    )
-    add_output_mode_options(search_parser, allow_ui=True)
 
     find_parser = subparsers.add_parser(
         "find",
@@ -709,7 +630,6 @@ def create_parser(
 
     return ParserBundle(
         parser=parser,
-        search_parser=search_parser,
         find_parser=find_parser,
         grep_parser=grep_parser,
         fuzzy_parser=fuzzy_parser,
@@ -726,21 +646,6 @@ def build_docs_parser() -> argparse.ArgumentParser:
     documentation toolchain.
     """
     return create_parser("never").parser
-
-
-def _search_explicit_flags(namespace: argparse.Namespace) -> dict[str, str]:
-    """Map query-field name → CLI flag name for `search` flag/field collisions.
-
-    Detects which flags the user explicitly set so the collision
-    check in :func:`_maybe_compile_query` can reject mixing them
-    with the equivalent ``field:`` syntax.
-    """
-    flags: dict[str, str] = {}
-    if t.cast("list[str]", namespace.agent):
-        flags["agent"] = "--agent"
-    if t.cast("str", namespace.search_type) != "prompts":
-        flags["type"] = "--type"
-    return flags
 
 
 def _grep_explicit_flags(namespace: argparse.Namespace) -> dict[str, str]:
@@ -878,7 +783,7 @@ def _check_for_mangled_field_predicate(
 
 def parse_args(
     argv: cabc.Sequence[str] | None = None,
-) -> SearchArgs | FindArgs | UIArgs | GrepArgs | FuzzyArgs | None:
+) -> FindArgs | UIArgs | GrepArgs | FuzzyArgs | None:
     """Parse CLI arguments into typed dataclasses."""
     color_mode = normalize_color_mode(argv)
     effective_argv = list(argv) if argv is not None else list(sys.argv[1:])
@@ -928,33 +833,6 @@ def parse_args(
         with configured_color_environment(color_mode):
             bundle.parser.error("--limit must be greater than 0")
 
-    if command == "search":
-        raw_terms = t.cast("list[str]", namespace.terms)
-        if not raw_terms and output_mode != "ui":
-            with configured_color_environment(color_mode):
-                bundle.search_parser.print_help()
-            return None
-        compiled, residual_terms = _maybe_compile_query(
-            raw_terms,
-            bundle=bundle,
-            color_mode=color_mode,
-            subparser=bundle.search_parser,
-            explicit_flags=_search_explicit_flags(namespace),
-        )
-        return SearchArgs(
-            terms=residual_terms,
-            agents=agents,
-            search_type=t.cast("SearchType", namespace.search_type),
-            any_term=t.cast("bool", namespace.any),
-            regex=t.cast("bool", namespace.regex),
-            case_sensitive=t.cast("bool", namespace.case_sensitive),
-            limit=limit,
-            output_mode=output_mode,
-            color_mode=color_mode,
-            progress_mode=t.cast("ProgressMode", namespace.progress),
-            compiled=compiled,
-            raw_query=" ".join(raw_terms),
-        )
     raw_pattern = t.cast("str | None", namespace.pattern)
     find_positionals = [raw_pattern] if raw_pattern is not None else []
     find_compiled, find_residual = _maybe_compile_query(
@@ -1053,13 +931,11 @@ def _build_grep_args(
             bundle.grep_parser.error("pattern cannot be empty")
     if grep_compiled is not None and not patterns_list:
         # Field-predicate-only grep would have no text to match line
-        # output against. Steer the user to ``search`` for record-
-        # level filtering and away from grep's line-aware shape.
+        # output against.
         with configured_color_environment(color_mode):
             bundle.grep_parser.error(
                 "grep query needs at least one text pattern; "
-                "use 'agentgrep search' for record-level filtering "
-                "without text matching",
+                "field predicates alone cannot drive line-level matching",
             )
 
     invert_match = t.cast("bool", namespace.invert_match)

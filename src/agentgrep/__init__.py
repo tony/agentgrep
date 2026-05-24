@@ -151,8 +151,8 @@ CLI_DESCRIPTION = build_description(
     Read-only search across Codex, Claude, Cursor, and Gemini local
     stores. Pick a subcommand from the list below: ``grep`` for
     rg-shaped content search, ``fuzzy`` for fzf-style filtering,
-    ``find`` for store enumeration, ``search`` for sensible-defaults
-    search, ``ui`` for the interactive Textual explorer.
+    ``find`` for store enumeration, ``ui`` for the interactive
+    Textual explorer.
     """,
     (
         (
@@ -172,15 +172,6 @@ CLI_DESCRIPTION = build_description(
             ),
         ),
         (
-            "search",
-            (
-                "agentgrep search bliss",
-                "agentgrep search serene bliss --agent codex",
-                "agentgrep search prompt history --type history --ndjson",
-                "agentgrep search design --ui",
-            ),
-        ),
-        (
             "find",
             (
                 "agentgrep find codex",
@@ -193,23 +184,6 @@ CLI_DESCRIPTION = build_description(
             (
                 "agentgrep ui",
                 "agentgrep ui bliss",
-            ),
-        ),
-    ),
-)
-SEARCH_DESCRIPTION = build_description(
-    """
-    Search normalized prompts or history across supported agent stores.
-    """,
-    (
-        (
-            None,
-            (
-                "agentgrep search bliss",
-                "agentgrep search serene bliss --agent codex",
-                "agentgrep search prompt history --type history --ndjson",
-                "agentgrep search serenity --json",
-                "agentgrep search design --ui",
             ),
         ),
     ),
@@ -2048,25 +2022,6 @@ def run_readonly_command(
         return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
-def make_search_query(args: SearchArgs) -> SearchQuery:
-    """Convert parsed search arguments into a query object.
-
-    Carries any parsed-query :class:`~agentgrep.CompiledQuery` (set
-    when the positionals included Lucene-style field syntax) through
-    to the engine. ``None`` on the legacy fast path.
-    """
-    return SearchQuery(
-        terms=args.terms,
-        search_type=args.search_type,
-        any_term=args.any_term,
-        regex=args.regex,
-        case_sensitive=args.case_sensitive,
-        agents=args.agents,
-        limit=args.limit,
-        compiled=args.compiled,
-    )
-
-
 def discover_sources(
     home: pathlib.Path,
     agents: tuple[AgentName, ...],
@@ -3704,41 +3659,6 @@ def maybe_use_pydantic() -> tuple[
     return pydantic_search, pydantic_find, pydantic_envelope
 
 
-def search_progress_enabled(args: SearchArgs) -> bool:
-    """Return whether search progress should be shown for ``args``."""
-    human_output = args.output_mode in {"text", "ui"}
-    return args.progress_mode == "always" or (args.progress_mode == "auto" and human_output)
-
-
-def should_enable_answer_now(
-    args: SearchArgs,
-    *,
-    stdin: t.TextIO | None = None,
-    stderr: t.TextIO | None = None,
-) -> bool:
-    """Return whether Enter should request a partial answer for this search."""
-    input_stream = stdin if stdin is not None else sys.stdin
-    error_stream = stderr if stderr is not None else sys.stderr
-    return (
-        args.output_mode == "text"
-        and search_progress_enabled(args)
-        and bool(getattr(input_stream, "isatty", lambda: False)())
-        and bool(getattr(error_stream, "isatty", lambda: False)())
-    )
-
-
-def build_search_progress(args: SearchArgs, *, answer_now_hint: bool = False) -> SearchProgress:
-    """Build the progress reporter for a search invocation."""
-    enabled = search_progress_enabled(args)
-    if not enabled:
-        return noop_search_progress()
-    return ConsoleSearchProgress(
-        enabled=True,
-        color_mode=args.color_mode,
-        answer_now_hint=answer_now_hint,
-    )
-
-
 def run_ui(
     home: pathlib.Path,
     query: SearchQuery,
@@ -3817,8 +3737,6 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
             return run_grep_command(parsed)
         if isinstance(parsed, FuzzyArgs):
             return run_fuzzy_command(parsed)
-        if isinstance(parsed, SearchArgs):
-            return run_search_command(parsed)
         if isinstance(parsed, UIArgs):
             return run_ui_command(parsed)
         return run_find_command(parsed)
@@ -3842,7 +3760,6 @@ from agentgrep.cli.parser import (  # noqa: E402  (re-exports must follow main d
     GrepArgs,
     ParserBundle,
     PatternMode,
-    SearchArgs,
     UIArgs,
     add_common_agent_options,
     add_output_mode_options,
@@ -3863,11 +3780,9 @@ from agentgrep.cli.render import (  # noqa: E402  (re-exports must follow main d
     maybe_build_pydantic,
     print_find_results,
     print_grep_results,
-    print_search_results,
     run_find_command,
     run_fuzzy_command,
     run_grep_command,
-    run_search_command,
     run_ui_command,
     serialize_find_record,
     serialize_grep_record,

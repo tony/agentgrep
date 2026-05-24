@@ -629,16 +629,6 @@ class QueryPassesThroughCase(t.NamedTuple):
 
 QUERY_PASSES_THROUGH_CASES: tuple[QueryPassesThroughCase, ...] = (
     QueryPassesThroughCase(
-        test_id="search-bare-term-legacy-path",
-        argv=("search", "bliss"),
-        expect_compiled=False,
-    ),
-    QueryPassesThroughCase(
-        test_id="search-field-syntax-compiled",
-        argv=("search", "agent:codex", "bliss"),
-        expect_compiled=True,
-    ),
-    QueryPassesThroughCase(
         test_id="grep-bare-term-legacy-path",
         argv=("grep", "bliss"),
         expect_compiled=False,
@@ -702,10 +692,6 @@ MANGLED_FIELD_PREDICATE_CASES: tuple[MangledFieldPredicateCase, ...] = (
         argv=("find", "-agent:claude"),
     ),
     MangledFieldPredicateCase(
-        test_id="search-mangled-agent",
-        argv=("search", "-agent:claude", "bliss"),
-    ),
-    MangledFieldPredicateCase(
         test_id="grep-mangled-path",
         argv=("grep", "-path:/foo", "bliss"),
     ),
@@ -714,8 +700,8 @@ MANGLED_FIELD_PREDICATE_CASES: tuple[MangledFieldPredicateCase, ...] = (
         argv=("find", "-timestamp:2026"),
     ),
     MangledFieldPredicateCase(
-        test_id="search-mangled-type",
-        argv=("search", "-type:prompts", "bliss"),
+        test_id="grep-mangled-type",
+        argv=("grep", "-type:prompts", "bliss"),
     ),
 )
 
@@ -799,11 +785,6 @@ class FlagFieldCollisionCase(t.NamedTuple):
 
 FLAG_FIELD_COLLISION_CASES: tuple[FlagFieldCollisionCase, ...] = (
     FlagFieldCollisionCase(
-        test_id="search-agent-flag-and-field",
-        argv=("search", "--agent", "codex", "agent:claude", "bliss"),
-        expected_message_fragment="cannot combine --agent flag with agent: field",
-    ),
-    FlagFieldCollisionCase(
         test_id="grep-agent-flag-and-field",
         argv=("grep", "--agent", "codex", "agent:claude", "bliss"),
         expected_message_fragment="cannot combine --agent flag with agent: field",
@@ -812,11 +793,6 @@ FLAG_FIELD_COLLISION_CASES: tuple[FlagFieldCollisionCase, ...] = (
         test_id="find-agent-flag-and-field",
         argv=("find", "--agent", "codex", "agent:claude"),
         expected_message_fragment="cannot combine --agent flag with agent: field",
-    ),
-    FlagFieldCollisionCase(
-        test_id="search-type-flag-and-field",
-        argv=("search", "--type", "history", "type:prompts", "bliss"),
-        expected_message_fragment="cannot combine --type flag with type: field",
     ),
     FlagFieldCollisionCase(
         test_id="grep-type-flag-and-field",
@@ -845,17 +821,17 @@ def test_flag_field_collision_errors_at_parse_time(
 
 def test_no_collision_when_only_field_used() -> None:
     """Bare `agent:codex` (no `--agent`) parses cleanly."""
-    args = agentgrep.parse_args(["search", "agent:codex", "bliss"])
+    args = agentgrep.parse_args(["grep", "agent:codex", "bliss"])
     assert args is not None
-    assert isinstance(args, agentgrep.SearchArgs)
+    assert isinstance(args, agentgrep.GrepArgs)
     assert args.compiled is not None
 
 
 def test_no_collision_when_only_flag_used() -> None:
     """Bare `--agent codex` (no `agent:`) parses cleanly."""
-    args = agentgrep.parse_args(["search", "--agent", "codex", "bliss"])
+    args = agentgrep.parse_args(["grep", "--agent", "codex", "bliss"])
     assert args is not None
-    assert isinstance(args, agentgrep.SearchArgs)
+    assert isinstance(args, agentgrep.GrepArgs)
     assert args.compiled is None
 
 
@@ -867,7 +843,7 @@ def test_grep_query_with_no_text_pattern_errors(
         _ = agentgrep.parse_args(["grep", "agent:codex"])
     assert exc_info.value.code == 2
     captured = capsys.readouterr()
-    assert "use 'agentgrep search'" in captured.err
+    assert "at least one text pattern" in captured.err
 
 
 def test_compiled_none_falls_through_to_legacy_path(

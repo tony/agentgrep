@@ -82,7 +82,7 @@ UIArgs, entry points, filter and display helpers.
 
 - {ref}`cli` — the `--ui` flag on any search-shaped subcommand opens
   the same explorer pre-seeded with that subcommand's query (e.g.
-  `agentgrep search bliss --agent codex --ui`).
+  `agentgrep grep bliss --agent codex --ui`).
 
 ```{toctree}
 :hidden:
