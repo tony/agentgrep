@@ -621,6 +621,160 @@ def test_collect_search_records_calls_record_added_with_each_unique_record(
     assert progress.counts == [1]
 
 
+def test_collect_search_records_reports_in_source_progress_and_yields_gil(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Large source scans report parser progress and cooperatively yield."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    source = agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "session.jsonl",
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=1,
+    )
+    query = agentgrep.SearchQuery(
+        terms=("bliss",),
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+        dedupe=False,
+    )
+
+    class CapturingProgress:
+        def __init__(self) -> None:
+            self.source_progress_events: list[tuple[int, int, int, int]] = []
+
+        def source_started(self, index: int, total: int, source: object) -> None: ...
+        def source_finished(
+            self,
+            index: int,
+            total: int,
+            source: object,
+            records: int,
+            matches: int,
+        ) -> None: ...
+        def result_added(self, count: int) -> None: ...
+        def record_added(self, record: object) -> None: ...
+
+        def source_progress(
+            self,
+            index: int,
+            total: int,
+            source: object,
+            records: int,
+            matches: int,
+        ) -> None:
+            self.source_progress_events.append((index, total, records, matches))
+
+    def iter_records(source: object) -> cabc.Iterator[object]:
+        for index in range(agentgrep._SOURCE_PROGRESS_RECORD_INTERVAL + 1):
+            yield agentgrep.SearchRecord(
+                kind="prompt",
+                agent="codex",
+                store="codex.sessions",
+                adapter_id="codex.sessions_jsonl.v1",
+                path=tmp_path / "session.jsonl",
+                text=f"bliss {index}",
+            )
+
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(agentgrep, "iter_source_records", iter_records)
+    monkeypatch.setattr(agentgrep.time, "sleep", sleep_calls.append)
+    progress = CapturingProgress()
+
+    _ = agentgrep.collect_search_records(query, [source], progress=progress)
+
+    assert progress.source_progress_events == [
+        (
+            1,
+            1,
+            agentgrep._SOURCE_PROGRESS_RECORD_INTERVAL,
+            agentgrep._SOURCE_PROGRESS_RECORD_INTERVAL,
+        ),
+    ]
+    assert sleep_calls == [0]
+
+
+def test_iter_jsonl_cooperatively_yields_during_large_files(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """JSONL parsing yields even before search records are produced."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    path = tmp_path / "events.jsonl"
+    lines = [
+        json.dumps({"type": "noise", "index": index})
+        for index in range(agentgrep._JSONL_YIELD_LINE_INTERVAL + 1)
+    ]
+    path.write_text("\n".join(lines), encoding="utf-8")
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(agentgrep.time, "sleep", sleep_calls.append)
+
+    parsed = list(agentgrep.iter_jsonl(path))
+
+    assert len(parsed) == agentgrep._JSONL_YIELD_LINE_INTERVAL + 1
+    assert sleep_calls == [0]
+
+
+def test_parse_codex_session_skips_function_call_output_before_json_decode(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex tool-output lines cannot become prompt records and stay unparsed."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    path = tmp_path / "session.jsonl"
+    tool_output_line = json.dumps(
+        {
+            "timestamp": "2026-01-01T00:00:00Z",
+            "type": "response_item",
+            "payload": {
+                "type": "function_call_output",
+                "call_id": "call_1",
+                "output": "bliss" + ("x" * agentgrep._CODEX_RAW_SKIP_MIN_BYTES),
+            },
+        },
+    )
+    message_line = json.dumps(
+        {
+            "timestamp": "2026-01-01T00:00:01Z",
+            "type": "response_item",
+            "payload": {"role": "user", "content": "bliss prompt"},
+        },
+    )
+    path.write_text(f"{tool_output_line}\n{message_line}\n", encoding="utf-8")
+    source = agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=path,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=1,
+    )
+    decoded_payloads: list[str] = []
+    original_loads = agentgrep.json.loads
+
+    def tracking_loads(payload: str) -> object:
+        decoded_payloads.append(payload)
+        return original_loads(payload)
+
+    monkeypatch.setattr(agentgrep.json, "loads", tracking_loads)
+
+    records = list(agentgrep.parse_codex_session_file(source))
+
+    assert [record.text for record in records] == ["bliss prompt"]
+    assert decoded_payloads == [message_line]
+
+
 def test_streaming_search_progress_buffers_and_flushes_records(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -731,6 +885,7 @@ def test_streaming_search_progress_translates_progress_callbacks(
     progress.sources_discovered(10)
     progress.sources_planned(7, 10)
     progress.source_started(1, 7, source)
+    progress.source_progress(1, 7, source, records=128, matches=3)
     progress.source_finished(1, 7, source, records=5, matches=2)
     progress.result_added(2)
     progress.finish(2)
@@ -738,7 +893,7 @@ def test_streaming_search_progress_translates_progress_callbacks(
     snapshots = [e for e in emitted if isinstance(e, agentgrep.ProgressSnapshot)]
     finished = [e for e in emitted if isinstance(e, agentgrep.StreamingSearchFinished)]
 
-    assert len(snapshots) == 5
+    assert len(snapshots) == 6
     assert snapshots[0].phase == "discovering"
     assert snapshots[0].query_label == "bliss"
     assert snapshots[1].phase == "discovered"
@@ -751,8 +906,10 @@ def test_streaming_search_progress_translates_progress_callbacks(
     assert snapshots[3].total == 7
     assert snapshots[3].detail == "session.jsonl"
     assert snapshots[4].phase == "scanning"
-    assert snapshots[4].detail is not None
-    assert "matches" in snapshots[4].detail
+    assert snapshots[4].detail == "128 records, 3 source matches"
+    assert snapshots[5].phase == "scanning"
+    assert snapshots[5].detail is not None
+    assert "matches" in snapshots[5].detail
 
     assert len(finished) == 1
     assert finished[0].outcome == "complete"
@@ -3308,6 +3465,70 @@ def test_progress_force_color_enables_auto_for_non_tty(
     assert "Searching bliss" in strip_ansi(out)
 
 
+class ProgressLineCase(t.NamedTuple):
+    """Formatting case for single-line search progress."""
+
+    test_id: str
+    snapshot: object
+    expected: str
+
+
+def _progress_line_cases() -> tuple[ProgressLineCase, ...]:
+    """Build progress-line cases after importing the runtime module."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    return (
+        ProgressLineCase(
+            test_id="source-count-with-detail",
+            snapshot=agentgrep.ProgressSnapshot(
+                query_label="bliss",
+                phase="scanning",
+                current=5,
+                total=9,
+                detail="128 records, 3 source matches",
+                matches=10,
+                elapsed=1.5,
+            ),
+            expected=(
+                "Searching bliss | scanning 5/9 sources | "
+                "128 records, 3 source matches | 10 matches | 1.5s"
+            ),
+        ),
+        ProgressLineCase(
+            test_id="detail-without-source-count",
+            snapshot=agentgrep.ProgressSnapshot(
+                query_label="bliss",
+                phase="prefiltering",
+                current=None,
+                total=None,
+                detail="~/.codex/sessions/",
+                matches=0,
+                elapsed=0.5,
+            ),
+            expected="Searching bliss | prefiltering ~/.codex/sessions/ | 0 matches | 0.5s",
+        ),
+    )
+
+
+_PROGRESS_LINE_CASES = _progress_line_cases()
+
+
+@pytest.mark.parametrize(
+    "case",
+    _PROGRESS_LINE_CASES,
+    ids=[c.test_id for c in _PROGRESS_LINE_CASES],
+)
+def test_format_search_progress_line_includes_detail(case: ProgressLineCase) -> None:
+    """Current source detail stays visible alongside source counters."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+
+    line = agentgrep.format_search_progress_line(
+        case.snapshot,
+        colors=agentgrep.AnsiColors.for_stream("never", io.StringIO()),
+    )
+
+    assert line == case.expected
+
+
 def test_non_tty_progress_emits_start_heartbeat_and_finish() -> None:
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     stream = io.StringIO()
@@ -3526,9 +3747,9 @@ def test_tty_progress_interrupt_preserves_current_summary(
     progress.interrupt()
 
     out = stream.getvalue()
-    assert "Searching bliss | scanning 118/126 sources | 109 matches" in out
+    assert "Searching bliss | scanning 118/126 sources | rollout.jsonl | 109 matches" in out
     assert out.endswith("\n")
-    assert "\r\x1b[2KSearching bliss | scanning 118/126 sources | 109 matches" in out
+    assert "\r\x1b[2KSearching bliss | scanning 118/126 sources | rollout.jsonl" in out
 
 
 def test_tty_progress_prefilter_uses_private_directory_path(
@@ -3593,7 +3814,7 @@ def test_non_tty_progress_interrupt_emits_current_summary() -> None:
 
     out = stream.getvalue()
     assert "Searching bliss\n" in out
-    assert "Searching bliss | scanning 118/126 sources | 109 matches" in out
+    assert "Searching bliss | scanning 118/126 sources | rollout.jsonl | 109 matches" in out
 
 
 def test_main_handles_keyboard_interrupt_without_traceback(

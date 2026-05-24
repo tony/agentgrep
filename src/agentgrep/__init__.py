@@ -1117,6 +1117,24 @@ class SourceHandle:
     mtime_ns: int
 
 
+type SourceProgressCallback = cabc.Callable[[int, int, SourceHandle, int, int], None]
+
+_SOURCE_PROGRESS_RECORD_INTERVAL = 128
+"""Parsed-record cadence for in-source progress updates and GIL yields."""
+
+_JSONL_YIELD_LINE_INTERVAL = 128
+"""Decoded-line cadence for cooperative JSONL parser yields."""
+
+_JSONL_PREFIX_BYTES = 4096
+"""Bytes read up front when a raw-line skip predicate is active."""
+
+_JSONL_SKIP_CHUNK_BYTES = 1024 * 1024
+"""Chunk size for discarding skipped oversized JSONL lines."""
+
+_CODEX_RAW_SKIP_MIN_BYTES = 1024 * 1024
+"""Minimum Codex session size before enabling raw-line output skipping."""
+
+
 @dataclasses.dataclass(slots=True)
 class SearchRecord:
     """Normalized prompt/history record."""
@@ -1451,6 +1469,22 @@ class ConsoleSearchProgress:
             detail=f"{records} records, {format_match_count(matches)} in {source.path.name}",
         )
 
+    def source_progress(
+        self,
+        index: int,
+        total: int,
+        source: SourceHandle,
+        records: int,
+        matches: int,
+    ) -> None:
+        """Report in-source scan progress."""
+        self.set_status(
+            "scanning",
+            current=index,
+            total=total,
+            detail=format_source_progress_detail(records, matches),
+        )
+
     def result_added(self, count: int) -> None:
         """Report deduped result count."""
         if not self._enabled:
@@ -1663,7 +1697,10 @@ class ConsoleSearchProgress:
             detail = self._detail
         if current is not None and total is not None:
             count = self._colors.warning(f"{current}/{total}")
-            return f"{self._colors.heading(phase)} {count} {self._colors.muted('sources')}"
+            text = f"{self._colors.heading(phase)} {count} {self._colors.muted('sources')}"
+            if detail:
+                return f"{text} | {self._colors.muted(detail)}"
+            return text
         if detail:
             return f"{self._colors.heading(phase)} {self._colors.muted(detail)}"
         return self._colors.heading(phase)
@@ -1680,6 +1717,12 @@ def format_match_count(count: int) -> str:
     """Return a human-readable match count."""
     suffix = "match" if count == 1 else "matches"
     return f"{count} {suffix}"
+
+
+def format_source_progress_detail(records: int, matches: int) -> str:
+    """Return a concise in-source progress detail."""
+    match_suffix = "source match" if matches == 1 else "source matches"
+    return f"{records} records, {matches} {match_suffix}"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1719,19 +1762,27 @@ def format_search_progress_line(
         each segment styled through ``colors``.
     """
     label_part = f"{colors.heading('Searching')} {colors.highlight(snapshot.query_label)}"
+    detail_part = colors.muted(snapshot.detail) if snapshot.detail else None
     if snapshot.current is not None and snapshot.total is not None:
         count = colors.warning(f"{snapshot.current}/{snapshot.total}")
         status_part = f"{colors.heading(snapshot.phase)} {count} {colors.muted('sources')}"
     elif snapshot.detail:
         status_part = f"{colors.heading(snapshot.phase)} {colors.muted(snapshot.detail)}"
+        detail_part = None
     else:
         status_part = colors.heading(snapshot.phase)
     parts = [
         label_part,
         status_part,
-        colors.warning(format_match_count(snapshot.matches)),
-        colors.muted(f"{snapshot.elapsed:.1f}s"),
     ]
+    if detail_part:
+        parts.append(detail_part)
+    parts.extend(
+        [
+            colors.warning(format_match_count(snapshot.matches)),
+            colors.muted(f"{snapshot.elapsed:.1f}s"),
+        ],
+    )
     if answer_now_hint:
         parts.append(colors.white("[Press enter, answer now]"))
     return " | ".join(parts)
@@ -1740,6 +1791,20 @@ def format_search_progress_line(
 def noop_search_progress() -> SearchProgress:
     """Return a silent search progress reporter."""
     return NoopSearchProgress()
+
+
+def _report_source_progress(
+    progress: SearchProgress,
+    index: int,
+    total: int,
+    source: SourceHandle,
+    records: int,
+    matches: int,
+) -> None:
+    """Call the optional in-source progress hook when a reporter exposes it."""
+    callback = getattr(progress, "source_progress", None)
+    if callable(callback):
+        t.cast("SourceProgressCallback", callback)(index, total, source, records, matches)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1894,6 +1959,22 @@ class StreamingSearchProgress:
             self._current = index
             self._total = total
             self._detail = f"{records} records, {format_match_count(matches)} in {source.path.name}"
+        self._emit_progress()
+
+    def source_progress(
+        self,
+        index: int,
+        total: int,
+        source: SourceHandle,
+        records: int,
+        matches: int,
+    ) -> None:
+        """Report in-source scan progress."""
+        with self._lock:
+            self._phase = "scanning"
+            self._current = index
+            self._total = total
+            self._detail = format_source_progress_detail(records, matches)
         self._emit_progress()
 
     def result_added(self, count: int) -> None:
@@ -2075,6 +2156,14 @@ def file_mtime_ns(path: pathlib.Path) -> int:
     """Return a cached modification time for a path."""
     try:
         return path.stat().st_mtime_ns
+    except OSError:
+        return 0
+
+
+def _file_size(path: pathlib.Path) -> int:
+    """Return file size in bytes, falling back to zero on stat failure."""
+    try:
+        return path.stat().st_size
     except OSError:
         return 0
 
@@ -2634,6 +2723,16 @@ def collect_search_records(
             if matches_record(record, query):
                 matches_seen += 1
                 matching_records.append(record)
+            if records_seen % _SOURCE_PROGRESS_RECORD_INTERVAL == 0:
+                _report_source_progress(
+                    active_progress,
+                    index,
+                    total,
+                    source,
+                    records_seen,
+                    matches_seen,
+                )
+                time.sleep(0)
         active_progress.source_finished(index, total, source, records_seen, matches_seen)
         matching_records.sort(key=search_record_sort_key, reverse=True)
         for record in matching_records:
@@ -2745,7 +2844,12 @@ def parse_codex_session_file(
     """Parse Codex session JSONL files."""
     session_id = source.path.stem
     session_model: str | None = None
-    for event in iter_jsonl(source.path):
+    events = (
+        _iter_jsonl(source.path, skip_line=_is_codex_function_call_output_line)
+        if _file_size(source.path) >= _CODEX_RAW_SKIP_MIN_BYTES
+        else iter_jsonl(source.path)
+    )
+    for event in events:
         if not isinstance(event, dict):
             continue
         event_type = str(event.get("type", ""))
@@ -3285,10 +3389,69 @@ def read_json_file(path: pathlib.Path) -> JSONValue | None:
 
 def iter_jsonl(path: pathlib.Path) -> cabc.Iterator[JSONValue]:
     """Yield decoded JSON objects from a JSONL file."""
+    yield from _iter_jsonl(path)
+
+
+def _iter_jsonl(
+    path: pathlib.Path,
+    *,
+    skip_line: cabc.Callable[[str], bool] | None = None,
+) -> cabc.Iterator[JSONValue]:
+    """Yield decoded JSON objects from a JSONL file with an optional raw-line filter."""
+    if skip_line is not None:
+        yield from _iter_jsonl_with_raw_skip(path, skip_line)
+        return
     try:
         with path.open(encoding="utf-8") as handle:
+            decoded_lines = 0
             for line in handle:
                 stripped = line.strip()
+                if not stripped:
+                    continue
+                decoded_lines += 1
+                if decoded_lines % _JSONL_YIELD_LINE_INTERVAL == 0:
+                    time.sleep(0)
+                if skip_line is not None and skip_line(stripped):
+                    continue
+                try:
+                    parsed = t.cast("object", json.loads(stripped))
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(parsed, (dict, list, str, int, float, bool)) or parsed is None:
+                    yield t.cast("JSONValue", parsed)
+    except OSError:
+        return
+
+
+def _iter_jsonl_with_raw_skip(
+    path: pathlib.Path,
+    skip_line: cabc.Callable[[str], bool],
+) -> cabc.Iterator[JSONValue]:
+    """Yield decoded JSON objects while skipping matched raw lines in chunks."""
+    try:
+        with path.open("rb") as handle:
+            decoded_lines = 0
+            while True:
+                prefix = handle.readline(_JSONL_PREFIX_BYTES)
+                if not prefix:
+                    break
+                if not prefix.strip():
+                    continue
+                decoded_lines += 1
+                if decoded_lines % _JSONL_YIELD_LINE_INTERVAL == 0:
+                    time.sleep(0)
+                prefix_text = prefix.decode("utf-8", errors="replace")
+                if skip_line(prefix_text):
+                    _discard_rest_of_line(handle, prefix)
+                    continue
+                raw_line = bytearray(prefix)
+                while raw_line and not raw_line.endswith(b"\n"):
+                    chunk = handle.readline(_JSONL_SKIP_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    raw_line.extend(chunk)
+                    time.sleep(0)
+                stripped = raw_line.decode("utf-8", errors="replace").strip()
                 if not stripped:
                     continue
                 try:
@@ -3299,6 +3462,22 @@ def iter_jsonl(path: pathlib.Path) -> cabc.Iterator[JSONValue]:
                     yield t.cast("JSONValue", parsed)
     except OSError:
         return
+
+
+def _discard_rest_of_line(handle: t.BinaryIO, prefix: bytes) -> None:
+    """Discard the unread remainder of the current physical line."""
+    chunk = prefix
+    while chunk and not chunk.endswith(b"\n"):
+        chunk = handle.readline(_JSONL_SKIP_CHUNK_BYTES)
+        time.sleep(0)
+
+
+def _is_codex_function_call_output_line(line: str) -> bool:
+    """Return whether a Codex JSONL line is a tool output record."""
+    prefix = line[:512].replace(" ", "")
+    return (
+        '"type":"response_item"' in prefix and '"payload":{"type":"function_call_output"' in prefix
+    )
 
 
 def candidate_from_mapping(
