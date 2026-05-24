@@ -436,7 +436,7 @@ def run_search_command(args: SearchArgs) -> int:
     ``--no-group``). Returns ``0`` when at least one result survives,
     ``1`` otherwise.
     """
-    if not args.terms and args.output_mode != "ui":
+    if not args.terms and args.compiled is None and args.output_mode != "ui":
         msg = "search requires at least one term unless --ui is used"
         raise SystemExit(msg)
     query = agentgrep.SearchQuery(
@@ -491,7 +491,8 @@ def run_search_command(args: SearchArgs) -> int:
         if listener is not None:
             listener.stop()
     query_text = " ".join(args.terms)
-    if args.no_rank:
+    answered_early = control.answer_now_requested()
+    if args.no_rank or answered_early or not query_text:
         scored: list[tuple[agentgrep.SearchRecord, float]] = [(r, 0.0) for r in records]
     else:
         from agentgrep.ranking import rank_search_records

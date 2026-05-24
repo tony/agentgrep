@@ -400,6 +400,26 @@ def test_search_command_no_terms_raises() -> None:
         run_search_command(args)
 
 
+def test_search_field_only_query_allowed(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Field-only queries like agent:codex work without text terms."""
+    parsed = agentgrep.parse_args(("search", "agent:codex"))
+    assert parsed is not None
+    assert isinstance(parsed, agentgrep.SearchArgs)
+    assert parsed.compiled is not None
+    assert parsed.terms == ()
+    canned = _canned_records()
+    monkeypatch.setattr(
+        agentgrep,
+        "run_search_query",
+        lambda *_args, **_kwargs: canned,
+    )
+    code = run_search_command(parsed)
+    assert code == 0
+
+
 def test_search_routes_through_ranking(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
