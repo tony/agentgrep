@@ -879,9 +879,9 @@ def format_grep_record_pretty(
         if remaining > 0:
             lines.append(colors.dim(f"  ... {remaining} more lines"))
     provenance_parts: list[str] = [record.agent, record.kind]
-    if record.timestamp is not None:
+    if record.timestamp:
         provenance_parts.append(format_relative_time(record.timestamp))
-    if record.model is not None:
+    if record.model:
         provenance_parts.append(record.model)
     display_path = agentgrep.format_display_path(record.path)
     provenance_parts.append(colors.path(display_path))
