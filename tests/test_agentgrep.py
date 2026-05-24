@@ -2589,7 +2589,7 @@ def test_run_search_command_starts_and_stops_answer_now_listener(
         regex=False,
         case_sensitive=False,
         limit=None,
-        output_mode="text",
+        output_mode="ndjson",
         color_mode="never",
         progress_mode="auto",
     )
@@ -2612,23 +2612,20 @@ def test_run_search_command_starts_and_stops_answer_now_listener(
         progress: object,
         control: object,
     ) -> list[object]:
-        typed_progress = t.cast("t.Any", progress)
         typed_control = t.cast("t.Any", control)
         assert typed_control.answer_now_requested()
-        typed_progress.answer_now(0)
         return []
 
     monkeypatch.setattr(agentgrep, "should_enable_answer_now", lambda args: True)
     monkeypatch.setattr(agentgrep, "AnswerNowInputListener", FakeListener)
     monkeypatch.setattr(agentgrep, "run_search_query", fake_run_search_query)
-    err = io.StringIO()
+    out = io.StringIO()
 
-    with contextlib.redirect_stderr(err):
+    with contextlib.redirect_stdout(out):
         exit_code = agentgrep.run_search_command(args)
 
     assert exit_code == 1
     assert events == ["start", "stop"]
-    assert "Answering now: 0 matches" in err.getvalue()
 
 
 def test_run_search_query_interrupts_progress_on_keyboard_interrupt(

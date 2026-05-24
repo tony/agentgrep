@@ -73,6 +73,7 @@ __all__ = [
     "serialize_source_handle",
     "stream_find_results",
     "stream_grep_results",
+    "stream_search_results",
 ]
 
 
@@ -254,6 +255,59 @@ def _format_find_text_line(record: FindRecord, args: FindArgs) -> str:
     return path
 
 
+def _search_path_is_eager(args: SearchArgs) -> bool:
+    """Return ``True`` when search output needs the full record list."""
+    return args.output_mode in ("json", "ndjson")
+
+
+def stream_search_results(args: SearchArgs) -> int:
+    """Stream search records to stdout as the engine emits them.
+
+    Follows the same pattern as :func:`stream_grep_results`: consume
+    :func:`agentgrep.iter_search_events`, filter for
+    :class:`~agentgrep.events.RecordEmitted`, and print each record
+    in snippet-first format as it arrives.
+    """
+    from agentgrep import events
+
+    query = agentgrep.make_search_query(args)
+    control = agentgrep.SearchControl()
+    colors = agentgrep.AnsiColors.for_stream(args.color_mode, sys.stdout)
+    is_tty = sys.stdout.isatty()
+    patterns = _compile_highlight_patterns(args)
+    summary = SearchSummary()
+
+    for event in agentgrep.iter_search_events(
+        pathlib.Path.home(),
+        query,
+        control=control,
+    ):
+        if isinstance(event, events.RecordEmitted):
+            summary.add(event.record)
+            print(
+                format_search_record(
+                    event.record,
+                    args,
+                    colors=colors,
+                    patterns=patterns,
+                ),
+            )
+            print()
+            if is_tty:
+                sys.stdout.flush()
+        elif isinstance(event, events.SearchFinished):
+            summary.elapsed = event.elapsed_seconds
+
+    if is_tty and summary.total > 0:
+        footer = summary.format(colors=colors)
+        if footer:
+            print(footer, file=sys.stderr)
+    if summary.total == 0:
+        print("No matches found.", file=sys.stderr)
+
+    return 0 if summary.total > 0 else 1
+
+
 def run_search_command(args: SearchArgs) -> int:
     """Execute ``agentgrep search``."""
     if not args.terms and args.output_mode != "ui":
@@ -268,6 +322,8 @@ def run_search_command(args: SearchArgs) -> int:
             initial_search_text=args.raw_query or None,
         )
         return 0
+    if not _search_path_is_eager(args):
+        return stream_search_results(args)
     answer_now_enabled = agentgrep.should_enable_answer_now(args)
     control = agentgrep.SearchControl()
     listener = agentgrep.AnswerNowInputListener(control) if answer_now_enabled else None
