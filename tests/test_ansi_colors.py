@@ -86,9 +86,7 @@ def test_dim_class_var_is_ansi_dim_attribute() -> None:
     assert agentgrep.AnsiColors.DIM == "\x1b[2m"
 
 
-def test_for_stream_produces_working_accent(
-    tmp_path: t.Any,
-) -> None:
+def test_for_stream_produces_working_accent() -> None:
     """AnsiColors.for_stream builds an instance whose accent() works."""
     import io
 
