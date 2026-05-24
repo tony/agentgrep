@@ -761,6 +761,16 @@ def build_docs_parser() -> argparse.ArgumentParser:
     return create_parser("never").parser
 
 
+def _search_explicit_flags(namespace: argparse.Namespace) -> dict[str, str]:
+    """Map query-field name → CLI flag name for `search` flag/field collisions."""
+    flags: dict[str, str] = {}
+    if t.cast("list[str]", namespace.agent):
+        flags["agent"] = "--agent"
+    if t.cast("str", namespace.search_type) != "prompts":
+        flags["type"] = "--type"
+    return flags
+
+
 def _grep_explicit_flags(namespace: argparse.Namespace) -> dict[str, str]:
     """Map query-field name → CLI flag name for `grep` flag/field collisions."""
     flags: dict[str, str] = {}
@@ -1146,6 +1156,7 @@ def _build_search_args(
         bundle=bundle,
         color_mode=color_mode,
         subparser=bundle.search_parser,
+        explicit_flags=_search_explicit_flags(namespace),
     )
     final_terms: tuple[str, ...] = (
         residual_terms if search_compiled is not None else tuple(terms_list)
