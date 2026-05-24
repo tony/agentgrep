@@ -16,6 +16,7 @@ compatibility.
 from __future__ import annotations
 
 import collections.abc as cabc
+import datetime
 import fnmatch
 import json
 import pathlib
@@ -43,6 +44,7 @@ __all__ = [
     "format_grep_heading",
     "format_grep_line",
     "format_grep_record",
+    "format_relative_time",
     "fuzzy_filter_lines",
     "iter_match_lines",
     "maybe_build_pydantic",
@@ -1034,6 +1036,60 @@ def run_fuzzy_command(args: FuzzyArgs) -> int:
         _emit(original)
     out.flush()
     return 0 if ranked else 1
+
+
+def format_relative_time(
+    iso_timestamp: str,
+    *,
+    now: datetime.datetime | None = None,
+) -> str:
+    """Convert an ISO 8601 timestamp to a human-scannable relative form.
+
+    Parameters
+    ----------
+    iso_timestamp : str
+        ISO 8601 timestamp string.  Assumed UTC when no timezone info
+        is present.
+    now : datetime.datetime | None
+        Reference time for delta computation.  Defaults to
+        ``datetime.datetime.now(datetime.UTC)``.
+
+    Returns
+    -------
+    str
+        Relative time such as ``now``, ``3m ago``, ``2d ago``.
+        Returns *iso_timestamp* verbatim when parsing fails.
+    """
+    try:
+        dt = datetime.datetime.fromisoformat(iso_timestamp)
+    except ValueError, TypeError:
+        return iso_timestamp
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.UTC)
+    ref = now if now is not None else datetime.datetime.now(datetime.UTC)
+    delta = ref - dt
+    total_seconds = int(delta.total_seconds())
+    if total_seconds < 0:
+        return iso_timestamp
+    if total_seconds < 60:
+        return "now"
+    minutes = total_seconds // 60
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours = total_seconds // 3600
+    if hours < 24:
+        return f"{hours}h ago"
+    days = total_seconds // 86400
+    if days < 7:
+        return f"{days}d ago"
+    if days < 30:
+        weeks = days // 7
+        return f"{weeks}w ago"
+    if days < 365:
+        months = days // 30
+        return f"{months}mo ago"
+    years = days // 365
+    return f"{years}y ago"
 
 
 def _grep_path_is_eager(args: GrepArgs) -> bool:
