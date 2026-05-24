@@ -450,15 +450,11 @@ def test_search_threshold_filters_low_scores(
         "run_search_query",
         lambda *_args, **_kwargs: canned,
     )
-    # Very high threshold should filter most records
     args = _make_search_args(terms=("bliss",), threshold=99)
     code = run_search_command(args)
     captured = capsys.readouterr()
-    # With threshold=99, only near-exact matches survive (or none)
-    # The exit code reflects whether any results remain
-    assert code in (0, 1)
-    if code == 1:
-        assert captured.out.strip() == ""
+    assert code == 1
+    assert captured.out.strip() == ""
 
 
 def test_search_json_includes_scores(
