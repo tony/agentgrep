@@ -3688,6 +3688,52 @@ def test_tty_progress_renders_answer_now_hint() -> None:
     assert out.endswith("\n")
 
 
+def test_tty_progress_render_fits_terminal_width(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TTY progress renders must not wrap into uncleared terminal rows."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    stream = io.StringIO()
+    columns = 72
+    monkeypatch.setattr(
+        agentgrep.shutil,
+        "get_terminal_size",
+        lambda fallback: os.terminal_size((columns, 24)),
+    )
+    progress = agentgrep.ConsoleSearchProgress(
+        enabled=True,
+        stream=stream,
+        tty=True,
+        color_mode="never",
+        refresh_interval=100.0,
+        answer_now_hint=True,
+    )
+    query = agentgrep.SearchQuery(
+        terms=("libtmux",),
+        search_type="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+
+    progress.start(query)
+    progress._stop_tty_thread()
+    progress.set_status(
+        "scanning",
+        current=8,
+        total=3807,
+        detail="128 records, 0 source matches",
+    )
+    progress.result_added(76)
+    progress._render_tty("⠋")
+
+    rendered = stream.getvalue().split("\r\033[2K")[-1]
+    assert "\n" not in rendered
+    assert len(strip_ansi(rendered)) <= columns
+
+
 def test_tty_progress_answer_now_hint_is_white(monkeypatch: pytest.MonkeyPatch) -> None:
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     stream = io.StringIO()

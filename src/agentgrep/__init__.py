@@ -124,6 +124,7 @@ OPTIONS_FLAG_ONLY: frozenset[str] = frozenset(
         "--ui",
     },
 )
+ANSI_CSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 def build_description(
@@ -389,6 +390,39 @@ def _hard_truncate(text: str, max_width: int) -> str:
     if max_width == 1:
         return "…"
     return text[: max_width - 1] + "…"
+
+
+def _visible_width(text: str) -> int:
+    """Return display width after stripping ANSI CSI escape sequences."""
+    return len(ANSI_CSI_RE.sub("", text))
+
+
+def _hard_truncate_ansi(text: str, max_width: int) -> str:
+    """Truncate ANSI-colored text to ``max_width`` visible cells."""
+    if max_width <= 0:
+        return ""
+    if _visible_width(text) <= max_width:
+        return text
+    if max_width == 1:
+        return "…"
+    output: list[str] = []
+    visible = 0
+    index = 0
+    saw_escape = False
+    while index < len(text) and visible < max_width - 1:
+        match = ANSI_CSI_RE.match(text, index)
+        if match is not None:
+            output.append(match.group(0))
+            index = match.end()
+            saw_escape = True
+            continue
+        output.append(text[index])
+        visible += 1
+        index += 1
+    output.append("…")
+    if saw_escape:
+        output.append(AnsiColors.RESET)
+    return "".join(output)
 
 
 def truncate_lines(text: str, max_lines: int) -> str:
@@ -1589,8 +1623,10 @@ class ConsoleSearchProgress:
             self._stop_event.wait(self._refresh_interval)
 
     def _render_tty(self, frame: str) -> None:
-        summary = self._summary()
-        line = f"{self._colors.info(frame)} {summary}"
+        frame_text = self._colors.info(frame)
+        summary_width = max(1, self._terminal_width() - _visible_width(frame_text) - 1)
+        summary = self._summary(max_width=summary_width)
+        line = f"{frame_text} {summary}"
         with self._lock:
             try:
                 self._stream.write("\r\033[2K" + line)
@@ -1611,7 +1647,7 @@ class ConsoleSearchProgress:
             self._last_line_len = 0
 
     def _write_tty_summary_line(self) -> None:
-        line = self._summary()
+        line = self._summary(max_width=self._terminal_width())
         self._write_tty_line(line)
 
     def _write_tty_line(self, line: str) -> None:
@@ -1648,12 +1684,19 @@ class ConsoleSearchProgress:
         except OSError, ValueError:
             pass
 
-    def _summary(self) -> str:
+    def _summary(self, *, max_width: int | None = None) -> str:
         return format_search_progress_line(
             self._snapshot(),
             colors=self._colors,
             answer_now_hint=self._answer_now_hint,
+            max_width=max_width,
         )
+
+    def _terminal_width(self) -> int:
+        try:
+            return max(1, os.get_terminal_size(self._stream.fileno()).columns)
+        except AttributeError, OSError, TypeError, ValueError:
+            return max(1, shutil.get_terminal_size(fallback=(80, 24)).columns)
 
     def _snapshot(self) -> ProgressSnapshot:
         elapsed = self._elapsed_seconds()
@@ -1743,6 +1786,7 @@ def format_search_progress_line(
     *,
     colors: SearchColors,
     answer_now_hint: bool = False,
+    max_width: int | None = None,
 ) -> str:
     """Format the single-line progress summary used by both the CLI and the TUI.
 
@@ -1754,6 +1798,9 @@ def format_search_progress_line(
         An :class:`AnsiColors` instance (used by the CLI chrome).
     answer_now_hint : bool, default False
         When ``True``, append the ``[Press enter, answer now]`` reminder.
+    max_width : int or None, default None
+        Maximum visible terminal cells for the returned line. When set, the
+        formatter drops optional detail and hint segments before truncating.
 
     Returns
     -------
@@ -1761,12 +1808,39 @@ def format_search_progress_line(
         ``"Searching <q> | <phase> N/M sources | K matches | T.Ts"`` with
         each segment styled through ``colors``.
     """
+    variants = (
+        (True, answer_now_hint),
+        (False, answer_now_hint),
+        (False, False),
+    )
+    for include_detail, include_hint in variants:
+        line = _format_search_progress_line(
+            snapshot,
+            colors=colors,
+            answer_now_hint=include_hint,
+            include_detail=include_detail,
+        )
+        if max_width is None or _visible_width(line) <= max_width:
+            return line
+    if max_width is None:
+        return line
+    return _hard_truncate_ansi(line, max_width)
+
+
+def _format_search_progress_line(
+    snapshot: ProgressSnapshot,
+    *,
+    colors: SearchColors,
+    answer_now_hint: bool,
+    include_detail: bool,
+) -> str:
+    """Build one progress-line variant."""
     label_part = f"{colors.heading('Searching')} {colors.highlight(snapshot.query_label)}"
-    detail_part = colors.muted(snapshot.detail) if snapshot.detail else None
+    detail_part = colors.muted(snapshot.detail) if include_detail and snapshot.detail else None
     if snapshot.current is not None and snapshot.total is not None:
         count = colors.warning(f"{snapshot.current}/{snapshot.total}")
         status_part = f"{colors.heading(snapshot.phase)} {count} {colors.muted('sources')}"
-    elif snapshot.detail:
+    elif include_detail and snapshot.detail:
         status_part = f"{colors.heading(snapshot.phase)} {colors.muted(snapshot.detail)}"
         detail_part = None
     else:
