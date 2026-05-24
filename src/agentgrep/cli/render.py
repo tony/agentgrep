@@ -470,28 +470,6 @@ def _merge_overlapping_spans(
     return merged
 
 
-def _compile_highlight_patterns(
-    args: SearchArgs,
-) -> list[re.Pattern[str]]:
-    """Compile search terms to regex for snippet highlighting.
-
-    Skips terms that look like Lucene field predicates (contain ``:``)
-    so the highlighting layer does not color metadata tokens.
-    Malformed patterns are silently skipped.
-    """
-    flags = 0 if args.case_sensitive else re.IGNORECASE
-    compiled: list[re.Pattern[str]] = []
-    for term in args.terms:
-        if ":" in term:
-            continue
-        source = term if args.regex else re.escape(term)
-        try:
-            compiled.append(re.compile(source, flags))
-        except re.error:
-            continue
-    return compiled
-
-
 def extract_search_snippet(
     text: str,
     patterns: list[re.Pattern[str]],

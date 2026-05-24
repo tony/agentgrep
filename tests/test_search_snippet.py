@@ -12,7 +12,6 @@ import pytest
 
 import agentgrep
 from agentgrep.cli.render import (
-    _compile_highlight_patterns,
     extract_search_snippet,
     highlight_search_spans,
 )
@@ -211,78 +210,3 @@ def test_highlight_multiline() -> None:
     assert _ACCENT in lines[0]
     assert _ACCENT not in lines[1]
     assert _ACCENT in lines[2]
-
-
-# ---------------------------------------------------------------------------
-# _compile_highlight_patterns
-# ---------------------------------------------------------------------------
-
-
-class CompileCase(t.NamedTuple):
-    """Parametrized case for highlight pattern compilation."""
-
-    test_id: str
-    terms: tuple[str, ...]
-    regex: bool
-    case_sensitive: bool
-    expected_count: int
-
-
-_COMPILE_CASES: tuple[CompileCase, ...] = (
-    CompileCase(
-        test_id="simple-terms",
-        terms=("hello", "world"),
-        regex=False,
-        case_sensitive=False,
-        expected_count=2,
-    ),
-    CompileCase(
-        test_id="regex-terms",
-        terms=(r"hel+o",),
-        regex=True,
-        case_sensitive=False,
-        expected_count=1,
-    ),
-    CompileCase(
-        test_id="field-predicate-skipped",
-        terms=("agent:codex", "hello"),
-        regex=False,
-        case_sensitive=False,
-        expected_count=1,
-    ),
-    CompileCase(
-        test_id="empty-terms",
-        terms=(),
-        regex=False,
-        case_sensitive=False,
-        expected_count=0,
-    ),
-    CompileCase(
-        test_id="all-field-predicates",
-        terms=("agent:codex", "path:~/.claude"),
-        regex=False,
-        case_sensitive=False,
-        expected_count=0,
-    ),
-)
-
-
-@pytest.mark.parametrize("case", _COMPILE_CASES, ids=[c.test_id for c in _COMPILE_CASES])
-def test_compile_highlight_patterns(case: CompileCase) -> None:
-    """_compile_highlight_patterns produces expected pattern count."""
-    from agentgrep.cli.parser import SearchArgs
-
-    args = SearchArgs(
-        terms=case.terms,
-        agents=("codex", "claude", "cursor", "gemini"),
-        search_type="prompts",
-        any_term=False,
-        regex=case.regex,
-        case_sensitive=case.case_sensitive,
-        limit=None,
-        output_mode="text",
-        color_mode="auto",
-        progress_mode="auto",
-    )
-    result = _compile_highlight_patterns(args)
-    assert len(result) == case.expected_count
