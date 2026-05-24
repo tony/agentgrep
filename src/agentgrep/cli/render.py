@@ -435,9 +435,127 @@ def run_search_command(args: SearchArgs) -> int:
     renders in the requested output format. Returns ``0`` when at
     least one result survives ranking, ``1`` otherwise.
     """
-    _ = args
-    msg = "search command not yet wired — ranking engine pending"
-    raise SystemExit(msg)
+    if not args.terms and args.output_mode != "ui":
+        msg = "search requires at least one term unless --ui is used"
+        raise SystemExit(msg)
+    query = agentgrep.SearchQuery(
+        terms=args.terms,
+        search_type=args.search_type,
+        any_term=args.any_term,
+        regex=args.regex,
+        case_sensitive=args.case_sensitive,
+        agents=args.agents,
+        limit=None,
+        compiled=args.compiled,
+    )
+    if args.output_mode == "ui":
+        agentgrep.run_ui(
+            pathlib.Path.home(),
+            query,
+            control=agentgrep.SearchControl(),
+            initial_search_text=args.raw_query or None,
+        )
+        return 0
+    control = agentgrep.SearchControl()
+    human_output = args.output_mode in {"text", "ui"}
+    progress_enabled = args.progress_mode == "always" or (
+        args.progress_mode == "auto" and human_output
+    )
+    progress: agentgrep.SearchProgress
+    if not progress_enabled:
+        progress = agentgrep.noop_search_progress()
+    else:
+        progress = agentgrep.ConsoleSearchProgress(
+            enabled=True,
+            color_mode=args.color_mode,
+            answer_now_hint=False,
+        )
+    records = agentgrep.run_search_query(
+        pathlib.Path.home(),
+        query,
+        progress=progress,
+        control=control,
+    )
+    query_text = " ".join(args.terms)
+    if args.no_rank:
+        scored: list[tuple[agentgrep.SearchRecord, float]] = [(r, 0.0) for r in records]
+    else:
+        from agentgrep.ranking import rank_search_records
+
+        scored = rank_search_records(records, query_text, threshold=args.threshold)
+    from agentgrep.ranking import collapse_near_duplicates, group_by_session
+
+    collapsed = collapse_near_duplicates(scored)
+    if args.limit is not None:
+        collapsed = collapsed[: args.limit]
+    if args.no_group:
+        groups: list[tuple[str | None, list[tuple[agentgrep.SearchRecord, float, int]]]] = [
+            (None, collapsed),
+        ]
+    else:
+        groups = group_by_session(collapsed)
+    if args.output_mode in ("json", "ndjson"):
+        _print_search_json(groups, args)
+        return 0 if collapsed else 1
+    _print_search_text(groups, args)
+    return 0 if collapsed else 1
+
+
+def _print_search_text(
+    groups: list[tuple[str | None, list[tuple[agentgrep.SearchRecord, float, int]]]],
+    args: SearchArgs,
+) -> None:
+    """Render search results with scores and duplicate counts to stdout."""
+    colors = agentgrep.AnsiColors.for_stream(args.color_mode, sys.stdout)
+    first_group = True
+    for session_id, entries in groups:
+        if not first_group:
+            print()
+        first_group = False
+        if session_id is not None and not args.no_group:
+            print(colors.heading(f"[session {session_id[:12]}]"))
+        for record, score, similar_count in entries:
+            path = agentgrep.format_display_path(record.path)
+            score_label = colors.warning(f"{score:.0f}")
+            snippet = record.text[:120].replace("\n", " ")
+            similar_label = ""
+            if similar_count > 0:
+                similar_label = colors.muted(f" (+{similar_count} similar)")
+            header = f"  {colors.path(path)}  {colors.muted(record.agent)}"
+            if record.timestamp:
+                header += f"  {colors.muted(record.timestamp)}"
+            print(f"{score_label}  {snippet}{similar_label}")
+            print(header)
+
+
+def _print_search_json(
+    groups: list[tuple[str | None, list[tuple[agentgrep.SearchRecord, float, int]]]],
+    args: SearchArgs,
+) -> None:
+    """Render search results as JSON with scores."""
+    serialize_search, _, serialize_envelope = maybe_build_pydantic()
+    results: list[dict[str, object]] = []
+    for session_id, entries in groups:
+        for record, score, similar_count in entries:
+            entry = serialize_search(record)
+            entry["score"] = score
+            entry["similar_count"] = similar_count
+            if session_id is not None:
+                entry["group_session_id"] = session_id
+            results.append(entry)
+    if args.output_mode == "json":
+        query_data: dict[str, object] = {
+            "terms": list(args.terms),
+            "agents": list(args.agents),
+            "threshold": args.threshold,
+            "no_rank": args.no_rank,
+            "no_group": args.no_group,
+        }
+        payload = serialize_envelope("search", query_data, results)
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        for result in results:
+            print(json.dumps(result, ensure_ascii=False))
 
 
 def _compile_grep_patterns(args: GrepArgs) -> list[re.Pattern[str]]:

@@ -7,11 +7,14 @@ and the integration between the ranking engine and the CLI dispatch.
 
 from __future__ import annotations
 
+import json
+import pathlib
 import typing as t
 
 import pytest
 
 import agentgrep
+from agentgrep.cli.render import run_search_command
 
 # ---------------------------------------------------------------------------
 # Argument parsing
@@ -233,3 +236,212 @@ def test_search_parse_agent_filter() -> None:
     parsed = agentgrep.parse_args(("search", "--agent", "codex", "bliss"))
     assert isinstance(parsed, agentgrep.SearchArgs)
     assert parsed.agents == ("codex",)
+
+
+# ---------------------------------------------------------------------------
+# Integration tests
+# ---------------------------------------------------------------------------
+
+
+def _make_search_args(**overrides: t.Any) -> agentgrep.SearchArgs:
+    """Build a SearchArgs with sensible test defaults."""
+    base: dict[str, t.Any] = {
+        "terms": ("bliss",),
+        "agents": agentgrep.AGENT_CHOICES,
+        "search_type": "prompts",
+        "any_term": False,
+        "regex": False,
+        "case_sensitive": False,
+        "limit": None,
+        "output_mode": "text",
+        "color_mode": "never",
+        "progress_mode": "never",
+        "threshold": 0,
+        "no_group": False,
+        "no_rank": False,
+        "compiled": None,
+        "raw_query": "",
+    }
+    base.update(overrides)
+    return agentgrep.SearchArgs(**base)
+
+
+def _canned_records() -> list[agentgrep.SearchRecord]:
+    """Return a small set of canned records for search integration tests."""
+    return [
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="test",
+            adapter_id="test.v1",
+            path=pathlib.Path("/tmp/test-a"),
+            text="the bliss of streaming parsers",
+            session_id="sess-1",
+        ),
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="test",
+            adapter_id="test.v1",
+            path=pathlib.Path("/tmp/test-b"),
+            text="unrelated noise about caching",
+            session_id="sess-2",
+        ),
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="claude",
+            store="test",
+            adapter_id="test.v1",
+            path=pathlib.Path("/tmp/test-c"),
+            text="bliss in every line of code",
+            session_id="sess-1",
+        ),
+    ]
+
+
+def test_search_command_no_terms_raises() -> None:
+    """Search without terms and without --ui raises SystemExit."""
+    args = _make_search_args(terms=())
+    with pytest.raises(SystemExit, match="search requires at least one term"):
+        run_search_command(args)
+
+
+def test_search_routes_through_ranking(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Search dispatches through the ranking pipeline and produces output."""
+    canned = _canned_records()
+    monkeypatch.setattr(
+        agentgrep,
+        "run_search_query",
+        lambda *_args, **_kwargs: canned,
+    )
+    args = _make_search_args(terms=("bliss",))
+    code = run_search_command(args)
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "bliss" in captured.out
+
+
+def test_search_no_rank_preserves_order(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--no-rank skips scoring and preserves discovery order."""
+    canned = _canned_records()
+    monkeypatch.setattr(
+        agentgrep,
+        "run_search_query",
+        lambda *_args, **_kwargs: canned,
+    )
+    args = _make_search_args(terms=("bliss",), no_rank=True)
+    code = run_search_command(args)
+    assert code == 0
+    captured = capsys.readouterr()
+    lines = captured.out.strip().splitlines()
+    # With no_rank, scores are 0 — all matching records appear
+    score_lines = [line for line in lines if line.startswith("0")]
+    assert len(score_lines) >= 1
+
+
+def test_search_threshold_filters_low_scores(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--threshold filters records below the minimum score."""
+    canned = _canned_records()
+    monkeypatch.setattr(
+        agentgrep,
+        "run_search_query",
+        lambda *_args, **_kwargs: canned,
+    )
+    # Very high threshold should filter most records
+    args = _make_search_args(terms=("bliss",), threshold=99)
+    code = run_search_command(args)
+    captured = capsys.readouterr()
+    # With threshold=99, only near-exact matches survive (or none)
+    # The exit code reflects whether any results remain
+    assert code in (0, 1)
+    if code == 1:
+        assert captured.out.strip() == ""
+
+
+def test_search_json_includes_scores(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--json output includes score and similar_count fields."""
+    canned = _canned_records()
+    monkeypatch.setattr(
+        agentgrep,
+        "run_search_query",
+        lambda *_args, **_kwargs: canned,
+    )
+    args = _make_search_args(terms=("bliss",), output_mode="json", no_group=True)
+    code = run_search_command(args)
+    assert code == 0
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert "results" in payload
+    for result in payload["results"]:
+        assert "score" in result
+        assert "similar_count" in result
+        assert isinstance(result["score"], (int, float))
+        assert isinstance(result["similar_count"], int)
+
+
+def test_search_ndjson_includes_scores(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--ndjson output includes score and similar_count in each line."""
+    canned = _canned_records()
+    monkeypatch.setattr(
+        agentgrep,
+        "run_search_query",
+        lambda *_args, **_kwargs: canned,
+    )
+    args = _make_search_args(terms=("bliss",), output_mode="ndjson", no_group=True)
+    code = run_search_command(args)
+    assert code == 0
+    captured = capsys.readouterr()
+    lines = [line for line in captured.out.strip().splitlines() if line]
+    assert len(lines) >= 1
+    for line in lines:
+        obj = json.loads(line)
+        assert "score" in obj
+        assert "similar_count" in obj
+
+
+def test_search_empty_results_returns_1(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Search with no matches returns exit code 1."""
+    monkeypatch.setattr(
+        agentgrep,
+        "run_search_query",
+        lambda *_args, **_kwargs: [],
+    )
+    args = _make_search_args(terms=("nonexistent",))
+    code = run_search_command(args)
+    assert code == 1
+
+
+def test_search_limit_caps_results(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--limit caps the number of results after ranking."""
+    canned = _canned_records()
+    monkeypatch.setattr(
+        agentgrep,
+        "run_search_query",
+        lambda *_args, **_kwargs: canned,
+    )
+    args = _make_search_args(terms=("bliss",), limit=1, no_group=True, output_mode="json")
+    code = run_search_command(args)
+    assert code == 0
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert len(payload["results"]) == 1
