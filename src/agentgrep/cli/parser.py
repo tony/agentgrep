@@ -1150,6 +1150,12 @@ def _build_search_args(
     if threshold < 0 or threshold > 100:
         with configured_color_environment(color_mode):
             bundle.search_parser.error("--threshold must be between 0 and 100")
+    no_rank = t.cast("bool", namespace.no_rank)
+    if no_rank and threshold > 0:
+        with configured_color_environment(color_mode):
+            bundle.search_parser.error(
+                "--threshold has no effect with --no-rank (ranking is disabled)",
+            )
 
     search_compiled, residual_terms = _maybe_compile_query(
         terms_list,
