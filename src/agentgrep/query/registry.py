@@ -117,7 +117,7 @@ def default_registry() -> FieldRegistry:
             name="agent",
             kind="enum",
             layer="source",
-            enum_values=("codex", "claude", "cursor", "gemini"),
+            enum_values=("codex", "claude", "cursor", "gemini", "grok"),
         ),
         FieldSpec(name="store", kind="string", layer="source"),
         FieldSpec(

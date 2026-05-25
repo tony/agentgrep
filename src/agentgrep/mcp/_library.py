@@ -13,8 +13,8 @@ import importlib
 import pathlib
 import typing as t
 
-AgentName = t.Literal["codex", "claude", "cursor", "gemini"]
-AgentSelector = t.Literal["codex", "claude", "cursor", "gemini", "all"]
+AgentName = t.Literal["codex", "claude", "cursor", "gemini", "grok"]
+AgentSelector = t.Literal["codex", "claude", "cursor", "gemini", "grok", "all"]
 SearchTypeName = t.Literal["prompts", "history", "all"]
 
 SERVER_VERSION = "0.1.0"
@@ -29,6 +29,9 @@ KNOWN_ADAPTERS: tuple[str, ...] = (
     "gemini.tmp_chats_jsonl.v1",
     "gemini.tmp_chats_legacy_json.v1",
     "gemini.tmp_logs_json.v1",
+    "grok.prompt_history_jsonl.v1",
+    "grok.sessions_jsonl.v1",
+    "grok.session_search_sqlite.v1",
 )
 READONLY_TAGS = {"readonly", "agentgrep"}
 RESOURCE_ANNOTATIONS = {"readOnlyHint": True, "idempotentHint": True}
