@@ -22,7 +22,7 @@ from agentgrep.stores import (
     StoreRole,
 )
 
-KNOWN_AGENTS: tuple[AgentName, ...] = ("claude", "cursor", "codex", "gemini")
+KNOWN_AGENTS: tuple[AgentName, ...] = ("claude", "cursor", "codex", "gemini", "grok")
 PATH_TOKEN_RE = re.compile(r"\$\{(?:HOME|[A-Z][A-Z0-9_]*)(?:\s+or\s+[^}]+)?\}")
 
 
