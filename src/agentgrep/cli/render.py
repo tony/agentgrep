@@ -428,13 +428,13 @@ def run_ui_command(args: UIArgs) -> int:
 
 
 def run_search_command(args: SearchArgs) -> int:
-    """Execute ``agentgrep search`` with ranking and grouping.
+    """Execute ``agentgrep search`` with ranked, pretty output.
 
-    Collects all matching records eagerly, then applies a three-stage
-    pipeline: score by rapidfuzz relevance (skipped with ``--no-rank``),
-    collapse near-duplicates, and group by session (skipped with
-    ``--no-group``). Returns ``0`` when at least one result survives,
-    ``1`` otherwise.
+    Collects all matching records eagerly with a progress spinner,
+    scores them by rapidfuzz partial_ratio (skipped with ``--no-rank``
+    or on answer-now), groups by session (skipped with ``--no-group``),
+    and renders with snippet-first pretty output.  Returns ``0`` when
+    at least one result survives, ``1`` otherwise.
     """
     if not args.terms and args.compiled is None and args.output_mode != "ui":
         msg = "search requires at least one term unless --ui is used"
@@ -446,7 +446,7 @@ def run_search_command(args: SearchArgs) -> int:
         regex=args.regex,
         case_sensitive=args.case_sensitive,
         agents=args.agents,
-        limit=None,
+        limit=args.limit,
         compiled=args.compiled,
     )
     if args.output_mode == "ui":
@@ -457,8 +457,10 @@ def run_search_command(args: SearchArgs) -> int:
             initial_search_text=args.raw_query or None,
         )
         return 0
+    if args.output_mode in ("json", "ndjson"):
+        return _run_search_eager(args, query)
     control = agentgrep.SearchControl()
-    human_output = args.output_mode in {"text", "ui"}
+    human_output = args.output_mode == "text"
     progress_enabled = args.progress_mode == "always" or (
         args.progress_mode == "auto" and human_output
     )
@@ -498,31 +500,37 @@ def run_search_command(args: SearchArgs) -> int:
         from agentgrep.ranking import rank_search_records
 
         scored = rank_search_records(records, query_text, threshold=args.threshold)
-    from agentgrep.ranking import collapse_near_duplicates, group_by_session
-
-    collapsed = collapse_near_duplicates(scored)
-
     if args.limit is not None:
-        collapsed = collapsed[: args.limit]
-    if args.no_group:
-        groups: list[tuple[str | None, list[tuple[agentgrep.SearchRecord, float, int]]]] = [
-            (None, collapsed),
-        ]
-    else:
-        groups = group_by_session(collapsed)
-    if args.output_mode in ("json", "ndjson"):
-        _print_search_json(groups, args)
-        return 0 if collapsed else 1
-    _print_search_text(groups, args)
-    return 0 if collapsed else 1
+        scored = scored[: args.limit]
+    from agentgrep.ranking import group_by_session
+
+    grouped = group_by_session([(r, s, 0) for r, s in scored])
+    _print_search_text(grouped, args)
+    return 0 if scored else 1
+
+
+def _compile_search_patterns(args: SearchArgs) -> list[re.Pattern[str]]:
+    """Compile search terms to regex for snippet highlighting."""
+    flags = 0 if args.case_sensitive else re.IGNORECASE
+    compiled: list[re.Pattern[str]] = []
+    for term in args.terms:
+        if ":" in term:
+            continue
+        source = term if args.regex else re.escape(term)
+        try:
+            compiled.append(re.compile(source, flags))
+        except re.error:
+            continue
+    return compiled
 
 
 def _print_search_text(
     groups: list[tuple[str | None, list[tuple[agentgrep.SearchRecord, float, int]]]],
     args: SearchArgs,
 ) -> None:
-    """Render search results with scores and duplicate counts to stdout."""
+    """Render ranked search results with pretty snippets."""
     colors = agentgrep.AnsiColors.for_stream(args.color_mode, sys.stdout)
+    patterns = _compile_search_patterns(args)
     first_group = True
     for session_id, entries in groups:
         if not first_group:
@@ -530,32 +538,52 @@ def _print_search_text(
         first_group = False
         if session_id is not None and not args.no_group:
             print(colors.heading(f"[session {session_id[:12]}]"))
-        for record, score, similar_count in entries:
-            path = agentgrep.format_display_path(record.path)
-            score_label = colors.warning(f"{score:.0f}")
-            snippet = record.text[:120].replace("\n", " ")
-            similar_label = ""
-            if similar_count > 0:
-                similar_label = colors.muted(f" (+{similar_count} similar)")
-            header = f"  {colors.path(path)}  {colors.muted(record.agent)}"
+        for record, _score, _similar in entries:
+            lines: list[str] = []
+            if record.text:
+                snippet, remaining = extract_search_snippet(record.text, patterns)
+                highlighted = highlight_search_spans(snippet, patterns, colors=colors)
+                lines.append(highlighted)
+                if remaining > 0:
+                    lines.append(colors.dim(f"  ... {remaining} more lines"))
+            provenance_parts: list[str] = [record.agent, record.kind]
             if record.timestamp:
-                header += f"  {colors.muted(record.timestamp)}"
-            print(f"{score_label}  {snippet}{similar_label}")
-            print(header)
+                provenance_parts.append(format_relative_time(record.timestamp))
+            provenance_parts.append(
+                colors.path(agentgrep.format_display_path(record.path)),
+            )
+            lines.append(colors.dim(f"  {' · '.join(provenance_parts)}"))
+            print("\n".join(lines))
+            print()
 
 
-def _print_search_json(
-    groups: list[tuple[str | None, list[tuple[agentgrep.SearchRecord, float, int]]]],
-    args: SearchArgs,
-) -> None:
-    """Render search results as JSON with scores."""
+def _run_search_eager(args: SearchArgs, query: agentgrep.SearchQuery) -> int:
+    """Eager search for JSON/NDJSON output with ranking but no pairwise dedup."""
+    control = agentgrep.SearchControl()
+    records = agentgrep.run_search_query(
+        pathlib.Path.home(),
+        query,
+        progress=agentgrep.noop_search_progress(),
+        control=control,
+    )
+    query_text = " ".join(args.terms)
+    if args.no_rank or not query_text:
+        scored: list[tuple[agentgrep.SearchRecord, float]] = [(r, 0.0) for r in records]
+    else:
+        from agentgrep.ranking import rank_search_records
+
+        scored = rank_search_records(records, query_text, threshold=args.threshold)
+    if args.limit is not None:
+        scored = scored[: args.limit]
+    from agentgrep.ranking import group_by_session
+
+    grouped = group_by_session([(r, s, 0) for r, s in scored])
     serialize_search, _, serialize_envelope = maybe_build_pydantic()
     results: list[dict[str, object]] = []
-    for session_id, entries in groups:
-        for record, score, similar_count in entries:
-            entry = serialize_search(record)
+    for session_id, entries in grouped:
+        for record, score, _similar in entries:
+            entry = dict(serialize_search(record))
             entry["score"] = score
-            entry["similar_count"] = similar_count
             if session_id is not None:
                 entry["group_session_id"] = session_id
             results.append(entry)
@@ -572,6 +600,7 @@ def _print_search_json(
     else:
         for result in results:
             print(json.dumps(result, ensure_ascii=False))
+    return 0 if results else 1
 
 
 def _compile_grep_patterns(args: GrepArgs) -> list[re.Pattern[str]]:

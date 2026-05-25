@@ -453,9 +453,7 @@ def test_search_no_rank_preserves_order(
     code = run_search_command(args)
     assert code == 0
     captured = capsys.readouterr()
-    lines = captured.out.strip().splitlines()
-    score_lines = [line for line in lines if line.startswith("0")]
-    assert len(score_lines) >= 1
+    assert "bliss" in captured.out.lower()
 
 
 def test_search_threshold_filters_low_scores(
@@ -480,7 +478,7 @@ def test_search_json_includes_scores(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """--json output includes score and similar_count fields."""
+    """--json output includes score fields."""
     canned = _canned_records()
     monkeypatch.setattr(
         agentgrep,
@@ -495,16 +493,14 @@ def test_search_json_includes_scores(
     assert "results" in payload
     for result in payload["results"]:
         assert "score" in result
-        assert "similar_count" in result
         assert isinstance(result["score"], (int, float))
-        assert isinstance(result["similar_count"], int)
 
 
 def test_search_ndjson_includes_scores(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """--ndjson output includes score and similar_count in each line."""
+    """--ndjson output includes score in each line."""
     canned = _canned_records()
     monkeypatch.setattr(
         agentgrep,
@@ -520,7 +516,6 @@ def test_search_ndjson_includes_scores(
     for line in lines:
         obj = json.loads(line)
         assert "score" in obj
-        assert "similar_count" in obj
 
 
 def test_search_empty_results_returns_1(
