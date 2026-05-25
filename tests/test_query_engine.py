@@ -653,6 +653,16 @@ QUERY_PASSES_THROUGH_CASES: tuple[QueryPassesThroughCase, ...] = (
         argv=("find", "agent:codex"),
         expect_compiled=True,
     ),
+    QueryPassesThroughCase(
+        test_id="search-bare-term-legacy-path",
+        argv=("search", "bliss"),
+        expect_compiled=False,
+    ),
+    QueryPassesThroughCase(
+        test_id="search-field-syntax-compiled",
+        argv=("search", "agent:codex", "bliss"),
+        expect_compiled=True,
+    ),
 )
 
 
@@ -797,6 +807,26 @@ FLAG_FIELD_COLLISION_CASES: tuple[FlagFieldCollisionCase, ...] = (
     FlagFieldCollisionCase(
         test_id="grep-type-flag-and-field",
         argv=("grep", "--type", "history", "type:prompts", "bliss"),
+        expected_message_fragment="cannot combine --type flag with type: field",
+    ),
+    FlagFieldCollisionCase(
+        test_id="grep-default-type-flag-and-field",
+        argv=("grep", "--type", "prompts", "type:history", "bliss"),
+        expected_message_fragment="cannot combine --type flag with type: field",
+    ),
+    FlagFieldCollisionCase(
+        test_id="search-type-flag-and-field",
+        argv=("search", "--type", "history", "type:prompts", "bliss"),
+        expected_message_fragment="cannot combine --type flag with type: field",
+    ),
+    FlagFieldCollisionCase(
+        test_id="search-default-type-flag-and-field",
+        argv=("search", "--type", "prompts", "type:history", "bliss"),
+        expected_message_fragment="cannot combine --type flag with type: field",
+    ),
+    FlagFieldCollisionCase(
+        test_id="find-default-type-flag-and-field",
+        argv=("find", "--type", "all", "type:history"),
         expected_message_fragment="cannot combine --type flag with type: field",
     ),
 )

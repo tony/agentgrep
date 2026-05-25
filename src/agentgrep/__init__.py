@@ -124,6 +124,7 @@ OPTIONS_FLAG_ONLY: frozenset[str] = frozenset(
         "--ui",
     },
 )
+ANSI_CSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 def build_description(
@@ -150,7 +151,8 @@ def build_description(
 CLI_DESCRIPTION = build_description(
     """
     Read-only search across Codex, Claude, Cursor, and Gemini local
-    stores. Pick a subcommand from the list below: ``grep`` for
+    stores. Pick a subcommand from the list below: ``search`` for
+    ranked results with dedup and session grouping, ``grep`` for
     rg-shaped content search, ``fuzzy`` for fzf-style filtering,
     ``find`` for store enumeration, ``ui`` for the interactive
     Textual explorer.
@@ -235,6 +237,23 @@ FUZZY_DESCRIPTION = build_description(
                 "agentgrep grep -F . | agentgrep fuzzy 'config bliss'",
                 "agentgrep fuzzy --exact -i 'design notes' < transcript.txt",
                 "agentgrep fuzzy --algo=v1 --print-query foo",
+            ),
+        ),
+    ),
+)
+SEARCH_DESCRIPTION = build_description(
+    """
+    Smart search with relevance ranking, deduplication, and session grouping.
+    Uses rapidfuzz for scoring — results sorted by match quality.
+    """,
+    (
+        (
+            None,
+            (
+                "agentgrep search streaming parser",
+                "agentgrep search --threshold 70 migration",
+                "agentgrep search --no-rank --no-group caching",
+                "agentgrep search bliss --json",
             ),
         ),
     ),
@@ -371,6 +390,39 @@ def _hard_truncate(text: str, max_width: int) -> str:
     if max_width == 1:
         return "…"
     return text[: max_width - 1] + "…"
+
+
+def _visible_width(text: str) -> int:
+    """Return display width after stripping ANSI CSI escape sequences."""
+    return len(ANSI_CSI_RE.sub("", text))
+
+
+def _hard_truncate_ansi(text: str, max_width: int) -> str:
+    """Truncate ANSI-colored text to ``max_width`` visible cells."""
+    if max_width <= 0:
+        return ""
+    if _visible_width(text) <= max_width:
+        return text
+    if max_width == 1:
+        return "…"
+    output: list[str] = []
+    visible = 0
+    index = 0
+    saw_escape = False
+    while index < len(text) and visible < max_width - 1:
+        match = ANSI_CSI_RE.match(text, index)
+        if match is not None:
+            output.append(match.group(0))
+            index = match.end()
+            saw_escape = True
+            continue
+        output.append(text[index])
+        visible += 1
+        index += 1
+    output.append("…")
+    if saw_escape:
+        output.append(AnsiColors.RESET)
+    return "".join(output)
 
 
 def truncate_lines(text: str, max_lines: int) -> str:
@@ -1099,6 +1151,24 @@ class SourceHandle:
     mtime_ns: int
 
 
+type SourceProgressCallback = cabc.Callable[[int, int, SourceHandle, int, int], None]
+
+_SOURCE_PROGRESS_RECORD_INTERVAL = 128
+"""Parsed-record cadence for in-source progress updates and GIL yields."""
+
+_JSONL_YIELD_LINE_INTERVAL = 128
+"""Decoded-line cadence for cooperative JSONL parser yields."""
+
+_JSONL_PREFIX_BYTES = 4096
+"""Bytes read up front when a raw-line skip predicate is active."""
+
+_JSONL_SKIP_CHUNK_BYTES = 1024 * 1024
+"""Chunk size for discarding skipped oversized JSONL lines."""
+
+_CODEX_RAW_SKIP_MIN_BYTES = 1024 * 1024
+"""Minimum Codex session size before enabling raw-line output skipping."""
+
+
 @dataclasses.dataclass(slots=True)
 class SearchRecord:
     """Normalized prompt/history record."""
@@ -1433,6 +1503,22 @@ class ConsoleSearchProgress:
             detail=f"{records} records, {format_match_count(matches)} in {source.path.name}",
         )
 
+    def source_progress(
+        self,
+        index: int,
+        total: int,
+        source: SourceHandle,
+        records: int,
+        matches: int,
+    ) -> None:
+        """Report in-source scan progress."""
+        self.set_status(
+            "scanning",
+            current=index,
+            total=total,
+            detail=format_source_progress_detail(records, matches),
+        )
+
     def result_added(self, count: int) -> None:
         """Report deduped result count."""
         if not self._enabled:
@@ -1537,8 +1623,10 @@ class ConsoleSearchProgress:
             self._stop_event.wait(self._refresh_interval)
 
     def _render_tty(self, frame: str) -> None:
-        summary = self._summary()
-        line = f"{self._colors.info(frame)} {summary}"
+        frame_text = self._colors.info(frame)
+        summary_width = max(1, self._terminal_width() - _visible_width(frame_text) - 1)
+        summary = self._summary(max_width=summary_width)
+        line = f"{frame_text} {summary}"
         with self._lock:
             try:
                 self._stream.write("\r\033[2K" + line)
@@ -1559,7 +1647,7 @@ class ConsoleSearchProgress:
             self._last_line_len = 0
 
     def _write_tty_summary_line(self) -> None:
-        line = self._summary()
+        line = self._summary(max_width=self._terminal_width())
         self._write_tty_line(line)
 
     def _write_tty_line(self, line: str) -> None:
@@ -1596,12 +1684,19 @@ class ConsoleSearchProgress:
         except OSError, ValueError:
             pass
 
-    def _summary(self) -> str:
+    def _summary(self, *, max_width: int | None = None) -> str:
         return format_search_progress_line(
             self._snapshot(),
             colors=self._colors,
             answer_now_hint=self._answer_now_hint,
+            max_width=max_width,
         )
+
+    def _terminal_width(self) -> int:
+        try:
+            return max(1, os.get_terminal_size(self._stream.fileno()).columns)
+        except AttributeError, OSError, TypeError, ValueError:
+            return max(1, shutil.get_terminal_size(fallback=(80, 24)).columns)
 
     def _snapshot(self) -> ProgressSnapshot:
         elapsed = self._elapsed_seconds()
@@ -1645,7 +1740,10 @@ class ConsoleSearchProgress:
             detail = self._detail
         if current is not None and total is not None:
             count = self._colors.warning(f"{current}/{total}")
-            return f"{self._colors.heading(phase)} {count} {self._colors.muted('sources')}"
+            text = f"{self._colors.heading(phase)} {count} {self._colors.muted('sources')}"
+            if detail:
+                return f"{text} | {self._colors.muted(detail)}"
+            return text
         if detail:
             return f"{self._colors.heading(phase)} {self._colors.muted(detail)}"
         return self._colors.heading(phase)
@@ -1662,6 +1760,12 @@ def format_match_count(count: int) -> str:
     """Return a human-readable match count."""
     suffix = "match" if count == 1 else "matches"
     return f"{count} {suffix}"
+
+
+def format_source_progress_detail(records: int, matches: int) -> str:
+    """Return a concise in-source progress detail."""
+    match_suffix = "source match" if matches == 1 else "source matches"
+    return f"{records} records, {matches} {match_suffix}"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1682,6 +1786,7 @@ def format_search_progress_line(
     *,
     colors: SearchColors,
     answer_now_hint: bool = False,
+    max_width: int | None = None,
 ) -> str:
     """Format the single-line progress summary used by both the CLI and the TUI.
 
@@ -1693,6 +1798,9 @@ def format_search_progress_line(
         An :class:`AnsiColors` instance (used by the CLI chrome).
     answer_now_hint : bool, default False
         When ``True``, append the ``[Press enter, answer now]`` reminder.
+    max_width : int or None, default None
+        Maximum visible terminal cells for the returned line. When set, the
+        formatter drops optional detail and hint segments before truncating.
 
     Returns
     -------
@@ -1700,20 +1808,55 @@ def format_search_progress_line(
         ``"Searching <q> | <phase> N/M sources | K matches | T.Ts"`` with
         each segment styled through ``colors``.
     """
+    variants = (
+        (True, answer_now_hint),
+        (False, answer_now_hint),
+        (False, False),
+    )
+    for include_detail, include_hint in variants:
+        line = _format_search_progress_line(
+            snapshot,
+            colors=colors,
+            answer_now_hint=include_hint,
+            include_detail=include_detail,
+        )
+        if max_width is None or _visible_width(line) <= max_width:
+            return line
+    if max_width is None:
+        return line
+    return _hard_truncate_ansi(line, max_width)
+
+
+def _format_search_progress_line(
+    snapshot: ProgressSnapshot,
+    *,
+    colors: SearchColors,
+    answer_now_hint: bool,
+    include_detail: bool,
+) -> str:
+    """Build one progress-line variant."""
     label_part = f"{colors.heading('Searching')} {colors.highlight(snapshot.query_label)}"
+    detail_part = colors.muted(snapshot.detail) if include_detail and snapshot.detail else None
     if snapshot.current is not None and snapshot.total is not None:
         count = colors.warning(f"{snapshot.current}/{snapshot.total}")
         status_part = f"{colors.heading(snapshot.phase)} {count} {colors.muted('sources')}"
-    elif snapshot.detail:
+    elif include_detail and snapshot.detail:
         status_part = f"{colors.heading(snapshot.phase)} {colors.muted(snapshot.detail)}"
+        detail_part = None
     else:
         status_part = colors.heading(snapshot.phase)
     parts = [
         label_part,
         status_part,
-        colors.warning(format_match_count(snapshot.matches)),
-        colors.muted(f"{snapshot.elapsed:.1f}s"),
     ]
+    if detail_part:
+        parts.append(detail_part)
+    parts.extend(
+        [
+            colors.warning(format_match_count(snapshot.matches)),
+            colors.muted(f"{snapshot.elapsed:.1f}s"),
+        ],
+    )
     if answer_now_hint:
         parts.append(colors.white("[Press enter, answer now]"))
     return " | ".join(parts)
@@ -1722,6 +1865,20 @@ def format_search_progress_line(
 def noop_search_progress() -> SearchProgress:
     """Return a silent search progress reporter."""
     return NoopSearchProgress()
+
+
+def _report_source_progress(
+    progress: SearchProgress,
+    index: int,
+    total: int,
+    source: SourceHandle,
+    records: int,
+    matches: int,
+) -> None:
+    """Call the optional in-source progress hook when a reporter exposes it."""
+    callback = getattr(progress, "source_progress", None)
+    if callable(callback):
+        t.cast("SourceProgressCallback", callback)(index, total, source, records, matches)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1876,6 +2033,22 @@ class StreamingSearchProgress:
             self._current = index
             self._total = total
             self._detail = f"{records} records, {format_match_count(matches)} in {source.path.name}"
+        self._emit_progress()
+
+    def source_progress(
+        self,
+        index: int,
+        total: int,
+        source: SourceHandle,
+        records: int,
+        matches: int,
+    ) -> None:
+        """Report in-source scan progress."""
+        with self._lock:
+            self._phase = "scanning"
+            self._current = index
+            self._total = total
+            self._detail = format_source_progress_detail(records, matches)
         self._emit_progress()
 
     def result_added(self, count: int) -> None:
@@ -2057,6 +2230,14 @@ def file_mtime_ns(path: pathlib.Path) -> int:
     """Return a cached modification time for a path."""
     try:
         return path.stat().st_mtime_ns
+    except OSError:
+        return 0
+
+
+def _file_size(path: pathlib.Path) -> int:
+    """Return file size in bytes, falling back to zero on stat failure."""
+    try:
+        return path.stat().st_size
     except OSError:
         return 0
 
@@ -2616,6 +2797,16 @@ def collect_search_records(
             if matches_record(record, query):
                 matches_seen += 1
                 matching_records.append(record)
+            if records_seen % _SOURCE_PROGRESS_RECORD_INTERVAL == 0:
+                _report_source_progress(
+                    active_progress,
+                    index,
+                    total,
+                    source,
+                    records_seen,
+                    matches_seen,
+                )
+                time.sleep(0)
         active_progress.source_finished(index, total, source, records_seen, matches_seen)
         matching_records.sort(key=search_record_sort_key, reverse=True)
         for record in matching_records:
@@ -2727,7 +2918,12 @@ def parse_codex_session_file(
     """Parse Codex session JSONL files."""
     session_id = source.path.stem
     session_model: str | None = None
-    for event in iter_jsonl(source.path):
+    events = (
+        _iter_jsonl(source.path, skip_line=_is_codex_function_call_output_line)
+        if _file_size(source.path) >= _CODEX_RAW_SKIP_MIN_BYTES
+        else iter_jsonl(source.path)
+    )
+    for event in events:
         if not isinstance(event, dict):
             continue
         event_type = str(event.get("type", ""))
@@ -3267,10 +3463,67 @@ def read_json_file(path: pathlib.Path) -> JSONValue | None:
 
 def iter_jsonl(path: pathlib.Path) -> cabc.Iterator[JSONValue]:
     """Yield decoded JSON objects from a JSONL file."""
+    yield from _iter_jsonl(path)
+
+
+def _iter_jsonl(
+    path: pathlib.Path,
+    *,
+    skip_line: cabc.Callable[[str], bool] | None = None,
+) -> cabc.Iterator[JSONValue]:
+    """Yield decoded JSON objects from a JSONL file with an optional raw-line filter."""
+    if skip_line is not None:
+        yield from _iter_jsonl_with_raw_skip(path, skip_line)
+        return
     try:
         with path.open(encoding="utf-8") as handle:
+            decoded_lines = 0
             for line in handle:
                 stripped = line.strip()
+                if not stripped:
+                    continue
+                decoded_lines += 1
+                if decoded_lines % _JSONL_YIELD_LINE_INTERVAL == 0:
+                    time.sleep(0)
+                try:
+                    parsed = t.cast("object", json.loads(stripped))
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(parsed, (dict, list, str, int, float, bool)) or parsed is None:
+                    yield t.cast("JSONValue", parsed)
+    except OSError:
+        return
+
+
+def _iter_jsonl_with_raw_skip(
+    path: pathlib.Path,
+    skip_line: cabc.Callable[[str], bool],
+) -> cabc.Iterator[JSONValue]:
+    """Yield decoded JSON objects while skipping matched raw lines in chunks."""
+    try:
+        with path.open("rb") as handle:
+            decoded_lines = 0
+            while True:
+                prefix = handle.readline(_JSONL_PREFIX_BYTES)
+                if not prefix:
+                    break
+                if not prefix.strip():
+                    continue
+                decoded_lines += 1
+                if decoded_lines % _JSONL_YIELD_LINE_INTERVAL == 0:
+                    time.sleep(0)
+                prefix_text = prefix.decode("utf-8", errors="replace")
+                if skip_line(prefix_text):
+                    _discard_rest_of_line(handle, prefix)
+                    continue
+                raw_line = bytearray(prefix)
+                while raw_line and not raw_line.endswith(b"\n"):
+                    chunk = handle.readline(_JSONL_SKIP_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    raw_line.extend(chunk)
+                    time.sleep(0)
+                stripped = raw_line.decode("utf-8", errors="replace").strip()
                 if not stripped:
                     continue
                 try:
@@ -3281,6 +3534,22 @@ def iter_jsonl(path: pathlib.Path) -> cabc.Iterator[JSONValue]:
                     yield t.cast("JSONValue", parsed)
     except OSError:
         return
+
+
+def _discard_rest_of_line(handle: t.BinaryIO, prefix: bytes) -> None:
+    """Discard the unread remainder of the current physical line."""
+    chunk = prefix
+    while chunk and not chunk.endswith(b"\n"):
+        chunk = handle.readline(_JSONL_SKIP_CHUNK_BYTES)
+        time.sleep(0)
+
+
+def _is_codex_function_call_output_line(line: str) -> bool:
+    """Return whether a Codex JSONL line is a tool output record."""
+    prefix = line[:512].replace(" ", "")
+    return (
+        '"type":"response_item"' in prefix and '"payload":{"type":"function_call_output"' in prefix
+    )
 
 
 def candidate_from_mapping(
@@ -3746,6 +4015,8 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
             return 0
         if isinstance(parsed, GrepArgs):
             return run_grep_command(parsed)
+        if isinstance(parsed, SearchArgs):
+            return run_search_command(parsed)
         if isinstance(parsed, FuzzyArgs):
             return run_fuzzy_command(parsed)
         if isinstance(parsed, UIArgs):
@@ -3771,6 +4042,7 @@ from agentgrep.cli.parser import (  # noqa: E402  (re-exports must follow main d
     GrepArgs,
     ParserBundle,
     PatternMode,
+    SearchArgs,
     UIArgs,
     add_common_agent_options,
     add_output_mode_options,
@@ -3794,6 +4066,7 @@ from agentgrep.cli.render import (  # noqa: E402  (re-exports must follow main d
     run_find_command,
     run_fuzzy_command,
     run_grep_command,
+    run_search_command,
     run_ui_command,
     serialize_find_record,
     serialize_grep_record,

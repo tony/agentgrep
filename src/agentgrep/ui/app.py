@@ -1173,6 +1173,8 @@ def build_streaming_ui_app(
                     f"Searching {label} | "
                     f"{snapshot.phase} {snapshot.current}/{snapshot.total} sources"
                 )
+                if snapshot.detail:
+                    status = f"{status} | {snapshot.detail}"
             elif snapshot.detail:
                 status = f"Searching {label} | {snapshot.phase} {snapshot.detail}"
             else:
