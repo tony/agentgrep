@@ -153,6 +153,33 @@ exposes a Python mirror via
 {func}`~agentgrep.store_catalog.gemini_project_hash` so the CLI can
 answer "which Gemini sessions belong to *this* repo?".
 
+### Grok CLI
+
+`observed_version`: ``grok-cli v0.1.219`` (observed 2026-05-25).
+
+Grok stores data under `${GROK_HOME or ${HOME}/.grok}/sessions/`
+using URL-encoded absolute project paths as directory keys
+(e.g. `%2Fhome%2Fd%2Fwork%2Fpython%2Fproj`). Three adapters cover
+the three searchable store shapes:
+
+- `grok.prompt_history_jsonl.v1` parses per-project
+  `sessions/<project>/prompt_history.jsonl`. Each line is a
+  `{ timestamp, session_id, prompt, is_bash }` audit record — one
+  entry per user prompt, analogous to Codex's `history.jsonl`.
+- `grok.sessions_jsonl.v1` parses per-session
+  `sessions/<project>/<uuid>/chat_history.jsonl`. Lines carry a
+  `type` field (`system` / `user` / `assistant` / `tool_use` /
+  `tool_result`) and a `content` field (string or content-blocks
+  array). All record types are emitted.
+- `grok.session_search_sqlite.v1` parses the global
+  `sessions/session_search.sqlite` FTS5 index. Table `session_docs`
+  has `session_id`, `cwd`, `updated_at` (unix seconds), `title`
+  (generated), and `content` (full-text indexed body).
+
+Documentary-only entries cover events, summaries, memory, logs,
+worktrees, and config — all catalogued with `search_by_default=False`
+or deferred.
+
 ## Adding or updating a store
 
 1. Edit `src/agentgrep/store_catalog.py`. Stamp `observed_version`
