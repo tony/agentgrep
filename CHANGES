@@ -42,15 +42,15 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
-### Breaking changes
-
-#### Remove `search` subcommand (#19)
-
-`agentgrep search` is removed. Use `agentgrep grep` for the same
-matching engine. `search` will return with rapidfuzz ranking,
-near-duplicate collapsing, and session grouping.
-
 ### What's new
+
+#### `search`: Relevance-ranked results with session grouping (#20)
+
+`search` now scores results by rapidfuzz relevance, sorts
+best-first, and groups by session. Progress spinner with
+Enter-to-answer-now during collection. Pretty snippet-first
+output with amber highlights. Flags: `--threshold`,
+`--no-rank`, `--no-group`.
 
 #### New flag: `--style=pretty` for `grep` (#18)
 
