@@ -22,6 +22,7 @@ classifiers = [
 ]
 
 keywords = ["ai", "codex", "claude", "cursor", "gemini", "mcp", "search", "agent-history"]
+readme = "README.md"
 packages = [
   { include = "*", from = "src" },
 ]
