@@ -50,10 +50,10 @@ agentgrep-mcp = "agentgrep.mcp:main"
 [dependency-groups]
 dev = [
   # Docs
-  "gp-sphinx==0.0.1a24",
-  "sphinx-autodoc-api-style==0.0.1a24",
-  "sphinx-autodoc-argparse==0.0.1a24",
-  "sphinx-autodoc-fastmcp==0.0.1a24",
+  "gp-sphinx==0.0.1a25",
+  "sphinx-autodoc-api-style==0.0.1a25",
+  "sphinx-autodoc-argparse==0.0.1a25",
+  "sphinx-autodoc-fastmcp==0.0.1a25",
   "sphinx-autobuild",
   # Testing
   "pytest",
@@ -76,10 +76,10 @@ dev = [
   "typer>=0.12",
 ]
 docs = [
-  "gp-sphinx==0.0.1a24",
-  "sphinx-autodoc-api-style==0.0.1a24",
-  "sphinx-autodoc-argparse==0.0.1a24",
-  "sphinx-autodoc-fastmcp==0.0.1a24",
+  "gp-sphinx==0.0.1a25",
+  "sphinx-autodoc-api-style==0.0.1a25",
+  "sphinx-autodoc-argparse==0.0.1a25",
+  "sphinx-autodoc-fastmcp==0.0.1a25",
   "sphinx-autobuild",
 ]
 
