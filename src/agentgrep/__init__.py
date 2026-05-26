@@ -3317,11 +3317,16 @@ def parse_grok_chat_history(
 
 def _unix_to_isoformat(value: object) -> str | None:
     """Convert a unix-seconds integer to an ISO-8601 UTC timestamp."""
-    if not isinstance(value, (int, float)) or value <= 0:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
         return None
-    return (
-        datetime.datetime.fromtimestamp(value, tz=datetime.UTC).isoformat().replace("+00:00", "Z")
-    )
+    try:
+        return (
+            datetime.datetime.fromtimestamp(value, tz=datetime.UTC)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+    except ValueError, OSError, OverflowError:
+        return None
 
 
 def parse_grok_session_search_db(

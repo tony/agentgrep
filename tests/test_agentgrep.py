@@ -4787,3 +4787,85 @@ def test_search_grok_session_search_db(
     assert db_records[0].session_id == "019729a0-0000-7000-8000-000000000099"
     assert db_records[0].timestamp is not None
     assert db_records[0].timestamp.startswith("2026-")
+
+
+class UnixToIsoCase(t.NamedTuple):
+    """Parametrized case for _unix_to_isoformat edge cases."""
+
+    test_id: str
+    value: object
+    expected: str | None
+
+
+UNIX_TO_ISO_CASES: tuple[UnixToIsoCase, ...] = (
+    UnixToIsoCase(
+        test_id="valid-unix-seconds",
+        value=1779750000,
+        expected="2026-05-25",
+    ),
+    UnixToIsoCase(
+        test_id="zero-returns-none",
+        value=0,
+        expected=None,
+    ),
+    UnixToIsoCase(
+        test_id="negative-returns-none",
+        value=-1,
+        expected=None,
+    ),
+    UnixToIsoCase(
+        test_id="nan-returns-none",
+        value=float("nan"),
+        expected=None,
+    ),
+    UnixToIsoCase(
+        test_id="inf-returns-none",
+        value=float("inf"),
+        expected=None,
+    ),
+    UnixToIsoCase(
+        test_id="negative-inf-returns-none",
+        value=float("-inf"),
+        expected=None,
+    ),
+    UnixToIsoCase(
+        test_id="extreme-int-returns-none",
+        value=9999999999999,
+        expected=None,
+    ),
+    UnixToIsoCase(
+        test_id="bool-true-returns-none",
+        value=True,
+        expected=None,
+    ),
+    UnixToIsoCase(
+        test_id="none-returns-none",
+        value=None,
+        expected=None,
+    ),
+    UnixToIsoCase(
+        test_id="string-returns-none",
+        value="1779750000",
+        expected=None,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    UnixToIsoCase._fields,
+    UNIX_TO_ISO_CASES,
+    ids=[c.test_id for c in UNIX_TO_ISO_CASES],
+)
+def test_unix_to_isoformat_edge_cases(
+    test_id: str,
+    value: object,
+    expected: str | None,
+) -> None:
+    """_unix_to_isoformat handles edge cases without crashing."""
+    agentgrep = load_agentgrep_module()
+    result = t.cast("t.Any", agentgrep)._unix_to_isoformat(value)
+    if expected is None:
+        assert result is None, f"{test_id}: expected None, got {result!r}"
+    else:
+        assert result is not None, f"{test_id}: expected timestamp, got None"
+        assert result.startswith(expected), f"{test_id}: {result!r}"
