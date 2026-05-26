@@ -874,7 +874,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
 
 CATALOG = StoreCatalog(
     catalog_version=4,
-    captured_at=OBSERVED_AT,
+    captured_at=_GROK_OBSERVED_AT,
     stores=(
         *_CLAUDE_STORES,
         *_CURSOR_STORES,
