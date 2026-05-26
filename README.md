@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Read-only search for local AI agent prompts and history across Codex,
-Claude Code, Cursor, and Gemini.
+Claude Code, Cursor, Gemini, and Grok.
 
 `agentgrep` provides a CLI and an MCP server over the same discovery + parsing layer:
 
