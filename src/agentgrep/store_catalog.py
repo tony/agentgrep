@@ -28,6 +28,7 @@ from agentgrep.stores import (
 )
 
 OBSERVED_AT = datetime.date(2026, 5, 17)
+_GROK_OBSERVED_AT = datetime.date(2026, 5, 25)
 
 
 def gemini_project_hash(project_root: pathlib.Path) -> str:
@@ -693,7 +694,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         ),
         env_overrides=("GROK_HOME",),
         observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
-        observed_at=OBSERVED_AT,
+        observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
             "JSONL per-project user-prompt audit log. Keys: `timestamp` "
             "(ISO-8601 nanosecond), `session_id` (UUIDv7), `prompt` (text), "
@@ -726,7 +727,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         ),
         env_overrides=("GROK_HOME",),
         observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
-        observed_at=OBSERVED_AT,
+        observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
             "JSONL full session transcripts. `type` field discriminates "
             "system/user/assistant/tool_use/tool_result. `content` is text "
@@ -760,7 +761,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         path_pattern="${GROK_HOME or ${HOME}/.grok}/sessions/session_search.sqlite",
         env_overrides=("GROK_HOME",),
         observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
-        observed_at=OBSERVED_AT,
+        observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
             "SQLite with FTS5. Table `session_docs`: session_id, cwd, "
             "updated_at (unix seconds), title (generated), content "
@@ -793,7 +794,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         ),
         env_overrides=("GROK_HOME",),
         observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
-        observed_at=OBSERVED_AT,
+        observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
             "Per-session event stream with turn-level lifecycle events: "
             "turn_started, loop_started, phase_changed, tool_started, "
@@ -811,7 +812,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         ),
         env_overrides=("GROK_HOME",),
         observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
-        observed_at=OBSERVED_AT,
+        observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
             "Per-session summary: id, cwd, session_summary, created_at, "
             "updated_at, num_messages, current_model_id, git metadata, "
@@ -826,7 +827,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         path_pattern="${GROK_HOME or ${HOME}/.grok}/memory/MEMORY.md",
         env_overrides=("GROK_HOME",),
         observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
-        observed_at=OBSERVED_AT,
+        observed_at=_GROK_OBSERVED_AT,
         schema_notes="Persistent memory in Markdown; managed by Grok's memory system.",
     ),
     StoreDescriptor(
@@ -837,7 +838,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         path_pattern="${GROK_HOME or ${HOME}/.grok}/logs/unified.jsonl",
         env_overrides=("GROK_HOME",),
         observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
-        observed_at=OBSERVED_AT,
+        observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
             "Structured application logs: ts, src, pid, lvl, msg, ctx. "
             "Debugging diagnostics, not chat content."
@@ -852,7 +853,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         path_pattern="${GROK_HOME or ${HOME}/.grok}/worktrees.db",
         env_overrides=("GROK_HOME",),
         observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
-        observed_at=OBSERVED_AT,
+        observed_at=_GROK_OBSERVED_AT,
         schema_notes="SQLite database tracking git worktrees created by Grok.",
         search_by_default=False,
     ),
@@ -864,7 +865,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         path_pattern="${GROK_HOME or ${HOME}/.grok}/config.toml",
         env_overrides=("GROK_HOME",),
         observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
-        observed_at=OBSERVED_AT,
+        observed_at=_GROK_OBSERVED_AT,
         schema_notes="TOML configuration file.",
         search_by_default=False,
     ),
