@@ -4738,8 +4738,6 @@ def test_search_grok_session_search_db(
     db_path = home / ".grok" / "sessions" / "session_search.sqlite"
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    import sqlite3
-
     conn = sqlite3.connect(str(db_path))
     conn.execute(
         "CREATE TABLE session_docs ("
