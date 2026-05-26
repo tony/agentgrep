@@ -187,6 +187,9 @@ def test_runtime_adapter_ids_match_catalogue_discovery() -> None:
     assert "cursor.cli_jsonl.v1" in runtime_adapter_ids
     assert "gemini.tmp_chats_jsonl.v1" in runtime_adapter_ids
     assert "gemini.tmp_logs_json.v1" in runtime_adapter_ids
+    assert "grok.prompt_history_jsonl.v1" in runtime_adapter_ids
+    assert "grok.sessions_jsonl.v1" in runtime_adapter_ids
+    assert "grok.session_search_sqlite.v1" in runtime_adapter_ids
 
     # No catalogue row claims an adapter id the MCP capabilities
     # tuple doesn't advertise.
@@ -348,6 +351,8 @@ PRIMARY_FIXTURES: tuple[tuple[str, str], ...] = (
     ("gemini.tmp.logs", "logs.json"),
     ("cursor.cli.transcripts", "example.jsonl"),
     ("cursor.cli.plans", "example.plan.md"),
+    ("grok.prompt_history", "prompt_history.jsonl"),
+    ("grok.sessions", "chat_history.jsonl"),
 )
 
 

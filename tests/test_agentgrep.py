@@ -27,7 +27,7 @@ import agentgrep as _agentgrep_module
 if t.TYPE_CHECKING:
     import collections.abc as cabc
 
-AgentName = t.Literal["codex", "claude", "cursor", "gemini"]
+AgentName = t.Literal["codex", "claude", "cursor", "gemini", "grok"]
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
