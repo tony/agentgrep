@@ -3316,7 +3316,17 @@ def parse_grok_chat_history(
 
 
 def _unix_to_isoformat(value: object) -> str | None:
-    """Convert a unix-seconds integer to an ISO-8601 UTC timestamp."""
+    """Convert a unix-seconds integer to an ISO-8601 UTC timestamp.
+
+    Examples
+    --------
+    >>> _unix_to_isoformat(1700000000)
+    '2023-11-14T22:13:20Z'
+    >>> _unix_to_isoformat(0) is None
+    True
+    >>> _unix_to_isoformat(float("nan")) is None
+    True
+    """
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
         return None
     try:
