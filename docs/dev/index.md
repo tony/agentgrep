@@ -16,7 +16,7 @@ Cross-commit `hyperfine` sweeps across HEAD, trunk, ranges, lookback, tags, or e
 :::{grid-item-card} Storage catalogue
 :link: storage-catalog
 :link-type: doc
-On-disk store layouts for Codex, Claude Code, Cursor, and Gemini CLI — useful for adapter authors and anyone tracing why a record was or wasn't found.
+On-disk store layouts for Codex, Claude Code, Cursor, Gemini CLI, and Grok CLI — useful for adapter authors and anyone tracing why a record was or wasn't found.
 :::
 
 ::::

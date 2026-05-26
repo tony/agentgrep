@@ -27,7 +27,7 @@ import agentgrep as _agentgrep_module
 if t.TYPE_CHECKING:
     import collections.abc as cabc
 
-AgentName = t.Literal["codex", "claude", "cursor", "gemini"]
+AgentName = t.Literal["codex", "claude", "cursor", "gemini", "grok"]
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
@@ -4547,3 +4547,323 @@ def test_search_gemini_logs_returns_user_message(
     assert log_records[0].kind == "history"
     assert log_records[0].timestamp == "2026-05-17T12:00:05Z"
     assert log_records[0].session_id == "sess-1"
+
+
+# ─── Grok backend tests ──────────────────────────────────────────────────
+
+
+def test_discover_grok_sources_honours_grok_home_env(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``GROK_HOME`` overrides ``${HOME}/.grok`` per the catalogue contract."""
+    agentgrep = load_agentgrep_module()
+    decoy_home = tmp_path / "home"
+    alt_root = tmp_path / "elsewhere"
+    monkeypatch.setenv("HOME", str(decoy_home))
+    monkeypatch.setenv("GROK_HOME", str(alt_root))
+    decoy_prompt = decoy_home / ".grok" / "sessions" / "%2Ftmp%2Fdecoy" / "prompt_history.jsonl"
+    write_jsonl(
+        decoy_prompt,
+        [
+            {
+                "timestamp": "2026-05-25T10:00:00Z",
+                "session_id": "s1",
+                "prompt": "hi",
+                "is_bash": False,
+            },
+        ],
+    )
+    real_prompt = alt_root / "sessions" / "%2Ftmp%2Freal" / "prompt_history.jsonl"
+    write_jsonl(
+        real_prompt,
+        [
+            {
+                "timestamp": "2026-05-25T10:00:00Z",
+                "session_id": "s2",
+                "prompt": "yo",
+                "is_bash": False,
+            },
+        ],
+    )
+
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    sources = t.cast("t.Any", agentgrep).discover_grok_sources(decoy_home, backends)
+
+    paths = {s.path for s in sources}
+    assert real_prompt in paths
+    assert decoy_prompt not in paths
+
+
+def test_search_grok_prompt_history(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Grok prompt_history.jsonl records surface as kind=history, role=user."""
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("GROK_HOME", raising=False)
+    prompt_file = home / ".grok" / "sessions" / "%2Ftmp%2Fproj" / "prompt_history.jsonl"
+    write_jsonl(
+        prompt_file,
+        [
+            {
+                "timestamp": "2026-05-25T10:00:00.000000000Z",
+                "session_id": "019729a0-0000-7000-8000-000000000001",
+                "prompt": "summarise the codebase",
+                "is_bash": False,
+            },
+            {
+                "timestamp": "2026-05-25T10:01:30.000000000Z",
+                "session_id": "019729a0-0000-7000-8000-000000000001",
+                "prompt": "uv run pytest",
+                "is_bash": True,
+            },
+        ],
+    )
+
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    query = t.cast("t.Any", agentgrep).SearchQuery(
+        terms=("summarise",),
+        search_type="all",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("grok",),
+        limit=None,
+    )
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("grok",), backends)
+    records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
+
+    assert records, "expected at least one grok prompt history record"
+    assert records[0].kind == "history"
+    assert records[0].role == "user"
+    assert records[0].agent == "grok"
+    assert "summarise" in records[0].text
+    assert records[0].session_id == "019729a0-0000-7000-8000-000000000001"
+
+
+def test_search_grok_chat_history_session(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Grok chat_history.jsonl yields user and assistant records."""
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("GROK_HOME", raising=False)
+    session_uuid = "019729a0-0000-7000-8000-aabbccddeeff"
+    chat_file = home / ".grok" / "sessions" / "%2Ftmp%2Fproj" / session_uuid / "chat_history.jsonl"
+    write_jsonl(
+        chat_file,
+        [
+            {"type": "system", "content": "You are Grok.", "timestamp": "2026-05-25T10:00:00Z"},
+            {"type": "user", "content": "explain the design", "timestamp": "2026-05-25T10:00:01Z"},
+            {
+                "type": "assistant",
+                "content": "The design uses an event-driven architecture.",
+                "timestamp": "2026-05-25T10:00:03Z",
+            },
+        ],
+    )
+
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    query = t.cast("t.Any", agentgrep).SearchQuery(
+        terms=("design",),
+        search_type="all",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("grok",),
+        limit=None,
+    )
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("grok",), backends)
+    records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
+
+    assert len(records) >= 2, "expected user + assistant records"
+    roles = {r.role for r in records}
+    assert "user" in roles
+    assert "assistant" in roles
+    for record in records:
+        assert record.conversation_id == session_uuid
+        assert record.agent == "grok"
+
+
+def test_search_grok_chat_history_drops_empty_content(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Records with empty content are not emitted."""
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("GROK_HOME", raising=False)
+    chat_file = home / ".grok" / "sessions" / "%2Ftmp%2Fproj" / "sess-1" / "chat_history.jsonl"
+    write_jsonl(
+        chat_file,
+        [
+            {"type": "user", "content": "", "timestamp": "2026-05-25T10:00:01Z"},
+            {"type": "assistant", "content": None, "timestamp": "2026-05-25T10:00:03Z"},
+            {"type": "tool_result", "content": "   ", "timestamp": "2026-05-25T10:00:04Z"},
+        ],
+    )
+
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    query = t.cast("t.Any", agentgrep).SearchQuery(
+        terms=(),
+        search_type="all",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("grok",),
+        limit=None,
+    )
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("grok",), backends)
+    records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
+
+    chat_records = [r for r in records if r.store == "grok.sessions"]
+    assert chat_records == []
+
+
+def test_search_grok_session_search_db(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Grok session_search.sqlite yields titled records."""
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("GROK_HOME", raising=False)
+    db_path = home / ".grok" / "sessions" / "session_search.sqlite"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "CREATE TABLE session_docs ("
+        "  session_id TEXT PRIMARY KEY,"
+        "  cwd TEXT NOT NULL,"
+        "  updated_at INTEGER NOT NULL,"
+        "  title TEXT NOT NULL,"
+        "  content TEXT NOT NULL,"
+        "  content_hash TEXT NOT NULL,"
+        "  last_indexed_offset INTEGER NOT NULL DEFAULT 0"
+        ")",
+    )
+    conn.execute(
+        "INSERT INTO session_docs VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            "019729a0-0000-7000-8000-000000000099",
+            "/tmp/proj",
+            1779750000,
+            "Refactor auth middleware",
+            "The auth middleware was refactored to use JWT tokens.",
+            "abc123",
+            0,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    query = t.cast("t.Any", agentgrep).SearchQuery(
+        terms=("middleware",),
+        search_type="all",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("grok",),
+        limit=None,
+    )
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("grok",), backends)
+    records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
+
+    db_records = [r for r in records if r.store == "grok.session_search"]
+    assert db_records, "expected at least one session_search record"
+    assert db_records[0].title == "Refactor auth middleware"
+    assert "JWT tokens" in db_records[0].text
+    assert db_records[0].session_id == "019729a0-0000-7000-8000-000000000099"
+    assert db_records[0].timestamp is not None
+    assert db_records[0].timestamp.startswith("2026-")
+
+
+class UnixToIsoCase(t.NamedTuple):
+    """Parametrized case for _unix_to_isoformat edge cases."""
+
+    test_id: str
+    value: object
+    expected: str | None
+
+
+UNIX_TO_ISO_CASES: tuple[UnixToIsoCase, ...] = (
+    UnixToIsoCase(
+        test_id="valid-unix-seconds",
+        value=1779750000,
+        expected="2026-05-25",
+    ),
+    UnixToIsoCase(
+        test_id="zero-returns-none",
+        value=0,
+        expected=None,
+    ),
+    UnixToIsoCase(
+        test_id="negative-returns-none",
+        value=-1,
+        expected=None,
+    ),
+    UnixToIsoCase(
+        test_id="nan-returns-none",
+        value=float("nan"),
+        expected=None,
+    ),
+    UnixToIsoCase(
+        test_id="inf-returns-none",
+        value=float("inf"),
+        expected=None,
+    ),
+    UnixToIsoCase(
+        test_id="negative-inf-returns-none",
+        value=float("-inf"),
+        expected=None,
+    ),
+    UnixToIsoCase(
+        test_id="extreme-int-returns-none",
+        value=9999999999999,
+        expected=None,
+    ),
+    UnixToIsoCase(
+        test_id="bool-true-returns-none",
+        value=True,
+        expected=None,
+    ),
+    UnixToIsoCase(
+        test_id="none-returns-none",
+        value=None,
+        expected=None,
+    ),
+    UnixToIsoCase(
+        test_id="string-returns-none",
+        value="1779750000",
+        expected=None,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    UnixToIsoCase._fields,
+    UNIX_TO_ISO_CASES,
+    ids=[c.test_id for c in UNIX_TO_ISO_CASES],
+)
+def test_unix_to_isoformat_edge_cases(
+    test_id: str,
+    value: object,
+    expected: str | None,
+) -> None:
+    """_unix_to_isoformat handles edge cases without crashing."""
+    agentgrep = load_agentgrep_module()
+    result = t.cast("t.Any", agentgrep)._unix_to_isoformat(value)
+    if expected is None:
+        assert result is None, f"{test_id}: expected None, got {result!r}"
+    else:
+        assert result is not None, f"{test_id}: expected timestamp, got None"
+        assert result.startswith(expected), f"{test_id}: {result!r}"

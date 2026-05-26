@@ -78,7 +78,7 @@ if t.TYPE_CHECKING:
 else:
     PrivatePathBase = type(pathlib.Path())
 
-AgentName = t.Literal["codex", "claude", "cursor", "gemini"]
+AgentName = t.Literal["codex", "claude", "cursor", "gemini", "grok"]
 OutputMode = t.Literal["text", "json", "ndjson", "ui"]
 ProgressMode = t.Literal["auto", "always", "never"]
 SearchType = t.Literal["prompts", "history", "all"]
@@ -89,7 +89,7 @@ type JSONValue = JSONScalar | list[JSONValue] | dict[str, JSONValue]
 type SummaryRow = tuple[object, object, object, object, object, object, object, object]
 type KeyValueRow = tuple[object, object]
 
-AGENT_CHOICES: tuple[AgentName, ...] = ("codex", "claude", "cursor", "gemini")
+AGENT_CHOICES: tuple[AgentName, ...] = ("codex", "claude", "cursor", "gemini", "grok")
 JSON_FILE_SUFFIXES: frozenset[str] = frozenset({".json", ".jsonl"})
 SCHEMA_VERSION: str = "agentgrep.v1"
 USER_ROLES: frozenset[str] = frozenset({"human", "user"})
@@ -150,8 +150,8 @@ def build_description(
 
 CLI_DESCRIPTION = build_description(
     """
-    Read-only search across Codex, Claude, Cursor, and Gemini local
-    stores. Pick a subcommand from the list below: ``search`` for
+    Read-only search across Codex, Claude, Cursor, Gemini, and Grok
+    local stores. Pick a subcommand from the list below: ``search`` for
     ranked results with dedup and session grouping, ``grep`` for
     rg-shaped content search, ``fuzzy`` for fzf-style filtering,
     ``find`` for store enumeration, ``ui`` for the interactive
@@ -2222,6 +2222,8 @@ def discover_sources(
             discovered.extend(discover_cursor_sources(home, backends))
         elif agent == "gemini":
             discovered.extend(discover_gemini_sources(home, backends))
+        elif agent == "grok":
+            discovered.extend(discover_grok_sources(home, backends))
     discovered.sort(key=lambda item: (item.agent, item.store, str(item.path)))
     return discovered
 
@@ -2494,6 +2496,23 @@ def discover_gemini_sources(
     if not base.exists():
         return []
     return discover_from_catalog(home, "gemini", base, backends)
+
+
+def discover_grok_sources(
+    home: pathlib.Path,
+    backends: BackendSelection,
+) -> list[SourceHandle]:
+    """Discover Grok CLI sessions and prompt history.
+
+    Honours the ``GROK_HOME`` environment variable; falls back to
+    ``${HOME}/.grok`` when unset or empty. Path roots, globs, file
+    lists, and adapter metadata come from the ``grok.*`` rows of
+    :data:`agentgrep.store_catalog.CATALOG`.
+    """
+    base = resolve_env_root("GROK_HOME", home / ".grok")
+    if not base.exists():
+        return []
+    return discover_from_catalog(home, "grok", base, backends)
 
 
 def list_files_matching(
@@ -2910,6 +2929,15 @@ def iter_source_records(
     if source.adapter_id == "gemini.tmp_logs_json.v1":
         yield from parse_gemini_logs_file(source)
         return
+    if source.adapter_id == "grok.prompt_history_jsonl.v1":
+        yield from parse_grok_prompt_history(source)
+        return
+    if source.adapter_id == "grok.sessions_jsonl.v1":
+        yield from parse_grok_chat_history(source)
+        return
+    if source.adapter_id == "grok.session_search_sqlite.v1":
+        yield from parse_grok_session_search_db(source)
+        return
 
 
 def parse_codex_session_file(
@@ -3216,6 +3244,138 @@ def parse_gemini_logs_file(
             session_id=session_id,
             conversation_id=session_id,
         )
+
+
+def parse_grok_prompt_history(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse a Grok CLI ``prompt_history.jsonl`` file.
+
+    Each line is ``{"timestamp": "…", "session_id": "…", "prompt": "…",
+    "is_bash": bool}`` — one record per user prompt, append-only across
+    all sessions within one project directory.
+    """
+    for event in iter_jsonl(source.path):
+        if not isinstance(event, dict):
+            continue
+        mapping = t.cast("dict[str, object]", event)
+        prompt = as_optional_str(mapping.get("prompt"))
+        if not prompt:
+            continue
+        session_id = as_optional_str(mapping.get("session_id"))
+        yield SearchRecord(
+            kind="history",
+            agent=source.agent,
+            store=source.store,
+            adapter_id=source.adapter_id,
+            path=source.path,
+            text=prompt,
+            title="Grok prompt history",
+            role="user",
+            timestamp=as_optional_str(mapping.get("timestamp")),
+            session_id=session_id,
+            conversation_id=session_id,
+            metadata={"is_bash": mapping.get("is_bash", False)},
+        )
+
+
+def parse_grok_chat_history(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse a Grok CLI ``chat_history.jsonl`` session transcript.
+
+    Lines carry a ``type`` field (system / user / assistant / tool_use /
+    tool_result) and ``content`` (text or content-blocks array). All
+    record types are emitted to maximise searchable content.
+    """
+    conversation_id = source.path.parent.name
+    for event in iter_jsonl(source.path):
+        if not isinstance(event, dict):
+            continue
+        mapping = t.cast("dict[str, object]", event)
+        record_type = as_optional_str(mapping.get("type"))
+        if not record_type:
+            continue
+        content_text = flatten_content_value(
+            t.cast("JSONValue | None", mapping.get("content")),
+        )
+        if not content_text:
+            continue
+        yield SearchRecord(
+            kind="prompt" if record_type == "user" else "history",
+            agent=source.agent,
+            store=source.store,
+            adapter_id=source.adapter_id,
+            path=source.path,
+            text=content_text,
+            role=record_type,
+            timestamp=as_optional_str(mapping.get("timestamp")),
+            session_id=conversation_id,
+            conversation_id=conversation_id,
+        )
+
+
+def _unix_to_isoformat(value: object) -> str | None:
+    """Convert a unix-seconds integer to an ISO-8601 UTC timestamp.
+
+    Examples
+    --------
+    >>> _unix_to_isoformat(1700000000)
+    '2023-11-14T22:13:20Z'
+    >>> _unix_to_isoformat(0) is None
+    True
+    >>> _unix_to_isoformat(float("nan")) is None
+    True
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        return None
+    try:
+        return (
+            datetime.datetime.fromtimestamp(value, tz=datetime.UTC)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+    except ValueError, OSError, OverflowError:
+        return None
+
+
+def parse_grok_session_search_db(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse the Grok CLI ``session_search.sqlite`` FTS5 index.
+
+    Table ``session_docs`` has columns: ``session_id``, ``cwd``,
+    ``updated_at`` (unix seconds), ``title`` (generated), ``content``
+    (full-text indexed session body), ``content_hash``.
+    """
+    connection = open_readonly_sqlite(source.path)
+    try:
+        cursor = connection.execute(
+            "SELECT session_id, title, content, updated_at FROM session_docs",
+        )
+        for row in cursor:
+            session_id_raw, title_raw, content_raw, updated_at_raw = row
+            text = content_raw if isinstance(content_raw, str) and content_raw.strip() else None
+            if not text:
+                continue
+            session_id = as_optional_str(session_id_raw)
+            yield SearchRecord(
+                kind="history",
+                agent=source.agent,
+                store=source.store,
+                adapter_id=source.adapter_id,
+                path=source.path,
+                text=text,
+                title=title_raw if isinstance(title_raw, str) else None,
+                role="assistant",
+                timestamp=_unix_to_isoformat(updated_at_raw),
+                session_id=session_id,
+                conversation_id=session_id,
+            )
+    except sqlite3.DatabaseError:
+        return
+    finally:
+        connection.close()
 
 
 def parse_cursor_ai_tracking_db(

@@ -54,7 +54,7 @@ class StoreRole(enum.StrEnum):
     UNKNOWN = "unknown"
 
 
-AgentName = t.Literal["claude", "cursor", "codex", "gemini"]
+AgentName = t.Literal["claude", "cursor", "codex", "gemini", "grok"]
 PathKind = t.Literal["history_file", "session_file", "sqlite_db"]
 SourceKind = t.Literal["json", "jsonl", "sqlite"]
 

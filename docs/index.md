@@ -2,7 +2,7 @@
 
 # agentgrep
 
-Read-only search for local AI agent prompts and history across Codex, Claude Code, Cursor, and Gemini.
+Read-only search for local AI agent prompts and history across Codex, Claude Code, Cursor, Gemini, and Grok.
 
 ```{warning}
 **Pre-alpha.** APIs may change. [Feedback welcome](https://github.com/tony/agentgrep/issues).
@@ -61,6 +61,12 @@ Config snippets for local MCP clients.
 Search behavior, privacy, output, and progress controls.
 :::
 
+:::{grid-item-card} Backends
+:link: backends/index
+:link-type: doc
+Per-agent store layouts, record schemas, and support matrix.
+:::
+
 ::::
 
 ## What you can do
@@ -91,6 +97,7 @@ cli/index
 tui/index
 library/index
 mcp/index
+backends/index
 dev/index
 history
 GitHub <https://github.com/tony/agentgrep>

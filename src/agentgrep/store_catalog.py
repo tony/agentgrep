@@ -28,6 +28,7 @@ from agentgrep.stores import (
 )
 
 OBSERVED_AT = datetime.date(2026, 5, 17)
+_GROK_OBSERVED_AT = datetime.date(2026, 5, 25)
 
 
 def gemini_project_hash(project_root: pathlib.Path) -> str:
@@ -682,10 +683,205 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
 )
 
 
+_GROK_STORES: tuple[StoreDescriptor, ...] = (
+    StoreDescriptor(
+        agent="grok",
+        store_id="grok.prompt_history",
+        role=StoreRole.PROMPT_HISTORY,
+        format=StoreFormat.JSONL,
+        path_pattern=(
+            "${GROK_HOME or ${HOME}/.grok}/sessions/<url_encoded_project>/prompt_history.jsonl"
+        ),
+        env_overrides=("GROK_HOME",),
+        observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
+        observed_at=_GROK_OBSERVED_AT,
+        schema_notes=(
+            "JSONL per-project user-prompt audit log. Keys: `timestamp` "
+            "(ISO-8601 nanosecond), `session_id` (UUIDv7), `prompt` (text), "
+            "`is_bash` (bool)."
+        ),
+        sample_record=(
+            '{"timestamp":"2026-05-25T10:00:00.000000000Z",'
+            '"session_id":"...","prompt":"<redacted>","is_bash":false}'
+        ),
+        search_by_default=True,
+        discovery=(
+            DiscoverySpec(
+                store="grok.prompt_history",
+                adapter_id="grok.prompt_history_jsonl.v1",
+                path_kind="history_file",
+                source_kind="jsonl",
+                home_subpath=("sessions",),
+                glob="prompt_history.jsonl",
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="grok",
+        store_id="grok.sessions",
+        role=StoreRole.PRIMARY_CHAT,
+        format=StoreFormat.JSONL,
+        path_pattern=(
+            "${GROK_HOME or ${HOME}/.grok}/sessions/"
+            "<url_encoded_project>/<session_uuid>/chat_history.jsonl"
+        ),
+        env_overrides=("GROK_HOME",),
+        observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
+        observed_at=_GROK_OBSERVED_AT,
+        schema_notes=(
+            "JSONL full session transcripts. `type` field discriminates "
+            "system/user/assistant/tool_use/tool_result. `content` is text "
+            "or content-blocks array. Includes tool calls and usage stats."
+        ),
+        sample_record=(
+            '{"type":"user","content":"<redacted>","timestamp":"2026-05-25T10:00:01.000000000Z"}'
+        ),
+        distinguishes_from=("grok.prompt_history",),
+        search_by_default=True,
+        search_notes=(
+            "Full per-session transcript with tool calls; "
+            "`grok.prompt_history` is the user-prompts-only audit log."
+        ),
+        discovery=(
+            DiscoverySpec(
+                store="grok.sessions",
+                adapter_id="grok.sessions_jsonl.v1",
+                path_kind="session_file",
+                source_kind="jsonl",
+                home_subpath=("sessions",),
+                glob="chat_history.jsonl",
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="grok",
+        store_id="grok.session_search",
+        role=StoreRole.SUPPLEMENTARY_CHAT,
+        format=StoreFormat.SQLITE,
+        path_pattern="${GROK_HOME or ${HOME}/.grok}/sessions/session_search.sqlite",
+        env_overrides=("GROK_HOME",),
+        observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
+        observed_at=_GROK_OBSERVED_AT,
+        schema_notes=(
+            "SQLite with FTS5. Table `session_docs`: session_id, cwd, "
+            "updated_at (unix seconds), title (generated), content "
+            "(full-text index), content_hash. Schema version 3."
+        ),
+        search_by_default=True,
+        search_notes=(
+            "Pre-indexed session titles and content for fast lookup. "
+            "De-duplicate against `grok.sessions` by session_id."
+        ),
+        discovery=(
+            DiscoverySpec(
+                store="grok.session_search",
+                adapter_id="grok.session_search_sqlite.v1",
+                path_kind="sqlite_db",
+                source_kind="sqlite",
+                home_subpath=("sessions",),
+                files=("session_search.sqlite",),
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="grok",
+        store_id="grok.sessions.events",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSONL,
+        path_pattern=(
+            "${GROK_HOME or ${HOME}/.grok}/sessions/"
+            "<url_encoded_project>/<session_uuid>/events.jsonl"
+        ),
+        env_overrides=("GROK_HOME",),
+        observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
+        observed_at=_GROK_OBSERVED_AT,
+        schema_notes=(
+            "Per-session event stream with turn-level lifecycle events: "
+            "turn_started, loop_started, phase_changed, tool_started, "
+            "tool_finished. Schema version 1.0."
+        ),
+    ),
+    StoreDescriptor(
+        agent="grok",
+        store_id="grok.sessions.summary",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern=(
+            "${GROK_HOME or ${HOME}/.grok}/sessions/"
+            "<url_encoded_project>/<session_uuid>/summary.json"
+        ),
+        env_overrides=("GROK_HOME",),
+        observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
+        observed_at=_GROK_OBSERVED_AT,
+        schema_notes=(
+            "Per-session summary: id, cwd, session_summary, created_at, "
+            "updated_at, num_messages, current_model_id, git metadata, "
+            "generated_title, agent_name."
+        ),
+    ),
+    StoreDescriptor(
+        agent="grok",
+        store_id="grok.memory",
+        role=StoreRole.PERSISTENT_MEMORY,
+        format=StoreFormat.MARKDOWN_FRONTMATTER,
+        path_pattern="${GROK_HOME or ${HOME}/.grok}/memory/MEMORY.md",
+        env_overrides=("GROK_HOME",),
+        observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
+        observed_at=_GROK_OBSERVED_AT,
+        schema_notes="Persistent memory in Markdown; managed by Grok's memory system.",
+    ),
+    StoreDescriptor(
+        agent="grok",
+        store_id="grok.logs",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSONL,
+        path_pattern="${GROK_HOME or ${HOME}/.grok}/logs/unified.jsonl",
+        env_overrides=("GROK_HOME",),
+        observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
+        observed_at=_GROK_OBSERVED_AT,
+        schema_notes=(
+            "Structured application logs: ts, src, pid, lvl, msg, ctx. "
+            "Debugging diagnostics, not chat content."
+        ),
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="grok",
+        store_id="grok.worktrees_db",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.SQLITE,
+        path_pattern="${GROK_HOME or ${HOME}/.grok}/worktrees.db",
+        env_overrides=("GROK_HOME",),
+        observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
+        observed_at=_GROK_OBSERVED_AT,
+        schema_notes="SQLite database tracking git worktrees created by Grok.",
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="grok",
+        store_id="grok.config",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.OPAQUE,
+        path_pattern="${GROK_HOME or ${HOME}/.grok}/config.toml",
+        env_overrides=("GROK_HOME",),
+        observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
+        observed_at=_GROK_OBSERVED_AT,
+        schema_notes="TOML configuration file.",
+        search_by_default=False,
+    ),
+)
+
+
 CATALOG = StoreCatalog(
-    catalog_version=3,
-    captured_at=OBSERVED_AT,
-    stores=(*_CLAUDE_STORES, *_CURSOR_STORES, *_CODEX_STORES, *_GEMINI_STORES),
+    catalog_version=4,
+    captured_at=_GROK_OBSERVED_AT,
+    stores=(
+        *_CLAUDE_STORES,
+        *_CURSOR_STORES,
+        *_CODEX_STORES,
+        *_GEMINI_STORES,
+        *_GROK_STORES,
+    ),
 )
 """The canonical agentgrep store catalogue.
 
