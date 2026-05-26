@@ -36,11 +36,44 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a7 (2026-05-25)
+## agentgrep 0.1.0a8 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a8 (2026-05-25)
+
+agentgrep 0.1.0a8 ships Grok CLI as the fifth searchable backend and
+introduces a new documentation section documenting every backend's
+store layout and record schema. Prompt history, chat transcripts, and
+the session-search SQLite index are all searchable out of the box.
+
+### What's new
+
+#### Grok CLI backend (#24)
+
+Grok CLI joins Codex, Claude Code, Cursor, and Gemini as a
+first-class backend. Three adapters parse the on-disk stores under
+`~/.grok/sessions/`: per-project `prompt_history.jsonl` (user-prompt
+audit log), per-session `chat_history.jsonl` (full transcripts with
+system, user, assistant, tool_use, and tool_result records), and the
+global `session_search.sqlite` FTS5 index. Discovery honours the
+`GROK_HOME` environment variable. Seven additional stores are
+catalogued as documentary-only for future adapter work.
+
+#### Backend documentation pages (#24)
+
+A new {doc}`/backends/index` section provides a support matrix and
+per-engine pages ({doc}`/backends/codex`, {doc}`/backends/claude`,
+{doc}`/backends/cursor`, {doc}`/backends/gemini`, {doc}`/backends/grok`)
+documenting store layouts, adapter IDs, and record schemas.
+
+### Dependencies
+
+Minimum `grok-cli v0.1.219` observed for the Grok backend stores.
+
+## agentgrep 0.1.0a7 (2026-05-25)
 
 ### What's new
 
