@@ -100,7 +100,7 @@ def default_registry() -> FieldRegistry:
     ============= ====== ======= ===========================================
     Field         Kind   Layer   Notes
     ============= ====== ======= ===========================================
-    ``agent``     enum   source  Values: codex, claude, cursor, gemini
+    ``agent``     enum   source  Values: codex, claude, cursor, gemini, grok
     ``store``     string source  Substring against :attr:`SourceHandle.store`
     ``adapter``   string source  Alias of ``adapter_id``
     ``path``      path   source  Glob against the file basename by default
