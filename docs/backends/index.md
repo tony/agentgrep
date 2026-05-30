@@ -8,16 +8,32 @@ overrides, store descriptors, and record schemas.
 
 ## Support matrix
 
-| Agent   | Prompt History | Chat Sessions | Session Index | Memory | Plans |
-|---------|:--------------:|:-------------:|:-------------:|:------:|:-----:|
-| Codex   | {doc}`codex`   | {doc}`codex`  |               |        |       |
-| Claude  | {doc}`claude`  | {doc}`claude` |               |        |       |
-| Cursor  |                | {doc}`cursor` | {doc}`cursor` |        |       |
-| Gemini  | {doc}`gemini`  | {doc}`gemini` |               |        |       |
-| Grok    | {doc}`grok`    | {doc}`grok`   | {doc}`grok`   |        |       |
+### Searched by default
 
-Cells with links are actively searched by default. Blank cells are
-either catalogued but not yet parsed, or not applicable to the agent.
+Cells link to backend pages with the matching store descriptors and
+record schemas.
+
+| Agent   | Prompt History | Primary Chat | Supplementary Chat | Index / Summaries |
+|---------|:--------------:|:------------:|:------------------:|:-----------------:|
+| Codex   | {doc}`codex`   | {doc}`codex` |                    |                   |
+| Claude  | {doc}`claude`  | {doc}`claude` | {doc}`claude`     |                   |
+| Cursor  |                | {doc}`cursor` | {doc}`cursor`     | {doc}`cursor`     |
+| Gemini  | {doc}`gemini`  | {doc}`gemini` | {doc}`gemini`     |                   |
+| Grok    | {doc}`grok`    | {doc}`grok`  |                    | {doc}`grok`       |
+
+### Catalogued only
+
+These stores are documented in the catalogue but are not searched by
+default. `deferred` means adapter support may be added later; `off`
+means agentgrep intentionally skips that store type.
+
+| Agent   | Memory | Plans / Todos | App State / Config | Cache / Source Trees |
+|---------|:------:|:-------------:|:------------------:|:--------------------:|
+| Codex   | deferred |             | deferred           |                      |
+| Claude  | deferred | deferred    | deferred           | off                  |
+| Cursor  |        | deferred      | deferred / off     | off                  |
+| Gemini  |        |               | off                |                      |
+| Grok    | deferred |             | deferred / off     | off                  |
 
 ```{toctree}
 :hidden:
