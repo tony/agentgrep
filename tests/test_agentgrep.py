@@ -4042,6 +4042,116 @@ def test_discover_codex_sources_honours_codex_home_env(
     assert decoy_history not in paths
 
 
+def test_search_claude_history_expands_external_pasted_text(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Claude global prompt history resolves content-addressed pasted text."""
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    paste_hash = "0123456789abcdef"
+    paste_path = home / ".claude" / "paste-cache" / f"{paste_hash}.txt"
+    paste_path.parent.mkdir(parents=True, exist_ok=True)
+    _ = paste_path.write_text("external bliss paste", encoding="utf-8")
+    history_path = home / ".claude" / "history.jsonl"
+    write_jsonl(
+        history_path,
+        [
+            {
+                "display": "Review [Pasted text #1] and [Pasted text #2 +1 lines]",
+                "pastedContents": {
+                    "1": {
+                        "id": 1,
+                        "type": "text",
+                        "content": "inline serenity paste",
+                    },
+                    "2": {
+                        "id": 2,
+                        "type": "text",
+                        "contentHash": paste_hash,
+                    },
+                },
+                "timestamp": 1_700_000_000_000,
+                "project": "/synthetic/project",
+                "sessionId": "session-1",
+            },
+        ],
+    )
+
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    query = t.cast("t.Any", agentgrep).SearchQuery(
+        terms=("bliss",),
+        search_type="history",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("claude",),
+        limit=None,
+    )
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("claude",), backends)
+    records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
+
+    assert len(records) == 1
+    record = records[0]
+    assert record.agent == "claude"
+    assert record.store == "claude.history"
+    assert record.adapter_id == "claude.history_jsonl.v1"
+    assert record.kind == "history"
+    assert record.role == "user"
+    assert record.timestamp == "2023-11-14T22:13:20Z"
+    assert record.session_id == "session-1"
+    assert record.conversation_id == "session-1"
+    assert "inline serenity paste" in record.text
+    assert "external bliss paste" in record.text
+    assert "[Pasted text" not in record.text
+
+
+def test_search_claude_history_tolerates_missing_paste_cache(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Missing Claude paste-cache entries keep history search resilient."""
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    history_path = home / ".claude" / "history.jsonl"
+    write_jsonl(
+        history_path,
+        [
+            {
+                "display": "missing paste marker [Pasted text #1]",
+                "pastedContents": {
+                    "1": {
+                        "id": 1,
+                        "type": "text",
+                        "contentHash": "fedcba9876543210",
+                    },
+                },
+                "timestamp": 1_700_000_000_000,
+                "project": "/synthetic/project",
+                "sessionId": "session-1",
+            },
+        ],
+    )
+
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    query = t.cast("t.Any", agentgrep).SearchQuery(
+        terms=("missing",),
+        search_type="history",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("claude",),
+        limit=None,
+    )
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("claude",), backends)
+    records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
+
+    assert len(records) == 1
+    assert records[0].text == "missing paste marker [Pasted text #1]"
+
+
 def test_discover_gemini_sources_honours_gemini_cli_home_env(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

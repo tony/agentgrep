@@ -334,6 +334,122 @@ def test_discover_from_catalog_deduplicates_paths_within_descriptor(
     assert len(matching) == 1, [s.adapter_id for s in matching]
 
 
+def test_discovery_spec_excludes_required_path_parts(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A glob can include main transcripts while excluding nested side stores."""
+    import agentgrep
+    import agentgrep.store_catalog as store_catalog
+
+    base = tmp_path / "base"
+    main = base / "project" / "session.jsonl"
+    excluded = base / "project" / "session" / "subagents" / "agent-a.jsonl"
+    main.parent.mkdir(parents=True)
+    excluded.parent.mkdir(parents=True)
+    _ = main.write_text("{}", encoding="utf-8")
+    _ = excluded.write_text("{}", encoding="utf-8")
+
+    fake_catalog = StoreCatalog(
+        catalog_version=999,
+        captured_at=OBSERVED_AT,
+        stores=(
+            StoreDescriptor(
+                agent="claude",
+                store_id="claude.test.main",
+                role=StoreRole.PRIMARY_CHAT,
+                format=StoreFormat.JSONL,
+                path_pattern="${HOME}/test/main",
+                observed_version="test",
+                observed_at=OBSERVED_AT,
+                schema_notes="Test row excluding nested side stores.",
+                search_by_default=True,
+                discovery=(
+                    DiscoverySpec(
+                        store="claude.test_main",
+                        adapter_id="claude.test_main.v1",
+                        path_kind="session_file",
+                        source_kind="jsonl",
+                        glob="*.jsonl",
+                        path_parts_excluded=("subagents",),
+                    ),
+                ),
+            ),
+        ),
+    )
+    monkeypatch.setattr(store_catalog, "CATALOG", fake_catalog)
+
+    backends = agentgrep.BackendSelection(None, None, None)
+    sources = agentgrep.discover_from_catalog(tmp_path, "claude", base, backends)
+
+    paths = {source.path for source in sources}
+    assert main in paths
+    assert excluded not in paths
+
+
+def test_actual_claude_discovery_splits_main_and_subagent_transcripts(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Claude main and subagent transcript files get distinct runtime stores."""
+    import agentgrep
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    main = home / ".claude" / "projects" / "project" / "session.jsonl"
+    subagent = home / ".claude" / "projects" / "project" / "session" / "subagents" / "agent-a.jsonl"
+    main.parent.mkdir(parents=True)
+    subagent.parent.mkdir(parents=True)
+    _ = main.write_text("{}", encoding="utf-8")
+    _ = subagent.write_text("{}", encoding="utf-8")
+
+    sources = agentgrep.discover_sources(
+        home,
+        ("claude",),
+        agentgrep.BackendSelection(None, None, None),
+    )
+
+    stores_by_path = {source.path: source.store for source in sources}
+    assert stores_by_path[main] == "claude.projects"
+    assert stores_by_path[subagent] == "claude.projects_subagents"
+
+
+def test_actual_cursor_discovery_splits_main_and_subagent_transcripts(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cursor CLI subagent transcript files do not collapse into main sessions."""
+    import agentgrep
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    main = home / ".cursor" / "projects" / "project" / "agent-transcripts" / "s" / "s.jsonl"
+    subagent = (
+        home
+        / ".cursor"
+        / "projects"
+        / "project"
+        / "agent-transcripts"
+        / "s"
+        / "subagents"
+        / "agent-a.jsonl"
+    )
+    main.parent.mkdir(parents=True)
+    subagent.parent.mkdir(parents=True)
+    _ = main.write_text("{}", encoding="utf-8")
+    _ = subagent.write_text("{}", encoding="utf-8")
+
+    sources = agentgrep.discover_sources(
+        home,
+        ("cursor",),
+        agentgrep.BackendSelection(None, None, None),
+    )
+
+    stores_by_path = {source.path: source.store for source in sources}
+    assert stores_by_path[main] == "cursor.cli_transcripts"
+    assert stores_by_path[subagent] == "cursor.cli_subagents"
+
+
 def test_descriptor_round_trips_through_json() -> None:
     """Pydantic dump/load identity — guards against future field-name drift."""
     sample = CATALOG.stores[0]
@@ -345,6 +461,7 @@ def test_descriptor_round_trips_through_json() -> None:
 PRIMARY_FIXTURES: tuple[tuple[str, str], ...] = (
     ("claude.projects.session", "example.jsonl"),
     ("claude.projects.subagent", "example.jsonl"),
+    ("claude.history", "history.jsonl"),
     ("codex.history", "example.jsonl"),
     ("codex.sessions", "rollout-2026-05-17T12-00-00-example.jsonl"),
     ("gemini.tmp.chats", "session-2026-05-17T12-00-00-example.jsonl"),
