@@ -13,9 +13,11 @@ import importlib
 import pathlib
 import typing as t
 
-AgentName = t.Literal["codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi"]
+AgentName = t.Literal[
+    "codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi", "opencode"
+]
 AgentSelector = t.Literal[
-    "codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi", "all"
+    "codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi", "opencode", "all"
 ]
 SearchTypeName = t.Literal["prompts", "history", "all"]
 

@@ -28,7 +28,9 @@ class SearchRecordModel(AgentGrepModel):
 
     schema_version: str = agentgrep.SCHEMA_VERSION
     kind: t.Literal["prompt", "history"]
-    agent: t.Literal["codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi"]
+    agent: t.Literal[
+        "codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi", "opencode"
+    ]
     store: str
     adapter_id: str
     path: str
@@ -52,7 +54,9 @@ class FindRecordModel(AgentGrepModel):
 
     schema_version: str = agentgrep.SCHEMA_VERSION
     kind: t.Literal["find"]
-    agent: t.Literal["codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi"]
+    agent: t.Literal[
+        "codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi", "opencode"
+    ]
     store: str
     adapter_id: str
     path: str
@@ -84,7 +88,9 @@ class SourceRecordModel(AgentGrepModel):
     """Discovered source summary payload."""
 
     schema_version: str = agentgrep.SCHEMA_VERSION
-    agent: t.Literal["codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi"]
+    agent: t.Literal[
+        "codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi", "opencode"
+    ]
     store: str
     adapter_id: str
     path: str
@@ -150,7 +156,9 @@ class CapabilitiesModel(AgentGrepModel):
     name: str = "agentgrep"
     version: str = SERVER_VERSION
     read_only: bool = True
-    agents: list[t.Literal["codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi"]]
+    agents: list[
+        t.Literal["codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi", "opencode"]
+    ]
     search_types: list[SearchTypeName]
     adapters: list[str]
     tools: list[str]
@@ -185,7 +193,9 @@ class StoreDescriptorModel(AgentGrepModel):
 
     schema_version: str = agentgrep.SCHEMA_VERSION
     kind: t.Literal["store"] = "store"
-    agent: t.Literal["codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi"]
+    agent: t.Literal[
+        "codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi", "opencode"
+    ]
     store_id: str
     role: str
     format: str

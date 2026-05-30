@@ -83,7 +83,9 @@ if t.TYPE_CHECKING:
 else:
     PrivatePathBase = type(pathlib.Path())
 
-AgentName = t.Literal["codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi"]
+AgentName = t.Literal[
+    "codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi", "opencode"
+]
 OutputMode = t.Literal["text", "json", "ndjson", "ui"]
 ProgressMode = t.Literal["auto", "always", "never"]
 SearchType = t.Literal["prompts", "history", "all"]
@@ -103,6 +105,7 @@ AGENT_CHOICES: tuple[AgentName, ...] = (
     "gemini",
     "grok",
     "pi",
+    "opencode",
 )
 JSON_FILE_SUFFIXES: frozenset[str] = frozenset({".json", ".jsonl"})
 SCHEMA_VERSION: str = "agentgrep.v1"
@@ -223,8 +226,8 @@ def build_description(
 
 CLI_DESCRIPTION = build_description(
     """
-    Read-only search across Codex, Claude, Cursor, Gemini, Grok, and
-    Pi local stores. Pick a subcommand from the list below:
+    Read-only search across Codex, Claude, Cursor, Gemini, Grok, Pi,
+    and OpenCode local stores. Pick a subcommand from the list below:
     ``search`` for ranked results with dedup and session grouping,
     ``grep`` for rg-shaped content search, ``find`` for store
     enumeration, ``ui`` for the interactive Textual explorer.
