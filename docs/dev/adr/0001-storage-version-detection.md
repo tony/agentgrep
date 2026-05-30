@@ -18,7 +18,10 @@ on disk.
 Codex is the concrete example that forced this decision:
 `history.jsonl` uses `session_id`, `ts`, and `text`, while older
 `history.json` files use `command` and `timestamp`. Both can exist in a
-modern config directory.
+modern config directory. The same applies to session transcripts:
+current installs write dated `sessions/**/*.jsonl` rollout streams,
+while older unmigrated data can remain as root-level
+`sessions/rollout-*.json` objects with `session` and `items` keys.
 
 ## Decision
 
@@ -46,7 +49,15 @@ record payloads stay focused on prompt/history content.
 Adapter authors should parse by concrete source shape. When app version
 and data shape disagree, the data shape wins. For example, a Codex
 config root with current model metadata can still contain legacy
-`history.json`, and agentgrep should parse it as legacy history.
+`history.json` or root-level rollout JSON, and agentgrep should parse
+each file by that legacy shape.
+
+Shape inference should stay narrow and explicit. It is appropriate for
+top-level JSON keys (`session` plus `items`, `id` plus `thread_name`),
+SQLite migration suffixes (`state_5.sqlite`, `logs_2.sqlite`), and
+known table/column surfaces used by a parser. It should not infer
+versions from prompt text, raw settings values, or arbitrary nested
+application state.
 
 Evidence strings must identify keys, table names, or filename suffixes
 only. They must not include prompt text, raw config values, tokens, or

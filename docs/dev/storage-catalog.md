@@ -64,7 +64,7 @@ Every descriptor has an effective coverage level:
 |----------|---------|
 | `default_search` | Normal search and find commands discover and parse this store. |
 | `inspectable` | Inventory tools can discover it when explicitly requested; default search skips it. |
-| `catalog_only` | The path and schema are documented, but agentgrep does not parse it as prompt history. |
+| `catalog_only` | The path and schema are documented, and default search skips it. A row may still expose a conservative structural sample for explicit inspection. |
 | `private` | The store is documented but intentionally not enumerated from disk. |
 
 This distinction lets the catalogue describe auth files, runtime logs,
@@ -118,12 +118,16 @@ file format is JSONL with multiple record types per line —
 the distinct runtime store `claude.projects_subagents`. `__store.db`,
 session memory, tasks, and plans are inspectable but remain outside
 default search because they either duplicate transcripts or represent
-derived state. Settings, skills, teams, IDE state, caches, file
-history, shell snapshots, context/security state, and session
-environment are catalogued or private according to sensitivity.
+derived state. Tasks are parsed from `subject` and `description` for
+explicit inspection. Settings expose only top-level key summaries, so
+raw values such as env vars are not indexed. Skills, teams, IDE state,
+update/stat caches, debug output, backups, file history, shell
+snapshots, context/security state, credentials, and session environment
+are catalogued or private according to sensitivity.
 Claude source version detection uses `embedded_metadata` for transcript
 `version` fields, `shape_inference` for history records with `display`,
-`timestamp`, and `project`, and `catalog_observation` as the fallback.
+`timestamp`, and `project`, task JSON keys, and settings key summaries,
+and `catalog_observation` as the fallback.
 
 ### Cursor
 
@@ -163,6 +167,8 @@ Schemas are pinned directly to the upstream Rust types:
   `RolloutItem` with variants `SessionMeta`, `ResponseItem`,
   `Compacted`, `TurnContext`, `EventMsg`
   ([`codex-rs/protocol/src/protocol.rs:2783`](https://github.com/openai/codex/blob/4c89772/codex-rs/protocol/src/protocol.rs#L2783)).
+- Legacy root `sessions/rollout-*.json` → JSON object with `session`
+  metadata and an `items` array carrying message-like records.
 
 The `_N.sqlite` files belong to the Codex CLI, not Cursor. Known
 SQLite stores are `state_5.sqlite`, `logs_2.sqlite`,
@@ -171,7 +177,9 @@ as `threads.first_user_message`, `threads.preview`, memory summaries,
 goal objectives, and job instructions are inspectable storage rather
 than default search.
 Codex source version detection uses `shape_inference` for
-`history.jsonl`, legacy `history.json`, and SQLite suffixes,
+`history.jsonl`, legacy `history.json`, legacy root rollout JSON,
+`session_index.jsonl`, external import ledgers, memory Markdown, and
+SQLite suffixes,
 `embedded_metadata` for session `cli_version`, and `version_check` for
 `models_cache.json.client_version` app-version context.
 

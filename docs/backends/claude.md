@@ -13,7 +13,9 @@ history was observed against `claude-code v2.1.157` (2026-05-29).
 Coverage is not the same as default search. `default` stores are
 searched normally; `inspectable` stores are discoverable only when an
 inventory caller opts in; `catalog` stores are documented but not
-parsed; `private` stores are intentionally not enumerated.
+searched by default; `private` stores are intentionally not
+enumerated. Some catalog stores expose safe structural samples for
+explicit inspection.
 
 | Store ID | Role | Format | Coverage | Adapter ID |
 |----------|------|--------|----------|------------|
@@ -25,6 +27,9 @@ parsed; `private` stores are intentionally not enumerated.
 | `claude.tasks` | Todo | JSON | inspectable | `claude.tasks_json.v1` |
 | `claude.plans` | Plan | Text | inspectable | `claude.plans_text.v1` |
 | `claude.settings` | App State | JSON | catalog | `claude.settings_json.v1` |
+| `claude.credentials` | App State | JSON | private | |
+| `claude.update_state` | App State | JSON | catalog | |
+| `claude.stats_cache` | Cache | JSON | catalog | |
 | `claude.projects.memory` | Persistent Memory | Markdown | catalog | |
 | `claude.todos` | Todo | JSON | catalog | |
 | `claude.sessions` | App State | JSON | catalog | |
@@ -32,6 +37,9 @@ parsed; `private` stores are intentionally not enumerated.
 | `claude.ide` | App State | JSON | catalog | |
 | `claude.skills` | Instruction | Text | catalog | |
 | `claude.teams` | Instruction | Text | catalog | |
+| `claude.debug_logs` | App State | Text | catalog | |
+| `claude.backups` | Cache | Opaque | catalog | |
+| `claude.generic_cache` | Cache | Opaque | catalog | |
 | `claude.paste_cache` | Cache | Opaque | catalog | |
 | `claude.image_cache` | Cache | Opaque | catalog | |
 | `claude.file_history` | Cache | Opaque | catalog | |
@@ -48,6 +56,10 @@ and `project` are reported as `claude.history_jsonl.log_entry.v1`.
 Project and sub-agent transcripts use embedded transcript `version`
 metadata when present; otherwise their `type`, `sessionId`, and
 `message` keys identify the JSONL message shape.
+Task files with `id`, `subject`, `description`, and `status` are
+reported as `claude.tasks.json.v1`; settings files use a medium
+confidence key-summary shape because their values are deliberately not
+indexed.
 
 Catalog observation stamps remain the fallback for discovered stores
 whose concrete shape cannot be sampled safely.
@@ -110,9 +122,14 @@ state rather than the primary transcript.
 
 Tasks are JSON files under `tasks/<task_list>/<task_id>.json` with
 `id`, `subject`, `description`, `status`, `blocks`, `blockedBy`, and
-optional metadata fields. Plans are Markdown files under `plans/*.md`.
-Settings, keybindings, context-mode files, security state, session
-environment, IDE bridge state, skills, teams, plugin cache, file
-history, shell snapshots, and image/paste caches are catalogued so
-storage audits can identify them without treating them as default
-prompt history.
+optional metadata fields. agentgrep emits one inspectable task sample
+from the subject and description plus status/blocking metadata. Plans
+are Markdown files under `plans/*.md`.
+
+Settings and keybindings expose only top-level key summaries for
+explicit inspection, so raw values such as environment variables are
+not indexed. Context-mode files, security state, session environment,
+IDE bridge state, skills, teams, plugin cache, file history, shell
+snapshots, stats/update cache, debug output, backups, generic cache,
+credentials, and image/paste caches are catalogued so storage audits
+can identify them without treating them as default prompt history.
