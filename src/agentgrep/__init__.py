@@ -109,12 +109,21 @@ OFFICIAL_CURSOR_STATE_PATHS: tuple[pathlib.Path, ...] = (
 ITER_SOURCE_RECORD_ADAPTERS: frozenset[str] = frozenset(
     {
         "claude.history_jsonl.v1",
+        "claude.app_state_json_summary.v1",
+        "claude.commands_text.v1",
         "claude.plans_text.v1",
+        "claude.projects_memory_text.v1",
         "claude.projects_jsonl.v1",
         "claude.session_memory_text.v1",
         "claude.settings_json.v1",
+        "claude.skills_text.v1",
         "claude.store_sqlite.v1",
         "claude.tasks_json.v1",
+        "claude.teams_json.v1",
+        "claude.todos_json.v1",
+        "codex.app_state_json_summary.v1",
+        "codex.config_backup_toml.v1",
+        "codex.config_toml.v1",
         "codex.external_imports_json.v1",
         "codex.goals_sqlite.v1",
         "codex.history_json.v1",
@@ -123,9 +132,13 @@ ITER_SOURCE_RECORD_ADAPTERS: frozenset[str] = frozenset(
         "codex.logs_sqlite.v1",
         "codex.memories_sqlite.v1",
         "codex.memories_text.v1",
+        "codex.plugin_instruction_text.v1",
+        "codex.plugin_manifest_json.v1",
+        "codex.rules_text.v1",
         "codex.session_index_jsonl.v1",
         "codex.sessions_jsonl.v1",
         "codex.sessions_legacy_json.v1",
+        "codex.skills_text.v1",
         "codex.state_sqlite.v1",
         "cursor.ai_tracking_sqlite.v1",
         "cursor.cli_jsonl.v1",
@@ -2568,6 +2581,51 @@ def _codex_source_version_detection(
             confidence=VersionDetectionConfidence.MEDIUM,
             evidence="markdown memory file discovered under memories",
         )
+    elif source.adapter_id in {"codex.config_toml.v1", "codex.config_backup_toml.v1"}:
+        try:
+            payload = tomllib.loads(source.path.read_text(encoding="utf-8"))
+        except OSError, tomllib.TOMLDecodeError:
+            payload = {}
+        if payload:
+            return SourceVersionDetection(
+                app_version=app_version,
+                data_version=spec.data_version,
+                strategy=VersionDetectionStrategy.SHAPE_INFERENCE,
+                confidence=VersionDetectionConfidence.HIGH,
+                evidence="TOML top-level keys observed",
+            )
+    elif source.adapter_id == "codex.app_state_json_summary.v1":
+        record = _json_mapping(source.path)
+        if record is not None:
+            return SourceVersionDetection(
+                app_version=app_version,
+                data_version=spec.data_version,
+                strategy=VersionDetectionStrategy.SHAPE_INFERENCE,
+                confidence=VersionDetectionConfidence.MEDIUM,
+                evidence="app-state JSON object keys observed",
+            )
+    elif source.adapter_id == "codex.plugin_manifest_json.v1":
+        record = _json_mapping(source.path)
+        if record is not None and {"name", "description"}.intersection(record):
+            return SourceVersionDetection(
+                app_version=app_version,
+                data_version=spec.data_version,
+                strategy=VersionDetectionStrategy.SHAPE_INFERENCE,
+                confidence=VersionDetectionConfidence.HIGH,
+                evidence="plugin manifest JSON object keys observed",
+            )
+    elif source.adapter_id in {
+        "codex.plugin_instruction_text.v1",
+        "codex.rules_text.v1",
+        "codex.skills_text.v1",
+    }:
+        return SourceVersionDetection(
+            app_version=app_version,
+            data_version=spec.data_version,
+            strategy=VersionDetectionStrategy.SHAPE_INFERENCE,
+            confidence=VersionDetectionConfidence.MEDIUM,
+            evidence="instruction text file discovered under Codex home",
+        )
     elif source.source_kind == "sqlite" and spec.data_version is not None:
         match = re.fullmatch(r".+_([0-9]+)\.sqlite", source.path.name)
         if match is not None:
@@ -2640,6 +2698,48 @@ def _claude_source_version_detection(
                 confidence=VersionDetectionConfidence.MEDIUM,
                 evidence="settings JSON object keys observed",
             )
+    elif source.adapter_id == "claude.todos_json.v1":
+        record = _json_mapping(source.path)
+        if record is not None:
+            return SourceVersionDetection(
+                app_version=None,
+                data_version=spec.data_version,
+                strategy=VersionDetectionStrategy.SHAPE_INFERENCE,
+                confidence=VersionDetectionConfidence.MEDIUM,
+                evidence="todo JSON object keys observed",
+            )
+    elif source.adapter_id == "claude.teams_json.v1":
+        record = _json_mapping(source.path)
+        if record is not None and {"name", "members"}.issubset(record):
+            return SourceVersionDetection(
+                app_version=None,
+                data_version=spec.data_version,
+                strategy=VersionDetectionStrategy.SHAPE_INFERENCE,
+                confidence=VersionDetectionConfidence.HIGH,
+                evidence="team config JSON object keys include name, members",
+            )
+    elif source.adapter_id == "claude.app_state_json_summary.v1":
+        record = _json_mapping(source.path)
+        if record is not None:
+            return SourceVersionDetection(
+                app_version=None,
+                data_version=spec.data_version,
+                strategy=VersionDetectionStrategy.SHAPE_INFERENCE,
+                confidence=VersionDetectionConfidence.MEDIUM,
+                evidence="app-state JSON object keys observed",
+            )
+    elif source.adapter_id in {
+        "claude.commands_text.v1",
+        "claude.projects_memory_text.v1",
+        "claude.skills_text.v1",
+    }:
+        return SourceVersionDetection(
+            app_version=None,
+            data_version=spec.data_version,
+            strategy=VersionDetectionStrategy.SHAPE_INFERENCE,
+            confidence=VersionDetectionConfidence.MEDIUM,
+            evidence="instruction or memory text file discovered under Claude config",
+        )
 
     return _catalog_version_detection(descriptor, spec)
 
@@ -3371,16 +3471,40 @@ def iter_source_records(
     if source.adapter_id == "claude.tasks_json.v1":
         yield from parse_claude_task_file(source)
         return
+    if source.adapter_id == "claude.todos_json.v1":
+        yield from parse_claude_todo_file(source)
+        return
+    if source.adapter_id == "claude.teams_json.v1":
+        yield from parse_claude_team_file(source)
+        return
     if source.adapter_id == "claude.settings_json.v1":
         yield from parse_claude_settings_file(source)
         return
+    if source.adapter_id == "claude.app_state_json_summary.v1":
+        yield from parse_json_summary_file(source, label="Claude app state")
+        return
     if source.adapter_id in {
+        "claude.commands_text.v1",
+        "claude.projects_memory_text.v1",
         "claude.session_memory_text.v1",
+        "claude.skills_text.v1",
         "claude.plans_text.v1",
         "codex.instructions_text.v1",
         "codex.memories_text.v1",
+        "codex.plugin_instruction_text.v1",
+        "codex.rules_text.v1",
+        "codex.skills_text.v1",
     }:
         yield from parse_text_store_file(source)
+        return
+    if source.adapter_id in {"codex.config_toml.v1", "codex.config_backup_toml.v1"}:
+        yield from parse_toml_summary_file(source)
+        return
+    if source.adapter_id == "codex.app_state_json_summary.v1":
+        yield from parse_json_summary_file(source, label="Codex app state")
+        return
+    if source.adapter_id == "codex.plugin_manifest_json.v1":
+        yield from parse_json_summary_file(source, label="Codex plugin manifest")
         return
     if source.adapter_id == "codex.state_sqlite.v1":
         yield from parse_codex_state_db(source)
@@ -3631,6 +3755,184 @@ def parse_claude_task_file(
             "blocks": _json_string_list(mapping.get("blocks")),
             "blocked_by": _json_string_list(mapping.get("blockedBy")),
         },
+    )
+
+
+def _json_value_shape(value: object) -> str:
+    """Return a value-free shape label for safe config/app-state summaries."""
+    if isinstance(value, dict):
+        return f"object[{len(value)}]"
+    if isinstance(value, list):
+        return f"array[{len(value)}]"
+    if isinstance(value, bool):
+        return "bool"
+    if isinstance(value, int) and not isinstance(value, bool):
+        return "int"
+    if isinstance(value, float):
+        return "float"
+    if isinstance(value, str):
+        return "str"
+    if value is None:
+        return "null"
+    return type(value).__name__
+
+
+def _safe_mapping_summary(label: str, payload: dict[str, object]) -> str:
+    """Summarize mapping keys and value shapes without including raw values."""
+    key_shapes = [
+        f"{key} ({_json_value_shape(payload[key])})" for key in sorted(payload) if key.strip()
+    ]
+    return f"{label} keys: {', '.join(key_shapes)}"
+
+
+def parse_json_summary_file(
+    source: SourceHandle,
+    *,
+    label: str,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse a JSON object as a key/type summary without raw values."""
+    payload = read_json_file(source.path)
+    if not isinstance(payload, dict):
+        return
+    mapping = t.cast("dict[str, object]", payload)
+    if not mapping:
+        return
+    yield SearchRecord(
+        kind="history",
+        agent=source.agent,
+        store=source.store,
+        adapter_id=source.adapter_id,
+        path=source.path,
+        text=_safe_mapping_summary(label, mapping),
+        title=source.path.name,
+        timestamp=isoformat_from_mtime_ns(source.mtime_ns),
+        metadata={"key_count": len(mapping)},
+    )
+
+
+def parse_toml_summary_file(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse a TOML file as a key/type summary without raw values."""
+    try:
+        payload = tomllib.loads(source.path.read_text(encoding="utf-8"))
+    except OSError, tomllib.TOMLDecodeError:
+        return
+    if not payload:
+        return
+    yield SearchRecord(
+        kind="history",
+        agent=source.agent,
+        store=source.store,
+        adapter_id=source.adapter_id,
+        path=source.path,
+        text=_safe_mapping_summary("Codex config", t.cast("dict[str, object]", payload)),
+        title=source.path.name,
+        timestamp=isoformat_from_mtime_ns(source.mtime_ns),
+        metadata={"key_count": len(payload)},
+    )
+
+
+def _iter_todo_mappings(payload: object) -> cabc.Iterator[dict[str, object]]:
+    """Yield task-like mappings from common Claude todo container shapes."""
+    if isinstance(payload, list):
+        for item in payload:
+            if isinstance(item, dict):
+                yield t.cast("dict[str, object]", item)
+        return
+    if not isinstance(payload, dict):
+        return
+    mapping = t.cast("dict[str, object]", payload)
+    if any(key in mapping for key in ("content", "text", "subject", "description", "title")):
+        yield mapping
+    for key in ("todos", "items", "tasks"):
+        nested = mapping.get(key)
+        if isinstance(nested, list):
+            for item in nested:
+                if isinstance(item, dict):
+                    yield t.cast("dict[str, object]", item)
+
+
+def parse_claude_todo_file(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse Claude todo JSON files as opt-in todo samples."""
+    payload = read_json_file(source.path)
+    for mapping in _iter_todo_mappings(payload):
+        first_line = (
+            as_optional_str(mapping.get("content"))
+            or as_optional_str(mapping.get("text"))
+            or as_optional_str(mapping.get("subject"))
+            or as_optional_str(mapping.get("title"))
+        )
+        description = as_optional_str(mapping.get("description"))
+        text = "\n\n".join(part for part in (first_line, description) if part)
+        if not text:
+            continue
+        todo_id = as_optional_str(mapping.get("id"))
+        yield SearchRecord(
+            kind="history",
+            agent=source.agent,
+            store=source.store,
+            adapter_id=source.adapter_id,
+            path=source.path,
+            text=text,
+            title=first_line,
+            role="todo",
+            timestamp=as_optional_str(mapping.get("updatedAt"))
+            or as_optional_str(mapping.get("updated_at"))
+            or isoformat_from_mtime_ns(source.mtime_ns),
+            session_id=todo_id,
+            metadata={
+                "status": as_optional_str(mapping.get("status")) or "",
+                "todo_id": todo_id or "",
+            },
+        )
+
+
+def parse_claude_team_file(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse Claude team config JSON as opt-in team instruction samples."""
+    payload = read_json_file(source.path)
+    if not isinstance(payload, dict):
+        return
+    mapping = t.cast("dict[str, object]", payload)
+    parts: list[str] = []
+    team_name = as_optional_str(mapping.get("name"))
+    description = as_optional_str(mapping.get("description"))
+    if team_name:
+        parts.append(f"Team: {team_name}")
+    if description:
+        parts.append(description)
+    members = mapping.get("members")
+    member_count = len(members) if isinstance(members, list) else 0
+    if isinstance(members, list):
+        for member in members:
+            if not isinstance(member, dict):
+                continue
+            member_mapping = t.cast("dict[str, object]", member)
+            prompt = as_optional_str(member_mapping.get("prompt"))
+            if not prompt:
+                continue
+            name = as_optional_str(member_mapping.get("name")) or "member"
+            parts.append(f"{name}: {prompt}")
+    text = "\n\n".join(parts)
+    if not text:
+        return
+    yield SearchRecord(
+        kind="history",
+        agent=source.agent,
+        store=source.store,
+        adapter_id=source.adapter_id,
+        path=source.path,
+        text=text,
+        title=team_name or source.path.parent.name,
+        role="team",
+        timestamp=_unix_millis_to_isoformat(mapping.get("createdAt"))
+        or isoformat_from_mtime_ns(source.mtime_ns),
+        session_id=as_optional_str(mapping.get("leadSessionId")),
+        metadata={"member_count": member_count},
     )
 
 

@@ -202,6 +202,24 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
             "Markdown files with YAML frontmatter; the auto-memory feature. Each file "
             "holds one fact/feedback/project/reference memory."
         ),
+        coverage=StoreCoverage.INSPECTABLE,
+        search_by_default=False,
+        version_strategies=(
+            VersionDetectionStrategy.SHAPE_INFERENCE,
+            VersionDetectionStrategy.CATALOG_OBSERVATION,
+        ),
+        discovery=(
+            DiscoverySpec(
+                store="claude.projects.memory",
+                adapter_id="claude.projects_memory_text.v1",
+                data_version="claude.projects.memory.markdown.v1",
+                path_kind="store_file",
+                source_kind="text",
+                home_subpath=("projects",),
+                glob="**/memory/**/*.md",
+                path_parts_excluded=(".git",),
+            ),
+        ),
     ),
     StoreDescriptor(
         agent="claude",
@@ -244,6 +262,23 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         observed_version="claude-code v2.1.143",
         observed_at=OBSERVED_AT,
         schema_notes="Persistent todo lists keyed by agent UUID.",
+        coverage=StoreCoverage.INSPECTABLE,
+        search_by_default=False,
+        version_strategies=(
+            VersionDetectionStrategy.SHAPE_INFERENCE,
+            VersionDetectionStrategy.CATALOG_OBSERVATION,
+        ),
+        discovery=(
+            DiscoverySpec(
+                store="claude.todos",
+                adapter_id="claude.todos_json.v1",
+                data_version="claude.todos.json.v1",
+                path_kind="store_file",
+                source_kind="json",
+                home_subpath=("todos",),
+                glob="*.json",
+            ),
+        ),
     ),
     StoreDescriptor(
         agent="claude",
@@ -255,6 +290,19 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         observed_version="claude-code v2.1.143",
         observed_at=OBSERVED_AT,
         schema_notes="Shell environment snapshots; rarely contains conversation text.",
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="claude.sessions",
+                adapter_id="claude.app_state_json_summary.v1",
+                data_version="claude.sessions.json.v1",
+                path_kind="store_file",
+                source_kind="json",
+                home_subpath=("sessions",),
+                glob="*.json",
+            ),
+        ),
     ),
     StoreDescriptor(
         agent="claude",
@@ -403,6 +451,16 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         schema_notes="Update and cleanup marker files; not prompt history.",
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="claude.update_state",
+                adapter_id="claude.app_state_json_summary.v1",
+                data_version="claude.update_state.json.v1",
+                path_kind="store_file",
+                source_kind="json",
+                files=(".last-update-result.json",),
+            ),
+        ),
     ),
     StoreDescriptor(
         agent="claude",
@@ -416,6 +474,16 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         schema_notes="Cached usage and statistics state; not conversation content.",
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="claude.stats_cache",
+                adapter_id="claude.app_state_json_summary.v1",
+                data_version="claude.stats_cache.json.v3",
+                path_kind="store_file",
+                source_kind="json",
+                files=("stats-cache.json",),
+            ),
+        ),
     ),
     StoreDescriptor(
         agent="claude",
@@ -510,6 +578,17 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         schema_notes="Context-mode counters and local app state, sometimes backed by SQLite.",
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="claude.context_mode",
+                adapter_id="claude.app_state_json_summary.v1",
+                data_version="claude.context_mode.json.v1",
+                path_kind="store_file",
+                source_kind="json",
+                home_subpath=("context-mode",),
+                glob="*.json",
+            ),
+        ),
     ),
     StoreDescriptor(
         agent="claude",
@@ -536,21 +615,81 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         observed_version="claude-code v2.1.157",
         observed_at=_CLAUDE_HISTORY_OBSERVED_AT,
         schema_notes="User and managed skill instructions loaded into Claude Code behavior.",
-        coverage=StoreCoverage.CATALOG_ONLY,
+        coverage=StoreCoverage.INSPECTABLE,
         search_by_default=False,
+        version_strategies=(
+            VersionDetectionStrategy.SHAPE_INFERENCE,
+            VersionDetectionStrategy.CATALOG_OBSERVATION,
+        ),
+        discovery=(
+            DiscoverySpec(
+                store="claude.skills",
+                adapter_id="claude.skills_text.v1",
+                data_version="claude.skills.markdown.v1",
+                path_kind="store_file",
+                source_kind="text",
+                home_subpath=("skills",),
+                glob="*.md",
+                path_parts_excluded=(".git",),
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="claude",
+        store_id="claude.commands",
+        role=StoreRole.INSTRUCTION,
+        format=StoreFormat.TEXT,
+        path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/commands/",
+        env_overrides=("CLAUDE_CONFIG_DIR",),
+        observed_version="claude-code v2.1.157",
+        observed_at=_CLAUDE_HISTORY_OBSERVED_AT,
+        schema_notes="Legacy custom slash-command Markdown loaded through the skill loader.",
+        coverage=StoreCoverage.INSPECTABLE,
+        search_by_default=False,
+        version_strategies=(
+            VersionDetectionStrategy.SHAPE_INFERENCE,
+            VersionDetectionStrategy.CATALOG_OBSERVATION,
+        ),
+        discovery=(
+            DiscoverySpec(
+                store="claude.commands",
+                adapter_id="claude.commands_text.v1",
+                data_version="claude.commands.markdown.v1",
+                path_kind="store_file",
+                source_kind="text",
+                home_subpath=("commands",),
+                glob="*.md",
+                path_parts_excluded=(".git",),
+            ),
+        ),
     ),
     StoreDescriptor(
         agent="claude",
         store_id="claude.teams",
         role=StoreRole.INSTRUCTION,
-        format=StoreFormat.TEXT,
+        format=StoreFormat.JSON_OBJECT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/teams/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
         observed_version="claude-code v2.1.157",
         observed_at=_CLAUDE_HISTORY_OBSERVED_AT,
-        schema_notes="Team-provided instruction bundles under the Claude config root.",
-        coverage=StoreCoverage.CATALOG_ONLY,
+        schema_notes="Team config JSON with member prompts and coordination metadata.",
+        coverage=StoreCoverage.INSPECTABLE,
         search_by_default=False,
+        version_strategies=(
+            VersionDetectionStrategy.SHAPE_INFERENCE,
+            VersionDetectionStrategy.CATALOG_OBSERVATION,
+        ),
+        discovery=(
+            DiscoverySpec(
+                store="claude.teams",
+                adapter_id="claude.teams_json.v1",
+                data_version="claude.teams.config_json.v1",
+                path_kind="store_file",
+                source_kind="json",
+                home_subpath=("teams",),
+                glob="config.json",
+            ),
+        ),
     ),
     StoreDescriptor(
         agent="claude",
@@ -577,6 +716,17 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         schema_notes="IDE integration state and bridge metadata.",
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="claude.ide",
+                adapter_id="claude.app_state_json_summary.v1",
+                data_version="claude.ide.json.v1",
+                path_kind="store_file",
+                source_kind="json",
+                home_subpath=("ide",),
+                glob="*.json",
+            ),
+        ),
     ),
     StoreDescriptor(
         agent="claude",
@@ -1192,6 +1342,16 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         ),
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="codex.config",
+                adapter_id="codex.config_toml.v1",
+                data_version="codex.config.toml.v1",
+                path_kind="store_file",
+                source_kind="text",
+                files=("config.toml",),
+            ),
+        ),
     ),
     StoreDescriptor(
         agent="codex",
@@ -1205,6 +1365,24 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         schema_notes="Historical config backups. Catalogued separately from active config.",
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="codex.config_backups",
+                adapter_id="codex.config_backup_toml.v1",
+                data_version="codex.config_backup.toml.v1",
+                path_kind="store_file",
+                source_kind="text",
+                glob="config.toml.bak*",
+            ),
+            DiscoverySpec(
+                store="codex.config_backups",
+                adapter_id="codex.config_backup_toml.v1",
+                data_version="codex.config_backup.toml.v1",
+                path_kind="store_file",
+                source_kind="text",
+                glob="config.toml.backup-*",
+            ),
+        ),
     ),
     StoreDescriptor(
         agent="codex",
@@ -1244,6 +1422,16 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         schema_notes="Update-check cache metadata; not prompt history.",
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="codex.update_check",
+                adapter_id="codex.app_state_json_summary.v1",
+                data_version="codex.update_check.json.v1",
+                path_kind="store_file",
+                source_kind="json",
+                files=("update-check.json",),
+            ),
+        ),
     ),
     StoreDescriptor(
         agent="codex",
@@ -1257,6 +1445,16 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         schema_notes="Local app-version cache used as an inventory hint.",
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="codex.version_file",
+                adapter_id="codex.app_state_json_summary.v1",
+                data_version="codex.version_file.json.v1",
+                path_kind="store_file",
+                source_kind="json",
+                files=("version.json",),
+            ),
+        ),
     ),
     StoreDescriptor(
         agent="codex",
@@ -1283,6 +1481,16 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         schema_notes="Cached model metadata: client version, ETag, fetch time, and models.",
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="codex.model_cache",
+                adapter_id="codex.app_state_json_summary.v1",
+                data_version="codex.model_cache.json.v1",
+                path_kind="store_file",
+                source_kind="json",
+                files=("models_cache.json",),
+            ),
+        ),
     ),
     StoreDescriptor(
         agent="codex",
@@ -1296,6 +1504,16 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         schema_notes="Small app flags and migration markers.",
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="codex.internal_storage",
+                adapter_id="codex.app_state_json_summary.v1",
+                data_version="codex.internal_storage.json.v1",
+                path_kind="store_file",
+                source_kind="json",
+                files=("internal_storage.json",),
+            ),
+        ),
     ),
     StoreDescriptor(
         agent="codex",
@@ -1307,8 +1525,57 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
         observed_at=OBSERVED_AT,
         schema_notes="Installed plugin bundles, commands, skills, and cached metadata.",
-        coverage=StoreCoverage.CATALOG_ONLY,
+        coverage=StoreCoverage.INSPECTABLE,
         search_by_default=False,
+        version_strategies=(
+            VersionDetectionStrategy.SHAPE_INFERENCE,
+            VersionDetectionStrategy.CATALOG_OBSERVATION,
+        ),
+        discovery=(
+            DiscoverySpec(
+                store="codex.plugins",
+                adapter_id="codex.plugin_manifest_json.v1",
+                data_version="codex.plugin_manifest.json.v1",
+                path_kind="store_file",
+                source_kind="json",
+                home_subpath=("plugins",),
+                glob="plugin.json",
+                path_parts_excluded=(".git",),
+            ),
+            DiscoverySpec(
+                store="codex.plugins",
+                adapter_id="codex.plugin_instruction_text.v1",
+                data_version="codex.plugin_instruction.markdown.v1",
+                path_kind="store_file",
+                source_kind="text",
+                home_subpath=("plugins",),
+                glob="*.md",
+                path_parts_required=("commands",),
+                path_parts_excluded=(".git",),
+            ),
+            DiscoverySpec(
+                store="codex.plugins",
+                adapter_id="codex.plugin_instruction_text.v1",
+                data_version="codex.plugin_instruction.markdown.v1",
+                path_kind="store_file",
+                source_kind="text",
+                home_subpath=("plugins",),
+                glob="*.md",
+                path_parts_required=("agents",),
+                path_parts_excluded=(".git",),
+            ),
+            DiscoverySpec(
+                store="codex.plugins",
+                adapter_id="codex.plugin_instruction_text.v1",
+                data_version="codex.plugin_instruction.markdown.v1",
+                path_kind="store_file",
+                source_kind="text",
+                home_subpath=("plugins",),
+                glob="*.md",
+                path_parts_required=("skills",),
+                path_parts_excluded=(".git",),
+            ),
+        ),
     ),
     StoreDescriptor(
         agent="codex",
@@ -1320,8 +1587,24 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
         observed_at=OBSERVED_AT,
         schema_notes="User-level Codex skill instructions.",
-        coverage=StoreCoverage.CATALOG_ONLY,
+        coverage=StoreCoverage.INSPECTABLE,
         search_by_default=False,
+        version_strategies=(
+            VersionDetectionStrategy.SHAPE_INFERENCE,
+            VersionDetectionStrategy.CATALOG_OBSERVATION,
+        ),
+        discovery=(
+            DiscoverySpec(
+                store="codex.skills",
+                adapter_id="codex.skills_text.v1",
+                data_version="codex.skills.markdown.v1",
+                path_kind="store_file",
+                source_kind="text",
+                home_subpath=("skills",),
+                glob="*.md",
+                path_parts_excluded=(".git",),
+            ),
+        ),
     ),
     StoreDescriptor(
         agent="codex",
@@ -1333,8 +1616,34 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
         observed_at=OBSERVED_AT,
         schema_notes="User-defined rule files that can affect agent behavior.",
-        coverage=StoreCoverage.CATALOG_ONLY,
+        coverage=StoreCoverage.INSPECTABLE,
         search_by_default=False,
+        version_strategies=(
+            VersionDetectionStrategy.SHAPE_INFERENCE,
+            VersionDetectionStrategy.CATALOG_OBSERVATION,
+        ),
+        discovery=(
+            DiscoverySpec(
+                store="codex.rules",
+                adapter_id="codex.rules_text.v1",
+                data_version="codex.rules.text.v1",
+                path_kind="store_file",
+                source_kind="text",
+                home_subpath=("rules",),
+                glob="*.rules",
+                path_parts_excluded=(".git",),
+            ),
+            DiscoverySpec(
+                store="codex.rules",
+                adapter_id="codex.rules_text.v1",
+                data_version="codex.rules.markdown.v1",
+                path_kind="store_file",
+                source_kind="text",
+                home_subpath=("rules",),
+                glob="*.md",
+                path_parts_excluded=(".git",),
+            ),
+        ),
     ),
     StoreDescriptor(
         agent="codex",
@@ -1402,6 +1711,17 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         schema_notes="Process-manager state for background jobs.",
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="codex.process_manager",
+                adapter_id="codex.app_state_json_summary.v1",
+                data_version="codex.process_manager.json.v1",
+                path_kind="store_file",
+                source_kind="json",
+                home_subpath=("process_manager",),
+                glob="*.json",
+            ),
+        ),
     ),
     StoreDescriptor(
         agent="codex",
@@ -1789,7 +2109,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
 
 
 CATALOG = StoreCatalog(
-    catalog_version=7,
+    catalog_version=8,
     captured_at=_CLAUDE_HISTORY_OBSERVED_AT,
     stores=(
         *_CLAUDE_STORES,
