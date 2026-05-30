@@ -161,6 +161,8 @@ ITER_SOURCE_RECORD_ADAPTERS: frozenset[str] = frozenset(
         "codex.skills_text.v1",
         "codex.state_sqlite.v1",
         "cursor_cli.ai_tracking_sqlite.v1",
+        "cursor_cli.chats_protobuf.v1",
+        "cursor_cli.prompt_history_json.v1",
         "cursor_cli.transcripts_jsonl.v1",
         "cursor_ide.state_vscdb_legacy.v1",
         "cursor_ide.state_vscdb_modern.v1",
@@ -3163,6 +3165,15 @@ def discover_cursor_cli_sources(
     )
 
 
+def _cursor_ide_workspace_root(home: pathlib.Path) -> pathlib.Path:
+    """Resolve the Cursor IDE ``workspaceStorage`` directory for this platform."""
+    if sys.platform == "darwin":
+        return home / "Library" / "Application Support" / "Cursor" / "User" / "workspaceStorage"
+    if sys.platform == "win32":
+        return home / "AppData" / "Roaming" / "Cursor" / "User" / "workspaceStorage"
+    return home / ".config" / "Cursor" / "User" / "workspaceStorage"
+
+
 def discover_cursor_ide_sources(
     home: pathlib.Path,
     backends: BackendSelection,
@@ -3171,15 +3182,21 @@ def discover_cursor_ide_sources(
 ) -> list[SourceHandle]:
     """Discover Cursor IDE (desktop app) sources.
 
-    Covers the VS Code-style ``state.vscdb`` databases — the
-    platform-specific ``globalStorage`` location and the legacy
-    ``~/.cursor/state.vscdb`` glob. Driven entirely by the
-    ``cursor-ide.*`` catalogue rows.
+    Covers the VS Code-style ``state.vscdb`` databases: the
+    platform-specific ``globalStorage`` location, the legacy
+    ``~/.cursor/state.vscdb`` glob, and the per-workspace
+    ``workspaceStorage/<hash>/state.vscdb`` databases resolved through the
+    ``ide_workspace`` root. Driven entirely by the ``cursor-ide.*``
+    catalogue rows.
     """
+    roots: dict[str, DiscoveryRoot] = {
+        "default": home,
+        "ide_workspace": _cursor_ide_workspace_root(home),
+    }
     return discover_from_catalog(
         home,
         "cursor-ide",
-        home,
+        roots,
         backends,
         include_non_default=include_non_default,
     )
@@ -3738,6 +3755,12 @@ def iter_source_records(
         return
     if source.adapter_id == "cursor_cli.transcripts_jsonl.v1":
         yield from parse_cursor_cli_transcript(source)
+        return
+    if source.adapter_id == "cursor_cli.prompt_history_json.v1":
+        yield from parse_cursor_prompt_history(source)
+        return
+    if source.adapter_id == "cursor_cli.chats_protobuf.v1":
+        yield from parse_cursor_cli_chats_db(source)
         return
     if source.adapter_id == "gemini.tmp_chats_jsonl.v1":
         yield from parse_gemini_chat_file(source)
@@ -5171,6 +5194,230 @@ def parse_cursor_ai_tracking_db(
         connection.close()
 
 
+def parse_cursor_prompt_history(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse a Cursor CLI ``prompt_history.json`` file.
+
+    The file is a flat JSON array of strings — one entry per prompt the
+    user typed into ``cursor-agent``, oldest first. It is the CLI's
+    up-arrow recall buffer, giving Cursor the same prompt-history store
+    the ``claude``/``codex``/``grok`` backends already expose. The file
+    carries no per-entry timestamps, so the file mtime is used as a
+    shared fallback.
+    """
+    payload = read_json_file(source.path)
+    if not isinstance(payload, list):
+        return
+    timestamp = isoformat_from_mtime_ns(source.mtime_ns)
+    seen: set[str] = set()
+    for entry in payload:
+        prompt = as_optional_str(entry)
+        if prompt is None:
+            continue
+        prompt = prompt.strip()
+        if not prompt or prompt in seen:
+            continue
+        seen.add(prompt)
+        yield SearchRecord(
+            kind="history",
+            agent=source.agent,
+            store=source.store,
+            adapter_id=source.adapter_id,
+            path=source.path,
+            text=prompt,
+            title="Cursor CLI prompt history",
+            role="user",
+            timestamp=timestamp,
+        )
+
+
+_CURSOR_CHATS_MIN_TEXT = 16
+"""Shortest decoded protobuf run treated as Cursor CLI chat text.
+
+Long enough to drop field junk (model ids, UUIDs, time zones) while
+keeping real prompts and assistant turns. Content-addressed child
+hashes are stored as raw bytes, so they fail the UTF-8 gate before this
+length check ever applies.
+"""
+
+
+def _read_varint(data: bytes, start: int) -> tuple[int | None, int]:
+    """Decode a base-128 varint.
+
+    Returns ``(value, next_index)``; ``value`` is ``None`` when the bytes
+    run out mid-varint or the value would exceed 64 bits.
+    """
+    result = 0
+    shift = 0
+    index = start
+    length = len(data)
+    while index < length:
+        byte = data[index]
+        index += 1
+        result |= (byte & 0x7F) << shift
+        if not byte & 0x80:
+            return result, index
+        shift += 7
+        if shift > 63:
+            return None, index
+    return None, index
+
+
+def _looks_like_protobuf_message(chunk: bytes) -> bool:
+    """Guess whether a length-delimited chunk is a nested message.
+
+    A nested message begins with a tag byte: a low value whose lowest
+    three bits are a valid wire type. Real UTF-8 text begins with a
+    printable byte (``>= 0x20``) or a multi-byte lead, so the two rarely
+    collide.
+    """
+    if not chunk:
+        return False
+    first = chunk[0]
+    return first < 0x20 and (first & 0x07) in (0, 1, 2, 5)
+
+
+def _decode_protobuf_text(chunk: bytes, min_length: int) -> str | None:
+    """Return ``chunk`` as text when it is a plausible UTF-8 string."""
+    if len(chunk) < min_length:
+        return None
+    try:
+        text = chunk.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    printable = sum(1 for char in text if char.isprintable() or char in "\n\t")
+    if printable / len(text) < 0.85:
+        return None
+    return text
+
+
+def iter_protobuf_text_fields(
+    data: bytes,
+    *,
+    min_length: int = 2,
+    _depth: int = 0,
+) -> cabc.Iterator[str]:
+    r"""Yield readable UTF-8 runs from an unknown protobuf message.
+
+    Walks the protobuf wire format without a schema: each
+    length-delimited (wire type 2) field is decoded as UTF-8 and yielded
+    when it looks like text, otherwise recursed into as a nested message.
+    A best-effort extractor for opaque protobuf blobs — such as the
+    Cursor CLI chat ``store.db`` — whose schema is unofficial and may
+    drift. It never raises on malformed input; unparseable bytes simply
+    end the walk.
+
+    Parameters
+    ----------
+    data : bytes
+        Raw protobuf message bytes.
+    min_length : int
+        Shortest decoded string to yield.
+
+    Yields
+    ------
+    str
+        Each plausible text run, in wire order.
+
+    Examples
+    --------
+    >>> list(iter_protobuf_text_fields(b"\x0a\x05hello"))
+    ['hello']
+    >>> list(iter_protobuf_text_fields(b"\x0a\x07\x0a\x05world"))
+    ['world']
+    >>> list(iter_protobuf_text_fields(b"\x08\x96\x01"))
+    []
+    """
+    if _depth > 12:
+        return
+    index = 0
+    length = len(data)
+    while index < length:
+        tag, index = _read_varint(data, index)
+        if tag is None:
+            return
+        wire_type = tag & 0x07
+        if wire_type == 0:
+            _, index = _read_varint(data, index)
+        elif wire_type == 2:
+            size, index = _read_varint(data, index)
+            if size is None or index + size > length:
+                return
+            chunk = data[index : index + size]
+            index += size
+            if _looks_like_protobuf_message(chunk):
+                yield from iter_protobuf_text_fields(
+                    chunk, min_length=min_length, _depth=_depth + 1
+                )
+                continue
+            text = _decode_protobuf_text(chunk, min_length)
+            if text is not None:
+                yield text
+            else:
+                yield from iter_protobuf_text_fields(
+                    chunk, min_length=min_length, _depth=_depth + 1
+                )
+        elif wire_type == 5:
+            index += 4
+        elif wire_type == 1:
+            index += 8
+        else:
+            return
+
+
+def parse_cursor_cli_chats_db(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Best-effort parse of a Cursor CLI ``chats/*/store.db`` blob store.
+
+    The CLI persists each session as content-addressed protobuf blobs in
+    a ``blobs(id, data)`` table, rooted by ``meta``'s ``latestRootBlobId``.
+    Cursor publishes no schema, so agentgrep walks the protobuf wire
+    format generically (:func:`iter_protobuf_text_fields`) and surfaces
+    the readable UTF-8 runs it finds. The adapter is versioned by
+    observation date (``cursor_cli.chats_protobuf.v1``) because the layout
+    is unofficial and may shift. The session UUID comes from the parent
+    directory name.
+    """
+    session_uuid = source.path.parent.name
+    timestamp = isoformat_from_mtime_ns(source.mtime_ns)
+    connection = open_readonly_sqlite(source.path)
+    try:
+        if "blobs" not in sqlite_table_names(connection):
+            return
+        rows = t.cast(
+            "cabc.Iterable[tuple[object]]",
+            connection.execute("SELECT data FROM blobs"),
+        )
+        seen: set[str] = set()
+        for (blob,) in rows:
+            if not isinstance(blob, (bytes, bytearray)):
+                continue
+            for text in iter_protobuf_text_fields(bytes(blob), min_length=_CURSOR_CHATS_MIN_TEXT):
+                normalized = text.strip()
+                if len(normalized) < _CURSOR_CHATS_MIN_TEXT or normalized in seen:
+                    continue
+                seen.add(normalized)
+                yield SearchRecord(
+                    kind="history",
+                    agent=source.agent,
+                    store=source.store,
+                    adapter_id=source.adapter_id,
+                    path=source.path,
+                    text=normalized,
+                    title="Cursor CLI chat",
+                    role=None,
+                    timestamp=timestamp,
+                    session_id=session_uuid,
+                    conversation_id=session_uuid,
+                )
+    except sqlite3.DatabaseError:
+        return
+    finally:
+        connection.close()
+
+
 def parse_cursor_state_db(
     source: SourceHandle,
 ) -> cabc.Iterator[SearchRecord]:
@@ -5191,11 +5438,15 @@ def parse_cursor_state_db(
                 parsed = parse_embedded_json(decoded)
                 if parsed is None:
                     continue
-                for candidate in iter_message_candidates(
-                    parsed,
-                    fallback_title=key,
-                    fallback_conversation_id=key,
-                ):
+                candidates = itertools.chain(
+                    iter_message_candidates(
+                        parsed,
+                        fallback_title=key,
+                        fallback_conversation_id=key,
+                    ),
+                    iter_cursor_prompt_candidates(parsed, fallback_conversation_id=key),
+                )
+                for candidate in candidates:
                     entry_key = (
                         candidate.role,
                         candidate.text,
@@ -5529,6 +5780,47 @@ def iter_message_candidates(
                 fallback_title=fallback_title,
                 fallback_conversation_id=fallback_conversation_id,
             )
+
+
+def iter_cursor_prompt_candidates(
+    value: JSONValue | None,
+    *,
+    fallback_conversation_id: str | None = None,
+) -> cabc.Iterator[MessageCandidate]:
+    """Yield user-prompt candidates from Cursor ``aiService.prompts`` data.
+
+    Cursor stores typed prompts as ``{"prompts": [{"text": ...,
+    "commandType": int}]}`` (or a bare list of such entries). These carry
+    no ``role`` field, so :func:`iter_message_candidates` skips them even
+    though every entry is a user prompt. This recovers them for both the
+    global and per-workspace ``state.vscdb`` stores.
+    """
+    entries: list[object] = []
+    if isinstance(value, dict):
+        prompts = t.cast("dict[str, object]", value).get("prompts")
+        if isinstance(prompts, list):
+            entries = list(t.cast("list[object]", prompts))
+    elif isinstance(value, list):
+        entries = [
+            item
+            for item in t.cast("list[object]", value)
+            if isinstance(item, dict) and "commandType" in t.cast("dict[str, object]", item)
+        ]
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        text = as_optional_str(t.cast("dict[str, object]", entry).get("text"))
+        if not text:
+            continue
+        yield MessageCandidate(
+            role="user",
+            text=text,
+            title=None,
+            timestamp=None,
+            model=None,
+            session_id=None,
+            conversation_id=fallback_conversation_id,
+        )
 
 
 def extract_role(mapping: dict[str, object]) -> str | None:

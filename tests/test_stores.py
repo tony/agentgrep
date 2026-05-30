@@ -701,6 +701,7 @@ PRIMARY_FIXTURES: tuple[tuple[str, str], ...] = (
     ("gemini.tmp.logs", "logs.json"),
     ("cursor-cli.transcripts", "example.jsonl"),
     ("cursor-cli.plans", "example.plan.md"),
+    ("cursor-cli.prompt_history", "prompt_history.json"),
     ("grok.prompt_history", "prompt_history.jsonl"),
     ("grok.sessions", "chat_history.jsonl"),
 )

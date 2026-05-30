@@ -32,6 +32,7 @@ from agentgrep.stores import (
 OBSERVED_AT = datetime.date(2026, 5, 17)
 _GROK_OBSERVED_AT = datetime.date(2026, 5, 25)
 _CLAUDE_HISTORY_OBSERVED_AT = datetime.date(2026, 5, 29)
+_CURSOR_CONFIG_OBSERVED_AT = datetime.date(2026, 5, 30)
 
 
 def gemini_project_hash(project_root: pathlib.Path) -> str:
@@ -1047,7 +1048,7 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
             '{"role":"user","message":{"content":'
             '[{"type":"text","text":"<user_query>...</user_query>"}]}}'
         ),
-        distinguishes_from=("cursor-ide.state_vscdb",),
+        distinguishes_from=("cursor-ide.state_vscdb", "cursor-cli.chats"),
         search_by_default=True,
         search_notes=(
             "Parsed by agentgrep via `parse_cursor_cli_transcript` "
@@ -1201,6 +1202,80 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
             ),
         ),
     ),
+    StoreDescriptor(
+        agent="cursor-cli",
+        store_id="cursor-cli.prompt_history",
+        role=StoreRole.PROMPT_HISTORY,
+        format=StoreFormat.JSON_ARRAY,
+        path_pattern="${HOME}/.config/cursor/prompt_history.json",
+        observed_version="cursor-agent 2026.05.27-fe9a6e2",
+        observed_at=_CURSOR_CONFIG_OBSERVED_AT,
+        schema_notes=(
+            "Flat JSON array of strings — one entry per prompt typed into "
+            "`cursor-agent`, oldest first. The CLI's up-arrow recall buffer; "
+            "no per-entry timestamps, so agentgrep stamps records with the "
+            "file mtime. Lives under the lowercase `~/.config/cursor` home, "
+            "separate from the `~/.cursor` transcript tree."
+        ),
+        sample_record='["continue", "run the tests", "<redacted>"]',
+        distinguishes_from=("cursor-cli.transcripts", "cursor-cli.chats"),
+        search_by_default=True,
+        search_notes=(
+            "Cursor's prompt-history store, parity with `claude.history` / "
+            "`codex.history` / `grok.prompt_history`. Parsed via "
+            "`parse_cursor_prompt_history` (`cursor_cli.prompt_history_json.v1`)."
+        ),
+        discovery=(
+            DiscoverySpec(
+                store="cursor-cli.prompt_history",
+                adapter_id="cursor_cli.prompt_history_json.v1",
+                path_kind="history_file",
+                source_kind="json",
+                home_subpath=(".config", "cursor"),
+                files=("prompt_history.json",),
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="cursor-cli",
+        store_id="cursor-cli.chats",
+        role=StoreRole.PRIMARY_CHAT,
+        format=StoreFormat.SQLITE,
+        path_pattern="${HOME}/.config/cursor/chats/<project_hash>/<session_uuid>/store.db",
+        observed_version="cursor-agent 2026.05.27-fe9a6e2",
+        observed_at=_CURSOR_CONFIG_OBSERVED_AT,
+        version_strategies=(VersionDetectionStrategy.CATALOG_OBSERVATION,),
+        upstream_ref="agentgrep.parse_cursor_cli_chats_db / iter_protobuf_text_fields",
+        schema_notes=(
+            "Per-session SQLite with `meta(key, value)` and `blobs(id, data)` "
+            "tables. `meta` holds session metadata (`agentId`, "
+            "`latestRootBlobId`); `blobs` holds content-addressed protobuf "
+            "messages forming a Merkle graph from the root blob. Cursor "
+            "publishes no schema, so agentgrep walks the protobuf wire format "
+            "generically and surfaces readable UTF-8 runs — best-effort and "
+            "date-versioned, not an official format."
+        ),
+        distinguishes_from=("cursor-cli.transcripts",),
+        coverage=StoreCoverage.INSPECTABLE,
+        search_by_default=False,
+        search_notes=(
+            "Opt-in (inspectable), not searched by default: the protobuf "
+            "extraction is best-effort and overlaps the cleaner "
+            "`cursor-cli.transcripts` JSONL. Parsed via "
+            "`parse_cursor_cli_chats_db` (`cursor_cli.chats_protobuf.v1`) when "
+            "the store is explicitly included."
+        ),
+        discovery=(
+            DiscoverySpec(
+                store="cursor-cli.chats",
+                adapter_id="cursor_cli.chats_protobuf.v1",
+                path_kind="sqlite_db",
+                source_kind="sqlite",
+                home_subpath=(".config", "cursor", "chats"),
+                glob="*/*/store.db",
+            ),
+        ),
+    ),
 )
 
 _CURSOR_IDE_STORES: tuple[StoreDescriptor, ...] = (
@@ -1227,7 +1302,7 @@ _CURSOR_IDE_STORES: tuple[StoreDescriptor, ...] = (
             "ItemTable row: key='workbench.panel.aichat.view...prompts', "
             'value=\'{"prompts":[{"text":"<redacted>","commandType":1}]}\''
         ),
-        distinguishes_from=("cursor-cli.transcripts",),
+        distinguishes_from=("cursor-cli.transcripts", "cursor-ide.workspace_state"),
         search_notes=(
             "Cursor IDE store, parsed by the current `cursor_ide.state_vscdb_modern.v1` "
             "adapter. Not the same as the Cursor CLI agent transcripts."
@@ -1252,6 +1327,46 @@ _CURSOR_IDE_STORES: tuple[StoreDescriptor, ...] = (
                 source_kind="sqlite",
                 home_subpath=(".cursor",),
                 glob="state.vscdb",
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="cursor-ide",
+        store_id="cursor-ide.workspace_state",
+        role=StoreRole.PRIMARY_CHAT,
+        format=StoreFormat.SQLITE,
+        path_pattern="${HOME}/.config/Cursor/User/workspaceStorage/<hash>/state.vscdb",
+        platform_variants={
+            "darwin": (
+                "${HOME}/Library/Application Support/Cursor/User/workspaceStorage/"
+                "<hash>/state.vscdb"
+            ),
+            "win32": "%APPDATA%/Cursor/User/workspaceStorage/<hash>/state.vscdb",
+        },
+        observed_version="Cursor IDE (current observed paths)",
+        observed_at=_CURSOR_CONFIG_OBSERVED_AT,
+        upstream_ref=("agentgrep.parse_cursor_state_db / CURSOR_STATE_TOKENS"),
+        schema_notes=(
+            "Per-workspace `state.vscdb`, one per opened project under "
+            "`workspaceStorage/<hash>/`. Same `ItemTable` shape as the global "
+            "store; the `aiService.prompts` key holds that workspace's prompt "
+            "history. Reuses the `cursor_ide.state_vscdb_modern.v1` adapter."
+        ),
+        distinguishes_from=("cursor-ide.state_vscdb",),
+        search_notes=(
+            "Per-workspace IDE history, complementing the global "
+            "`cursor-ide.state_vscdb`. Parsed by the shared "
+            "`cursor_ide.state_vscdb_modern.v1` adapter."
+        ),
+        search_by_default=True,
+        discovery=(
+            DiscoverySpec(
+                store="cursor-ide.workspace_state",
+                adapter_id="cursor_ide.state_vscdb_modern.v1",
+                path_kind="sqlite_db",
+                source_kind="sqlite",
+                glob="*/state.vscdb",
+                root_key="ide_workspace",
             ),
         ),
     ),
@@ -2642,7 +2757,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
 
 
 CATALOG = StoreCatalog(
-    catalog_version=10,
+    catalog_version=11,
     captured_at=_CLAUDE_HISTORY_OBSERVED_AT,
     stores=(
         *_CLAUDE_STORES,
