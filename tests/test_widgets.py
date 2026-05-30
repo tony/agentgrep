@@ -124,3 +124,30 @@ def test_cli_install_panel_matrix() -> None:
         assert "<COOLDOWN_DATE>" not in bodies["days"]
         assert "--uploaded-prior-to" not in bodies["days"]
         assert "--pip-args" not in bodies["days"]
+
+
+def test_backend_index_renders_backend_shortcut_grid(tmp_path: pathlib.Path) -> None:
+    """The backend index links directly to each backend page near the top."""
+    repo = pathlib.Path(__file__).resolve().parents[1]
+    docs = repo / "docs"
+    _ = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "sphinx",
+            "-b",
+            "dirhtml",
+            "-q",
+            str(docs),
+            str(tmp_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    backend_index = (tmp_path / "backends" / "index.html").read_text(encoding="utf-8")
+    assert "Backend pages" in backend_index
+    assert backend_index.index("Backend pages") < backend_index.index("Coverage levels")
+    for backend in ("codex", "claude", "cursor", "gemini", "grok"):
+        assert f'href="{backend}/"' in backend_index
