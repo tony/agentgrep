@@ -9,14 +9,8 @@ Base path: `~/.gemini` (env override: `GEMINI_CLI_HOME`).
 
 ## Stores
 
-| Store ID | Role | Format | Searched | Adapter ID |
-|----------|------|--------|:--------:|------------|
-| `gemini.tmp.chats` | Primary Chat | JSONL | ✓ | `gemini.tmp_chats_jsonl.v1` |
-| `gemini.tmp.chats_legacy` | Supplementary Chat | JSON | ✓ | `gemini.tmp_chats_legacy_json.v1` |
-| `gemini.tmp.logs` | Prompt History | JSON Array | ✓ | `gemini.tmp_logs_json.v1` |
-| `gemini.tmp.checkpoints` | Supplementary Chat | JSON | | |
-| `gemini.skills` | App State | Markdown | | |
-| `gemini.settings` | App State | JSON | | |
+```{storage:agent} gemini
+```
 
 ## Record schemas
 

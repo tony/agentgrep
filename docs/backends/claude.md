@@ -17,43 +17,8 @@ searched by default; `private` stores are intentionally not
 enumerated. Some catalog stores expose safe structural samples for
 explicit inspection.
 
-| Store ID | Role | Format | Coverage | Adapter ID |
-|----------|------|--------|----------|------------|
-| `claude.history` | Prompt History | JSONL | default | `claude.history_jsonl.v1` |
-| `claude.projects.session` | Primary Chat | JSONL | default | `claude.projects_jsonl.v1` |
-| `claude.projects.subagent` | Supplementary Chat | JSONL | default | `claude.projects_jsonl.v1` |
-| `claude.store_db` | App State | SQLite | inspectable | `claude.store_sqlite.v1` |
-| `claude.projects.session_memory` | Persistent Memory | Text | inspectable | `claude.session_memory_text.v1` |
-| `claude.tasks` | Todo | JSON | inspectable | `claude.tasks_json.v1` |
-| `claude.plans` | Plan | Text | inspectable | `claude.plans_text.v1` |
-| `claude.settings` | App State | JSON | catalog | `claude.settings_json.v1` |
-| `claude.credentials` | App State | JSON | private | |
-| `claude.update_state` | App State | JSON | catalog | `claude.app_state_json_summary.v1` |
-| `claude.stats_cache` | Cache | JSON | catalog | `claude.app_state_json_summary.v1` |
-| `claude.projects.memory` | Persistent Memory | Markdown | inspectable | `claude.projects_memory_text.v1` |
-| `claude.memory_files` | Persistent Memory | Text | inspectable | `claude.memory_text.v1` |
-| `claude.todos` | Todo | JSON | inspectable | `claude.todos_json.v1` |
-| `claude.sessions` | App State | JSON | catalog | `claude.app_state_json_summary.v1` |
-| `claude.context_mode` | App State | JSON / SQLite | catalog | `claude.app_state_json_summary.v1` |
-| `claude.ide` | App State | JSON | catalog | `claude.app_state_json_summary.v1` |
-| `claude.chrome` | App State | JSON | catalog | `claude.app_state_json_summary.v1` |
-| `claude.native_install` | App State | JSON | catalog | `claude.app_state_json_summary.v1` |
-| `claude.jobs` | App State | JSON | catalog | `claude.app_state_json_summary.v1` |
-| `claude.skills` | Instruction | Text | inspectable | `claude.skills_text.v1` |
-| `claude.commands` | Instruction | Text | inspectable | `claude.commands_text.v1` |
-| `claude.project_instructions` | Instruction | Text | inspectable | `claude.project_instruction_text.v1` |
-| `claude.teams` | Instruction | JSON | inspectable | `claude.teams_json.v1` |
-| `claude.debug_logs` | App State | Text | catalog | `claude.file_metadata_summary.v1` |
-| `claude.backups` | Cache | Opaque | catalog | |
-| `claude.generic_cache` | Cache | Opaque | catalog | |
-| `claude.paste_cache` | Cache | Opaque | catalog | |
-| `claude.image_cache` | Cache | Opaque | catalog | |
-| `claude.file_history` | Cache | Opaque | catalog | |
-| `claude.plugins_cache` | Cache / Instruction | Opaque / Text / JSON | inspectable | `claude.plugin_manifest_json.v1`, `claude.plugin_instruction_text.v1`, `claude.plugin_hooks_json.v1` |
-| `claude.shell_snapshots` | App State | Text | catalog | `claude.file_metadata_summary.v1` |
-| `claude.uploads` | Cache | Opaque | catalog | |
-| `claude.security_state` | App State | JSON | private | |
-| `claude.session_env` | App State | Opaque | private | |
+```{storage:agent} claude
+```
 
 ## Version detection
 

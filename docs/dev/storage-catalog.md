@@ -22,6 +22,11 @@ catalogue version; adapters pick the new metadata up automatically.
 :depth: 2
 ```
 
+## Catalog summary
+
+```{storage:catalog-summary}
+```
+
 ## Why a catalogue
 
 Three reasons we did not bake paths into the adapters:

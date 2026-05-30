@@ -10,19 +10,8 @@ Two distinct surfaces, both catalogued and searched:
 
 ## Stores
 
-| Store ID | Role | Format | Searched | Adapter ID |
-|----------|------|--------|:--------:|------------|
-| `cursor.cli.transcripts` | Primary Chat | JSONL | ✓ | `cursor.cli_jsonl.v1` |
-| `cursor.cli.subagent_transcripts` | Supplementary Chat | JSONL | ✓ | `cursor.cli_jsonl.v1` |
-| `cursor.ai_tracking` | Supplementary Chat | SQLite | ✓ | `cursor.ai_tracking_sqlite.v1` |
-| `cursor.ide.state_vscdb` | Primary Chat | SQLite | ✓ | `cursor.state_vscdb_modern.v1` |
-| `cursor.cli.repo_meta` | App State | JSON | | |
-| `cursor.cli.tools` | App State | JSON | | |
-| `cursor.cli.terminals` | App State | Opaque | | |
-| `cursor.cli.canvases` | App State | JSON | | |
-| `cursor.cli.plans` | Plan | Markdown | | |
-| `cursor.cli.state` | App State | JSON | | |
-| `cursor.cli.worktrees` | Source Tree | Opaque | | |
+```{storage:agent} cursor
+```
 
 ## Record schemas
 
