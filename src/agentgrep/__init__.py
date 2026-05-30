@@ -93,6 +93,7 @@ type JSONScalar = str | int | float | bool | None
 type JSONValue = JSONScalar | list[JSONValue] | dict[str, JSONValue]
 type SummaryRow = tuple[object, object, object, object, object, object, object, object]
 type KeyValueRow = tuple[object, object]
+type DiscoveryRoot = pathlib.Path | tuple[pathlib.Path, ...]
 
 AGENT_CHOICES: tuple[AgentName, ...] = ("codex", "claude", "cursor", "gemini", "grok")
 JSON_FILE_SUFFIXES: frozenset[str] = frozenset({".json", ".jsonl"})
@@ -111,7 +112,13 @@ ITER_SOURCE_RECORD_ADAPTERS: frozenset[str] = frozenset(
         "claude.history_jsonl.v1",
         "claude.app_state_json_summary.v1",
         "claude.commands_text.v1",
+        "claude.file_metadata_summary.v1",
+        "claude.memory_text.v1",
         "claude.plans_text.v1",
+        "claude.plugin_hooks_json.v1",
+        "claude.plugin_instruction_text.v1",
+        "claude.plugin_manifest_json.v1",
+        "claude.project_instruction_text.v1",
         "claude.projects_memory_text.v1",
         "claude.projects_jsonl.v1",
         "claude.session_memory_text.v1",
@@ -125,15 +132,21 @@ ITER_SOURCE_RECORD_ADAPTERS: frozenset[str] = frozenset(
         "codex.config_backup_toml.v1",
         "codex.config_toml.v1",
         "codex.external_imports_json.v1",
+        "codex.file_metadata_summary.v1",
         "codex.goals_sqlite.v1",
+        "codex.hooks_json.v1",
         "codex.history_json.v1",
         "codex.history_jsonl.v1",
         "codex.instructions_text.v1",
         "codex.logs_sqlite.v1",
         "codex.memories_sqlite.v1",
         "codex.memories_text.v1",
+        "codex.plugin_hooks_json.v1",
         "codex.plugin_instruction_text.v1",
         "codex.plugin_manifest_json.v1",
+        "codex.plugin_marketplace_json.v1",
+        "codex.project_config_toml.v1",
+        "codex.project_skill_text.v1",
         "codex.rules_text.v1",
         "codex.session_index_jsonl.v1",
         "codex.sessions_jsonl.v1",
@@ -2466,6 +2479,96 @@ def _json_mapping(path: pathlib.Path) -> dict[str, JSONValue] | None:
     return value if isinstance(value, dict) else None
 
 
+def _safe_project_root(value: object) -> pathlib.Path | None:
+    """Return a usable project root from session metadata."""
+    if not isinstance(value, str) or not value:
+        return None
+    path = pathlib.Path(value).expanduser()
+    if not path.is_absolute() or not path.is_dir():
+        return None
+    return path
+
+
+def _project_roots_from_jsonl_sessions(
+    session_root: pathlib.Path,
+    backends: BackendSelection,
+) -> tuple[pathlib.Path, ...]:
+    """Derive known project roots from session metadata JSONL files."""
+    if not session_root.exists():
+        return ()
+    roots: set[pathlib.Path] = set()
+    for path in list_files_matching(session_root, "*.jsonl", backends.find_tool):
+        if "subagents" in path.parts:
+            continue
+        for index, record in enumerate(iter_jsonl(path)):
+            if not isinstance(record, dict):
+                if index >= 31:
+                    break
+                continue
+            mapping = t.cast("dict[str, object]", record)
+            payload = mapping.get("payload")
+            candidates = [mapping.get("cwd"), mapping.get("project")]
+            if isinstance(payload, dict):
+                payload_mapping = t.cast("dict[str, object]", payload)
+                candidates.extend((payload_mapping.get("cwd"), payload_mapping.get("project")))
+            found_root = False
+            for candidate in candidates:
+                root = _safe_project_root(candidate)
+                if root is not None:
+                    roots.add(root)
+                    found_root = True
+                    break
+            if found_root or index >= 31:
+                break
+    return tuple(sorted(roots))
+
+
+def _codex_project_roots_from_legacy_sessions(
+    session_root: pathlib.Path,
+    backends: BackendSelection,
+) -> tuple[pathlib.Path, ...]:
+    """Derive known project roots from legacy Codex JSON session files."""
+    if not session_root.exists():
+        return ()
+    roots: set[pathlib.Path] = set()
+    for path in list_files_matching(session_root, "rollout-*.json", backends.find_tool):
+        payload = read_json_file(path)
+        if not isinstance(payload, dict):
+            continue
+        session = payload.get("session")
+        if not isinstance(session, dict):
+            continue
+        mapping = t.cast("dict[str, object]", session)
+        root = _safe_project_root(mapping.get("cwd") or mapping.get("project"))
+        if root is not None:
+            roots.add(root)
+    return tuple(sorted(roots))
+
+
+def _claude_project_roots(
+    root: pathlib.Path,
+    backends: BackendSelection,
+) -> tuple[pathlib.Path, ...]:
+    """Return project roots Claude Code has already referenced in transcripts."""
+    return _project_roots_from_jsonl_sessions(root / "projects", backends)
+
+
+def _codex_project_roots(
+    root: pathlib.Path,
+    backends: BackendSelection,
+) -> tuple[pathlib.Path, ...]:
+    """Return project roots Codex has already referenced in transcripts."""
+    session_root = root / "sessions"
+    return tuple(
+        sorted(
+            {
+                *_project_roots_from_jsonl_sessions(session_root, backends),
+                *_codex_project_roots_from_legacy_sessions(session_root, backends),
+            },
+        ),
+    )
+
+
 def _codex_client_version_from_cache(codex_root: pathlib.Path | None) -> str | None:
     """Return Codex's local client-version hint without spawning the CLI."""
     if codex_root is None:
@@ -2581,7 +2684,11 @@ def _codex_source_version_detection(
             confidence=VersionDetectionConfidence.MEDIUM,
             evidence="markdown memory file discovered under memories",
         )
-    elif source.adapter_id in {"codex.config_toml.v1", "codex.config_backup_toml.v1"}:
+    elif source.adapter_id in {
+        "codex.config_toml.v1",
+        "codex.config_backup_toml.v1",
+        "codex.project_config_toml.v1",
+    }:
         try:
             payload = tomllib.loads(source.path.read_text(encoding="utf-8"))
         except OSError, tomllib.TOMLDecodeError:
@@ -2615,7 +2722,22 @@ def _codex_source_version_detection(
                 evidence="plugin manifest JSON object keys observed",
             )
     elif source.adapter_id in {
+        "codex.hooks_json.v1",
+        "codex.plugin_hooks_json.v1",
+        "codex.plugin_marketplace_json.v1",
+    }:
+        record = _json_mapping(source.path)
+        if record is not None:
+            return SourceVersionDetection(
+                app_version=app_version,
+                data_version=spec.data_version,
+                strategy=VersionDetectionStrategy.SHAPE_INFERENCE,
+                confidence=VersionDetectionConfidence.MEDIUM,
+                evidence="JSON object keys observed for Codex hook or plugin metadata",
+            )
+    elif source.adapter_id in {
         "codex.plugin_instruction_text.v1",
+        "codex.project_skill_text.v1",
         "codex.rules_text.v1",
         "codex.skills_text.v1",
     }:
@@ -2624,7 +2746,15 @@ def _codex_source_version_detection(
             data_version=spec.data_version,
             strategy=VersionDetectionStrategy.SHAPE_INFERENCE,
             confidence=VersionDetectionConfidence.MEDIUM,
-            evidence="instruction text file discovered under Codex home",
+            evidence="instruction text file discovered for Codex",
+        )
+    elif source.adapter_id == "codex.file_metadata_summary.v1":
+        return SourceVersionDetection(
+            app_version=app_version,
+            data_version=spec.data_version,
+            strategy=VersionDetectionStrategy.SHAPE_INFERENCE,
+            confidence=VersionDetectionConfidence.LOW,
+            evidence="metadata-only raw state file observed",
         )
     elif source.source_kind == "sqlite" and spec.data_version is not None:
         match = re.fullmatch(r".+_([0-9]+)\.sqlite", source.path.name)
@@ -2729,8 +2859,25 @@ def _claude_source_version_detection(
                 evidence="app-state JSON object keys observed",
             )
     elif source.adapter_id in {
+        "claude.plugin_hooks_json.v1",
+        "claude.plugin_manifest_json.v1",
+    }:
+        record = _json_mapping(source.path)
+        if record is not None:
+            return SourceVersionDetection(
+                app_version=None,
+                data_version=spec.data_version,
+                strategy=VersionDetectionStrategy.SHAPE_INFERENCE,
+                confidence=VersionDetectionConfidence.MEDIUM,
+                evidence="plugin JSON object keys observed",
+            )
+    elif source.adapter_id in {
         "claude.commands_text.v1",
+        "claude.memory_text.v1",
+        "claude.plugin_instruction_text.v1",
+        "claude.project_instruction_text.v1",
         "claude.projects_memory_text.v1",
+        "claude.session_memory_text.v1",
         "claude.skills_text.v1",
     }:
         return SourceVersionDetection(
@@ -2738,7 +2885,15 @@ def _claude_source_version_detection(
             data_version=spec.data_version,
             strategy=VersionDetectionStrategy.SHAPE_INFERENCE,
             confidence=VersionDetectionConfidence.MEDIUM,
-            evidence="instruction or memory text file discovered under Claude config",
+            evidence="instruction or memory text file discovered for Claude",
+        )
+    elif source.adapter_id == "claude.file_metadata_summary.v1":
+        return SourceVersionDetection(
+            app_version=None,
+            data_version=spec.data_version,
+            strategy=VersionDetectionStrategy.SHAPE_INFERENCE,
+            confidence=VersionDetectionConfidence.LOW,
+            evidence="metadata-only raw state file observed",
         )
 
     return _catalog_version_detection(descriptor, spec)
@@ -2887,7 +3042,7 @@ def format_timestamp_tig(value: str | None) -> str:
 def discover_from_catalog(
     home: pathlib.Path,
     agent: AgentName,
-    base: pathlib.Path | dict[str, pathlib.Path],
+    base: pathlib.Path | dict[str, DiscoveryRoot],
     backends: BackendSelection,
     *,
     include_non_default: bool = False,
@@ -2895,8 +3050,9 @@ def discover_from_catalog(
     """Walk every catalogue row for ``agent`` and emit ``SourceHandle``s.
 
     Each row's :class:`agentgrep.stores.DiscoverySpec` entries drive
-    enumeration via :func:`handles_from_discovery`. Rows whose ``discovery``
-    tuple is empty are documentary-only and contribute no sources.
+    enumeration via :func:`handles_from_discovery`. Named roots may point to
+    one directory or a bounded tuple of known project directories. Rows whose
+    ``discovery`` tuple is empty are documentary-only and contribute no sources.
     ``DEFAULT_SEARCH`` rows are emitted by default. Inventory callers can
     set ``include_non_default`` to include ``INSPECTABLE`` and
     ``CATALOG_ONLY`` rows that carry discovery specs. ``PRIVATE`` rows are
@@ -2904,7 +3060,13 @@ def discover_from_catalog(
     """
     from agentgrep.store_catalog import CATALOG
 
-    roots = {"default": base} if isinstance(base, pathlib.Path) else base
+    roots: dict[str, DiscoveryRoot] = {"default": base} if isinstance(base, pathlib.Path) else base
+    primary_roots: dict[str, pathlib.Path] = {}
+    for key, value in roots.items():
+        if isinstance(value, pathlib.Path):
+            primary_roots[key] = value
+        elif value:
+            primary_roots[key] = value[0]
     sources: list[SourceHandle] = []
     for descriptor in CATALOG.for_agent(agent):
         coverage = descriptor.coverage_level
@@ -2918,20 +3080,22 @@ def discover_from_catalog(
         # under different adapter ids on layouts where both specs match.
         seen_paths: set[pathlib.Path] = set()
         for spec in descriptor.discovery:
-            root = roots.get(spec.root_key)
-            if root is None:
+            root_value = roots.get(spec.root_key)
+            if root_value is None:
                 continue
-            for handle in handles_from_discovery(spec, agent, root, backends, coverage):
-                if handle.path in seen_paths:
-                    continue
-                seen_paths.add(handle.path)
-                handle.version_detection = detect_source_version(
-                    handle,
-                    descriptor,
-                    spec,
-                    roots,
-                )
-                sources.append(handle)
+            root_paths = root_value if isinstance(root_value, tuple) else (root_value,)
+            for root in root_paths:
+                for handle in handles_from_discovery(spec, agent, root, backends, coverage):
+                    if handle.path in seen_paths:
+                        continue
+                    seen_paths.add(handle.path)
+                    handle.version_detection = detect_source_version(
+                        handle,
+                        descriptor,
+                        spec,
+                        primary_roots,
+                    )
+                    sources.append(handle)
     return sources
 
 
@@ -2953,10 +3117,13 @@ def discover_codex_sources(
     if not root.exists():
         return []
     sqlite_root = resolve_codex_sqlite_root(root)
+    roots: dict[str, DiscoveryRoot] = {"default": root, "codex_sqlite": sqlite_root}
+    if include_non_default:
+        roots["codex_project"] = _codex_project_roots(root, backends)
     return discover_from_catalog(
         home,
         "codex",
-        {"default": root, "codex_sqlite": sqlite_root},
+        roots,
         backends,
         include_non_default=include_non_default,
     )
@@ -2977,10 +3144,13 @@ def discover_claude_sources(
     root = resolve_env_root("CLAUDE_CONFIG_DIR", home / ".claude")
     if not root.exists():
         return []
+    roots: dict[str, DiscoveryRoot] = {"default": root}
+    if include_non_default:
+        roots["claude_project"] = _claude_project_roots(root, backends)
     return discover_from_catalog(
         home,
         "claude",
-        root,
+        roots,
         backends,
         include_non_default=include_non_default,
     )
@@ -3483,28 +3653,57 @@ def iter_source_records(
     if source.adapter_id == "claude.app_state_json_summary.v1":
         yield from parse_json_summary_file(source, label="Claude app state")
         return
+    if source.adapter_id == "claude.file_metadata_summary.v1":
+        yield from parse_file_metadata_summary_file(source, label="Claude raw state")
+        return
+    if source.adapter_id == "claude.plugin_manifest_json.v1":
+        yield from parse_json_summary_file(source, label="Claude plugin manifest")
+        return
+    if source.adapter_id == "claude.plugin_hooks_json.v1":
+        yield from parse_hooks_summary_file(source, label="Claude plugin hooks")
+        return
     if source.adapter_id in {
         "claude.commands_text.v1",
+        "claude.memory_text.v1",
         "claude.projects_memory_text.v1",
+        "claude.plugin_instruction_text.v1",
+        "claude.project_instruction_text.v1",
         "claude.session_memory_text.v1",
         "claude.skills_text.v1",
         "claude.plans_text.v1",
         "codex.instructions_text.v1",
         "codex.memories_text.v1",
         "codex.plugin_instruction_text.v1",
+        "codex.project_skill_text.v1",
         "codex.rules_text.v1",
         "codex.skills_text.v1",
     }:
         yield from parse_text_store_file(source)
         return
-    if source.adapter_id in {"codex.config_toml.v1", "codex.config_backup_toml.v1"}:
+    if source.adapter_id in {
+        "codex.config_toml.v1",
+        "codex.config_backup_toml.v1",
+        "codex.project_config_toml.v1",
+    }:
         yield from parse_toml_summary_file(source)
         return
     if source.adapter_id == "codex.app_state_json_summary.v1":
         yield from parse_json_summary_file(source, label="Codex app state")
         return
+    if source.adapter_id == "codex.file_metadata_summary.v1":
+        yield from parse_file_metadata_summary_file(source, label="Codex raw state")
+        return
+    if source.adapter_id == "codex.hooks_json.v1":
+        yield from parse_hooks_summary_file(source, label="Codex hooks")
+        return
+    if source.adapter_id == "codex.plugin_hooks_json.v1":
+        yield from parse_hooks_summary_file(source, label="Codex plugin hooks")
+        return
     if source.adapter_id == "codex.plugin_manifest_json.v1":
         yield from parse_json_summary_file(source, label="Codex plugin manifest")
+        return
+    if source.adapter_id == "codex.plugin_marketplace_json.v1":
+        yield from parse_json_summary_file(source, label="Codex plugin marketplace")
         return
     if source.adapter_id == "codex.state_sqlite.v1":
         yield from parse_codex_state_db(source)
@@ -3807,6 +4006,77 @@ def parse_json_summary_file(
         title=source.path.name,
         timestamp=isoformat_from_mtime_ns(source.mtime_ns),
         metadata={"key_count": len(mapping)},
+    )
+
+
+def _safe_nested_keys(payload: dict[str, object], key: str) -> list[str]:
+    """Return sorted keys from a nested object without exposing values."""
+    nested = payload.get(key)
+    if not isinstance(nested, dict):
+        return []
+    return sorted(nested_key for nested_key in nested if isinstance(nested_key, str))
+
+
+def parse_hooks_summary_file(
+    source: SourceHandle,
+    *,
+    label: str,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse hook JSON as event/key summaries without raw commands."""
+    payload = read_json_file(source.path)
+    if not isinstance(payload, dict):
+        return
+    mapping = t.cast("dict[str, object]", payload)
+    if not mapping:
+        return
+    hook_events = _safe_nested_keys(mapping, "hooks")
+    text = _safe_mapping_summary(label, mapping)
+    if hook_events:
+        text = f"{text}; hook events: {', '.join(hook_events)}"
+    yield SearchRecord(
+        kind="history",
+        agent=source.agent,
+        store=source.store,
+        adapter_id=source.adapter_id,
+        path=source.path,
+        text=text,
+        title=source.path.name,
+        timestamp=isoformat_from_mtime_ns(source.mtime_ns),
+        metadata={"key_count": len(mapping), "hook_event_count": len(hook_events)},
+    )
+
+
+def _line_count(path: pathlib.Path) -> int:
+    """Count text lines without exposing their contents."""
+    try:
+        with path.open(encoding="utf-8", errors="replace") as handle:
+            return sum(1 for _ in handle)
+    except OSError:
+        return 0
+
+
+def parse_file_metadata_summary_file(
+    source: SourceHandle,
+    *,
+    label: str,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse raw/cache text files as metadata-only summaries."""
+    byte_size = _file_size(source.path)
+    line_count = _line_count(source.path)
+    suffix = source.path.suffix or "<none>"
+    yield SearchRecord(
+        kind="history",
+        agent=source.agent,
+        store=source.store,
+        adapter_id=source.adapter_id,
+        path=source.path,
+        text=(
+            f"{label} file metadata: name={source.path.name}, "
+            f"suffix={suffix}, bytes={byte_size}, lines={line_count}"
+        ),
+        title=source.path.name,
+        timestamp=isoformat_from_mtime_ns(source.mtime_ns),
+        metadata={"byte_size": byte_size, "line_count": line_count},
     )
 
 
