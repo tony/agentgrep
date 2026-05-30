@@ -33,6 +33,7 @@ OBSERVED_AT = datetime.date(2026, 5, 17)
 _GROK_OBSERVED_AT = datetime.date(2026, 5, 25)
 _CLAUDE_HISTORY_OBSERVED_AT = datetime.date(2026, 5, 29)
 _CURSOR_CONFIG_OBSERVED_AT = datetime.date(2026, 5, 30)
+_PI_OBSERVED_AT = datetime.date(2026, 5, 30)
 
 
 def gemini_project_hash(project_root: pathlib.Path) -> str:
@@ -2756,9 +2757,197 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
 )
 
 
+_PI_STORES: tuple[StoreDescriptor, ...] = (
+    StoreDescriptor(
+        agent="pi",
+        store_id="pi.sessions",
+        role=StoreRole.PRIMARY_CHAT,
+        format=StoreFormat.JSONL,
+        path_pattern=(
+            "${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/sessions/"
+            "--<encoded_cwd>--/<ts>_<session_uuid>.jsonl"
+        ),
+        env_overrides=("PI_CODING_AGENT_DIR", "PI_CODING_AGENT_SESSION_DIR"),
+        observed_version="pi v0.78.0 (observed 2026-05-30)",
+        observed_at=_PI_OBSERVED_AT,
+        upstream_ref=(
+            "github.com/earendil-works/pi@v0.78.0/packages/coding-agent/"
+            "src/core/session-manager.ts#L51-L54"
+        ),
+        schema_notes=(
+            "Append-only JSONL transcript, one file per session, grouped by "
+            "working directory (`--<encoded_cwd>--`, leading slash stripped, "
+            '`/ \\ :` -> `-`). Line 1 is a `type:"session"` header (`id`, '
+            "`timestamp`, `cwd`; `version` is 3 and may be absent in v1 files). "
+            "Each later line is a SessionEntry tagged union sharing "
+            "`id`/`parentId`/`timestamp`: `message` wraps an LLM message "
+            "(`role` user/assistant/toolResult, `content` string or "
+            "content-blocks; assistant turns carry `model`/`provider`); "
+            "`compaction`/`branch_summary` carry a `summary`; `session_info` "
+            "carries a user-set `name`. No separate prompt-history log or "
+            "SQLite index exists."
+        ),
+        sample_record=(
+            '{"type":"message","id":"...","parentId":"...",'
+            '"timestamp":"2026-05-30T18:23:54.003Z","message":{"role":"user",'
+            '"content":[{"type":"text","text":"<redacted>"}],'
+            '"timestamp":1780165434002}}'
+        ),
+        search_by_default=True,
+        search_notes=(
+            "The sole searchable pi store. User turns surface as prompts and "
+            "assistant/tool turns as history via the shared role->kind mapping; "
+            "compaction/branch summaries and session names are included as "
+            "history text."
+        ),
+        discovery=(
+            DiscoverySpec(
+                store="pi.sessions",
+                adapter_id="pi.sessions_jsonl.v1",
+                path_kind="session_file",
+                source_kind="jsonl",
+                root_key="default",
+                home_subpath=("sessions",),
+                glob="*.jsonl",
+            ),
+            DiscoverySpec(
+                store="pi.sessions",
+                adapter_id="pi.sessions_jsonl.v1",
+                path_kind="session_file",
+                source_kind="jsonl",
+                root_key="pi_session",
+                glob="*.jsonl",
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="pi",
+        store_id="pi.settings",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern="${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/settings.json",
+        env_overrides=("PI_CODING_AGENT_DIR",),
+        observed_version="pi v0.78.0 (observed 2026-05-30)",
+        observed_at=_PI_OBSERVED_AT,
+        schema_notes=(
+            "User preferences: selected models, themes, installed extension "
+            "`packages`, and assorted UI/agent settings. Configuration, not "
+            "chat content."
+        ),
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="pi",
+        store_id="pi.auth",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern="${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/auth.json",
+        env_overrides=("PI_CODING_AGENT_DIR",),
+        observed_version="pi v0.78.0 (observed 2026-05-30)",
+        observed_at=_PI_OBSERVED_AT,
+        schema_notes="Provider API credentials. Documented but never enumerated.",
+        coverage=StoreCoverage.PRIVATE,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="pi",
+        store_id="pi.models",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern="${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/models.json",
+        env_overrides=("PI_CODING_AGENT_DIR",),
+        observed_version="pi v0.78.0 (observed 2026-05-30)",
+        observed_at=_PI_OBSERVED_AT,
+        schema_notes=(
+            "Custom model definitions and provider overrides. Created only "
+            "when the user adds custom models."
+        ),
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="pi",
+        store_id="pi.themes",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern="${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/themes/<theme>.json",
+        env_overrides=("PI_CODING_AGENT_DIR",),
+        observed_version="pi v0.78.0 (observed 2026-05-30)",
+        observed_at=_PI_OBSERVED_AT,
+        schema_notes="User-defined TUI colour schemes. Created only when the user adds themes.",
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="pi",
+        store_id="pi.tools",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.OPAQUE,
+        path_pattern="${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/tools/<tool>",
+        env_overrides=("PI_CODING_AGENT_DIR",),
+        observed_version="pi v0.78.0 (observed 2026-05-30)",
+        observed_at=_PI_OBSERVED_AT,
+        schema_notes="Directory of user-authored custom tool scripts. Created on demand.",
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="pi",
+        store_id="pi.bin",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.OPAQUE,
+        path_pattern="${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/bin/<binary>",
+        env_overrides=("PI_CODING_AGENT_DIR",),
+        observed_version="pi v0.78.0 (observed 2026-05-30)",
+        observed_at=_PI_OBSERVED_AT,
+        schema_notes="Managed binaries (e.g. `fd`, `rg`) pi downloads for its own use.",
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="pi",
+        store_id="pi.prompts",
+        role=StoreRole.INSTRUCTION,
+        format=StoreFormat.MARKDOWN_FRONTMATTER,
+        path_pattern="${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/prompts/<prompt>.md",
+        env_overrides=("PI_CODING_AGENT_DIR",),
+        observed_version="pi v0.78.0 (observed 2026-05-30)",
+        observed_at=_PI_OBSERVED_AT,
+        schema_notes=(
+            "User-authored Markdown prompt templates, not conversation history. Created on demand."
+        ),
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="pi",
+        store_id="pi.debug_log",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.TEXT,
+        path_pattern="${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/pi-debug.log",
+        env_overrides=("PI_CODING_AGENT_DIR",),
+        observed_version="pi v0.78.0 (observed 2026-05-30)",
+        observed_at=_PI_OBSERVED_AT,
+        schema_notes="Runtime diagnostics log. Written only when debug logging is enabled.",
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="pi",
+        store_id="pi.extensions_npm",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.OPAQUE,
+        path_pattern="${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/npm/",
+        env_overrides=("PI_CODING_AGENT_DIR",),
+        observed_version="pi v0.78.0 (observed 2026-05-30)",
+        observed_at=_PI_OBSERVED_AT,
+        schema_notes=(
+            "Managed npm extension install root: `package.json`, "
+            "`package-lock.json`, and `node_modules/`. Declared via the "
+            "`packages` array in pi.settings."
+        ),
+        search_by_default=False,
+    ),
+)
+
+
 CATALOG = StoreCatalog(
-    catalog_version=11,
-    captured_at=_CLAUDE_HISTORY_OBSERVED_AT,
+    catalog_version=12,
+    captured_at=_PI_OBSERVED_AT,
     stores=(
         *_CLAUDE_STORES,
         *_CURSOR_CLI_STORES,
@@ -2766,6 +2955,7 @@ CATALOG = StoreCatalog(
         *_CODEX_STORES,
         *_GEMINI_STORES,
         *_GROK_STORES,
+        *_PI_STORES,
     ),
 )
 """The canonical agentgrep store catalogue.

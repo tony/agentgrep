@@ -77,6 +77,7 @@ KNOWN_ADAPTERS: tuple[str, ...] = (
     "grok.prompt_history_jsonl.v1",
     "grok.sessions_jsonl.v1",
     "grok.session_search_sqlite.v1",
+    "pi.sessions_jsonl.v1",
 )
 READONLY_TAGS = {"readonly", "agentgrep"}
 RESOURCE_ANNOTATIONS = {"readOnlyHint": True, "idempotentHint": True}
