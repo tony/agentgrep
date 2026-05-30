@@ -174,15 +174,20 @@ def test_catalog_covers_remaining_claude_and_codex_storage_map() -> None:
         "claude.debug_logs",
         "claude.backups",
         "claude.generic_cache",
+        "claude.commands",
         "codex.installation_id",
         "codex.update_check",
         "codex.version_file",
         "codex.personality_migration",
         "codex.config_backups",
+        "codex.skills",
+        "codex.rules",
         "codex.sqlite_sidecars",
     } <= store_ids
 
     assert CATALOG.by_id("claude.credentials").coverage_level is StoreCoverage.PRIVATE
+    assert CATALOG.by_id("claude.commands").coverage_level is StoreCoverage.INSPECTABLE
+    assert CATALOG.by_id("codex.rules").coverage_level is StoreCoverage.INSPECTABLE
     assert CATALOG.by_id("codex.sqlite_sidecars").coverage_level is StoreCoverage.CATALOG_ONLY
 
 

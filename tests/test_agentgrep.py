@@ -4805,6 +4805,266 @@ def test_parse_claude_task_json_returns_task_sample(tmp_path: pathlib.Path) -> N
     }
 
 
+def test_discover_remaining_claude_inventory_sources(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Claude non-default inventory discovers memory, instruction, and app-state stores."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    claude_home = home / ".claude"
+
+    paths = [
+        claude_home / "projects" / "-repo" / "memory" / "MEMORY.md",
+        claude_home / "todos" / "agent.json",
+        claude_home / "skills" / "review.md",
+        claude_home / "commands" / "ship.md",
+        claude_home / "teams" / "storage" / "config.json",
+        claude_home / "stats-cache.json",
+        claude_home / "sessions" / "session.json",
+        claude_home / "context-mode" / "state.json",
+        claude_home / "ide" / "bridge.json",
+        claude_home / ".last-update-result.json",
+    ]
+    for path in paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _ = path.write_text("{}" if path.suffix == ".json" else "sample", encoding="utf-8")
+
+    backends = agentgrep.BackendSelection(None, None, None)
+    default_sources = agentgrep.discover_claude_sources(home, backends)
+    inventory_sources = agentgrep.discover_claude_sources(
+        home,
+        backends,
+        include_non_default=True,
+    )
+
+    default_paths = {source.path for source in default_sources}
+    assert not default_paths.intersection(paths)
+    adapter_ids = {source.adapter_id for source in inventory_sources}
+    assert {
+        "claude.projects_memory_text.v1",
+        "claude.todos_json.v1",
+        "claude.skills_text.v1",
+        "claude.commands_text.v1",
+        "claude.teams_json.v1",
+        "claude.app_state_json_summary.v1",
+    } <= adapter_ids
+
+
+def test_parse_remaining_claude_inventory_samples(tmp_path: pathlib.Path) -> None:
+    """Claude inventory parsers expose prompt-adjacent text and redact app state."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    todo_path = tmp_path / "todos" / "agent.json"
+    todo_path.parent.mkdir(parents=True, exist_ok=True)
+    _ = todo_path.write_text(
+        json.dumps(
+            {
+                "todos": [
+                    {
+                        "id": "todo-1",
+                        "content": "Fix storage parser",
+                        "status": "pending",
+                    },
+                ],
+            },
+        ),
+        encoding="utf-8",
+    )
+    team_path = tmp_path / "teams" / "storage" / "config.json"
+    team_path.parent.mkdir(parents=True, exist_ok=True)
+    _ = team_path.write_text(
+        json.dumps(
+            {
+                "name": "Storage Team",
+                "description": "Coordinates storage coverage",
+                "createdAt": 1_700_000_000_000,
+                "members": [
+                    {
+                        "name": "worker",
+                        "prompt": "Audit non-default storage",
+                        "joinedAt": 1_700_000_000_001,
+                    },
+                ],
+            },
+        ),
+        encoding="utf-8",
+    )
+    app_path = tmp_path / "stats-cache.json"
+    _ = app_path.write_text(
+        json.dumps({"version": 3, "secret": "do-not-index", "dailyActivity": [1, 2]}),
+        encoding="utf-8",
+    )
+
+    sources = [
+        agentgrep.SourceHandle(
+            agent="claude",
+            store="claude.todos",
+            adapter_id="claude.todos_json.v1",
+            path=todo_path,
+            path_kind="store_file",
+            source_kind="json",
+            search_root=None,
+            mtime_ns=0,
+            coverage=agentgrep.StoreCoverage.INSPECTABLE,
+        ),
+        agentgrep.SourceHandle(
+            agent="claude",
+            store="claude.teams",
+            adapter_id="claude.teams_json.v1",
+            path=team_path,
+            path_kind="store_file",
+            source_kind="json",
+            search_root=None,
+            mtime_ns=0,
+            coverage=agentgrep.StoreCoverage.INSPECTABLE,
+        ),
+        agentgrep.SourceHandle(
+            agent="claude",
+            store="claude.stats_cache",
+            adapter_id="claude.app_state_json_summary.v1",
+            path=app_path,
+            path_kind="store_file",
+            source_kind="json",
+            search_root=None,
+            mtime_ns=0,
+            coverage=agentgrep.StoreCoverage.CATALOG_ONLY,
+        ),
+    ]
+
+    records = [record for source in sources for record in agentgrep.iter_source_records(source)]
+
+    assert records[0].text == "Fix storage parser"
+    assert records[0].metadata["status"] == "pending"
+    assert "Storage Team" in records[1].text
+    assert "Audit non-default storage" in records[1].text
+    assert "do-not-index" not in records[2].text
+    assert records[2].metadata == {"key_count": 3}
+
+
+def test_discover_remaining_codex_inventory_sources(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex non-default inventory discovers instructions, config, app state, and plugins."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    codex_home = home / ".codex"
+
+    paths = [
+        codex_home / "skills" / "review" / "SKILL.md",
+        codex_home / "rules" / "default.rules",
+        codex_home / "config.toml",
+        codex_home / "config.toml.bak",
+        codex_home / "update-check.json",
+        codex_home / "version.json",
+        codex_home / "models_cache.json",
+        codex_home / "internal_storage.json",
+        codex_home / "process_manager" / "chat_processes.json",
+        codex_home / "plugins" / "cache" / "example" / ".codex-plugin" / "plugin.json",
+        codex_home / "plugins" / "cache" / "example" / "commands" / "ship.md",
+        codex_home / "plugins" / "cache" / "example" / "agents" / "reviewer.md",
+        codex_home / "plugins" / "cache" / "example" / "skills" / "audit" / "SKILL.md",
+    ]
+    for path in paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.suffix == ".json":
+            text = "{}"
+        elif path.suffix == ".toml" or ".toml." in path.name:
+            text = "model = 'gpt-5'\n"
+        else:
+            text = "instruction text"
+        _ = path.write_text(text, encoding="utf-8")
+
+    backends = agentgrep.BackendSelection(None, None, None)
+    default_sources = agentgrep.discover_codex_sources(home, backends)
+    inventory_sources = agentgrep.discover_codex_sources(
+        home,
+        backends,
+        include_non_default=True,
+    )
+
+    default_paths = {source.path for source in default_sources}
+    assert not default_paths.intersection(paths)
+    adapter_ids = {source.adapter_id for source in inventory_sources}
+    assert {
+        "codex.skills_text.v1",
+        "codex.rules_text.v1",
+        "codex.config_toml.v1",
+        "codex.config_backup_toml.v1",
+        "codex.app_state_json_summary.v1",
+        "codex.plugin_manifest_json.v1",
+        "codex.plugin_instruction_text.v1",
+    } <= adapter_ids
+
+
+def test_parse_codex_inventory_safe_samples(tmp_path: pathlib.Path) -> None:
+    """Codex config and app-state samples summarize structure without raw values."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    config_path = tmp_path / "config.toml"
+    _ = config_path.write_text(
+        "model = 'secret-model'\n[projects]\n'/private/repo' = { trust_level = 'trusted' }\n",
+        encoding="utf-8",
+    )
+    app_path = tmp_path / "version.json"
+    _ = app_path.write_text(
+        json.dumps({"latest_version": "9.9.9", "dismissed_version": None}),
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "plugin.json"
+    _ = manifest_path.write_text(
+        json.dumps({"name": "secret-plugin", "description": "private description"}),
+        encoding="utf-8",
+    )
+
+    sources = [
+        agentgrep.SourceHandle(
+            agent="codex",
+            store="codex.config",
+            adapter_id="codex.config_toml.v1",
+            path=config_path,
+            path_kind="store_file",
+            source_kind="text",
+            search_root=None,
+            mtime_ns=0,
+            coverage=agentgrep.StoreCoverage.CATALOG_ONLY,
+        ),
+        agentgrep.SourceHandle(
+            agent="codex",
+            store="codex.version_file",
+            adapter_id="codex.app_state_json_summary.v1",
+            path=app_path,
+            path_kind="store_file",
+            source_kind="json",
+            search_root=None,
+            mtime_ns=0,
+            coverage=agentgrep.StoreCoverage.CATALOG_ONLY,
+        ),
+        agentgrep.SourceHandle(
+            agent="codex",
+            store="codex.plugins",
+            adapter_id="codex.plugin_manifest_json.v1",
+            path=manifest_path,
+            path_kind="store_file",
+            source_kind="json",
+            search_root=None,
+            mtime_ns=0,
+            coverage=agentgrep.StoreCoverage.INSPECTABLE,
+        ),
+    ]
+
+    records = [record for source in sources for record in agentgrep.iter_source_records(source)]
+
+    assert "secret-model" not in records[0].text
+    assert "/private/repo" not in records[0].text
+    assert "projects" in records[0].text
+    assert "9.9.9" not in records[1].text
+    assert "latest_version" in records[1].text
+    assert "secret-plugin" not in records[2].text
+    assert "description" in records[2].text
+
+
 def test_search_claude_history_expands_external_pasted_text(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

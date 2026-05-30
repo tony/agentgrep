@@ -276,6 +276,9 @@ async def test_mcp_capabilities_lists_every_supported_agent_and_adapter() -> Non
 
     advertised_adapters = set(t.cast("list[str]", data["adapters"]))
     for adapter_id in (
+        "claude.projects_memory_text.v1",
+        "codex.config_toml.v1",
+        "codex.plugin_instruction_text.v1",
         "cursor.cli_jsonl.v1",
         "gemini.tmp_chats_jsonl.v1",
         "gemini.tmp_logs_json.v1",
@@ -725,6 +728,9 @@ async def test_mcp_inspect_record_sample_returns_non_default_adapter_records(
         index_path,
         [{"id": "thread-1", "thread_name": "Sample thread", "updated_at": "2026-05-30T12:00:00Z"}],
     )
+    config_path = home / ".codex" / "config.toml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    _ = config_path.write_text("model = 'do-not-index'\n", encoding="utf-8")
 
     async with Client(agentgrep_mcp.build_mcp_server()) as client:
         task_result = await client.call_tool(
@@ -743,13 +749,25 @@ async def test_mcp_inspect_record_sample_returns_non_default_adapter_records(
                 "sample_size": 1,
             },
         )
+        config_result = await client.call_tool(
+            "inspect_record_sample",
+            {
+                "adapter_id": "codex.config_toml.v1",
+                "source_path": str(config_path),
+                "sample_size": 1,
+            },
+        )
 
     task_data = tool_payload(task_result)
     index_data = tool_payload(index_result)
+    config_data = tool_payload(config_result)
     assert task_data["error_message"] is None
     assert task_data["records"][0]["text"] == "Sample task\n\nInspect task text"
     assert index_data["error_message"] is None
     assert index_data["records"][0]["text"] == "Sample thread"
+    assert config_data["error_message"] is None
+    assert "model (str)" in config_data["records"][0]["text"]
+    assert "do-not-index" not in config_data["records"][0]["text"]
 
 
 async def test_mcp_catalog_resource_returns_full_catalog() -> None:
