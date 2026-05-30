@@ -25,3 +25,12 @@ Platform-specific SQLite (`state.vscdb`). Keys in
 | Linux | `~/.config/Cursor/User/globalStorage/state.vscdb` |
 | macOS | `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` |
 | Windows | `%APPDATA%/Cursor/User/globalStorage/state.vscdb` |
+
+### cursor-ide.workspace_state
+
+The IDE also writes one `state.vscdb` per opened project under
+`workspaceStorage/<hash>/`. These share the global store's `ItemTable`
+shape; the `aiService.prompts` key holds that workspace's typed prompt
+history. agentgrep enumerates them through the platform
+`workspaceStorage` directory and parses them with the same adapter as
+the global store.

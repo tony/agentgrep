@@ -255,7 +255,7 @@ $ agentgrep grep agent:codex bliss
 ```
 
 ```console
-$ agentgrep grep '(agent:codex OR agent:cursor) AND deploy'
+$ agentgrep grep '(agent:codex OR agent:cursor-cli) AND deploy'
 ```
 
 The text portion (`bliss`, `deploy`) feeds grep's existing line-

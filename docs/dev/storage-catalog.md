@@ -141,27 +141,34 @@ instruction Markdown paths, file metadata summaries, and
 `catalog_observation` as the fallback. Project-local discovery is
 bounded to roots already present in Claude transcript metadata.
 
-### Cursor
+### Cursor CLI and Cursor IDE
 
-Two distinct surfaces, both catalogued and both searched:
+Cursor is modelled as two separate agents — `cursor-cli` (the
+`cursor-agent` terminal binary) and `cursor-ide` (the desktop app) —
+because they have disjoint data homes and on-disk formats.
 
-- **Cursor CLI agent** (`cursor-agent`): transcripts live at
-  `${HOME}/.cursor/projects/<id>/agent-transcripts/<session_uuid>/<session_uuid>.jsonl`
-  and are parsed by `cursor.cli_jsonl.v1`. Records are
-  Anthropic-style `{role, message.content[]}` with `text` and
-  `tool_use` content blocks; tool outputs are sometimes `[REDACTED]`
-  in older `cursor-agent` builds. There is no native per-turn
-  timestamp, so agentgrep backfills the file's mtime. Sub-agent
-  transcripts nested under `subagents/` share the parser but surface as
-  the distinct runtime store `cursor.cli_subagents`.
-- **Cursor IDE**: parsed by `cursor.state_vscdb_modern.v1` /
-  `cursor.state_vscdb_legacy.v1` via `state.vscdb` (SQLite). The
-  catalogue keeps the IDE path separate from the CLI agent so the
-  two never collide.
-
-`cursor.cli.worktrees` is catalogued explicitly with
-`role=SOURCE_TREE` and `search_by_default=False` so the adapter
-does not index multi-gigabyte git working trees as chat history.
+- **`cursor-cli`** spans two home directories. The original
+  `${HOME}/.cursor/` tree holds the JSONL transcripts
+  (`cursor_cli.transcripts_jsonl.v1`, Anthropic-style
+  `{role, message.content[]}` with no native timestamp, so agentgrep
+  backfills the file mtime) and the AI-tracking SQLite summaries. The
+  newer lowercase `${HOME}/.config/cursor/` home holds
+  `prompt_history.json` — a flat JSON array of typed prompts parsed by
+  `cursor_cli.prompt_history_json.v1`, Cursor's prompt-history store —
+  and the per-session chat `chats/<hash>/<uuid>/store.db`. The chat
+  store holds content-addressed protobuf blobs with no published
+  schema; `cursor_cli.chats_protobuf.v1` walks the wire format
+  best-effort and is inspectable (opt-in) rather than searched by
+  default, since it overlaps the cleaner transcripts.
+  `cursor-cli.worktrees` is catalogued with `role=SOURCE_TREE` and
+  `search_by_default=False` so the adapter never indexes multi-gigabyte
+  git working trees as chat history.
+- **`cursor-ide`** is parsed by `cursor_ide.state_vscdb_modern.v1` /
+  `cursor_ide.state_vscdb_legacy.v1` via VS Code-style `state.vscdb`
+  SQLite. `cursor-ide.state_vscdb` covers the global database and
+  `cursor-ide.workspace_state` covers the per-workspace
+  `workspaceStorage/<hash>/state.vscdb`; both surface the
+  `aiService.prompts` history alongside composer/chat keys.
 
 ### Codex
 

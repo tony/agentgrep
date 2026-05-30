@@ -31,3 +31,23 @@ files do not collapse into `cursor-cli.transcripts`.
 SQLite with `conversation_summaries` table: `conversationId`,
 `title`, `tldr`, `overview`, `summaryBullets`, `model`, `mode`,
 `updatedAt`.
+
+### cursor-cli.prompt_history
+
+`~/.config/cursor/prompt_history.json` is a flat JSON array of
+strings — one entry per prompt typed into `cursor-agent`, oldest
+first. This is the CLI's up-arrow recall buffer and gives Cursor the
+same prompt-history store the Claude, Codex, and Grok backends expose.
+There are no per-entry timestamps, so records share the file's mtime.
+
+### cursor-cli.chats
+
+`~/.config/cursor/chats/<project_hash>/<session_uuid>/store.db` is a
+per-session SQLite database with a `meta` table (`agentId`,
+`latestRootBlobId`) and a `blobs` table of content-addressed protobuf
+messages forming a graph from the root blob. Cursor publishes no
+schema, so agentgrep walks the protobuf wire format generically and
+surfaces the readable UTF-8 runs it finds — a best-effort, date-versioned
+adapter. Because the extraction is noisier than and overlaps the JSONL
+transcripts, the store is **inspectable** (opt-in) rather than searched
+by default; include it explicitly to parse it.
