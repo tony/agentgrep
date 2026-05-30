@@ -1,0 +1,134 @@
+"""Tests for the Sphinx storage catalogue extension."""
+
+from __future__ import annotations
+
+import io
+import pathlib
+import textwrap
+
+from sphinx.application import Sphinx
+
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+
+def _build_sphinx(srcdir: pathlib.Path, outdir: pathlib.Path) -> tuple[Sphinx, str]:
+    """Build a tiny Sphinx project and return the app plus warnings."""
+    outdir.mkdir()
+    doctreedir = outdir / ".doctrees"
+    doctreedir.mkdir()
+    warning = io.StringIO()
+    app = Sphinx(
+        srcdir=str(srcdir),
+        confdir=str(srcdir),
+        outdir=str(outdir / "html"),
+        doctreedir=str(doctreedir),
+        buildername="dirhtml",
+        freshenv=True,
+        warning=warning,
+        status=io.StringIO(),
+    )
+    app.build()
+    return app, warning.getvalue()
+
+
+def _root_html(outdir: pathlib.Path) -> str:
+    """Return the built root page HTML."""
+    return (outdir / "html" / "index.html").read_text(encoding="utf-8")
+
+
+def test_storage_badge_group_uses_coverage_and_type_badges() -> None:
+    """Storage badge groups use the shared gp-sphinx badge primitives."""
+    from sphinx_ux_badges import BadgeNode
+
+    from docs._ext.storages._badges import build_store_badge_group
+
+    group = build_store_badge_group("default_search")
+
+    assert "gp-sphinx-badge-group" in group["classes"]
+    badges = list(group.findall(BadgeNode))
+    assert [badge.astext() for badge in badges] == ["default", "store"]
+    assert "gp-sphinx-storage__coverage-default-search" in badges[0]["classes"]
+
+
+def test_storage_domain_registers_and_resolves_store_targets(tmp_path: pathlib.Path) -> None:
+    """Generated store targets resolve through the custom storage domain."""
+    srcdir = tmp_path / "src"
+    srcdir.mkdir()
+    (srcdir / "conf.py").write_text(
+        textwrap.dedent(
+            f"""\
+            from __future__ import annotations
+            import sys
+            sys.path.insert(0, {str(_REPO_ROOT)!r})
+            sys.path.insert(0, {str(_REPO_ROOT / "src")!r})
+            extensions = ["myst_parser", "docs._ext.storages"]
+            myst_enable_extensions = ["colon_fence"]
+            """
+        ),
+        encoding="utf-8",
+    )
+    (srcdir / "index.md").write_text(
+        textwrap.dedent(
+            """\
+            # Storage docs
+
+            Use {storage:store}`claude.history` beside {storage:storeref}`claude.projects.session`.
+
+            ```{storage:agent} claude
+            ```
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    app, warnings = _build_sphinx(srcdir, tmp_path / "build")
+    html = _root_html(tmp_path / "build")
+
+    domain = app.env.get_domain("storage")
+    objects = list(domain.get_objects())
+    assert any(obj[0] == "claude.history" for obj in objects)
+    assert 'id="storage-store-claude-history"' in html
+    assert 'href="#storage-store-claude-history"' in html
+    assert "gp-sphinx-api-card-entry" in html
+    assert "gp-sphinx-storage__coverage-default-search" in html
+    assert "undefined label" not in warnings
+
+
+def test_storage_coverage_grid_summarizes_catalog(tmp_path: pathlib.Path) -> None:
+    """The generated coverage grid exposes catalog coverage by backend."""
+    srcdir = tmp_path / "src"
+    srcdir.mkdir()
+    (srcdir / "conf.py").write_text(
+        textwrap.dedent(
+            f"""\
+            from __future__ import annotations
+            import sys
+            sys.path.insert(0, {str(_REPO_ROOT)!r})
+            sys.path.insert(0, {str(_REPO_ROOT / "src")!r})
+            extensions = ["myst_parser", "docs._ext.storages"]
+            myst_enable_extensions = ["colon_fence"]
+            """
+        ),
+        encoding="utf-8",
+    )
+    (srcdir / "index.md").write_text(
+        textwrap.dedent(
+            """\
+            # Backend coverage
+
+            ```{storage:coverage-grid}
+            ```
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    _app, warnings = _build_sphinx(srcdir, tmp_path / "build")
+    html = _root_html(tmp_path / "build")
+
+    assert "Codex" in html
+    assert "Default search" in html
+    assert "Runtime / cache / private" in html
+    assert "codex.history" in html
+    assert "claude.history" in html
+    assert "undefined label" not in warnings
