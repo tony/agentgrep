@@ -90,7 +90,11 @@ def test_storage_domain_registers_and_resolves_store_targets(tmp_path: pathlib.P
     assert 'id="storage-store-claude-history"' in html
     assert 'href="#storage-store-claude-history"' in html
     assert "gp-sphinx-api-card-entry" in html
+    assert "gp-sphinx-storage__store-index" in html
+    assert "gp-sphinx-storage__store-index-card" in html
+    assert "gp-sphinx-storage__key-value" in html
     assert "gp-sphinx-storage__coverage-default-search" in html
+    assert '<table class="gp-sphinx-storage__table' not in html
     assert "undefined label" not in warnings
 
 
@@ -126,9 +130,56 @@ def test_storage_coverage_grid_summarizes_catalog(tmp_path: pathlib.Path) -> Non
     _app, warnings = _build_sphinx(srcdir, tmp_path / "build")
     html = _root_html(tmp_path / "build")
 
+    assert "gp-sphinx-storage__support-matrix" in html
+    assert "gp-sphinx-storage__support-agent-card" in html
     assert "Codex" in html
     assert "Default search" in html
     assert "Runtime / cache / private" in html
     assert "codex.history" in html
     assert "claude.history" in html
+    assert '<table class="gp-sphinx-storage__table' not in html
+    assert "gp-sphinx-storage__coverage-grid" not in html
+    assert "undefined label" not in warnings
+
+
+def test_storage_catalog_summary_uses_nested_key_value_cards(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The generated catalog summary uses nested key/value cards."""
+    srcdir = tmp_path / "src"
+    srcdir.mkdir()
+    (srcdir / "conf.py").write_text(
+        textwrap.dedent(
+            f"""\
+            from __future__ import annotations
+            import sys
+            sys.path.insert(0, {str(_REPO_ROOT)!r})
+            sys.path.insert(0, {str(_REPO_ROOT / "src")!r})
+            extensions = ["myst_parser", "docs._ext.storages"]
+            myst_enable_extensions = ["colon_fence"]
+            """
+        ),
+        encoding="utf-8",
+    )
+    (srcdir / "index.md").write_text(
+        textwrap.dedent(
+            """\
+            # Catalog summary
+
+            ```{storage:catalog-summary}
+            ```
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    _app, warnings = _build_sphinx(srcdir, tmp_path / "build")
+    html = _root_html(tmp_path / "build")
+
+    assert "gp-sphinx-storage__catalog-summary" in html
+    assert "gp-sphinx-storage__catalog-summary-card" in html
+    assert "gp-sphinx-storage__key-value" in html
+    assert "By coverage" in html
+    assert "default_search" in html
+    assert '<table class="gp-sphinx-storage__table' not in html
     assert "undefined label" not in warnings
