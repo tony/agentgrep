@@ -50,6 +50,18 @@ def test_storage_badge_group_uses_coverage_and_type_badges() -> None:
     assert "gp-sphinx-storage__coverage-default-search" in badges[0]["classes"]
 
 
+def test_storage_badge_css_uses_shared_badge_color_variables() -> None:
+    """Storage badge classes map onto gp-sphinx badge color tokens."""
+    css = pathlib.Path("docs/_ext/storages/_static/css/storage.css").read_text(encoding="utf-8")
+
+    assert ".gp-sphinx-storage__coverage-default-search" in css
+    assert ".gp-sphinx-storage__type-store" in css
+    assert "--gp-sphinx-badge-bg" in css
+    assert "--gp-sphinx-badge-fg" in css
+    assert "--gp-sphinx-badge-border" in css
+    assert "--sab-color" not in css
+
+
 def test_storage_domain_registers_and_resolves_store_targets(tmp_path: pathlib.Path) -> None:
     """Generated store targets resolve through the custom storage domain."""
     srcdir = tmp_path / "src"
