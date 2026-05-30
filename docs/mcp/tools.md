@@ -73,7 +73,11 @@ agentgrep's tools are read-only. They return structured Pydantic models and prot
 ```{fastmcp-tool} list_sources
 ```
 
-**Use when** you want a structured listing of discovered sources with optional path-kind / source-kind filters.
+**Use when** you want a structured listing of discovered sources with
+optional path-kind, source-kind, and coverage filters. By default this
+matches the default-search surface; pass `include_non_default=true` or
+set `coverage_filter` to inspect inventory-only stores such as Codex
+SQLite DBs or Claude session memory.
 
 ```{fastmcp-tool-input} list_sources
 ```

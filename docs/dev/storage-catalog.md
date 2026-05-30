@@ -7,9 +7,9 @@ about, modelled as Pydantic
 {class}`~agentgrep.stores.StoreDescriptor` rows aggregated under one
 {class}`~agentgrep.stores.StoreCatalog`. The catalogue is **descriptive**:
 it documents *where* each agent's data lives and *what* the records look
-like. Search-policy decisions — whether agentgrep actually opens a
-particular store by default — are captured per-row and may be deferred
-(`search_by_default=None`) when no adapter consumes them yet.
+like. Coverage decisions — whether agentgrep searches, inventories, or
+only documents a store — are captured per-row so adding storage
+knowledge does not automatically expand default prompt search.
 
 The catalogue is the single source of truth that downstream adapters
 consume. When upstream renames a path or changes a record shape, the
@@ -52,7 +52,24 @@ claude_session.path_pattern
 Path patterns use `${HOME}` and `${<ENV>}` tokens; resolving them
 against a concrete environment is the consumer's job, so the catalogue
 stays portable. `env_overrides` lists the env vars that change the
-root (Codex respects `CODEX_HOME`; Gemini respects `GEMINI_CLI_HOME`).
+root (Claude respects `CLAUDE_CONFIG_DIR`; Codex respects
+`CODEX_HOME` and `CODEX_SQLITE_HOME`; Gemini respects
+`GEMINI_CLI_HOME`).
+
+## Coverage levels
+
+Every descriptor has an effective coverage level:
+
+| Coverage | Meaning |
+|----------|---------|
+| `default_search` | Normal search and find commands discover and parse this store. |
+| `inspectable` | Inventory tools can discover it when explicitly requested; default search skips it. |
+| `catalog_only` | The path and schema are documented, but agentgrep does not parse it as prompt history. |
+| `private` | The store is documented but intentionally not enumerated from disk. |
+
+This distinction lets the catalogue describe auth files, runtime logs,
+shell snapshots, and file-history caches without making them part of
+ordinary prompt search.
 
 ## Stores by agent
 
@@ -63,12 +80,13 @@ schemas were observed against ``claude-code v2.1.143`` (2026-05-15);
 global prompt history was observed against ``claude-code v2.1.157``
 (2026-05-29).
 
-Claude's global prompt-history audit log lives at
-`${HOME}/.claude/history.jsonl` and is parsed by
+Claude honours `CLAUDE_CONFIG_DIR`, falling back to `${HOME}/.claude`.
+Its global prompt-history audit log lives at
+`${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/history.jsonl` and is parsed by
 `claude.history_jsonl.v1`. It stores the user-facing `display` text,
 Unix-millisecond `timestamp`, `project`, `sessionId`, and
 `pastedContents`; content-addressed text pastes resolve through
-`${HOME}/.claude/paste-cache/<contentHash>.txt` when present.
+`paste-cache/<contentHash>.txt` when present.
 
 Claude's primary chat record lives at
 `${HOME}/.claude/projects/<encoded_project>/<session_uuid>.jsonl`. The
@@ -76,8 +94,12 @@ file format is JSONL with multiple record types per line —
 `type: "user"`, `type: "assistant"`, `type: "attachment"`,
 `type: "permission-mode"`. Sub-agent dispatches nest under
 `<session_uuid>/subagents/`, share the same parser, and are exposed as
-the distinct runtime store `claude.projects_subagents`. The auto-memory
-feature stores markdown notes under `<encoded_project>/memory/`.
+the distinct runtime store `claude.projects_subagents`. `__store.db`,
+session memory, tasks, and plans are inspectable but remain outside
+default search because they either duplicate transcripts or represent
+derived state. Settings, skills, teams, IDE state, caches, file
+history, shell snapshots, context/security state, and session
+environment are catalogued or private according to sensitivity.
 
 ### Cursor
 
@@ -104,6 +126,9 @@ does not index multi-gigabyte git working trees as chat history.
 ### Codex
 
 `observed_version`: ``github.com/openai/codex@4c89772`` (2026-05-16).
+Codex honours `CODEX_HOME` for primary files. SQLite files resolve
+through `CODEX_SQLITE_HOME`, then `sqlite_home` in `config.toml`, then
+`CODEX_HOME`.
 
 Schemas are pinned directly to the upstream Rust types:
 
@@ -115,10 +140,12 @@ Schemas are pinned directly to the upstream Rust types:
   `Compacted`, `TurnContext`, `EventMsg`
   ([`codex-rs/protocol/src/protocol.rs:2783`](https://github.com/openai/codex/blob/4c89772/codex-rs/protocol/src/protocol.rs#L2783)).
 
-The two `_N.sqlite` files at the Codex root — `state_5.sqlite` and
-`logs_2.sqlite` — belong to the Codex CLI. Their filenames come from
-`STATE_DB_FILENAME` and `LOGS_DB_FILENAME` in
-[`codex-rs/state/src/lib.rs`](https://github.com/openai/codex/blob/4c89772/codex-rs/state/src/lib.rs#L70-L71).
+The `_N.sqlite` files belong to the Codex CLI, not Cursor. Known
+SQLite stores are `state_5.sqlite`, `logs_2.sqlite`,
+`memories_1.sqlite`, and `goals_1.sqlite`. Prompt-bearing fields such
+as `threads.first_user_message`, `threads.preview`, memory summaries,
+goal objectives, and job instructions are inspectable storage rather
+than default search.
 
 ### Gemini CLI
 
