@@ -2345,6 +2345,14 @@ def discover_sources(
                     include_non_default=include_non_default,
                 ),
             )
+        elif agent == "opencode":
+            discovered.extend(
+                discover_opencode_sources(
+                    home,
+                    backends,
+                    include_non_default=include_non_default,
+                ),
+            )
     discovered.sort(key=lambda item: (item.agent, item.store, str(item.path)))
     return discovered
 
@@ -3297,6 +3305,66 @@ def discover_pi_sources(
         home,
         "pi",
         roots,
+        backends,
+        include_non_default=include_non_default,
+    )
+
+
+def discover_opencode_sources(
+    home: pathlib.Path,
+    backends: BackendSelection,
+    *,
+    include_non_default: bool = False,
+) -> list[SourceHandle]:
+    """Discover OpenCode (anomalyco/opencode) SQLite databases.
+
+    OpenCode stores conversations in ``opencode.db`` under its XDG data
+    directory (``${XDG_DATA_HOME}/opencode``, falling back to
+    ``${HOME}/.local/share/opencode``). The store is discovered by
+    filename (not a glob) so the binary SQLite file bypasses the
+    text prefilter, the same way the Grok SQLite store is.
+
+    ``OPENCODE_DB`` overrides the database location: when it points at an
+    absolute file, OpenCode uses that file (any filename) instead of the
+    default, so agentgrep discovers that exact file directly — which also
+    makes non-stable channel databases (``opencode-<channel>.db``)
+    reachable by pointing ``OPENCODE_DB`` at them. The default lookup and
+    adapter metadata come from the ``opencode.*`` rows of
+    :data:`agentgrep.store_catalog.CATALOG`.
+    """
+    db_override = os.environ.get("OPENCODE_DB")
+    if db_override and db_override != ":memory:":
+        candidate = pathlib.Path(os.path.expandvars(db_override)).expanduser()
+        if candidate.is_absolute():
+            if not candidate.is_file():
+                return []
+            from agentgrep.store_catalog import CATALOG
+
+            descriptor = CATALOG.by_id("opencode.db")
+            handle = SourceHandle(
+                agent="opencode",
+                store="opencode.db",
+                adapter_id="opencode.db_sqlite.v1",
+                path=candidate,
+                path_kind="sqlite_db",
+                source_kind="sqlite",
+                search_root=None,
+                mtime_ns=file_mtime_ns(candidate),
+            )
+            handle.version_detection = detect_source_version(
+                handle,
+                descriptor,
+                descriptor.discovery[0],
+                {},
+            )
+            return [handle]
+    base = resolve_env_root("XDG_DATA_HOME", home / ".local" / "share") / "opencode"
+    if not base.exists():
+        return []
+    return discover_from_catalog(
+        home,
+        "opencode",
+        base,
         backends,
         include_non_default=include_non_default,
     )
