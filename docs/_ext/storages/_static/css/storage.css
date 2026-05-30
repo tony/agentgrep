@@ -18,6 +18,24 @@
   --gp-sphinx-api-accent-color: var(--color-api-class);
 }
 
+:root {
+  --gp-sphinx-storage-badge-default-bg: #e6f7ed;
+  --gp-sphinx-storage-badge-default-fg: #166534;
+  --gp-sphinx-storage-badge-default-border: #22c55e;
+  --gp-sphinx-storage-badge-inspectable-bg: #ecfeff;
+  --gp-sphinx-storage-badge-inspectable-fg: #0e7490;
+  --gp-sphinx-storage-badge-inspectable-border: #06b6d4;
+  --gp-sphinx-storage-badge-catalog-bg: #fff7ed;
+  --gp-sphinx-storage-badge-catalog-fg: #c2410c;
+  --gp-sphinx-storage-badge-catalog-border: #f97316;
+  --gp-sphinx-storage-badge-private-bg: #fff1f2;
+  --gp-sphinx-storage-badge-private-fg: #be123c;
+  --gp-sphinx-storage-badge-private-border: #f43f5e;
+  --gp-sphinx-storage-badge-store-bg: #eef2ff;
+  --gp-sphinx-storage-badge-store-fg: #4338ca;
+  --gp-sphinx-storage-badge-store-border: #6366f1;
+}
+
 .gp-sphinx-storage__store-signature code,
 .gp-sphinx-storage__store-signature .highlight {
   font-size: 0.95em;
@@ -136,21 +154,69 @@
 }
 
 .gp-sphinx-storage__coverage-default-search {
-  --sab-color: var(--color-api-method);
+  --gp-sphinx-badge-bg: var(--gp-sphinx-storage-badge-default-bg);
+  --gp-sphinx-badge-fg: var(--gp-sphinx-storage-badge-default-fg);
+  --gp-sphinx-badge-border: var(--gp-sphinx-storage-badge-default-border);
 }
 
 .gp-sphinx-storage__coverage-inspectable {
-  --sab-color: var(--color-api-function);
+  --gp-sphinx-badge-bg: var(--gp-sphinx-storage-badge-inspectable-bg);
+  --gp-sphinx-badge-fg: var(--gp-sphinx-storage-badge-inspectable-fg);
+  --gp-sphinx-badge-border: var(--gp-sphinx-storage-badge-inspectable-border);
 }
 
 .gp-sphinx-storage__coverage-catalog-only {
-  --sab-color: var(--color-api-attribute);
+  --gp-sphinx-badge-bg: var(--gp-sphinx-storage-badge-catalog-bg);
+  --gp-sphinx-badge-fg: var(--gp-sphinx-storage-badge-catalog-fg);
+  --gp-sphinx-badge-border: var(--gp-sphinx-storage-badge-catalog-border);
 }
 
 .gp-sphinx-storage__coverage-private {
-  --sab-color: var(--color-api-exception);
+  --gp-sphinx-badge-bg: var(--gp-sphinx-storage-badge-private-bg);
+  --gp-sphinx-badge-fg: var(--gp-sphinx-storage-badge-private-fg);
+  --gp-sphinx-badge-border: var(--gp-sphinx-storage-badge-private-border);
 }
 
 .gp-sphinx-storage__type-store {
-  --sab-color: var(--color-api-class);
+  --gp-sphinx-badge-bg: var(--gp-sphinx-storage-badge-store-bg);
+  --gp-sphinx-badge-fg: var(--gp-sphinx-storage-badge-store-fg);
+  --gp-sphinx-badge-border: var(--gp-sphinx-storage-badge-store-border);
+}
+
+@media (prefers-color-scheme: dark) {
+  body:not([data-theme="light"]) {
+    --gp-sphinx-storage-badge-default-bg: #113b29;
+    --gp-sphinx-storage-badge-default-fg: #3dd68c;
+    --gp-sphinx-storage-badge-default-border: #2f7c57;
+    --gp-sphinx-storage-badge-inspectable-bg: #083344;
+    --gp-sphinx-storage-badge-inspectable-fg: #67e8f9;
+    --gp-sphinx-storage-badge-inspectable-border: #0891b2;
+    --gp-sphinx-storage-badge-catalog-bg: #431407;
+    --gp-sphinx-storage-badge-catalog-fg: #fdba74;
+    --gp-sphinx-storage-badge-catalog-border: #f97316;
+    --gp-sphinx-storage-badge-private-bg: #4c0519;
+    --gp-sphinx-storage-badge-private-fg: #fda4af;
+    --gp-sphinx-storage-badge-private-border: #e11d48;
+    --gp-sphinx-storage-badge-store-bg: #1e1b4b;
+    --gp-sphinx-storage-badge-store-fg: #c4b5fd;
+    --gp-sphinx-storage-badge-store-border: #8b5cf6;
+  }
+}
+
+body[data-theme="dark"] {
+  --gp-sphinx-storage-badge-default-bg: #113b29;
+  --gp-sphinx-storage-badge-default-fg: #3dd68c;
+  --gp-sphinx-storage-badge-default-border: #2f7c57;
+  --gp-sphinx-storage-badge-inspectable-bg: #083344;
+  --gp-sphinx-storage-badge-inspectable-fg: #67e8f9;
+  --gp-sphinx-storage-badge-inspectable-border: #0891b2;
+  --gp-sphinx-storage-badge-catalog-bg: #431407;
+  --gp-sphinx-storage-badge-catalog-fg: #fdba74;
+  --gp-sphinx-storage-badge-catalog-border: #f97316;
+  --gp-sphinx-storage-badge-private-bg: #4c0519;
+  --gp-sphinx-storage-badge-private-fg: #fda4af;
+  --gp-sphinx-storage-badge-private-border: #e11d48;
+  --gp-sphinx-storage-badge-store-bg: #1e1b4b;
+  --gp-sphinx-storage-badge-store-fg: #c4b5fd;
+  --gp-sphinx-storage-badge-store-border: #8b5cf6;
 }
