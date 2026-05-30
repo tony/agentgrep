@@ -96,6 +96,30 @@
   overflow-wrap: anywhere;
 }
 
+.gp-sphinx-storage__store-link-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+  margin: 0;
+}
+
+.gp-sphinx-storage__store-link-list p.gp-sphinx-storage__store-link-item {
+  margin: 0;
+  min-width: 0;
+  line-height: 1.45;
+}
+
+.gp-sphinx-storage__store-link-item a.reference {
+  display: inline-block;
+  max-width: 100%;
+}
+
+.gp-sphinx-storage__store-link-item code.literal {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .gp-sphinx-storage__empty-value {
   color: var(--color-foreground-muted);
 }

@@ -6,6 +6,7 @@ import importlib
 import typing as t
 
 from docutils import nodes
+from sphinx import addnodes
 from sphinx.util.docutils import SphinxDirective
 from sphinx_ux_autodoc_layout import (
     API,
@@ -72,21 +73,24 @@ def _storage_domain(directive: SphinxDirective) -> StorageDomain:
     return t.cast(StorageDomain, directive.env.get_domain("storage"))
 
 
-def _store_reference(store: StoreDescriptor, *, docname: str = "") -> nodes.reference:
-    """Return an inline reference to one store anchor."""
-    ref = nodes.reference("", "", internal=True)
-    if docname:
-        ref["refuri"] = f"../{docname}/#{store_target_id(store.store_id)}"
-    else:
-        ref["refuri"] = f"#{store_target_id(store.store_id)}"
+def _store_reference(store: StoreDescriptor) -> addnodes.pending_xref:
+    """Return an unresolved storage-domain reference to one store."""
+    ref = addnodes.pending_xref(
+        "",
+        refdomain="storage",
+        reftype="storeref",
+        reftarget=store.store_id,
+        refexplicit=False,
+        refwarn=True,
+    )
     ref += nodes.literal("", store.store_id)
     return ref
 
 
-def _store_link(store: StoreDescriptor, *, docname: str = "") -> nodes.paragraph:
+def _store_link(store: StoreDescriptor) -> nodes.paragraph:
     """Return a paragraph linking to one store anchor."""
     paragraph = nodes.paragraph()
-    paragraph += _store_reference(store, docname=docname)
+    paragraph += _store_reference(store)
     return paragraph
 
 
@@ -114,15 +118,19 @@ def _literal_chip_list(values: Sequence[str]) -> nodes.paragraph:
     return paragraph
 
 
-def _store_chip_list(stores: Sequence[StoreDescriptor]) -> nodes.paragraph:
-    """Return a wrapping paragraph of linked store chips."""
-    paragraph = nodes.paragraph(classes=[StorageCSS.CHIP_LIST])
+def _store_link_list(stores: Sequence[StoreDescriptor]) -> nodes.container:
+    """Return one linked store per line."""
+    store_list = nodes.container(classes=[StorageCSS.STORE_LINK_LIST])
     if not stores:
+        paragraph = nodes.paragraph(classes=[StorageCSS.STORE_LINK_ITEM])
         paragraph += nodes.inline("", "-", classes=[StorageCSS.EMPTY_VALUE])
-        return paragraph
+        store_list += paragraph
+        return store_list
     for store in stores:
+        paragraph = nodes.paragraph(classes=[StorageCSS.STORE_LINK_ITEM])
         paragraph += _store_reference(store)
-    return paragraph
+        store_list += paragraph
+    return store_list
 
 
 def _key_value_section(rows: Sequence[ApiFactRow]) -> nodes.Element:
@@ -336,7 +344,7 @@ def _coverage_groups(
 def _support_agent_card(agent: str, stores: Sequence[StoreDescriptor]) -> nodes.container:
     """Build one support-matrix card for an agent."""
     rows = [
-        ApiFactRow(label, _store_chip_list(group_stores))
+        ApiFactRow(label, _store_link_list(group_stores))
         for label, group_stores in _coverage_groups(stores)
     ]
     entry = build_api_card_entry(
