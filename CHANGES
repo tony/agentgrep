@@ -42,6 +42,70 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### Breaking changes
+
+#### Cursor split into `cursor-cli` and `cursor-ide` (#27)
+
+The single `cursor` backend is gone. Cursor is two separate
+applications with disjoint data homes and on-disk formats — the
+`cursor-agent` terminal CLI and the desktop IDE — so agentgrep now
+models them as two agents, `cursor-cli` and `cursor-ide`. Anywhere you
+referenced `cursor` (the `--agent` flag, `agent:` query predicates, the
+`agentgrep://sources/{agent}` MCP resource, record `agent` fields), pick
+the surface you mean.
+
+Before:
+
+```console
+$ agentgrep search foo --agent cursor
+```
+
+After — the terminal agent:
+
+```console
+$ agentgrep search foo --agent cursor-cli
+```
+
+After — the desktop app:
+
+```console
+$ agentgrep search foo --agent cursor-ide
+```
+
+Store and adapter identifiers lost their now-redundant infix to match
+the agent (`cursor.cli.transcripts` → `cursor-cli.transcripts`,
+`cursor.state_vscdb_modern.v1` → `cursor_ide.state_vscdb_modern.v1`).
+See {doc}`/backends/cursor-cli` and {doc}`/backends/cursor-ide`.
+
+### What's new
+
+#### Cursor CLI prompt history (#27)
+
+Cursor CLI now has a prompt-history store, parity with the Claude,
+Codex, and Grok backends. agentgrep reads the typed-prompt recall
+buffer from `~/.config/cursor/prompt_history.json` — a directory the
+catalogue never knew, because Cursor moved its CLI home to the
+lowercase `~/.config/cursor/` while the catalogue only watched
+`~/.cursor/`. Searching `--agent cursor-cli` now returns what you typed
+into `cursor-agent`, not just the full transcripts.
+
+#### Cursor IDE per-workspace history (#27)
+
+The Cursor IDE backend now reads per-workspace databases at
+`workspaceStorage/<hash>/state.vscdb`, not just the global store. Both
+surface the `aiService.prompts` typed-prompt history, which previous
+builds advertised but did not actually extract — prompt entries carry
+no role field, so the generic walker skipped them.
+
+#### Best-effort Cursor CLI chat parser (#27)
+
+Cursor CLI's newer chat backend stores each session as content-addressed
+protobuf blobs in a `chats/<hash>/<uuid>/store.db` SQLite database, with
+no published schema. agentgrep can open these on a best-effort basis: a
+schema-less protobuf wire-walker surfaces the readable text it finds.
+The store is inspectable (opt-in) rather than searched by default, since
+the extraction is noisier than and overlaps the cleaner transcripts.
+
 ## agentgrep 0.1.0a10 (2026-05-31)
 
 agentgrep 0.1.0a10 is a scope-tightening release — both changes are
