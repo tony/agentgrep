@@ -120,23 +120,51 @@ def test_storage_coverage_grid_summarizes_catalog(tmp_path: pathlib.Path) -> Non
             """\
             # Backend coverage
 
+            ```{toctree}
+            :maxdepth: 1
+
+            claude
+            codex
+            cursor
+            gemini
+            grok
+            ```
+
             ```{storage:coverage-grid}
             ```
             """
         ),
         encoding="utf-8",
     )
+    for agent in ("claude", "codex", "cursor", "gemini", "grok"):
+        (srcdir / f"{agent}.md").write_text(
+            textwrap.dedent(
+                f"""\
+                # {agent.title()}
+
+                ```{{storage:agent}} {agent}
+                ```
+                """
+            ),
+            encoding="utf-8",
+        )
 
     _app, warnings = _build_sphinx(srcdir, tmp_path / "build")
     html = _root_html(tmp_path / "build")
 
     assert "gp-sphinx-storage__support-matrix" in html
     assert "gp-sphinx-storage__support-agent-card" in html
+    assert "gp-sphinx-storage__store-link-list" in html
+    assert "gp-sphinx-storage__store-link-item" in html
     assert "Codex" in html
     assert "Default search" in html
     assert "Runtime / cache / private" in html
     assert "codex.history" in html
     assert "claude.history" in html
+    assert 'href="claude/#storage-store-claude-history"' in html
+    assert 'href="codex/#storage-store-codex-history"' in html
+    assert 'href="#storage-store-claude-history"' not in html
+    assert 'href="#storage-store-codex-history"' not in html
     assert '<table class="gp-sphinx-storage__table' not in html
     assert "gp-sphinx-storage__coverage-grid" not in html
     assert "undefined label" not in warnings
