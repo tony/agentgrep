@@ -21,6 +21,7 @@ SERVER_VERSION = "0.1.0"
 KNOWN_ADAPTERS: tuple[str, ...] = (
     "codex.history_json.v1",
     "codex.sessions_jsonl.v1",
+    "claude.history_jsonl.v1",
     "claude.projects_jsonl.v1",
     "cursor.ai_tracking_sqlite.v1",
     "cursor.cli_jsonl.v1",

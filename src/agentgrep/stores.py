@@ -75,10 +75,10 @@ class DiscoverySpec(pydantic.BaseModel):
 
     - ``files`` lists specific relative filenames to check via ``is_file()``.
     - ``glob`` is a pattern walked under the resolved root via
-      :func:`agentgrep.list_files_matching`. ``path_parts_required``
-      filters glob results to those whose path contains every named
-      directory component (e.g., Cursor CLI transcripts must live under an
-      ``agent-transcripts`` segment).
+      :func:`agentgrep.list_files_matching`. ``path_parts_required`` and
+      ``path_parts_excluded`` filter glob results by path components (e.g.,
+      Cursor CLI transcripts must live under ``agent-transcripts`` but the
+      primary transcript store excludes nested ``subagents`` files).
 
     ``platform_paths`` lists absolute paths to check unconditionally — used
     for stores whose canonical location depends on the operating system
@@ -113,6 +113,9 @@ class DiscoverySpec(pydantic.BaseModel):
 
     path_parts_required: tuple[str, ...] = ()
     """Each named segment must appear in a glob result's ``path.parts``."""
+
+    path_parts_excluded: tuple[str, ...] = ()
+    """A glob result is skipped when any named segment appears in ``path.parts``."""
 
 
 class StoreDescriptor(pydantic.BaseModel):

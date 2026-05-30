@@ -2292,8 +2292,8 @@ def handles_from_discovery(
 
     Applies the spec's ``home_subpath`` under ``root`` to derive the search
     root, then enumerates source files via ``files`` (single-file lookups),
-    ``glob`` (recursive walk with optional ``path_parts_required`` filter),
-    and ``platform_paths`` (absolute paths).
+    ``glob`` (recursive walk with optional path-part filters), and
+    ``platform_paths`` (absolute paths).
     """
     sources: list[SourceHandle] = []
     search_root = root.joinpath(*spec.home_subpath) if spec.home_subpath else root
@@ -2316,8 +2316,11 @@ def handles_from_discovery(
 
     if spec.glob is not None and search_root.exists():
         required_parts = set(spec.path_parts_required)
+        excluded_parts = set(spec.path_parts_excluded)
         for path in list_files_matching(search_root, spec.glob, backends.find_tool):
             if required_parts and not required_parts.issubset(path.parts):
+                continue
+            if excluded_parts and excluded_parts.intersection(path.parts):
                 continue
             sources.append(
                 SourceHandle(
@@ -2747,6 +2750,8 @@ def direct_source_matches(
     active_control = SearchControl() if control is None else control
     if active_control.answer_now_requested():
         return False
+    if source.adapter_id == "claude.history_jsonl.v1":
+        return True
     if source.source_kind == "sqlite":
         return True
     if backends.grep_tool is not None:
@@ -2908,6 +2913,9 @@ def iter_source_records(
     if source.adapter_id == "codex.history_json.v1":
         yield from parse_codex_history_file(source)
         return
+    if source.adapter_id == "claude.history_jsonl.v1":
+        yield from parse_claude_history_file(source)
+        return
     if source.adapter_id == "claude.projects_jsonl.v1":
         yield from parse_claude_project_file(source)
         return
@@ -3030,6 +3038,100 @@ def parse_claude_project_file(
                 continue
             seen.add(key)
             yield build_search_record(source, candidate)
+
+
+CLAUDE_PASTE_REF_RE = re.compile(
+    r"\[(?:Pasted text|Image|\.\.\.Truncated text) #(?P<id>\d+)(?: \+\d+ lines)?\.*\]",
+)
+CLAUDE_PASTE_HASH_RE = re.compile(r"^[0-9a-fA-F]{16}$")
+
+
+def parse_claude_history_file(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse Claude Code's global ``history.jsonl`` prompt audit log."""
+    paste_cache_dir = source.path.parent / "paste-cache"
+    for event in iter_jsonl(source.path):
+        if not isinstance(event, dict):
+            continue
+        mapping = t.cast("dict[str, object]", event)
+        display = as_optional_str(mapping.get("display"))
+        if not display:
+            continue
+        session_id = as_optional_str(mapping.get("sessionId"))
+        yield SearchRecord(
+            kind="history",
+            agent=source.agent,
+            store=source.store,
+            adapter_id=source.adapter_id,
+            path=source.path,
+            text=expand_claude_history_pastes(
+                display,
+                mapping.get("pastedContents"),
+                paste_cache_dir,
+            ),
+            title="Claude prompt history",
+            role="user",
+            timestamp=_unix_millis_to_isoformat(mapping.get("timestamp")),
+            session_id=session_id,
+            conversation_id=session_id,
+            metadata={"project": as_optional_str(mapping.get("project")) or ""},
+        )
+
+
+def expand_claude_history_pastes(
+    display: str,
+    pasted_contents: object,
+    paste_cache_dir: pathlib.Path,
+) -> str:
+    """Replace Claude history paste placeholders with stored text when available.
+
+    Examples
+    --------
+    >>> expand_claude_history_pastes(
+    ...     "Review [Pasted text #1]",
+    ...     {"1": {"type": "text", "content": "inline text"}},
+    ...     pathlib.Path("/missing"),
+    ... )
+    'Review inline text'
+    >>> expand_claude_history_pastes(
+    ...     "Review [Image #1]",
+    ...     {"1": {"type": "image", "content": "ignored"}},
+    ...     pathlib.Path("/missing"),
+    ... )
+    'Review [Image #1]'
+    """
+    if not isinstance(pasted_contents, dict):
+        return display
+    refs = t.cast("dict[object, object]", pasted_contents)
+
+    def replace(match: re.Match[str]) -> str:
+        ref_id = match.group("id")
+        stored = refs.get(ref_id)
+        replacement = claude_history_paste_text(stored, paste_cache_dir)
+        return replacement if replacement is not None else match.group(0)
+
+    return CLAUDE_PASTE_REF_RE.sub(replace, display)
+
+
+def claude_history_paste_text(
+    stored: object,
+    paste_cache_dir: pathlib.Path,
+) -> str | None:
+    """Return stored Claude pasted text, resolving content hashes if needed."""
+    if not isinstance(stored, dict):
+        return None
+    mapping = t.cast("dict[str, object]", stored)
+    if mapping.get("type") != "text":
+        return None
+    content = mapping.get("content")
+    if isinstance(content, str) and content:
+        return content
+    content_hash = as_optional_str(mapping.get("contentHash"))
+    if content_hash is None or CLAUDE_PASTE_HASH_RE.fullmatch(content_hash) is None:
+        return None
+    cached = read_text_file(paste_cache_dir / f"{content_hash}.txt")
+    return cached or None
 
 
 def parse_cursor_cli_transcript(
@@ -3332,6 +3434,28 @@ def _unix_to_isoformat(value: object) -> str | None:
     try:
         return (
             datetime.datetime.fromtimestamp(value, tz=datetime.UTC)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+    except ValueError, OSError, OverflowError:
+        return None
+
+
+def _unix_millis_to_isoformat(value: object) -> str | None:
+    """Convert a unix-milliseconds timestamp to ISO-8601 UTC.
+
+    Examples
+    --------
+    >>> _unix_millis_to_isoformat(1700000000000)
+    '2023-11-14T22:13:20Z'
+    >>> _unix_millis_to_isoformat(0) is None
+    True
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        return None
+    try:
+        return (
+            datetime.datetime.fromtimestamp(value / 1000, tz=datetime.UTC)
             .isoformat()
             .replace("+00:00", "Z")
         )

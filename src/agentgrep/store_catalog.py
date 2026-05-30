@@ -29,6 +29,7 @@ from agentgrep.stores import (
 
 OBSERVED_AT = datetime.date(2026, 5, 17)
 _GROK_OBSERVED_AT = datetime.date(2026, 5, 25)
+_CLAUDE_HISTORY_OBSERVED_AT = datetime.date(2026, 5, 29)
 
 
 def gemini_project_hash(project_root: pathlib.Path) -> str:
@@ -65,6 +66,41 @@ def gemini_project_hash(project_root: pathlib.Path) -> str:
 _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
     StoreDescriptor(
         agent="claude",
+        store_id="claude.history",
+        role=StoreRole.PROMPT_HISTORY,
+        format=StoreFormat.JSONL,
+        path_pattern="${HOME}/.claude/history.jsonl",
+        observed_version="claude-code v2.1.157",
+        observed_at=_CLAUDE_HISTORY_OBSERVED_AT,
+        schema_notes=(
+            "Global prompt history JSONL. Each line carries `display`, "
+            "`pastedContents`, `timestamp` (Unix milliseconds), `project`, and "
+            "`sessionId`. Large text pastes may be content-addressed through "
+            "`paste-cache/<contentHash>.txt`."
+        ),
+        sample_record=(
+            '{"display":"<redacted>","pastedContents":{},'
+            '"timestamp":1700000000000,"project":"<path>","sessionId":"..."}'
+        ),
+        distinguishes_from=("claude.projects.session",),
+        search_by_default=True,
+        search_notes=(
+            "User-prompt audit log used by Claude Code prompt history; project "
+            "transcripts remain the full conversation replay."
+        ),
+        discovery=(
+            DiscoverySpec(
+                store="claude.history",
+                adapter_id="claude.history_jsonl.v1",
+                path_kind="history_file",
+                source_kind="jsonl",
+                home_subpath=(".claude",),
+                files=("history.jsonl",),
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="claude",
         store_id="claude.projects.session",
         role=StoreRole.PRIMARY_CHAT,
         format=StoreFormat.JSONL,
@@ -89,6 +125,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
                 source_kind="jsonl",
                 home_subpath=(".claude", "projects"),
                 glob="*.jsonl",
+                path_parts_excluded=("subagents",),
             ),
         ),
     ),
@@ -109,6 +146,17 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         search_notes=(
             "Sub-agent transcripts are conversation content; de-duplicate with the "
             "parent session by `uuid`."
+        ),
+        discovery=(
+            DiscoverySpec(
+                store="claude.projects_subagents",
+                adapter_id="claude.projects_jsonl.v1",
+                path_kind="session_file",
+                source_kind="jsonl",
+                home_subpath=(".claude", "projects"),
+                glob="*.jsonl",
+                path_parts_required=("subagents",),
+            ),
         ),
     ),
     StoreDescriptor(
@@ -226,6 +274,36 @@ _CURSOR_STORES: tuple[StoreDescriptor, ...] = (
                 home_subpath=(".cursor", "projects"),
                 glob="*.jsonl",
                 path_parts_required=("agent-transcripts",),
+                path_parts_excluded=("subagents",),
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="cursor",
+        store_id="cursor.cli.subagent_transcripts",
+        role=StoreRole.SUPPLEMENTARY_CHAT,
+        format=StoreFormat.JSONL,
+        path_pattern=(
+            "${HOME}/.cursor/projects/<id>/agent-transcripts/<session_uuid>/subagents/<agent>.jsonl"
+        ),
+        observed_version="cursor-agent 2026.05.28-a70ca7c",
+        observed_at=datetime.date(2026, 5, 29),
+        schema_notes=(
+            "Same JSONL Anthropic-style shape as `cursor.cli.transcripts`, nested "
+            "under a session's `subagents/` directory."
+        ),
+        distinguishes_from=("cursor.cli.transcripts",),
+        search_by_default=True,
+        search_notes="Subagent transcript files are conversation content, not primary sessions.",
+        discovery=(
+            DiscoverySpec(
+                store="cursor.cli_subagents",
+                adapter_id="cursor.cli_jsonl.v1",
+                path_kind="session_file",
+                source_kind="jsonl",
+                home_subpath=(".cursor", "projects"),
+                glob="*.jsonl",
+                path_parts_required=("agent-transcripts", "subagents"),
             ),
         ),
     ),
@@ -873,8 +951,8 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
 
 
 CATALOG = StoreCatalog(
-    catalog_version=4,
-    captured_at=_GROK_OBSERVED_AT,
+    catalog_version=5,
+    captured_at=_CLAUDE_HISTORY_OBSERVED_AT,
     stores=(
         *_CLAUDE_STORES,
         *_CURSOR_STORES,
