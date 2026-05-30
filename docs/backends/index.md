@@ -6,6 +6,43 @@ agentgrep reads on-disk stores from multiple AI coding assistants.
 Each backend page documents the agent's path layout, environment
 overrides, store descriptors, and record schemas.
 
+## Backend pages
+
+::::{grid} 1 1 2 3
+:gutter: 2 2 3 3
+
+:::{grid-item-card} Codex
+:link: codex
+:link-type: doc
+OpenAI Codex CLI history, sessions, instructions, memory, goals, and SQLite state.
+:::
+
+:::{grid-item-card} Claude Code
+:link: claude
+:link-type: doc
+Claude Code history, project transcripts, tasks, memory, settings, and plugin surfaces.
+:::
+
+:::{grid-item-card} Cursor
+:link: cursor
+:link-type: doc
+Cursor CLI agent transcripts and Cursor IDE SQLite state.
+:::
+
+:::{grid-item-card} Gemini CLI
+:link: gemini
+:link-type: doc
+Gemini CLI chat sessions, prompt logs, checkpoints, settings, and skills.
+:::
+
+:::{grid-item-card} Grok CLI
+:link: grok
+:link-type: doc
+Grok CLI prompt history, session transcripts, memory, logs, and config.
+:::
+
+::::
+
 ## Coverage levels
 
 The backend pages distinguish search support from storage coverage.
