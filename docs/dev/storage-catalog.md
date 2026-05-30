@@ -71,6 +71,27 @@ This distinction lets the catalogue describe auth files, runtime logs,
 shell snapshots, and file-history caches without making them part of
 ordinary prompt search.
 
+## Version detection strategies
+
+Discovery payloads include a `version_detection` object for each source
+agentgrep can enumerate. The object records the app version when local
+metadata exposes one, the data-shape version, the strategy used, the
+confidence level, and a short evidence string.
+
+The strategies are:
+
+| Strategy | Meaning |
+|----------|---------|
+| `embedded_metadata` | The source itself carries a version field, such as a session metadata record. |
+| `shape_inference` | The file name, record keys, table names, or SQLite suffix identify the data shape. |
+| `version_check` | A local version file provides app-version context without spawning the upstream CLI. |
+| `catalog_observation` | No concrete source evidence was available, so the catalog observation stamp is reported as a low-confidence fallback. |
+
+The concrete data shape is authoritative. If a modern app-version hint
+coexists with an old unmigrated file, agentgrep parses the file by its
+own shape. See {ref}`adr-storage-version-detection` for the full
+decision.
+
 ## Stores by agent
 
 ### Claude Code
@@ -100,6 +121,9 @@ default search because they either duplicate transcripts or represent
 derived state. Settings, skills, teams, IDE state, caches, file
 history, shell snapshots, context/security state, and session
 environment are catalogued or private according to sensitivity.
+Claude source version detection uses `embedded_metadata` for transcript
+`version` fields, `shape_inference` for history records with `display`,
+`timestamp`, and `project`, and `catalog_observation` as the fallback.
 
 ### Cursor
 
@@ -146,6 +170,10 @@ SQLite stores are `state_5.sqlite`, `logs_2.sqlite`,
 as `threads.first_user_message`, `threads.preview`, memory summaries,
 goal objectives, and job instructions are inspectable storage rather
 than default search.
+Codex source version detection uses `shape_inference` for
+`history.jsonl`, legacy `history.json`, and SQLite suffixes,
+`embedded_metadata` for session `cli_version`, and `version_check` for
+`models_cache.json.client_version` app-version context.
 
 ### Gemini CLI
 

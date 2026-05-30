@@ -40,6 +40,23 @@ parsed; `private` stores are intentionally not enumerated.
 | `codex.auth` | App State | JSON | private | |
 | `codex.policy` | App State | Opaque | private | |
 
+## Version detection
+
+Codex exposes both app-version context and concrete data-shape
+versions in source discovery. `models_cache.json.client_version`
+provides app-version context when present; `version.json.latest_version`
+is not treated as the installed version. Session transcripts can carry
+`session_meta.payload.cli_version`, which is stronger evidence for
+that transcript than the global cache.
+
+Data-shape detection is based on the source itself. `history.jsonl`
+records with `session_id`, `ts`, and `text` are reported as
+`codex.history_jsonl.current`; legacy `history.json` array records with
+`command` and `timestamp` are reported as
+`codex.history_json.legacy`. SQLite stores derive data versions from
+their migration suffixes, such as `state_5.sqlite` →
+`codex.state.sqlite.v5`.
+
 ## Record schemas
 
 ### codex.history

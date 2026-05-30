@@ -42,6 +42,22 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### What's new
+
+#### Source version detection strategies (#25)
+
+agentgrep now reports how each discovered source version was detected.
+Source discovery and MCP `list_sources` payloads include app-version
+context, data-shape version, strategy, confidence, and concise
+evidence, while search result records stay focused on prompt/history
+content.
+
+Codex history detection now distinguishes modern `history.jsonl`
+records (`session_id`, `ts`, `text`) from legacy `history.json`
+records (`command`, `timestamp`) even when both coexist under a modern
+Codex config root. Claude Code detection uses prompt-history shape and
+embedded transcript version metadata when available.
+
 ## agentgrep 0.1.0a8 (2026-05-25)
 
 agentgrep 0.1.0a8 ships Grok CLI as the fifth searchable backend and

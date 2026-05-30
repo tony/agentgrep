@@ -15,6 +15,16 @@ are not searched by default. Catalog-only stores are documented so
 future adapters do not mistake them for prompt history. Private stores
 are documented but intentionally not enumerated from disk.
 
+## Version detection
+
+Source discovery reports version metadata separately from record
+content. agentgrep prefers concrete source evidence over app freshness:
+embedded metadata, file/record shape, and SQLite suffixes identify the
+data version; local version files provide app-version context only
+when they can be read without spawning an upstream CLI. If neither is
+available, the catalog observation stamp is reported as a
+low-confidence fallback.
+
 ## Support matrix
 
 | Agent | Default search | Opt-in / inspectable prompts | Memory | Plans / todos / goals | Instructions / plugins / skills | Indexes / summaries | App state / config | Runtime / cache |

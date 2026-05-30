@@ -77,7 +77,9 @@ agentgrep's tools are read-only. They return structured Pydantic models and prot
 optional path-kind, source-kind, and coverage filters. By default this
 matches the default-search surface; pass `include_non_default=true` or
 set `coverage_filter` to inspect inventory-only stores such as Codex
-SQLite DBs or Claude session memory.
+SQLite DBs or Claude session memory. Each returned source includes
+`version_detection`, which records the strategy and evidence agentgrep
+used to identify the app/data version for that concrete file or DB.
 
 ```{fastmcp-tool-input} list_sources
 ```

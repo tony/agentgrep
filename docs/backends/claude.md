@@ -40,6 +40,18 @@ parsed; `private` stores are intentionally not enumerated.
 | `claude.security_state` | App State | JSON | private | |
 | `claude.session_env` | App State | Opaque | private | |
 
+## Version detection
+
+Claude Code source discovery reports data-shape versions from concrete
+record evidence. Global history records with `display`, `timestamp`,
+and `project` are reported as `claude.history_jsonl.log_entry.v1`.
+Project and sub-agent transcripts use embedded transcript `version`
+metadata when present; otherwise their `type`, `sessionId`, and
+`message` keys identify the JSONL message shape.
+
+Catalog observation stamps remain the fallback for discovered stores
+whose concrete shape cannot be sampled safely.
+
 ## Record schemas
 
 ### claude.history
