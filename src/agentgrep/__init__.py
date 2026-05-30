@@ -173,6 +173,7 @@ ITER_SOURCE_RECORD_ADAPTERS: frozenset[str] = frozenset(
         "grok.prompt_history_jsonl.v1",
         "grok.session_search_sqlite.v1",
         "grok.sessions_jsonl.v1",
+        "pi.sessions_jsonl.v1",
     },
 )
 EnvelopeFactory = t.Callable[[str, dict[str, object], list[dict[str, object]]], dict[str, object]]
@@ -3826,6 +3827,9 @@ def iter_source_records(
     if source.adapter_id == "grok.session_search_sqlite.v1":
         yield from parse_grok_session_search_db(source)
         return
+    if source.adapter_id == "pi.sessions_jsonl.v1":
+        yield from parse_pi_session_file(source)
+        return
 
 
 def parse_codex_session_file(
@@ -4729,6 +4733,105 @@ def _unix_millis_to_isoformat(value: object) -> str | None:
         )
     except ValueError, OSError, OverflowError:
         return None
+
+
+def _pi_message_candidate(
+    entry: dict[str, object],
+    entry_timestamp: str | None,
+    session_id: str | None,
+    conversation_id: str | None,
+) -> MessageCandidate | None:
+    """Build a candidate from a pi ``message`` session entry.
+
+    The entry wraps an LLM message under ``message`` (``role`` plus
+    ``content`` that is a string or content-blocks array). The
+    entry-level ISO timestamp is preferred; the inner unix-milliseconds
+    ``timestamp`` is the fallback for v1 entries that lack one.
+    """
+    message = entry.get("message")
+    if not isinstance(message, dict):
+        return None
+    message_map = t.cast("dict[str, object]", message)
+    role = as_optional_str(message_map.get("role"))
+    text = flatten_content_value(t.cast("JSONValue | None", message_map.get("content")))
+    if role is None or not text:
+        return None
+    timestamp = entry_timestamp or _unix_millis_to_isoformat(message_map.get("timestamp"))
+    return MessageCandidate(
+        role=role,
+        text=text,
+        timestamp=timestamp,
+        model=as_optional_str(message_map.get("model")),
+        session_id=session_id,
+        conversation_id=conversation_id,
+    )
+
+
+def _pi_entry_text(entry_type: str, entry: dict[str, object]) -> str | None:
+    """Return searchable text from a non-message pi session entry.
+
+    ``compaction``/``branch_summary`` carry a ``summary``; ``session_info``
+    carries a user-set ``name``. Other entry types (model/thinking-level
+    changes, custom, label) are metadata-only and yield no text.
+    """
+    if entry_type in {"compaction", "branch_summary"}:
+        return as_optional_str(entry.get("summary"))
+    if entry_type == "session_info":
+        return as_optional_str(entry.get("name"))
+    return None
+
+
+def parse_pi_session_file(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse a pi (earendil-works/pi) session JSONL transcript.
+
+    Line 1 is a ``type:"session"`` header (capturing ``id``/``cwd``);
+    ``version`` may be absent in v1 files. Each later line is a
+    ``SessionEntry`` tagged union. ``message`` entries become candidates
+    whose role drives the prompt/history split (user turns are prompts);
+    ``compaction``/``branch_summary`` summaries and ``session_info`` names
+    are emitted as history text. Metadata-only entries are skipped.
+    """
+    session_id: str | None = source.path.stem
+    conversation_id: str | None = None
+    for event in iter_jsonl(source.path):
+        if not isinstance(event, dict):
+            continue
+        mapping = t.cast("dict[str, object]", event)
+        entry_type = as_optional_str(mapping.get("type"))
+        if not entry_type:
+            continue
+        if entry_type == "session":
+            session_id = as_optional_str(mapping.get("id")) or session_id
+            conversation_id = as_optional_str(mapping.get("cwd"))
+            continue
+        entry_timestamp = as_optional_str(mapping.get("timestamp"))
+        if entry_type == "message":
+            candidate = _pi_message_candidate(
+                mapping,
+                entry_timestamp,
+                session_id,
+                conversation_id,
+            )
+            if candidate is not None:
+                yield build_search_record(source, candidate)
+            continue
+        text = _pi_entry_text(entry_type, mapping)
+        if not text:
+            continue
+        yield SearchRecord(
+            kind="history",
+            agent=source.agent,
+            store=source.store,
+            adapter_id=source.adapter_id,
+            path=source.path,
+            text=text,
+            role=entry_type,
+            timestamp=entry_timestamp,
+            session_id=session_id,
+            conversation_id=conversation_id,
+        )
 
 
 def parse_text_store_file(
