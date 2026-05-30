@@ -177,6 +177,7 @@ ITER_SOURCE_RECORD_ADAPTERS: frozenset[str] = frozenset(
         "grok.session_search_sqlite.v1",
         "grok.sessions_jsonl.v1",
         "pi.sessions_jsonl.v1",
+        "opencode.db_sqlite.v1",
     },
 )
 EnvelopeFactory = t.Callable[[str, dict[str, object], list[dict[str, object]]], dict[str, object]]
@@ -3901,6 +3902,9 @@ def iter_source_records(
     if source.adapter_id == "pi.sessions_jsonl.v1":
         yield from parse_pi_session_file(source)
         return
+    if source.adapter_id == "opencode.db_sqlite.v1":
+        yield from parse_opencode_db(source)
+        return
 
 
 def parse_codex_session_file(
@@ -5358,6 +5362,100 @@ def parse_grok_session_search_db(
                 timestamp=_unix_to_isoformat(updated_at_raw),
                 session_id=session_id,
                 conversation_id=session_id,
+            )
+    except sqlite3.DatabaseError:
+        return
+    finally:
+        connection.close()
+
+
+def _opencode_json_object(raw: object) -> dict[str, object] | None:
+    """Parse a JSON object from an OpenCode SQLite ``data`` text column."""
+    if not isinstance(raw, str):
+        return None
+    try:
+        value = json.loads(raw)
+    except ValueError, TypeError:
+        return None
+    return t.cast("dict[str, object]", value) if isinstance(value, dict) else None
+
+
+def _opencode_part_text(part_type: str, part_data: dict[str, object]) -> str | None:
+    """Return the searchable text for an OpenCode message part.
+
+    ``text``/``reasoning`` parts carry the prompt, reply, or model thinking
+    under ``text``; ``subtask`` parts carry a ``prompt``/``description``.
+    Other part types (tool, file, snapshot, patch, step markers, …) are
+    metadata or opt-in and contribute no default-search text.
+    """
+    if part_type in {"text", "reasoning"}:
+        return as_optional_str(part_data.get("text"))
+    if part_type == "subtask":
+        return as_optional_str(part_data.get("prompt")) or as_optional_str(
+            part_data.get("description"),
+        )
+    return None
+
+
+def parse_opencode_db(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse an OpenCode ``opencode.db`` SQLite store.
+
+    Joins ``part`` -> ``message`` -> ``session``: each text-bearing part
+    becomes one record whose ``kind`` is derived from the joined message
+    ``role`` (user -> prompt, else history), with the session title,
+    working directory, and the message model/timestamp attached. Degrades
+    gracefully when the expected tables or columns are absent.
+    """
+    connection = open_readonly_sqlite(source.path)
+    try:
+        if not {"session", "message", "part"}.issubset(sqlite_table_names(connection)):
+            return
+        cursor = connection.execute(
+            "SELECT p.data, m.data, s.title, s.directory, s.id "
+            "FROM part p "
+            "JOIN message m ON p.message_id = m.id "
+            "JOIN session s ON p.session_id = s.id "
+            "ORDER BY s.id, m.id, p.id",
+        )
+        for part_raw, message_raw, title_raw, directory_raw, session_id_raw in cursor:
+            part_data = _opencode_json_object(part_raw)
+            if part_data is None:
+                continue
+            part_type = as_optional_str(part_data.get("type"))
+            if not part_type:
+                continue
+            text = _opencode_part_text(part_type, part_data)
+            if not text:
+                continue
+            message_data = _opencode_json_object(message_raw) or {}
+            role = as_optional_str(message_data.get("role")) or "assistant"
+            kind: t.Literal["prompt", "history"] = (
+                "prompt" if role.casefold() in USER_ROLES else "history"
+            )
+            time_obj = message_data.get("time")
+            created = (
+                t.cast("dict[str, object]", time_obj).get("created")
+                if isinstance(time_obj, dict)
+                else None
+            )
+            session_id = as_optional_str(session_id_raw)
+            directory = as_optional_str(directory_raw)
+            yield SearchRecord(
+                kind=kind,
+                agent=source.agent,
+                store=source.store,
+                adapter_id=source.adapter_id,
+                path=source.path,
+                text=text,
+                title=as_optional_str(title_raw),
+                role=role,
+                timestamp=_unix_millis_to_isoformat(created),
+                model=as_optional_str(message_data.get("modelID")),
+                session_id=session_id,
+                conversation_id=session_id,
+                metadata={"directory": directory} if directory else {},
             )
     except sqlite3.DatabaseError:
         return
