@@ -26,7 +26,7 @@ used to interpret that source.
 ```{fastmcp-resource-template} agentgrep_sources_by_agent
 ```
 
-Read `agentgrep://sources/codex`, `agentgrep://sources/claude`, `agentgrep://sources/cursor-cli`, `agentgrep://sources/cursor-ide`, `agentgrep://sources/gemini`, or `agentgrep://sources/grok` to filter discovery by agent.
+Read `agentgrep://sources/codex`, `agentgrep://sources/claude`, `agentgrep://sources/cursor-cli`, `agentgrep://sources/cursor-ide`, `agentgrep://sources/gemini`, `agentgrep://sources/grok`, or `agentgrep://sources/pi` to filter discovery by agent.
 
 ## Store catalog
 

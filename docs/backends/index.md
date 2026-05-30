@@ -47,6 +47,12 @@ Gemini CLI chat sessions, prompt logs, checkpoints, settings, and skills.
 Grok CLI prompt history, session transcripts, memory, logs, and config.
 :::
 
+:::{grid-item-card} Pi
+:link: pi
+:link-type: doc
+Pi (earendil-works) session transcripts, settings, prompts, and managed extensions.
+:::
+
 ::::
 
 ## Coverage levels
@@ -84,4 +90,5 @@ cursor-cli
 cursor-ide
 gemini
 grok
+pi
 ```

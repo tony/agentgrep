@@ -149,5 +149,5 @@ def test_backend_index_renders_backend_shortcut_grid(tmp_path: pathlib.Path) -> 
     backend_index = (tmp_path / "backends" / "index.html").read_text(encoding="utf-8")
     assert "Backend pages" in backend_index
     assert backend_index.index("Backend pages") < backend_index.index("Coverage levels")
-    for backend in ("codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok"):
+    for backend in ("codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi"):
         assert f'href="{backend}/"' in backend_index
