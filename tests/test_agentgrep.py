@@ -4814,11 +4814,16 @@ def test_discover_remaining_claude_inventory_sources(
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
     claude_home = home / ".claude"
+    project_root = home / "work" / "repo"
+    project_session = claude_home / "projects" / "repo" / "session.jsonl"
+    write_jsonl(project_session, [{"type": "system", "cwd": str(project_root)}])
 
     paths = [
+        claude_home / "CLAUDE.md",
         claude_home / "projects" / "-repo" / "memory" / "MEMORY.md",
         claude_home / "todos" / "agent.json",
         claude_home / "skills" / "review.md",
+        claude_home / "skills" / "audit" / "SKILL.md",
         claude_home / "commands" / "ship.md",
         claude_home / "teams" / "storage" / "config.json",
         claude_home / "stats-cache.json",
@@ -4826,6 +4831,20 @@ def test_discover_remaining_claude_inventory_sources(
         claude_home / "context-mode" / "state.json",
         claude_home / "ide" / "bridge.json",
         claude_home / ".last-update-result.json",
+        claude_home / "plugins" / "cache" / "example" / ".claude-plugin" / "plugin.json",
+        claude_home / "plugins" / "cache" / "example" / "commands" / "ship.md",
+        claude_home / "plugins" / "cache" / "example" / "agents" / "reviewer.md",
+        claude_home / "plugins" / "cache" / "example" / "skills" / "audit" / "SKILL.md",
+        claude_home / "plugins" / "cache" / "example" / "hooks" / "hooks.json",
+        claude_home / "chrome" / "native-host.json",
+        claude_home / "local" / "install-state.json",
+        claude_home / "jobs" / "job.json",
+        claude_home / "debug" / "claude.log",
+        claude_home / "shell-snapshots" / "snapshot.sh",
+        project_root / "CLAUDE.md",
+        project_root / ".claude" / "commands" / "project.md",
+        project_root / ".claude" / "agents" / "reviewer.md",
+        project_root / ".claude" / "skills" / "audit" / "SKILL.md",
     ]
     for path in paths:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -4844,12 +4863,49 @@ def test_discover_remaining_claude_inventory_sources(
     adapter_ids = {source.adapter_id for source in inventory_sources}
     assert {
         "claude.projects_memory_text.v1",
+        "claude.memory_text.v1",
+        "claude.project_instruction_text.v1",
         "claude.todos_json.v1",
         "claude.skills_text.v1",
         "claude.commands_text.v1",
         "claude.teams_json.v1",
+        "claude.plugin_manifest_json.v1",
+        "claude.plugin_instruction_text.v1",
+        "claude.plugin_hooks_json.v1",
         "claude.app_state_json_summary.v1",
+        "claude.file_metadata_summary.v1",
     } <= adapter_ids
+
+    inventory_paths = {source.path for source in inventory_sources}
+    assert project_root / "CLAUDE.md" in inventory_paths
+    assert project_root / ".claude" / "commands" / "project.md" in inventory_paths
+
+
+def test_claude_private_inventory_stays_unenumerated(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Claude private files are documented but not discovered from disk."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    claude_home = home / ".claude"
+    private_paths = [
+        claude_home / ".credentials.json",
+        claude_home / "security_warnings_state_repo.json",
+        claude_home / "session-env" / "session.json",
+    ]
+    for path in private_paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _ = path.write_text("secret", encoding="utf-8")
+
+    sources = agentgrep.discover_claude_sources(
+        home,
+        agentgrep.BackendSelection(None, None, None),
+        include_non_default=True,
+    )
+
+    assert not {source.path for source in sources}.intersection(private_paths)
 
 
 def test_parse_remaining_claude_inventory_samples(tmp_path: pathlib.Path) -> None:
@@ -4895,6 +4951,18 @@ def test_parse_remaining_claude_inventory_samples(tmp_path: pathlib.Path) -> Non
         json.dumps({"version": 3, "secret": "do-not-index", "dailyActivity": [1, 2]}),
         encoding="utf-8",
     )
+    plugin_manifest_path = tmp_path / "plugin.json"
+    _ = plugin_manifest_path.write_text(
+        json.dumps({"name": "secret-plugin", "description": "private description"}),
+        encoding="utf-8",
+    )
+    hook_path = tmp_path / "hooks.json"
+    _ = hook_path.write_text(
+        json.dumps({"hooks": {"PreToolUse": [{"command": "echo do-not-index"}]}}),
+        encoding="utf-8",
+    )
+    raw_path = tmp_path / "debug.log"
+    _ = raw_path.write_text("do-not-index\nsecond line\n", encoding="utf-8")
 
     sources = [
         agentgrep.SourceHandle(
@@ -4930,6 +4998,39 @@ def test_parse_remaining_claude_inventory_samples(tmp_path: pathlib.Path) -> Non
             mtime_ns=0,
             coverage=agentgrep.StoreCoverage.CATALOG_ONLY,
         ),
+        agentgrep.SourceHandle(
+            agent="claude",
+            store="claude.plugins_cache",
+            adapter_id="claude.plugin_manifest_json.v1",
+            path=plugin_manifest_path,
+            path_kind="store_file",
+            source_kind="json",
+            search_root=None,
+            mtime_ns=0,
+            coverage=agentgrep.StoreCoverage.INSPECTABLE,
+        ),
+        agentgrep.SourceHandle(
+            agent="claude",
+            store="claude.plugins_cache",
+            adapter_id="claude.plugin_hooks_json.v1",
+            path=hook_path,
+            path_kind="store_file",
+            source_kind="json",
+            search_root=None,
+            mtime_ns=0,
+            coverage=agentgrep.StoreCoverage.INSPECTABLE,
+        ),
+        agentgrep.SourceHandle(
+            agent="claude",
+            store="claude.debug_logs",
+            adapter_id="claude.file_metadata_summary.v1",
+            path=raw_path,
+            path_kind="store_file",
+            source_kind="text",
+            search_root=None,
+            mtime_ns=0,
+            coverage=agentgrep.StoreCoverage.CATALOG_ONLY,
+        ),
     ]
 
     records = [record for source in sources for record in agentgrep.iter_source_records(source)]
@@ -4940,6 +5041,12 @@ def test_parse_remaining_claude_inventory_samples(tmp_path: pathlib.Path) -> Non
     assert "Audit non-default storage" in records[1].text
     assert "do-not-index" not in records[2].text
     assert records[2].metadata == {"key_count": 3}
+    assert "secret-plugin" not in records[3].text
+    assert "description" in records[3].text
+    assert "echo do-not-index" not in records[4].text
+    assert "PreToolUse" in records[4].text
+    assert "do-not-index" not in records[5].text
+    assert records[5].metadata["line_count"] == 2
 
 
 def test_discover_remaining_codex_inventory_sources(
@@ -4951,21 +5058,41 @@ def test_discover_remaining_codex_inventory_sources(
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
     codex_home = home / ".codex"
+    project_root = home / "work" / "repo"
+    session_path = codex_home / "sessions" / "2026" / "05" / "30" / "rollout-1.jsonl"
+    write_jsonl(
+        session_path,
+        [{"type": "session_meta", "payload": {"id": "s1", "cwd": str(project_root)}}],
+    )
 
     paths = [
         codex_home / "skills" / "review" / "SKILL.md",
         codex_home / "rules" / "default.rules",
         codex_home / "config.toml",
         codex_home / "config.toml.bak",
+        codex_home / "hooks.json",
+        codex_home / "managed_config.toml",
+        codex_home / "environments.toml",
         codex_home / "update-check.json",
         codex_home / "version.json",
+        codex_home / ".personality_migration",
         codex_home / "models_cache.json",
         codex_home / "internal_storage.json",
         codex_home / "process_manager" / "chat_processes.json",
+        codex_home / "tmp" / "arg0" / "state.json",
+        codex_home / "log" / "codex.log",
+        codex_home / "shell_snapshots" / "snapshot.sh",
         codex_home / "plugins" / "cache" / "example" / ".codex-plugin" / "plugin.json",
+        codex_home / "plugins" / "cache" / "example" / ".claude-plugin" / "plugin.json",
+        codex_home / "plugins" / "cache" / "example" / ".agents" / "plugins" / "marketplace.json",
         codex_home / "plugins" / "cache" / "example" / "commands" / "ship.md",
         codex_home / "plugins" / "cache" / "example" / "agents" / "reviewer.md",
         codex_home / "plugins" / "cache" / "example" / "skills" / "audit" / "SKILL.md",
+        codex_home / "plugins" / "cache" / "example" / "custom-skills" / "audit" / "SKILL.md",
+        codex_home / "plugins" / "cache" / "example" / "hooks" / "hooks.json",
+        project_root / ".codex" / "config.toml",
+        project_root / ".codex" / "hooks.json",
+        project_root / ".codex" / "skills" / "audit" / "SKILL.md",
     ]
     for path in paths:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -4993,10 +5120,49 @@ def test_discover_remaining_codex_inventory_sources(
         "codex.rules_text.v1",
         "codex.config_toml.v1",
         "codex.config_backup_toml.v1",
+        "codex.project_config_toml.v1",
+        "codex.project_skill_text.v1",
+        "codex.hooks_json.v1",
         "codex.app_state_json_summary.v1",
         "codex.plugin_manifest_json.v1",
+        "codex.plugin_marketplace_json.v1",
+        "codex.plugin_hooks_json.v1",
         "codex.plugin_instruction_text.v1",
+        "codex.file_metadata_summary.v1",
     } <= adapter_ids
+
+    inventory_paths = {source.path for source in inventory_sources}
+    assert project_root / ".codex" / "config.toml" in inventory_paths
+    assert project_root / ".codex" / "skills" / "audit" / "SKILL.md" in inventory_paths
+
+
+def test_codex_private_inventory_stays_unenumerated(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex private files are documented but not discovered from disk."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    codex_home = home / ".codex"
+    private_paths = [
+        codex_home / "auth.json",
+        codex_home / "installation_id",
+        codex_home / "policy" / "policy.json",
+        codex_home / "secrets" / "token",
+        codex_home / ".env",
+    ]
+    for path in private_paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _ = path.write_text("secret", encoding="utf-8")
+
+    sources = agentgrep.discover_codex_sources(
+        home,
+        agentgrep.BackendSelection(None, None, None),
+        include_non_default=True,
+    )
+
+    assert not {source.path for source in sources}.intersection(private_paths)
 
 
 def test_parse_codex_inventory_safe_samples(tmp_path: pathlib.Path) -> None:
@@ -5017,6 +5183,18 @@ def test_parse_codex_inventory_safe_samples(tmp_path: pathlib.Path) -> None:
         json.dumps({"name": "secret-plugin", "description": "private description"}),
         encoding="utf-8",
     )
+    marketplace_path = tmp_path / "marketplace.json"
+    _ = marketplace_path.write_text(
+        json.dumps({"plugins": [{"name": "private-plugin", "repo": "secret"}]}),
+        encoding="utf-8",
+    )
+    hook_path = tmp_path / "hooks.json"
+    _ = hook_path.write_text(
+        json.dumps({"hooks": {"PostToolUse": [{"command": "echo do-not-index"}]}}),
+        encoding="utf-8",
+    )
+    raw_path = tmp_path / "codex.log"
+    _ = raw_path.write_text("do-not-index\nsecond line\n", encoding="utf-8")
 
     sources = [
         agentgrep.SourceHandle(
@@ -5052,6 +5230,39 @@ def test_parse_codex_inventory_safe_samples(tmp_path: pathlib.Path) -> None:
             mtime_ns=0,
             coverage=agentgrep.StoreCoverage.INSPECTABLE,
         ),
+        agentgrep.SourceHandle(
+            agent="codex",
+            store="codex.plugin_marketplace",
+            adapter_id="codex.plugin_marketplace_json.v1",
+            path=marketplace_path,
+            path_kind="store_file",
+            source_kind="json",
+            search_root=None,
+            mtime_ns=0,
+            coverage=agentgrep.StoreCoverage.INSPECTABLE,
+        ),
+        agentgrep.SourceHandle(
+            agent="codex",
+            store="codex.plugins",
+            adapter_id="codex.plugin_hooks_json.v1",
+            path=hook_path,
+            path_kind="store_file",
+            source_kind="json",
+            search_root=None,
+            mtime_ns=0,
+            coverage=agentgrep.StoreCoverage.INSPECTABLE,
+        ),
+        agentgrep.SourceHandle(
+            agent="codex",
+            store="codex.log_files",
+            adapter_id="codex.file_metadata_summary.v1",
+            path=raw_path,
+            path_kind="store_file",
+            source_kind="text",
+            search_root=None,
+            mtime_ns=0,
+            coverage=agentgrep.StoreCoverage.CATALOG_ONLY,
+        ),
     ]
 
     records = [record for source in sources for record in agentgrep.iter_source_records(source)]
@@ -5063,6 +5274,12 @@ def test_parse_codex_inventory_safe_samples(tmp_path: pathlib.Path) -> None:
     assert "latest_version" in records[1].text
     assert "secret-plugin" not in records[2].text
     assert "description" in records[2].text
+    assert "private-plugin" not in records[3].text
+    assert "plugins" in records[3].text
+    assert "echo do-not-index" not in records[4].text
+    assert "PostToolUse" in records[4].text
+    assert "do-not-index" not in records[5].text
+    assert records[5].metadata["line_count"] == 2
 
 
 def test_search_claude_history_expands_external_pasted_text(

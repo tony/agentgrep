@@ -174,7 +174,13 @@ def test_catalog_covers_remaining_claude_and_codex_storage_map() -> None:
         "claude.debug_logs",
         "claude.backups",
         "claude.generic_cache",
+        "claude.memory_files",
+        "claude.project_instructions",
         "claude.commands",
+        "claude.uploads",
+        "claude.chrome",
+        "claude.native_install",
+        "claude.jobs",
         "codex.installation_id",
         "codex.update_check",
         "codex.version_file",
@@ -182,12 +188,21 @@ def test_catalog_covers_remaining_claude_and_codex_storage_map() -> None:
         "codex.config_backups",
         "codex.skills",
         "codex.rules",
+        "codex.project_config",
+        "codex.project_skills",
+        "codex.hooks",
+        "codex.plugin_marketplace",
+        "codex.secrets",
+        "codex.env",
+        "codex.arg0_runtime",
         "codex.sqlite_sidecars",
     } <= store_ids
 
     assert CATALOG.by_id("claude.credentials").coverage_level is StoreCoverage.PRIVATE
     assert CATALOG.by_id("claude.commands").coverage_level is StoreCoverage.INSPECTABLE
+    assert CATALOG.by_id("claude.plugins_cache").coverage_level is StoreCoverage.INSPECTABLE
     assert CATALOG.by_id("codex.rules").coverage_level is StoreCoverage.INSPECTABLE
+    assert CATALOG.by_id("codex.secrets").coverage_level is StoreCoverage.PRIVATE
     assert CATALOG.by_id("codex.sqlite_sidecars").coverage_level is StoreCoverage.CATALOG_ONLY
 
 
