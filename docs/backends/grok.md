@@ -12,17 +12,8 @@ Each session is identified by a UUIDv7 (timestamp-sortable).
 
 ## Stores
 
-| Store ID | Role | Format | Searched | Adapter ID |
-|----------|------|--------|:--------:|------------|
-| `grok.prompt_history` | Prompt History | JSONL | ✓ | `grok.prompt_history_jsonl.v1` |
-| `grok.sessions` | Primary Chat | JSONL | ✓ | `grok.sessions_jsonl.v1` |
-| `grok.session_search` | Supplementary Chat | SQLite | ✓ | `grok.session_search_sqlite.v1` |
-| `grok.sessions.events` | App State | JSONL | | |
-| `grok.sessions.summary` | App State | JSON | | |
-| `grok.memory` | Persistent Memory | Markdown | | |
-| `grok.logs` | App State | JSONL | | |
-| `grok.worktrees_db` | App State | SQLite | | |
-| `grok.config` | App State | TOML | | |
+```{storage:agent} grok
+```
 
 ## Record schemas
 

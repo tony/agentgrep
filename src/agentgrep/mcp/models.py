@@ -56,13 +56,28 @@ class FindRecordModel(AgentGrepModel):
     store: str
     adapter_id: str
     path: str
-    path_kind: t.Literal["history_file", "session_file", "sqlite_db"]
+    path_kind: t.Literal["history_file", "session_file", "sqlite_db", "store_file"]
     metadata: dict[str, t.Any] = Field(default_factory=dict)
 
     @classmethod
     def from_record(cls, record: FindRecordLike) -> FindRecordModel:
         """Build a typed result from an ``agentgrep`` find record."""
         return cls.model_validate(agentgrep.serialize_find_record(record))
+
+
+class SourceVersionDetectionModel(AgentGrepModel):
+    """Detected version metadata for one discovered source."""
+
+    app_version: str | None = None
+    data_version: str | None = None
+    strategy: t.Literal[
+        "version_check",
+        "embedded_metadata",
+        "shape_inference",
+        "catalog_observation",
+    ]
+    confidence: t.Literal["high", "medium", "low"]
+    evidence: str
 
 
 class SourceRecordModel(AgentGrepModel):
@@ -73,8 +88,10 @@ class SourceRecordModel(AgentGrepModel):
     store: str
     adapter_id: str
     path: str
-    path_kind: t.Literal["history_file", "session_file", "sqlite_db"]
-    source_kind: t.Literal["json", "jsonl", "sqlite"]
+    path_kind: t.Literal["history_file", "session_file", "sqlite_db", "store_file"]
+    source_kind: t.Literal["json", "jsonl", "sqlite", "text", "opaque"]
+    coverage: t.Literal["default_search", "inspectable", "catalog_only", "private"]
+    version_detection: SourceVersionDetectionModel | None = None
     search_root: str | None = None
     mtime_ns: int
 
@@ -179,6 +196,8 @@ class StoreDescriptorModel(AgentGrepModel):
     path_pattern: str
     env_overrides: list[str] = Field(default_factory=list)
     platform_variants: dict[str, str] = Field(default_factory=dict)
+    coverage: str
+    version_strategies: list[str] = Field(default_factory=list)
     observed_version: str | None = None
     observed_at: str | None = None
     upstream_ref: str | None = None
@@ -218,8 +237,14 @@ class ListSourcesRequest(AgentGrepModel):
     """Validated list-sources request payload."""
 
     agent: AgentSelector = "all"
-    path_kind_filter: t.Literal["history_file", "session_file", "sqlite_db"] | None = None
-    source_kind_filter: t.Literal["json", "jsonl", "sqlite"] | None = None
+    path_kind_filter: (
+        t.Literal["history_file", "session_file", "sqlite_db", "store_file"] | None
+    ) = None
+    source_kind_filter: t.Literal["json", "jsonl", "sqlite", "text", "opaque"] | None = None
+    coverage_filter: (
+        t.Literal["default_search", "inspectable", "catalog_only", "private"] | None
+    ) = None
+    include_non_default: bool = False
     limit: int | None = Field(default=None, ge=1)
 
 

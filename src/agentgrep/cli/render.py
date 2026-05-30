@@ -35,6 +35,8 @@ from agentgrep import (
     SearchRecordPayload,
     SourceHandle,
     SourceHandlePayload,
+    SourceVersionDetection,
+    SourceVersionDetectionPayload,
 )
 from agentgrep.cli.parser import FindArgs, FuzzyArgs, GrepArgs, SearchArgs, UIArgs
 
@@ -132,12 +134,29 @@ def serialize_source_handle(source: SourceHandle) -> SourceHandlePayload:
         "path": agentgrep.format_display_path(source.path),
         "path_kind": source.path_kind,
         "source_kind": source.source_kind,
+        "coverage": source.coverage,
+        "version_detection": serialize_source_version_detection(source.version_detection),
         "search_root": (
             None
             if source.search_root is None
             else agentgrep.format_display_path(source.search_root, directory=True)
         ),
         "mtime_ns": source.mtime_ns,
+    }
+
+
+def serialize_source_version_detection(
+    detection: SourceVersionDetection | None,
+) -> SourceVersionDetectionPayload | None:
+    """Serialize source version metadata for JSON/MCP discovery payloads."""
+    if detection is None:
+        return None
+    return {
+        "app_version": detection.app_version,
+        "data_version": detection.data_version,
+        "strategy": detection.strategy,
+        "confidence": detection.confidence,
+        "evidence": detection.evidence,
     }
 
 

@@ -4042,6 +4042,1356 @@ def test_discover_codex_sources_honours_codex_home_env(
     assert decoy_history not in paths
 
 
+def test_discover_codex_sqlite_sources_honours_codex_sqlite_home_env(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``CODEX_SQLITE_HOME`` points SQLite-backed stores away from ``CODEX_HOME``."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    codex_root = tmp_path / "codex-home"
+    sqlite_root = tmp_path / "codex-sqlite"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("CODEX_HOME", str(codex_root))
+    monkeypatch.setenv("CODEX_SQLITE_HOME", str(sqlite_root))
+
+    decoy_state = codex_root / "state_5.sqlite"
+    decoy_state.parent.mkdir(parents=True, exist_ok=True)
+    decoy_state.touch()
+    real_state = sqlite_root / "state_5.sqlite"
+    real_state.parent.mkdir(parents=True, exist_ok=True)
+    real_state.touch()
+
+    backends = agentgrep.BackendSelection(None, None, None)
+    sources = agentgrep.discover_codex_sources(
+        home,
+        backends,
+        include_non_default=True,
+    )
+
+    paths = {source.path for source in sources}
+    assert real_state in paths
+    assert decoy_state not in paths
+
+
+def test_search_codex_history_jsonl_uses_modern_text_schema(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Current Codex ``history.jsonl`` stores prompts as ``text`` with Unix ``ts``."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    history_path = home / ".codex" / "history.jsonl"
+    write_jsonl(
+        history_path,
+        [
+            {
+                "session_id": "session-jsonl-1",
+                "ts": 1_700_000_000,
+                "text": "modern codex prompt schema",
+            },
+        ],
+    )
+
+    backends = agentgrep.BackendSelection(None, None, None)
+    query = agentgrep.SearchQuery(
+        terms=("modern",),
+        search_type="history",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+    sources = agentgrep.discover_sources(home, ("codex",), backends)
+    records = agentgrep.search_sources(query, sources, backends)
+
+    assert len(records) == 1
+    record = records[0]
+    assert record.text == "modern codex prompt schema"
+    assert record.adapter_id == "codex.history_jsonl.v1"
+    assert record.timestamp == "2023-11-14T22:13:20Z"
+    assert record.session_id == "session-jsonl-1"
+    assert record.conversation_id == "session-jsonl-1"
+    assert "version_detection" not in agentgrep.serialize_search_record(record)
+
+
+def test_search_codex_legacy_root_rollout_json_session(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Legacy root ``rollout-*.json`` sessions are parsed as primary chat."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    session_path = home / ".codex" / "sessions" / "rollout-2025-04-21-abc.json"
+    session_path.parent.mkdir(parents=True, exist_ok=True)
+    _ = session_path.write_text(
+        json.dumps(
+            {
+                "session": {
+                    "id": "legacy-session-1",
+                    "timestamp": "2025-04-21T00:00:00Z",
+                    "model": "legacy-model",
+                },
+                "items": [
+                    {
+                        "role": "user",
+                        "type": "message",
+                        "content": "legacy codex prompt",
+                    },
+                    {
+                        "role": "assistant",
+                        "type": "message",
+                        "content": "legacy codex answer",
+                    },
+                ],
+            },
+        ),
+        encoding="utf-8",
+    )
+
+    backends = agentgrep.BackendSelection(None, None, None)
+    query = agentgrep.SearchQuery(
+        terms=("legacy",),
+        search_type="all",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+    sources = agentgrep.discover_sources(home, ("codex",), backends)
+    records = agentgrep.search_sources(query, sources, backends)
+
+    assert [record.text for record in records] == [
+        "legacy codex prompt",
+        "legacy codex answer",
+    ]
+    assert {record.adapter_id for record in records} == {"codex.sessions_legacy_json.v1"}
+    assert records[0].session_id == "legacy-session-1"
+    assert records[0].model == "legacy-model"
+
+
+def test_source_payload_exposes_codex_history_data_versions(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex history detection follows the concrete file shape, not app freshness."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    codex_home = home / ".codex"
+    _ = (codex_home / "version.json").parent.mkdir(parents=True, exist_ok=True)
+    _ = (codex_home / "version.json").write_text(
+        json.dumps({"latest_version": "9.9.9"}),
+        encoding="utf-8",
+    )
+    _ = (codex_home / "history.json").write_text(
+        json.dumps([{"command": "legacy prompt", "timestamp": "2026-01-01T00:00:00Z"}]),
+        encoding="utf-8",
+    )
+    write_jsonl(
+        codex_home / "history.jsonl",
+        [{"session_id": "session-jsonl-1", "ts": 1_700_000_000, "text": "modern prompt"}],
+    )
+
+    backends = agentgrep.BackendSelection(None, None, None)
+    sources = agentgrep.discover_sources(home, ("codex",), backends)
+    payloads = {
+        pathlib.Path(source.path).name: agentgrep.serialize_source_handle(source)
+        for source in sources
+        if source.store == "codex.history"
+    }
+
+    current = payloads["history.jsonl"]["version_detection"]
+    legacy = payloads["history.json"]["version_detection"]
+    assert current == {
+        "app_version": None,
+        "data_version": "codex.history_jsonl.current",
+        "strategy": "shape_inference",
+        "confidence": "high",
+        "evidence": "history.jsonl object keys include session_id, ts, text",
+    }
+    assert legacy == {
+        "app_version": None,
+        "data_version": "codex.history_json.legacy",
+        "strategy": "shape_inference",
+        "confidence": "high",
+        "evidence": "history.json array object keys include command, timestamp",
+    }
+
+
+def test_source_payload_exposes_codex_legacy_session_data_version(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Legacy Codex session JSON reports its concrete legacy data shape."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    session_path = home / ".codex" / "sessions" / "rollout-2025-04-21-abc.json"
+    session_path.parent.mkdir(parents=True, exist_ok=True)
+    _ = session_path.write_text(
+        json.dumps(
+            {
+                "session": {"id": "legacy-session-1"},
+                "items": [{"role": "user", "content": "legacy prompt"}],
+            },
+        ),
+        encoding="utf-8",
+    )
+
+    backends = agentgrep.BackendSelection(None, None, None)
+    sources = agentgrep.discover_sources(home, ("codex",), backends)
+    payload = next(
+        agentgrep.serialize_source_handle(source)
+        for source in sources
+        if source.adapter_id == "codex.sessions_legacy_json.v1"
+    )
+
+    assert payload["version_detection"] == {
+        "app_version": None,
+        "data_version": "codex.sessions.legacy_json.v1",
+        "strategy": "shape_inference",
+        "confidence": "high",
+        "evidence": "legacy session JSON object keys include session, items",
+    }
+
+
+def test_codex_source_version_detection_uses_safe_client_hints(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex uses local metadata files and embedded session metadata without spawning."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    codex_home = home / ".codex"
+    codex_home.mkdir(parents=True, exist_ok=True)
+    _ = (codex_home / "models_cache.json").write_text(
+        json.dumps({"client_version": "0.135.0"}),
+        encoding="utf-8",
+    )
+    write_jsonl(
+        codex_home / "history.jsonl",
+        [{"session_id": "session-jsonl-1", "ts": 1_700_000_000, "text": "modern prompt"}],
+    )
+    write_jsonl(
+        codex_home / "sessions" / "2026" / "01" / "01" / "rollout.jsonl",
+        [
+            {
+                "type": "session_meta",
+                "payload": {"id": "session-1", "cli_version": "0.134.0"},
+            },
+        ],
+    )
+
+    backends = agentgrep.BackendSelection(None, None, None)
+    sources = agentgrep.discover_sources(home, ("codex",), backends)
+    payloads = [agentgrep.serialize_source_handle(source) for source in sources]
+    history = next(item for item in payloads if item["adapter_id"] == "codex.history_jsonl.v1")
+    session = next(item for item in payloads if item["adapter_id"] == "codex.sessions_jsonl.v1")
+
+    assert history["version_detection"]["app_version"] == "0.135.0"
+    assert history["version_detection"]["strategy"] == "shape_inference"
+    assert session["version_detection"] == {
+        "app_version": "0.134.0",
+        "data_version": "codex.sessions.rollout.v1",
+        "strategy": "embedded_metadata",
+        "confidence": "high",
+        "evidence": "session_meta.payload keys include cli_version",
+    }
+
+
+def test_codex_sqlite_source_versions_derive_from_filename_suffix(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex SQLite store suffixes are schema-version evidence."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    codex_home = home / ".codex"
+    for filename in ("state_5.sqlite", "memories_1.sqlite", "goals_1.sqlite"):
+        path = codex_home / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+
+    backends = agentgrep.BackendSelection(None, None, None)
+    sources = agentgrep.discover_codex_sources(home, backends, include_non_default=True)
+    payloads = {
+        pathlib.Path(source.path).name: agentgrep.serialize_source_handle(source)
+        for source in sources
+    }
+
+    assert payloads["state_5.sqlite"]["version_detection"]["data_version"] == (
+        "codex.state.sqlite.v5"
+    )
+    assert payloads["memories_1.sqlite"]["version_detection"]["data_version"] == (
+        "codex.memories.sqlite.v1"
+    )
+    assert payloads["goals_1.sqlite"]["version_detection"]["data_version"] == (
+        "codex.goals.sqlite.v1"
+    )
+
+
+def test_discover_codex_memory_workspace_in_non_default_inventory(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex markdown memory files are inspectable inventory sources."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    memory_path = home / ".codex" / "memories" / "MEMORY.md"
+    memory_path.parent.mkdir(parents=True, exist_ok=True)
+    _ = memory_path.write_text("workspace memory note", encoding="utf-8")
+    git_path = home / ".codex" / "memories" / ".git" / "ignored.md"
+    git_path.parent.mkdir(parents=True, exist_ok=True)
+    _ = git_path.write_text("ignored git internals", encoding="utf-8")
+
+    backends = agentgrep.BackendSelection(None, None, None)
+    default_sources = agentgrep.discover_codex_sources(home, backends)
+    inventory_sources = agentgrep.discover_codex_sources(
+        home,
+        backends,
+        include_non_default=True,
+    )
+
+    assert memory_path not in {source.path for source in default_sources}
+    memory_sources = [
+        source for source in inventory_sources if source.adapter_id == "codex.memories_text.v1"
+    ]
+    assert [source.path for source in memory_sources] == [memory_path]
+    assert memory_sources[0].coverage.value == "inspectable"
+
+
+def test_claude_source_version_detection_infers_history_and_project_versions(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Claude detection combines history shape and transcript embedded versions."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    claude_home = home / ".claude"
+    write_jsonl(
+        claude_home / "history.jsonl",
+        [
+            {
+                "display": "claude prompt",
+                "timestamp": 1_700_000_000_000,
+                "project": "/tmp/project",
+                "sessionId": "session-1",
+                "pastedContents": {},
+            },
+        ],
+    )
+    write_jsonl(
+        claude_home / "projects" / "-tmp-project" / "session-1.jsonl",
+        [
+            {
+                "type": "user",
+                "sessionId": "session-1",
+                "version": "2.1.157",
+                "message": {"role": "user", "content": "project prompt"},
+            },
+        ],
+    )
+
+    backends = agentgrep.BackendSelection(None, None, None)
+    sources = agentgrep.discover_sources(home, ("claude",), backends)
+    payloads = [agentgrep.serialize_source_handle(source) for source in sources]
+    history = next(item for item in payloads if item["adapter_id"] == "claude.history_jsonl.v1")
+    project = next(item for item in payloads if item["adapter_id"] == "claude.projects_jsonl.v1")
+
+    assert history["version_detection"] == {
+        "app_version": None,
+        "data_version": "claude.history_jsonl.log_entry.v1",
+        "strategy": "shape_inference",
+        "confidence": "high",
+        "evidence": "history.jsonl object keys include display, timestamp, project",
+    }
+    assert project["version_detection"] == {
+        "app_version": "2.1.157",
+        "data_version": "claude.projects_jsonl.message.v1",
+        "strategy": "embedded_metadata",
+        "confidence": "high",
+        "evidence": "project transcript keys include version",
+    }
+
+
+def test_discover_claude_sources_honours_claude_config_dir_env(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``CLAUDE_CONFIG_DIR`` overrides the default ``${HOME}/.claude`` root."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    decoy_home = tmp_path / "home"
+    alt_root = tmp_path / "claude-config"
+    monkeypatch.setenv("HOME", str(decoy_home))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(alt_root))
+
+    decoy_history = decoy_home / ".claude" / "history.jsonl"
+    write_jsonl(decoy_history, [{"display": "decoy", "timestamp": 1}])
+    history_path = alt_root / "history.jsonl"
+    write_jsonl(history_path, [{"display": "real", "timestamp": 1}])
+
+    backends = agentgrep.BackendSelection(None, None, None)
+    sources = agentgrep.discover_claude_sources(decoy_home, backends)
+
+    paths = {source.path for source in sources}
+    assert history_path in paths
+    assert decoy_history not in paths
+
+
+def test_parse_claude_store_db_returns_message_samples(tmp_path: pathlib.Path) -> None:
+    """Claude ``__store.db`` inspection surfaces message-table text."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    db_path = tmp_path / "__store.db"
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.executescript(
+            """
+            CREATE TABLE base_messages (
+                uuid TEXT PRIMARY KEY,
+                session_id TEXT
+            );
+            CREATE TABLE user_messages (
+                uuid TEXT PRIMARY KEY,
+                message TEXT,
+                timestamp TEXT
+            );
+            CREATE TABLE assistant_messages (
+                uuid TEXT PRIMARY KEY,
+                message TEXT,
+                timestamp TEXT,
+                model TEXT
+            );
+            CREATE TABLE conversation_summaries (
+                leaf_uuid TEXT,
+                summary TEXT,
+                updated_at TEXT
+            );
+            """
+        )
+        connection.execute(
+            "INSERT INTO base_messages(uuid, session_id) VALUES (?, ?)",
+            ("u1", "session-db-1"),
+        )
+        connection.execute(
+            "INSERT INTO user_messages(uuid, message, timestamp) VALUES (?, ?, ?)",
+            ("u1", "sqlite user prompt", "2026-05-01T00:00:00Z"),
+        )
+        connection.execute(
+            "INSERT INTO assistant_messages(uuid, message, timestamp, model) VALUES (?, ?, ?, ?)",
+            ("a1", "sqlite assistant answer", "2026-05-01T00:00:01Z", "claude-test"),
+        )
+        connection.execute(
+            "INSERT INTO conversation_summaries(leaf_uuid, summary, updated_at) VALUES (?, ?, ?)",
+            ("u1", "sqlite summary", "2026-05-01T00:00:02Z"),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    source = agentgrep.SourceHandle(
+        agent="claude",
+        store="claude.store_db",
+        adapter_id="claude.store_sqlite.v1",
+        path=db_path,
+        path_kind="sqlite_db",
+        source_kind="sqlite",
+        search_root=None,
+        mtime_ns=0,
+    )
+
+    records = list(agentgrep.iter_source_records(source))
+
+    assert [record.text for record in records] == [
+        "sqlite user prompt",
+        "sqlite assistant answer",
+        "sqlite summary",
+    ]
+    assert records[0].kind == "prompt"
+    assert records[0].session_id == "session-db-1"
+    assert records[1].model == "claude-test"
+
+
+def test_parse_codex_state_db_returns_thread_and_job_samples(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Codex ``state_5.sqlite`` inspection surfaces prompt-bearing fields."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    db_path = tmp_path / "state_5.sqlite"
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.executescript(
+            """
+            CREATE TABLE threads (
+                id TEXT PRIMARY KEY,
+                first_user_message TEXT,
+                preview TEXT,
+                title TEXT,
+                updated_at_ms INTEGER
+            );
+            CREATE TABLE agent_jobs (
+                id TEXT PRIMARY KEY,
+                thread_id TEXT,
+                instruction TEXT,
+                updated_at_ms INTEGER
+            );
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO threads(id, first_user_message, preview, title, updated_at_ms)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                "thread-1",
+                "codex sqlite prompt",
+                "codex sqlite preview",
+                "Codex DB",
+                1_700_000_000_000,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO agent_jobs(id, thread_id, instruction, updated_at_ms)
+            VALUES (?, ?, ?, ?)
+            """,
+            ("job-1", "thread-1", "codex job instruction", 1_700_000_000_001),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    source = agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.state_db",
+        adapter_id="codex.state_sqlite.v1",
+        path=db_path,
+        path_kind="sqlite_db",
+        source_kind="sqlite",
+        search_root=None,
+        mtime_ns=0,
+    )
+
+    records = list(agentgrep.iter_source_records(source))
+
+    assert [record.text for record in records] == [
+        "codex sqlite prompt",
+        "codex sqlite preview",
+        "codex job instruction",
+    ]
+    assert records[0].kind == "prompt"
+    assert records[0].conversation_id == "thread-1"
+    assert records[2].metadata["job_id"] == "job-1"
+
+
+def test_parse_codex_session_index_returns_thread_name_samples(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Codex ``session_index.jsonl`` inspection surfaces thread names."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    index_path = tmp_path / "session_index.jsonl"
+    write_jsonl(
+        index_path,
+        [
+            {
+                "id": "thread-1",
+                "thread_name": "Storage coverage plan",
+                "updated_at": "2026-05-30T12:00:00Z",
+            },
+        ],
+    )
+    source = agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.session_index",
+        adapter_id="codex.session_index_jsonl.v1",
+        path=index_path,
+        path_kind="store_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=0,
+        coverage=agentgrep.StoreCoverage.INSPECTABLE,
+    )
+
+    records = list(agentgrep.iter_source_records(source))
+
+    assert len(records) == 1
+    assert records[0].text == "Storage coverage plan"
+    assert records[0].session_id == "thread-1"
+    assert records[0].timestamp == "2026-05-30T12:00:00Z"
+
+
+def test_parse_codex_logs_db_returns_feedback_log_samples(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Codex ``logs_2.sqlite`` inspection surfaces structured log payload text."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    db_path = tmp_path / "logs_2.sqlite"
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.executescript(
+            """
+            CREATE TABLE logs (
+                id INTEGER PRIMARY KEY,
+                ts TEXT,
+                level TEXT,
+                target TEXT,
+                feedback_log_body TEXT,
+                thread_id TEXT
+            );
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO logs(id, ts, level, target, feedback_log_body, thread_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                1,
+                "2026-05-30T12:00:00Z",
+                "INFO",
+                "codex_core",
+                '{"message":"feedback body text"}',
+                "thread-1",
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    source = agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.logs_db",
+        adapter_id="codex.logs_sqlite.v1",
+        path=db_path,
+        path_kind="sqlite_db",
+        source_kind="sqlite",
+        search_root=None,
+        mtime_ns=0,
+        coverage=agentgrep.StoreCoverage.CATALOG_ONLY,
+    )
+
+    records = list(agentgrep.iter_source_records(source))
+
+    assert len(records) == 1
+    assert records[0].text == '{"message":"feedback body text"}'
+    assert records[0].timestamp == "2026-05-30T12:00:00Z"
+    assert records[0].metadata == {"level": "INFO", "target": "codex_core"}
+
+
+def test_parse_codex_external_imports_returns_ledger_samples(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Codex external-agent import ledger inspection surfaces imported thread ids."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    ledger_path = tmp_path / "external_agent_session_imports.json"
+    _ = ledger_path.write_text(
+        json.dumps(
+            {
+                "records": [
+                    {
+                        "source_path": "/tmp/source.jsonl",
+                        "content_hash": "abc123",
+                        "imported_thread_id": "thread-1",
+                        "imported_at": "2026-05-30T12:00:00Z",
+                    },
+                ],
+            },
+        ),
+        encoding="utf-8",
+    )
+    source = agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.external_agent_imports",
+        adapter_id="codex.external_imports_json.v1",
+        path=ledger_path,
+        path_kind="store_file",
+        source_kind="json",
+        search_root=None,
+        mtime_ns=0,
+        coverage=agentgrep.StoreCoverage.CATALOG_ONLY,
+    )
+
+    records = list(agentgrep.iter_source_records(source))
+
+    assert len(records) == 1
+    assert records[0].text == "Imported external agent session thread-1"
+    assert records[0].conversation_id == "thread-1"
+    assert records[0].metadata == {
+        "content_hash": "abc123",
+        "source_name": "source.jsonl",
+    }
+
+
+def test_parse_claude_settings_returns_key_summary_sample(tmp_path: pathlib.Path) -> None:
+    """Claude settings inspection summarizes keys without indexing raw config values."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    settings_path = tmp_path / "settings.json"
+    _ = settings_path.write_text(
+        json.dumps(
+            {
+                "permissions": {"allow": ["Read"]},
+                "env": {"SECRET": "do-not-index"},
+            },
+        ),
+        encoding="utf-8",
+    )
+    source = agentgrep.SourceHandle(
+        agent="claude",
+        store="claude.settings",
+        adapter_id="claude.settings_json.v1",
+        path=settings_path,
+        path_kind="store_file",
+        source_kind="json",
+        search_root=None,
+        mtime_ns=0,
+        coverage=agentgrep.StoreCoverage.CATALOG_ONLY,
+    )
+
+    records = list(agentgrep.iter_source_records(source))
+
+    assert len(records) == 1
+    assert records[0].text == "Claude settings keys: env, permissions"
+    assert "do-not-index" not in records[0].text
+
+
+def test_parse_claude_task_json_returns_task_sample(tmp_path: pathlib.Path) -> None:
+    """Claude task JSON inspection surfaces task prose and status metadata."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    task_path = tmp_path / "tasks" / "team" / "1.json"
+    task_path.parent.mkdir(parents=True, exist_ok=True)
+    _ = task_path.write_text(
+        json.dumps(
+            {
+                "id": "1",
+                "subject": "Ship storage coverage",
+                "description": "Handle Claude and Codex storage gaps",
+                "status": "in_progress",
+                "blocks": ["2"],
+                "blockedBy": ["0"],
+                "metadata": {"source": "test"},
+            },
+        ),
+        encoding="utf-8",
+    )
+    source = agentgrep.SourceHandle(
+        agent="claude",
+        store="claude.tasks",
+        adapter_id="claude.tasks_json.v1",
+        path=task_path,
+        path_kind="store_file",
+        source_kind="json",
+        search_root=None,
+        mtime_ns=0,
+        coverage=agentgrep.StoreCoverage.INSPECTABLE,
+    )
+
+    records = list(agentgrep.iter_source_records(source))
+
+    assert len(records) == 1
+    assert records[0].text == "Ship storage coverage\n\nHandle Claude and Codex storage gaps"
+    assert records[0].title == "Ship storage coverage"
+    assert records[0].metadata == {
+        "status": "in_progress",
+        "task_id": "1",
+        "blocks": ["2"],
+        "blocked_by": ["0"],
+    }
+
+
+def test_discover_remaining_claude_inventory_sources(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Claude non-default inventory discovers memory, instruction, and app-state stores."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    claude_home = home / ".claude"
+    project_root = home / "work" / "repo"
+    project_session = claude_home / "projects" / "repo" / "session.jsonl"
+    write_jsonl(project_session, [{"type": "system", "cwd": str(project_root)}])
+
+    paths = [
+        claude_home / "CLAUDE.md",
+        claude_home / "projects" / "-repo" / "memory" / "MEMORY.md",
+        claude_home / "todos" / "agent.json",
+        claude_home / "skills" / "review.md",
+        claude_home / "skills" / "audit" / "SKILL.md",
+        claude_home / "commands" / "ship.md",
+        claude_home / "teams" / "storage" / "config.json",
+        claude_home / "stats-cache.json",
+        claude_home / "sessions" / "session.json",
+        claude_home / "context-mode" / "state.json",
+        claude_home / "ide" / "bridge.json",
+        claude_home / ".last-update-result.json",
+        claude_home / "plugins" / "cache" / "example" / ".claude-plugin" / "plugin.json",
+        claude_home / "plugins" / "cache" / "example" / "commands" / "ship.md",
+        claude_home / "plugins" / "cache" / "example" / "agents" / "reviewer.md",
+        claude_home / "plugins" / "cache" / "example" / "skills" / "audit" / "SKILL.md",
+        claude_home / "plugins" / "cache" / "example" / "hooks" / "hooks.json",
+        claude_home / "chrome" / "native-host.json",
+        claude_home / "local" / "install-state.json",
+        claude_home / "jobs" / "job.json",
+        claude_home / "debug" / "claude.log",
+        claude_home / "shell-snapshots" / "snapshot.sh",
+        project_root / "CLAUDE.md",
+        project_root / ".claude" / "commands" / "project.md",
+        project_root / ".claude" / "agents" / "reviewer.md",
+        project_root / ".claude" / "skills" / "audit" / "SKILL.md",
+    ]
+    for path in paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _ = path.write_text("{}" if path.suffix == ".json" else "sample", encoding="utf-8")
+
+    backends = agentgrep.BackendSelection(None, None, None)
+    default_sources = agentgrep.discover_claude_sources(home, backends)
+    inventory_sources = agentgrep.discover_claude_sources(
+        home,
+        backends,
+        include_non_default=True,
+    )
+
+    default_paths = {source.path for source in default_sources}
+    assert not default_paths.intersection(paths)
+    adapter_ids = {source.adapter_id for source in inventory_sources}
+    assert {
+        "claude.projects_memory_text.v1",
+        "claude.memory_text.v1",
+        "claude.project_instruction_text.v1",
+        "claude.todos_json.v1",
+        "claude.skills_text.v1",
+        "claude.commands_text.v1",
+        "claude.teams_json.v1",
+        "claude.plugin_manifest_json.v1",
+        "claude.plugin_instruction_text.v1",
+        "claude.plugin_hooks_json.v1",
+        "claude.app_state_json_summary.v1",
+        "claude.file_metadata_summary.v1",
+    } <= adapter_ids
+
+    inventory_paths = {source.path for source in inventory_sources}
+    assert project_root / "CLAUDE.md" in inventory_paths
+    assert project_root / ".claude" / "commands" / "project.md" in inventory_paths
+
+
+def test_claude_private_inventory_stays_unenumerated(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Claude private files are documented but not discovered from disk."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    claude_home = home / ".claude"
+    private_paths = [
+        claude_home / ".credentials.json",
+        claude_home / "security_warnings_state_repo.json",
+        claude_home / "session-env" / "session.json",
+    ]
+    for path in private_paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _ = path.write_text("secret", encoding="utf-8")
+
+    sources = agentgrep.discover_claude_sources(
+        home,
+        agentgrep.BackendSelection(None, None, None),
+        include_non_default=True,
+    )
+
+    assert not {source.path for source in sources}.intersection(private_paths)
+
+
+def test_parse_remaining_claude_inventory_samples(tmp_path: pathlib.Path) -> None:
+    """Claude inventory parsers expose prompt-adjacent text and redact app state."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    todo_path = tmp_path / "todos" / "agent.json"
+    todo_path.parent.mkdir(parents=True, exist_ok=True)
+    _ = todo_path.write_text(
+        json.dumps(
+            {
+                "todos": [
+                    {
+                        "id": "todo-1",
+                        "content": "Fix storage parser",
+                        "status": "pending",
+                    },
+                ],
+            },
+        ),
+        encoding="utf-8",
+    )
+    team_path = tmp_path / "teams" / "storage" / "config.json"
+    team_path.parent.mkdir(parents=True, exist_ok=True)
+    _ = team_path.write_text(
+        json.dumps(
+            {
+                "name": "Storage Team",
+                "description": "Coordinates storage coverage",
+                "createdAt": 1_700_000_000_000,
+                "members": [
+                    {
+                        "name": "worker",
+                        "prompt": "Audit non-default storage",
+                        "joinedAt": 1_700_000_000_001,
+                    },
+                ],
+            },
+        ),
+        encoding="utf-8",
+    )
+    app_path = tmp_path / "stats-cache.json"
+    _ = app_path.write_text(
+        json.dumps({"version": 3, "secret": "do-not-index", "dailyActivity": [1, 2]}),
+        encoding="utf-8",
+    )
+    plugin_manifest_path = tmp_path / "plugin.json"
+    _ = plugin_manifest_path.write_text(
+        json.dumps({"name": "secret-plugin", "description": "private description"}),
+        encoding="utf-8",
+    )
+    hook_path = tmp_path / "hooks.json"
+    _ = hook_path.write_text(
+        json.dumps({"hooks": {"PreToolUse": [{"command": "echo do-not-index"}]}}),
+        encoding="utf-8",
+    )
+    raw_path = tmp_path / "debug.log"
+    _ = raw_path.write_text("do-not-index\nsecond line\n", encoding="utf-8")
+
+    sources = [
+        agentgrep.SourceHandle(
+            agent="claude",
+            store="claude.todos",
+            adapter_id="claude.todos_json.v1",
+            path=todo_path,
+            path_kind="store_file",
+            source_kind="json",
+            search_root=None,
+            mtime_ns=0,
+            coverage=agentgrep.StoreCoverage.INSPECTABLE,
+        ),
+        agentgrep.SourceHandle(
+            agent="claude",
+            store="claude.teams",
+            adapter_id="claude.teams_json.v1",
+            path=team_path,
+            path_kind="store_file",
+            source_kind="json",
+            search_root=None,
+            mtime_ns=0,
+            coverage=agentgrep.StoreCoverage.INSPECTABLE,
+        ),
+        agentgrep.SourceHandle(
+            agent="claude",
+            store="claude.stats_cache",
+            adapter_id="claude.app_state_json_summary.v1",
+            path=app_path,
+            path_kind="store_file",
+            source_kind="json",
+            search_root=None,
+            mtime_ns=0,
+            coverage=agentgrep.StoreCoverage.CATALOG_ONLY,
+        ),
+        agentgrep.SourceHandle(
+            agent="claude",
+            store="claude.plugins_cache",
+            adapter_id="claude.plugin_manifest_json.v1",
+            path=plugin_manifest_path,
+            path_kind="store_file",
+            source_kind="json",
+            search_root=None,
+            mtime_ns=0,
+            coverage=agentgrep.StoreCoverage.INSPECTABLE,
+        ),
+        agentgrep.SourceHandle(
+            agent="claude",
+            store="claude.plugins_cache",
+            adapter_id="claude.plugin_hooks_json.v1",
+            path=hook_path,
+            path_kind="store_file",
+            source_kind="json",
+            search_root=None,
+            mtime_ns=0,
+            coverage=agentgrep.StoreCoverage.INSPECTABLE,
+        ),
+        agentgrep.SourceHandle(
+            agent="claude",
+            store="claude.debug_logs",
+            adapter_id="claude.file_metadata_summary.v1",
+            path=raw_path,
+            path_kind="store_file",
+            source_kind="text",
+            search_root=None,
+            mtime_ns=0,
+            coverage=agentgrep.StoreCoverage.CATALOG_ONLY,
+        ),
+    ]
+
+    records = [record for source in sources for record in agentgrep.iter_source_records(source)]
+
+    assert records[0].text == "Fix storage parser"
+    assert records[0].metadata["status"] == "pending"
+    assert "Storage Team" in records[1].text
+    assert "Audit non-default storage" in records[1].text
+    assert "do-not-index" not in records[2].text
+    assert records[2].metadata == {"key_count": 3}
+    assert "secret-plugin" not in records[3].text
+    assert "description" in records[3].text
+    assert "echo do-not-index" not in records[4].text
+    assert "PreToolUse" in records[4].text
+    assert "do-not-index" not in records[5].text
+    assert records[5].metadata["line_count"] == 2
+
+
+def test_discover_remaining_codex_inventory_sources(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex non-default inventory discovers instructions, config, app state, and plugins."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    codex_home = home / ".codex"
+    project_root = home / "work" / "repo"
+    session_path = codex_home / "sessions" / "2026" / "05" / "30" / "rollout-1.jsonl"
+    write_jsonl(
+        session_path,
+        [{"type": "session_meta", "payload": {"id": "s1", "cwd": str(project_root)}}],
+    )
+
+    paths = [
+        codex_home / "skills" / "review" / "SKILL.md",
+        codex_home / "rules" / "default.rules",
+        codex_home / "config.toml",
+        codex_home / "config.toml.bak",
+        codex_home / "hooks.json",
+        codex_home / "managed_config.toml",
+        codex_home / "environments.toml",
+        codex_home / "update-check.json",
+        codex_home / "version.json",
+        codex_home / ".personality_migration",
+        codex_home / "models_cache.json",
+        codex_home / "internal_storage.json",
+        codex_home / "process_manager" / "chat_processes.json",
+        codex_home / "tmp" / "arg0" / "state.json",
+        codex_home / "log" / "codex.log",
+        codex_home / "shell_snapshots" / "snapshot.sh",
+        codex_home / "plugins" / "cache" / "example" / ".codex-plugin" / "plugin.json",
+        codex_home / "plugins" / "cache" / "example" / ".claude-plugin" / "plugin.json",
+        codex_home / "plugins" / "cache" / "example" / ".agents" / "plugins" / "marketplace.json",
+        codex_home / "plugins" / "cache" / "example" / "commands" / "ship.md",
+        codex_home / "plugins" / "cache" / "example" / "agents" / "reviewer.md",
+        codex_home / "plugins" / "cache" / "example" / "skills" / "audit" / "SKILL.md",
+        codex_home / "plugins" / "cache" / "example" / "custom-skills" / "audit" / "SKILL.md",
+        codex_home / "plugins" / "cache" / "example" / "hooks" / "hooks.json",
+        project_root / ".codex" / "config.toml",
+        project_root / ".codex" / "hooks.json",
+        project_root / ".codex" / "skills" / "audit" / "SKILL.md",
+    ]
+    for path in paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.suffix == ".json":
+            text = "{}"
+        elif path.suffix == ".toml" or ".toml." in path.name:
+            text = "model = 'gpt-5'\n"
+        else:
+            text = "instruction text"
+        _ = path.write_text(text, encoding="utf-8")
+
+    backends = agentgrep.BackendSelection(None, None, None)
+    default_sources = agentgrep.discover_codex_sources(home, backends)
+    inventory_sources = agentgrep.discover_codex_sources(
+        home,
+        backends,
+        include_non_default=True,
+    )
+
+    default_paths = {source.path for source in default_sources}
+    assert not default_paths.intersection(paths)
+    adapter_ids = {source.adapter_id for source in inventory_sources}
+    assert {
+        "codex.skills_text.v1",
+        "codex.rules_text.v1",
+        "codex.config_toml.v1",
+        "codex.config_backup_toml.v1",
+        "codex.project_config_toml.v1",
+        "codex.project_skill_text.v1",
+        "codex.hooks_json.v1",
+        "codex.app_state_json_summary.v1",
+        "codex.plugin_manifest_json.v1",
+        "codex.plugin_marketplace_json.v1",
+        "codex.plugin_hooks_json.v1",
+        "codex.plugin_instruction_text.v1",
+        "codex.file_metadata_summary.v1",
+    } <= adapter_ids
+
+    inventory_paths = {source.path for source in inventory_sources}
+    assert project_root / ".codex" / "config.toml" in inventory_paths
+    assert project_root / ".codex" / "skills" / "audit" / "SKILL.md" in inventory_paths
+
+
+def test_codex_private_inventory_stays_unenumerated(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex private files are documented but not discovered from disk."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    codex_home = home / ".codex"
+    private_paths = [
+        codex_home / "auth.json",
+        codex_home / "installation_id",
+        codex_home / "policy" / "policy.json",
+        codex_home / "secrets" / "token",
+        codex_home / ".env",
+    ]
+    for path in private_paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _ = path.write_text("secret", encoding="utf-8")
+
+    sources = agentgrep.discover_codex_sources(
+        home,
+        agentgrep.BackendSelection(None, None, None),
+        include_non_default=True,
+    )
+
+    assert not {source.path for source in sources}.intersection(private_paths)
+
+
+def test_parse_codex_inventory_safe_samples(tmp_path: pathlib.Path) -> None:
+    """Codex config and app-state samples summarize structure without raw values."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    config_path = tmp_path / "config.toml"
+    _ = config_path.write_text(
+        "model = 'secret-model'\n[projects]\n'/private/repo' = { trust_level = 'trusted' }\n",
+        encoding="utf-8",
+    )
+    app_path = tmp_path / "version.json"
+    _ = app_path.write_text(
+        json.dumps({"latest_version": "9.9.9", "dismissed_version": None}),
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "plugin.json"
+    _ = manifest_path.write_text(
+        json.dumps({"name": "secret-plugin", "description": "private description"}),
+        encoding="utf-8",
+    )
+    marketplace_path = tmp_path / "marketplace.json"
+    _ = marketplace_path.write_text(
+        json.dumps({"plugins": [{"name": "private-plugin", "repo": "secret"}]}),
+        encoding="utf-8",
+    )
+    hook_path = tmp_path / "hooks.json"
+    _ = hook_path.write_text(
+        json.dumps({"hooks": {"PostToolUse": [{"command": "echo do-not-index"}]}}),
+        encoding="utf-8",
+    )
+    raw_path = tmp_path / "codex.log"
+    _ = raw_path.write_text("do-not-index\nsecond line\n", encoding="utf-8")
+
+    sources = [
+        agentgrep.SourceHandle(
+            agent="codex",
+            store="codex.config",
+            adapter_id="codex.config_toml.v1",
+            path=config_path,
+            path_kind="store_file",
+            source_kind="text",
+            search_root=None,
+            mtime_ns=0,
+            coverage=agentgrep.StoreCoverage.CATALOG_ONLY,
+        ),
+        agentgrep.SourceHandle(
+            agent="codex",
+            store="codex.version_file",
+            adapter_id="codex.app_state_json_summary.v1",
+            path=app_path,
+            path_kind="store_file",
+            source_kind="json",
+            search_root=None,
+            mtime_ns=0,
+            coverage=agentgrep.StoreCoverage.CATALOG_ONLY,
+        ),
+        agentgrep.SourceHandle(
+            agent="codex",
+            store="codex.plugins",
+            adapter_id="codex.plugin_manifest_json.v1",
+            path=manifest_path,
+            path_kind="store_file",
+            source_kind="json",
+            search_root=None,
+            mtime_ns=0,
+            coverage=agentgrep.StoreCoverage.INSPECTABLE,
+        ),
+        agentgrep.SourceHandle(
+            agent="codex",
+            store="codex.plugin_marketplace",
+            adapter_id="codex.plugin_marketplace_json.v1",
+            path=marketplace_path,
+            path_kind="store_file",
+            source_kind="json",
+            search_root=None,
+            mtime_ns=0,
+            coverage=agentgrep.StoreCoverage.INSPECTABLE,
+        ),
+        agentgrep.SourceHandle(
+            agent="codex",
+            store="codex.plugins",
+            adapter_id="codex.plugin_hooks_json.v1",
+            path=hook_path,
+            path_kind="store_file",
+            source_kind="json",
+            search_root=None,
+            mtime_ns=0,
+            coverage=agentgrep.StoreCoverage.INSPECTABLE,
+        ),
+        agentgrep.SourceHandle(
+            agent="codex",
+            store="codex.log_files",
+            adapter_id="codex.file_metadata_summary.v1",
+            path=raw_path,
+            path_kind="store_file",
+            source_kind="text",
+            search_root=None,
+            mtime_ns=0,
+            coverage=agentgrep.StoreCoverage.CATALOG_ONLY,
+        ),
+    ]
+
+    records = [record for source in sources for record in agentgrep.iter_source_records(source)]
+
+    assert "secret-model" not in records[0].text
+    assert "/private/repo" not in records[0].text
+    assert "projects" in records[0].text
+    assert "9.9.9" not in records[1].text
+    assert "latest_version" in records[1].text
+    assert "secret-plugin" not in records[2].text
+    assert "description" in records[2].text
+    assert "private-plugin" not in records[3].text
+    assert "plugins" in records[3].text
+    assert "echo do-not-index" not in records[4].text
+    assert "PostToolUse" in records[4].text
+    assert "do-not-index" not in records[5].text
+    assert records[5].metadata["line_count"] == 2
+
+
+def test_search_claude_history_expands_external_pasted_text(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Claude global prompt history resolves content-addressed pasted text."""
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    paste_hash = "0123456789abcdef"
+    paste_path = home / ".claude" / "paste-cache" / f"{paste_hash}.txt"
+    paste_path.parent.mkdir(parents=True, exist_ok=True)
+    _ = paste_path.write_text("external bliss paste", encoding="utf-8")
+    history_path = home / ".claude" / "history.jsonl"
+    write_jsonl(
+        history_path,
+        [
+            {
+                "display": "Review [Pasted text #1] and [Pasted text #2 +1 lines]",
+                "pastedContents": {
+                    "1": {
+                        "id": 1,
+                        "type": "text",
+                        "content": "inline serenity paste",
+                    },
+                    "2": {
+                        "id": 2,
+                        "type": "text",
+                        "contentHash": paste_hash,
+                    },
+                },
+                "timestamp": 1_700_000_000_000,
+                "project": "/synthetic/project",
+                "sessionId": "session-1",
+            },
+        ],
+    )
+
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    query = t.cast("t.Any", agentgrep).SearchQuery(
+        terms=("bliss",),
+        search_type="history",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("claude",),
+        limit=None,
+    )
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("claude",), backends)
+    records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
+
+    assert len(records) == 1
+    record = records[0]
+    assert record.agent == "claude"
+    assert record.store == "claude.history"
+    assert record.adapter_id == "claude.history_jsonl.v1"
+    assert record.kind == "history"
+    assert record.role == "user"
+    assert record.timestamp == "2023-11-14T22:13:20Z"
+    assert record.session_id == "session-1"
+    assert record.conversation_id == "session-1"
+    assert "inline serenity paste" in record.text
+    assert "external bliss paste" in record.text
+    assert "[Pasted text" not in record.text
+
+
+def test_search_claude_history_tolerates_missing_paste_cache(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Missing Claude paste-cache entries keep history search resilient."""
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    history_path = home / ".claude" / "history.jsonl"
+    write_jsonl(
+        history_path,
+        [
+            {
+                "display": "missing paste marker [Pasted text #1]",
+                "pastedContents": {
+                    "1": {
+                        "id": 1,
+                        "type": "text",
+                        "contentHash": "fedcba9876543210",
+                    },
+                },
+                "timestamp": 1_700_000_000_000,
+                "project": "/synthetic/project",
+                "sessionId": "session-1",
+            },
+        ],
+    )
+
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    query = t.cast("t.Any", agentgrep).SearchQuery(
+        terms=("missing",),
+        search_type="history",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("claude",),
+        limit=None,
+    )
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("claude",), backends)
+    records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
+
+    assert len(records) == 1
+    assert records[0].text == "missing paste marker [Pasted text #1]"
+
+
 def test_discover_gemini_sources_honours_gemini_cli_home_env(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

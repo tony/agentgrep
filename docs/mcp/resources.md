@@ -17,6 +17,9 @@ Read `agentgrep://capabilities` to see supported agents, adapters, tools, resour
 ```
 
 Read `agentgrep://sources` to list every discovered source.
+Each source includes a `version_detection` object with the detected
+app version, detected data version, strategy, confidence, and evidence
+used to interpret that source.
 
 ## Sources by agent
 

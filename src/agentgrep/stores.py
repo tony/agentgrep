@@ -28,6 +28,7 @@ class StoreFormat(enum.StrEnum):
     JSON_ARRAY = "json_array"
     JSON_OBJECT = "json_object"
     SQLITE = "sqlite"
+    TEXT = "text"
     MARKDOWN_FRONTMATTER = "md_frontmatter"
     PROTOBUF = "protobuf"
     OPAQUE = "opaque"
@@ -48,15 +49,48 @@ class StoreRole(enum.StrEnum):
     PERSISTENT_MEMORY = "persistent_memory"
     PLAN = "plan"
     TODO = "todo"
+    INSTRUCTION = "instruction"
     APP_STATE = "app_state"
     CACHE = "cache"
     SOURCE_TREE = "source_tree"
     UNKNOWN = "unknown"
 
 
+class StoreCoverage(enum.StrEnum):
+    """How agentgrep treats a known store at runtime.
+
+    ``DEFAULT_SEARCH`` stores are opened by normal search and find flows.
+    ``INSPECTABLE`` and ``CATALOG_ONLY`` stores are hidden from default
+    discovery but can be included by inventory tools. ``PRIVATE`` stores are
+    documented in the catalogue but intentionally not enumerated from disk.
+    """
+
+    DEFAULT_SEARCH = "default_search"
+    INSPECTABLE = "inspectable"
+    CATALOG_ONLY = "catalog_only"
+    PRIVATE = "private"
+
+
+class VersionDetectionStrategy(enum.StrEnum):
+    """How agentgrep detected a concrete source's app or data version."""
+
+    VERSION_CHECK = "version_check"
+    EMBEDDED_METADATA = "embedded_metadata"
+    SHAPE_INFERENCE = "shape_inference"
+    CATALOG_OBSERVATION = "catalog_observation"
+
+
+class VersionDetectionConfidence(enum.StrEnum):
+    """Confidence level for a detected source version."""
+
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
 AgentName = t.Literal["claude", "cursor", "codex", "gemini", "grok"]
-PathKind = t.Literal["history_file", "session_file", "sqlite_db"]
-SourceKind = t.Literal["json", "jsonl", "sqlite"]
+PathKind = t.Literal["history_file", "session_file", "sqlite_db", "store_file"]
+SourceKind = t.Literal["json", "jsonl", "sqlite", "text", "opaque"]
 
 
 class DiscoverySpec(pydantic.BaseModel):
@@ -75,10 +109,10 @@ class DiscoverySpec(pydantic.BaseModel):
 
     - ``files`` lists specific relative filenames to check via ``is_file()``.
     - ``glob`` is a pattern walked under the resolved root via
-      :func:`agentgrep.list_files_matching`. ``path_parts_required``
-      filters glob results to those whose path contains every named
-      directory component (e.g., Cursor CLI transcripts must live under an
-      ``agent-transcripts`` segment).
+      :func:`agentgrep.list_files_matching`. ``path_parts_required`` and
+      ``path_parts_excluded`` filter glob results by path components (e.g.,
+      Cursor CLI transcripts must live under ``agent-transcripts`` but the
+      primary transcript store excludes nested ``subagents`` files).
 
     ``platform_paths`` lists absolute paths to check unconditionally — used
     for stores whose canonical location depends on the operating system
@@ -93,6 +127,9 @@ class DiscoverySpec(pydantic.BaseModel):
     adapter_id: str
     """Runtime adapter identifier (e.g. ``"claude.projects_jsonl.v1"``)."""
 
+    data_version: str | None = None
+    """Known data-shape version for this discovery path, when stable."""
+
     path_kind: PathKind
     """Kind of filesystem entry the records live in."""
 
@@ -105,6 +142,9 @@ class DiscoverySpec(pydantic.BaseModel):
     platform_paths: tuple[str, ...] = ()
     """Absolute paths to check unconditionally, e.g. Cursor IDE state."""
 
+    root_key: str = "default"
+    """Named discovery root to resolve this spec against."""
+
     files: tuple[str, ...] = ()
     """Specific relative filenames to check via ``is_file()``."""
 
@@ -113,6 +153,9 @@ class DiscoverySpec(pydantic.BaseModel):
 
     path_parts_required: tuple[str, ...] = ()
     """Each named segment must appear in a glob result's ``path.parts``."""
+
+    path_parts_excluded: tuple[str, ...] = ()
+    """A glob result is skipped when any named segment appears in ``path.parts``."""
 
 
 class StoreDescriptor(pydantic.BaseModel):
@@ -150,6 +193,12 @@ class StoreDescriptor(pydantic.BaseModel):
 
     platform_variants: dict[str, str] = pydantic.Field(default_factory=dict)
     """Per-platform path overrides keyed by ``"linux"``/``"darwin"``/``"win32"``."""
+
+    coverage: StoreCoverage | None = None
+    """Explicit runtime coverage level, or ``None`` to infer from search policy."""
+
+    version_strategies: tuple[VersionDetectionStrategy, ...] = ()
+    """Strategies runtime discovery may use to identify concrete source versions."""
 
     observed_version: str
     """Released version (or HEAD commit) the schema notes were captured against."""
@@ -193,6 +242,17 @@ class StoreDescriptor(pydantic.BaseModel):
     ``history.json`` and ``history.jsonl`` variants, or the modern vs.
     legacy Cursor IDE state databases.
     """
+
+    @property
+    def coverage_level(self) -> StoreCoverage:
+        """Return this descriptor's effective runtime coverage level."""
+        if self.coverage is not None:
+            return self.coverage
+        if self.search_by_default is True:
+            return StoreCoverage.DEFAULT_SEARCH
+        if self.discovery:
+            return StoreCoverage.INSPECTABLE
+        return StoreCoverage.CATALOG_ONLY
 
 
 class StoreCatalog(pydantic.BaseModel):
@@ -242,6 +302,7 @@ __all__ = (
     "PathKind",
     "SourceKind",
     "StoreCatalog",
+    "StoreCoverage",
     "StoreDescriptor",
     "StoreFormat",
     "StoreRole",

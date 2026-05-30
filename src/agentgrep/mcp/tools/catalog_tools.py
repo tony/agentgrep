@@ -40,6 +40,8 @@ def _descriptor_to_model(descriptor: t.Any) -> StoreDescriptorModel:
         path_pattern=descriptor.path_pattern,
         env_overrides=list(descriptor.env_overrides),
         platform_variants=dict(descriptor.platform_variants),
+        coverage=descriptor.coverage_level.value,
+        version_strategies=[strategy.value for strategy in descriptor.version_strategies],
         observed_version=descriptor.observed_version,
         observed_at=observed_at_iso,
         upstream_ref=descriptor.upstream_ref,
@@ -82,6 +84,7 @@ def _inspect_record_sample_sync(request: InspectSampleRequest) -> InspectSampleR
         pathlib.Path.home(),
         agentgrep.AGENT_CHOICES,
         backends,
+        include_non_default=True,
     )
     requested = pathlib.Path(request.source_path).expanduser().resolve()
     target = next(

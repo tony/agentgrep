@@ -6,18 +6,68 @@ agentgrep reads on-disk stores from multiple AI coding assistants.
 Each backend page documents the agent's path layout, environment
 overrides, store descriptors, and record schemas.
 
+## Backend pages
+
+::::{grid} 1 1 2 3
+:gutter: 2 2 3 3
+
+:::{grid-item-card} Codex
+:link: codex
+:link-type: doc
+OpenAI Codex CLI history, sessions, instructions, memory, goals, and SQLite state.
+:::
+
+:::{grid-item-card} Claude Code
+:link: claude
+:link-type: doc
+Claude Code history, project transcripts, tasks, memory, settings, and plugin surfaces.
+:::
+
+:::{grid-item-card} Cursor
+:link: cursor
+:link-type: doc
+Cursor CLI agent transcripts and Cursor IDE SQLite state.
+:::
+
+:::{grid-item-card} Gemini CLI
+:link: gemini
+:link-type: doc
+Gemini CLI chat sessions, prompt logs, checkpoints, settings, and skills.
+:::
+
+:::{grid-item-card} Grok CLI
+:link: grok
+:link-type: doc
+Grok CLI prompt history, session transcripts, memory, logs, and config.
+:::
+
+::::
+
+## Coverage levels
+
+The backend pages distinguish search support from storage coverage.
+Default-search stores are opened by normal search and find commands.
+Inspectable stores are known and can be inventoried explicitly, but
+are not searched by default. Catalog-only stores are documented so
+future adapters do not mistake them for prompt history; some catalog
+stores expose safe structural samples for `inspect_record_sample`, but
+they still stay outside default search. Private stores are documented
+but intentionally not enumerated from disk.
+
+## Version detection
+
+Source discovery reports version metadata separately from record
+content. agentgrep prefers concrete source evidence over app freshness:
+embedded metadata, file/record shape, and SQLite suffixes identify the
+data version; local version files provide app-version context only
+when they can be read without spawning an upstream CLI. If neither is
+available, the catalog observation stamp is reported as a
+low-confidence fallback.
+
 ## Support matrix
 
-| Agent   | Prompt History | Chat Sessions | Session Index | Memory | Plans |
-|---------|:--------------:|:-------------:|:-------------:|:------:|:-----:|
-| Codex   | {doc}`codex`   | {doc}`codex`  |               |        |       |
-| Claude  |                | {doc}`claude` |               |        |       |
-| Cursor  |                | {doc}`cursor` | {doc}`cursor` |        |       |
-| Gemini  | {doc}`gemini`  | {doc}`gemini` |               |        |       |
-| Grok    | {doc}`grok`    | {doc}`grok`   | {doc}`grok`   |        |       |
-
-Cells with links are actively searched by default. Blank cells are
-either catalogued but not yet parsed, or not applicable to the agent.
+```{storage:coverage-grid}
+```
 
 ```{toctree}
 :hidden:

@@ -276,6 +276,9 @@ async def test_mcp_capabilities_lists_every_supported_agent_and_adapter() -> Non
 
     advertised_adapters = set(t.cast("list[str]", data["adapters"]))
     for adapter_id in (
+        "claude.projects_memory_text.v1",
+        "codex.config_toml.v1",
+        "codex.plugin_instruction_text.v1",
         "cursor.cli_jsonl.v1",
         "gemini.tmp_chats_jsonl.v1",
         "gemini.tmp_logs_json.v1",
@@ -466,6 +469,74 @@ async def test_mcp_list_sources_with_filters(
     assert all(s["path_kind"] == "sqlite_db" for s in data["sources"])
 
 
+async def test_mcp_list_sources_exposes_non_default_coverage_on_request(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``list_sources`` keeps defaults narrow but can inventory non-default stores."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+
+    history_path = home / ".codex" / "history.jsonl"
+    write_jsonl(
+        history_path,
+        [{"session_id": "s", "ts": 1_700_000_000, "text": "history"}],
+    )
+    state_db = home / ".codex" / "state_5.sqlite"
+    state_db.parent.mkdir(parents=True, exist_ok=True)
+    state_db.touch()
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        default_result = await client.call_tool("list_sources", {"agent": "codex"})
+        inventory_result = await client.call_tool(
+            "list_sources",
+            {
+                "agent": "codex",
+                "include_non_default": True,
+                "coverage_filter": "inspectable",
+            },
+        )
+
+    default_data = tool_payload(default_result)
+    inventory_data = tool_payload(inventory_result)
+    assert all(s["coverage"] == "default_search" for s in default_data["sources"])
+    assert any(s["path"].endswith("state_5.sqlite") for s in inventory_data["sources"])
+    assert {s["coverage"] for s in inventory_data["sources"]} == {"inspectable"}
+
+
+async def test_mcp_list_sources_exposes_version_detection(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Source discovery payloads expose concrete data-shape detection."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+
+    history_path = home / ".codex" / "history.jsonl"
+    write_jsonl(
+        history_path,
+        [{"session_id": "session-jsonl-1", "ts": 1_700_000_000, "text": "history"}],
+    )
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        result = await client.call_tool(
+            "list_sources",
+            {"agent": "codex"},
+        )
+
+    data = tool_payload(result)
+    source = next(s for s in data["sources"] if s["adapter_id"] == "codex.history_jsonl.v1")
+    assert source["version_detection"] == {
+        "app_version": None,
+        "data_version": "codex.history_jsonl.current",
+        "strategy": "shape_inference",
+        "confidence": "high",
+        "evidence": "history.jsonl object keys include session_id, ts, text",
+    }
+
+
 async def test_mcp_filter_sources_requires_pattern() -> None:
     """``filter_sources`` rejects an empty pattern at the validation layer."""
     from fastmcp.exceptions import ToolError
@@ -626,6 +697,77 @@ async def test_mcp_inspect_record_sample_returns_codex_history(
     data = tool_payload(result)
     assert data["error_message"] is None
     assert data["sample_count"] >= 1
+
+
+async def test_mcp_inspect_record_sample_returns_non_default_adapter_records(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Inspectable/catalog adapters with discovery can produce record samples."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+
+    task_path = home / ".claude" / "tasks" / "team" / "1.json"
+    task_path.parent.mkdir(parents=True, exist_ok=True)
+    _ = task_path.write_text(
+        json.dumps(
+            {
+                "id": "1",
+                "subject": "Sample task",
+                "description": "Inspect task text",
+                "status": "pending",
+                "blocks": [],
+                "blockedBy": [],
+            },
+        ),
+        encoding="utf-8",
+    )
+    index_path = home / ".codex" / "session_index.jsonl"
+    write_jsonl(
+        index_path,
+        [{"id": "thread-1", "thread_name": "Sample thread", "updated_at": "2026-05-30T12:00:00Z"}],
+    )
+    config_path = home / ".codex" / "config.toml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    _ = config_path.write_text("model = 'do-not-index'\n", encoding="utf-8")
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        task_result = await client.call_tool(
+            "inspect_record_sample",
+            {
+                "adapter_id": "claude.tasks_json.v1",
+                "source_path": str(task_path),
+                "sample_size": 1,
+            },
+        )
+        index_result = await client.call_tool(
+            "inspect_record_sample",
+            {
+                "adapter_id": "codex.session_index_jsonl.v1",
+                "source_path": str(index_path),
+                "sample_size": 1,
+            },
+        )
+        config_result = await client.call_tool(
+            "inspect_record_sample",
+            {
+                "adapter_id": "codex.config_toml.v1",
+                "source_path": str(config_path),
+                "sample_size": 1,
+            },
+        )
+
+    task_data = tool_payload(task_result)
+    index_data = tool_payload(index_result)
+    config_data = tool_payload(config_result)
+    assert task_data["error_message"] is None
+    assert task_data["records"][0]["text"] == "Sample task\n\nInspect task text"
+    assert index_data["error_message"] is None
+    assert index_data["records"][0]["text"] == "Sample thread"
+    assert config_data["error_message"] is None
+    assert "model (str)" in config_data["records"][0]["text"]
+    assert "do-not-index" not in config_data["records"][0]["text"]
 
 
 async def test_mcp_catalog_resource_returns_full_catalog() -> None:

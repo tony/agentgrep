@@ -7,9 +7,9 @@ about, modelled as Pydantic
 {class}`~agentgrep.stores.StoreDescriptor` rows aggregated under one
 {class}`~agentgrep.stores.StoreCatalog`. The catalogue is **descriptive**:
 it documents *where* each agent's data lives and *what* the records look
-like. Search-policy decisions — whether agentgrep actually opens a
-particular store by default — are captured per-row and may be deferred
-(`search_by_default=None`) when no adapter consumes them yet.
+like. Coverage decisions — whether agentgrep searches, inventories, or
+only documents a store — are captured per-row so adding storage
+knowledge does not automatically expand default prompt search.
 
 The catalogue is the single source of truth that downstream adapters
 consume. When upstream renames a path or changes a record shape, the
@@ -20,6 +20,11 @@ catalogue version; adapters pick the new metadata up automatically.
 ```{contents}
 :local:
 :depth: 2
+```
+
+## Catalog summary
+
+```{storage:catalog-summary}
 ```
 
 ## Why a catalogue
@@ -52,21 +57,89 @@ claude_session.path_pattern
 Path patterns use `${HOME}` and `${<ENV>}` tokens; resolving them
 against a concrete environment is the consumer's job, so the catalogue
 stays portable. `env_overrides` lists the env vars that change the
-root (Codex respects `CODEX_HOME`; Gemini respects `GEMINI_CLI_HOME`).
+root (Claude respects `CLAUDE_CONFIG_DIR`; Codex respects
+`CODEX_HOME` and `CODEX_SQLITE_HOME`; Gemini respects
+`GEMINI_CLI_HOME`).
+
+## Coverage levels
+
+Every descriptor has an effective coverage level:
+
+| Coverage | Meaning |
+|----------|---------|
+| `default_search` | Normal search and find commands discover and parse this store. |
+| `inspectable` | Inventory tools can discover it when explicitly requested; default search skips it. |
+| `catalog_only` | The path and schema are documented, and default search skips it. A row may still expose a conservative structural sample for explicit inspection. |
+| `private` | The store is documented but intentionally not enumerated from disk. |
+
+This distinction lets the catalogue describe auth files, runtime logs,
+shell snapshots, and file-history caches without making them part of
+ordinary prompt search.
+
+## Version detection strategies
+
+Discovery payloads include a `version_detection` object for each source
+agentgrep can enumerate. The object records the app version when local
+metadata exposes one, the data-shape version, the strategy used, the
+confidence level, and a short evidence string.
+
+The strategies are:
+
+| Strategy | Meaning |
+|----------|---------|
+| `embedded_metadata` | The source itself carries a version field, such as a session metadata record. |
+| `shape_inference` | The file name, record keys, table names, or SQLite suffix identify the data shape. |
+| `version_check` | A local version file provides app-version context without spawning the upstream CLI. |
+| `catalog_observation` | No concrete source evidence was available, so the catalog observation stamp is reported as a low-confidence fallback. |
+
+The concrete data shape is authoritative. If a modern app-version hint
+coexists with an old unmigrated file, agentgrep parses the file by its
+own shape. See {ref}`adr-storage-version-detection` for the full
+decision.
 
 ## Stores by agent
 
 ### Claude Code
 
-`observed_version`: ``claude-code v2.1.143`` (2026-05-15).
+Claude rows carry per-store observation stamps. Project transcript
+schemas were observed against ``claude-code v2.1.143`` (2026-05-15);
+global prompt history was observed against ``claude-code v2.1.157``
+(2026-05-29).
+
+Claude honours `CLAUDE_CONFIG_DIR`, falling back to `${HOME}/.claude`.
+Its global prompt-history audit log lives at
+`${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/history.jsonl` and is parsed by
+`claude.history_jsonl.v1`. It stores the user-facing `display` text,
+Unix-millisecond `timestamp`, `project`, `sessionId`, and
+`pastedContents`; content-addressed text pastes resolve through
+`paste-cache/<contentHash>.txt` when present.
 
 Claude's primary chat record lives at
 `${HOME}/.claude/projects/<encoded_project>/<session_uuid>.jsonl`. The
 file format is JSONL with multiple record types per line —
 `type: "user"`, `type: "assistant"`, `type: "attachment"`,
 `type: "permission-mode"`. Sub-agent dispatches nest under
-`<session_uuid>/subagents/`. The auto-memory feature stores markdown
-notes under `<encoded_project>/memory/`.
+`<session_uuid>/subagents/`, share the same parser, and are exposed as
+the distinct runtime store `claude.projects_subagents`. `__store.db`,
+session memory, project auto-memory, `CLAUDE.md`, tasks, todos, plans,
+skills, legacy commands, project-local `.claude` instructions, plugin
+instructions, and teams are inspectable but remain outside default
+search because they either duplicate transcripts, represent derived
+state, or steer future sessions. Tasks and todos emit their subject,
+content, and description fields; teams emit team descriptions and
+member prompts. Settings and app-state JSON expose only top-level key
+and type summaries, so raw values such as env vars are not indexed.
+Debug output and shell snapshots expose metadata-only file summaries.
+Backups, uploads, file history, context/security state, credentials,
+session environment, and cache payloads are catalogued or private
+according to sensitivity.
+Claude source version detection uses `embedded_metadata` for transcript
+`version` fields, `shape_inference` for history records with `display`,
+`timestamp`, and `project`, task/todo/team JSON keys, settings and
+app-state key summaries, plugin manifests and hook event names,
+instruction Markdown paths, file metadata summaries, and
+`catalog_observation` as the fallback. Project-local discovery is
+bounded to roots already present in Claude transcript metadata.
 
 ### Cursor
 
@@ -78,7 +151,9 @@ Two distinct surfaces, both catalogued and both searched:
   Anthropic-style `{role, message.content[]}` with `text` and
   `tool_use` content blocks; tool outputs are sometimes `[REDACTED]`
   in older `cursor-agent` builds. There is no native per-turn
-  timestamp, so agentgrep backfills the file's mtime.
+  timestamp, so agentgrep backfills the file's mtime. Sub-agent
+  transcripts nested under `subagents/` share the parser but surface as
+  the distinct runtime store `cursor.cli_subagents`.
 - **Cursor IDE**: parsed by `cursor.state_vscdb_modern.v1` /
   `cursor.state_vscdb_legacy.v1` via `state.vscdb` (SQLite). The
   catalogue keeps the IDE path separate from the CLI agent so the
@@ -91,6 +166,9 @@ does not index multi-gigabyte git working trees as chat history.
 ### Codex
 
 `observed_version`: ``github.com/openai/codex@4c89772`` (2026-05-16).
+Codex honours `CODEX_HOME` for primary files. SQLite files resolve
+through `CODEX_SQLITE_HOME`, then `sqlite_home` in `config.toml`, then
+`CODEX_HOME`.
 
 Schemas are pinned directly to the upstream Rust types:
 
@@ -101,11 +179,25 @@ Schemas are pinned directly to the upstream Rust types:
   `RolloutItem` with variants `SessionMeta`, `ResponseItem`,
   `Compacted`, `TurnContext`, `EventMsg`
   ([`codex-rs/protocol/src/protocol.rs:2783`](https://github.com/openai/codex/blob/4c89772/codex-rs/protocol/src/protocol.rs#L2783)).
+- Legacy root `sessions/rollout-*.json` → JSON object with `session`
+  metadata and an `items` array carrying message-like records.
 
-The two `_N.sqlite` files at the Codex root — `state_5.sqlite` and
-`logs_2.sqlite` — belong to the Codex CLI. Their filenames come from
-`STATE_DB_FILENAME` and `LOGS_DB_FILENAME` in
-[`codex-rs/state/src/lib.rs`](https://github.com/openai/codex/blob/4c89772/codex-rs/state/src/lib.rs#L70-L71).
+The `_N.sqlite` files belong to the Codex CLI, not Cursor. Known
+SQLite stores are `state_5.sqlite`, `logs_2.sqlite`,
+`memories_1.sqlite`, and `goals_1.sqlite`. Prompt-bearing fields such
+as `threads.first_user_message`, `threads.preview`, memory summaries,
+goal objectives, and job instructions are inspectable storage rather
+than default search.
+Codex source version detection uses `shape_inference` for
+`history.jsonl`, legacy `history.json`, legacy root rollout JSON,
+`session_index.jsonl`, external import ledgers, memory Markdown,
+config TOML, project config TOML, app-state JSON summaries, plugin
+manifests, plugin marketplace metadata, hook event names, instruction
+Markdown/rule paths, file metadata summaries, and SQLite suffixes. It
+uses `embedded_metadata` for session `cli_version`, and
+`version_check` for `models_cache.json.client_version` app-version
+context. Project-local `.codex` discovery is bounded to roots already
+present in Codex session metadata.
 
 ### Gemini CLI
 
