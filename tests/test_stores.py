@@ -706,6 +706,7 @@ PRIMARY_FIXTURES: tuple[tuple[str, str], ...] = (
     ("cursor-cli.prompt_history", "prompt_history.json"),
     ("grok.prompt_history", "prompt_history.jsonl"),
     ("grok.sessions", "chat_history.jsonl"),
+    ("pi.sessions", "example.jsonl"),
 )
 
 
