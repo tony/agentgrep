@@ -116,18 +116,21 @@ file format is JSONL with multiple record types per line —
 `type: "permission-mode"`. Sub-agent dispatches nest under
 `<session_uuid>/subagents/`, share the same parser, and are exposed as
 the distinct runtime store `claude.projects_subagents`. `__store.db`,
-session memory, tasks, and plans are inspectable but remain outside
-default search because they either duplicate transcripts or represent
-derived state. Tasks are parsed from `subject` and `description` for
-explicit inspection. Settings expose only top-level key summaries, so
-raw values such as env vars are not indexed. Skills, teams, IDE state,
-update/stat caches, debug output, backups, file history, shell
-snapshots, context/security state, credentials, and session environment
-are catalogued or private according to sensitivity.
+session memory, project auto-memory, tasks, todos, plans, skills,
+legacy commands, and teams are inspectable but remain outside default
+search because they either duplicate transcripts, represent derived
+state, or steer future sessions. Tasks and todos emit their subject,
+content, and description fields; teams emit team descriptions and
+member prompts. Settings and app-state JSON expose only top-level key
+and type summaries, so raw values such as env vars are not indexed.
+Debug output, backups, file history, shell snapshots, context/security
+state, credentials, plugin cache, and session environment are
+catalogued or private according to sensitivity.
 Claude source version detection uses `embedded_metadata` for transcript
 `version` fields, `shape_inference` for history records with `display`,
-`timestamp`, and `project`, task JSON keys, and settings key summaries,
-and `catalog_observation` as the fallback.
+`timestamp`, and `project`, task/todo/team JSON keys, settings and
+app-state key summaries, instruction Markdown paths, and
+`catalog_observation` as the fallback.
 
 ### Cursor
 
@@ -178,9 +181,10 @@ goal objectives, and job instructions are inspectable storage rather
 than default search.
 Codex source version detection uses `shape_inference` for
 `history.jsonl`, legacy `history.json`, legacy root rollout JSON,
-`session_index.jsonl`, external import ledgers, memory Markdown, and
-SQLite suffixes,
-`embedded_metadata` for session `cli_version`, and `version_check` for
+`session_index.jsonl`, external import ledgers, memory Markdown,
+config TOML, app-state JSON summaries, plugin manifests, instruction
+Markdown/rule paths, and SQLite suffixes. It uses `embedded_metadata`
+for session `cli_version`, and `version_check` for
 `models_cache.json.client_version` app-version context.
 
 ### Gemini CLI

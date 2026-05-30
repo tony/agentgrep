@@ -29,19 +29,19 @@ enumerated. Some catalog stores have safe sample parsers for
 | `codex.memories` | Persistent Memory | Markdown | inspectable | `codex.memories_text.v1` |
 | `codex.logs_db` | App State | SQLite | catalog | `codex.logs_sqlite.v1` |
 | `codex.external_agent_imports` | App State | JSON | catalog | `codex.external_imports_json.v1` |
-| `codex.config` | App State | Text | catalog | |
-| `codex.config_backups` | App State | Text | catalog | |
-| `codex.update_check` | App State | JSON | catalog | |
-| `codex.version_file` | App State | JSON | catalog | |
+| `codex.config` | App State | Text | catalog | `codex.config_toml.v1` |
+| `codex.config_backups` | App State | Text | catalog | `codex.config_backup_toml.v1` |
+| `codex.update_check` | App State | JSON | catalog | `codex.app_state_json_summary.v1` |
+| `codex.version_file` | App State | JSON | catalog | `codex.app_state_json_summary.v1` |
 | `codex.personality_migration` | App State | Text | catalog | |
-| `codex.model_cache` | Cache | JSON | catalog | |
-| `codex.internal_storage` | App State | JSON | catalog | |
-| `codex.plugins` | Instruction | Opaque | catalog | |
-| `codex.skills` | Instruction | Text | catalog | |
-| `codex.rules` | Instruction | Text | catalog | |
+| `codex.model_cache` | Cache | JSON | catalog | `codex.app_state_json_summary.v1` |
+| `codex.internal_storage` | App State | JSON | catalog | `codex.app_state_json_summary.v1` |
+| `codex.plugins` | Instruction | Opaque / Text / JSON | inspectable | `codex.plugin_manifest_json.v1`, `codex.plugin_instruction_text.v1` |
+| `codex.skills` | Instruction | Text | inspectable | `codex.skills_text.v1` |
+| `codex.rules` | Instruction | Text | inspectable | `codex.rules_text.v1` |
 | `codex.runtime_cache` | Cache | Opaque | catalog | |
 | `codex.log_files` | App State | Text | catalog | |
-| `codex.process_manager` | App State | JSON | catalog | |
+| `codex.process_manager` | App State | JSON | catalog | `codex.app_state_json_summary.v1` |
 | `codex.shell_snapshots` | App State | Opaque | catalog | |
 | `codex.sqlite_sidecars` | Cache | Opaque | catalog | |
 | `codex.auth` | App State | JSON | private | |
@@ -65,7 +65,9 @@ records with `session_id`, `ts`, and `text` are reported as
 objects with `session` and `items` are reported as
 `codex.sessions.legacy_json.v1`. SQLite stores derive data versions
 from their migration suffixes, such as `state_5.sqlite` →
-`codex.state.sqlite.v5`.
+`codex.state.sqlite.v5`. Config, app-state, skill, rule, and plugin
+adapters infer shape from TOML keys, JSON keys, manifest keys, or
+instruction paths while keeping those sources outside default search.
 
 ## Record schemas
 
@@ -129,12 +131,15 @@ operational metadata.
 ### Instructions, Memory, And Runtime State
 
 `instructions.md`, `skills/`, `rules/`, and plugin bundles are
-instruction surfaces rather than chat transcripts. `memories/` and
-`memories_1.sqlite` hold retained memory and rollout summaries; the
-Markdown workspace is inspectable through `codex.memories_text.v1`.
-The external-agent import ledger exposes imported thread ids and source
-file names for explicit inspection without indexing full imported
-content. Auth, installation id, and policy state are private; caches,
-logs, process-manager files, shell snapshots, SQLite sidecars, model
-cache, update/version markers, config backups, and temp directories
-are catalogued for audits but stay outside default search.
+instruction surfaces rather than chat transcripts. The root
+instructions file, user skills, rules, plugin manifests, and plugin
+command/agent/skill Markdown are inspectable but stay outside default
+search. `memories/` and `memories_1.sqlite` hold retained memory and
+rollout summaries; the Markdown workspace is inspectable through
+`codex.memories_text.v1`. The external-agent import ledger exposes
+imported thread ids and source file names for explicit inspection
+without indexing full imported content. Config TOML, config backups,
+update/version/model/internal JSON, and process-manager state expose
+only key/type summaries. Auth, installation id, and policy state are
+private; caches, logs, shell snapshots, SQLite sidecars, and temp
+directories are catalogued for audits but stay outside default search.

@@ -28,15 +28,16 @@ explicit inspection.
 | `claude.plans` | Plan | Text | inspectable | `claude.plans_text.v1` |
 | `claude.settings` | App State | JSON | catalog | `claude.settings_json.v1` |
 | `claude.credentials` | App State | JSON | private | |
-| `claude.update_state` | App State | JSON | catalog | |
-| `claude.stats_cache` | Cache | JSON | catalog | |
-| `claude.projects.memory` | Persistent Memory | Markdown | catalog | |
-| `claude.todos` | Todo | JSON | catalog | |
-| `claude.sessions` | App State | JSON | catalog | |
-| `claude.context_mode` | App State | JSON / SQLite | catalog | |
-| `claude.ide` | App State | JSON | catalog | |
-| `claude.skills` | Instruction | Text | catalog | |
-| `claude.teams` | Instruction | Text | catalog | |
+| `claude.update_state` | App State | JSON | catalog | `claude.app_state_json_summary.v1` |
+| `claude.stats_cache` | Cache | JSON | catalog | `claude.app_state_json_summary.v1` |
+| `claude.projects.memory` | Persistent Memory | Markdown | inspectable | `claude.projects_memory_text.v1` |
+| `claude.todos` | Todo | JSON | inspectable | `claude.todos_json.v1` |
+| `claude.sessions` | App State | JSON | catalog | `claude.app_state_json_summary.v1` |
+| `claude.context_mode` | App State | JSON / SQLite | catalog | `claude.app_state_json_summary.v1` |
+| `claude.ide` | App State | JSON | catalog | `claude.app_state_json_summary.v1` |
+| `claude.skills` | Instruction | Text | inspectable | `claude.skills_text.v1` |
+| `claude.commands` | Instruction | Text | inspectable | `claude.commands_text.v1` |
+| `claude.teams` | Instruction | JSON | inspectable | `claude.teams_json.v1` |
 | `claude.debug_logs` | App State | Text | catalog | |
 | `claude.backups` | Cache | Opaque | catalog | |
 | `claude.generic_cache` | Cache | Opaque | catalog | |
@@ -57,9 +58,11 @@ Project and sub-agent transcripts use embedded transcript `version`
 metadata when present; otherwise their `type`, `sessionId`, and
 `message` keys identify the JSONL message shape.
 Task files with `id`, `subject`, `description`, and `status` are
-reported as `claude.tasks.json.v1`; settings files use a medium
-confidence key-summary shape because their values are deliberately not
-indexed.
+reported as `claude.tasks.json.v1`. Todo, team, app-state, skill,
+command, and auto-memory stores use path and key-shape inference for
+their non-default adapters. Settings and app-state files use
+medium-confidence key/type summaries because their values are
+deliberately not indexed.
 
 Catalog observation stamps remain the fallback for discovered stores
 whose concrete shape cannot be sampled safely.
@@ -128,8 +131,12 @@ are Markdown files under `plans/*.md`.
 
 Settings and keybindings expose only top-level key summaries for
 explicit inspection, so raw values such as environment variables are
-not indexed. Context-mode files, security state, session environment,
-IDE bridge state, skills, teams, plugin cache, file history, shell
-snapshots, stats/update cache, debug output, backups, generic cache,
-credentials, and image/paste caches are catalogued so storage audits
-can identify them without treating them as default prompt history.
+not indexed. Auto-memory Markdown, persistent todos, user skills,
+legacy commands, and team member prompts are inspectable because they
+can steer future Claude Code behavior. Context-mode files, IDE bridge
+state, stats/update cache, and session state expose only key/type
+summaries. Security state, session environment, plugin cache, file
+history, shell snapshots, debug output, backups, generic cache,
+credentials, and image/paste caches stay catalogued or private so
+storage audits can identify them without treating them as default
+prompt history.
