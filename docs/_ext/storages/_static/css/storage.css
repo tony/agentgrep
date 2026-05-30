@@ -1,0 +1,56 @@
+.gp-sphinx-storage__visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.gp-sphinx-storage__store-section {
+  margin-block: 1.25rem;
+}
+
+.gp-sphinx-storage__store-entry {
+  --gp-sphinx-api-accent-color: var(--color-api-class);
+}
+
+.gp-sphinx-storage__store-signature code,
+.gp-sphinx-storage__store-signature .highlight {
+  font-size: 0.95em;
+}
+
+.gp-sphinx-storage__body-section table {
+  margin-block: 0.75rem 0;
+}
+
+.gp-sphinx-storage__table {
+  width: 100%;
+}
+
+.gp-sphinx-storage__table code.literal {
+  white-space: nowrap;
+}
+
+.gp-sphinx-storage__coverage-default-search {
+  --sab-color: var(--color-api-method);
+}
+
+.gp-sphinx-storage__coverage-inspectable {
+  --sab-color: var(--color-api-function);
+}
+
+.gp-sphinx-storage__coverage-catalog-only {
+  --sab-color: var(--color-api-attribute);
+}
+
+.gp-sphinx-storage__coverage-private {
+  --sab-color: var(--color-api-exception);
+}
+
+.gp-sphinx-storage__type-store {
+  --sab-color: var(--color-api-class);
+}
