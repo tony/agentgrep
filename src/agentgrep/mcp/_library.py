@@ -91,6 +91,7 @@ class SourceHandleLike(t.Protocol):
     path_kind: str
     source_kind: str
     coverage: str
+    version_detection: object | None
     search_root: pathlib.Path | None
     mtime_ns: int
 

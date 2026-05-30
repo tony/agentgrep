@@ -66,6 +66,9 @@ from agentgrep.stores import (
     PathKind,
     SourceKind,
     StoreCoverage,
+    StoreDescriptor,
+    VersionDetectionConfidence,
+    VersionDetectionStrategy,
 )
 
 logger = logging.getLogger(__name__)
@@ -635,6 +638,7 @@ class SourceHandlePayload(t.TypedDict):
     path_kind: PathKind
     source_kind: SourceKind
     coverage: StoreCoverage
+    version_detection: SourceVersionDetectionPayload | None
     search_root: str | None
     mtime_ns: int
 
@@ -1141,6 +1145,27 @@ class SearchQuery:
 
 
 @dataclasses.dataclass(slots=True)
+class SourceVersionDetection:
+    """Detected app/data version metadata for one concrete source."""
+
+    app_version: str | None
+    data_version: str | None
+    strategy: VersionDetectionStrategy
+    confidence: VersionDetectionConfidence
+    evidence: str
+
+
+class SourceVersionDetectionPayload(t.TypedDict):
+    """JSON payload for source version detection metadata."""
+
+    app_version: str | None
+    data_version: str | None
+    strategy: VersionDetectionStrategy
+    confidence: VersionDetectionConfidence
+    evidence: str
+
+
+@dataclasses.dataclass(slots=True)
 class SourceHandle:
     """A discovered, parseable source file or SQLite database."""
 
@@ -1153,6 +1178,7 @@ class SourceHandle:
     search_root: pathlib.Path | None
     mtime_ns: int
     coverage: StoreCoverage = StoreCoverage.DEFAULT_SEARCH
+    version_detection: SourceVersionDetection | None = None
 
 
 type SourceProgressCallback = cabc.Callable[[int, int, SourceHandle, int, int], None]
@@ -2369,6 +2395,172 @@ def resolve_codex_sqlite_root(codex_root: pathlib.Path) -> pathlib.Path:
     )
 
 
+def _first_jsonl_mapping(path: pathlib.Path) -> dict[str, JSONValue] | None:
+    """Return the first object record from a JSONL file."""
+    for value in iter_jsonl(path):
+        if isinstance(value, dict):
+            return value
+    return None
+
+
+def _first_json_array_mapping(path: pathlib.Path) -> dict[str, JSONValue] | None:
+    """Return the first object from a JSON array file."""
+    value = read_json_file(path)
+    if not isinstance(value, list):
+        return None
+    for entry in value:
+        if isinstance(entry, dict):
+            return entry
+    return None
+
+
+def _codex_client_version_from_cache(codex_root: pathlib.Path | None) -> str | None:
+    """Return Codex's local client-version hint without spawning the CLI."""
+    if codex_root is None:
+        return None
+    value = read_json_file(codex_root / "models_cache.json")
+    if not isinstance(value, dict):
+        return None
+    return as_optional_str(value.get("client_version"))
+
+
+def _catalog_version_detection(
+    descriptor: StoreDescriptor,
+    spec: DiscoverySpec,
+    *,
+    app_version: str | None = None,
+) -> SourceVersionDetection:
+    """Build the low-confidence fallback for sources without shape evidence."""
+    return SourceVersionDetection(
+        app_version=app_version,
+        data_version=spec.data_version,
+        strategy=VersionDetectionStrategy.CATALOG_OBSERVATION,
+        confidence=VersionDetectionConfidence.LOW,
+        evidence=f"catalog observed_version: {descriptor.observed_version}",
+    )
+
+
+def _codex_source_version_detection(
+    source: SourceHandle,
+    descriptor: StoreDescriptor,
+    spec: DiscoverySpec,
+    roots: dict[str, pathlib.Path],
+) -> SourceVersionDetection:
+    """Detect Codex source versions from local metadata and concrete shape."""
+    app_version = _codex_client_version_from_cache(roots.get("default"))
+
+    if source.adapter_id == "codex.history_jsonl.v1":
+        record = _first_jsonl_mapping(source.path)
+        if record is not None and {"session_id", "ts", "text"}.issubset(record):
+            return SourceVersionDetection(
+                app_version=app_version,
+                data_version="codex.history_jsonl.current",
+                strategy=VersionDetectionStrategy.SHAPE_INFERENCE,
+                confidence=VersionDetectionConfidence.HIGH,
+                evidence="history.jsonl object keys include session_id, ts, text",
+            )
+    elif source.adapter_id == "codex.history_json.v1":
+        record = _first_json_array_mapping(source.path)
+        if record is not None and {"command", "timestamp"}.issubset(record):
+            return SourceVersionDetection(
+                app_version=app_version,
+                data_version="codex.history_json.legacy",
+                strategy=VersionDetectionStrategy.SHAPE_INFERENCE,
+                confidence=VersionDetectionConfidence.HIGH,
+                evidence="history.json array object keys include command, timestamp",
+            )
+    elif source.adapter_id == "codex.sessions_jsonl.v1":
+        record = _first_jsonl_mapping(source.path)
+        if record is not None and record.get("type") == "session_meta":
+            payload = record.get("payload")
+            embedded_version: str | None = None
+            if isinstance(payload, dict):
+                embedded_version = as_optional_str(payload.get("cli_version"))
+            if embedded_version:
+                return SourceVersionDetection(
+                    app_version=embedded_version,
+                    data_version=spec.data_version,
+                    strategy=VersionDetectionStrategy.EMBEDDED_METADATA,
+                    confidence=VersionDetectionConfidence.HIGH,
+                    evidence="session_meta.payload keys include cli_version",
+                )
+            return SourceVersionDetection(
+                app_version=app_version,
+                data_version=spec.data_version,
+                strategy=VersionDetectionStrategy.SHAPE_INFERENCE,
+                confidence=VersionDetectionConfidence.MEDIUM,
+                evidence="jsonl event type includes session_meta",
+            )
+    elif source.source_kind == "sqlite" and spec.data_version is not None:
+        match = re.fullmatch(r".+_([0-9]+)\.sqlite", source.path.name)
+        if match is not None:
+            return SourceVersionDetection(
+                app_version=app_version,
+                data_version=spec.data_version,
+                strategy=VersionDetectionStrategy.SHAPE_INFERENCE,
+                confidence=VersionDetectionConfidence.HIGH,
+                evidence=f"filename suffix _{match.group(1)}.sqlite",
+            )
+
+    return _catalog_version_detection(descriptor, spec, app_version=app_version)
+
+
+def _claude_source_version_detection(
+    source: SourceHandle,
+    descriptor: StoreDescriptor,
+    spec: DiscoverySpec,
+) -> SourceVersionDetection:
+    """Detect Claude Code source versions from embedded metadata and shape."""
+    if source.adapter_id == "claude.history_jsonl.v1":
+        record = _first_jsonl_mapping(source.path)
+        if record is not None and {"display", "timestamp", "project"}.issubset(record):
+            return SourceVersionDetection(
+                app_version=None,
+                data_version="claude.history_jsonl.log_entry.v1",
+                strategy=VersionDetectionStrategy.SHAPE_INFERENCE,
+                confidence=VersionDetectionConfidence.HIGH,
+                evidence="history.jsonl object keys include display, timestamp, project",
+            )
+    elif source.adapter_id == "claude.projects_jsonl.v1":
+        record = _first_jsonl_mapping(source.path)
+        if record is not None:
+            app_version = as_optional_str(record.get("version")) or as_optional_str(
+                record.get("claude_code_version"),
+            )
+            if app_version:
+                return SourceVersionDetection(
+                    app_version=app_version,
+                    data_version=spec.data_version,
+                    strategy=VersionDetectionStrategy.EMBEDDED_METADATA,
+                    confidence=VersionDetectionConfidence.HIGH,
+                    evidence="project transcript keys include version",
+                )
+            if {"type", "sessionId", "message"}.issubset(record):
+                return SourceVersionDetection(
+                    app_version=None,
+                    data_version=spec.data_version,
+                    strategy=VersionDetectionStrategy.SHAPE_INFERENCE,
+                    confidence=VersionDetectionConfidence.MEDIUM,
+                    evidence="project transcript keys include type, sessionId, message",
+                )
+
+    return _catalog_version_detection(descriptor, spec)
+
+
+def detect_source_version(
+    source: SourceHandle,
+    descriptor: StoreDescriptor,
+    spec: DiscoverySpec,
+    roots: dict[str, pathlib.Path],
+) -> SourceVersionDetection:
+    """Detect concrete source version metadata for discovery payloads."""
+    if source.agent == "codex":
+        return _codex_source_version_detection(source, descriptor, spec, roots)
+    if source.agent == "claude":
+        return _claude_source_version_detection(source, descriptor, spec)
+    return _catalog_version_detection(descriptor, spec)
+
+
 def handles_from_discovery(
     spec: DiscoverySpec,
     agent: AgentName,
@@ -2536,6 +2728,12 @@ def discover_from_catalog(
                 if handle.path in seen_paths:
                     continue
                 seen_paths.add(handle.path)
+                handle.version_detection = detect_source_version(
+                    handle,
+                    descriptor,
+                    spec,
+                    roots,
+                )
                 sources.append(handle)
     return sources
 

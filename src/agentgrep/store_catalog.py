@@ -26,6 +26,7 @@ from agentgrep.stores import (
     StoreDescriptor,
     StoreFormat,
     StoreRole,
+    VersionDetectionStrategy,
 )
 
 OBSERVED_AT = datetime.date(2026, 5, 17)
@@ -86,6 +87,10 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         ),
         distinguishes_from=("claude.projects.session",),
         search_by_default=True,
+        version_strategies=(
+            VersionDetectionStrategy.SHAPE_INFERENCE,
+            VersionDetectionStrategy.CATALOG_OBSERVATION,
+        ),
         search_notes=(
             "User-prompt audit log used by Claude Code prompt history; project "
             "transcripts remain the full conversation replay."
@@ -94,6 +99,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
             DiscoverySpec(
                 store="claude.history",
                 adapter_id="claude.history_jsonl.v1",
+                data_version="claude.history_jsonl.log_entry.v1",
                 path_kind="history_file",
                 source_kind="jsonl",
                 home_subpath=(),
@@ -123,10 +129,16 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         ),
         sample_record='{"type":"user","uuid":"...","timestamp":"2026-05-17T...","message":{"role":"user","content":[{"type":"text","text":"<redacted>"}]}}',
         search_by_default=True,
+        version_strategies=(
+            VersionDetectionStrategy.EMBEDDED_METADATA,
+            VersionDetectionStrategy.SHAPE_INFERENCE,
+            VersionDetectionStrategy.CATALOG_OBSERVATION,
+        ),
         discovery=(
             DiscoverySpec(
                 store="claude.projects",
                 adapter_id="claude.projects_jsonl.v1",
+                data_version="claude.projects_jsonl.message.v1",
                 path_kind="session_file",
                 source_kind="jsonl",
                 home_subpath=("projects",),
@@ -153,6 +165,11 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         ),
         distinguishes_from=("claude.projects.session",),
         search_by_default=True,
+        version_strategies=(
+            VersionDetectionStrategy.EMBEDDED_METADATA,
+            VersionDetectionStrategy.SHAPE_INFERENCE,
+            VersionDetectionStrategy.CATALOG_OBSERVATION,
+        ),
         search_notes=(
             "Sub-agent transcripts are conversation content; de-duplicate with the "
             "parent session by `uuid`."
@@ -161,6 +178,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
             DiscoverySpec(
                 store="claude.projects_subagents",
                 adapter_id="claude.projects_jsonl.v1",
+                data_version="claude.projects_jsonl.message.v1",
                 path_kind="session_file",
                 source_kind="jsonl",
                 home_subpath=("projects",),
@@ -745,10 +763,16 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         sample_record='{"session_id":"...","ts":1747509826,"text":"<redacted>"}',
         distinguishes_from=("codex.sessions",),
         search_by_default=True,
+        version_strategies=(
+            VersionDetectionStrategy.VERSION_CHECK,
+            VersionDetectionStrategy.SHAPE_INFERENCE,
+            VersionDetectionStrategy.CATALOG_OBSERVATION,
+        ),
         discovery=(
             DiscoverySpec(
                 store="codex.history",
                 adapter_id="codex.history_json.v1",
+                data_version="codex.history_json.legacy",
                 path_kind="history_file",
                 source_kind="json",
                 files=("history.json",),
@@ -756,6 +780,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
             DiscoverySpec(
                 store="codex.history",
                 adapter_id="codex.history_jsonl.v1",
+                data_version="codex.history_jsonl.current",
                 path_kind="history_file",
                 source_kind="jsonl",
                 files=("history.jsonl",),
@@ -788,10 +813,16 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
             "Full per-thread transcript with tool calls; `codex.history` is the "
             "user-prompts-only audit log."
         ),
+        version_strategies=(
+            VersionDetectionStrategy.EMBEDDED_METADATA,
+            VersionDetectionStrategy.SHAPE_INFERENCE,
+            VersionDetectionStrategy.CATALOG_OBSERVATION,
+        ),
         discovery=(
             DiscoverySpec(
                 store="codex.sessions",
                 adapter_id="codex.sessions_jsonl.v1",
+                data_version="codex.sessions.rollout.v1",
                 path_kind="session_file",
                 source_kind="jsonl",
                 home_subpath=("sessions",),
@@ -816,10 +847,15 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         ),
         coverage=StoreCoverage.INSPECTABLE,
         search_by_default=False,
+        version_strategies=(
+            VersionDetectionStrategy.SHAPE_INFERENCE,
+            VersionDetectionStrategy.CATALOG_OBSERVATION,
+        ),
         discovery=(
             DiscoverySpec(
                 store="codex.session_index",
                 adapter_id="codex.session_index_jsonl.v1",
+                data_version="codex.session_index.jsonl.v1",
                 path_kind="store_file",
                 source_kind="jsonl",
                 files=("session_index.jsonl",),
@@ -843,10 +879,15 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         ),
         coverage=StoreCoverage.INSPECTABLE,
         search_by_default=False,
+        version_strategies=(
+            VersionDetectionStrategy.SHAPE_INFERENCE,
+            VersionDetectionStrategy.CATALOG_OBSERVATION,
+        ),
         discovery=(
             DiscoverySpec(
                 store="codex.state_db",
                 adapter_id="codex.state_sqlite.v1",
+                data_version="codex.state.sqlite.v5",
                 path_kind="sqlite_db",
                 source_kind="sqlite",
                 root_key="codex_sqlite",
@@ -871,10 +912,15 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         ),
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
+        version_strategies=(
+            VersionDetectionStrategy.SHAPE_INFERENCE,
+            VersionDetectionStrategy.CATALOG_OBSERVATION,
+        ),
         discovery=(
             DiscoverySpec(
                 store="codex.logs_db",
                 adapter_id="codex.logs_sqlite.v1",
+                data_version="codex.logs.sqlite.v2",
                 path_kind="sqlite_db",
                 source_kind="sqlite",
                 root_key="codex_sqlite",
@@ -897,10 +943,15 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         ),
         coverage=StoreCoverage.INSPECTABLE,
         search_by_default=False,
+        version_strategies=(
+            VersionDetectionStrategy.SHAPE_INFERENCE,
+            VersionDetectionStrategy.CATALOG_OBSERVATION,
+        ),
         discovery=(
             DiscoverySpec(
                 store="codex.memories_db",
                 adapter_id="codex.memories_sqlite.v1",
+                data_version="codex.memories.sqlite.v1",
                 path_kind="sqlite_db",
                 source_kind="sqlite",
                 root_key="codex_sqlite",
@@ -924,10 +975,15 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         ),
         coverage=StoreCoverage.INSPECTABLE,
         search_by_default=False,
+        version_strategies=(
+            VersionDetectionStrategy.SHAPE_INFERENCE,
+            VersionDetectionStrategy.CATALOG_OBSERVATION,
+        ),
         discovery=(
             DiscoverySpec(
                 store="codex.goals_db",
                 adapter_id="codex.goals_sqlite.v1",
+                data_version="codex.goals.sqlite.v1",
                 path_kind="sqlite_db",
                 source_kind="sqlite",
                 root_key="codex_sqlite",
@@ -1533,7 +1589,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
 
 
 CATALOG = StoreCatalog(
-    catalog_version=5,
+    catalog_version=6,
     captured_at=_CLAUDE_HISTORY_OBSERVED_AT,
     stores=(
         *_CLAUDE_STORES,

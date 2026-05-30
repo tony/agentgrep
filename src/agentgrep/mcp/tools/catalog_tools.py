@@ -41,6 +41,7 @@ def _descriptor_to_model(descriptor: t.Any) -> StoreDescriptorModel:
         env_overrides=list(descriptor.env_overrides),
         platform_variants=dict(descriptor.platform_variants),
         coverage=descriptor.coverage_level.value,
+        version_strategies=[strategy.value for strategy in descriptor.version_strategies],
         observed_version=descriptor.observed_version,
         observed_at=observed_at_iso,
         upstream_ref=descriptor.upstream_ref,

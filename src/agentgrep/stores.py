@@ -71,6 +71,23 @@ class StoreCoverage(enum.StrEnum):
     PRIVATE = "private"
 
 
+class VersionDetectionStrategy(enum.StrEnum):
+    """How agentgrep detected a concrete source's app or data version."""
+
+    VERSION_CHECK = "version_check"
+    EMBEDDED_METADATA = "embedded_metadata"
+    SHAPE_INFERENCE = "shape_inference"
+    CATALOG_OBSERVATION = "catalog_observation"
+
+
+class VersionDetectionConfidence(enum.StrEnum):
+    """Confidence level for a detected source version."""
+
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
 AgentName = t.Literal["claude", "cursor", "codex", "gemini", "grok"]
 PathKind = t.Literal["history_file", "session_file", "sqlite_db", "store_file"]
 SourceKind = t.Literal["json", "jsonl", "sqlite", "text", "opaque"]
@@ -109,6 +126,9 @@ class DiscoverySpec(pydantic.BaseModel):
 
     adapter_id: str
     """Runtime adapter identifier (e.g. ``"claude.projects_jsonl.v1"``)."""
+
+    data_version: str | None = None
+    """Known data-shape version for this discovery path, when stable."""
 
     path_kind: PathKind
     """Kind of filesystem entry the records live in."""
@@ -176,6 +196,9 @@ class StoreDescriptor(pydantic.BaseModel):
 
     coverage: StoreCoverage | None = None
     """Explicit runtime coverage level, or ``None`` to infer from search policy."""
+
+    version_strategies: tuple[VersionDetectionStrategy, ...] = ()
+    """Strategies runtime discovery may use to identify concrete source versions."""
 
     observed_version: str
     """Released version (or HEAD commit) the schema notes were captured against."""

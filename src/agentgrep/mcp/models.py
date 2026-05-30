@@ -65,6 +65,21 @@ class FindRecordModel(AgentGrepModel):
         return cls.model_validate(agentgrep.serialize_find_record(record))
 
 
+class SourceVersionDetectionModel(AgentGrepModel):
+    """Detected version metadata for one discovered source."""
+
+    app_version: str | None = None
+    data_version: str | None = None
+    strategy: t.Literal[
+        "version_check",
+        "embedded_metadata",
+        "shape_inference",
+        "catalog_observation",
+    ]
+    confidence: t.Literal["high", "medium", "low"]
+    evidence: str
+
+
 class SourceRecordModel(AgentGrepModel):
     """Discovered source summary payload."""
 
@@ -76,6 +91,7 @@ class SourceRecordModel(AgentGrepModel):
     path_kind: t.Literal["history_file", "session_file", "sqlite_db", "store_file"]
     source_kind: t.Literal["json", "jsonl", "sqlite", "text", "opaque"]
     coverage: t.Literal["default_search", "inspectable", "catalog_only", "private"]
+    version_detection: SourceVersionDetectionModel | None = None
     search_root: str | None = None
     mtime_ns: int
 
@@ -181,6 +197,7 @@ class StoreDescriptorModel(AgentGrepModel):
     env_overrides: list[str] = Field(default_factory=list)
     platform_variants: dict[str, str] = Field(default_factory=dict)
     coverage: str
+    version_strategies: list[str] = Field(default_factory=list)
     observed_version: str | None = None
     observed_at: str | None = None
     upstream_ref: str | None = None
