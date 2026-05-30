@@ -6,8 +6,11 @@ import re
 import typing as t
 
 from docutils import nodes
+from sphinx_ux_autodoc_layout import parse_generated_markup
 
 if t.TYPE_CHECKING:
+    from sphinx.util.docutils import SphinxDirective
+
     from agentgrep.stores import StoreDescriptor
 
 
@@ -46,6 +49,21 @@ def literal_paragraph(text: str) -> nodes.paragraph:
 def text_paragraph(text: str) -> nodes.paragraph:
     """Return a plain paragraph, using a dash for missing text."""
     return nodes.paragraph("", text if text else "-")
+
+
+def markup_body(directive: SphinxDirective, text: str) -> list[nodes.Node]:
+    """Parse generated store markup into body nodes (MyST/rST aware).
+
+    Store ``schema_notes`` and ``search_notes`` are authored with
+    single-backtick Markdown. Reparsing them through the page's active
+    parser renders that markup as inline code instead of literal
+    backticks. Empty text keeps the dash placeholder used elsewhere on
+    the card.
+    """
+    if not text:
+        empty: list[nodes.Node] = [text_paragraph("-")]
+        return empty
+    return parse_generated_markup(directive, text)
 
 
 def store_adapter_ids(store: StoreDescriptor) -> str:

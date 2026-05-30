@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import io
 import pathlib
+import re
 import textwrap
+import typing as t
 
+import pytest
 from sphinx.application import Sphinx
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -222,4 +225,62 @@ def test_storage_catalog_summary_uses_nested_key_value_cards(
     assert "By coverage" in html
     assert "default_search" in html
     assert '<table class="gp-sphinx-storage__table' not in html
+    assert "undefined label" not in warnings
+
+
+class DescriptionMarkupCase(t.NamedTuple):
+    """Parametrized case for store-card description markup rendering."""
+
+    test_id: str
+    token: str
+
+
+DESCRIPTION_MARKUP_CASES: tuple[DescriptionMarkupCase, ...] = (
+    DescriptionMarkupCase(test_id="schema-notes-inline-code", token="RolloutItem"),
+    DescriptionMarkupCase(test_id="search-notes-inline-code", token="codex.history"),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    DESCRIPTION_MARKUP_CASES,
+    ids=[case.test_id for case in DESCRIPTION_MARKUP_CASES],
+)
+def test_store_card_description_renders_markdown(
+    case: DescriptionMarkupCase, tmp_path: pathlib.Path
+) -> None:
+    """Single-backtick Markdown in a store description renders as inline code."""
+    srcdir = tmp_path / "src"
+    srcdir.mkdir()
+    (srcdir / "conf.py").write_text(
+        textwrap.dedent(
+            f"""\
+            from __future__ import annotations
+            import sys
+            sys.path.insert(0, {str(_REPO_ROOT)!r})
+            sys.path.insert(0, {str(_REPO_ROOT / "src")!r})
+            extensions = ["myst_parser", "docs._ext.storages"]
+            myst_enable_extensions = ["colon_fence"]
+            """
+        ),
+        encoding="utf-8",
+    )
+    (srcdir / "index.md").write_text(
+        textwrap.dedent(
+            """\
+            # Codex sessions
+
+            ```{storage:store} codex.sessions
+            ```
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    _app, warnings = _build_sphinx(srcdir, tmp_path / "build")
+    html = _root_html(tmp_path / "build")
+
+    token = re.escape(case.token)
+    assert re.search(rf"<code[^>]*>(?:<span[^>]*>)?{token}", html), html
+    assert f"`{case.token}`" not in html
     assert "undefined label" not in warnings

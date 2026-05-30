@@ -23,6 +23,7 @@ from ._css import StorageCSS
 from ._domain import StorageDomain
 from ._utils import (
     literal_paragraph,
+    markup_body,
     store_adapter_ids,
     store_data_versions,
     store_strategy_values,
@@ -192,7 +193,7 @@ def _store_card(directive: SphinxDirective, store: StoreDescriptor) -> nodes.sec
     content_nodes: list[nodes.Node] = [
         build_api_section(
             API.DESCRIPTION,
-            text_paragraph(store.schema_notes),
+            *markup_body(directive, store.schema_notes),
             classes=(StorageCSS.BODY_SECTION,),
         ),
         _key_value_section(facts),
@@ -201,7 +202,7 @@ def _store_card(directive: SphinxDirective, store: StoreDescriptor) -> nodes.sec
         content_nodes.append(
             build_api_section(
                 API.DESCRIPTION,
-                text_paragraph(store.search_notes),
+                *markup_body(directive, store.search_notes),
                 classes=(StorageCSS.BODY_SECTION,),
             ),
         )
