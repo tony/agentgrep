@@ -145,8 +145,9 @@ catalogued as documentary-only for future adapter work.
 
 A new {doc}`/backends/index` section provides a support matrix and
 per-engine pages ({doc}`/backends/codex`, {doc}`/backends/claude`,
-{doc}`/backends/cursor`, {doc}`/backends/gemini`, {doc}`/backends/grok`)
-documenting store layouts, adapter IDs, and record schemas.
+{doc}`/backends/cursor-cli`, {doc}`/backends/cursor-ide`,
+{doc}`/backends/gemini`, {doc}`/backends/grok`) documenting store
+layouts, adapter IDs, and record schemas.
 
 ### Dependencies
 

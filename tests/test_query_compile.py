@@ -228,14 +228,14 @@ SOURCE_PREDICATE_CASES: tuple[SourcePredicateCase, ...] = (
     ),
     SourcePredicateCase(
         test_id="or-source-source-prunes-when-both-fail",
-        query="agent:codex OR agent:cursor",
+        query="agent:codex OR agent:cursor-cli",
         source_kwargs={"agent": "claude"},
         expected_passes=False,
     ),
     SourcePredicateCase(
         test_id="or-source-source-passes-when-one-matches",
-        query="agent:codex OR agent:cursor",
-        source_kwargs={"agent": "cursor"},
+        query="agent:codex OR agent:cursor-cli",
+        source_kwargs={"agent": "cursor-cli"},
         expected_passes=True,
     ),
     SourcePredicateCase(

@@ -86,7 +86,7 @@ BUILD_QUERY_CASES: tuple[BuildQueryFromInputCase, ...] = (
     ),
     BuildQueryFromInputCase(
         test_id="or-composition-builds-compiled",
-        text="(agent:codex OR agent:cursor) AND deploy",
+        text="(agent:codex OR agent:cursor-cli) AND deploy",
         expected_terms=("deploy",),
         expected_compiled=True,
         expected_error_fragment=None,

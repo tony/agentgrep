@@ -1025,10 +1025,10 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
 )
 
 
-_CURSOR_STORES: tuple[StoreDescriptor, ...] = (
+_CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
     StoreDescriptor(
-        agent="cursor",
-        store_id="cursor.cli.transcripts",
+        agent="cursor-cli",
+        store_id="cursor-cli.transcripts",
         role=StoreRole.PRIMARY_CHAT,
         format=StoreFormat.JSONL,
         path_pattern=(
@@ -1041,22 +1041,22 @@ _CURSOR_STORES: tuple[StoreDescriptor, ...] = (
             "JSONL Anthropic-style: `role`, `message.content[]` with "
             "`text`/`tool_use`/`tool_result`. No native timestamp — agentgrep "
             "infers from the file's mtime. Tool outputs sometimes `[REDACTED]` "
-            "in older `cursor-agent` versions. Adapter `store` field uses the "
-            "underscore-flattened form ``cursor.cli_transcripts``."
+            "in older `cursor-agent` versions."
         ),
         sample_record=(
             '{"role":"user","message":{"content":'
             '[{"type":"text","text":"<user_query>...</user_query>"}]}}'
         ),
-        distinguishes_from=("cursor.ide.state_vscdb",),
+        distinguishes_from=("cursor-ide.state_vscdb",),
         search_by_default=True,
         search_notes=(
-            "Parsed by agentgrep via `parse_cursor_cli_transcript` (`cursor.cli_jsonl.v1`)."
+            "Parsed by agentgrep via `parse_cursor_cli_transcript` "
+            "(`cursor_cli.transcripts_jsonl.v1`)."
         ),
         discovery=(
             DiscoverySpec(
-                store="cursor.cli_transcripts",
-                adapter_id="cursor.cli_jsonl.v1",
+                store="cursor-cli.transcripts",
+                adapter_id="cursor_cli.transcripts_jsonl.v1",
                 path_kind="session_file",
                 source_kind="jsonl",
                 home_subpath=(".cursor", "projects"),
@@ -1067,8 +1067,8 @@ _CURSOR_STORES: tuple[StoreDescriptor, ...] = (
         ),
     ),
     StoreDescriptor(
-        agent="cursor",
-        store_id="cursor.cli.subagent_transcripts",
+        agent="cursor-cli",
+        store_id="cursor-cli.subagent_transcripts",
         role=StoreRole.SUPPLEMENTARY_CHAT,
         format=StoreFormat.JSONL,
         path_pattern=(
@@ -1077,16 +1077,16 @@ _CURSOR_STORES: tuple[StoreDescriptor, ...] = (
         observed_version="cursor-agent 2026.05.28-a70ca7c",
         observed_at=datetime.date(2026, 5, 29),
         schema_notes=(
-            "Same JSONL Anthropic-style shape as `cursor.cli.transcripts`, nested "
+            "Same JSONL Anthropic-style shape as `cursor-cli.transcripts`, nested "
             "under a session's `subagents/` directory."
         ),
-        distinguishes_from=("cursor.cli.transcripts",),
+        distinguishes_from=("cursor-cli.transcripts",),
         search_by_default=True,
         search_notes="Subagent transcript files are conversation content, not primary sessions.",
         discovery=(
             DiscoverySpec(
-                store="cursor.cli_subagents",
-                adapter_id="cursor.cli_jsonl.v1",
+                store="cursor-cli.subagent_transcripts",
+                adapter_id="cursor_cli.transcripts_jsonl.v1",
                 path_kind="session_file",
                 source_kind="jsonl",
                 home_subpath=(".cursor", "projects"),
@@ -1096,8 +1096,8 @@ _CURSOR_STORES: tuple[StoreDescriptor, ...] = (
         ),
     ),
     StoreDescriptor(
-        agent="cursor",
-        store_id="cursor.cli.repo_meta",
+        agent="cursor-cli",
+        store_id="cursor-cli.repo_meta",
         role=StoreRole.APP_STATE,
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${HOME}/.cursor/projects/<id>/repo.json",
@@ -1106,8 +1106,8 @@ _CURSOR_STORES: tuple[StoreDescriptor, ...] = (
         schema_notes="Project tree/manifest metadata.",
     ),
     StoreDescriptor(
-        agent="cursor",
-        store_id="cursor.cli.tools",
+        agent="cursor-cli",
+        store_id="cursor-cli.tools",
         role=StoreRole.APP_STATE,
         format=StoreFormat.JSON_OBJECT,
         path_pattern=(
@@ -1119,8 +1119,8 @@ _CURSOR_STORES: tuple[StoreDescriptor, ...] = (
         schema_notes="MCP tool registry and approval records.",
     ),
     StoreDescriptor(
-        agent="cursor",
-        store_id="cursor.cli.terminals",
+        agent="cursor-cli",
+        store_id="cursor-cli.terminals",
         role=StoreRole.APP_STATE,
         format=StoreFormat.OPAQUE,
         path_pattern="${HOME}/.cursor/projects/<id>/terminals/",
@@ -1129,8 +1129,8 @@ _CURSOR_STORES: tuple[StoreDescriptor, ...] = (
         schema_notes="Terminal output logs.",
     ),
     StoreDescriptor(
-        agent="cursor",
-        store_id="cursor.cli.canvases",
+        agent="cursor-cli",
+        store_id="cursor-cli.canvases",
         role=StoreRole.APP_STATE,
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${HOME}/.cursor/projects/<id>/canvases/",
@@ -1139,8 +1139,8 @@ _CURSOR_STORES: tuple[StoreDescriptor, ...] = (
         schema_notes="Cursor canvas state.",
     ),
     StoreDescriptor(
-        agent="cursor",
-        store_id="cursor.cli.plans",
+        agent="cursor-cli",
+        store_id="cursor-cli.plans",
         role=StoreRole.PLAN,
         format=StoreFormat.MARKDOWN_FRONTMATTER,
         path_pattern="${HOME}/.cursor/plans/*.plan.md",
@@ -1149,8 +1149,8 @@ _CURSOR_STORES: tuple[StoreDescriptor, ...] = (
         schema_notes=("YAML frontmatter (name, overview, todos[], isProject) plus markdown body."),
     ),
     StoreDescriptor(
-        agent="cursor",
-        store_id="cursor.cli.state",
+        agent="cursor-cli",
+        store_id="cursor-cli.state",
         role=StoreRole.APP_STATE,
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${HOME}/.cursor/agent-cli-state.json",
@@ -1160,8 +1160,8 @@ _CURSOR_STORES: tuple[StoreDescriptor, ...] = (
         search_by_default=False,
     ),
     StoreDescriptor(
-        agent="cursor",
-        store_id="cursor.cli.worktrees",
+        agent="cursor-cli",
+        store_id="cursor-cli.worktrees",
         role=StoreRole.SOURCE_TREE,
         format=StoreFormat.OPAQUE,
         path_pattern="${HOME}/.cursor/worktrees/",
@@ -1175,8 +1175,8 @@ _CURSOR_STORES: tuple[StoreDescriptor, ...] = (
         search_notes="Source trees, not transcripts; would drown real hits.",
     ),
     StoreDescriptor(
-        agent="cursor",
-        store_id="cursor.ai_tracking",
+        agent="cursor-cli",
+        store_id="cursor-cli.ai_tracking",
         role=StoreRole.SUPPLEMENTARY_CHAT,
         format=StoreFormat.SQLITE,
         path_pattern="${HOME}/.cursor/ai-tracking/ai-code-tracking.db",
@@ -1192,8 +1192,8 @@ _CURSOR_STORES: tuple[StoreDescriptor, ...] = (
         search_by_default=True,
         discovery=(
             DiscoverySpec(
-                store="cursor.ai_tracking",
-                adapter_id="cursor.ai_tracking_sqlite.v1",
+                store="cursor-cli.ai_tracking",
+                adapter_id="cursor_cli.ai_tracking_sqlite.v1",
                 path_kind="sqlite_db",
                 source_kind="sqlite",
                 home_subpath=(".cursor", "ai-tracking"),
@@ -1201,9 +1201,12 @@ _CURSOR_STORES: tuple[StoreDescriptor, ...] = (
             ),
         ),
     ),
+)
+
+_CURSOR_IDE_STORES: tuple[StoreDescriptor, ...] = (
     StoreDescriptor(
-        agent="cursor",
-        store_id="cursor.ide.state_vscdb",
+        agent="cursor-ide",
+        store_id="cursor-ide.state_vscdb",
         role=StoreRole.PRIMARY_CHAT,
         format=StoreFormat.SQLITE,
         path_pattern="${HOME}/.config/Cursor/User/globalStorage/state.vscdb",
@@ -1224,16 +1227,16 @@ _CURSOR_STORES: tuple[StoreDescriptor, ...] = (
             "ItemTable row: key='workbench.panel.aichat.view...prompts', "
             'value=\'{"prompts":[{"text":"<redacted>","commandType":1}]}\''
         ),
-        distinguishes_from=("cursor.cli.transcripts",),
+        distinguishes_from=("cursor-cli.transcripts",),
         search_notes=(
-            "Cursor IDE store, parsed by the current `cursor.state_vscdb_modern.v1` "
+            "Cursor IDE store, parsed by the current `cursor_ide.state_vscdb_modern.v1` "
             "adapter. Not the same as the Cursor CLI agent transcripts."
         ),
         search_by_default=True,
         discovery=(
             DiscoverySpec(
-                store="cursor.state",
-                adapter_id="cursor.state_vscdb_modern.v1",
+                store="cursor-ide.state_vscdb",
+                adapter_id="cursor_ide.state_vscdb_modern.v1",
                 path_kind="sqlite_db",
                 source_kind="sqlite",
                 platform_paths=(
@@ -1243,8 +1246,8 @@ _CURSOR_STORES: tuple[StoreDescriptor, ...] = (
                 ),
             ),
             DiscoverySpec(
-                store="cursor.state",
-                adapter_id="cursor.state_vscdb_legacy.v1",
+                store="cursor-ide.state_vscdb",
+                adapter_id="cursor_ide.state_vscdb_legacy.v1",
                 path_kind="sqlite_db",
                 source_kind="sqlite",
                 home_subpath=(".cursor",),
@@ -2639,11 +2642,12 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
 
 
 CATALOG = StoreCatalog(
-    catalog_version=9,
+    catalog_version=10,
     captured_at=_CLAUDE_HISTORY_OBSERVED_AT,
     stores=(
         *_CLAUDE_STORES,
-        *_CURSOR_STORES,
+        *_CURSOR_CLI_STORES,
+        *_CURSOR_IDE_STORES,
         *_CODEX_STORES,
         *_GEMINI_STORES,
         *_GROK_STORES,

@@ -27,7 +27,7 @@ import agentgrep as _agentgrep_module
 if t.TYPE_CHECKING:
     import collections.abc as cabc
 
-AgentName = t.Literal["codex", "claude", "cursor", "gemini", "grok"]
+AgentName = t.Literal["codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok"]
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
@@ -274,7 +274,7 @@ def test_help_examples_are_present_for_help_flags() -> None:
 
     assert root_help.returncode == 0
     assert find_help.returncode == 0
-    assert "agentgrep find cursor --json" in find_help.stdout
+    assert "agentgrep find cursor-cli --json" in find_help.stdout
 
 
 def test_build_docs_parser_returns_root_parser() -> None:
@@ -3073,18 +3073,18 @@ def test_cursor_ai_tracking_summary_is_exposed_as_history(
         any_term=False,
         regex=False,
         case_sensitive=False,
-        agents=("cursor",),
+        agents=("cursor-cli",),
         limit=None,
     )
     sources = agentgrep.discover_sources(
         home,
-        ("cursor",),
+        ("cursor-cli",),
         agentgrep.BackendSelection(None, None, None),
     )
     records = agentgrep.search_sources(query, sources, agentgrep.BackendSelection(None, None, None))
 
     assert len(records) == 1
-    assert records[0].agent == "cursor"
+    assert records[0].agent == "cursor-cli"
     assert records[0].kind == "history"
     assert "bliss summary" in records[0].text
 
@@ -3120,12 +3120,12 @@ def test_cursor_state_itemtable_extracts_prompt(
         any_term=False,
         regex=False,
         case_sensitive=False,
-        agents=("cursor",),
+        agents=("cursor-ide",),
         limit=None,
     )
     sources = agentgrep.discover_sources(
         home,
-        ("cursor",),
+        ("cursor-ide",),
         agentgrep.BackendSelection(None, None, None),
     )
     records = agentgrep.search_sources(query, sources, agentgrep.BackendSelection(None, None, None))
@@ -3154,13 +3154,13 @@ def test_find_discovers_sources_and_filters_pattern(
 
     sources = agentgrep.discover_sources(
         home,
-        ("codex", "cursor"),
+        ("codex", "cursor-ide"),
         agentgrep.BackendSelection(None, None, None),
     )
     records = agentgrep.find_sources("state", sources, None)
 
     assert len(records) == 1
-    assert records[0].agent == "cursor"
+    assert records[0].agent == "cursor-ide"
     assert records[0].path.name == "state.vscdb"
 
 
@@ -5527,13 +5527,13 @@ def test_search_cursor_cli_transcript_user_prompt(
         ],
     )
 
-    query = _make_query(agentgrep, ("cursor",), ("libtmux",))
+    query = _make_query(agentgrep, ("cursor-cli",), ("libtmux",))
     backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
-    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("cursor",), backends)
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("cursor-cli",), backends)
     records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
 
-    assert any(r.agent == "cursor" and "libtmux" in r.text for r in records)
-    cursor_records = [r for r in records if r.agent == "cursor"]
+    assert any(r.agent == "cursor-cli" and "libtmux" in r.text for r in records)
+    cursor_records = [r for r in records if r.agent == "cursor-cli"]
     assert cursor_records[0].timestamp is not None  # mtime-derived fallback
 
 
@@ -5562,12 +5562,12 @@ def test_search_cursor_cli_transcript_assistant_text(
         ],
     )
 
-    query = _make_query(agentgrep, ("cursor",), ("libtmux",))
+    query = _make_query(agentgrep, ("cursor-cli",), ("libtmux",))
     backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
-    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("cursor",), backends)
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("cursor-cli",), backends)
     records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
 
-    roles = {r.role for r in records if r.agent == "cursor"}
+    roles = {r.role for r in records if r.agent == "cursor-cli"}
     assert "user" in roles
     assert "assistant" in roles
 
@@ -5603,9 +5603,9 @@ def test_search_cursor_cli_transcript_ignores_tool_use_blocks(
         ],
     )
 
-    query = _make_query(agentgrep, ("cursor",), ("libtmux",))
+    query = _make_query(agentgrep, ("cursor-cli",), ("libtmux",))
     backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
-    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("cursor",), backends)
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("cursor-cli",), backends)
     records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
 
     assert all(r.text.strip() for r in records)  # no empty-text records leak through

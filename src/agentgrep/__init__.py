@@ -83,7 +83,7 @@ if t.TYPE_CHECKING:
 else:
     PrivatePathBase = type(pathlib.Path())
 
-AgentName = t.Literal["codex", "claude", "cursor", "gemini", "grok"]
+AgentName = t.Literal["codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok"]
 OutputMode = t.Literal["text", "json", "ndjson", "ui"]
 ProgressMode = t.Literal["auto", "always", "never"]
 SearchType = t.Literal["prompts", "history", "all"]
@@ -95,7 +95,14 @@ type SummaryRow = tuple[object, object, object, object, object, object, object, 
 type KeyValueRow = tuple[object, object]
 type DiscoveryRoot = pathlib.Path | tuple[pathlib.Path, ...]
 
-AGENT_CHOICES: tuple[AgentName, ...] = ("codex", "claude", "cursor", "gemini", "grok")
+AGENT_CHOICES: tuple[AgentName, ...] = (
+    "codex",
+    "claude",
+    "cursor-cli",
+    "cursor-ide",
+    "gemini",
+    "grok",
+)
 JSON_FILE_SUFFIXES: frozenset[str] = frozenset({".json", ".jsonl"})
 SCHEMA_VERSION: str = "agentgrep.v1"
 USER_ROLES: frozenset[str] = frozenset({"human", "user"})
@@ -153,10 +160,10 @@ ITER_SOURCE_RECORD_ADAPTERS: frozenset[str] = frozenset(
         "codex.sessions_legacy_json.v1",
         "codex.skills_text.v1",
         "codex.state_sqlite.v1",
-        "cursor.ai_tracking_sqlite.v1",
-        "cursor.cli_jsonl.v1",
-        "cursor.state_vscdb_legacy.v1",
-        "cursor.state_vscdb_modern.v1",
+        "cursor_cli.ai_tracking_sqlite.v1",
+        "cursor_cli.transcripts_jsonl.v1",
+        "cursor_ide.state_vscdb_legacy.v1",
+        "cursor_ide.state_vscdb_modern.v1",
         "gemini.tmp_chats_jsonl.v1",
         "gemini.tmp_chats_legacy_json.v1",
         "gemini.tmp_logs_json.v1",
@@ -233,7 +240,7 @@ CLI_DESCRIPTION = build_description(
             (
                 "agentgrep find codex",
                 "agentgrep find -t prompts -e jsonl",
-                "agentgrep find cursor --json",
+                "agentgrep find cursor-cli --json",
             ),
         ),
         (
@@ -255,7 +262,7 @@ FIND_DESCRIPTION = build_description(
             (
                 "agentgrep find codex",
                 "agentgrep find sessions --agent codex",
-                "agentgrep find cursor --json",
+                "agentgrep find cursor-cli --json",
             ),
         ),
     ),
@@ -2291,9 +2298,17 @@ def discover_sources(
                     include_non_default=include_non_default,
                 ),
             )
-        elif agent == "cursor":
+        elif agent == "cursor-cli":
             discovered.extend(
-                discover_cursor_sources(
+                discover_cursor_cli_sources(
+                    home,
+                    backends,
+                    include_non_default=include_non_default,
+                ),
+            )
+        elif agent == "cursor-ide":
+            discovered.extend(
+                discover_cursor_ide_sources(
                     home,
                     backends,
                     include_non_default=include_non_default,
@@ -3126,22 +3141,44 @@ def discover_claude_sources(
     )
 
 
-def discover_cursor_sources(
+def discover_cursor_cli_sources(
     home: pathlib.Path,
     backends: BackendSelection,
     *,
     include_non_default: bool = False,
 ) -> list[SourceHandle]:
-    """Discover Cursor databases from both home-local and official roots.
+    """Discover Cursor CLI (``cursor-agent``) sources.
 
-    Includes the AI-tracking SQLite, Cursor IDE platform-specific
-    ``state.vscdb`` locations, the legacy ``~/.cursor/state.vscdb`` glob,
-    and the Cursor CLI agent transcripts. Driven entirely by the
-    ``cursor.*`` catalogue rows.
+    Covers the terminal agent's transcripts under ``~/.cursor/projects``,
+    the AI-tracking SQLite, and the lowercase ``~/.config/cursor`` home
+    (prompt history and chat ``store.db`` blobs). Driven entirely by the
+    ``cursor-cli.*`` catalogue rows.
     """
     return discover_from_catalog(
         home,
-        "cursor",
+        "cursor-cli",
+        home,
+        backends,
+        include_non_default=include_non_default,
+    )
+
+
+def discover_cursor_ide_sources(
+    home: pathlib.Path,
+    backends: BackendSelection,
+    *,
+    include_non_default: bool = False,
+) -> list[SourceHandle]:
+    """Discover Cursor IDE (desktop app) sources.
+
+    Covers the VS Code-style ``state.vscdb`` databases — the
+    platform-specific ``globalStorage`` location and the legacy
+    ``~/.cursor/state.vscdb`` glob. Driven entirely by the
+    ``cursor-ide.*`` catalogue rows.
+    """
+    return discover_from_catalog(
+        home,
+        "cursor-ide",
         home,
         backends,
         include_non_default=include_non_default,
@@ -3690,13 +3727,16 @@ def iter_source_records(
     if source.adapter_id == "codex.external_imports_json.v1":
         yield from parse_codex_external_imports_file(source)
         return
-    if source.adapter_id == "cursor.ai_tracking_sqlite.v1":
+    if source.adapter_id == "cursor_cli.ai_tracking_sqlite.v1":
         yield from parse_cursor_ai_tracking_db(source)
         return
-    if source.adapter_id in {"cursor.state_vscdb_modern.v1", "cursor.state_vscdb_legacy.v1"}:
+    if source.adapter_id in {
+        "cursor_ide.state_vscdb_modern.v1",
+        "cursor_ide.state_vscdb_legacy.v1",
+    }:
         yield from parse_cursor_state_db(source)
         return
-    if source.adapter_id == "cursor.cli_jsonl.v1":
+    if source.adapter_id == "cursor_cli.transcripts_jsonl.v1":
         yield from parse_cursor_cli_transcript(source)
         return
     if source.adapter_id == "gemini.tmp_chats_jsonl.v1":

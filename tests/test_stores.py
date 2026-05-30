@@ -24,7 +24,14 @@ from agentgrep.stores import (
     VersionDetectionStrategy,
 )
 
-KNOWN_AGENTS: tuple[AgentName, ...] = ("claude", "cursor", "codex", "gemini", "grok")
+KNOWN_AGENTS: tuple[AgentName, ...] = (
+    "claude",
+    "cursor-cli",
+    "cursor-ide",
+    "codex",
+    "gemini",
+    "grok",
+)
 PATH_TOKEN_RE = re.compile(r"\$\{(?:HOME|[A-Z][A-Z0-9_]*)(?:\s+or\s+[^}]+)?\}")
 
 
@@ -276,10 +283,10 @@ def test_runtime_adapter_ids_match_catalogue_discovery() -> None:
     assert "claude.projects_jsonl.v1" in runtime_adapter_ids
     assert "codex.history_json.v1" in runtime_adapter_ids
     assert "codex.sessions_jsonl.v1" in runtime_adapter_ids
-    assert "cursor.ai_tracking_sqlite.v1" in runtime_adapter_ids
-    assert "cursor.state_vscdb_modern.v1" in runtime_adapter_ids
-    assert "cursor.state_vscdb_legacy.v1" in runtime_adapter_ids
-    assert "cursor.cli_jsonl.v1" in runtime_adapter_ids
+    assert "cursor_cli.ai_tracking_sqlite.v1" in runtime_adapter_ids
+    assert "cursor_ide.state_vscdb_modern.v1" in runtime_adapter_ids
+    assert "cursor_ide.state_vscdb_legacy.v1" in runtime_adapter_ids
+    assert "cursor_cli.transcripts_jsonl.v1" in runtime_adapter_ids
     assert "gemini.tmp_chats_jsonl.v1" in runtime_adapter_ids
     assert "gemini.tmp_logs_json.v1" in runtime_adapter_ids
     assert "grok.prompt_history_jsonl.v1" in runtime_adapter_ids
@@ -523,8 +530,8 @@ def test_discover_from_catalog_deduplicates_paths_within_descriptor(
         captured_at=OBSERVED_AT,
         stores=(
             StoreDescriptor(
-                agent="cursor",
-                store_id="cursor.test.shared",
+                agent="cursor-cli",
+                store_id="cursor-cli.test.shared",
                 role=StoreRole.PRIMARY_CHAT,
                 format=StoreFormat.SQLITE,
                 path_pattern="${HOME}/test/shared",
@@ -554,7 +561,7 @@ def test_discover_from_catalog_deduplicates_paths_within_descriptor(
     monkeypatch.setattr(store_catalog, "CATALOG", fake_catalog)
 
     backends = agentgrep.BackendSelection(None, None, None)
-    sources = agentgrep.discover_from_catalog(tmp_path, "cursor", base, backends)
+    sources = agentgrep.discover_from_catalog(tmp_path, "cursor-cli", base, backends)
 
     matching = [s for s in sources if s.path == target]
     assert len(matching) == 1, [s.adapter_id for s in matching]
@@ -667,13 +674,13 @@ def test_actual_cursor_discovery_splits_main_and_subagent_transcripts(
 
     sources = agentgrep.discover_sources(
         home,
-        ("cursor",),
+        ("cursor-cli",),
         agentgrep.BackendSelection(None, None, None),
     )
 
     stores_by_path = {source.path: source.store for source in sources}
-    assert stores_by_path[main] == "cursor.cli_transcripts"
-    assert stores_by_path[subagent] == "cursor.cli_subagents"
+    assert stores_by_path[main] == "cursor-cli.transcripts"
+    assert stores_by_path[subagent] == "cursor-cli.subagent_transcripts"
 
 
 def test_descriptor_round_trips_through_json() -> None:
@@ -692,8 +699,8 @@ PRIMARY_FIXTURES: tuple[tuple[str, str], ...] = (
     ("codex.sessions", "rollout-2026-05-17T12-00-00-example.jsonl"),
     ("gemini.tmp.chats", "session-2026-05-17T12-00-00-example.jsonl"),
     ("gemini.tmp.logs", "logs.json"),
-    ("cursor.cli.transcripts", "example.jsonl"),
-    ("cursor.cli.plans", "example.plan.md"),
+    ("cursor-cli.transcripts", "example.jsonl"),
+    ("cursor-cli.plans", "example.plan.md"),
     ("grok.prompt_history", "prompt_history.jsonl"),
     ("grok.sessions", "chat_history.jsonl"),
 )

@@ -172,7 +172,7 @@ TOKENIZER_CASES: tuple[TokenizerCase, ...] = (
     ),
     TokenizerCase(
         test_id="grouped-or",
-        query="(agent:codex OR agent:cursor) AND bliss",
+        query="(agent:codex OR agent:cursor-cli) AND bliss",
         expected_kinds=(
             "lparen",
             "ident",
@@ -195,7 +195,7 @@ TOKENIZER_CASES: tuple[TokenizerCase, ...] = (
             "OR",
             "agent",
             ":",
-            "cursor",
+            "cursor-cli",
             ")",
             "AND",
             "bliss",
@@ -392,15 +392,15 @@ PARSER_CASES: tuple[ParserCase, ...] = (
     ),
     ParserCase(
         test_id="or-disjunction",
-        query="agent:codex OR agent:cursor",
-        expected=OrNode(children=(_eq("agent", "codex"), _eq("agent", "cursor"))),
+        query="agent:codex OR agent:cursor-cli",
+        expected=OrNode(children=(_eq("agent", "codex"), _eq("agent", "cursor-cli"))),
     ),
     ParserCase(
         test_id="grouped-or-and-term",
-        query="(agent:codex OR agent:cursor) AND bliss",
+        query="(agent:codex OR agent:cursor-cli) AND bliss",
         expected=AndNode(
             children=(
-                OrNode(children=(_eq("agent", "codex"), _eq("agent", "cursor"))),
+                OrNode(children=(_eq("agent", "codex"), _eq("agent", "cursor-cli"))),
                 _term("bliss"),
             ),
         ),

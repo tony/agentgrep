@@ -270,7 +270,7 @@ def _build_engine_records() -> tuple[agentgrep.SearchRecord, ...]:
             path="/tmp/claude/sessions/b.jsonl",
         ),
         _make_record(
-            agent="cursor",
+            agent="cursor-cli",
             text="bliss in cursor",
             timestamp="2025-12-15T10:00:00Z",
             path="/tmp/cursor/sessions/c.jsonl",
@@ -293,7 +293,7 @@ ENGINE_ROUNDTRIP_CASES: tuple[EngineRoundtripCase, ...] = (
     ),
     EngineRoundtripCase(
         test_id="negated-agent",
-        query="-agent:cursor bliss",
+        query="-agent:cursor-cli bliss",
         records=_build_engine_records(),
         expected_agents=("codex", "claude"),
     ),
@@ -382,7 +382,7 @@ FIND_PIPELINE_CASES: tuple[FindPipelineCase, ...] = (
     ),
     FindPipelineCase(
         test_id="negated-agent-find",
-        query="-agent:cursor",
+        query="-agent:cursor-cli",
         expected_agents=("claude", "codex"),
     ),
     FindPipelineCase(
@@ -406,7 +406,7 @@ def test_find_pipeline_consumes_compiled_query(
     sources = [
         _make_source(agent="codex", path="/tmp/codex/a.jsonl"),
         _make_source(agent="claude", path="/tmp/claude/b.jsonl"),
-        _make_source(agent="cursor", path="/tmp/cursor/c.jsonl"),
+        _make_source(agent="cursor-cli", path="/tmp/cursor/c.jsonl"),
     ]
     monkeypatch.setattr(
         agentgrep,
@@ -465,20 +465,20 @@ SEARCH_SOURCE_PRUNE_CASES: tuple[SearchSourcePruneCase, ...] = (
     SearchSourcePruneCase(
         test_id="single-agent-prune",
         query="agent:codex bliss",
-        source_agents=("codex", "claude", "cursor"),
+        source_agents=("codex", "claude", "cursor-cli"),
         expected_read_agents=("codex",),
     ),
     SearchSourcePruneCase(
         test_id="or-two-agents-prune",
         query="(agent:codex OR agent:claude) bliss",
-        source_agents=("codex", "claude", "cursor", "gemini"),
+        source_agents=("codex", "claude", "cursor-cli", "gemini"),
         expected_read_agents=("codex", "claude"),
     ),
     SearchSourcePruneCase(
         test_id="negation-prune",
         query="-agent:claude bliss",
-        source_agents=("codex", "claude", "cursor"),
-        expected_read_agents=("codex", "cursor"),
+        source_agents=("codex", "claude", "cursor-cli"),
+        expected_read_agents=("codex", "cursor-cli"),
     ),
 )
 
@@ -550,26 +550,26 @@ FIND_EAGER_SOURCE_PRUNE_CASES: tuple[FindEagerSourcePruneCase, ...] = (
     FindEagerSourcePruneCase(
         test_id="json-mode-agent-prune",
         argv=("find", "--no-progress", "--json", "agent:codex"),
-        source_agents=("codex", "claude", "cursor", "gemini"),
+        source_agents=("codex", "claude", "cursor-cli", "gemini"),
         expected_agents=("codex",),
     ),
     FindEagerSourcePruneCase(
         test_id="json-mode-negated-prune",
         argv=("find", "--no-progress", "--json", "NOT agent:claude"),
-        source_agents=("codex", "claude", "cursor"),
-        expected_agents=("codex", "cursor"),
+        source_agents=("codex", "claude", "cursor-cli"),
+        expected_agents=("codex", "cursor-cli"),
     ),
     FindEagerSourcePruneCase(
         test_id="list-details-agent-prune",
         argv=("find", "--no-progress", "-l", "agent:codex"),
-        source_agents=("codex", "claude", "cursor", "gemini"),
+        source_agents=("codex", "claude", "cursor-cli", "gemini"),
         expected_agents=("codex",),
     ),
     FindEagerSourcePruneCase(
         test_id="list-details-or-prune",
-        argv=("find", "--no-progress", "-l", "(agent:codex OR agent:cursor)"),
-        source_agents=("codex", "claude", "cursor", "gemini"),
-        expected_agents=("codex", "cursor"),
+        argv=("find", "--no-progress", "-l", "(agent:codex OR agent:cursor-cli)"),
+        source_agents=("codex", "claude", "cursor-cli", "gemini"),
+        expected_agents=("codex", "cursor-cli"),
     ),
 )
 
