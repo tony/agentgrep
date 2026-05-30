@@ -32,6 +32,7 @@ KNOWN_AGENTS: tuple[AgentName, ...] = (
     "gemini",
     "grok",
     "pi",
+    "opencode",
 )
 PATH_TOKEN_RE = re.compile(r"\$\{(?:HOME|[A-Z][A-Z0-9_]*)(?:\s+or\s+[^}]+)?\}")
 

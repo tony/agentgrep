@@ -80,6 +80,7 @@ KNOWN_ADAPTERS: tuple[str, ...] = (
     "grok.sessions_jsonl.v1",
     "grok.session_search_sqlite.v1",
     "pi.sessions_jsonl.v1",
+    "opencode.db_sqlite.v1",
 )
 READONLY_TAGS = {"readonly", "agentgrep"}
 RESOURCE_ANNOTATIONS = {"readOnlyHint": True, "idempotentHint": True}

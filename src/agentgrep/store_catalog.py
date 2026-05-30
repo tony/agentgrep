@@ -34,6 +34,7 @@ _GROK_OBSERVED_AT = datetime.date(2026, 5, 25)
 _CLAUDE_HISTORY_OBSERVED_AT = datetime.date(2026, 5, 29)
 _CURSOR_CONFIG_OBSERVED_AT = datetime.date(2026, 5, 30)
 _PI_OBSERVED_AT = datetime.date(2026, 5, 30)
+_OPENCODE_OBSERVED_AT = datetime.date(2026, 5, 30)
 
 
 def gemini_project_hash(project_root: pathlib.Path) -> str:
@@ -2945,9 +2946,160 @@ _PI_STORES: tuple[StoreDescriptor, ...] = (
 )
 
 
+_OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
+    StoreDescriptor(
+        agent="opencode",
+        store_id="opencode.db",
+        role=StoreRole.PRIMARY_CHAT,
+        format=StoreFormat.SQLITE,
+        path_pattern="${XDG_DATA_HOME or ${HOME}/.local/share}/opencode/opencode.db",
+        env_overrides=("XDG_DATA_HOME", "OPENCODE_DB"),
+        observed_version="opencode v1.15.11 (observed 2026-05-30)",
+        observed_at=_OPENCODE_OBSERVED_AT,
+        upstream_ref=(
+            "github.com/anomalyco/opencode/blob/v1.15.11/packages/opencode/"
+            "src/session/session.sql.ts#L16-L91"
+        ),
+        schema_notes=(
+            "SQLite store (Drizzle). Tables `session` (id, project_id, "
+            "`directory` = working dir, title, version, time_created/updated, "
+            "model, cost, tokens_*), `message` (id, session_id FK, `data` JSON "
+            "with role user/assistant, modelID/providerID, time, path.cwd), and "
+            "`part` (id, message_id FK, session_id, `data` JSON with type + "
+            "payload). Searchable text lives in `part.data`: type `text`/"
+            "`reasoning` -> `text`, `subtask` -> `prompt`. A conversation turn "
+            "is reconstructed by joining part -> message -> session. Channel "
+            "installs use `opencode-<channel>.db`; `OPENCODE_DB` overrides the "
+            "path (also `:memory:`/absolute)."
+        ),
+        sample_record=(
+            'part.data: {"type":"text","text":"<redacted>",'
+            '"time":{"start":1779999665000,"end":1779999666000}}'
+        ),
+        search_by_default=True,
+        search_notes=(
+            "The sole searchable OpenCode store. kind is derived from the "
+            "joined message role (user -> prompt, else history)."
+        ),
+        discovery=(
+            DiscoverySpec(
+                store="opencode.db",
+                adapter_id="opencode.db_sqlite.v1",
+                path_kind="sqlite_db",
+                source_kind="sqlite",
+                root_key="default",
+                files=("opencode.db",),
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="opencode",
+        store_id="opencode.storage_legacy",
+        role=StoreRole.PRIMARY_CHAT,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern=(
+            "${XDG_DATA_HOME or ${HOME}/.local/share}/opencode/storage/"
+            "{session,message,part}/**/*.json"
+        ),
+        env_overrides=("XDG_DATA_HOME",),
+        observed_version="opencode v1.15.11 (observed 2026-05-30)",
+        observed_at=_OPENCODE_OBSERVED_AT,
+        upstream_ref=(
+            "github.com/anomalyco/opencode/blob/v1.15.11/packages/opencode/"
+            "src/storage/storage.ts#L189-L230"
+        ),
+        schema_notes=(
+            "Pre-migration on-disk layout: one JSON file per session/message/"
+            "part. A startup migration folds these into opencode.db; migrated "
+            "installs keep only an empty `storage/session_diff/` and a "
+            "`storage/migration` marker. Documentary — relevant only to older, "
+            "un-migrated installs."
+        ),
+        distinguishes_from=("opencode.db",),
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="opencode",
+        store_id="opencode.config",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern="${XDG_CONFIG_HOME or ${HOME}/.config}/opencode/opencode.json",
+        env_overrides=("XDG_CONFIG_HOME", "OPENCODE_CONFIG_DIR"),
+        observed_version="opencode v1.15.11 (observed 2026-05-30)",
+        observed_at=_OPENCODE_OBSERVED_AT,
+        schema_notes=(
+            "Application config (`opencode.json`/`opencode.jsonc`): providers, "
+            "agents, plugins, commands, UI settings. Configuration, not chat."
+        ),
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="opencode",
+        store_id="opencode.auth",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern="${XDG_DATA_HOME or ${HOME}/.local/share}/opencode/auth.json",
+        env_overrides=("XDG_DATA_HOME",),
+        observed_version="opencode v1.15.11 (observed 2026-05-30)",
+        observed_at=_OPENCODE_OBSERVED_AT,
+        schema_notes="Provider API keys and OAuth tokens. Documented but never enumerated.",
+        coverage=StoreCoverage.PRIVATE,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="opencode",
+        store_id="opencode.snapshots",
+        role=StoreRole.SOURCE_TREE,
+        format=StoreFormat.OPAQUE,
+        path_pattern="${XDG_DATA_HOME or ${HOME}/.local/share}/opencode/snapshot/",
+        env_overrides=("XDG_DATA_HOME",),
+        observed_version="opencode v1.15.11 (observed 2026-05-30)",
+        observed_at=_OPENCODE_OBSERVED_AT,
+        schema_notes="Per-project git repositories holding session file snapshots.",
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="opencode",
+        store_id="opencode.repos",
+        role=StoreRole.CACHE,
+        format=StoreFormat.OPAQUE,
+        path_pattern="${XDG_DATA_HOME or ${HOME}/.local/share}/opencode/repos/",
+        env_overrides=("XDG_DATA_HOME",),
+        observed_version="opencode v1.15.11 (observed 2026-05-30)",
+        observed_at=_OPENCODE_OBSERVED_AT,
+        schema_notes="Cache of cloned git repositories referenced during sessions.",
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="opencode",
+        store_id="opencode.logs",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.TEXT,
+        path_pattern="${XDG_DATA_HOME or ${HOME}/.local/share}/opencode/log/",
+        env_overrides=("XDG_DATA_HOME",),
+        observed_version="opencode v1.15.11 (observed 2026-05-30)",
+        observed_at=_OPENCODE_OBSERVED_AT,
+        schema_notes="Timestamped application logs. Diagnostics, not chat content.",
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="opencode",
+        store_id="opencode.tool_output",
+        role=StoreRole.CACHE,
+        format=StoreFormat.TEXT,
+        path_pattern="${XDG_DATA_HOME or ${HOME}/.local/share}/opencode/tool-output/",
+        env_overrides=("XDG_DATA_HOME",),
+        observed_version="opencode v1.15.11 (observed 2026-05-30)",
+        observed_at=_OPENCODE_OBSERVED_AT,
+        schema_notes="Overflow storage for large tool output that exceeds inline limits.",
+        search_by_default=False,
+    ),
+)
+
+
 CATALOG = StoreCatalog(
-    catalog_version=12,
-    captured_at=_PI_OBSERVED_AT,
+    catalog_version=13,
+    captured_at=_OPENCODE_OBSERVED_AT,
     stores=(
         *_CLAUDE_STORES,
         *_CURSOR_CLI_STORES,
@@ -2956,6 +3108,7 @@ CATALOG = StoreCatalog(
         *_GEMINI_STORES,
         *_GROK_STORES,
         *_PI_STORES,
+        *_OPENCODE_STORES,
     ),
 )
 """The canonical agentgrep store catalogue.
