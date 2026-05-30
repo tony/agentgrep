@@ -28,6 +28,7 @@ class StoreFormat(enum.StrEnum):
     JSON_ARRAY = "json_array"
     JSON_OBJECT = "json_object"
     SQLITE = "sqlite"
+    TEXT = "text"
     MARKDOWN_FRONTMATTER = "md_frontmatter"
     PROTOBUF = "protobuf"
     OPAQUE = "opaque"
@@ -48,15 +49,31 @@ class StoreRole(enum.StrEnum):
     PERSISTENT_MEMORY = "persistent_memory"
     PLAN = "plan"
     TODO = "todo"
+    INSTRUCTION = "instruction"
     APP_STATE = "app_state"
     CACHE = "cache"
     SOURCE_TREE = "source_tree"
     UNKNOWN = "unknown"
 
 
+class StoreCoverage(enum.StrEnum):
+    """How agentgrep treats a known store at runtime.
+
+    ``DEFAULT_SEARCH`` stores are opened by normal search and find flows.
+    ``INSPECTABLE`` and ``CATALOG_ONLY`` stores are hidden from default
+    discovery but can be included by inventory tools. ``PRIVATE`` stores are
+    documented in the catalogue but intentionally not enumerated from disk.
+    """
+
+    DEFAULT_SEARCH = "default_search"
+    INSPECTABLE = "inspectable"
+    CATALOG_ONLY = "catalog_only"
+    PRIVATE = "private"
+
+
 AgentName = t.Literal["claude", "cursor", "codex", "gemini", "grok"]
-PathKind = t.Literal["history_file", "session_file", "sqlite_db"]
-SourceKind = t.Literal["json", "jsonl", "sqlite"]
+PathKind = t.Literal["history_file", "session_file", "sqlite_db", "store_file"]
+SourceKind = t.Literal["json", "jsonl", "sqlite", "text", "opaque"]
 
 
 class DiscoverySpec(pydantic.BaseModel):
@@ -104,6 +121,9 @@ class DiscoverySpec(pydantic.BaseModel):
 
     platform_paths: tuple[str, ...] = ()
     """Absolute paths to check unconditionally, e.g. Cursor IDE state."""
+
+    root_key: str = "default"
+    """Named discovery root to resolve this spec against."""
 
     files: tuple[str, ...] = ()
     """Specific relative filenames to check via ``is_file()``."""
@@ -154,6 +174,9 @@ class StoreDescriptor(pydantic.BaseModel):
     platform_variants: dict[str, str] = pydantic.Field(default_factory=dict)
     """Per-platform path overrides keyed by ``"linux"``/``"darwin"``/``"win32"``."""
 
+    coverage: StoreCoverage | None = None
+    """Explicit runtime coverage level, or ``None`` to infer from search policy."""
+
     observed_version: str
     """Released version (or HEAD commit) the schema notes were captured against."""
 
@@ -196,6 +219,17 @@ class StoreDescriptor(pydantic.BaseModel):
     ``history.json`` and ``history.jsonl`` variants, or the modern vs.
     legacy Cursor IDE state databases.
     """
+
+    @property
+    def coverage_level(self) -> StoreCoverage:
+        """Return this descriptor's effective runtime coverage level."""
+        if self.coverage is not None:
+            return self.coverage
+        if self.search_by_default is True:
+            return StoreCoverage.DEFAULT_SEARCH
+        if self.discovery:
+            return StoreCoverage.INSPECTABLE
+        return StoreCoverage.CATALOG_ONLY
 
 
 class StoreCatalog(pydantic.BaseModel):
@@ -245,6 +279,7 @@ __all__ = (
     "PathKind",
     "SourceKind",
     "StoreCatalog",
+    "StoreCoverage",
     "StoreDescriptor",
     "StoreFormat",
     "StoreRole",

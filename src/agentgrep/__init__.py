@@ -52,6 +52,7 @@ import sys
 import textwrap
 import threading
 import time
+import tomllib
 import typing as t
 
 import pydantic
@@ -64,6 +65,7 @@ from agentgrep.stores import (
     DiscoverySpec,
     PathKind,
     SourceKind,
+    StoreCoverage,
 )
 
 logger = logging.getLogger(__name__)
@@ -632,6 +634,7 @@ class SourceHandlePayload(t.TypedDict):
     path: str
     path_kind: PathKind
     source_kind: SourceKind
+    coverage: StoreCoverage
     search_root: str | None
     mtime_ns: int
 
@@ -1149,6 +1152,7 @@ class SourceHandle:
     source_kind: SourceKind
     search_root: pathlib.Path | None
     mtime_ns: int
+    coverage: StoreCoverage = StoreCoverage.DEFAULT_SEARCH
 
 
 type SourceProgressCallback = cabc.Callable[[int, int, SourceHandle, int, int], None]
@@ -2210,20 +2214,52 @@ def discover_sources(
     home: pathlib.Path,
     agents: tuple[AgentName, ...],
     backends: BackendSelection,
+    *,
+    include_non_default: bool = False,
 ) -> list[SourceHandle]:
     """Discover all known parseable sources for the selected agents."""
     discovered: list[SourceHandle] = []
     for agent in agents:
         if agent == "codex":
-            discovered.extend(discover_codex_sources(home, backends))
+            discovered.extend(
+                discover_codex_sources(
+                    home,
+                    backends,
+                    include_non_default=include_non_default,
+                ),
+            )
         elif agent == "claude":
-            discovered.extend(discover_claude_sources(home, backends))
+            discovered.extend(
+                discover_claude_sources(
+                    home,
+                    backends,
+                    include_non_default=include_non_default,
+                ),
+            )
         elif agent == "cursor":
-            discovered.extend(discover_cursor_sources(home, backends))
+            discovered.extend(
+                discover_cursor_sources(
+                    home,
+                    backends,
+                    include_non_default=include_non_default,
+                ),
+            )
         elif agent == "gemini":
-            discovered.extend(discover_gemini_sources(home, backends))
+            discovered.extend(
+                discover_gemini_sources(
+                    home,
+                    backends,
+                    include_non_default=include_non_default,
+                ),
+            )
         elif agent == "grok":
-            discovered.extend(discover_grok_sources(home, backends))
+            discovered.extend(
+                discover_grok_sources(
+                    home,
+                    backends,
+                    include_non_default=include_non_default,
+                ),
+            )
     discovered.sort(key=lambda item: (item.agent, item.store, str(item.path)))
     return discovered
 
@@ -2282,11 +2318,63 @@ def resolve_env_root(env_var: str, default: pathlib.Path) -> pathlib.Path:
     return default
 
 
+def _resolve_optional_root(value: str | None, default: pathlib.Path, *, label: str) -> pathlib.Path:
+    """Resolve an optional path override, warning and falling back on bad paths."""
+    if not value:
+        return default
+    candidate = pathlib.Path(os.path.expandvars(value)).expanduser()
+    if candidate.is_dir():
+        return candidate
+    status = "not_a_directory" if candidate.exists() else "not_found"
+    logger.warning(
+        "path override unavailable, fell back to default",
+        extra={
+            "agentgrep_override_label": label,
+            "agentgrep_override_path": value,
+            "agentgrep_override_path_status": status,
+        },
+    )
+    return default
+
+
+def _codex_sqlite_home_from_config(codex_root: pathlib.Path) -> str | None:
+    """Return Codex's configured ``sqlite_home`` value when present."""
+    config_path = codex_root / "config.toml"
+    if not config_path.is_file():
+        return None
+    try:
+        payload = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        logger.warning(
+            "codex config parse failed",
+            extra={
+                "agentgrep_path": str(config_path),
+                "agentgrep_error": type(exc).__name__,
+            },
+        )
+        return None
+    value = payload.get("sqlite_home")
+    return value if isinstance(value, str) else None
+
+
+def resolve_codex_sqlite_root(codex_root: pathlib.Path) -> pathlib.Path:
+    """Resolve Codex's SQLite root from env/config, falling back to ``CODEX_HOME``."""
+    env_value = os.environ.get("CODEX_SQLITE_HOME")
+    if env_value:
+        return _resolve_optional_root(env_value, codex_root, label="CODEX_SQLITE_HOME")
+    return _resolve_optional_root(
+        _codex_sqlite_home_from_config(codex_root),
+        codex_root,
+        label="sqlite_home",
+    )
+
+
 def handles_from_discovery(
     spec: DiscoverySpec,
     agent: AgentName,
     root: pathlib.Path,
     backends: BackendSelection,
+    coverage: StoreCoverage,
 ) -> list[SourceHandle]:
     """Produce ``SourceHandle``s from a :class:`DiscoverySpec`.
 
@@ -2311,6 +2399,7 @@ def handles_from_discovery(
                     source_kind=spec.source_kind,
                     search_root=None,
                     mtime_ns=file_mtime_ns(candidate),
+                    coverage=coverage,
                 ),
             )
 
@@ -2332,6 +2421,7 @@ def handles_from_discovery(
                     source_kind=spec.source_kind,
                     search_root=search_root,
                     mtime_ns=file_mtime_ns(path),
+                    coverage=coverage,
                 ),
             )
 
@@ -2348,6 +2438,7 @@ def handles_from_discovery(
                     source_kind=spec.source_kind,
                     search_root=None,
                     mtime_ns=file_mtime_ns(candidate),
+                    coverage=coverage,
                 ),
             )
 
@@ -2407,24 +2498,30 @@ def format_timestamp_tig(value: str | None) -> str:
 def discover_from_catalog(
     home: pathlib.Path,
     agent: AgentName,
-    base: pathlib.Path,
+    base: pathlib.Path | dict[str, pathlib.Path],
     backends: BackendSelection,
+    *,
+    include_non_default: bool = False,
 ) -> list[SourceHandle]:
     """Walk every catalogue row for ``agent`` and emit ``SourceHandle``s.
 
     Each row's :class:`agentgrep.stores.DiscoverySpec` entries drive
     enumeration via :func:`handles_from_discovery`. Rows whose ``discovery``
     tuple is empty are documentary-only and contribute no sources.
-    Rows whose ``search_by_default`` is exactly ``False`` are skipped so
-    the catalogue contract documented in
-    :mod:`agentgrep.store_catalog` is honoured at runtime;
-    ``True`` and ``None`` (decision-deferred) are searched.
+    ``DEFAULT_SEARCH`` rows are emitted by default. Inventory callers can
+    set ``include_non_default`` to include ``INSPECTABLE`` and
+    ``CATALOG_ONLY`` rows that carry discovery specs. ``PRIVATE`` rows are
+    never enumerated from disk.
     """
     from agentgrep.store_catalog import CATALOG
 
+    roots = {"default": base} if isinstance(base, pathlib.Path) else base
     sources: list[SourceHandle] = []
     for descriptor in CATALOG.for_agent(agent):
-        if descriptor.search_by_default is False:
+        coverage = descriptor.coverage_level
+        if coverage is StoreCoverage.PRIVATE:
+            continue
+        if coverage is not StoreCoverage.DEFAULT_SEARCH and not include_non_default:
             continue
         # Per-descriptor dedup: a row whose discovery tuple has more than one
         # spec (e.g. Cursor IDE state.vscdb with both modern platform_paths
@@ -2432,7 +2529,10 @@ def discover_from_catalog(
         # under different adapter ids on layouts where both specs match.
         seen_paths: set[pathlib.Path] = set()
         for spec in descriptor.discovery:
-            for handle in handles_from_discovery(spec, agent, base, backends):
+            root = roots.get(spec.root_key)
+            if root is None:
+                continue
+            for handle in handles_from_discovery(spec, agent, root, backends, coverage):
                 if handle.path in seen_paths:
                     continue
                 seen_paths.add(handle.path)
@@ -2443,6 +2543,8 @@ def discover_from_catalog(
 def discover_codex_sources(
     home: pathlib.Path,
     backends: BackendSelection,
+    *,
+    include_non_default: bool = False,
 ) -> list[SourceHandle]:
     """Discover Codex sessions and command history.
 
@@ -2455,24 +2557,45 @@ def discover_codex_sources(
     root = resolve_env_root("CODEX_HOME", home / ".codex")
     if not root.exists():
         return []
-    return discover_from_catalog(home, "codex", root, backends)
+    sqlite_root = resolve_codex_sqlite_root(root)
+    return discover_from_catalog(
+        home,
+        "codex",
+        {"default": root, "codex_sqlite": sqlite_root},
+        backends,
+        include_non_default=include_non_default,
+    )
 
 
 def discover_claude_sources(
     home: pathlib.Path,
     backends: BackendSelection,
+    *,
+    include_non_default: bool = False,
 ) -> list[SourceHandle]:
     """Discover Claude Code project session files.
 
-    Path roots, globs, and adapter metadata come from the ``claude.*`` rows
-    of :data:`agentgrep.store_catalog.CATALOG`.
+    Honours ``CLAUDE_CONFIG_DIR`` and otherwise falls back to
+    ``${HOME}/.claude``. Path roots, globs, and adapter metadata come from
+    the ``claude.*`` rows of :data:`agentgrep.store_catalog.CATALOG`.
     """
-    return discover_from_catalog(home, "claude", home, backends)
+    root = resolve_env_root("CLAUDE_CONFIG_DIR", home / ".claude")
+    if not root.exists():
+        return []
+    return discover_from_catalog(
+        home,
+        "claude",
+        root,
+        backends,
+        include_non_default=include_non_default,
+    )
 
 
 def discover_cursor_sources(
     home: pathlib.Path,
     backends: BackendSelection,
+    *,
+    include_non_default: bool = False,
 ) -> list[SourceHandle]:
     """Discover Cursor databases from both home-local and official roots.
 
@@ -2481,12 +2604,20 @@ def discover_cursor_sources(
     and the Cursor CLI agent transcripts. Driven entirely by the
     ``cursor.*`` catalogue rows.
     """
-    return discover_from_catalog(home, "cursor", home, backends)
+    return discover_from_catalog(
+        home,
+        "cursor",
+        home,
+        backends,
+        include_non_default=include_non_default,
+    )
 
 
 def discover_gemini_sources(
     home: pathlib.Path,
     backends: BackendSelection,
+    *,
+    include_non_default: bool = False,
 ) -> list[SourceHandle]:
     """Discover Gemini CLI sessions and prompt logs.
 
@@ -2498,12 +2629,20 @@ def discover_gemini_sources(
     base = resolve_env_root("GEMINI_CLI_HOME", home / ".gemini")
     if not base.exists():
         return []
-    return discover_from_catalog(home, "gemini", base, backends)
+    return discover_from_catalog(
+        home,
+        "gemini",
+        base,
+        backends,
+        include_non_default=include_non_default,
+    )
 
 
 def discover_grok_sources(
     home: pathlib.Path,
     backends: BackendSelection,
+    *,
+    include_non_default: bool = False,
 ) -> list[SourceHandle]:
     """Discover Grok CLI sessions and prompt history.
 
@@ -2515,7 +2654,13 @@ def discover_grok_sources(
     base = resolve_env_root("GROK_HOME", home / ".grok")
     if not base.exists():
         return []
-    return discover_from_catalog(home, "grok", base, backends)
+    return discover_from_catalog(
+        home,
+        "grok",
+        base,
+        backends,
+        include_non_default=include_non_default,
+    )
 
 
 def list_files_matching(
@@ -2910,7 +3055,7 @@ def iter_source_records(
     if source.adapter_id == "codex.sessions_jsonl.v1":
         yield from parse_codex_session_file(source)
         return
-    if source.adapter_id == "codex.history_json.v1":
+    if source.adapter_id in {"codex.history_json.v1", "codex.history_jsonl.v1"}:
         yield from parse_codex_history_file(source)
         return
     if source.adapter_id == "claude.history_jsonl.v1":
@@ -2918,6 +3063,25 @@ def iter_source_records(
         return
     if source.adapter_id == "claude.projects_jsonl.v1":
         yield from parse_claude_project_file(source)
+        return
+    if source.adapter_id == "claude.store_sqlite.v1":
+        yield from parse_claude_store_db(source)
+        return
+    if source.adapter_id in {
+        "claude.session_memory_text.v1",
+        "claude.plans_text.v1",
+        "codex.instructions_text.v1",
+    }:
+        yield from parse_text_store_file(source)
+        return
+    if source.adapter_id == "codex.state_sqlite.v1":
+        yield from parse_codex_state_db(source)
+        return
+    if source.adapter_id == "codex.memories_sqlite.v1":
+        yield from parse_codex_memories_db(source)
+        return
+    if source.adapter_id == "codex.goals_sqlite.v1":
+        yield from parse_codex_goals_db(source)
         return
     if source.adapter_id == "cursor.ai_tracking_sqlite.v1":
         yield from parse_cursor_ai_tracking_db(source)
@@ -2990,7 +3154,7 @@ def parse_codex_session_file(
 def parse_codex_history_file(
     source: SourceHandle,
 ) -> cabc.Iterator[SearchRecord]:
-    """Parse Codex command history files."""
+    """Parse Codex prompt/command history files."""
     entries: list[JSONValue]
     if source.source_kind == "json":
         payload = read_json_file(source.path)
@@ -3001,19 +3165,30 @@ def parse_codex_history_file(
     for entry in entries:
         if not isinstance(entry, dict):
             continue
-        command = as_optional_str(entry.get("command"))
-        if not command:
+        text = as_optional_str(entry.get("text")) or as_optional_str(entry.get("command"))
+        if not text:
             continue
+        session_id = as_optional_str(entry.get("session_id"))
+        timestamp = as_optional_str(entry.get("timestamp"))
+        ts = entry.get("ts")
+        if timestamp is None and isinstance(ts, int):
+            timestamp = (
+                datetime.datetime.fromtimestamp(ts, tz=datetime.UTC)
+                .isoformat()
+                .replace("+00:00", "Z")
+            )
         yield SearchRecord(
             kind="history",
             agent=source.agent,
             store=source.store,
             adapter_id=source.adapter_id,
             path=source.path,
-            text=command,
-            title="Codex command history",
+            text=text,
+            title="Codex prompt history",
             role="user",
-            timestamp=as_optional_str(entry.get("timestamp")),
+            timestamp=timestamp,
+            session_id=session_id,
+            conversation_id=session_id,
         )
 
 
@@ -3463,6 +3638,325 @@ def _unix_millis_to_isoformat(value: object) -> str | None:
         return None
 
 
+def parse_text_store_file(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse opt-in plain-text inventory stores as one sample record."""
+    text = read_text_file(source.path).strip()
+    if not text:
+        return
+    yield SearchRecord(
+        kind="history",
+        agent=source.agent,
+        store=source.store,
+        adapter_id=source.adapter_id,
+        path=source.path,
+        text=text,
+        title=source.store,
+        timestamp=isoformat_from_mtime_ns(source.mtime_ns),
+        metadata={"coverage": source.coverage.value},
+    )
+
+
+def parse_claude_store_db(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse opt-in Claude Code ``__store.db`` message samples."""
+    connection = open_readonly_sqlite(source.path)
+    try:
+        tables = sqlite_table_names(connection)
+        has_base = "base_messages" in tables
+        if "user_messages" in tables:
+            query = (
+                """
+                SELECT u.uuid, u.message, u.timestamp, b.session_id
+                FROM user_messages u
+                LEFT JOIN base_messages b ON b.uuid = u.uuid
+                """
+                if has_base
+                else "SELECT uuid, message, timestamp, NULL FROM user_messages"
+            )
+            rows = t.cast(
+                "cabc.Iterable[tuple[object, object, object, object]]",
+                connection.execute(query),
+            )
+            for uuid, message, timestamp, session in rows:
+                text = decode_sqlite_value(message) or as_optional_str(message)
+                if not text:
+                    continue
+                session_id = as_optional_str(session)
+                yield SearchRecord(
+                    kind="prompt",
+                    agent=source.agent,
+                    store=source.store,
+                    adapter_id=source.adapter_id,
+                    path=source.path,
+                    text=text,
+                    title="Claude SQLite user message",
+                    role="user",
+                    timestamp=as_optional_str(timestamp),
+                    session_id=session_id,
+                    conversation_id=session_id or as_optional_str(uuid),
+                )
+        if "assistant_messages" in tables:
+            query = (
+                """
+                SELECT a.uuid, a.message, a.timestamp, a.model, b.session_id
+                FROM assistant_messages a
+                LEFT JOIN base_messages b ON b.uuid = a.uuid
+                """
+                if has_base
+                else "SELECT uuid, message, timestamp, model, NULL FROM assistant_messages"
+            )
+            rows = t.cast(
+                "cabc.Iterable[tuple[object, object, object, object, object]]",
+                connection.execute(query),
+            )
+            for uuid, message, timestamp, model, session in rows:
+                text = decode_sqlite_value(message) or as_optional_str(message)
+                if not text:
+                    continue
+                session_id = as_optional_str(session)
+                yield SearchRecord(
+                    kind="history",
+                    agent=source.agent,
+                    store=source.store,
+                    adapter_id=source.adapter_id,
+                    path=source.path,
+                    text=text,
+                    title="Claude SQLite assistant message",
+                    role="assistant",
+                    timestamp=as_optional_str(timestamp),
+                    model=as_optional_str(model),
+                    session_id=session_id,
+                    conversation_id=session_id or as_optional_str(uuid),
+                )
+        if "conversation_summaries" in tables:
+            query = (
+                """
+                SELECT c.leaf_uuid, c.summary, c.updated_at, b.session_id
+                FROM conversation_summaries c
+                LEFT JOIN base_messages b ON b.uuid = c.leaf_uuid
+                """
+                if has_base
+                else "SELECT leaf_uuid, summary, updated_at, NULL FROM conversation_summaries"
+            )
+            rows = t.cast(
+                "cabc.Iterable[tuple[object, object, object, object]]",
+                connection.execute(query),
+            )
+            for leaf_uuid, summary, updated_at, session in rows:
+                text = decode_sqlite_value(summary) or as_optional_str(summary)
+                if not text:
+                    continue
+                session_id = as_optional_str(session)
+                yield SearchRecord(
+                    kind="history",
+                    agent=source.agent,
+                    store=source.store,
+                    adapter_id=source.adapter_id,
+                    path=source.path,
+                    text=text,
+                    title="Claude conversation summary",
+                    role="assistant",
+                    timestamp=as_optional_str(updated_at),
+                    session_id=session_id,
+                    conversation_id=session_id or as_optional_str(leaf_uuid),
+                )
+    except sqlite3.DatabaseError:
+        return
+    finally:
+        connection.close()
+
+
+def parse_codex_state_db(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse opt-in Codex ``state_5.sqlite`` prompt-bearing fields."""
+    connection = open_readonly_sqlite(source.path)
+    try:
+        tables = sqlite_table_names(connection)
+        if "threads" in tables:
+            columns = sqlite_column_names(connection, "threads")
+            if {"id", "first_user_message"}.issubset(columns):
+                preview_expr = "preview" if "preview" in columns else "NULL"
+                title_expr = "title" if "title" in columns else "NULL"
+                updated_expr = "updated_at_ms" if "updated_at_ms" in columns else "NULL"
+                rows = t.cast(
+                    "cabc.Iterable[tuple[object, object, object, object, object]]",
+                    connection.execute(
+                        "SELECT id, first_user_message, "
+                        f"{preview_expr}, {title_expr}, {updated_expr} FROM threads",
+                    ),
+                )
+                for thread_id, first_message, preview, title, updated_at in rows:
+                    conversation_id = as_optional_str(thread_id)
+                    thread_title = as_optional_str(title)
+                    timestamp = _unix_millis_to_isoformat(updated_at)
+                    text = decode_sqlite_value(first_message) or as_optional_str(first_message)
+                    if text:
+                        yield SearchRecord(
+                            kind="prompt",
+                            agent=source.agent,
+                            store=source.store,
+                            adapter_id=source.adapter_id,
+                            path=source.path,
+                            text=text,
+                            title=thread_title or "Codex thread first prompt",
+                            role="user",
+                            timestamp=timestamp,
+                            session_id=conversation_id,
+                            conversation_id=conversation_id,
+                        )
+                    preview_text = decode_sqlite_value(preview) or as_optional_str(preview)
+                    if preview_text and preview_text != text:
+                        yield SearchRecord(
+                            kind="history",
+                            agent=source.agent,
+                            store=source.store,
+                            adapter_id=source.adapter_id,
+                            path=source.path,
+                            text=preview_text,
+                            title=thread_title or "Codex thread preview",
+                            role="assistant",
+                            timestamp=timestamp,
+                            session_id=conversation_id,
+                            conversation_id=conversation_id,
+                            metadata={"field": "preview"},
+                        )
+        if "agent_jobs" in tables:
+            columns = sqlite_column_names(connection, "agent_jobs")
+            if {"id", "instruction"}.issubset(columns):
+                thread_expr = "thread_id" if "thread_id" in columns else "NULL"
+                updated_expr = "updated_at_ms" if "updated_at_ms" in columns else "NULL"
+                rows = t.cast(
+                    "cabc.Iterable[tuple[object, object, object, object]]",
+                    connection.execute(
+                        f"SELECT id, {thread_expr}, instruction, {updated_expr} FROM agent_jobs",
+                    ),
+                )
+                for job_id, thread_id, instruction, updated_at in rows:
+                    text = decode_sqlite_value(instruction) or as_optional_str(instruction)
+                    if not text:
+                        continue
+                    conversation_id = as_optional_str(thread_id)
+                    yield SearchRecord(
+                        kind="prompt",
+                        agent=source.agent,
+                        store=source.store,
+                        adapter_id=source.adapter_id,
+                        path=source.path,
+                        text=text,
+                        title="Codex agent job instruction",
+                        role="user",
+                        timestamp=_unix_millis_to_isoformat(updated_at),
+                        session_id=conversation_id,
+                        conversation_id=conversation_id,
+                        metadata={"job_id": as_optional_str(job_id) or ""},
+                    )
+    except sqlite3.DatabaseError:
+        return
+    finally:
+        connection.close()
+
+
+def parse_codex_memories_db(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse opt-in Codex ``memories_1.sqlite`` memory summaries."""
+    connection = open_readonly_sqlite(source.path)
+    try:
+        tables = sqlite_table_names(connection)
+        if "stage1_outputs" not in tables:
+            return
+        columns = sqlite_column_names(connection, "stage1_outputs")
+        if not {"thread_id", "raw_memory"}.issubset(columns):
+            return
+        summary_expr = "rollout_summary" if "rollout_summary" in columns else "NULL"
+        slug_expr = "rollout_slug" if "rollout_slug" in columns else "NULL"
+        rows = t.cast(
+            "cabc.Iterable[tuple[object, object, object, object]]",
+            connection.execute(
+                f"SELECT thread_id, raw_memory, {summary_expr}, {slug_expr} FROM stage1_outputs",
+            ),
+        )
+        for thread_id, raw_memory, rollout_summary, rollout_slug in rows:
+            conversation_id = as_optional_str(thread_id)
+            for field_name, value in (
+                ("raw_memory", raw_memory),
+                ("rollout_summary", rollout_summary),
+            ):
+                text = decode_sqlite_value(value) or as_optional_str(value)
+                if not text:
+                    continue
+                yield SearchRecord(
+                    kind="history",
+                    agent=source.agent,
+                    store=source.store,
+                    adapter_id=source.adapter_id,
+                    path=source.path,
+                    text=text,
+                    title=as_optional_str(rollout_slug) or "Codex memory",
+                    role="assistant",
+                    session_id=conversation_id,
+                    conversation_id=conversation_id,
+                    metadata={"field": field_name},
+                )
+    except sqlite3.DatabaseError:
+        return
+    finally:
+        connection.close()
+
+
+def parse_codex_goals_db(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse opt-in Codex ``goals_1.sqlite`` goal objectives."""
+    connection = open_readonly_sqlite(source.path)
+    try:
+        tables = sqlite_table_names(connection)
+        if "thread_goals" not in tables:
+            return
+        columns = sqlite_column_names(connection, "thread_goals")
+        if not {"thread_id", "goal_id", "objective"}.issubset(columns):
+            return
+        status_expr = "status" if "status" in columns else "NULL"
+        updated_expr = "updated_at_ms" if "updated_at_ms" in columns else "NULL"
+        rows = t.cast(
+            "cabc.Iterable[tuple[object, object, object, object, object]]",
+            connection.execute(
+                f"SELECT thread_id, goal_id, objective, {status_expr}, {updated_expr} "
+                "FROM thread_goals",
+            ),
+        )
+        for thread_id, goal_id, objective, status, updated_at in rows:
+            text = decode_sqlite_value(objective) or as_optional_str(objective)
+            if not text:
+                continue
+            conversation_id = as_optional_str(thread_id)
+            yield SearchRecord(
+                kind="prompt",
+                agent=source.agent,
+                store=source.store,
+                adapter_id=source.adapter_id,
+                path=source.path,
+                text=text,
+                title="Codex goal objective",
+                role="user",
+                timestamp=_unix_millis_to_isoformat(updated_at),
+                session_id=conversation_id,
+                conversation_id=conversation_id,
+                metadata={
+                    "goal_id": as_optional_str(goal_id) or "",
+                    "status": as_optional_str(status) or "",
+                },
+            )
+    except sqlite3.DatabaseError:
+        return
+    finally:
+        connection.close()
+
+
 def parse_grok_session_search_db(
     source: SourceHandle,
 ) -> cabc.Iterator[SearchRecord]:
@@ -3609,6 +4103,21 @@ def sqlite_table_names(connection: sqlite3.Connection) -> set[str]:
         if isinstance(name, str):
             names.add(name)
     return names
+
+
+def sqlite_column_names(connection: sqlite3.Connection, table: str) -> set[str]:
+    """Return the column names for a known SQLite table."""
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", table):
+        return set()
+    rows = t.cast(
+        "cabc.Iterable[tuple[object, ...]]",
+        connection.execute(f"PRAGMA table_info({table})"),
+    )
+    columns: set[str] = set()
+    for row in rows:
+        if len(row) > 1 and isinstance(row[1], str):
+            columns.add(row[1])
+    return columns
 
 
 def iter_key_value_rows(

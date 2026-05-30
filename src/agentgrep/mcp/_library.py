@@ -20,9 +20,22 @@ SearchTypeName = t.Literal["prompts", "history", "all"]
 SERVER_VERSION = "0.1.0"
 KNOWN_ADAPTERS: tuple[str, ...] = (
     "codex.history_json.v1",
+    "codex.history_jsonl.v1",
+    "codex.session_index_jsonl.v1",
     "codex.sessions_jsonl.v1",
+    "codex.state_sqlite.v1",
+    "codex.logs_sqlite.v1",
+    "codex.memories_sqlite.v1",
+    "codex.goals_sqlite.v1",
+    "codex.external_imports_json.v1",
+    "codex.instructions_text.v1",
     "claude.history_jsonl.v1",
     "claude.projects_jsonl.v1",
+    "claude.store_sqlite.v1",
+    "claude.tasks_json.v1",
+    "claude.plans_text.v1",
+    "claude.session_memory_text.v1",
+    "claude.settings_json.v1",
     "cursor.ai_tracking_sqlite.v1",
     "cursor.cli_jsonl.v1",
     "cursor.state_vscdb_legacy.v1",
@@ -77,6 +90,7 @@ class SourceHandleLike(t.Protocol):
     path: pathlib.Path
     path_kind: str
     source_kind: str
+    coverage: str
     search_root: pathlib.Path | None
     mtime_ns: int
 
@@ -121,6 +135,8 @@ class AgentGrepModule(t.Protocol):
         home: pathlib.Path,
         agents: tuple[str, ...],
         backends: BackendSelectionLike,
+        *,
+        include_non_default: bool = False,
     ) -> list[SourceHandleLike]: ...
 
     def run_search_query(

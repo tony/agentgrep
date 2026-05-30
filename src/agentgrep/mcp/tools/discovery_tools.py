@@ -57,6 +57,7 @@ def _list_sources_sync(request: ListSourcesRequest) -> ListSourcesResponse:
         pathlib.Path.home(),
         normalize_agent_selection(request.agent),
         backends,
+        include_non_default=request.include_non_default or request.coverage_filter is not None,
     )
     filtered: list[SourceRecordModel] = []
     for source in sources:
@@ -66,6 +67,8 @@ def _list_sources_sync(request: ListSourcesRequest) -> ListSourcesResponse:
             request.source_kind_filter is not None
             and source.source_kind != request.source_kind_filter
         ):
+            continue
+        if request.coverage_filter is not None and source.coverage != request.coverage_filter:
             continue
         filtered.append(SourceRecordModel.from_source(source))
         if request.limit is not None and len(filtered) >= request.limit:
@@ -159,13 +162,24 @@ def register(mcp: FastMCP) -> None:
             Field(description="Limit discovery to one agent or scan every agent."),
         ] = "all",
         path_kind_filter: t.Annotated[
-            t.Literal["history_file", "session_file", "sqlite_db"] | None,
+            t.Literal["history_file", "session_file", "sqlite_db", "store_file"] | None,
             Field(default=None, description="Filter by path kind."),
         ] = None,
         source_kind_filter: t.Annotated[
-            t.Literal["json", "jsonl", "sqlite"] | None,
+            t.Literal["json", "jsonl", "sqlite", "text", "opaque"] | None,
             Field(default=None, description="Filter by on-disk source kind."),
         ] = None,
+        coverage_filter: t.Annotated[
+            t.Literal["default_search", "inspectable", "catalog_only", "private"] | None,
+            Field(default=None, description="Filter by coverage level."),
+        ] = None,
+        include_non_default: t.Annotated[
+            bool,
+            Field(
+                default=False,
+                description="Include non-default inventory sources when true.",
+            ),
+        ] = False,
         limit: t.Annotated[
             int | None,
             Field(default=None, ge=1, description="Maximum number of sources to return."),
@@ -175,6 +189,8 @@ def register(mcp: FastMCP) -> None:
             agent=agent,
             path_kind_filter=path_kind_filter,
             source_kind_filter=source_kind_filter,
+            coverage_filter=coverage_filter,
+            include_non_default=include_non_default,
             limit=limit,
         )
         return await asyncio.to_thread(_list_sources_sync, request)

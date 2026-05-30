@@ -132,6 +132,7 @@ def serialize_source_handle(source: SourceHandle) -> SourceHandlePayload:
         "path": agentgrep.format_display_path(source.path),
         "path_kind": source.path_kind,
         "source_kind": source.source_kind,
+        "coverage": source.coverage,
         "search_root": (
             None
             if source.search_root is None
