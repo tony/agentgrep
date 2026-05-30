@@ -58,6 +58,11 @@ records (`command`, `timestamp`) even when both coexist under a modern
 Codex config root. Claude Code detection uses prompt-history shape and
 embedded transcript version metadata when available.
 
+### Fixes
+
+- `agentgrep find --type` (`prompts`, `history`, `sessions`) now returns the matching stores again instead of nothing. (#31)
+- `agentgrep fuzzy --json` and `--ndjson` now emit structured output (scored matches) instead of silently printing plain text. (#31)
+
 ## agentgrep 0.1.0a8 (2026-05-25)
 
 agentgrep 0.1.0a8 ships Grok CLI as the fifth searchable backend and
