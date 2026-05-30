@@ -2333,6 +2333,14 @@ def discover_sources(
                     include_non_default=include_non_default,
                 ),
             )
+        elif agent == "pi":
+            discovered.extend(
+                discover_pi_sources(
+                    home,
+                    backends,
+                    include_non_default=include_non_default,
+                ),
+            )
     discovered.sort(key=lambda item: (item.agent, item.store, str(item.path)))
     return discovered
 
@@ -3248,6 +3256,43 @@ def discover_grok_sources(
         home,
         "grok",
         base,
+        backends,
+        include_non_default=include_non_default,
+    )
+
+
+def discover_pi_sources(
+    home: pathlib.Path,
+    backends: BackendSelection,
+    *,
+    include_non_default: bool = False,
+) -> list[SourceHandle]:
+    """Discover pi (earendil-works/pi) session transcripts.
+
+    Honours ``PI_CODING_AGENT_DIR`` (pi's agent data directory, used
+    verbatim) and falls back to ``${HOME}/.pi/agent``. The optional
+    ``PI_CODING_AGENT_SESSION_DIR`` overrides the sessions directory
+    directly: when set, pi writes session files flat into it with no
+    per-working-directory subdirectory, so it is resolved as a separate
+    discovery root. Path roots, globs, and adapter metadata come from
+    the ``pi.*`` rows of :data:`agentgrep.store_catalog.CATALOG`.
+    """
+    agent_dir = resolve_env_root("PI_CODING_AGENT_DIR", home / ".pi" / "agent")
+    session_dir = _resolve_optional_root(
+        os.environ.get("PI_CODING_AGENT_SESSION_DIR"),
+        agent_dir / "sessions",
+        label="PI_CODING_AGENT_SESSION_DIR",
+    )
+    if not agent_dir.exists() and not session_dir.exists():
+        return []
+    roots: dict[str, DiscoveryRoot] = {
+        "default": agent_dir,
+        "pi_session": session_dir,
+    }
+    return discover_from_catalog(
+        home,
+        "pi",
+        roots,
         backends,
         include_non_default=include_non_default,
     )
