@@ -11,7 +11,7 @@ overrides, store descriptors, and record schemas.
 | Agent   | Prompt History | Chat Sessions | Session Index | Memory | Plans |
 |---------|:--------------:|:-------------:|:-------------:|:------:|:-----:|
 | Codex   | {doc}`codex`   | {doc}`codex`  |               |        |       |
-| Claude  |                | {doc}`claude` |               |        |       |
+| Claude  | {doc}`claude`  | {doc}`claude` |               |        |       |
 | Cursor  |                | {doc}`cursor` | {doc}`cursor` |        |       |
 | Gemini  | {doc}`gemini`  | {doc}`gemini` |               |        |       |
 | Grok    | {doc}`grok`    | {doc}`grok`   | {doc}`grok`   |        |       |
