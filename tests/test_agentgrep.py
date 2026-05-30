@@ -4114,6 +4114,188 @@ def test_search_codex_history_jsonl_uses_modern_text_schema(
     assert record.timestamp == "2023-11-14T22:13:20Z"
     assert record.session_id == "session-jsonl-1"
     assert record.conversation_id == "session-jsonl-1"
+    assert "version_detection" not in agentgrep.serialize_search_record(record)
+
+
+def test_source_payload_exposes_codex_history_data_versions(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex history detection follows the concrete file shape, not app freshness."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    codex_home = home / ".codex"
+    _ = (codex_home / "version.json").parent.mkdir(parents=True, exist_ok=True)
+    _ = (codex_home / "version.json").write_text(
+        json.dumps({"latest_version": "9.9.9"}),
+        encoding="utf-8",
+    )
+    _ = (codex_home / "history.json").write_text(
+        json.dumps([{"command": "legacy prompt", "timestamp": "2026-01-01T00:00:00Z"}]),
+        encoding="utf-8",
+    )
+    write_jsonl(
+        codex_home / "history.jsonl",
+        [{"session_id": "session-jsonl-1", "ts": 1_700_000_000, "text": "modern prompt"}],
+    )
+
+    backends = agentgrep.BackendSelection(None, None, None)
+    sources = agentgrep.discover_sources(home, ("codex",), backends)
+    payloads = {
+        pathlib.Path(source.path).name: agentgrep.serialize_source_handle(source)
+        for source in sources
+        if source.store == "codex.history"
+    }
+
+    current = payloads["history.jsonl"]["version_detection"]
+    legacy = payloads["history.json"]["version_detection"]
+    assert current == {
+        "app_version": None,
+        "data_version": "codex.history_jsonl.current",
+        "strategy": "shape_inference",
+        "confidence": "high",
+        "evidence": "history.jsonl object keys include session_id, ts, text",
+    }
+    assert legacy == {
+        "app_version": None,
+        "data_version": "codex.history_json.legacy",
+        "strategy": "shape_inference",
+        "confidence": "high",
+        "evidence": "history.json array object keys include command, timestamp",
+    }
+
+
+def test_codex_source_version_detection_uses_safe_client_hints(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex uses local metadata files and embedded session metadata without spawning."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    codex_home = home / ".codex"
+    codex_home.mkdir(parents=True, exist_ok=True)
+    _ = (codex_home / "models_cache.json").write_text(
+        json.dumps({"client_version": "0.135.0"}),
+        encoding="utf-8",
+    )
+    write_jsonl(
+        codex_home / "history.jsonl",
+        [{"session_id": "session-jsonl-1", "ts": 1_700_000_000, "text": "modern prompt"}],
+    )
+    write_jsonl(
+        codex_home / "sessions" / "2026" / "01" / "01" / "rollout.jsonl",
+        [
+            {
+                "type": "session_meta",
+                "payload": {"id": "session-1", "cli_version": "0.134.0"},
+            },
+        ],
+    )
+
+    backends = agentgrep.BackendSelection(None, None, None)
+    sources = agentgrep.discover_sources(home, ("codex",), backends)
+    payloads = [agentgrep.serialize_source_handle(source) for source in sources]
+    history = next(item for item in payloads if item["adapter_id"] == "codex.history_jsonl.v1")
+    session = next(item for item in payloads if item["adapter_id"] == "codex.sessions_jsonl.v1")
+
+    assert history["version_detection"]["app_version"] == "0.135.0"
+    assert history["version_detection"]["strategy"] == "shape_inference"
+    assert session["version_detection"] == {
+        "app_version": "0.134.0",
+        "data_version": "codex.sessions.rollout.v1",
+        "strategy": "embedded_metadata",
+        "confidence": "high",
+        "evidence": "session_meta.payload keys include cli_version",
+    }
+
+
+def test_codex_sqlite_source_versions_derive_from_filename_suffix(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex SQLite store suffixes are schema-version evidence."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    codex_home = home / ".codex"
+    for filename in ("state_5.sqlite", "memories_1.sqlite", "goals_1.sqlite"):
+        path = codex_home / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+
+    backends = agentgrep.BackendSelection(None, None, None)
+    sources = agentgrep.discover_codex_sources(home, backends, include_non_default=True)
+    payloads = {
+        pathlib.Path(source.path).name: agentgrep.serialize_source_handle(source)
+        for source in sources
+    }
+
+    assert payloads["state_5.sqlite"]["version_detection"]["data_version"] == (
+        "codex.state.sqlite.v5"
+    )
+    assert payloads["memories_1.sqlite"]["version_detection"]["data_version"] == (
+        "codex.memories.sqlite.v1"
+    )
+    assert payloads["goals_1.sqlite"]["version_detection"]["data_version"] == (
+        "codex.goals.sqlite.v1"
+    )
+
+
+def test_claude_source_version_detection_infers_history_and_project_versions(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Claude detection combines history shape and transcript embedded versions."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    claude_home = home / ".claude"
+    write_jsonl(
+        claude_home / "history.jsonl",
+        [
+            {
+                "display": "claude prompt",
+                "timestamp": 1_700_000_000_000,
+                "project": "/tmp/project",
+                "sessionId": "session-1",
+                "pastedContents": {},
+            },
+        ],
+    )
+    write_jsonl(
+        claude_home / "projects" / "-tmp-project" / "session-1.jsonl",
+        [
+            {
+                "type": "user",
+                "sessionId": "session-1",
+                "version": "2.1.157",
+                "message": {"role": "user", "content": "project prompt"},
+            },
+        ],
+    )
+
+    backends = agentgrep.BackendSelection(None, None, None)
+    sources = agentgrep.discover_sources(home, ("claude",), backends)
+    payloads = [agentgrep.serialize_source_handle(source) for source in sources]
+    history = next(item for item in payloads if item["adapter_id"] == "claude.history_jsonl.v1")
+    project = next(item for item in payloads if item["adapter_id"] == "claude.projects_jsonl.v1")
+
+    assert history["version_detection"] == {
+        "app_version": None,
+        "data_version": "claude.history_jsonl.log_entry.v1",
+        "strategy": "shape_inference",
+        "confidence": "high",
+        "evidence": "history.jsonl object keys include display, timestamp, project",
+    }
+    assert project["version_detection"] == {
+        "app_version": "2.1.157",
+        "data_version": "claude.projects_jsonl.message.v1",
+        "strategy": "embedded_metadata",
+        "confidence": "high",
+        "evidence": "project transcript keys include version",
+    }
 
 
 def test_discover_claude_sources_honours_claude_config_dir_env(

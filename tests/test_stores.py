@@ -21,6 +21,7 @@ from agentgrep.stores import (
     StoreDescriptor,
     StoreFormat,
     StoreRole,
+    VersionDetectionStrategy,
 )
 
 KNOWN_AGENTS: tuple[AgentName, ...] = ("claude", "cursor", "codex", "gemini", "grok")
@@ -160,6 +161,28 @@ def test_catalog_exposes_coverage_levels() -> None:
     assert coverage_by_id["claude.store_db"] is StoreCoverage.INSPECTABLE
     assert coverage_by_id["codex.state_db"] is StoreCoverage.INSPECTABLE
     assert coverage_by_id["codex.auth"] is StoreCoverage.PRIVATE
+
+
+def test_catalog_exposes_version_detection_strategies() -> None:
+    """Descriptors declare how runtime source versions should be detected."""
+    codex_history = CATALOG.by_id("codex.history")
+    codex_state = CATALOG.by_id("codex.state_db")
+    claude_projects = CATALOG.by_id("claude.projects.session")
+
+    assert VersionDetectionStrategy.SHAPE_INFERENCE in codex_history.version_strategies
+    assert VersionDetectionStrategy.VERSION_CHECK in codex_history.version_strategies
+    assert VersionDetectionStrategy.SHAPE_INFERENCE in codex_state.version_strategies
+    assert VersionDetectionStrategy.EMBEDDED_METADATA in claude_projects.version_strategies
+
+    data_versions = {
+        (spec.adapter_id, spec.data_version)
+        for store in (codex_history, codex_state, claude_projects)
+        for spec in store.discovery
+    }
+    assert ("codex.history_json.v1", "codex.history_json.legacy") in data_versions
+    assert ("codex.history_jsonl.v1", "codex.history_jsonl.current") in data_versions
+    assert ("codex.state_sqlite.v1", "codex.state.sqlite.v5") in data_versions
+    assert ("claude.projects_jsonl.v1", "claude.projects_jsonl.message.v1") in data_versions
 
 
 def test_search_by_default_only_true_for_searchable_roles() -> None:

@@ -502,6 +502,38 @@ async def test_mcp_list_sources_exposes_non_default_coverage_on_request(
     assert {s["coverage"] for s in inventory_data["sources"]} == {"inspectable"}
 
 
+async def test_mcp_list_sources_exposes_version_detection(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Source discovery payloads expose concrete data-shape detection."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+
+    history_path = home / ".codex" / "history.jsonl"
+    write_jsonl(
+        history_path,
+        [{"session_id": "session-jsonl-1", "ts": 1_700_000_000, "text": "history"}],
+    )
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        result = await client.call_tool(
+            "list_sources",
+            {"agent": "codex"},
+        )
+
+    data = tool_payload(result)
+    source = next(s for s in data["sources"] if s["adapter_id"] == "codex.history_jsonl.v1")
+    assert source["version_detection"] == {
+        "app_version": None,
+        "data_version": "codex.history_jsonl.current",
+        "strategy": "shape_inference",
+        "confidence": "high",
+        "evidence": "history.jsonl object keys include session_id, ts, text",
+    }
+
+
 async def test_mcp_filter_sources_requires_pattern() -> None:
     """``filter_sources`` rejects an empty pattern at the validation layer."""
     from fastmcp.exceptions import ToolError
