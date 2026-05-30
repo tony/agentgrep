@@ -1384,6 +1384,17 @@ def run_fuzzy_command(args: FuzzyArgs) -> int:
     raw = sys.stdin.read()
     lines = [line for line in raw.split(separator) if line]
     ranked = fuzzy_filter_lines(lines, args)
+    if args.output_mode in {"json", "ndjson"}:
+        matches: list[dict[str, object]] = [
+            {"text": original, "score": score} for original, score in ranked
+        ]
+        if args.output_mode == "json":
+            payload = build_envelope("fuzzy", {"query": args.query}, matches)
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            for match in matches:
+                print(json.dumps(match, ensure_ascii=False))
+        return 0 if ranked else 1
     out_sep = "\0" if args.print0 else "\n"
     out = sys.stdout
 
