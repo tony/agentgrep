@@ -106,6 +106,39 @@ OFFICIAL_CURSOR_STATE_PATHS: tuple[pathlib.Path, ...] = (
     ).expanduser(),
     pathlib.Path("~/AppData/Roaming/Cursor/User/globalStorage/state.vscdb").expanduser(),
 )
+ITER_SOURCE_RECORD_ADAPTERS: frozenset[str] = frozenset(
+    {
+        "claude.history_jsonl.v1",
+        "claude.plans_text.v1",
+        "claude.projects_jsonl.v1",
+        "claude.session_memory_text.v1",
+        "claude.settings_json.v1",
+        "claude.store_sqlite.v1",
+        "claude.tasks_json.v1",
+        "codex.external_imports_json.v1",
+        "codex.goals_sqlite.v1",
+        "codex.history_json.v1",
+        "codex.history_jsonl.v1",
+        "codex.instructions_text.v1",
+        "codex.logs_sqlite.v1",
+        "codex.memories_sqlite.v1",
+        "codex.memories_text.v1",
+        "codex.session_index_jsonl.v1",
+        "codex.sessions_jsonl.v1",
+        "codex.sessions_legacy_json.v1",
+        "codex.state_sqlite.v1",
+        "cursor.ai_tracking_sqlite.v1",
+        "cursor.cli_jsonl.v1",
+        "cursor.state_vscdb_legacy.v1",
+        "cursor.state_vscdb_modern.v1",
+        "gemini.tmp_chats_jsonl.v1",
+        "gemini.tmp_chats_legacy_json.v1",
+        "gemini.tmp_logs_json.v1",
+        "grok.prompt_history_jsonl.v1",
+        "grok.session_search_sqlite.v1",
+        "grok.sessions_jsonl.v1",
+    },
+)
 EnvelopeFactory = t.Callable[[str, dict[str, object], list[dict[str, object]]], dict[str, object]]
 
 OPTIONS_EXPECTING_VALUE: frozenset[str] = frozenset(
@@ -2414,6 +2447,12 @@ def _first_json_array_mapping(path: pathlib.Path) -> dict[str, JSONValue] | None
     return None
 
 
+def _json_mapping(path: pathlib.Path) -> dict[str, JSONValue] | None:
+    """Return a JSON file payload when its top-level value is an object."""
+    value = read_json_file(path)
+    return value if isinstance(value, dict) else None
+
+
 def _codex_client_version_from_cache(codex_root: pathlib.Path | None) -> str | None:
     """Return Codex's local client-version hint without spawning the CLI."""
     if codex_root is None:
@@ -2491,6 +2530,44 @@ def _codex_source_version_detection(
                 confidence=VersionDetectionConfidence.MEDIUM,
                 evidence="jsonl event type includes session_meta",
             )
+    elif source.adapter_id == "codex.sessions_legacy_json.v1":
+        record = _json_mapping(source.path)
+        if record is not None and {"session", "items"}.issubset(record):
+            return SourceVersionDetection(
+                app_version=app_version,
+                data_version="codex.sessions.legacy_json.v1",
+                strategy=VersionDetectionStrategy.SHAPE_INFERENCE,
+                confidence=VersionDetectionConfidence.HIGH,
+                evidence="legacy session JSON object keys include session, items",
+            )
+    elif source.adapter_id == "codex.session_index_jsonl.v1":
+        record = _first_jsonl_mapping(source.path)
+        if record is not None and {"id", "thread_name", "updated_at"}.issubset(record):
+            return SourceVersionDetection(
+                app_version=app_version,
+                data_version=spec.data_version,
+                strategy=VersionDetectionStrategy.SHAPE_INFERENCE,
+                confidence=VersionDetectionConfidence.HIGH,
+                evidence="session_index.jsonl object keys include id, thread_name, updated_at",
+            )
+    elif source.adapter_id == "codex.external_imports_json.v1":
+        record = _json_mapping(source.path)
+        if record is not None and "records" in record:
+            return SourceVersionDetection(
+                app_version=app_version,
+                data_version=spec.data_version,
+                strategy=VersionDetectionStrategy.SHAPE_INFERENCE,
+                confidence=VersionDetectionConfidence.HIGH,
+                evidence="external import ledger object key includes records",
+            )
+    elif source.adapter_id == "codex.memories_text.v1":
+        return SourceVersionDetection(
+            app_version=app_version,
+            data_version=spec.data_version,
+            strategy=VersionDetectionStrategy.SHAPE_INFERENCE,
+            confidence=VersionDetectionConfidence.MEDIUM,
+            evidence="markdown memory file discovered under memories",
+        )
     elif source.source_kind == "sqlite" and spec.data_version is not None:
         match = re.fullmatch(r".+_([0-9]+)\.sqlite", source.path.name)
         if match is not None:
@@ -2543,6 +2620,26 @@ def _claude_source_version_detection(
                     confidence=VersionDetectionConfidence.MEDIUM,
                     evidence="project transcript keys include type, sessionId, message",
                 )
+    elif source.adapter_id == "claude.tasks_json.v1":
+        record = _json_mapping(source.path)
+        if record is not None and {"id", "subject", "description", "status"}.issubset(record):
+            return SourceVersionDetection(
+                app_version=None,
+                data_version=spec.data_version,
+                strategy=VersionDetectionStrategy.SHAPE_INFERENCE,
+                confidence=VersionDetectionConfidence.HIGH,
+                evidence="task JSON object keys include id, subject, description, status",
+            )
+    elif source.adapter_id == "claude.settings_json.v1":
+        record = _json_mapping(source.path)
+        if record is not None:
+            return SourceVersionDetection(
+                app_version=None,
+                data_version=spec.data_version,
+                strategy=VersionDetectionStrategy.SHAPE_INFERENCE,
+                confidence=VersionDetectionConfidence.MEDIUM,
+                evidence="settings JSON object keys observed",
+            )
 
     return _catalog_version_detection(descriptor, spec)
 
@@ -3253,8 +3350,14 @@ def iter_source_records(
     if source.adapter_id == "codex.sessions_jsonl.v1":
         yield from parse_codex_session_file(source)
         return
+    if source.adapter_id == "codex.sessions_legacy_json.v1":
+        yield from parse_codex_legacy_session_file(source)
+        return
     if source.adapter_id in {"codex.history_json.v1", "codex.history_jsonl.v1"}:
         yield from parse_codex_history_file(source)
+        return
+    if source.adapter_id == "codex.session_index_jsonl.v1":
+        yield from parse_codex_session_index_file(source)
         return
     if source.adapter_id == "claude.history_jsonl.v1":
         yield from parse_claude_history_file(source)
@@ -3265,21 +3368,34 @@ def iter_source_records(
     if source.adapter_id == "claude.store_sqlite.v1":
         yield from parse_claude_store_db(source)
         return
+    if source.adapter_id == "claude.tasks_json.v1":
+        yield from parse_claude_task_file(source)
+        return
+    if source.adapter_id == "claude.settings_json.v1":
+        yield from parse_claude_settings_file(source)
+        return
     if source.adapter_id in {
         "claude.session_memory_text.v1",
         "claude.plans_text.v1",
         "codex.instructions_text.v1",
+        "codex.memories_text.v1",
     }:
         yield from parse_text_store_file(source)
         return
     if source.adapter_id == "codex.state_sqlite.v1":
         yield from parse_codex_state_db(source)
         return
+    if source.adapter_id == "codex.logs_sqlite.v1":
+        yield from parse_codex_logs_db(source)
+        return
     if source.adapter_id == "codex.memories_sqlite.v1":
         yield from parse_codex_memories_db(source)
         return
     if source.adapter_id == "codex.goals_sqlite.v1":
         yield from parse_codex_goals_db(source)
+        return
+    if source.adapter_id == "codex.external_imports_json.v1":
+        yield from parse_codex_external_imports_file(source)
         return
     if source.adapter_id == "cursor.ai_tracking_sqlite.v1":
         yield from parse_cursor_ai_tracking_db(source)
@@ -3349,6 +3465,42 @@ def parse_codex_session_file(
         yield build_search_record(source, candidate)
 
 
+def parse_codex_legacy_session_file(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse legacy root-level Codex ``rollout-*.json`` session files."""
+    payload = read_json_file(source.path)
+    if not isinstance(payload, dict):
+        return
+    session_raw = payload.get("session")
+    session = t.cast("dict[str, object]", session_raw) if isinstance(session_raw, dict) else {}
+    session_id = as_optional_str(session.get("id")) or source.path.stem
+    timestamp = as_optional_str(session.get("timestamp")) or as_optional_str(
+        session.get("created_at"),
+    )
+    model = (
+        as_optional_str(session.get("model"))
+        or as_optional_str(session.get("model_name"))
+        or as_optional_str(session.get("modelProvider"))
+    )
+    items = payload.get("items")
+    if not isinstance(items, list):
+        return
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        candidate = candidate_from_mapping(
+            t.cast("dict[str, object]", item),
+            timestamp=as_optional_str(item.get("timestamp")) or timestamp,
+            model=model,
+            session_id=session_id,
+            conversation_id=session_id,
+        )
+        if candidate is None:
+            continue
+        yield build_search_record(source, candidate)
+
+
 def parse_codex_history_file(
     source: SourceHandle,
 ) -> cabc.Iterator[SearchRecord]:
@@ -3390,6 +3542,33 @@ def parse_codex_history_file(
         )
 
 
+def parse_codex_session_index_file(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse Codex ``session_index.jsonl`` records as opt-in thread summaries."""
+    for entry in iter_jsonl(source.path):
+        if not isinstance(entry, dict):
+            continue
+        mapping = t.cast("dict[str, object]", entry)
+        thread_name = as_optional_str(mapping.get("thread_name"))
+        if not thread_name:
+            continue
+        session_id = as_optional_str(mapping.get("id"))
+        yield SearchRecord(
+            kind="history",
+            agent=source.agent,
+            store=source.store,
+            adapter_id=source.adapter_id,
+            path=source.path,
+            text=thread_name,
+            title=thread_name,
+            role="assistant",
+            timestamp=as_optional_str(mapping.get("updated_at")),
+            session_id=session_id,
+            conversation_id=session_id,
+        )
+
+
 def parse_claude_project_file(
     source: SourceHandle,
 ) -> cabc.Iterator[SearchRecord]:
@@ -3411,6 +3590,71 @@ def parse_claude_project_file(
                 continue
             seen.add(key)
             yield build_search_record(source, candidate)
+
+
+def _json_string_list(value: object) -> list[str]:
+    """Return a list of non-empty strings from a JSON list-like field."""
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str) and item.strip()]
+
+
+def parse_claude_task_file(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse Claude Code task JSON files as opt-in task samples."""
+    payload = read_json_file(source.path)
+    if not isinstance(payload, dict):
+        return
+    mapping = t.cast("dict[str, object]", payload)
+    subject = as_optional_str(mapping.get("subject"))
+    description = as_optional_str(mapping.get("description"))
+    text = "\n\n".join(part for part in (subject, description) if part)
+    if not text:
+        return
+    yield SearchRecord(
+        kind="history",
+        agent=source.agent,
+        store=source.store,
+        adapter_id=source.adapter_id,
+        path=source.path,
+        text=text,
+        title=subject,
+        role="task",
+        timestamp=as_optional_str(mapping.get("updatedAt"))
+        or as_optional_str(mapping.get("updated_at"))
+        or isoformat_from_mtime_ns(source.mtime_ns),
+        session_id=as_optional_str(mapping.get("id")),
+        metadata={
+            "status": as_optional_str(mapping.get("status")) or "",
+            "task_id": as_optional_str(mapping.get("id")) or "",
+            "blocks": _json_string_list(mapping.get("blocks")),
+            "blocked_by": _json_string_list(mapping.get("blockedBy")),
+        },
+    )
+
+
+def parse_claude_settings_file(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse Claude settings JSON as a key summary without raw values."""
+    payload = read_json_file(source.path)
+    if not isinstance(payload, dict):
+        return
+    keys = sorted(key for key in payload if key.strip())
+    if not keys:
+        return
+    yield SearchRecord(
+        kind="history",
+        agent=source.agent,
+        store=source.store,
+        adapter_id=source.adapter_id,
+        path=source.path,
+        text=f"Claude settings keys: {', '.join(keys)}",
+        title=source.path.name,
+        timestamp=isoformat_from_mtime_ns(source.mtime_ns),
+        metadata={"key_count": len(keys)},
+    )
 
 
 CLAUDE_PASTE_REF_RE = re.compile(
@@ -4058,6 +4302,65 @@ def parse_codex_state_db(
         connection.close()
 
 
+def parse_codex_logs_db(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse opt-in Codex ``logs_2.sqlite`` feedback log bodies."""
+    connection = open_readonly_sqlite(source.path)
+    try:
+        tables = sqlite_table_names(connection)
+        if "logs" not in tables:
+            return
+        columns = sqlite_column_names(connection, "logs")
+        if "feedback_log_body" not in columns:
+            return
+        id_expr = "id" if "id" in columns else "NULL"
+        ts_expr = "ts" if "ts" in columns else "NULL"
+        level_expr = "level" if "level" in columns else "NULL"
+        target_expr = "target" if "target" in columns else "NULL"
+        thread_expr = "thread_id" if "thread_id" in columns else "NULL"
+        rows = t.cast(
+            "cabc.Iterable[tuple[object, object, object, object, object, object]]",
+            connection.execute(
+                f"SELECT {id_expr}, {ts_expr}, {level_expr}, {target_expr}, "
+                f"feedback_log_body, {thread_expr} FROM logs",
+            ),
+        )
+        for row_id, timestamp, level, target, body, thread_id in rows:
+            text = decode_sqlite_value(body) or as_optional_str(body)
+            if not text:
+                continue
+            conversation_id = as_optional_str(thread_id)
+            metadata: dict[str, object] = {}
+            level_text = as_optional_str(level)
+            target_text = as_optional_str(target)
+            if level_text:
+                metadata["level"] = level_text
+            if target_text:
+                metadata["target"] = target_text
+            log_id = as_optional_str(row_id)
+            if log_id and not metadata:
+                metadata["log_id"] = log_id
+            yield SearchRecord(
+                kind="history",
+                agent=source.agent,
+                store=source.store,
+                adapter_id=source.adapter_id,
+                path=source.path,
+                text=text,
+                title="Codex feedback log",
+                role="system",
+                timestamp=as_optional_str(timestamp),
+                session_id=conversation_id,
+                conversation_id=conversation_id,
+                metadata=metadata,
+            )
+    except sqlite3.DatabaseError:
+        return
+    finally:
+        connection.close()
+
+
 def parse_codex_memories_db(
     source: SourceHandle,
 ) -> cabc.Iterator[SearchRecord]:
@@ -4104,6 +4407,49 @@ def parse_codex_memories_db(
         return
     finally:
         connection.close()
+
+
+def parse_codex_external_imports_file(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse Codex external-agent session import ledgers as opt-in summaries."""
+    payload = read_json_file(source.path)
+    if not isinstance(payload, dict):
+        return
+    records = payload.get("records")
+    if not isinstance(records, list):
+        return
+    for entry in records:
+        if not isinstance(entry, dict):
+            continue
+        mapping = t.cast("dict[str, object]", entry)
+        thread_id = (
+            as_optional_str(mapping.get("imported_thread_id"))
+            or as_optional_str(mapping.get("thread_id"))
+            or as_optional_str(mapping.get("id"))
+        )
+        if not thread_id:
+            continue
+        source_path = as_optional_str(mapping.get("source_path"))
+        metadata: dict[str, object] = {}
+        content_hash = as_optional_str(mapping.get("content_hash"))
+        if content_hash:
+            metadata["content_hash"] = content_hash
+        if source_path:
+            metadata["source_name"] = pathlib.PurePath(source_path).name
+        yield SearchRecord(
+            kind="history",
+            agent=source.agent,
+            store=source.store,
+            adapter_id=source.adapter_id,
+            path=source.path,
+            text=f"Imported external agent session {thread_id}",
+            title="Codex external import",
+            timestamp=as_optional_str(mapping.get("imported_at")),
+            session_id=thread_id,
+            conversation_id=thread_id,
+            metadata=metadata,
+        )
 
 
 def parse_codex_goals_db(
