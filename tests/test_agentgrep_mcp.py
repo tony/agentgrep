@@ -466,6 +466,42 @@ async def test_mcp_list_sources_with_filters(
     assert all(s["path_kind"] == "sqlite_db" for s in data["sources"])
 
 
+async def test_mcp_list_sources_exposes_non_default_coverage_on_request(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``list_sources`` keeps defaults narrow but can inventory non-default stores."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+
+    history_path = home / ".codex" / "history.jsonl"
+    write_jsonl(
+        history_path,
+        [{"session_id": "s", "ts": 1_700_000_000, "text": "history"}],
+    )
+    state_db = home / ".codex" / "state_5.sqlite"
+    state_db.parent.mkdir(parents=True, exist_ok=True)
+    state_db.touch()
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        default_result = await client.call_tool("list_sources", {"agent": "codex"})
+        inventory_result = await client.call_tool(
+            "list_sources",
+            {
+                "agent": "codex",
+                "include_non_default": True,
+                "coverage_filter": "inspectable",
+            },
+        )
+
+    default_data = tool_payload(default_result)
+    inventory_data = tool_payload(inventory_result)
+    assert all(s["coverage"] == "default_search" for s in default_data["sources"])
+    assert any(s["path"].endswith("state_5.sqlite") for s in inventory_data["sources"])
+    assert {s["coverage"] for s in inventory_data["sources"]} == {"inspectable"}
+
+
 async def test_mcp_filter_sources_requires_pattern() -> None:
     """``filter_sources`` rejects an empty pattern at the validation layer."""
     from fastmcp.exceptions import ToolError

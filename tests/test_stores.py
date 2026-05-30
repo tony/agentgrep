@@ -17,6 +17,7 @@ from agentgrep.stores import (
     AgentName,
     DiscoverySpec,
     StoreCatalog,
+    StoreCoverage,
     StoreDescriptor,
     StoreFormat,
     StoreRole,
@@ -151,6 +152,16 @@ def test_descriptor_format_and_role_are_enum_members() -> None:
         assert store.role in valid_roles, store.store_id
 
 
+def test_catalog_exposes_coverage_levels() -> None:
+    """Coverage level separates default search from broader storage support."""
+    coverage_by_id = {store.store_id: store.coverage_level for store in CATALOG.stores}
+
+    assert coverage_by_id["claude.history"] is StoreCoverage.DEFAULT_SEARCH
+    assert coverage_by_id["claude.store_db"] is StoreCoverage.INSPECTABLE
+    assert coverage_by_id["codex.state_db"] is StoreCoverage.INSPECTABLE
+    assert coverage_by_id["codex.auth"] is StoreCoverage.PRIVATE
+
+
 def test_search_by_default_only_true_for_searchable_roles() -> None:
     """``search_by_default=True`` shouldn't appear on caches or source trees."""
     searchable = {
@@ -272,6 +283,137 @@ def test_discover_from_catalog_skips_search_by_default_false(
     discovered_paths = {s.path for s in sources}
     assert searched_file in discovered_paths
     assert skipped_file not in discovered_paths
+
+
+def test_discover_from_catalog_can_include_non_default_coverage(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-default coverage is inventory-only unless explicitly requested."""
+    import agentgrep
+    import agentgrep.store_catalog as store_catalog
+
+    base = tmp_path / "base"
+    base.mkdir()
+    default_file = base / "default.jsonl"
+    inspectable_file = base / "inspectable.sqlite"
+    catalog_file = base / "catalog.json"
+    private_file = base / "private.json"
+    for path in (default_file, inspectable_file, catalog_file, private_file):
+        _ = path.write_text("{}", encoding="utf-8")
+
+    fake_catalog = StoreCatalog(
+        catalog_version=999,
+        captured_at=OBSERVED_AT,
+        stores=(
+            StoreDescriptor(
+                agent="codex",
+                store_id="codex.test_default",
+                role=StoreRole.PROMPT_HISTORY,
+                format=StoreFormat.JSONL,
+                path_pattern="${HOME}/default.jsonl",
+                observed_version="test",
+                observed_at=OBSERVED_AT,
+                schema_notes="Default-search test row.",
+                search_by_default=True,
+                discovery=(
+                    DiscoverySpec(
+                        store="codex.test_default",
+                        adapter_id="codex.test_default.v1",
+                        path_kind="history_file",
+                        source_kind="jsonl",
+                        files=("default.jsonl",),
+                    ),
+                ),
+            ),
+            StoreDescriptor(
+                agent="codex",
+                store_id="codex.test_inspectable",
+                role=StoreRole.APP_STATE,
+                format=StoreFormat.SQLITE,
+                path_pattern="${HOME}/inspectable.sqlite",
+                coverage=StoreCoverage.INSPECTABLE,
+                observed_version="test",
+                observed_at=OBSERVED_AT,
+                schema_notes="Inspectable test row.",
+                search_by_default=False,
+                discovery=(
+                    DiscoverySpec(
+                        store="codex.test_inspectable",
+                        adapter_id="codex.test_inspectable.v1",
+                        path_kind="sqlite_db",
+                        source_kind="sqlite",
+                        files=("inspectable.sqlite",),
+                    ),
+                ),
+            ),
+            StoreDescriptor(
+                agent="codex",
+                store_id="codex.test_catalog",
+                role=StoreRole.APP_STATE,
+                format=StoreFormat.JSON_OBJECT,
+                path_pattern="${HOME}/catalog.json",
+                coverage=StoreCoverage.CATALOG_ONLY,
+                observed_version="test",
+                observed_at=OBSERVED_AT,
+                schema_notes="Catalog-only test row.",
+                search_by_default=False,
+                discovery=(
+                    DiscoverySpec(
+                        store="codex.test_catalog",
+                        adapter_id="codex.test_catalog.v1",
+                        path_kind="store_file",
+                        source_kind="json",
+                        files=("catalog.json",),
+                    ),
+                ),
+            ),
+            StoreDescriptor(
+                agent="codex",
+                store_id="codex.test_private",
+                role=StoreRole.APP_STATE,
+                format=StoreFormat.JSON_OBJECT,
+                path_pattern="${HOME}/private.json",
+                coverage=StoreCoverage.PRIVATE,
+                observed_version="test",
+                observed_at=OBSERVED_AT,
+                schema_notes="Private test row.",
+                search_by_default=False,
+                discovery=(
+                    DiscoverySpec(
+                        store="codex.test_private",
+                        adapter_id="codex.test_private.v1",
+                        path_kind="store_file",
+                        source_kind="json",
+                        files=("private.json",),
+                    ),
+                ),
+            ),
+        ),
+    )
+    monkeypatch.setattr(store_catalog, "CATALOG", fake_catalog)
+
+    backends = agentgrep.BackendSelection(None, None, None)
+    default_sources = agentgrep.discover_from_catalog(tmp_path, "codex", base, backends)
+    all_sources = agentgrep.discover_from_catalog(
+        tmp_path,
+        "codex",
+        base,
+        backends,
+        include_non_default=True,
+    )
+
+    assert {source.path for source in default_sources} == {default_file}
+    assert {source.path for source in all_sources} == {
+        default_file,
+        inspectable_file,
+        catalog_file,
+    }
+    assert {source.coverage for source in all_sources} == {
+        StoreCoverage.DEFAULT_SEARCH,
+        StoreCoverage.INSPECTABLE,
+        StoreCoverage.CATALOG_ONLY,
+    }
 
 
 def test_discover_from_catalog_deduplicates_paths_within_descriptor(

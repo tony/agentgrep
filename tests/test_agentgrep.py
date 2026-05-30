@@ -4042,6 +4042,249 @@ def test_discover_codex_sources_honours_codex_home_env(
     assert decoy_history not in paths
 
 
+def test_discover_codex_sqlite_sources_honours_codex_sqlite_home_env(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``CODEX_SQLITE_HOME`` points SQLite-backed stores away from ``CODEX_HOME``."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    codex_root = tmp_path / "codex-home"
+    sqlite_root = tmp_path / "codex-sqlite"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("CODEX_HOME", str(codex_root))
+    monkeypatch.setenv("CODEX_SQLITE_HOME", str(sqlite_root))
+
+    decoy_state = codex_root / "state_5.sqlite"
+    decoy_state.parent.mkdir(parents=True, exist_ok=True)
+    decoy_state.touch()
+    real_state = sqlite_root / "state_5.sqlite"
+    real_state.parent.mkdir(parents=True, exist_ok=True)
+    real_state.touch()
+
+    backends = agentgrep.BackendSelection(None, None, None)
+    sources = agentgrep.discover_codex_sources(
+        home,
+        backends,
+        include_non_default=True,
+    )
+
+    paths = {source.path for source in sources}
+    assert real_state in paths
+    assert decoy_state not in paths
+
+
+def test_search_codex_history_jsonl_uses_modern_text_schema(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Current Codex ``history.jsonl`` stores prompts as ``text`` with Unix ``ts``."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    history_path = home / ".codex" / "history.jsonl"
+    write_jsonl(
+        history_path,
+        [
+            {
+                "session_id": "session-jsonl-1",
+                "ts": 1_700_000_000,
+                "text": "modern codex prompt schema",
+            },
+        ],
+    )
+
+    backends = agentgrep.BackendSelection(None, None, None)
+    query = agentgrep.SearchQuery(
+        terms=("modern",),
+        search_type="history",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+    sources = agentgrep.discover_sources(home, ("codex",), backends)
+    records = agentgrep.search_sources(query, sources, backends)
+
+    assert len(records) == 1
+    record = records[0]
+    assert record.text == "modern codex prompt schema"
+    assert record.adapter_id == "codex.history_jsonl.v1"
+    assert record.timestamp == "2023-11-14T22:13:20Z"
+    assert record.session_id == "session-jsonl-1"
+    assert record.conversation_id == "session-jsonl-1"
+
+
+def test_discover_claude_sources_honours_claude_config_dir_env(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``CLAUDE_CONFIG_DIR`` overrides the default ``${HOME}/.claude`` root."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    decoy_home = tmp_path / "home"
+    alt_root = tmp_path / "claude-config"
+    monkeypatch.setenv("HOME", str(decoy_home))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(alt_root))
+
+    decoy_history = decoy_home / ".claude" / "history.jsonl"
+    write_jsonl(decoy_history, [{"display": "decoy", "timestamp": 1}])
+    history_path = alt_root / "history.jsonl"
+    write_jsonl(history_path, [{"display": "real", "timestamp": 1}])
+
+    backends = agentgrep.BackendSelection(None, None, None)
+    sources = agentgrep.discover_claude_sources(decoy_home, backends)
+
+    paths = {source.path for source in sources}
+    assert history_path in paths
+    assert decoy_history not in paths
+
+
+def test_parse_claude_store_db_returns_message_samples(tmp_path: pathlib.Path) -> None:
+    """Claude ``__store.db`` inspection surfaces message-table text."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    db_path = tmp_path / "__store.db"
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.executescript(
+            """
+            CREATE TABLE base_messages (
+                uuid TEXT PRIMARY KEY,
+                session_id TEXT
+            );
+            CREATE TABLE user_messages (
+                uuid TEXT PRIMARY KEY,
+                message TEXT,
+                timestamp TEXT
+            );
+            CREATE TABLE assistant_messages (
+                uuid TEXT PRIMARY KEY,
+                message TEXT,
+                timestamp TEXT,
+                model TEXT
+            );
+            CREATE TABLE conversation_summaries (
+                leaf_uuid TEXT,
+                summary TEXT,
+                updated_at TEXT
+            );
+            """
+        )
+        connection.execute(
+            "INSERT INTO base_messages(uuid, session_id) VALUES (?, ?)",
+            ("u1", "session-db-1"),
+        )
+        connection.execute(
+            "INSERT INTO user_messages(uuid, message, timestamp) VALUES (?, ?, ?)",
+            ("u1", "sqlite user prompt", "2026-05-01T00:00:00Z"),
+        )
+        connection.execute(
+            "INSERT INTO assistant_messages(uuid, message, timestamp, model) VALUES (?, ?, ?, ?)",
+            ("a1", "sqlite assistant answer", "2026-05-01T00:00:01Z", "claude-test"),
+        )
+        connection.execute(
+            "INSERT INTO conversation_summaries(leaf_uuid, summary, updated_at) VALUES (?, ?, ?)",
+            ("u1", "sqlite summary", "2026-05-01T00:00:02Z"),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    source = agentgrep.SourceHandle(
+        agent="claude",
+        store="claude.store_db",
+        adapter_id="claude.store_sqlite.v1",
+        path=db_path,
+        path_kind="sqlite_db",
+        source_kind="sqlite",
+        search_root=None,
+        mtime_ns=0,
+    )
+
+    records = list(agentgrep.iter_source_records(source))
+
+    assert [record.text for record in records] == [
+        "sqlite user prompt",
+        "sqlite assistant answer",
+        "sqlite summary",
+    ]
+    assert records[0].kind == "prompt"
+    assert records[0].session_id == "session-db-1"
+    assert records[1].model == "claude-test"
+
+
+def test_parse_codex_state_db_returns_thread_and_job_samples(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Codex ``state_5.sqlite`` inspection surfaces prompt-bearing fields."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    db_path = tmp_path / "state_5.sqlite"
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.executescript(
+            """
+            CREATE TABLE threads (
+                id TEXT PRIMARY KEY,
+                first_user_message TEXT,
+                preview TEXT,
+                title TEXT,
+                updated_at_ms INTEGER
+            );
+            CREATE TABLE agent_jobs (
+                id TEXT PRIMARY KEY,
+                thread_id TEXT,
+                instruction TEXT,
+                updated_at_ms INTEGER
+            );
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO threads(id, first_user_message, preview, title, updated_at_ms)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                "thread-1",
+                "codex sqlite prompt",
+                "codex sqlite preview",
+                "Codex DB",
+                1_700_000_000_000,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO agent_jobs(id, thread_id, instruction, updated_at_ms)
+            VALUES (?, ?, ?, ?)
+            """,
+            ("job-1", "thread-1", "codex job instruction", 1_700_000_000_001),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    source = agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.state_db",
+        adapter_id="codex.state_sqlite.v1",
+        path=db_path,
+        path_kind="sqlite_db",
+        source_kind="sqlite",
+        search_root=None,
+        mtime_ns=0,
+    )
+
+    records = list(agentgrep.iter_source_records(source))
+
+    assert [record.text for record in records] == [
+        "codex sqlite prompt",
+        "codex sqlite preview",
+        "codex job instruction",
+    ]
+    assert records[0].kind == "prompt"
+    assert records[0].conversation_id == "thread-1"
+    assert records[2].metadata["job_id"] == "job-1"
+
+
 def test_search_claude_history_expands_external_pasted_text(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
