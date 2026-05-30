@@ -696,6 +696,62 @@ async def test_mcp_inspect_record_sample_returns_codex_history(
     assert data["sample_count"] >= 1
 
 
+async def test_mcp_inspect_record_sample_returns_non_default_adapter_records(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Inspectable/catalog adapters with discovery can produce record samples."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+
+    task_path = home / ".claude" / "tasks" / "team" / "1.json"
+    task_path.parent.mkdir(parents=True, exist_ok=True)
+    _ = task_path.write_text(
+        json.dumps(
+            {
+                "id": "1",
+                "subject": "Sample task",
+                "description": "Inspect task text",
+                "status": "pending",
+                "blocks": [],
+                "blockedBy": [],
+            },
+        ),
+        encoding="utf-8",
+    )
+    index_path = home / ".codex" / "session_index.jsonl"
+    write_jsonl(
+        index_path,
+        [{"id": "thread-1", "thread_name": "Sample thread", "updated_at": "2026-05-30T12:00:00Z"}],
+    )
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        task_result = await client.call_tool(
+            "inspect_record_sample",
+            {
+                "adapter_id": "claude.tasks_json.v1",
+                "source_path": str(task_path),
+                "sample_size": 1,
+            },
+        )
+        index_result = await client.call_tool(
+            "inspect_record_sample",
+            {
+                "adapter_id": "codex.session_index_jsonl.v1",
+                "source_path": str(index_path),
+                "sample_size": 1,
+            },
+        )
+
+    task_data = tool_payload(task_result)
+    index_data = tool_payload(index_result)
+    assert task_data["error_message"] is None
+    assert task_data["records"][0]["text"] == "Sample task\n\nInspect task text"
+    assert index_data["error_message"] is None
+    assert index_data["records"][0]["text"] == "Sample thread"
+
+
 async def test_mcp_catalog_resource_returns_full_catalog() -> None:
     """``agentgrep://catalog`` returns the StoreCatalog payload."""
     agentgrep_mcp = load_agentgrep_mcp_module()

@@ -163,6 +163,29 @@ def test_catalog_exposes_coverage_levels() -> None:
     assert coverage_by_id["codex.auth"] is StoreCoverage.PRIVATE
 
 
+def test_catalog_covers_remaining_claude_and_codex_storage_map() -> None:
+    """Claude/Codex catalog rows include non-prompt app/cache/private stores."""
+    store_ids = {store.store_id for store in CATALOG.stores}
+
+    assert {
+        "claude.credentials",
+        "claude.update_state",
+        "claude.stats_cache",
+        "claude.debug_logs",
+        "claude.backups",
+        "claude.generic_cache",
+        "codex.installation_id",
+        "codex.update_check",
+        "codex.version_file",
+        "codex.personality_migration",
+        "codex.config_backups",
+        "codex.sqlite_sidecars",
+    } <= store_ids
+
+    assert CATALOG.by_id("claude.credentials").coverage_level is StoreCoverage.PRIVATE
+    assert CATALOG.by_id("codex.sqlite_sidecars").coverage_level is StoreCoverage.CATALOG_ONLY
+
+
 def test_catalog_exposes_version_detection_strategies() -> None:
     """Descriptors declare how runtime source versions should be detected."""
     codex_history = CATALOG.by_id("codex.history")
@@ -183,6 +206,24 @@ def test_catalog_exposes_version_detection_strategies() -> None:
     assert ("codex.history_jsonl.v1", "codex.history_jsonl.current") in data_versions
     assert ("codex.state_sqlite.v1", "codex.state.sqlite.v5") in data_versions
     assert ("claude.projects_jsonl.v1", "claude.projects_jsonl.message.v1") in data_versions
+
+
+def test_claude_codex_discovered_adapters_are_sampleable_or_explicitly_opaque() -> None:
+    """Discovered Claude/Codex adapters must either parse samples or be intentionally opaque."""
+    import agentgrep
+
+    dispatchable = set(agentgrep.ITER_SOURCE_RECORD_ADAPTERS)
+    missing = [
+        f"{store.store_id}:{spec.adapter_id}"
+        for store in CATALOG.stores
+        if store.agent in {"claude", "codex"}
+        and store.coverage_level is not StoreCoverage.PRIVATE
+        and store.format is not StoreFormat.OPAQUE
+        for spec in store.discovery
+        if spec.adapter_id not in dispatchable
+    ]
+
+    assert missing == []
 
 
 def test_search_by_default_only_true_for_searchable_roles() -> None:
