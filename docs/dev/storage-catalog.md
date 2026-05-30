@@ -116,21 +116,25 @@ file format is JSONL with multiple record types per line —
 `type: "permission-mode"`. Sub-agent dispatches nest under
 `<session_uuid>/subagents/`, share the same parser, and are exposed as
 the distinct runtime store `claude.projects_subagents`. `__store.db`,
-session memory, project auto-memory, tasks, todos, plans, skills,
-legacy commands, and teams are inspectable but remain outside default
+session memory, project auto-memory, `CLAUDE.md`, tasks, todos, plans,
+skills, legacy commands, project-local `.claude` instructions, plugin
+instructions, and teams are inspectable but remain outside default
 search because they either duplicate transcripts, represent derived
 state, or steer future sessions. Tasks and todos emit their subject,
 content, and description fields; teams emit team descriptions and
 member prompts. Settings and app-state JSON expose only top-level key
 and type summaries, so raw values such as env vars are not indexed.
-Debug output, backups, file history, shell snapshots, context/security
-state, credentials, plugin cache, and session environment are
-catalogued or private according to sensitivity.
+Debug output and shell snapshots expose metadata-only file summaries.
+Backups, uploads, file history, context/security state, credentials,
+session environment, and cache payloads are catalogued or private
+according to sensitivity.
 Claude source version detection uses `embedded_metadata` for transcript
 `version` fields, `shape_inference` for history records with `display`,
 `timestamp`, and `project`, task/todo/team JSON keys, settings and
-app-state key summaries, instruction Markdown paths, and
-`catalog_observation` as the fallback.
+app-state key summaries, plugin manifests and hook event names,
+instruction Markdown paths, file metadata summaries, and
+`catalog_observation` as the fallback. Project-local discovery is
+bounded to roots already present in Claude transcript metadata.
 
 ### Cursor
 
@@ -182,10 +186,13 @@ than default search.
 Codex source version detection uses `shape_inference` for
 `history.jsonl`, legacy `history.json`, legacy root rollout JSON,
 `session_index.jsonl`, external import ledgers, memory Markdown,
-config TOML, app-state JSON summaries, plugin manifests, instruction
-Markdown/rule paths, and SQLite suffixes. It uses `embedded_metadata`
-for session `cli_version`, and `version_check` for
-`models_cache.json.client_version` app-version context.
+config TOML, project config TOML, app-state JSON summaries, plugin
+manifests, plugin marketplace metadata, hook event names, instruction
+Markdown/rule paths, file metadata summaries, and SQLite suffixes. It
+uses `embedded_metadata` for session `cli_version`, and
+`version_check` for `models_cache.json.client_version` app-version
+context. Project-local `.codex` discovery is bounded to roots already
+present in Codex session metadata.
 
 ### Gemini CLI
 

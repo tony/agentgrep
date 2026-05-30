@@ -31,21 +31,27 @@ explicit inspection.
 | `claude.update_state` | App State | JSON | catalog | `claude.app_state_json_summary.v1` |
 | `claude.stats_cache` | Cache | JSON | catalog | `claude.app_state_json_summary.v1` |
 | `claude.projects.memory` | Persistent Memory | Markdown | inspectable | `claude.projects_memory_text.v1` |
+| `claude.memory_files` | Persistent Memory | Text | inspectable | `claude.memory_text.v1` |
 | `claude.todos` | Todo | JSON | inspectable | `claude.todos_json.v1` |
 | `claude.sessions` | App State | JSON | catalog | `claude.app_state_json_summary.v1` |
 | `claude.context_mode` | App State | JSON / SQLite | catalog | `claude.app_state_json_summary.v1` |
 | `claude.ide` | App State | JSON | catalog | `claude.app_state_json_summary.v1` |
+| `claude.chrome` | App State | JSON | catalog | `claude.app_state_json_summary.v1` |
+| `claude.native_install` | App State | JSON | catalog | `claude.app_state_json_summary.v1` |
+| `claude.jobs` | App State | JSON | catalog | `claude.app_state_json_summary.v1` |
 | `claude.skills` | Instruction | Text | inspectable | `claude.skills_text.v1` |
 | `claude.commands` | Instruction | Text | inspectable | `claude.commands_text.v1` |
+| `claude.project_instructions` | Instruction | Text | inspectable | `claude.project_instruction_text.v1` |
 | `claude.teams` | Instruction | JSON | inspectable | `claude.teams_json.v1` |
-| `claude.debug_logs` | App State | Text | catalog | |
+| `claude.debug_logs` | App State | Text | catalog | `claude.file_metadata_summary.v1` |
 | `claude.backups` | Cache | Opaque | catalog | |
 | `claude.generic_cache` | Cache | Opaque | catalog | |
 | `claude.paste_cache` | Cache | Opaque | catalog | |
 | `claude.image_cache` | Cache | Opaque | catalog | |
 | `claude.file_history` | Cache | Opaque | catalog | |
-| `claude.plugins_cache` | Cache | Opaque | catalog | |
-| `claude.shell_snapshots` | App State | Text | catalog | |
+| `claude.plugins_cache` | Cache / Instruction | Opaque / Text / JSON | inspectable | `claude.plugin_manifest_json.v1`, `claude.plugin_instruction_text.v1`, `claude.plugin_hooks_json.v1` |
+| `claude.shell_snapshots` | App State | Text | catalog | `claude.file_metadata_summary.v1` |
+| `claude.uploads` | Cache | Opaque | catalog | |
 | `claude.security_state` | App State | JSON | private | |
 | `claude.session_env` | App State | Opaque | private | |
 
@@ -59,10 +65,12 @@ metadata when present; otherwise their `type`, `sessionId`, and
 `message` keys identify the JSONL message shape.
 Task files with `id`, `subject`, `description`, and `status` are
 reported as `claude.tasks.json.v1`. Todo, team, app-state, skill,
-command, and auto-memory stores use path and key-shape inference for
-their non-default adapters. Settings and app-state files use
+command, plugin, project instruction, user/project memory, and
+auto-memory stores use path and key-shape inference for their
+non-default adapters. Settings and app-state files use
 medium-confidence key/type summaries because their values are
-deliberately not indexed.
+deliberately not indexed. Debug logs and shell snapshots expose
+metadata-only summaries, not raw file content.
 
 Catalog observation stamps remain the fallback for discovered stores
 whose concrete shape cannot be sampled safely.
@@ -131,12 +139,19 @@ are Markdown files under `plans/*.md`.
 
 Settings and keybindings expose only top-level key summaries for
 explicit inspection, so raw values such as environment variables are
-not indexed. Auto-memory Markdown, persistent todos, user skills,
-legacy commands, and team member prompts are inspectable because they
-can steer future Claude Code behavior. Context-mode files, IDE bridge
-state, stats/update cache, and session state expose only key/type
-summaries. Security state, session environment, plugin cache, file
-history, shell snapshots, debug output, backups, generic cache,
-credentials, and image/paste caches stay catalogued or private so
-storage audits can identify them without treating them as default
+not indexed. Auto-memory Markdown, `CLAUDE.md` memory files,
+persistent todos, user skills, legacy commands, project-local
+commands/agents/skills, plugin instructions, and team member prompts
+are inspectable because they can steer future Claude Code behavior.
+Project-local files are discovered only from roots already referenced
+by local Claude transcript metadata; agentgrep does not recursively
+scan `$HOME` for every possible project.
+
+Context-mode files, IDE bridge state, Chrome/native integration state,
+native installer metadata, jobs, stats/update cache, and session state
+expose only key/type summaries. Debug logs and shell snapshots expose
+file metadata such as name, suffix, byte size, and line count. Security
+state, session environment, uploads, file history, backups, generic
+cache, credentials, and image/paste caches stay catalogued or private
+so storage audits can identify them without treating them as default
 prompt history.

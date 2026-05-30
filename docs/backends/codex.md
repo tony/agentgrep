@@ -31,21 +31,28 @@ enumerated. Some catalog stores have safe sample parsers for
 | `codex.external_agent_imports` | App State | JSON | catalog | `codex.external_imports_json.v1` |
 | `codex.config` | App State | Text | catalog | `codex.config_toml.v1` |
 | `codex.config_backups` | App State | Text | catalog | `codex.config_backup_toml.v1` |
+| `codex.project_config` | App State | Text | catalog | `codex.project_config_toml.v1` |
 | `codex.update_check` | App State | JSON | catalog | `codex.app_state_json_summary.v1` |
 | `codex.version_file` | App State | JSON | catalog | `codex.app_state_json_summary.v1` |
-| `codex.personality_migration` | App State | Text | catalog | |
+| `codex.personality_migration` | App State | Text | catalog | `codex.file_metadata_summary.v1` |
 | `codex.model_cache` | Cache | JSON | catalog | `codex.app_state_json_summary.v1` |
 | `codex.internal_storage` | App State | JSON | catalog | `codex.app_state_json_summary.v1` |
-| `codex.plugins` | Instruction | Opaque / Text / JSON | inspectable | `codex.plugin_manifest_json.v1`, `codex.plugin_instruction_text.v1` |
+| `codex.hooks` | App State | JSON | catalog | `codex.hooks_json.v1` |
+| `codex.plugins` | Instruction | Opaque / Text / JSON | inspectable | `codex.plugin_manifest_json.v1`, `codex.plugin_instruction_text.v1`, `codex.plugin_hooks_json.v1` |
+| `codex.plugin_marketplace` | App State | JSON | inspectable | `codex.plugin_marketplace_json.v1` |
 | `codex.skills` | Instruction | Text | inspectable | `codex.skills_text.v1` |
+| `codex.project_skills` | Instruction | Text | inspectable | `codex.project_skill_text.v1` |
 | `codex.rules` | Instruction | Text | inspectable | `codex.rules_text.v1` |
 | `codex.runtime_cache` | Cache | Opaque | catalog | |
-| `codex.log_files` | App State | Text | catalog | |
+| `codex.arg0_runtime` | App State | JSON | catalog | `codex.app_state_json_summary.v1` |
+| `codex.log_files` | App State | Text | catalog | `codex.file_metadata_summary.v1` |
 | `codex.process_manager` | App State | JSON | catalog | `codex.app_state_json_summary.v1` |
-| `codex.shell_snapshots` | App State | Opaque | catalog | |
+| `codex.shell_snapshots` | App State | Text | catalog | `codex.file_metadata_summary.v1` |
 | `codex.sqlite_sidecars` | Cache | Opaque | catalog | |
 | `codex.auth` | App State | JSON | private | |
 | `codex.installation_id` | App State | Text | private | |
+| `codex.secrets` | App State | Opaque | private | |
+| `codex.env` | App State | Text | private | |
 | `codex.policy` | App State | Opaque | private | |
 
 ## Version detection
@@ -66,8 +73,9 @@ objects with `session` and `items` are reported as
 `codex.sessions.legacy_json.v1`. SQLite stores derive data versions
 from their migration suffixes, such as `state_5.sqlite` →
 `codex.state.sqlite.v5`. Config, app-state, skill, rule, and plugin
-adapters infer shape from TOML keys, JSON keys, manifest keys, or
-instruction paths while keeping those sources outside default search.
+adapters infer shape from TOML keys, JSON keys, manifest keys, hook
+event names, marketplace keys, file metadata, or instruction paths
+while keeping those sources outside default search.
 
 ## Record schemas
 
@@ -130,16 +138,25 @@ operational metadata.
 
 ### Instructions, Memory, And Runtime State
 
-`instructions.md`, `skills/`, `rules/`, and plugin bundles are
-instruction surfaces rather than chat transcripts. The root
-instructions file, user skills, rules, plugin manifests, and plugin
-command/agent/skill Markdown are inspectable but stay outside default
-search. `memories/` and `memories_1.sqlite` hold retained memory and
-rollout summaries; the Markdown workspace is inspectable through
+`instructions.md`, `skills/`, `rules/`, project `.codex/skills/`, and
+plugin bundles are instruction surfaces rather than chat transcripts.
+The root instructions file, user skills, project skills, rules, plugin
+manifests, plugin marketplace metadata, plugin hooks, and plugin
+command/agent/skill/custom-skill Markdown are inspectable but stay
+outside default search. Project-local files are discovered only from
+roots already referenced by local Codex session metadata; agentgrep
+does not recursively scan `$HOME` for arbitrary `.codex` directories.
+
+`memories/` and `memories_1.sqlite` hold retained memory and rollout
+summaries; the Markdown workspace is inspectable through
 `codex.memories_text.v1`. The external-agent import ledger exposes
 imported thread ids and source file names for explicit inspection
-without indexing full imported content. Config TOML, config backups,
-update/version/model/internal JSON, and process-manager state expose
-only key/type summaries. Auth, installation id, and policy state are
-private; caches, logs, shell snapshots, SQLite sidecars, and temp
-directories are catalogued for audits but stay outside default search.
+without indexing full imported content. Config TOML, managed config,
+environment TOML, config backups, project config,
+update/version/model/internal JSON, hooks, arg0 runtime state, and
+process-manager state expose only key/type summaries. Raw logs, shell
+snapshots, and personality-migration markers expose metadata-only file
+summaries.
+Auth, installation id, secrets, `.env`, and policy state are private;
+caches, SQLite sidecars, and temp directories are catalogued for audits
+but stay outside default search.

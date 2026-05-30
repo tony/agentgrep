@@ -34,6 +34,14 @@ agentgrep detects source versions from concrete data evidence first:
    CLI, such as Codex `models_cache.json.client_version`.
 4. Catalog observation metadata as a low-confidence fallback.
 
+For opt-in inventory stores that are useful for storage coverage but
+unsafe or noisy as raw text, shape inference may use structural
+summaries: top-level JSON/TOML keys, hook event names, plugin manifest
+keys, file suffixes, byte sizes, or line counts. These summaries prove
+which storage shape was observed without adding raw logs, shell
+snapshots, hook commands, config values, or cache payloads to the
+search corpus.
+
 Normal discovery and search must not run `codex`, `claude`, or another
 agent CLI just to learn a version. CLI subprocess probes are slow,
 side-effect-prone, and can fail for reasons unrelated to local storage.
@@ -62,6 +70,12 @@ application state.
 Evidence strings must identify keys, table names, or filename suffixes
 only. They must not include prompt text, raw config values, tokens, or
 local absolute paths.
+
+Private stores, including auth files, credentials, security state,
+session environment, secrets, and `.env` files, remain catalog
+documentation only. Runtime discovery must not enumerate those paths
+from disk, so they expose no `version_detection` payload until a future
+explicitly safe private-store inventory policy exists.
 
 The store catalogue declares the strategies each descriptor supports,
 but runtime discovery records the strategy actually used for each
