@@ -58,15 +58,26 @@ root (Codex respects `CODEX_HOME`; Gemini respects `GEMINI_CLI_HOME`).
 
 ### Claude Code
 
-`observed_version`: ``claude-code v2.1.143`` (2026-05-15).
+Claude rows carry per-store observation stamps. Project transcript
+schemas were observed against ``claude-code v2.1.143`` (2026-05-15);
+global prompt history was observed against ``claude-code v2.1.157``
+(2026-05-29).
+
+Claude's global prompt-history audit log lives at
+`${HOME}/.claude/history.jsonl` and is parsed by
+`claude.history_jsonl.v1`. It stores the user-facing `display` text,
+Unix-millisecond `timestamp`, `project`, `sessionId`, and
+`pastedContents`; content-addressed text pastes resolve through
+`${HOME}/.claude/paste-cache/<contentHash>.txt` when present.
 
 Claude's primary chat record lives at
 `${HOME}/.claude/projects/<encoded_project>/<session_uuid>.jsonl`. The
 file format is JSONL with multiple record types per line —
 `type: "user"`, `type: "assistant"`, `type: "attachment"`,
 `type: "permission-mode"`. Sub-agent dispatches nest under
-`<session_uuid>/subagents/`. The auto-memory feature stores markdown
-notes under `<encoded_project>/memory/`.
+`<session_uuid>/subagents/`, share the same parser, and are exposed as
+the distinct runtime store `claude.projects_subagents`. The auto-memory
+feature stores markdown notes under `<encoded_project>/memory/`.
 
 ### Cursor
 
@@ -78,7 +89,9 @@ Two distinct surfaces, both catalogued and both searched:
   Anthropic-style `{role, message.content[]}` with `text` and
   `tool_use` content blocks; tool outputs are sometimes `[REDACTED]`
   in older `cursor-agent` builds. There is no native per-turn
-  timestamp, so agentgrep backfills the file's mtime.
+  timestamp, so agentgrep backfills the file's mtime. Sub-agent
+  transcripts nested under `subagents/` share the parser but surface as
+  the distinct runtime store `cursor.cli_subagents`.
 - **Cursor IDE**: parsed by `cursor.state_vscdb_modern.v1` /
   `cursor.state_vscdb_legacy.v1` via `state.vscdb` (SQLite). The
   catalogue keeps the IDE path separate from the CLI agent so the
