@@ -36,11 +36,21 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a13 (Yet to be released)
+## agentgrep 0.1.0a14 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a13 (2026-05-31)
+
+agentgrep 0.1.0a13 adds OpenCode (anomalyco/opencode, formerly
+sst/opencode) as a searchable backend, reachable from both the CLI
+(`--agent opencode`) and the MCP server. Unlike the JSONL-transcript
+backends, OpenCode keeps every conversation in one SQLite database
+that agentgrep reads relationally by joining its session, message, and
+part tables. See {doc}`/backends/opencode` for the store layout and
+record schema.
 
 ### What's new
 
