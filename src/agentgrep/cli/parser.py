@@ -348,10 +348,10 @@ def create_parser(
         help="Show column numbers in output (implies -n)",
     )
     _ = grep_parser.add_argument(
-        "--type",
-        choices=["prompts", "history", "all"],
+        "--scope",
+        choices=["prompts", "conversations", "all"],
         dest="search_type",
-        help="Record type to search (default: prompts)",
+        help="Search scope: prompts, conversations, or all (default: prompts)",
     )
     _ = grep_parser.add_argument(
         "--progress",
@@ -513,10 +513,10 @@ def create_parser(
         help="Search terms (combined as AND by default)",
     )
     _ = search_parser.add_argument(
-        "--type",
-        choices=["prompts", "history", "all"],
+        "--scope",
+        choices=["prompts", "conversations", "all"],
         dest="search_type",
-        help="Record type to search (default: prompts)",
+        help="Search scope: prompts, conversations, or all (default: prompts)",
     )
     _ = search_parser.add_argument(
         "--case-sensitive",
@@ -587,7 +587,7 @@ def _search_explicit_flags(namespace: argparse.Namespace) -> dict[str, str]:
     if t.cast("list[str]", namespace.agent):
         flags["agent"] = "--agent"
     if t.cast("str | None", namespace.search_type) is not None:
-        flags["type"] = "--type"
+        flags["scope"] = "--scope"
     return flags
 
 
@@ -597,7 +597,7 @@ def _grep_explicit_flags(namespace: argparse.Namespace) -> dict[str, str]:
     if t.cast("list[str]", namespace.agent):
         flags["agent"] = "--agent"
     if t.cast("str | None", namespace.search_type) is not None:
-        flags["type"] = "--type"
+        flags["scope"] = "--scope"
     return flags
 
 
@@ -620,7 +620,7 @@ def _effective_search_type(
     explicit = t.cast("SearchType | None", namespace.search_type)
     if explicit is not None:
         return explicit
-    if "type" in query_fields:
+    if "scope" in query_fields:
         return "all"
     return "prompts"
 

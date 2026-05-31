@@ -36,6 +36,7 @@ import collections
 import contextlib
 import dataclasses
 import datetime
+import functools
 import importlib
 import itertools
 import json
@@ -67,6 +68,7 @@ from agentgrep.stores import (
     SourceKind,
     StoreCoverage,
     StoreDescriptor,
+    StoreRole,
     VersionDetectionConfidence,
     VersionDetectionStrategy,
 )
@@ -88,7 +90,7 @@ AgentName = t.Literal[
 ]
 OutputMode = t.Literal["text", "json", "ndjson", "ui"]
 ProgressMode = t.Literal["auto", "always", "never"]
-SearchType = t.Literal["prompts", "history", "all"]
+SearchType = t.Literal["prompts", "conversations", "all"]
 ColorMode = t.Literal["auto", "always", "never"]
 GrepStyle = t.Literal["default", "pretty"]
 type JSONScalar = str | int | float | bool | None
@@ -185,6 +187,7 @@ EnvelopeFactory = t.Callable[[str, dict[str, object], list[dict[str, object]]], 
 OPTIONS_EXPECTING_VALUE: frozenset[str] = frozenset(
     {
         "--agent",
+        "--scope",
         "--type",
         "--limit",
         "--color",
@@ -239,7 +242,7 @@ CLI_DESCRIPTION = build_description(
             (
                 "agentgrep grep bliss",
                 "agentgrep grep -i 'serene bliss'",
-                "agentgrep grep -F --type history TODO",
+                "agentgrep grep -F --scope conversations TODO",
                 "agentgrep grep --json design",
             ),
         ),
@@ -322,7 +325,7 @@ GREP_DESCRIPTION = build_description(
             (
                 "agentgrep grep bliss",
                 "agentgrep grep -i 'serene bliss'",
-                "agentgrep grep -F --type history TODO",
+                "agentgrep grep -F --scope conversations TODO",
                 "agentgrep grep --json design",
                 "agentgrep grep --vimgrep --no-dedupe foo",
             ),
@@ -4009,7 +4012,7 @@ def parse_codex_history_file(
                 .replace("+00:00", "Z")
             )
         yield SearchRecord(
-            kind="history",
+            kind="prompt",
             agent=source.agent,
             store=source.store,
             adapter_id=source.adapter_id,
@@ -4407,7 +4410,7 @@ def parse_claude_history_file(
             continue
         session_id = as_optional_str(mapping.get("sessionId"))
         yield SearchRecord(
-            kind="history",
+            kind="prompt",
             agent=source.agent,
             store=source.store,
             adapter_id=source.adapter_id,
@@ -4667,7 +4670,7 @@ def parse_gemini_logs_file(
 ) -> cabc.Iterator[SearchRecord]:
     """Parse a Gemini CLI ``logs.json`` file (flat JSON array of LogEntry).
 
-    Records are emitted as ``kind="history"`` — the file is an audit log of
+    Records are emitted as ``kind="prompt"`` — the file is an audit log of
     user prompts, the same role ``codex.history`` plays for Codex.
     """
     payload = read_json_file(source.path)
@@ -4681,7 +4684,7 @@ def parse_gemini_logs_file(
             continue
         session_id = as_optional_str(mapping.get("sessionId"))
         yield SearchRecord(
-            kind="history",
+            kind="prompt",
             agent=source.agent,
             store=source.store,
             adapter_id=source.adapter_id,
@@ -4713,7 +4716,7 @@ def parse_grok_prompt_history(
             continue
         session_id = as_optional_str(mapping.get("session_id"))
         yield SearchRecord(
-            kind="history",
+            kind="prompt",
             agent=source.agent,
             store=source.store,
             adapter_id=source.adapter_id,
@@ -5538,7 +5541,7 @@ def parse_cursor_prompt_history(
             continue
         seen.add(prompt)
         yield SearchRecord(
-            kind="history",
+            kind="prompt",
             agent=source.agent,
             store=source.store,
             adapter_id=source.adapter_id,
@@ -6299,6 +6302,33 @@ def build_search_record(source: SourceHandle, candidate: MessageCandidate) -> Se
     )
 
 
+CONVERSATION_STORE_ROLES: frozenset[StoreRole] = frozenset(
+    {StoreRole.PRIMARY_CHAT, StoreRole.SUPPLEMENTARY_CHAT},
+)
+
+
+@functools.cache
+def store_role_for_record(store: str, adapter_id: str) -> StoreRole | None:
+    """Return the catalog role for a normalized record's source store."""
+    from agentgrep.store_catalog import CATALOG
+
+    for descriptor in CATALOG.stores:
+        for spec in descriptor.discovery:
+            if spec.store == store and spec.adapter_id == adapter_id:
+                return descriptor.role
+    return None
+
+
+def record_matches_scope(record: SearchRecord, scope: SearchType) -> bool:
+    """Return whether ``record`` belongs to the requested search scope."""
+    if scope == "all":
+        return True
+    if scope == "prompts":
+        return record.kind == "prompt"
+    role = store_role_for_record(record.store, record.adapter_id)
+    return role in CONVERSATION_STORE_ROLES
+
+
 def matches_record(record: SearchRecord, query: SearchQuery) -> bool:
     """Return whether a normalized record should be included.
 
@@ -6307,9 +6337,7 @@ def matches_record(record: SearchRecord, query: SearchQuery) -> bool:
     checks. Pure-text queries skip the predicate evaluation since
     the compiler leaves ``compiled = None`` for them.
     """
-    if query.search_type == "prompts" and record.kind != "prompt":
-        return False
-    if query.search_type == "history" and record.kind != "history":
+    if not record_matches_scope(record, query.search_type):
         return False
     if not matches_text(build_search_haystack(record), query):
         return False

@@ -112,7 +112,7 @@ class SearchToolQuery(AgentGrepModel):
 
     terms: list[str]
     agent: AgentSelector
-    search_type: SearchTypeName
+    scope: SearchTypeName
     case_sensitive: bool
     limit: int | None = None
 
@@ -159,7 +159,7 @@ class CapabilitiesModel(AgentGrepModel):
     agents: list[
         t.Literal["codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi", "opencode"]
     ]
-    search_types: list[SearchTypeName]
+    search_scopes: list[SearchTypeName]
     adapters: list[str]
     tools: list[str]
     resources: list[str]
@@ -175,7 +175,7 @@ class SearchRequestModel(AgentGrepModel):
 
     terms: list[str]
     agent: AgentSelector
-    search_type: SearchTypeName
+    scope: SearchTypeName
     case_sensitive: bool
     limit: int | None = None
 

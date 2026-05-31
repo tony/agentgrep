@@ -19,7 +19,7 @@ AgentName = t.Literal[
 AgentSelector = t.Literal[
     "codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi", "opencode", "all"
 ]
-SearchTypeName = t.Literal["prompts", "history", "all"]
+SearchTypeName = t.Literal["prompts", "conversations", "all"]
 
 SERVER_VERSION = "0.1.0"
 KNOWN_ADAPTERS: tuple[str, ...] = (

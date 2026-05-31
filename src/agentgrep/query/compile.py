@@ -144,7 +144,7 @@ def _validate_ast(node: QueryNode, registry: FieldRegistry) -> None:
     - **comparison against non-comparable field**: e.g.
       ``agent:>codex`` (the agent enum doesn't support comparison).
     - **range against non-range field**: e.g.
-      ``type:[prompts TO history]``.
+      ``scope:[prompts TO conversations]``.
 
     The walk is O(nodes) and runs once before the closures are
     built; the closures themselves keep their defensive raises so
@@ -491,9 +491,11 @@ def _field_matches_record(
     if spec.layer == "source":
         # Source-level fields can be read off the record too.
         return _field_matches_record_via_source(node, record, spec)
-    if spec.name == "type":
-        target = "prompt" if node.value == "prompts" else "history"
-        return record.kind == target
+    if spec.name == "scope":
+        return agentgrep.record_matches_scope(
+            record,
+            t.cast("agentgrep.SearchType", node.value),
+        )
     if spec.name == "timestamp":
         return _date_predicate_matches(
             node,

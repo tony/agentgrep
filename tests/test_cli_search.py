@@ -106,13 +106,13 @@ SEARCH_PARSE_CASES: tuple[SearchParseCase, ...] = (
         False,
     ),
     SearchParseCase(
-        "type-history",
-        ("search", "--type", "history", "todo"),
+        "scope-conversations",
+        ("search", "--scope", "conversations", "todo"),
         ("todo",),
         0,
         False,
         False,
-        "history",
+        "conversations",
         False,
     ),
     SearchParseCase(
@@ -211,6 +211,7 @@ class RemovedSearchFlagCase(t.NamedTuple):
 REMOVED_SEARCH_FLAG_CASES: tuple[RemovedSearchFlagCase, ...] = (
     RemovedSearchFlagCase("any-mode", "--any", ("search", "--any", "foo", "bar")),
     RemovedSearchFlagCase("regex-mode", "--regex", ("search", "--regex", "foo.*bar")),
+    RemovedSearchFlagCase("type-mode", "--type", ("search", "--type", "history", "todo")),
 )
 
 
@@ -233,25 +234,25 @@ def test_search_removed_flags_are_rejected(
     assert "Traceback" not in captured.err
 
 
-def test_search_type_field_broadens_coarse_search_type() -> None:
-    """A query-language ``type:`` predicate controls record-kind filtering."""
-    parsed = agentgrep.parse_args(("search", "type:history", "bliss"))
+def test_search_scope_field_broadens_coarse_search_type() -> None:
+    """A query-language ``scope:`` predicate controls search-scope filtering."""
+    parsed = agentgrep.parse_args(("search", "scope:conversations", "bliss"))
     assert isinstance(parsed, agentgrep.SearchArgs)
     assert parsed.search_type == "all"
     assert parsed.terms == ("bliss",)
     assert parsed.compiled is not None
 
 
-def test_search_type_field_history_record_reaches_compiled_predicate() -> None:
-    """``type:history`` must not be pre-filtered by the default prompts scope."""
-    parsed = agentgrep.parse_args(("search", "type:history", "bliss"))
+def test_search_scope_field_conversation_record_reaches_compiled_predicate() -> None:
+    """``scope:conversations`` must not be pre-filtered by default prompt scope."""
+    parsed = agentgrep.parse_args(("search", "scope:conversations", "bliss"))
     assert isinstance(parsed, agentgrep.SearchArgs)
     record = agentgrep.SearchRecord(
         kind="history",
         agent="codex",
-        store="history",
-        adapter_id="codex.history_json.v1",
-        path=pathlib.Path("/tmp/history.json"),
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
         text="bliss command",
     )
     query = agentgrep.SearchQuery(

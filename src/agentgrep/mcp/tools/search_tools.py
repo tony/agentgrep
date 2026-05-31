@@ -35,7 +35,7 @@ def _search_sync(request: SearchRequestModel) -> SearchToolResponse:
     """Run the blocking search work and build a typed response."""
     query = agentgrep.SearchQuery(
         terms=tuple(request.terms),
-        search_type=request.search_type,
+        search_type=request.scope,
         any_term=False,
         regex=False,
         case_sensitive=request.case_sensitive,
@@ -47,7 +47,7 @@ def _search_sync(request: SearchRequestModel) -> SearchToolResponse:
         query=SearchToolQuery(
             terms=request.terms,
             agent=request.agent,
-            search_type=request.search_type,
+            scope=request.scope,
             case_sensitive=request.case_sensitive,
             limit=request.limit,
         ),
@@ -98,9 +98,9 @@ def register(mcp: FastMCP) -> None:
             AgentSelector,
             Field(description="Limit search to one agent or search all agents."),
         ] = "all",
-        search_type: t.Annotated[
+        scope: t.Annotated[
             SearchTypeName,
-            Field(description="Search prompts, history, or both."),
+            Field(description="Search prompts, conversations, or both."),
         ] = "prompts",
         case_sensitive: t.Annotated[
             bool,
@@ -118,7 +118,7 @@ def register(mcp: FastMCP) -> None:
         request = SearchRequestModel(
             terms=terms,
             agent=agent,
-            search_type=search_type,
+            scope=scope,
             case_sensitive=case_sensitive,
             limit=limit,
         )

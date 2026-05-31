@@ -162,6 +162,23 @@ def test_grep_max_count_propagates() -> None:
     assert parsed.max_count == 5
 
 
+def test_grep_scope_conversations_propagates() -> None:
+    """``--scope conversations`` selects full conversation/session content."""
+    parsed = agentgrep.parse_args(["grep", "--scope", "conversations", "foo"])
+    assert isinstance(parsed, agentgrep.GrepArgs)
+    assert parsed.search_type == "conversations"
+
+
+def test_grep_type_flag_is_rejected(capsys: pytest.CaptureFixture[str]) -> None:
+    """``grep --type`` is no longer the public search-breadth selector."""
+    with pytest.raises(SystemExit) as exc_info:
+        _ = agentgrep.parse_args(["grep", "--type", "history", "foo"])
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert "unrecognized arguments" in captured.err
+    assert "--type" in captured.err
+
+
 class QueryTranslationCase(t.NamedTuple):
     """Parametrized case for :func:`agentgrep.build_grep_query`."""
 

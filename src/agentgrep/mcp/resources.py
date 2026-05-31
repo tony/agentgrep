@@ -72,7 +72,7 @@ def build_capabilities() -> CapabilitiesModel:
     backends = agentgrep.select_backends()
     return CapabilitiesModel(
         agents=list(agentgrep.AGENT_CHOICES),
-        search_types=["prompts", "history", "all"],
+        search_scopes=["prompts", "conversations", "all"],
         adapters=list(KNOWN_ADAPTERS),
         tools=[
             "search",
@@ -94,7 +94,7 @@ def build_capabilities() -> CapabilitiesModel:
             "agentgrep://store-roles",
             "agentgrep://store-formats",
         ],
-        prompts=["search_prompts", "search_history", "inspect_stores"],
+        prompts=["search_prompts", "search_conversations", "inspect_stores"],
         backends=BackendAvailabilityModel(
             find_tool=backends.find_tool,
             grep_tool=backends.grep_tool,

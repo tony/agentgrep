@@ -325,15 +325,29 @@ RECORD_PREDICATE_CASES: tuple[RecordPredicateCase, ...] = (
         expected_matches=True,
     ),
     RecordPredicateCase(
-        test_id="type-prompts-on-prompt-kind",
-        query="type:prompts",
+        test_id="scope-prompts-on-prompt-kind",
+        query="scope:prompts",
         record_kwargs={"kind": "prompt"},
         expected_matches=True,
     ),
     RecordPredicateCase(
-        test_id="type-history-on-prompt-kind",
-        query="type:history",
-        record_kwargs={"kind": "prompt"},
+        test_id="scope-conversations-on-chat-record",
+        query="scope:conversations",
+        record_kwargs={
+            "kind": "history",
+            "store": "codex.sessions",
+            "adapter_id": "codex.sessions_jsonl.v1",
+        },
+        expected_matches=True,
+    ),
+    RecordPredicateCase(
+        test_id="scope-conversations-excludes-prompt-history",
+        query="scope:conversations",
+        record_kwargs={
+            "kind": "prompt",
+            "store": "codex.history",
+            "adapter_id": "codex.history_jsonl.v1",
+        },
         expected_matches=False,
     ),
     RecordPredicateCase(
@@ -467,14 +481,14 @@ ENUM_VALIDATION_CASES: tuple[EnumValidationCase, ...] = (
         expected_fragment="invalid agent value 'clauded'",
     ),
     EnumValidationCase(
-        test_id="type-unknown-value",
-        query="type:bogus bliss",
-        expected_fragment="invalid type value 'bogus'",
+        test_id="scope-unknown-value",
+        query="scope:bogus bliss",
+        expected_fragment="invalid scope value 'bogus'",
     ),
     EnumValidationCase(
-        test_id="type-near-miss",
-        query="type:prompt bliss",
-        expected_fragment="invalid type value 'prompt'",
+        test_id="scope-near-miss",
+        query="scope:prompt bliss",
+        expected_fragment="invalid scope value 'prompt'",
     ),
 )
 
@@ -557,9 +571,9 @@ COMPARISON_ON_STRING_CASES: tuple[ComparisonOnStringFieldCase, ...] = (
         expected_fragment="'agent' does not support comparison",
     ),
     ComparisonOnStringFieldCase(
-        test_id="range-against-type",
-        query="type:[prompts TO history] bliss",
-        expected_fragment="'type' does not support range",
+        test_id="range-against-scope",
+        query="scope:[prompts TO conversations] bliss",
+        expected_fragment="'scope' does not support range",
     ),
     ComparisonOnStringFieldCase(
         test_id="comparison-against-path",

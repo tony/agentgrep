@@ -3006,7 +3006,7 @@ def test_search_codex_history_json_returns_history_record(
 
     query = agentgrep.SearchQuery(
         terms=("serenity",),
-        search_type="history",
+        search_type="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -3021,7 +3021,7 @@ def test_search_codex_history_json_returns_history_record(
     records = agentgrep.search_sources(query, sources, agentgrep.BackendSelection(None, None, None))
 
     assert len(records) == 1
-    assert records[0].kind == "history"
+    assert records[0].kind == "prompt"
     assert records[0].text == "serenity command example"
 
 
@@ -3071,7 +3071,7 @@ def test_cursor_ai_tracking_summary_is_exposed_as_history(
 
     query = agentgrep.SearchQuery(
         terms=("serenity", "bliss"),
-        search_type="history",
+        search_type="conversations",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -4294,7 +4294,7 @@ def test_search_codex_history_jsonl_uses_modern_text_schema(
     backends = agentgrep.BackendSelection(None, None, None)
     query = agentgrep.SearchQuery(
         terms=("modern",),
-        search_type="history",
+        search_type="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -5519,7 +5519,7 @@ def test_search_claude_history_expands_external_pasted_text(
     backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
     query = t.cast("t.Any", agentgrep).SearchQuery(
         terms=("bliss",),
-        search_type="history",
+        search_type="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -5534,7 +5534,7 @@ def test_search_claude_history_expands_external_pasted_text(
     assert record.agent == "claude"
     assert record.store == "claude.history"
     assert record.adapter_id == "claude.history_jsonl.v1"
-    assert record.kind == "history"
+    assert record.kind == "prompt"
     assert record.role == "user"
     assert record.timestamp == "2023-11-14T22:13:20Z"
     assert record.session_id == "session-1"
@@ -5575,7 +5575,7 @@ def test_search_claude_history_tolerates_missing_paste_cache(
     backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
     query = t.cast("t.Any", agentgrep).SearchQuery(
         terms=("missing",),
-        search_type="history",
+        search_type="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -6091,7 +6091,7 @@ def test_search_gemini_logs_returns_user_message(
     assert log_records, "expected at least one gemini.tmp_logs record"
     assert log_records[0].text == "libtmux trace"
     assert log_records[0].role == "user"
-    assert log_records[0].kind == "history"
+    assert log_records[0].kind == "prompt"
     assert log_records[0].timestamp == "2026-05-17T12:00:05Z"
     assert log_records[0].session_id == "sess-1"
 
@@ -6146,7 +6146,7 @@ def test_search_grok_prompt_history(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Grok prompt_history.jsonl records surface as kind=history, role=user."""
+    """Grok prompt_history.jsonl records surface as kind=prompt, role=user."""
     agentgrep = load_agentgrep_module()
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
@@ -6184,7 +6184,7 @@ def test_search_grok_prompt_history(
     records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
 
     assert records, "expected at least one grok prompt history record"
-    assert records[0].kind == "history"
+    assert records[0].kind == "prompt"
     assert records[0].role == "user"
     assert records[0].agent == "grok"
     assert "summarise" in records[0].text

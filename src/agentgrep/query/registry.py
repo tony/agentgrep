@@ -106,7 +106,7 @@ def default_registry() -> FieldRegistry:
     ``adapter``   string source  Alias of ``adapter_id``
     ``path``      path   source  Glob against the file basename by default
     ``mtime``     date   source  File mtime; supports comparison + range
-    ``type``      enum   record  Values: prompts, history
+    ``scope``     enum   record  Values: prompts, conversations, all
     ``timestamp`` date   record  Record timestamp; comparison + range
     ``model``     string record  Substring against ``record.model``
     ``role``      string record  Substring against ``record.role``
@@ -145,10 +145,10 @@ def default_registry() -> FieldRegistry:
             supports_range=True,
         ),
         FieldSpec(
-            name="type",
+            name="scope",
             kind="enum",
             layer="record",
-            enum_values=("prompts", "history"),
+            enum_values=("prompts", "conversations", "all"),
         ),
         FieldSpec(
             name="timestamp",

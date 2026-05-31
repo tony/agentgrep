@@ -710,8 +710,8 @@ MANGLED_FIELD_PREDICATE_CASES: tuple[MangledFieldPredicateCase, ...] = (
         argv=("find", "-timestamp:2026"),
     ),
     MangledFieldPredicateCase(
-        test_id="grep-mangled-type",
-        argv=("grep", "-type:prompts", "bliss"),
+        test_id="grep-mangled-scope",
+        argv=("grep", "-scope:prompts", "bliss"),
     ),
 )
 
@@ -805,29 +805,24 @@ FLAG_FIELD_COLLISION_CASES: tuple[FlagFieldCollisionCase, ...] = (
         expected_message_fragment="cannot combine --agent flag with agent: field",
     ),
     FlagFieldCollisionCase(
-        test_id="grep-type-flag-and-field",
-        argv=("grep", "--type", "history", "type:prompts", "bliss"),
-        expected_message_fragment="cannot combine --type flag with type: field",
+        test_id="grep-scope-flag-and-field",
+        argv=("grep", "--scope", "conversations", "scope:prompts", "bliss"),
+        expected_message_fragment="cannot combine --scope flag with scope: field",
     ),
     FlagFieldCollisionCase(
-        test_id="grep-default-type-flag-and-field",
-        argv=("grep", "--type", "prompts", "type:history", "bliss"),
-        expected_message_fragment="cannot combine --type flag with type: field",
+        test_id="grep-default-scope-flag-and-field",
+        argv=("grep", "--scope", "prompts", "scope:conversations", "bliss"),
+        expected_message_fragment="cannot combine --scope flag with scope: field",
     ),
     FlagFieldCollisionCase(
-        test_id="search-type-flag-and-field",
-        argv=("search", "--type", "history", "type:prompts", "bliss"),
-        expected_message_fragment="cannot combine --type flag with type: field",
+        test_id="search-scope-flag-and-field",
+        argv=("search", "--scope", "conversations", "scope:prompts", "bliss"),
+        expected_message_fragment="cannot combine --scope flag with scope: field",
     ),
     FlagFieldCollisionCase(
-        test_id="search-default-type-flag-and-field",
-        argv=("search", "--type", "prompts", "type:history", "bliss"),
-        expected_message_fragment="cannot combine --type flag with type: field",
-    ),
-    FlagFieldCollisionCase(
-        test_id="find-default-type-flag-and-field",
-        argv=("find", "--type", "all", "type:history"),
-        expected_message_fragment="cannot combine --type flag with type: field",
+        test_id="search-default-scope-flag-and-field",
+        argv=("search", "--scope", "prompts", "scope:conversations", "bliss"),
+        expected_message_fragment="cannot combine --scope flag with scope: field",
     ),
 )
 
