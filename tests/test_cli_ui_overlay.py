@@ -1,4 +1,4 @@
-"""Tests for the ``--ui`` overlay across grep / find / fuzzy subcommands.
+"""Tests for the ``--ui`` overlay across grep / find subcommands.
 
 The ``--ui`` flag is the ``tig``-shaped overlay: any subcommand can have
 its query opened in the Textual explorer instead of the text/JSON
@@ -67,12 +67,6 @@ OVERLAY_CASES: tuple[OverlayCase, ...] = (
         ("FOO",),
     ),
     OverlayCase("find-ui-passes-pattern", ("find", "--ui", "codex"), "all", ("codex",)),
-    OverlayCase(
-        "fuzzy-ui-passes-query",
-        ("fuzzy", "--ui", "design"),
-        "all",
-        ("design",),
-    ),
 )
 
 
@@ -85,7 +79,7 @@ def test_ui_overlay_dispatches_to_run_ui(
     case: OverlayCase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``--ui`` on grep/find/fuzzy routes through agentgrep.run_ui with a query."""
+    """``--ui`` on grep/find routes through agentgrep.run_ui with a query."""
     captured = _capture_run_ui(monkeypatch)
     _stub_run_search_query(monkeypatch)
     exit_code = agentgrep.main(list(case.argv))
@@ -112,12 +106,3 @@ def test_find_ui_overlay_passes_agents(monkeypatch: pytest.MonkeyPatch) -> None:
     exit_code = agentgrep.main(["find", "--ui", "--agent", "codex", "anything"])
     assert exit_code == 0
     assert captured[0].agents == ("codex",)
-
-
-def test_fuzzy_ui_with_case_sensitive_flag(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Fuzzy --ui --no-ignore-case forwards case-sensitivity to the TUI query."""
-    captured = _capture_run_ui(monkeypatch)
-    _stub_run_search_query(monkeypatch)
-    exit_code = agentgrep.main(["fuzzy", "--ui", "--no-ignore-case", "FOO"])
-    assert exit_code == 0
-    assert captured[0].case_sensitive is True

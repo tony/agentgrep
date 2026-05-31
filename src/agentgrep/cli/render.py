@@ -1,7 +1,7 @@
 """CLI output rendering and subcommand dispatch for agentgrep.
 
 This module owns the rendering paths for the ``grep``, ``find``, and
-``fuzzy`` subcommands, plus the dispatcher functions that glue parsed
+``search`` subcommands, plus the dispatcher functions that glue parsed
 arguments to the engine and the chosen output format.
 
 Runtime callables (engines, helpers, classes) are accessed through the
@@ -38,7 +38,7 @@ from agentgrep import (
     SourceVersionDetection,
     SourceVersionDetectionPayload,
 )
-from agentgrep.cli.parser import FindArgs, FuzzyArgs, GrepArgs, SearchArgs, UIArgs
+from agentgrep.cli.parser import FindArgs, GrepArgs, SearchArgs, UIArgs
 
 __all__ = [
     "GrepSummary",
@@ -51,14 +51,12 @@ __all__ = [
     "format_grep_record",
     "format_grep_record_pretty",
     "format_relative_time",
-    "fuzzy_filter_lines",
     "highlight_search_spans",
     "iter_match_lines",
     "maybe_build_pydantic",
     "print_find_results",
     "print_grep_results",
     "run_find_command",
-    "run_fuzzy_command",
     "run_grep_command",
     "run_search_command",
     "run_ui_command",
@@ -1220,141 +1218,6 @@ def print_grep_results(records: list[agentgrep.SearchRecord], args: GrepArgs) ->
         ):
             print()
     return 0
-
-
-def fuzzy_filter_lines(
-    lines: list[str],
-    args: FuzzyArgs,
-) -> list[tuple[str, float]]:
-    """Apply fzf ``--filter`` semantics to ``lines`` and return ranked pairs.
-
-    Selects between exact-substring and fuzzy scoring based on
-    ``args.exact``, honors the extended-search token grammar when
-    ``args.extended`` is set, and respects sort / no-sort. Field
-    delimiter / nth / with-nth are applied before scoring so the
-    user-facing fzf model holds.
-    """
-    from agentgrep import fuzzy as _fuzzy_lib
-
-    case_mode: _fuzzy_lib.CaseSensitivity = args.case_mode
-    algo: _fuzzy_lib.FuzzyAlgo = args.algo
-    transformed = _apply_field_selection(lines, args)
-    if args.exact:
-        matched: list[tuple[str, float]] = []
-        if args.extended:
-            for original, display in transformed:
-                if _fuzzy_lib.extended_match(args.query, display, case=case_mode):
-                    matched.append((original, 1.0))
-        else:
-            case_sensitive = _fuzzy_lib.resolve_case_sensitivity(args.query, case_mode)
-            needle = args.query if case_sensitive else args.query.casefold()
-            for original, display in transformed:
-                haystack = display if case_sensitive else display.casefold()
-                if needle in haystack:
-                    matched.append((original, 1.0))
-        if args.sort:
-            return sorted(matched, key=lambda pair: pair[1], reverse=True)
-        return matched
-    matched = list(
-        _fuzzy_lib.rank_lines(
-            args.query,
-            (display for _, display in transformed),
-            case=case_mode,
-            algo=algo,
-            extended=args.extended,
-            sort=args.sort,
-            limit=None,
-        ),
-    )
-    display_to_original: dict[str, str] = {display: original for original, display in transformed}
-    return [(display_to_original.get(display, display), score) for display, score in matched]
-
-
-def _apply_field_selection(
-    lines: list[str],
-    args: FuzzyArgs,
-) -> list[tuple[str, str]]:
-    """Apply ``--delimiter`` / ``--nth`` / ``--with-nth`` field selection.
-
-    Returns ``(original, display)`` pairs. ``original`` is the raw input
-    line, ``display`` is what's scored / printed. When no field selectors
-    are set, the two are equal.
-    """
-    delimiter = args.delimiter
-    if delimiter is None and args.nth is None and args.with_nth is None:
-        return [(line, line) for line in lines]
-    sep = delimiter if delimiter is not None else None
-    pairs: list[tuple[str, str]] = []
-    for line in lines:
-        fields = line.split(sep) if sep is not None else line.split()
-        if args.nth is not None and 1 <= args.nth <= len(fields):
-            score_target = fields[args.nth - 1]
-        else:
-            score_target = line
-        if args.with_nth is not None and 1 <= args.with_nth <= len(fields):
-            display = fields[args.with_nth - 1]
-        else:
-            display = score_target
-        pairs.append((line, display))
-    return pairs
-
-
-def run_fuzzy_command(args: FuzzyArgs) -> int:
-    """Execute ``agentgrep fuzzy``.
-
-    Reads lines from stdin (NUL- or newline-delimited per ``--read0``),
-    applies the fzf-style filter, and prints matching lines to stdout.
-    Exits 0 when at least one line matches, 1 when nothing matches.
-
-    The ``--ui`` overlay opens the Textual explorer pre-filled with the
-    fuzzy query so users can browse interactively from the same
-    invocation (the ``tig`` model).
-    """
-    if args.output_mode == "ui":
-        query = agentgrep.SearchQuery(
-            terms=(args.query,) if args.query else (),
-            search_type="all",
-            any_term=False,
-            regex=False,
-            case_sensitive=args.case_mode == "respect",
-            agents=args.agents,
-            limit=None,
-        )
-        agentgrep.run_ui(
-            pathlib.Path.home(),
-            query,
-            control=agentgrep.SearchControl(),
-            initial_search_text=args.query or None,
-        )
-        return 0
-    separator = "\0" if args.read0 else "\n"
-    raw = sys.stdin.read()
-    lines = [line for line in raw.split(separator) if line]
-    ranked = fuzzy_filter_lines(lines, args)
-    if args.output_mode in {"json", "ndjson"}:
-        matches: list[dict[str, object]] = [
-            {"text": original, "score": score} for original, score in ranked
-        ]
-        if args.output_mode == "json":
-            payload = build_envelope("fuzzy", {"query": args.query}, matches)
-            print(json.dumps(payload, ensure_ascii=False, indent=2))
-        else:
-            for match in matches:
-                print(json.dumps(match, ensure_ascii=False))
-        return 0 if ranked else 1
-    out_sep = "\0" if args.print0 else "\n"
-    out = sys.stdout
-
-    def _emit(text: str) -> None:
-        out.write(text)
-        out.write(out_sep)
-
-    if args.print_query:
-        _emit(args.query)
-    for original, _ in ranked:
-        _emit(original)
-    out.flush()
-    return 0 if ranked else 1
 
 
 def format_relative_time(

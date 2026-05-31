@@ -215,9 +215,8 @@ CLI_DESCRIPTION = build_description(
     Read-only search across Codex, Claude, Cursor, Gemini, and Grok
     local stores. Pick a subcommand from the list below: ``search`` for
     ranked results with dedup and session grouping, ``grep`` for
-    rg-shaped content search, ``fuzzy`` for fzf-style filtering,
-    ``find`` for store enumeration, ``ui`` for the interactive
-    Textual explorer.
+    rg-shaped content search, ``find`` for store enumeration, ``ui``
+    for the interactive Textual explorer.
     """,
     (
         (
@@ -227,13 +226,6 @@ CLI_DESCRIPTION = build_description(
                 "agentgrep grep -i 'serene bliss'",
                 "agentgrep grep -F --type history TODO",
                 "agentgrep grep --json design",
-            ),
-        ),
-        (
-            "fuzzy",
-            (
-                "agentgrep grep -F . | agentgrep fuzzy 'config bliss'",
-                "agentgrep fuzzy --exact -i 'design notes' < transcript.txt",
             ),
         ),
         (
@@ -279,26 +271,6 @@ UI_DESCRIPTION = build_description(
             (
                 "agentgrep ui",
                 "agentgrep ui bliss",
-            ),
-        ),
-    ),
-)
-FUZZY_DESCRIPTION = build_description(
-    """
-    Fuzzy match in fzf ``--filter`` mode: stdin lines are scored
-    against QUERY and emitted in descending-score order.
-
-    No QUERY and no piped stdin prints usage and exits 2 (strict, no
-    interactive fallback — use ``agentgrep ui`` or ``--ui`` for
-    interactive browsing).
-    """,
-    (
-        (
-            None,
-            (
-                "agentgrep grep -F . | agentgrep fuzzy 'config bliss'",
-                "agentgrep fuzzy --exact -i 'design notes' < transcript.txt",
-                "agentgrep fuzzy --algo=v1 --print-query foo",
             ),
         ),
     ),
@@ -5924,8 +5896,6 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
             return run_grep_command(parsed)
         if isinstance(parsed, SearchArgs):
             return run_search_command(parsed)
-        if isinstance(parsed, FuzzyArgs):
-            return run_fuzzy_command(parsed)
         if isinstance(parsed, UIArgs):
             return run_ui_command(parsed)
         return run_find_command(parsed)
@@ -5943,9 +5913,6 @@ from agentgrep.cli.parser import (  # noqa: E402  (re-exports must follow main d
     FindArgs,
     FindPatternMode,
     FindTypeFilter,
-    FuzzyAlgo,
-    FuzzyArgs,
-    FuzzyTiebreak,
     GrepArgs,
     ParserBundle,
     PatternMode,
@@ -5966,12 +5933,10 @@ from agentgrep.cli.render import (  # noqa: E402  (re-exports must follow main d
     build_grep_query,
     filter_find_records,
     format_grep_record,
-    fuzzy_filter_lines,
     maybe_build_pydantic,
     print_find_results,
     print_grep_results,
     run_find_command,
-    run_fuzzy_command,
     run_grep_command,
     run_search_command,
     run_ui_command,
