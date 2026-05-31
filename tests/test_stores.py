@@ -31,6 +31,7 @@ KNOWN_AGENTS: tuple[AgentName, ...] = (
     "codex",
     "gemini",
     "grok",
+    "pi",
 )
 PATH_TOKEN_RE = re.compile(r"\$\{(?:HOME|[A-Z][A-Z0-9_]*)(?:\s+or\s+[^}]+)?\}")
 
@@ -292,6 +293,7 @@ def test_runtime_adapter_ids_match_catalogue_discovery() -> None:
     assert "grok.prompt_history_jsonl.v1" in runtime_adapter_ids
     assert "grok.sessions_jsonl.v1" in runtime_adapter_ids
     assert "grok.session_search_sqlite.v1" in runtime_adapter_ids
+    assert "pi.sessions_jsonl.v1" in runtime_adapter_ids
 
     # No catalogue row claims an adapter id the MCP capabilities
     # tuple doesn't advertise.
@@ -704,6 +706,7 @@ PRIMARY_FIXTURES: tuple[tuple[str, str], ...] = (
     ("cursor-cli.prompt_history", "prompt_history.json"),
     ("grok.prompt_history", "prompt_history.jsonl"),
     ("grok.sessions", "chat_history.jsonl"),
+    ("pi.sessions", "example.jsonl"),
 )
 
 

@@ -42,6 +42,24 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### What's new
+
+#### Pi backend (#28)
+
+agentgrep now searches [Pi](https://github.com/earendil-works/pi) (the
+earendil-works "Pi Agent Harness") as a new backend. Pi keeps each
+conversation as one append-only JSONL session file under
+`~/.pi/agent/sessions/`, grouped by working directory, with no separate
+prompt-history log or SQLite index — so user prompts surface as prompts
+and assistant and tool turns as history straight from the transcript.
+Discovery honours `PI_CODING_AGENT_DIR` and the flat
+`PI_CODING_AGENT_SESSION_DIR` override (where the working directory is
+recovered from the session header), and every other on-disk pi store —
+settings, models, themes, tools, managed binaries, prompt templates,
+the debug log, and the npm extension root — is catalogued for
+completeness, with `auth.json` documented but never indexed. See
+{doc}`/backends/pi` for details.
+
 ## agentgrep 0.1.0a11 (2026-05-31)
 
 agentgrep 0.1.0a11 splits the Cursor backend into two agents —

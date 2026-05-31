@@ -144,6 +144,7 @@ def test_storage_coverage_grid_summarizes_catalog(tmp_path: pathlib.Path) -> Non
             cursor-ide
             gemini
             grok
+            pi
             ```
 
             ```{storage:coverage-grid}
@@ -152,7 +153,7 @@ def test_storage_coverage_grid_summarizes_catalog(tmp_path: pathlib.Path) -> Non
         ),
         encoding="utf-8",
     )
-    for agent in ("claude", "codex", "cursor-cli", "cursor-ide", "gemini", "grok"):
+    for agent in ("claude", "codex", "cursor-cli", "cursor-ide", "gemini", "grok", "pi"):
         (srcdir / f"{agent}.md").write_text(
             textwrap.dedent(
                 f"""\

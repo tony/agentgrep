@@ -27,7 +27,7 @@ import agentgrep as _agentgrep_module
 if t.TYPE_CHECKING:
     import collections.abc as cabc
 
-AgentName = t.Literal["codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok"]
+AgentName = t.Literal["codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi"]
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
@@ -6330,6 +6330,403 @@ def test_search_grok_session_search_db(
     assert db_records[0].session_id == "019729a0-0000-7000-8000-000000000099"
     assert db_records[0].timestamp is not None
     assert db_records[0].timestamp.startswith("2026-")
+
+
+def _pi_session_header(
+    *, cwd: str = "/home/user/project", version: int | None = 3
+) -> dict[str, object]:
+    """Build a pi session-header line; ``version=None`` omits the field (v1)."""
+    header: dict[str, object] = {
+        "type": "session",
+        "id": "019e0000-0000-7000-8000-000000000abc",
+        "timestamp": "2026-05-30T12:00:00.000Z",
+        "cwd": cwd,
+    }
+    if version is not None:
+        header["version"] = version
+    return header
+
+
+def _parse_pi_entries(
+    agentgrep: AgentGrepModule,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    entries: list[dict[str, object]],
+    *,
+    version: int | None = 3,
+) -> list[t.Any]:
+    """Write a nested pi session of ``entries`` and return its parsed records."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+    monkeypatch.delenv("PI_CODING_AGENT_SESSION_DIR", raising=False)
+    session_file = home / ".pi" / "agent" / "sessions" / "--home-user-project--" / "sess.jsonl"
+    write_jsonl(session_file, [_pi_session_header(version=version), *entries])
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("pi",), backends)
+    records: list[t.Any] = []
+    for source in sources:
+        if source.store == "pi.sessions":
+            records.extend(t.cast("t.Any", agentgrep).iter_source_records(source))
+    return records
+
+
+def test_discover_pi_sources_honours_pi_coding_agent_dir(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``PI_CODING_AGENT_DIR`` is used verbatim, overriding ``${HOME}/.pi/agent``."""
+    agentgrep = load_agentgrep_module()
+    decoy_home = tmp_path / "home"
+    alt_dir = tmp_path / "elsewhere" / "agent"
+    monkeypatch.setenv("HOME", str(decoy_home))
+    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(alt_dir))
+    monkeypatch.delenv("PI_CODING_AGENT_SESSION_DIR", raising=False)
+    decoy = decoy_home / ".pi" / "agent" / "sessions" / "--decoy--" / "d.jsonl"
+    write_jsonl(decoy, [_pi_session_header(cwd="/decoy")])
+    real = alt_dir / "sessions" / "--real--" / "r.jsonl"
+    write_jsonl(real, [_pi_session_header(cwd="/real")])
+
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    sources = t.cast("t.Any", agentgrep).discover_pi_sources(decoy_home, backends)
+
+    paths = {s.path for s in sources}
+    assert real in paths
+    assert decoy not in paths
+
+
+def test_discover_pi_sources_session_dir_override_is_flat(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``PI_CODING_AGENT_SESSION_DIR`` holds session files flat; cwd comes from the header."""
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    flat_dir = tmp_path / "pi-sessions"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+    monkeypatch.setenv("PI_CODING_AGENT_SESSION_DIR", str(flat_dir))
+    session_file = flat_dir / "2026-05-30T12-00-00-000Z_019e0000-0000-7000-8000-0000000000aa.jsonl"
+    write_jsonl(
+        session_file,
+        [
+            _pi_session_header(cwd="/srv/work/app"),
+            {
+                "type": "message",
+                "id": "u1",
+                "parentId": None,
+                "timestamp": "2026-05-30T12:00:02.000Z",
+                "message": {
+                    "role": "user",
+                    "content": "flat layout prompt",
+                    "timestamp": 1780228802000,
+                },
+            },
+        ],
+    )
+
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("pi",), backends)
+    pi_sources = [s for s in sources if s.store == "pi.sessions"]
+
+    assert any(s.path == session_file for s in pi_sources)
+    records: list[t.Any] = []
+    for source in pi_sources:
+        records.extend(t.cast("t.Any", agentgrep).iter_source_records(source))
+    assert records, "expected the flat-layout session to parse"
+    assert records[0].conversation_id == "/srv/work/app"
+
+
+def test_search_pi_sessions(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pi sessions yield user prompts and assistant history carrying the model."""
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+    monkeypatch.delenv("PI_CODING_AGENT_SESSION_DIR", raising=False)
+    session_file = home / ".pi" / "agent" / "sessions" / "--home-user-proj--" / "sess.jsonl"
+    write_jsonl(
+        session_file,
+        [
+            _pi_session_header(cwd="/home/user/proj"),
+            {
+                "type": "message",
+                "id": "u1",
+                "parentId": None,
+                "timestamp": "2026-05-30T12:00:02.000Z",
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "explain the streaming design"}],
+                    "timestamp": 1780228802000,
+                },
+            },
+            {
+                "type": "message",
+                "id": "a1",
+                "parentId": "u1",
+                "timestamp": "2026-05-30T12:00:03.000Z",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "The streaming design is event-driven."}],
+                    "provider": "openrouter",
+                    "model": "example/model",
+                    "timestamp": 1780228803000,
+                },
+            },
+        ],
+    )
+
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    query = t.cast("t.Any", agentgrep).SearchQuery(
+        terms=("streaming",),
+        search_type="all",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("pi",),
+        limit=None,
+    )
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("pi",), backends)
+    records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
+
+    assert len(records) >= 2, "expected user + assistant records"
+    by_role = {r.role: r for r in records}
+    assert by_role["user"].kind == "prompt"
+    assert by_role["user"].agent == "pi"
+    assert by_role["user"].conversation_id == "/home/user/proj"
+    assert by_role["assistant"].kind == "history"
+    assert by_role["assistant"].model == "example/model"
+
+
+def test_parse_pi_session_v1_uses_unix_ms_timestamp_fallback(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A v1 session (no version) with no entry timestamp falls back to inner unix-ms."""
+    agentgrep = load_agentgrep_module()
+    records = _parse_pi_entries(
+        agentgrep,
+        tmp_path,
+        monkeypatch,
+        [
+            {
+                "type": "message",
+                "id": "u1",
+                "parentId": None,
+                "message": {"role": "user", "content": "v1 prompt", "timestamp": 1700000000000},
+            },
+        ],
+        version=None,
+    )
+
+    assert len(records) == 1
+    assert records[0].kind == "prompt"
+    assert records[0].timestamp == "2023-11-14T22:13:20Z"
+
+
+class PiEntryCase(t.NamedTuple):
+    """Parametrized case for one pi session entry through the parser."""
+
+    test_id: str
+    entry: dict[str, object]
+    expected_count: int
+    expected_kind: str | None
+    expected_role: str | None
+    expected_text_contains: str | None
+    expected_model: str | None
+
+
+PI_ENTRY_CASES: tuple[PiEntryCase, ...] = (
+    PiEntryCase(
+        "user-message-is-prompt",
+        {
+            "type": "message",
+            "id": "u1",
+            "timestamp": "2026-05-30T12:00:02.000Z",
+            "message": {"role": "user", "content": [{"type": "text", "text": "design question"}]},
+        },
+        1,
+        "prompt",
+        "user",
+        "design question",
+        None,
+    ),
+    PiEntryCase(
+        "assistant-message-is-history-with-model",
+        {
+            "type": "message",
+            "id": "a1",
+            "timestamp": "2026-05-30T12:00:03.000Z",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "an answer"}],
+                "model": "example/model",
+            },
+        },
+        1,
+        "history",
+        "assistant",
+        "an answer",
+        "example/model",
+    ),
+    PiEntryCase(
+        "tool-result-is-history",
+        {
+            "type": "message",
+            "id": "t1",
+            "timestamp": "2026-05-30T12:00:04.000Z",
+            "message": {
+                "role": "toolResult",
+                "toolName": "read",
+                "content": [{"type": "text", "text": "tool output"}],
+                "isError": False,
+            },
+        },
+        1,
+        "history",
+        "toolResult",
+        "tool output",
+        None,
+    ),
+    PiEntryCase(
+        "compaction-summary-is-history",
+        {
+            "type": "compaction",
+            "id": "c1",
+            "timestamp": "2026-05-30T12:00:05.000Z",
+            "summary": "compacted summary text",
+        },
+        1,
+        "history",
+        "compaction",
+        "compacted summary text",
+        None,
+    ),
+    PiEntryCase(
+        "branch-summary-is-history",
+        {
+            "type": "branch_summary",
+            "id": "b1",
+            "timestamp": "2026-05-30T12:00:06.000Z",
+            "fromId": "u1",
+            "summary": "branch summary text",
+        },
+        1,
+        "history",
+        "branch_summary",
+        "branch summary text",
+        None,
+    ),
+    PiEntryCase(
+        "session-info-name-is-history",
+        {
+            "type": "session_info",
+            "id": "s1",
+            "timestamp": "2026-05-30T12:00:07.000Z",
+            "name": "Session title",
+        },
+        1,
+        "history",
+        "session_info",
+        "Session title",
+        None,
+    ),
+    PiEntryCase(
+        "model-change-is-skipped",
+        {
+            "type": "model_change",
+            "id": "m1",
+            "timestamp": "2026-05-30T12:00:01.000Z",
+            "provider": "openrouter",
+            "modelId": "example/model",
+        },
+        0,
+        None,
+        None,
+        None,
+        None,
+    ),
+    PiEntryCase(
+        "thinking-level-change-is-skipped",
+        {
+            "type": "thinking_level_change",
+            "id": "tl1",
+            "timestamp": "2026-05-30T12:00:01.500Z",
+            "thinkingLevel": "high",
+        },
+        0,
+        None,
+        None,
+        None,
+        None,
+    ),
+    PiEntryCase(
+        "empty-user-content-is-skipped",
+        {
+            "type": "message",
+            "id": "u2",
+            "timestamp": "2026-05-30T12:00:02.000Z",
+            "message": {"role": "user", "content": []},
+        },
+        0,
+        None,
+        None,
+        None,
+        None,
+    ),
+    PiEntryCase(
+        "assistant-thinking-only-is-skipped",
+        {
+            "type": "message",
+            "id": "a2",
+            "timestamp": "2026-05-30T12:00:03.000Z",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "thinking", "thinking": "internal reasoning"}],
+            },
+        },
+        0,
+        None,
+        None,
+        None,
+        None,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    PiEntryCase._fields,
+    PI_ENTRY_CASES,
+    ids=[case.test_id for case in PI_ENTRY_CASES],
+)
+def test_parse_pi_session_entry(
+    test_id: str,
+    entry: dict[str, object],
+    expected_count: int,
+    expected_kind: str | None,
+    expected_role: str | None,
+    expected_text_contains: str | None,
+    expected_model: str | None,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each pi session entry type maps to the expected record (or is skipped)."""
+    _ = test_id
+    agentgrep = load_agentgrep_module()
+    records = _parse_pi_entries(agentgrep, tmp_path, monkeypatch, [entry])
+
+    assert len(records) == expected_count
+    if expected_count:
+        record = records[0]
+        assert record.agent == "pi"
+        assert record.kind == expected_kind
+        assert record.role == expected_role
+        assert record.model == expected_model
+        if expected_text_contains is not None:
+            assert expected_text_contains in record.text
 
 
 class UnixToIsoCase(t.NamedTuple):

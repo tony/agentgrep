@@ -279,6 +279,34 @@ Documentary-only entries cover events, summaries, memory, logs,
 worktrees, and config — all catalogued with `search_by_default=False`
 or deferred.
 
+### Pi
+
+`observed_version`: ``pi v0.78.0`` (observed 2026-05-30).
+
+Pi (earendil-works) stores each conversation as one append-only JSONL
+file under `${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/sessions/`,
+grouped by working directory (`--<encoded_cwd>--`, leading slash
+stripped and `/ \ :` replaced by `-`). It keeps no separate
+prompt-history log and no SQLite index, so a single adapter covers the
+whole searchable surface:
+
+- `pi.sessions_jsonl.v1` parses `sessions/--<cwd>--/<ts>_<uuid>.jsonl`.
+  Line one is a `type:"session"` header (`version` may be absent in v1
+  files); each later line is a `SessionEntry` tagged union. `message`
+  entries carry an LLM message (`role` user / assistant / toolResult,
+  `content` string or content-blocks; assistant turns carry `model`),
+  while `compaction` / `branch_summary` summaries and `session_info`
+  names are emitted as history text. User turns surface as prompts via
+  the shared role-to-kind mapping.
+
+Discovery resolves two roots: `PI_CODING_AGENT_DIR` (the agent dir,
+default `~/.pi/agent`) and the optional `PI_CODING_AGENT_SESSION_DIR`,
+which holds session files flat with the cwd recovered from the header.
+
+Documentary-only entries cover settings, auth (private credentials),
+models, themes, tools, managed binaries, prompt templates, the debug
+log, and the npm extension install root.
+
 ## Adding or updating a store
 
 1. Edit `src/agentgrep/store_catalog.py`. Stamp `observed_version`

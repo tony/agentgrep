@@ -1,7 +1,7 @@
 [project]
 name = "agentgrep"
 version = "0.1.0a11"
-description = "Read-only search for local AI agent prompts and history (Codex, Claude Code, Cursor, Gemini, Grok)"
+description = "Read-only search for local AI agent prompts and history (Codex, Claude Code, Cursor, Gemini, Grok, Pi)"
 requires-python = ">=3.14,<4.0"
 authors = [
   {name = "Tony Narlock", email = "tony@git-pull.com"}
@@ -21,7 +21,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 
-keywords = ["ai", "codex", "claude", "cursor", "gemini", "grok", "mcp", "search", "agent-history"]
+keywords = ["ai", "codex", "claude", "cursor", "gemini", "grok", "pi", "mcp", "search", "agent-history"]
 readme = "README.md"
 packages = [
   { include = "*", from = "src" },

@@ -3,7 +3,7 @@
 # TUI
 
 The `agentgrep ui` command launches the interactive Textual explorer
-over the same Codex, Claude Code, Cursor, Gemini, and Grok stores the rest
+over the same Codex, Claude Code, Cursor, Gemini, Grok, and Pi stores the rest
 of the CLI walks. It is read-only — agentgrep never mutates the
 source stores. Bare `agentgrep` prints the directory of choices, so
 the explorer always needs the explicit `ui` subcommand.
