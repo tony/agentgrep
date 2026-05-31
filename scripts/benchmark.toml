@@ -14,9 +14,9 @@ sync_command = "uv sync --quiet"
 venv = ".venv"
 timeout_seconds = 300
 
-[bench.grep]
-description = "rg-shaped grep, exit at first match"
-command = "{venv}/bin/agentgrep grep --no-progress -m 1 {query}"
+[bench.grep-max-count-1]
+description = "rg-shaped grep, max-count 1"
+command = "{venv}/bin/agentgrep grep --no-progress --max-count 1 {query}"
 default_query = "libtmux"
 skip_if_missing = "grep"
 
@@ -25,20 +25,20 @@ description = "fd-shaped source enumeration"
 command = "{venv}/bin/agentgrep find --no-progress {query}"
 default_query = "libtmux"
 
-[bench.search]
-description = "search, exit after first match"
+[bench.search-limit-1]
+description = "search, limit 1"
 command = "{venv}/bin/agentgrep search --no-progress --limit 1 {query}"
 default_query = "libtmux"
 
-[bench.grep-all-prompts-json-limit-50]
-description = "All-agent prompt grep, JSON output, limit 50"
-command = "{venv}/bin/agentgrep grep --no-progress --agent all --scope prompts -m 50 --json {query}"
+[bench.grep-all-prompts-json-max-count-50]
+description = "All-agent prompt grep, JSON output, max-count 50"
+command = "{venv}/bin/agentgrep grep --no-progress --agent all --scope prompts --max-count 50 --json {query}"
 default_query = "tmux"
 skip_if_missing = "grep"
 
-[bench.grep-all-conversations-json-limit-50]
-description = "All-agent conversation grep, JSON output, limit 50"
-command = "{venv}/bin/agentgrep grep --no-progress --agent all --scope conversations -m 50 --json {query}"
+[bench.grep-all-conversations-json-max-count-50]
+description = "All-agent conversation grep, JSON output, max-count 50"
+command = "{venv}/bin/agentgrep grep --no-progress --agent all --scope conversations --max-count 50 --json {query}"
 default_query = "tmux"
 skip_if_missing = "grep"
 
@@ -50,6 +50,33 @@ default_query = "tmux"
 [bench.find-all-prompts-json-limit-500]
 description = "All-agent prompt-source enumeration, JSON output, limit 500"
 command = "{venv}/bin/agentgrep find --no-progress --agent all --type prompts --json --limit 500"
+default_query = ""
+
+[bench.profile-grep-all-prompts-json-max-count-500]
+description = "Profiling: all-agent prompt grep, JSON output, max-count 500"
+command = "{venv}/bin/agentgrep grep --no-progress --agent all --scope prompts --max-count 500 --json {query}"
+default_query = "tmux"
+skip_if_missing = "grep"
+
+[bench.profile-grep-all-conversations-json-max-count-500]
+description = "Profiling: all-agent conversation grep, JSON output, max-count 500"
+command = "{venv}/bin/agentgrep grep --no-progress --agent all --scope conversations --max-count 500 --json {query}"
+default_query = "tmux"
+skip_if_missing = "grep"
+
+[bench.profile-search-all-prompts-ranked-json-limit-50]
+description = "Profiling: all-agent prompt search with ranking, JSON output, limit 50"
+command = "{venv}/bin/agentgrep search --no-progress --agent all --scope prompts --limit 50 --json {query}"
+default_query = "tmux"
+
+[bench.profile-search-all-conversations-json-limit-50]
+description = "Profiling: all-agent conversation search, JSON output, limit 50"
+command = "{venv}/bin/agentgrep search --no-progress --agent all --scope conversations --limit 50 --no-rank --no-group --json {query}"
+default_query = "tmux"
+
+[bench.profile-find-all-json-limit-500]
+description = "Profiling: all-agent source enumeration, JSON output, limit 500"
+command = "{venv}/bin/agentgrep find --no-progress --agent all --json --limit 500"
 default_query = ""
 
 [bench.import-time]
