@@ -20,8 +20,8 @@ def _validate_query_sync(request: ValidateQueryRequest) -> ValidateQueryResponse
     query = agentgrep.SearchQuery(
         terms=tuple(request.terms),
         search_type="all",
-        any_term=request.any_term,
-        regex=request.regex,
+        any_term=False,
+        regex=False,
         case_sensitive=request.case_sensitive,
         agents=agentgrep.AGENT_CHOICES,
         limit=None,
@@ -50,32 +50,22 @@ def register(mcp: FastMCP) -> None:
             list[str],
             Field(
                 min_length=1,
-                description="One or more literal or regex search terms.",
+                description="One or more literal search terms (AND-matched).",
             ),
         ],
         sample_text: t.Annotated[
             str,
             Field(description="Sample text to test the query against."),
         ],
-        regex: t.Annotated[
-            bool,
-            Field(description="Treat terms as regular expressions."),
-        ] = False,
         case_sensitive: t.Annotated[
             bool,
             Field(description="Perform case-sensitive matching."),
-        ] = False,
-        any_term: t.Annotated[
-            bool,
-            Field(description="Match any term instead of requiring all terms."),
         ] = False,
     ) -> ValidateQueryResponse:
         request = ValidateQueryRequest(
             terms=terms,
             sample_text=sample_text,
-            regex=regex,
             case_sensitive=case_sensitive,
-            any_term=any_term,
         )
         return await asyncio.to_thread(_validate_query_sync, request)
 

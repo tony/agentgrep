@@ -576,26 +576,6 @@ async def test_mcp_summarize_discovery_totals_match_list_sources(
     assert summary_data["total_sources"] == listing_data["total"]
 
 
-async def test_mcp_validate_query_invalid_regex() -> None:
-    """``validate_query`` reports ``regex_valid=False`` on unclosed character classes."""
-    agentgrep_mcp = load_agentgrep_mcp_module()
-
-    async with Client(agentgrep_mcp.build_mcp_server()) as client:
-        result = await client.call_tool(
-            "validate_query",
-            {
-                "terms": ["[unclosed"],
-                "regex": True,
-                "sample_text": "anything",
-            },
-        )
-
-    data = tool_payload(result)
-    assert data["regex_valid"] is False
-    assert data["matches"] is False
-    assert data["error_message"]
-
-
 async def test_mcp_validate_query_substring_match() -> None:
     """``validate_query`` returns ``matches=True`` for a literal hit."""
     agentgrep_mcp = load_agentgrep_mcp_module()

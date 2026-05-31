@@ -35,9 +35,7 @@ _INSTR_SEARCH_VS_DISCOVERY = (
 
 _INSTR_DEFAULTS = (
     "Defaults: results are newest-first and deduplicated by session. "
-    "search uses substring AND-matching across all terms; set any_term=true "
-    "for OR. Use regex=true for pattern matching; complex regex should be "
-    "validated locally before running a broad cross-agent search."
+    "search uses substring AND-matching across all terms."
 )
 
 _INSTR_RESOURCES = (

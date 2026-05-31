@@ -107,8 +107,6 @@ class SearchToolQuery(AgentGrepModel):
     terms: list[str]
     agent: AgentSelector
     search_type: SearchTypeName
-    any_term: bool
-    regex: bool
     case_sensitive: bool
     limit: int | None = None
 
@@ -170,8 +168,6 @@ class SearchRequestModel(AgentGrepModel):
     terms: list[str]
     agent: AgentSelector
     search_type: SearchTypeName
-    any_term: bool
-    regex: bool
     case_sensitive: bool
     limit: int | None = None
 
@@ -284,9 +280,7 @@ class ValidateQueryRequest(AgentGrepModel):
     """Validated validate-query request payload."""
 
     terms: list[str] = Field(min_length=1)
-    regex: bool = False
     case_sensitive: bool = False
-    any_term: bool = False
     sample_text: str
 
 

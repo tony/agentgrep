@@ -42,6 +42,23 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### Breaking changes
+
+#### Removed: regex, OR, and files-without-match search modes
+
+Three search modes that bypassed the ripgrep prefilter—triggering a
+full-corpus scan with high peak memory usage—have been removed until
+they can be implemented with bounded memory. This affects the CLI
+`search --regex` and `search --any` flags, the `regex` and `any_term`
+parameters in the MCP {tooliconl}`search` and {tooliconl}`validate_query`
+tools, and `grep -L` (`--files-without-match`).
+
+`agentgrep search` is now restricted to literal AND-matching to ensure
+performance and stability. `grep` and `find` remain regex-by-default
+as they utilize ripgrep directly. Re-introducing the removed modes
+with bounded memory is tracked in
+[tony/agentgrep#32](https://github.com/tony/agentgrep/issues/32).
+
 ## agentgrep 0.1.0a9 (2026-05-30)
 
 agentgrep 0.1.0a9 reports how each discovered source's version was

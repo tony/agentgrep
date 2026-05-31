@@ -36,8 +36,8 @@ def _search_sync(request: SearchRequestModel) -> SearchToolResponse:
     query = agentgrep.SearchQuery(
         terms=tuple(request.terms),
         search_type=request.search_type,
-        any_term=request.any_term,
-        regex=request.regex,
+        any_term=False,
+        regex=False,
         case_sensitive=request.case_sensitive,
         agents=normalize_agent_selection(request.agent),
         limit=request.limit,
@@ -48,8 +48,6 @@ def _search_sync(request: SearchRequestModel) -> SearchToolResponse:
             terms=request.terms,
             agent=request.agent,
             search_type=request.search_type,
-            any_term=request.any_term,
-            regex=request.regex,
             case_sensitive=request.case_sensitive,
             limit=request.limit,
         ),
@@ -93,7 +91,7 @@ def register(mcp: FastMCP) -> None:
             list[str],
             Field(
                 min_length=1,
-                description="One or more literal or regex search terms.",
+                description="One or more literal search terms (AND-matched).",
             ),
         ],
         agent: t.Annotated[
@@ -104,14 +102,6 @@ def register(mcp: FastMCP) -> None:
             SearchTypeName,
             Field(description="Search prompts, history, or both."),
         ] = "prompts",
-        any_term: t.Annotated[
-            bool,
-            Field(description="Match any term instead of requiring all terms."),
-        ] = False,
-        regex: t.Annotated[
-            bool,
-            Field(description="Treat search terms as regular expressions."),
-        ] = False,
         case_sensitive: t.Annotated[
             bool,
             Field(description="Perform case-sensitive matching."),
@@ -129,8 +119,6 @@ def register(mcp: FastMCP) -> None:
             terms=terms,
             agent=agent,
             search_type=search_type,
-            any_term=any_term,
-            regex=regex,
             case_sensitive=case_sensitive,
             limit=limit,
         )

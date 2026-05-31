@@ -3877,7 +3877,6 @@ def test_main_handles_keyboard_interrupt_without_traceback(
         invert_match=False,
         count_only=False,
         files_with_matches=False,
-        files_without_match=False,
         only_matching=False,
         no_dedupe=False,
         line_number=None,

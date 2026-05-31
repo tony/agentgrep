@@ -135,7 +135,7 @@ used to identify the app/data version for that concrete file or DB.
 ```{fastmcp-tool} validate_query
 ```
 
-**Use when** you want to dry-run a regex or literal pattern against sample text before issuing a broad cross-agent search.
+**Use when** you want to dry-run a literal pattern against sample text before issuing a broad cross-agent search.
 
 ```{fastmcp-tool-input} validate_query
 ```

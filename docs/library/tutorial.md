@@ -38,12 +38,6 @@ Require every term:
 $ uv run agentgrep grep docs deploy
 ```
 
-Match any term (all patterns use AND by default):
-
-```console
-$ uv run agentgrep grep docs deploy
-```
-
 Use regular expressions (regex is the default):
 
 ```console
