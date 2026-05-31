@@ -42,6 +42,16 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+## agentgrep 0.1.0a11 (2026-05-31)
+
+agentgrep 0.1.0a11 splits the Cursor backend into two agents —
+`cursor-cli` (the `cursor-agent` terminal CLI) and `cursor-ide` (the
+desktop app) — matching their disjoint data homes and on-disk formats.
+It also adds three stores the single-agent model had missed: the Cursor
+CLI prompt-history log, per-workspace IDE history, and a best-effort
+protobuf chat reader. Retiring the `cursor` agent is a breaking change
+— see below.
+
 ### Breaking changes
 
 #### Cursor split into `cursor-cli` and `cursor-ide` (#27)
