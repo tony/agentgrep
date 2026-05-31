@@ -26,6 +26,8 @@ rather than a JSONL-transcript backend.
 A relational `session → message → part` schema (Drizzle). A conversation
 turn is reconstructed by joining a `part` row up to its `message` (for
 the role) and `session` (for the title and working directory).
+User text parts participate in the default prompt scope; assistant and
+reasoning parts require `--scope conversations` or `--scope all`.
 
 `session` table — one row per session:
 

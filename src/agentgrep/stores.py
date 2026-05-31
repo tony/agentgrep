@@ -1,6 +1,6 @@
 """Pydantic-backed catalogue of every on-disk store agentgrep knows about.
 
-agentgrep searches AI agent prompt and history stores that live in the user's
+agentgrep searches AI agent prompt and conversation stores that live in the user's
 ``$HOME``. Those stores move (Claude has renamed paths between minor
 versions), grow (Cursor added a CLI agent with its own layout), and overlap
 (Gemini keeps a pruned archive alongside its live tmp tree). Keeping that

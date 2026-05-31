@@ -1,7 +1,7 @@
 """Search event-stream producer.
 
 The :func:`iter_search_events` generator is the primary entry point
-into agentgrep's search engine: it scans the user's prompt and history
+into agentgrep's search engine: it scans the user's prompt and conversation
 stores and yields :class:`agentgrep.events.SearchEvent` values as it
 goes. Consumers (the CLI text path, the TUI worker, the MCP tool
 wrapper) filter the event stream for the variants they need.

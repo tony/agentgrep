@@ -16,6 +16,9 @@ named `<iso-timestamp>_<session-uuid>.jsonl`.
 Unlike Codex or Grok, pi keeps no separate prompt-history log and no
 SQLite session index — the session transcript is the entire searchable
 surface, which makes pi the structural twin of the Claude Code backend.
+agentgrep projects user turns from that transcript into the default
+prompt scope; assistant, tool, summary, and branch records require
+`--scope conversations` or `--scope all`.
 
 The optional `PI_CODING_AGENT_SESSION_DIR` override points at the
 sessions directory directly. When it is set, pi writes session files

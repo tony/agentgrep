@@ -2,7 +2,11 @@
 
 # MCP
 
-agentgrep's MCP server exposes a read-only search surface over stdio. It does not mutate local agent stores, open SQLite in write mode, or execute arbitrary shell commands.
+agentgrep's MCP server exposes a read-only search surface over stdio.
+Search defaults to prompt scope; full conversation records are an
+explicit `scope="conversations"` opt-in. The server does not mutate
+local agent stores, open SQLite in write mode, or execute arbitrary
+shell commands.
 
 ## Install
 

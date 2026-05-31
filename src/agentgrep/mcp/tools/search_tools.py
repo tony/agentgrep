@@ -84,7 +84,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(
         name="search",
         tags=READONLY_TAGS | {"search"},
-        description="Search normalized prompts or history across local agent stores.",
+        description=("Search normalized prompts by default; opt into conversations with scope."),
     )
     async def search_tool(
         terms: t.Annotated[

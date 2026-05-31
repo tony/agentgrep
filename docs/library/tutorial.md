@@ -13,21 +13,21 @@ $ uv run agentgrep grep "draft pr"
 Search only Codex prompts:
 
 ```console
-$ uv run agentgrep grep "draft pr" --agent codex --type prompts
+$ uv run agentgrep grep "draft pr" --agent codex
 ```
 
-## Search history
+## Search conversations
 
-Search assistant and command history:
+Search assistant, tool, event, and full conversation records:
 
 ```console
-$ uv run agentgrep grep "pytest" --type history
+$ uv run agentgrep grep "pytest" --scope conversations
 ```
 
-Search prompts and history together:
+Search prompts and conversations together:
 
 ```console
-$ uv run agentgrep grep "docs" --type all
+$ uv run agentgrep grep "docs" --scope all
 ```
 
 ## Combine terms

@@ -935,7 +935,7 @@ def build_streaming_ui_app(
                 initial_search = " ".join(self.query.terms) if self.query.terms else ""
             yield SearchInput(
                 value=initial_search,
-                placeholder="Search prompts and history",
+                placeholder="Search prompts",
                 id="search",
             )
             with horizontal(id="body"):

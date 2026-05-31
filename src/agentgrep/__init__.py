@@ -3,7 +3,7 @@
 # requires-python = ">=3.14"
 # dependencies = ["pydantic>=2.11.3", "textual>=3.2.0"]
 # ///
-"""Search local AI agent prompts and history without mutating agent stores.
+"""Search local AI agent prompts and conversations without mutating agent stores.
 
 The tool discovers known read-only stores under ``~/.codex``, ``~/.claude``,
 ``~/.cursor``, and Cursor's official IDE storage locations, then normalizes

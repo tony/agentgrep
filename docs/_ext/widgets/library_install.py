@@ -90,7 +90,7 @@ import agentgrep
 backends = agentgrep.select_backends()
 query = agentgrep.SearchQuery(
     terms=("hello",),
-    search_type="all",
+    scope="all",
     any_term=False,
     regex=False,
     case_sensitive=False,

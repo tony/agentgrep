@@ -89,10 +89,10 @@ Combine multiple patterns with an agent filter:
 $ agentgrep grep serene bliss --agent codex
 ```
 
-Stream history matches as NDJSON:
+Stream full-conversation matches as NDJSON:
 
 ```console
-$ agentgrep grep prompt history --type history --ndjson
+$ agentgrep grep prompt history --scope conversations --ndjson
 ```
 
 List stores for one agent as JSON:

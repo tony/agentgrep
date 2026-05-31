@@ -14,14 +14,14 @@ Use this when the user wants matching user prompts.
 ```{fastmcp-prompt-input} search_prompts
 ```
 
-## Search history
+## Search conversations
 
-```{fastmcp-prompt} search_history
+```{fastmcp-prompt} search_conversations
 ```
 
-Use this when the user wants assistant or command history records.
+Use this when the user wants full conversation records.
 
-```{fastmcp-prompt-input} search_history
+```{fastmcp-prompt-input} search_conversations
 ```
 
 ## Inspect stores

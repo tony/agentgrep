@@ -9,7 +9,9 @@ MCP resources expose passive read-only data at `agentgrep://` URIs. Clients read
 ```{fastmcp-resource} agentgrep_capabilities
 ```
 
-Read `agentgrep://capabilities` to see supported agents, adapters, tools, resources, prompts, and optional backend selections.
+Read `agentgrep://capabilities` to see supported agents, adapters,
+search scopes, tools, resources, prompts, and optional backend
+selections.
 
 ## Sources
 

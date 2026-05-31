@@ -4,13 +4,15 @@
 
 agentgrep's tools are read-only. They return structured Pydantic models and protect private paths before serialization.
 
-## Prompt and History Search
+## Prompt and Conversation Search
 
 ```{fastmcp-tool} search
 :no-index:
 ```
 
-**Use when** you need full prompt or history records matching one or more terms.
+**Use when** you need prompt records matching one or more terms. Pass
+`scope="conversations"` for full conversation, assistant, tool, and
+event records, or `scope="all"` for both surfaces.
 
 **Returns:** query metadata plus normalized records with agent, store, adapter, path, text, title, role, timestamp, model, session ID, conversation ID, and metadata.
 
@@ -22,7 +24,7 @@ agentgrep's tools are read-only. They return structured Pydantic models and prot
   "arguments": {
     "terms": ["release notes"],
     "agent": "all",
-    "search_type": "prompts",
+    "scope": "prompts",
     "limit": 20
   }
 }

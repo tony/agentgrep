@@ -4,8 +4,8 @@
 [![Python versions](https://img.shields.io/pypi/pyversions/agentgrep.svg)](https://pypi.org/project/agentgrep/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Read-only search for local AI agent prompts and history across Codex,
-Claude Code, Cursor, Gemini, Grok, Pi, and OpenCode.
+Read-only search for local AI agent prompts and opt-in conversations
+across Codex, Claude Code, Cursor, Gemini, Grok, Pi, and OpenCode.
 
 `agentgrep` provides a CLI and an MCP server over the same discovery + parsing layer:
 
@@ -29,10 +29,16 @@ snippets live in the
 
 ## CLI quickstart
 
-Search prompts and history across every configured agent:
+Search user prompts across every configured agent:
 
 ```console
 $ agentgrep grep "deploy"
+```
+
+Search full conversations explicitly:
+
+```console
+$ agentgrep grep "deploy" --scope conversations
 ```
 
 Stream JSON so a non-MCP agent or shell pipeline can consume the
@@ -73,7 +79,7 @@ import agentgrep
 backends = agentgrep.select_backends()
 query = agentgrep.SearchQuery(
     terms=("hello",),
-    search_type="all",
+    scope="all",
     any_term=False,
     regex=False,
     case_sensitive=False,

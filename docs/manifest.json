@@ -1,7 +1,7 @@
 {
   "name": "agentgrep",
   "short_name": "agentgrep",
-  "description": "Read-only search for local AI agent prompts and history (Codex, Claude, Cursor)",
+  "description": "Read-only search for local AI agent prompts and opt-in conversations",
   "theme_color": "#2196f3",
   "background_color": "#fff",
   "display": "browser",

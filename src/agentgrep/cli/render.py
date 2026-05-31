@@ -285,7 +285,7 @@ def _type_matches(record: FindRecord, args: FindArgs) -> bool:
     transcripts) and ``history``/``prompts`` -> ``history_file`` (the
     prompt-history audit logs, where standalone prompt records live).
     The prompt/history distinction is a record-level concept (``search``
-    ``--type``); at the file granularity ``find`` operates on, both map
+    ``--scope``); at the file granularity ``find`` operates on, both map
     to the same path kind.
     """
     if args.type_filter == "all":
@@ -388,7 +388,7 @@ def run_find_command(args: FindArgs) -> int:
     for the routing decision.
 
     The ``--ui`` overlay translates the find filters into a
-    :class:`SearchQuery` seeded with the same agent / type narrowing,
+    :class:`SearchQuery` seeded with the same agent / scope narrowing,
     then opens the Textual explorer. This mirrors the ``tig`` model:
     same query semantics, different presentation.
     """

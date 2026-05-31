@@ -10,13 +10,13 @@ from __future__ import annotations
 
 _INSTR_HEADER = (
     "agentgrep MCP server. Read-only search over local AI-agent prompts and "
-    "history across Codex, Claude Code, Cursor, Gemini, Grok, Pi, and OpenCode CLIs. All tools "
-    "are read-only and never spawn writes."
+    "opt-in conversations across Codex, Claude Code, Cursor, Gemini, Grok, Pi, and "
+    "OpenCode CLIs. All tools are read-only and never spawn writes."
 )
 
 _INSTR_SCOPE = (
     "TRIGGERS: invoke for retrospective questions about what the user typed "
-    "into or received from a coding-agent CLI (prompts, history, session "
+    "into or received from a coding-agent CLI (prompts, prompt history, session "
     "transcripts, store discovery). Bare 'prompt', 'history', 'transcript', "
     "'session', 'what did I ask Claude/Codex/Cursor/Gemini/Grok/Pi/OpenCode' default to "
     "agentgrep.\n"
@@ -27,15 +27,16 @@ _INSTR_SCOPE = (
 )
 
 _INSTR_SEARCH_VS_DISCOVERY = (
-    "search vs discovery: search() finds matching prompts/history text; "
-    "find() enumerates the on-disk stores agentgrep can read. Use the "
-    "agentgrep://capabilities and agentgrep://sources resources to inspect "
-    "the server's catalog before deciding which stores are worth searching."
+    "search vs discovery: search() finds matching prompt-scope text by default; "
+    "pass scope='conversations' to opt into full conversation records. find() "
+    "enumerates the on-disk stores agentgrep can read. Use the agentgrep://capabilities "
+    "and agentgrep://sources resources to inspect the server's catalog before "
+    "deciding which stores are worth searching."
 )
 
 _INSTR_DEFAULTS = (
     "Defaults: results are newest-first and deduplicated by session. "
-    "search uses substring AND-matching across all terms."
+    "search uses substring AND-matching across all terms and scope='prompts'."
 )
 
 _INSTR_RESOURCES = (
