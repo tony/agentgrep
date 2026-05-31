@@ -175,6 +175,33 @@ RANK_LINES_CASES: tuple[RankLinesCase, ...] = (
         None,
         ("foobaz", "fooqux"),
     ),
+    RankLinesCase(
+        "empty-query-matches-all",
+        "",
+        ("apple", "banana", "cherry"),
+        "ignore",
+        False,
+        None,
+        ("apple", "banana", "cherry"),
+    ),
+    RankLinesCase(
+        "whitespace-query-matches-all",
+        "   ",
+        ("one", "two"),
+        "ignore",
+        False,
+        None,
+        ("one", "two"),
+    ),
+    RankLinesCase(
+        "empty-query-respects-limit",
+        "",
+        ("a", "b", "c"),
+        "ignore",
+        False,
+        2,
+        ("a", "b"),
+    ),
 )
 
 

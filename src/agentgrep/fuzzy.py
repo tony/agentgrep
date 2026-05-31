@@ -218,6 +218,10 @@ def rank_lines(
     query is a single bare token), the fuzzy score alone gates inclusion
     — lines scoring ``0.0`` are dropped.
 
+    An empty or whitespace-only query matches every line (yielded with
+    score ``0.0``), mirroring ``fzf --filter ''``; the ``0.0`` drop only
+    applies to non-empty queries.
+
     With ``sort=True`` (default) the iterator yields the highest-scoring
     line first; otherwise it preserves the input order. ``limit`` caps
     the number of yielded results when set.
@@ -244,14 +248,15 @@ def rank_lines(
     Yields
     ------
     tuple[str, float]
-        ``(line, score)`` pairs with ``score > 0.0``.
+        ``(line, score)`` pairs with ``score > 0.0`` (or ``0.0`` for an
+        empty query, which matches every line).
     """
     candidates: list[tuple[str, float]] = []
     for line in lines:
         if extended and not extended_match(query, line, case=case):
             continue
         score = fuzzy_score(query, line, case=case, algo=algo)
-        if score <= 0.0:
+        if score <= 0.0 and query.strip():
             continue
         candidates.append((line, score))
     if sort:

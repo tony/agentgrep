@@ -377,3 +377,15 @@ def test_run_fuzzy_command_ndjson_no_match_returns_one(
     exit_code = agentgrep.run_fuzzy_command(args)
     assert exit_code == 1
     assert capsys.readouterr().out == ""
+
+
+def test_run_fuzzy_command_empty_query_matches_all_lines(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An empty query passes every line through, like ``fzf --filter ''``."""
+    monkeypatch.setattr("sys.stdin", io.StringIO("apple\nbanana\ncherry\n"))
+    args = _make_fuzzy_args(query="")
+    exit_code = agentgrep.run_fuzzy_command(args)
+    assert exit_code == 0
+    assert capsys.readouterr().out.splitlines() == ["apple", "banana", "cherry"]
