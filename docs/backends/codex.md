@@ -29,6 +29,11 @@ is not treated as the installed version. Session transcripts can carry
 `session_meta.payload.cli_version`, which is stronger evidence for
 that transcript than the global cache.
 
+Metadata-rich discovery reads the root client-version cache once per
+discovery pass and reuses it for every Codex source. Normal search and
+find paths skip version evidence entirely, so broad all-agent lookups do
+not reread root metadata before the query planner narrows the source set.
+
 Data-shape detection is based on the source itself. `history.jsonl`
 records with `session_id`, `ts`, and `text` are reported as
 `codex.history_jsonl.current`; legacy `history.json` array records with

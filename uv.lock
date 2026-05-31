@@ -49,6 +49,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "click" },
     { name = "gp-sphinx" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -82,6 +83,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "click", specifier = ">=8.1" },
     { name = "gp-sphinx", specifier = "==0.0.1a26" },
     { name = "pytest" },
     { name = "pytest-asyncio" },

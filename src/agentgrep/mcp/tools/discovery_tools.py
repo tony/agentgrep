@@ -101,6 +101,7 @@ def _summarize_discovery_sync(request: DiscoverySummaryRequest) -> DiscoverySumm
         pathlib.Path.home(),
         normalize_agent_selection(request.agent),
         backends,
+        version_detail="none",
     )
     by_agent: collections.Counter[str] = collections.Counter()
     by_format: collections.Counter[str] = collections.Counter()

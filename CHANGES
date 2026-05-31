@@ -42,6 +42,15 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### What's new
+
+#### Faster scoped discovery planning (#41)
+
+Search, grep, find, and MCP lookup paths avoid metadata-rich source inventory
+when they only need parseable handles. Prompt and conversation scopes also
+narrow catalogue roles before filesystem walks, and committed benchmark entries
+now make their `--max-count` and `--limit` caps explicit.
+
 ## agentgrep 0.1.0a14 (2026-05-31)
 
 agentgrep 0.1.0a14 makes prompt search the default search scope and

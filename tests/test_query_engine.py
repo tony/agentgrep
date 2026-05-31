@@ -29,12 +29,13 @@ def _make_source(
     *,
     agent: agentgrep.AgentName,
     path: str,
+    store: str = "sessions",
     adapter_id: str = "codex.sessions_jsonl.v1",
 ) -> agentgrep.SourceHandle:
     """Build a synthetic SourceHandle for engine tests."""
     return agentgrep.SourceHandle(
         agent=agent,
-        store="sessions",
+        store=store,
         adapter_id=adapter_id,
         path=pathlib.Path(path),
         path_kind="session_file",
@@ -617,6 +618,207 @@ def test_find_eager_path_honors_source_predicate(
             line.split("\t", 1)[0] for line in captured.out.splitlines() if line.strip()
         }
     assert emitted_agents == set(case.expected_agents)
+
+
+class FastDiscoveryEntrypointCase(t.NamedTuple):
+    """One frontend entrypoint that should use metadata-free discovery."""
+
+    test_id: str
+    entrypoint: str
+
+
+FAST_DISCOVERY_ENTRYPOINT_CASES: tuple[FastDiscoveryEntrypointCase, ...] = (
+    FastDiscoveryEntrypointCase(test_id="run-search-query", entrypoint="run_search_query"),
+    FastDiscoveryEntrypointCase(test_id="iter-search-events", entrypoint="iter_search_events"),
+    FastDiscoveryEntrypointCase(test_id="run-find-query", entrypoint="run_find_query"),
+    FastDiscoveryEntrypointCase(test_id="iter-find-events", entrypoint="iter_find_events"),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    FAST_DISCOVERY_ENTRYPOINT_CASES,
+    ids=[c.test_id for c in FAST_DISCOVERY_ENTRYPOINT_CASES],
+)
+def test_fast_entrypoints_request_metadata_free_discovery(
+    case: FastDiscoveryEntrypointCase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Search and find frontends request the fastest discovery path."""
+    source = _make_source(agent="codex", path="/tmp/codex.jsonl")
+    calls: list[dict[str, object]] = []
+
+    def fake_discover_sources(
+        home: pathlib.Path,
+        agents: tuple[agentgrep.AgentName, ...],
+        backends: agentgrep.BackendSelection,
+        **kwargs: object,
+    ) -> list[agentgrep.SourceHandle]:
+        del home, agents, backends
+        calls.append(kwargs)
+        return [source]
+
+    monkeypatch.setattr(agentgrep, "discover_sources", fake_discover_sources)
+    monkeypatch.setattr(
+        agentgrep,
+        "plan_search_sources",
+        lambda query, sources, backends, **kwargs: list(sources),
+    )
+    monkeypatch.setattr(agentgrep, "iter_source_records", lambda source: iter(()))
+
+    query = agentgrep.SearchQuery(
+        terms=("bliss",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=1,
+    )
+
+    if case.entrypoint == "run_search_query":
+        _ = agentgrep.run_search_query(pathlib.Path.home(), query)
+    elif case.entrypoint == "iter_search_events":
+        _ = list(agentgrep.iter_search_events(pathlib.Path.home(), query))
+    elif case.entrypoint == "run_find_query":
+        _ = agentgrep.run_find_query(
+            pathlib.Path.home(),
+            ("codex",),
+            pattern=None,
+            limit=1,
+        )
+    elif case.entrypoint == "iter_find_events":
+        _ = list(
+            agentgrep.iter_find_events(
+                pathlib.Path.home(),
+                ("codex",),
+                pattern=None,
+                limit=1,
+            ),
+        )
+    else:
+        msg = f"unknown entrypoint: {case.entrypoint}"
+        raise AssertionError(msg)
+
+    assert calls
+    assert all(call.get("version_detail") == "none" for call in calls)
+
+
+class SearchDiscoveryRoleCase(t.NamedTuple):
+    """One search scope and the store-role discovery calls it should issue."""
+
+    test_id: str
+    scope: agentgrep.SearchScope
+    prompt_history_agents: frozenset[agentgrep.AgentName]
+    expected_calls: tuple[
+        tuple[
+            tuple[agentgrep.AgentName, ...],
+            frozenset[agentgrep.StoreRole] | None,
+        ],
+        ...,
+    ]
+
+
+SEARCH_DISCOVERY_ROLE_CASES: tuple[SearchDiscoveryRoleCase, ...] = (
+    SearchDiscoveryRoleCase(
+        test_id="all-keeps-default-discovery",
+        scope="all",
+        prompt_history_agents=frozenset(),
+        expected_calls=((("codex", "claude"), None),),
+    ),
+    SearchDiscoveryRoleCase(
+        test_id="conversations-discovers-conversation-roles",
+        scope="conversations",
+        prompt_history_agents=frozenset(),
+        expected_calls=((("codex", "claude"), agentgrep.CONVERSATION_STORE_ROLES),),
+    ),
+    SearchDiscoveryRoleCase(
+        test_id="prompts-falls-back-per-agent",
+        scope="prompts",
+        prompt_history_agents=frozenset({"codex"}),
+        expected_calls=(
+            (("codex", "claude"), frozenset({agentgrep.StoreRole.PROMPT_HISTORY})),
+            (("claude",), agentgrep.CONVERSATION_STORE_ROLES),
+        ),
+    ),
+    SearchDiscoveryRoleCase(
+        test_id="prompts-skips-fallback-when-history-exists",
+        scope="prompts",
+        prompt_history_agents=frozenset({"codex", "claude"}),
+        expected_calls=((("codex", "claude"), frozenset({agentgrep.StoreRole.PROMPT_HISTORY})),),
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    SEARCH_DISCOVERY_ROLE_CASES,
+    ids=[c.test_id for c in SEARCH_DISCOVERY_ROLE_CASES],
+)
+def test_search_discovery_pushes_scope_into_store_roles(
+    case: SearchDiscoveryRoleCase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Search discovery avoids enumerating store roles the query scope cannot use."""
+    calls: list[
+        tuple[
+            tuple[agentgrep.AgentName, ...],
+            frozenset[agentgrep.StoreRole] | None,
+        ],
+    ] = []
+
+    def fake_discover_sources(
+        home: pathlib.Path,
+        agents: tuple[agentgrep.AgentName, ...],
+        backends: agentgrep.BackendSelection,
+        **kwargs: object,
+    ) -> list[agentgrep.SourceHandle]:
+        del home, backends
+        store_roles = t.cast("frozenset[agentgrep.StoreRole] | None", kwargs.get("store_roles"))
+        calls.append((agents, store_roles))
+        if store_roles == frozenset({agentgrep.StoreRole.PROMPT_HISTORY}):
+            prompt_sources = {
+                "codex": ("codex.history", "codex.history_jsonl.v1"),
+                "claude": ("claude.history", "claude.history_jsonl.v1"),
+            }
+            return [
+                _make_source(
+                    agent=agent,
+                    path=f"/tmp/{agent}/history.jsonl",
+                    store=prompt_sources[agent][0],
+                    adapter_id=prompt_sources[agent][1],
+                )
+                for agent in agents
+                if agent in case.prompt_history_agents and agent in prompt_sources
+            ]
+        return [
+            _make_source(
+                agent=agent,
+                path=f"/tmp/{agent}/session.jsonl",
+            )
+            for agent in agents
+        ]
+
+    monkeypatch.setattr(agentgrep, "discover_sources", fake_discover_sources)
+
+    query = agentgrep.SearchQuery(
+        terms=("bliss",),
+        scope=case.scope,
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex", "claude"),
+        limit=1,
+    )
+
+    _ = agentgrep.discover_sources_for_search(
+        pathlib.Path.home(),
+        query,
+        agentgrep.BackendSelection(find_tool=None, grep_tool=None, json_tool=None),
+        version_detail="none",
+    )
+
+    assert calls == list(case.expected_calls)
 
 
 class QueryPassesThroughCase(t.NamedTuple):

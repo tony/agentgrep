@@ -12,6 +12,7 @@ from __future__ import annotations
 import importlib.util
 import math
 import pathlib
+import shlex
 import subprocess
 import sys
 import typing as t
@@ -312,6 +313,65 @@ def test_load_config_layers_in_documented_precedence_order(
         assert config.bench["grep"].command == case.expected_grep_command
 
 
+class BenchmarkLimitCase(t.NamedTuple):
+    """One configured benchmark and its command tokens."""
+
+    test_id: str
+    name: str
+    description: str
+    tokens: list[str]
+
+
+def _committed_benchmark_limit_cases() -> tuple[BenchmarkLimitCase, ...]:
+    config = benchmark.load_config(
+        config_path=benchmark.DEFAULT_CONFIG,
+        local_path=_REPO_ROOT / "scripts" / "__missing_benchmark.local.toml",
+    )
+    return tuple(
+        BenchmarkLimitCase(
+            test_id=name,
+            name=name,
+            description=bench.description,
+            tokens=shlex.split(bench.command),
+        )
+        for name, bench in config.bench.items()
+    )
+
+
+def _flag_values(tokens: list[str], flag: str) -> list[str]:
+    values: list[str] = []
+    for index, token in enumerate(tokens):
+        if token == flag and index + 1 < len(tokens):
+            values.append(tokens[index + 1])
+    return values
+
+
+@pytest.mark.parametrize(
+    "case",
+    _committed_benchmark_limit_cases(),
+    ids=[c.test_id for c in _committed_benchmark_limit_cases()],
+)
+def test_committed_benchmarks_name_every_command_limit(case: BenchmarkLimitCase) -> None:
+    """Committed benchmark keys and descriptions disclose command caps."""
+    description = case.description.casefold()
+    assert "-m" not in case.tokens
+
+    max_counts = _flag_values(case.tokens, "--max-count")
+    limits = _flag_values(case.tokens, "--limit")
+    if not max_counts and not limits:
+        assert "max-count-" not in case.name
+        assert "limit-" not in case.name
+        assert "max-count " not in description
+        assert "limit " not in description
+
+    for value in max_counts:
+        assert f"max-count-{value}" in case.name
+        assert f"max-count {value}" in description
+    for value in limits:
+        assert f"limit-{value}" in case.name
+        assert f"limit {value}" in description
+
+
 # ---------------------------------------------------------------------------
 # Templating
 # ---------------------------------------------------------------------------
@@ -337,9 +397,9 @@ TEMPLATE_CASES: tuple[TemplatingCase, ...] = (
     ),
     TemplatingCase(
         test_id="multi-token-grep-shape",
-        template="{venv}/bin/agentgrep grep -m 1 {query}",
+        template="{venv}/bin/agentgrep grep --max-count 1 {query}",
         context={"venv": ".venv", "query": "libtmux"},
-        expected=".venv/bin/agentgrep grep -m 1 libtmux",
+        expected=".venv/bin/agentgrep grep --max-count 1 libtmux",
         raises=None,
     ),
     TemplatingCase(
@@ -382,7 +442,7 @@ def test_measurement_json_shape_preserves_documented_keys() -> None:
         short_sha="0123456",
         subject="feat: a thing",
         command_name="grep",
-        command_string=".venv/bin/agentgrep grep -m 1 libtmux",
+        command_string=".venv/bin/agentgrep grep --max-count 1 libtmux",
         samples=[0.5, 0.6, 0.55],
         status="ok",
     )

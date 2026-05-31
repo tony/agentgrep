@@ -97,6 +97,20 @@ coexists with an old unmigrated file, agentgrep parses the file by its
 own shape. See {ref}`adr-storage-version-detection` for the full
 decision.
 
+Discovery callers choose how much version evidence they need. Normal
+`grep`, `search`, and `find` paths use metadata-free discovery so the
+planner can prune source handles before opening files for evidence.
+Inventory and MCP source-listing surfaces keep shape detection enabled,
+while catalog-only detail remains available for callers that want a
+cheap, low-confidence metadata stamp.
+
+Search callers also narrow discovery by descriptor role before walking
+the filesystem. Prompt scope first enumerates `prompt_history` rows and
+then falls back, per agent, to `primary_chat` and `supplementary_chat`
+rows only when no prompt-history source exists for that agent.
+Conversation scope enumerates the chat roles directly, and all scope
+keeps the full default-search catalogue.
+
 ## Stores by agent
 
 ### Claude Code

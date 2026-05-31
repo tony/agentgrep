@@ -2,6 +2,7 @@
 # /// script
 # requires-python = ">=3.14"
 # dependencies = [
+#     "click>=8.1",
 #     "typer>=0.12",
 #     "rich>=13.0",
 #     "pydantic>=2.0",

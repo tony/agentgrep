@@ -137,8 +137,9 @@ order (each layer overlays the previous):
 1. **Built-in pydantic defaults** — `runs = 3`, `warmup = 1`, `trunk =
    "master"`, etc.
 2. **`scripts/benchmark.toml`** — the committed defaults shipped with
-   the repo. Defines `[bench.grep]`, `[bench.find]`, `[bench.search]`,
-   `[bench.import-time]` for agentgrep against `libtmux`.
+   the repo. Defines small capped benches, broad all-agent prompt,
+   conversation, search, and find benches that exercise the discovery
+   planner, and `profile-*` probes for deeper bottleneck runs.
 3. **`scripts/benchmark.local.toml`** — per-machine overrides
    (gitignored). Copy `scripts/benchmark.local.toml.example` to start.
 4. **CLI flags** — `--runs N`, `--warmup N`, `--query STR`,
@@ -147,6 +148,26 @@ order (each layer overlays the previous):
 Deep-merge semantics: only the keys you set in a higher layer are
 replaced. So adding `[bench.fuzzy]` in `benchmark.local.toml` extends
 the bench set without disturbing the existing entries.
+
+## Benchmark names
+
+Treat committed `[bench.X]` keys and descriptions as the human audit
+surface for performance runs. If a command is capped, the cap must be
+visible before anyone reads the command string:
+
+- `grep --max-count N` benches use `max-count-N` in the key and
+  `max-count N` in the description.
+- `search --limit N` and `find --limit N` benches use `limit-N` in
+  the key and `limit N` in the description.
+- Committed `grep` benches use the long `--max-count` flag rather
+  than `-m`, so `list-commands` stays self-explanatory.
+
+The ordinary benches are shaped for repeatable time-series
+comparisons. `profile-*` benches are still bounded and explicit, but
+they intentionally cover broader or different lookup paths so a
+profiling run can expose planner, discovery, parsing, ranking, and
+output bottlenecks. They are useful evidence for bottleneck work even
+when their distributions are noisier across machines.
 
 ## Templating
 

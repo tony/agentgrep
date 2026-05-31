@@ -96,7 +96,12 @@ def iter_search_events(
     active_control = agentgrep.SearchControl() if control is None else control
     start_time = time.monotonic()
 
-    sources = agentgrep.discover_sources(home, query.agents, active_backends)
+    sources = agentgrep.discover_sources_for_search(
+        home,
+        query,
+        active_backends,
+        version_detail="none",
+    )
     source_predicate = query.compiled.source_predicate if query.compiled is not None else None
     if source_predicate is not None:
         sources = [s for s in sources if source_predicate(s)]

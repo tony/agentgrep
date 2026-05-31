@@ -510,6 +510,140 @@ def test_discover_from_catalog_can_include_non_default_coverage(
     }
 
 
+class DiscoveryVersionDetailCase(t.NamedTuple):
+    """One discovery version-detail expectation."""
+
+    test_id: str
+    version_detail: t.Literal["none", "catalog", "shape"]
+    expected_strategy: VersionDetectionStrategy | None
+    expected_models_cache_reads: int
+
+
+DISCOVERY_VERSION_DETAIL_CASES: tuple[DiscoveryVersionDetailCase, ...] = (
+    DiscoveryVersionDetailCase(
+        test_id="none-skips-version-detection",
+        version_detail="none",
+        expected_strategy=None,
+        expected_models_cache_reads=0,
+    ),
+    DiscoveryVersionDetailCase(
+        test_id="catalog-uses-catalog-fallback-and-one-root-read",
+        version_detail="catalog",
+        expected_strategy=VersionDetectionStrategy.CATALOG_OBSERVATION,
+        expected_models_cache_reads=1,
+    ),
+    DiscoveryVersionDetailCase(
+        test_id="shape-detects-shape-and-one-root-read",
+        version_detail="shape",
+        expected_strategy=VersionDetectionStrategy.SHAPE_INFERENCE,
+        expected_models_cache_reads=1,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    DISCOVERY_VERSION_DETAIL_CASES,
+    ids=[c.test_id for c in DISCOVERY_VERSION_DETAIL_CASES],
+)
+def test_discover_from_catalog_controls_version_detection_detail(
+    case: DiscoveryVersionDetailCase,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Version detection is selectable and Codex root metadata is cached once."""
+    import agentgrep
+    import agentgrep.store_catalog as store_catalog
+
+    base = tmp_path / "codex"
+    base.mkdir()
+    models_cache = base / "models_cache.json"
+    history_jsonl = base / "history.jsonl"
+    history_json = base / "history.json"
+    _ = models_cache.write_text('{"client_version": "codex-test"}', encoding="utf-8")
+    _ = history_jsonl.write_text(
+        '{"session_id": "s1", "ts": 1700000000, "text": "prompt"}\n',
+        encoding="utf-8",
+    )
+    _ = history_json.write_text(
+        '[{"command": "prompt", "timestamp": 1700000000}]',
+        encoding="utf-8",
+    )
+
+    fake_catalog = StoreCatalog(
+        catalog_version=999,
+        captured_at=OBSERVED_AT,
+        stores=(
+            StoreDescriptor(
+                agent="codex",
+                store_id="codex.test_history_jsonl",
+                role=StoreRole.PROMPT_HISTORY,
+                format=StoreFormat.JSONL,
+                path_pattern="${HOME}/.codex/history.jsonl",
+                observed_version="test",
+                observed_at=OBSERVED_AT,
+                schema_notes="Current JSONL history.",
+                search_by_default=True,
+                discovery=(
+                    DiscoverySpec(
+                        store="codex.test_history_jsonl",
+                        adapter_id="codex.history_jsonl.v1",
+                        path_kind="history_file",
+                        source_kind="jsonl",
+                        files=("history.jsonl",),
+                    ),
+                ),
+            ),
+            StoreDescriptor(
+                agent="codex",
+                store_id="codex.test_history_json",
+                role=StoreRole.PROMPT_HISTORY,
+                format=StoreFormat.JSON_ARRAY,
+                path_pattern="${HOME}/.codex/history.json",
+                observed_version="test",
+                observed_at=OBSERVED_AT,
+                schema_notes="Legacy JSON history.",
+                search_by_default=True,
+                discovery=(
+                    DiscoverySpec(
+                        store="codex.test_history_json",
+                        adapter_id="codex.history_json.v1",
+                        path_kind="history_file",
+                        source_kind="json",
+                        files=("history.json",),
+                    ),
+                ),
+            ),
+        ),
+    )
+    monkeypatch.setattr(store_catalog, "CATALOG", fake_catalog)
+
+    original_read_json_file = agentgrep.read_json_file
+    read_json_paths: list[pathlib.Path] = []
+
+    def counting_read_json_file(path: pathlib.Path) -> object:
+        read_json_paths.append(path)
+        return original_read_json_file(path)
+
+    monkeypatch.setattr(agentgrep, "read_json_file", counting_read_json_file)
+
+    sources = agentgrep.discover_from_catalog(
+        tmp_path,
+        "codex",
+        base,
+        agentgrep.BackendSelection(None, None, None),
+        version_detail=case.version_detail,
+    )
+
+    assert [source.path for source in sources] == [history_jsonl, history_json]
+    strategies = [
+        source.version_detection.strategy if source.version_detection is not None else None
+        for source in sources
+    ]
+    assert strategies == [case.expected_strategy, case.expected_strategy]
+    assert sum(path == models_cache for path in read_json_paths) == case.expected_models_cache_reads
+
+
 def test_discover_from_catalog_deduplicates_paths_within_descriptor(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

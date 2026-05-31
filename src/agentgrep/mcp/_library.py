@@ -173,6 +173,7 @@ class AgentGrepModule(t.Protocol):
         backends: BackendSelectionLike,
         *,
         include_non_default: bool = False,
+        version_detail: t.Literal["none", "catalog", "shape"] = "shape",
     ) -> list[SourceHandleLike]: ...
 
     def run_search_query(
