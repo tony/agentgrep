@@ -180,8 +180,6 @@ OPTIONS_FLAG_ONLY: frozenset[str] = frozenset(
     {
         "-h",
         "--help",
-        "--any",
-        "--regex",
         "--case-sensitive",
         "--json",
         "--ndjson",

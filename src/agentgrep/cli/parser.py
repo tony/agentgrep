@@ -157,7 +157,6 @@ class GrepArgs:
     invert_match: bool
     count_only: bool
     files_with_matches: bool
-    files_without_match: bool
     only_matching: bool
     no_dedupe: bool
     line_number: bool | None
@@ -185,8 +184,6 @@ class SearchArgs:
     terms: tuple[str, ...]
     agents: tuple[AgentName, ...]
     search_type: SearchType
-    any_term: bool
-    regex: bool
     case_sensitive: bool
     limit: int | None
     output_mode: OutputMode
@@ -323,12 +320,6 @@ def create_parser(
         "--files-with-matches",
         action="store_true",
         help="List source paths with at least one match",
-    )
-    _ = grep_parser.add_argument(
-        "-L",
-        "--files-without-match",
-        action="store_true",
-        help="List source paths with no matches",
     )
     _ = grep_parser.add_argument(
         "-o",
@@ -682,17 +673,6 @@ def create_parser(
         choices=["prompts", "history", "all"],
         dest="search_type",
         help="Record type to search (default: prompts)",
-    )
-    _ = search_parser.add_argument(
-        "--any",
-        action="store_true",
-        dest="any_term",
-        help="OR mode — match any term instead of all",
-    )
-    _ = search_parser.add_argument(
-        "--regex",
-        action="store_true",
-        help="Treat terms as regex patterns",
     )
     _ = search_parser.add_argument(
         "--case-sensitive",
@@ -1084,12 +1064,11 @@ def _build_grep_args(
 
     invert_match = t.cast("bool", namespace.invert_match)
     count_only = t.cast("bool", namespace.count)
-    files_without_match = t.cast("bool", namespace.files_without_match)
-    if invert_match and not (count_only or files_without_match):
+    if invert_match and not count_only:
         with configured_color_environment(color_mode):
             bundle.grep_parser.error(
                 "--invert-match for text output is not yet implemented "
-                "(see https://github.com/tony/agentgrep/issues/8); use -c or -L",
+                "(see https://github.com/tony/agentgrep/issues/8); use -c",
             )
     if pattern_mode != "fixed":
         case_sensitive = case_mode == "respect" or (
@@ -1130,7 +1109,6 @@ def _build_grep_args(
         invert_match=invert_match,
         count_only=count_only,
         files_with_matches=t.cast("bool", namespace.files_with_matches),
-        files_without_match=files_without_match,
         only_matching=t.cast("bool", namespace.only_matching),
         compiled=grep_compiled,
         raw_query=" ".join(patterns_list_raw),
@@ -1182,16 +1160,7 @@ def _build_search_args(
     final_terms: tuple[str, ...] = (
         residual_terms if search_compiled is not None else tuple(terms_list)
     )
-    regex = t.cast("bool", namespace.regex)
     case_sensitive = t.cast("bool", namespace.case_sensitive)
-    if regex:
-        flags = 0 if case_sensitive else re.IGNORECASE
-        for term in final_terms:
-            try:
-                _ = re.compile(term, flags)
-            except re.error as exc:
-                with configured_color_environment(color_mode):
-                    bundle.search_parser.error(f"invalid regex {term!r}: {exc}")
 
     return SearchArgs(
         terms=final_terms,
@@ -1200,8 +1169,6 @@ def _build_search_args(
             namespace,
             query_fields=search_query_fields,
         ),
-        any_term=t.cast("bool", namespace.any_term),
-        regex=regex,
         case_sensitive=case_sensitive,
         limit=limit,
         output_mode=output_mode,

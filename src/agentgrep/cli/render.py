@@ -472,8 +472,8 @@ def run_search_command(args: SearchArgs) -> int:
     query = agentgrep.SearchQuery(
         terms=args.terms,
         search_type=args.search_type,
-        any_term=args.any_term,
-        regex=args.regex,
+        any_term=False,
+        regex=False,
         case_sensitive=args.case_sensitive,
         agents=args.agents,
         limit=args.limit,
@@ -546,7 +546,7 @@ def _compile_search_patterns(args: SearchArgs) -> list[re.Pattern[str]]:
     for term in args.terms:
         if ":" in term:
             continue
-        source = term if args.regex else re.escape(term)
+        source = re.escape(term)
         try:
             compiled.append(re.compile(source, flags))
         except re.error:
@@ -1107,10 +1107,10 @@ def format_grep_record(record: agentgrep.SearchRecord, args: GrepArgs) -> str:
 
     ``--vimgrep`` emits one row per match span (one line can produce
     multiple rows). ``-o`` / ``--only-matching`` emits only the matched
-    substrings; ``-l`` / ``-L`` emit just the path.
+    substrings; ``-l`` emits just the path.
     """
     path = agentgrep.format_display_path(record.path)
-    if args.files_with_matches or args.files_without_match:
+    if args.files_with_matches:
         return path
     colors = agentgrep.AnsiColors.for_stream(args.color_mode, sys.stdout)
     matches = list(iter_match_lines(record.text, args))
@@ -1164,10 +1164,8 @@ def print_grep_results(records: list[agentgrep.SearchRecord], args: GrepArgs) ->
         if args.count_only:
             print("0" if records else "1")
             return 1 if records else 0
-        if args.files_without_match:
-            return _print_files_without_match(args)
         print(
-            "error: --invert-match/-v is supported with -c and -L only; "
+            "error: --invert-match/-v is supported with -c only; "
             "engine-level line inversion is tracked at "
             "https://github.com/tony/agentgrep/issues/8",
             file=sys.stderr,
@@ -1210,8 +1208,6 @@ def print_grep_results(records: list[agentgrep.SearchRecord], args: GrepArgs) ->
                 seen.add(path)
                 print(path)
         return 0 if records else 1
-    if args.files_without_match:
-        return _print_files_without_match(args)
 
     if not records:
         if args.output_mode == "text":
@@ -1224,55 +1220,6 @@ def print_grep_results(records: list[agentgrep.SearchRecord], args: GrepArgs) ->
         ):
             print()
     return 0
-
-
-def _print_files_without_match(args: GrepArgs) -> int:
-    """Print sources whose records produced no matches (rg ``-L`` parity).
-
-    Runs the same query the engine would run, collects the set of paths
-    that emitted at least one :class:`agentgrep.events.RecordEmitted`,
-    then prints the complement against the engine's planned-source list
-    so the user gets the file-level "no match" view rg's ``-L`` exposes.
-
-    Re-uses the public :func:`agentgrep.discover_sources` and
-    :func:`agentgrep.plan_search_sources` helpers so this consumer-layer
-    implementation tracks any future changes to the engine's source
-    selection logic without duplicating filter rules.
-
-    Returns ``0`` when at least one path is printed (the "no-match
-    file" is itself a positive result for ``-L``), ``1`` otherwise.
-    """
-    from agentgrep import events
-
-    query = build_grep_query(args)
-    home = pathlib.Path.home()
-
-    matched_paths: set[pathlib.Path] = set()
-    for event in agentgrep.iter_search_events(
-        home,
-        query,
-        control=agentgrep.SearchControl(),
-    ):
-        if isinstance(event, events.RecordEmitted):
-            matched_paths.add(event.record.path)
-
-    backends = agentgrep.select_backends()
-    discovered = agentgrep.discover_sources(home, args.agents, backends)
-    planned = agentgrep.plan_search_sources(query, discovered, backends)
-
-    colors = agentgrep.AnsiColors.for_stream(args.color_mode, sys.stdout)
-    seen: set[str] = set()
-    printed = 0
-    for source in planned:
-        if source.path in matched_paths:
-            continue
-        display = agentgrep.format_display_path(source.path)
-        if display in seen:
-            continue
-        seen.add(display)
-        print(colors.path(display))
-        printed += 1
-    return 0 if printed > 0 else 1
 
 
 def fuzzy_filter_lines(
@@ -1476,7 +1423,6 @@ def _grep_path_is_eager(args: GrepArgs) -> bool:
         args.output_mode == "json"
         or args.count_only
         or args.files_with_matches
-        or args.files_without_match
         or args.invert_match
     )
 

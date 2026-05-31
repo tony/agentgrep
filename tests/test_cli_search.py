@@ -31,8 +31,6 @@ class SearchParseCase(t.NamedTuple):
     expected_no_group: bool
     expected_no_rank: bool
     expected_search_type: agentgrep.SearchType
-    expected_any_term: bool
-    expected_regex: bool
     expected_case_sensitive: bool
 
 
@@ -46,8 +44,6 @@ SEARCH_PARSE_CASES: tuple[SearchParseCase, ...] = (
         False,
         "prompts",
         False,
-        False,
-        False,
     ),
     SearchParseCase(
         "multi-term",
@@ -57,8 +53,6 @@ SEARCH_PARSE_CASES: tuple[SearchParseCase, ...] = (
         False,
         False,
         "prompts",
-        False,
-        False,
         False,
     ),
     SearchParseCase(
@@ -70,8 +64,6 @@ SEARCH_PARSE_CASES: tuple[SearchParseCase, ...] = (
         False,
         "prompts",
         False,
-        False,
-        False,
     ),
     SearchParseCase(
         "no-group-flag",
@@ -81,8 +73,6 @@ SEARCH_PARSE_CASES: tuple[SearchParseCase, ...] = (
         True,
         False,
         "prompts",
-        False,
-        False,
         False,
     ),
     SearchParseCase(
@@ -94,8 +84,6 @@ SEARCH_PARSE_CASES: tuple[SearchParseCase, ...] = (
         True,
         "prompts",
         False,
-        False,
-        False,
     ),
     SearchParseCase(
         "no-group-and-no-rank",
@@ -105,8 +93,6 @@ SEARCH_PARSE_CASES: tuple[SearchParseCase, ...] = (
         True,
         True,
         "prompts",
-        False,
-        False,
         False,
     ),
     SearchParseCase(
@@ -118,8 +104,6 @@ SEARCH_PARSE_CASES: tuple[SearchParseCase, ...] = (
         False,
         "prompts",
         False,
-        False,
-        False,
     ),
     SearchParseCase(
         "type-history",
@@ -130,32 +114,6 @@ SEARCH_PARSE_CASES: tuple[SearchParseCase, ...] = (
         False,
         "history",
         False,
-        False,
-        False,
-    ),
-    SearchParseCase(
-        "any-term-mode",
-        ("search", "--any", "foo", "bar"),
-        ("foo", "bar"),
-        0,
-        False,
-        False,
-        "prompts",
-        True,
-        False,
-        False,
-    ),
-    SearchParseCase(
-        "regex-flag",
-        ("search", "--regex", "foo.*bar"),
-        ("foo.*bar",),
-        0,
-        False,
-        False,
-        "prompts",
-        False,
-        True,
-        False,
     ),
     SearchParseCase(
         "case-sensitive-flag",
@@ -165,8 +123,6 @@ SEARCH_PARSE_CASES: tuple[SearchParseCase, ...] = (
         False,
         False,
         "prompts",
-        False,
-        False,
         True,
     ),
     SearchParseCase(
@@ -177,8 +133,6 @@ SEARCH_PARSE_CASES: tuple[SearchParseCase, ...] = (
         False,
         False,
         "prompts",
-        False,
-        False,
         False,
     ),
 )
@@ -197,8 +151,6 @@ def test_search_parse_args(
     expected_no_group: bool,
     expected_no_rank: bool,
     expected_search_type: agentgrep.SearchType,
-    expected_any_term: bool,
-    expected_regex: bool,
     expected_case_sensitive: bool,
 ) -> None:
     """Search subparser captures ranking-specific flags correctly."""
@@ -210,8 +162,6 @@ def test_search_parse_args(
     assert parsed.no_group == expected_no_group
     assert parsed.no_rank == expected_no_rank
     assert parsed.search_type == expected_search_type
-    assert parsed.any_term == expected_any_term
-    assert parsed.regex == expected_regex
     assert parsed.case_sensitive == expected_case_sensitive
 
 
@@ -250,49 +200,36 @@ def test_search_parse_agent_filter() -> None:
     assert parsed.agents == ("codex",)
 
 
-class SearchInvalidRegexCase(t.NamedTuple):
-    """Parametrized case for ``search --regex`` validation."""
+class RemovedSearchFlagCase(t.NamedTuple):
+    """Parametrized case for search flags removed pending bounded-memory support."""
 
     test_id: str
-    pattern: str
-    expected_msg_fragment: str
+    flag: str
+    argv: tuple[str, ...]
 
 
-SEARCH_INVALID_REGEX_CASES: tuple[SearchInvalidRegexCase, ...] = (
-    SearchInvalidRegexCase(
-        test_id="unterminated-charset",
-        pattern="[",
-        expected_msg_fragment="unterminated character set",
-    ),
-    SearchInvalidRegexCase(
-        test_id="unclosed-paren",
-        pattern="(unclosed",
-        expected_msg_fragment="unterminated subpattern",
-    ),
-    SearchInvalidRegexCase(
-        test_id="bad-backref",
-        pattern=r"\1",
-        expected_msg_fragment="invalid group reference",
-    ),
+REMOVED_SEARCH_FLAG_CASES: tuple[RemovedSearchFlagCase, ...] = (
+    RemovedSearchFlagCase("any-mode", "--any", ("search", "--any", "foo", "bar")),
+    RemovedSearchFlagCase("regex-mode", "--regex", ("search", "--regex", "foo.*bar")),
 )
 
 
 @pytest.mark.parametrize(
     "case",
-    SEARCH_INVALID_REGEX_CASES,
-    ids=[case.test_id for case in SEARCH_INVALID_REGEX_CASES],
+    REMOVED_SEARCH_FLAG_CASES,
+    ids=[case.test_id for case in REMOVED_SEARCH_FLAG_CASES],
 )
-def test_search_invalid_regex_exits_with_clean_error(
-    case: SearchInvalidRegexCase,
+def test_search_removed_flags_are_rejected(
+    case: RemovedSearchFlagCase,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """``agentgrep search --regex <bad-regex>`` exits before scanning."""
+    """``search --any`` / ``--regex`` no longer parse; removed pending bounded-memory support."""
     with pytest.raises(SystemExit) as exc_info:
-        _ = agentgrep.parse_args(("search", "--regex", case.pattern))
+        _ = agentgrep.parse_args(case.argv)
     assert exc_info.value.code == 2
     captured = capsys.readouterr()
-    assert "invalid regex" in captured.err
-    assert case.expected_msg_fragment in captured.err
+    assert "unrecognized arguments" in captured.err
+    assert case.flag in captured.err
     assert "Traceback" not in captured.err
 
 
@@ -320,8 +257,8 @@ def test_search_type_field_history_record_reaches_compiled_predicate() -> None:
     query = agentgrep.SearchQuery(
         terms=parsed.terms,
         search_type=parsed.search_type,
-        any_term=parsed.any_term,
-        regex=parsed.regex,
+        any_term=False,
+        regex=False,
         case_sensitive=parsed.case_sensitive,
         agents=parsed.agents,
         limit=parsed.limit,
@@ -343,8 +280,6 @@ def _make_search_args(**overrides: t.Any) -> agentgrep.SearchArgs:
         "terms": ("bliss",),
         "agents": agentgrep.AGENT_CHOICES,
         "search_type": "prompts",
-        "any_term": False,
-        "regex": False,
         "case_sensitive": False,
         "limit": None,
         "output_mode": "text",

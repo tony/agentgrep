@@ -273,7 +273,6 @@ def test_build_grep_query_translates_modes(case: QueryTranslationCase) -> None:
         invert_match=False,
         count_only=False,
         files_with_matches=False,
-        files_without_match=False,
         only_matching=False,
         no_dedupe=case.no_dedupe,
         line_number=None,
@@ -303,7 +302,6 @@ def _make_grep_args(**overrides: object) -> agentgrep.GrepArgs:
         "invert_match": False,
         "count_only": False,
         "files_with_matches": False,
-        "files_without_match": False,
         "only_matching": False,
         "no_dedupe": False,
         "line_number": None,
@@ -597,150 +595,6 @@ def test_run_grep_command_files_with_matches_dedupes_by_path(
     assert captured.out.count(".jsonl") == 1
 
 
-class FilesWithoutMatchCase(t.NamedTuple):
-    """Parametrized case for ``grep -L`` (files-without-match) output."""
-
-    test_id: str
-    universe_paths: tuple[str, ...]
-    matched_paths: tuple[str, ...]
-    expected_paths: tuple[str, ...]
-    expected_exit_code: int
-
-
-FILES_WITHOUT_MATCH_CASES: tuple[FilesWithoutMatchCase, ...] = (
-    FilesWithoutMatchCase(
-        "pattern-matches-no-sources-prints-all",
-        ("/tmp/a.jsonl", "/tmp/b.jsonl", "/tmp/c.jsonl"),
-        (),
-        ("/tmp/a.jsonl", "/tmp/b.jsonl", "/tmp/c.jsonl"),
-        0,
-    ),
-    FilesWithoutMatchCase(
-        "pattern-matches-some-prints-complement",
-        ("/tmp/a.jsonl", "/tmp/b.jsonl", "/tmp/c.jsonl"),
-        ("/tmp/a.jsonl",),
-        ("/tmp/b.jsonl", "/tmp/c.jsonl"),
-        0,
-    ),
-    FilesWithoutMatchCase(
-        "pattern-matches-every-source-prints-none",
-        ("/tmp/a.jsonl", "/tmp/b.jsonl"),
-        ("/tmp/a.jsonl", "/tmp/b.jsonl"),
-        (),
-        1,
-    ),
-    FilesWithoutMatchCase(
-        "duplicate-records-still-dedupe-by-path",
-        ("/tmp/a.jsonl", "/tmp/b.jsonl"),
-        ("/tmp/a.jsonl", "/tmp/a.jsonl"),
-        ("/tmp/b.jsonl",),
-        0,
-    ),
-)
-
-
-def _fake_files_without_match(
-    universe_paths: tuple[str, ...],
-    matched_paths: tuple[str, ...],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Stub the source discovery + event stream for ``-L`` tests.
-
-    Returns the engine's `planned_sources` shape from
-    `discover_sources` + `plan_search_sources`, and emits one
-    RecordEmitted per matched path through `iter_search_events`. The
-    record's `path` field is what `_print_files_without_match` reads
-    to compute the complement, so the stub focuses on that field.
-    """
-    handles = [
-        agentgrep.SourceHandle(
-            agent="codex",
-            store="sessions",
-            adapter_id="codex.sessions.jsonl",
-            path=pathlib.Path(path),
-            path_kind="session_file",
-            source_kind="jsonl",
-            search_root=None,
-            mtime_ns=0,
-        )
-        for path in universe_paths
-    ]
-
-    def _stub_discover(
-        home: object,
-        agents: object,
-        backends: object,
-    ) -> list[agentgrep.SourceHandle]:
-        return list(handles)
-
-    def _stub_plan(
-        query: object,
-        sources: list[agentgrep.SourceHandle],
-        backends: object,
-        *,
-        progress: object = None,
-        control: object = None,
-    ) -> list[agentgrep.SourceHandle]:
-        return list(sources)
-
-    def _stub_iter(
-        home: object,
-        query: object,
-        *,
-        backends: object = None,
-        control: object = None,
-    ) -> t.Iterator[ag_events.SearchEvent]:
-        yield ag_events.SearchStarted(source_count=len(handles))
-        for match_path in matched_paths:
-            yield ag_events.RecordEmitted(
-                record=agentgrep.SearchRecord(
-                    kind="prompt",
-                    agent="codex",
-                    store="sessions",
-                    adapter_id="codex.sessions.jsonl",
-                    path=pathlib.Path(match_path),
-                    text="bliss",
-                    title=None,
-                    role="user",
-                    timestamp=None,
-                    model=None,
-                    session_id=None,
-                    conversation_id=None,
-                    metadata={},
-                ),
-            )
-        yield ag_events.SearchFinished(
-            match_count=len(matched_paths),
-            elapsed_seconds=0.0,
-        )
-
-    monkeypatch.setattr(agentgrep, "discover_sources", _stub_discover)
-    monkeypatch.setattr(agentgrep, "plan_search_sources", _stub_plan)
-    monkeypatch.setattr(agentgrep, "iter_search_events", _stub_iter)
-
-
-@pytest.mark.parametrize(
-    "case",
-    FILES_WITHOUT_MATCH_CASES,
-    ids=[c.test_id for c in FILES_WITHOUT_MATCH_CASES],
-)
-def test_run_grep_command_files_without_match_lists_complement(
-    case: FilesWithoutMatchCase,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """``-L`` lists planned sources whose records produced no matches."""
-    _fake_files_without_match(case.universe_paths, case.matched_paths, monkeypatch)
-    args = _make_grep_args(patterns=("bliss",), files_without_match=True)
-    exit_code = agentgrep.run_grep_command(args)
-    captured = capsys.readouterr()
-    assert exit_code == case.expected_exit_code
-    emitted = [line for line in captured.out.splitlines() if line]
-    for expected in case.expected_paths:
-        assert any(expected in line for line in emitted), f"expected {expected} in {emitted!r}"
-    assert len(emitted) == len(case.expected_paths)
-
-
 def test_run_grep_command_with_no_patterns_exits_with_systemexit() -> None:
     """Empty patterns is a programmer error — surface SystemExit."""
     args = _make_grep_args(patterns=())
@@ -843,7 +697,7 @@ def test_grep_empty_pattern_exits_with_argparse_error(
 
 
 class InvertMatchRefusedCase(t.NamedTuple):
-    """Parametrized case for ``-v`` rejection outside ``-c`` / ``-L``."""
+    """Parametrized case for ``-v`` rejection outside ``-c``."""
 
     test_id: str
     argv: tuple[str, ...]
@@ -862,11 +716,11 @@ INVERT_MATCH_REFUSED_CASES: tuple[InvertMatchRefusedCase, ...] = (
     INVERT_MATCH_REFUSED_CASES,
     ids=[c.test_id for c in INVERT_MATCH_REFUSED_CASES],
 )
-def test_grep_invert_match_outside_count_or_files_without_is_refused(
+def test_grep_invert_match_outside_count_is_refused(
     case: InvertMatchRefusedCase,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """``-v`` errors at parse time unless paired with ``-c`` or ``-L``."""
+    """``-v`` errors at parse time unless paired with ``-c``."""
     with pytest.raises(SystemExit) as exc_info:
         _ = agentgrep.parse_args(list(case.argv))
     assert exc_info.value.code == 2
@@ -875,32 +729,25 @@ def test_grep_invert_match_outside_count_or_files_without_is_refused(
     assert "issues/8" in captured.err
 
 
-class InvertMatchAllowedCase(t.NamedTuple):
-    """Parametrized case for ``-v`` paired with ``-c`` or ``-L`` (still permitted)."""
-
-    test_id: str
-    argv: tuple[str, ...]
-
-
-INVERT_MATCH_ALLOWED_CASES: tuple[InvertMatchAllowedCase, ...] = (
-    InvertMatchAllowedCase("invert-with-count", ("grep", "-v", "-c", "bliss")),
-    InvertMatchAllowedCase("invert-with-L", ("grep", "-v", "-L", "bliss")),
-)
-
-
-@pytest.mark.parametrize(
-    "case",
-    INVERT_MATCH_ALLOWED_CASES,
-    ids=[c.test_id for c in INVERT_MATCH_ALLOWED_CASES],
-)
-def test_grep_invert_match_with_count_or_files_without_is_allowed(
-    case: InvertMatchAllowedCase,
-) -> None:
-    """``-v -c`` and ``-v -L`` still parse — those paths honor inversion."""
-    args = agentgrep.parse_args(list(case.argv))
+def test_grep_invert_match_with_count_is_allowed() -> None:
+    """``-v -c`` still parses — that path honors inversion."""
+    args = agentgrep.parse_args(["grep", "-v", "-c", "bliss"])
     assert args is not None
     assert isinstance(args, agentgrep.GrepArgs)
     assert args.invert_match is True
+
+
+def test_grep_files_without_match_flag_is_rejected(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``grep -L`` no longer parses; removed pending bounded-memory support."""
+    with pytest.raises(SystemExit) as exc_info:
+        _ = agentgrep.parse_args(["grep", "-L", "bliss"])
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert "unrecognized arguments" in captured.err
+    assert "-L" in captured.err
+    assert "Traceback" not in captured.err
 
 
 # ----- -o / --only-matching trailing-blank suppression --------------------
@@ -1053,7 +900,6 @@ def _make_grep_args_for_helpers(**overrides: t.Any) -> agentgrep.GrepArgs:
         "invert_match": False,
         "count_only": False,
         "files_with_matches": False,
-        "files_without_match": False,
         "only_matching": False,
         "no_dedupe": False,
         "line_number": None,

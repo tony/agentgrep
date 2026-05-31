@@ -31,7 +31,6 @@ def _make_grep_args(**overrides: t.Any) -> GrepArgs:
         "invert_match": False,
         "count_only": False,
         "files_with_matches": False,
-        "files_without_match": False,
         "only_matching": False,
         "no_dedupe": False,
         "line_number": None,
