@@ -40,12 +40,6 @@ Content search with rg/ag-shaped flags, output, and exit codes.
 Enumerate on-disk stores with fd-shaped flag grammar.
 :::
 
-:::{grid-item-card} agentgrep fuzzy
-:link: fuzzy
-:link-type: doc
-Non-interactive fuzzy match on stdin, shaped like `fzf --filter`.
-:::
-
 :::{grid-item-card} API Reference
 :link: reference
 :link-type: doc
@@ -129,6 +123,5 @@ $ agentgrep
 
 grep
 find
-fuzzy
 reference
 ```

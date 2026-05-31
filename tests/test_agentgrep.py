@@ -317,7 +317,7 @@ def test_parse_args_empty_argv_returns_none_and_prints_help(
     assert args is None
     captured = capsys.readouterr().out
     assert "agentgrep" in captured
-    assert "{grep,search,find,fuzzy,ui}" in captured or "grep" in captured
+    assert "{grep,search,find,ui}" in captured or "grep" in captured
 
 
 def test_main_with_empty_argv_prints_root_help(
@@ -336,7 +336,6 @@ def test_main_with_empty_argv_prints_root_help(
     assert exit_code == 0
     captured = capsys.readouterr().out
     assert "grep examples:" in captured
-    assert "fuzzy examples:" in captured
     assert "find examples:" in captured
     assert "ui examples:" in captured
 
