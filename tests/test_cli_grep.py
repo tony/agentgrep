@@ -166,7 +166,7 @@ def test_grep_scope_conversations_propagates() -> None:
     """``--scope conversations`` selects full conversation/session content."""
     parsed = agentgrep.parse_args(["grep", "--scope", "conversations", "foo"])
     assert isinstance(parsed, agentgrep.GrepArgs)
-    assert parsed.search_type == "conversations"
+    assert parsed.scope == "conversations"
 
 
 def test_grep_type_flag_is_rejected(capsys: pytest.CaptureFixture[str]) -> None:
@@ -284,7 +284,7 @@ def test_build_grep_query_translates_modes(case: QueryTranslationCase) -> None:
     args = agentgrep.GrepArgs(
         patterns=case.patterns,
         agents=agentgrep.AGENT_CHOICES,
-        search_type="prompts",
+        scope="prompts",
         case_mode=case.case_mode,
         pattern_mode=case.pattern_mode,
         invert_match=False,
@@ -313,7 +313,7 @@ def _make_grep_args(**overrides: object) -> agentgrep.GrepArgs:
     base: dict[str, object] = {
         "patterns": ("foo",),
         "agents": agentgrep.AGENT_CHOICES,
-        "search_type": "prompts",
+        "scope": "prompts",
         "case_mode": "smart",
         "pattern_mode": "regex",
         "invert_match": False,
@@ -911,7 +911,7 @@ def _make_grep_args_for_helpers(**overrides: t.Any) -> agentgrep.GrepArgs:
     base: dict[str, t.Any] = {
         "patterns": ("foo",),
         "agents": agentgrep.AGENT_CHOICES,
-        "search_type": "prompts",
+        "scope": "prompts",
         "case_mode": "smart",
         "pattern_mode": "regex",
         "invert_match": False,

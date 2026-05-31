@@ -11,7 +11,7 @@ from agentgrep.mcp._library import (
     AgentSelector,
     FindRecordLike,
     SearchRecordLike,
-    SearchTypeName,
+    SearchScopeName,
     SourceHandleLike,
     agentgrep,
 )
@@ -112,7 +112,7 @@ class SearchToolQuery(AgentGrepModel):
 
     terms: list[str]
     agent: AgentSelector
-    scope: SearchTypeName
+    scope: SearchScopeName
     case_sensitive: bool
     limit: int | None = None
 
@@ -159,7 +159,7 @@ class CapabilitiesModel(AgentGrepModel):
     agents: list[
         t.Literal["codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi", "opencode"]
     ]
-    search_scopes: list[SearchTypeName]
+    search_scopes: list[SearchScopeName]
     adapters: list[str]
     tools: list[str]
     resources: list[str]
@@ -175,7 +175,7 @@ class SearchRequestModel(AgentGrepModel):
 
     terms: list[str]
     agent: AgentSelector
-    scope: SearchTypeName
+    scope: SearchScopeName
     case_sensitive: bool
     limit: int | None = None
 

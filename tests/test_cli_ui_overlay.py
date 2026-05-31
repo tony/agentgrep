@@ -54,7 +54,7 @@ class OverlayCase(t.NamedTuple):
 
     test_id: str
     argv: tuple[str, ...]
-    expected_search_type: agentgrep.SearchType
+    expected_scope: agentgrep.SearchScope
     expected_terms: tuple[str, ...]
 
 
@@ -86,7 +86,7 @@ def test_ui_overlay_dispatches_to_run_ui(
     assert exit_code == 0
     assert len(captured) == 1
     query = captured[0]
-    assert query.search_type == case.expected_search_type
+    assert query.scope == case.expected_scope
     assert query.terms == case.expected_terms
 
 

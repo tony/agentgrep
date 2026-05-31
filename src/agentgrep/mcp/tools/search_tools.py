@@ -13,7 +13,7 @@ from pydantic import Field
 from agentgrep.mcp._library import (
     READONLY_TAGS,
     AgentSelector,
-    SearchTypeName,
+    SearchScopeName,
     agentgrep,
     normalize_agent_selection,
 )
@@ -35,7 +35,7 @@ def _search_sync(request: SearchRequestModel) -> SearchToolResponse:
     """Run the blocking search work and build a typed response."""
     query = agentgrep.SearchQuery(
         terms=tuple(request.terms),
-        search_type=request.scope,
+        scope=request.scope,
         any_term=False,
         regex=False,
         case_sensitive=request.case_sensitive,
@@ -99,7 +99,7 @@ def register(mcp: FastMCP) -> None:
             Field(description="Limit search to one agent or search all agents."),
         ] = "all",
         scope: t.Annotated[
-            SearchTypeName,
+            SearchScopeName,
             Field(description="Search prompts, conversations, or both."),
         ] = "prompts",
         case_sensitive: t.Annotated[

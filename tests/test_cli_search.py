@@ -30,7 +30,7 @@ class SearchParseCase(t.NamedTuple):
     expected_threshold: int
     expected_no_group: bool
     expected_no_rank: bool
-    expected_search_type: agentgrep.SearchType
+    expected_scope: agentgrep.SearchScope
     expected_case_sensitive: bool
 
 
@@ -150,7 +150,7 @@ def test_search_parse_args(
     expected_threshold: int,
     expected_no_group: bool,
     expected_no_rank: bool,
-    expected_search_type: agentgrep.SearchType,
+    expected_scope: agentgrep.SearchScope,
     expected_case_sensitive: bool,
 ) -> None:
     """Search subparser captures ranking-specific flags correctly."""
@@ -161,7 +161,7 @@ def test_search_parse_args(
     assert parsed.threshold == expected_threshold
     assert parsed.no_group == expected_no_group
     assert parsed.no_rank == expected_no_rank
-    assert parsed.search_type == expected_search_type
+    assert parsed.scope == expected_scope
     assert parsed.case_sensitive == expected_case_sensitive
 
 
@@ -234,11 +234,11 @@ def test_search_removed_flags_are_rejected(
     assert "Traceback" not in captured.err
 
 
-def test_search_scope_field_broadens_coarse_search_type() -> None:
+def test_search_scope_field_broadens_coarse_search_scope() -> None:
     """A query-language ``scope:`` predicate controls search-scope filtering."""
     parsed = agentgrep.parse_args(("search", "scope:conversations", "bliss"))
     assert isinstance(parsed, agentgrep.SearchArgs)
-    assert parsed.search_type == "all"
+    assert parsed.scope == "all"
     assert parsed.terms == ("bliss",)
     assert parsed.compiled is not None
 
@@ -257,7 +257,7 @@ def test_search_scope_field_conversation_record_reaches_compiled_predicate() -> 
     )
     query = agentgrep.SearchQuery(
         terms=parsed.terms,
-        search_type=parsed.search_type,
+        scope=parsed.scope,
         any_term=False,
         regex=False,
         case_sensitive=parsed.case_sensitive,
@@ -266,7 +266,7 @@ def test_search_scope_field_conversation_record_reaches_compiled_predicate() -> 
         compiled=parsed.compiled,
     )
 
-    assert query.search_type == "all"
+    assert query.scope == "all"
     assert agentgrep.matches_record(record, query)
 
 
@@ -280,7 +280,7 @@ def _make_search_args(**overrides: t.Any) -> agentgrep.SearchArgs:
     base: dict[str, t.Any] = {
         "terms": ("bliss",),
         "agents": agentgrep.AGENT_CHOICES,
-        "search_type": "prompts",
+        "scope": "prompts",
         "case_sensitive": False,
         "limit": None,
         "output_mode": "text",

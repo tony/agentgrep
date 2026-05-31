@@ -33,7 +33,7 @@ from agentgrep import (
     GrepStyle,
     OutputMode,
     ProgressMode,
-    SearchType,
+    SearchScope,
     create_themed_formatter,
 )
 
@@ -116,7 +116,7 @@ class GrepArgs:
 
     patterns: tuple[str, ...]
     agents: tuple[AgentName, ...]
-    search_type: SearchType
+    scope: SearchScope
     case_mode: CaseMode
     pattern_mode: PatternMode
     invert_match: bool
@@ -148,7 +148,7 @@ class SearchArgs:
 
     terms: tuple[str, ...]
     agents: tuple[AgentName, ...]
-    search_type: SearchType
+    scope: SearchScope
     case_sensitive: bool
     limit: int | None
     output_mode: OutputMode
@@ -350,7 +350,7 @@ def create_parser(
     _ = grep_parser.add_argument(
         "--scope",
         choices=["prompts", "conversations", "all"],
-        dest="search_type",
+        dest="scope",
         help="Search scope: prompts, conversations, or all (default: prompts)",
     )
     _ = grep_parser.add_argument(
@@ -515,7 +515,7 @@ def create_parser(
     _ = search_parser.add_argument(
         "--scope",
         choices=["prompts", "conversations", "all"],
-        dest="search_type",
+        dest="scope",
         help="Search scope: prompts, conversations, or all (default: prompts)",
     )
     _ = search_parser.add_argument(
@@ -586,7 +586,7 @@ def _search_explicit_flags(namespace: argparse.Namespace) -> dict[str, str]:
     flags: dict[str, str] = {}
     if t.cast("list[str]", namespace.agent):
         flags["agent"] = "--agent"
-    if t.cast("str | None", namespace.search_type) is not None:
+    if t.cast("str | None", namespace.scope) is not None:
         flags["scope"] = "--scope"
     return flags
 
@@ -596,7 +596,7 @@ def _grep_explicit_flags(namespace: argparse.Namespace) -> dict[str, str]:
     flags: dict[str, str] = {}
     if t.cast("list[str]", namespace.agent):
         flags["agent"] = "--agent"
-    if t.cast("str | None", namespace.search_type) is not None:
+    if t.cast("str | None", namespace.scope) is not None:
         flags["scope"] = "--scope"
     return flags
 
@@ -611,13 +611,13 @@ def _find_explicit_flags(namespace: argparse.Namespace) -> dict[str, str]:
     return flags
 
 
-def _effective_search_type(
+def _effective_search_scope(
     namespace: argparse.Namespace,
     *,
     query_fields: set[str],
-) -> SearchType:
-    """Return the coarse search type after query-language reconciliation."""
-    explicit = t.cast("SearchType | None", namespace.search_type)
+) -> SearchScope:
+    """Return the coarse search scope after query-language reconciliation."""
+    explicit = t.cast("SearchScope | None", namespace.scope)
     if explicit is not None:
         return explicit
     if "scope" in query_fields:
@@ -934,7 +934,7 @@ def _build_grep_args(
     return GrepArgs(
         patterns=tuple(patterns_list),
         agents=agents,
-        search_type=_effective_search_type(
+        scope=_effective_search_scope(
             namespace,
             query_fields=grep_query_fields,
         ),
@@ -999,7 +999,7 @@ def _build_search_args(
     return SearchArgs(
         terms=final_terms,
         agents=agents,
-        search_type=_effective_search_type(
+        scope=_effective_search_scope(
             namespace,
             query_fields=search_query_fields,
         ),

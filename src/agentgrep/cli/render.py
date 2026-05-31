@@ -395,7 +395,7 @@ def run_find_command(args: FindArgs) -> int:
     if args.output_mode == "ui":
         query = agentgrep.SearchQuery(
             terms=(args.pattern,) if args.pattern else (),
-            search_type="all",
+            scope="all",
             any_term=False,
             regex=args.pattern_mode == "regex",
             case_sensitive=args.case_mode == "respect",
@@ -444,7 +444,7 @@ def run_ui_command(args: UIArgs) -> int:
     initial_terms = tuple(args.initial_query.split()) if args.initial_query else ()
     query = agentgrep.SearchQuery(
         terms=initial_terms,
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -469,7 +469,7 @@ def run_search_command(args: SearchArgs) -> int:
         raise SystemExit(msg)
     query = agentgrep.SearchQuery(
         terms=args.terms,
-        search_type=args.search_type,
+        scope=args.scope,
         any_term=False,
         regex=False,
         case_sensitive=args.case_sensitive,
@@ -877,7 +877,7 @@ def build_grep_query(args: GrepArgs) -> agentgrep.SearchQuery:
 
     return agentgrep.SearchQuery(
         terms=terms,
-        search_type=args.search_type,
+        scope=args.scope,
         any_term=False,
         regex=regex,
         case_sensitive=case_sensitive,

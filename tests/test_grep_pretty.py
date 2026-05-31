@@ -25,7 +25,7 @@ def _make_grep_args(**overrides: t.Any) -> GrepArgs:
     defaults: dict[str, t.Any] = {
         "patterns": ("streaming",),
         "agents": ("codex", "claude", "cursor-cli", "gemini"),
-        "search_type": "prompts",
+        "scope": "prompts",
         "case_mode": "smart",
         "pattern_mode": "fixed",
         "invert_match": False,

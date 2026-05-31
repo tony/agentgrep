@@ -19,7 +19,7 @@ AgentName = t.Literal[
 AgentSelector = t.Literal[
     "codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi", "opencode", "all"
 ]
-SearchTypeName = t.Literal["prompts", "conversations", "all"]
+SearchScopeName = t.Literal["prompts", "conversations", "all"]
 
 SERVER_VERSION = "0.1.0"
 KNOWN_ADAPTERS: tuple[str, ...] = (
@@ -138,7 +138,7 @@ class SearchQueryFactory(t.Protocol):
         self,
         *,
         terms: tuple[str, ...],
-        search_type: str,
+        scope: str,
         any_term: bool,
         regex: bool,
         case_sensitive: bool,

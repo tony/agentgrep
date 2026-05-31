@@ -15,7 +15,7 @@ List prompts containing both ``serenity`` and ``bliss``:
 
 >>> query = SearchQuery(
 ...     terms=("serenity", "bliss"),
-...     search_type="prompts",
+...     scope="prompts",
 ...     any_term=False,
 ...     regex=False,
 ...     case_sensitive=False,
@@ -90,7 +90,7 @@ AgentName = t.Literal[
 ]
 OutputMode = t.Literal["text", "json", "ndjson", "ui"]
 ProgressMode = t.Literal["auto", "always", "never"]
-SearchType = t.Literal["prompts", "conversations", "all"]
+SearchScope = t.Literal["prompts", "conversations", "all"]
 ColorMode = t.Literal["auto", "always", "never"]
 GrepStyle = t.Literal["default", "pretty"]
 type JSONScalar = str | int | float | bool | None
@@ -1181,7 +1181,7 @@ class SearchQuery:
     """
 
     terms: tuple[str, ...]
-    search_type: SearchType
+    scope: SearchScope
     any_term: bool
     regex: bool
     case_sensitive: bool
@@ -6319,7 +6319,7 @@ def store_role_for_record(store: str, adapter_id: str) -> StoreRole | None:
     return None
 
 
-def record_matches_scope(record: SearchRecord, scope: SearchType) -> bool:
+def record_matches_scope(record: SearchRecord, scope: SearchScope) -> bool:
     """Return whether ``record`` belongs to the requested search scope."""
     if scope == "all":
         return True
@@ -6333,11 +6333,11 @@ def matches_record(record: SearchRecord, query: SearchQuery) -> bool:
     """Return whether a normalized record should be included.
 
     When ``query.compiled`` carries a record-level predicate, the
-    record must satisfy it in addition to the existing text + kind
+    record must satisfy it in addition to the existing text + scope
     checks. Pure-text queries skip the predicate evaluation since
     the compiler leaves ``compiled = None`` for them.
     """
-    if not record_matches_scope(record, query.search_type):
+    if not record_matches_scope(record, query.scope):
         return False
     if not matches_text(build_search_haystack(record), query):
         return False

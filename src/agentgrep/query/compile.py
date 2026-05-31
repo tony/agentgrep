@@ -261,7 +261,7 @@ def build_query_from_input(
       compiled query through ``SearchQuery.compiled`` so source and
       record predicates apply on the next search.
 
-    Inherits ``search_type``, ``any_term``, ``regex``,
+    Inherits ``scope``, ``any_term``, ``regex``,
     ``case_sensitive``, ``agents``, ``limit``, and ``dedupe`` from
     ``base_query`` so the search bar lives on top of the existing
     filter scope rather than resetting it.
@@ -305,7 +305,7 @@ def _rebuild(
     """Clone ``base`` with new ``terms`` / ``compiled``; carry the rest forward."""
     return agentgrep.SearchQuery(
         terms=terms,
-        search_type=base.search_type,
+        scope=base.scope,
         any_term=base.any_term,
         regex=base.regex,
         case_sensitive=base.case_sensitive,
@@ -494,7 +494,7 @@ def _field_matches_record(
     if spec.name == "scope":
         return agentgrep.record_matches_scope(
             record,
-            t.cast("agentgrep.SearchType", node.value),
+            t.cast("agentgrep.SearchScope", node.value),
         )
     if spec.name == "timestamp":
         return _date_predicate_matches(

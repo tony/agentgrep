@@ -115,7 +115,7 @@ def test_source_predicate_prunes_codex_sources_without_reading_records(
     compiled = _compile_query("-agent:claude bliss")
     query = agentgrep.SearchQuery(
         terms=("bliss",),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -171,7 +171,7 @@ def test_record_predicate_filters_after_source_predicate(
     compiled = _compile_query("agent:codex model:claude bliss")
     query = agentgrep.SearchQuery(
         terms=("bliss",),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -228,7 +228,7 @@ def test_text_matches_finds_needle_in_model_and_path(
     compiled = _compile_query("agent:codex sonnet")
     query = agentgrep.SearchQuery(
         terms=("sonnet",),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -344,7 +344,7 @@ def test_engine_routes_query_through_predicates(
     compiled = _compile_query(case.query)
     query = agentgrep.SearchQuery(
         terms=compiled.text_terms,
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -524,7 +524,7 @@ def test_eager_search_path_prunes_sources_before_reading(
     compiled = _compile_query(case.query)
     query = agentgrep.SearchQuery(
         terms=compiled.text_terms,
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -896,7 +896,7 @@ def test_compiled_none_falls_through_to_legacy_path(
 
     query = agentgrep.SearchQuery(
         terms=("bliss",),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
