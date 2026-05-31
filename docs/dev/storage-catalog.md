@@ -104,6 +104,13 @@ Inventory and MCP source-listing surfaces keep shape detection enabled,
 while catalog-only detail remains available for callers that want a
 cheap, low-confidence metadata stamp.
 
+Search callers also narrow discovery by descriptor role before walking
+the filesystem. Prompt scope first enumerates `prompt_history` rows and
+then falls back, per agent, to `primary_chat` and `supplementary_chat`
+rows only when no prompt-history source exists for that agent.
+Conversation scope enumerates the chat roles directly, and all scope
+keeps the full default-search catalogue.
+
 ## Stores by agent
 
 ### Claude Code
