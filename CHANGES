@@ -56,8 +56,28 @@ tools, and `grep -L` (`--files-without-match`).
 `agentgrep search` is now restricted to literal AND-matching to ensure
 performance and stability. `grep` and `find` remain regex-by-default
 as they utilize ripgrep directly. Re-introducing the removed modes
-with bounded memory is tracked in
-[tony/agentgrep#32](https://github.com/tony/agentgrep/issues/32).
+with bounded memory is tracked in #32.
+
+#### Removed: the `fuzzy` subcommand
+
+`agentgrep fuzzy` — a `fzf --filter`-shaped filter over stdin that never
+read the agent stores — has been removed. It sat outside agentgrep's
+prompt/history search scope and only approximated fzf, scoring with
+rapidfuzz rather than fzf's own algorithm.
+
+Before:
+
+```console
+$ agentgrep grep foo | agentgrep fuzzy bar
+```
+
+After — pipe through `fzf` directly:
+
+```console
+$ agentgrep grep foo | fzf --filter bar
+```
+
+Re-adding it with a faithful fzf port is tracked in #34.
 
 ## agentgrep 0.1.0a9 (2026-05-30)
 
