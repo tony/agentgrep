@@ -36,11 +36,20 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a11 (Yet to be released)
+## agentgrep 0.1.0a13 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a12 (2026-05-31)
+
+agentgrep 0.1.0a12 adds Pi (the earendil-works "Pi Agent Harness") as
+a searchable backend, reachable from both the CLI (`--agent pi`) and
+the MCP server. Pi keeps each conversation as a single append-only
+JSONL session file with no separate prompt-history log or SQLite
+index, so prompts and history are read straight from the transcript.
+See {doc}`/backends/pi` for the store layout and record schema.
 
 ### What's new
 
