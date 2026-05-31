@@ -36,11 +36,18 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a15 (Yet to be released)
+## agentgrep 0.1.0a16 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a15 (2026-05-31)
+
+agentgrep 0.1.0a15 speeds up broad lookup paths by separating lightweight
+search discovery from metadata-rich source inventory. Search, grep, find, and
+MCP lookup paths now avoid version and shape work when they only need parseable
+source handles.
 
 ### What's new
 
