@@ -36,11 +36,13 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a14 (Yet to be released)
+## agentgrep 0.1.0a15 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a14 (2026-05-31)
 
 agentgrep 0.1.0a14 makes prompt search the default search scope and
 requires explicit opt-in for full conversation records. This release
