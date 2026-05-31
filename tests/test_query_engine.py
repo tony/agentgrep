@@ -115,7 +115,7 @@ def test_source_predicate_prunes_codex_sources_without_reading_records(
     compiled = _compile_query("-agent:claude bliss")
     query = agentgrep.SearchQuery(
         terms=("bliss",),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -171,7 +171,7 @@ def test_record_predicate_filters_after_source_predicate(
     compiled = _compile_query("agent:codex model:claude bliss")
     query = agentgrep.SearchQuery(
         terms=("bliss",),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -228,7 +228,7 @@ def test_text_matches_finds_needle_in_model_and_path(
     compiled = _compile_query("agent:codex sonnet")
     query = agentgrep.SearchQuery(
         terms=("sonnet",),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -344,7 +344,7 @@ def test_engine_routes_query_through_predicates(
     compiled = _compile_query(case.query)
     query = agentgrep.SearchQuery(
         terms=compiled.text_terms,
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -524,7 +524,7 @@ def test_eager_search_path_prunes_sources_before_reading(
     compiled = _compile_query(case.query)
     query = agentgrep.SearchQuery(
         terms=compiled.text_terms,
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -710,8 +710,8 @@ MANGLED_FIELD_PREDICATE_CASES: tuple[MangledFieldPredicateCase, ...] = (
         argv=("find", "-timestamp:2026"),
     ),
     MangledFieldPredicateCase(
-        test_id="grep-mangled-type",
-        argv=("grep", "-type:prompts", "bliss"),
+        test_id="grep-mangled-scope",
+        argv=("grep", "-scope:prompts", "bliss"),
     ),
 )
 
@@ -805,29 +805,24 @@ FLAG_FIELD_COLLISION_CASES: tuple[FlagFieldCollisionCase, ...] = (
         expected_message_fragment="cannot combine --agent flag with agent: field",
     ),
     FlagFieldCollisionCase(
-        test_id="grep-type-flag-and-field",
-        argv=("grep", "--type", "history", "type:prompts", "bliss"),
-        expected_message_fragment="cannot combine --type flag with type: field",
+        test_id="grep-scope-flag-and-field",
+        argv=("grep", "--scope", "conversations", "scope:prompts", "bliss"),
+        expected_message_fragment="cannot combine --scope flag with scope: field",
     ),
     FlagFieldCollisionCase(
-        test_id="grep-default-type-flag-and-field",
-        argv=("grep", "--type", "prompts", "type:history", "bliss"),
-        expected_message_fragment="cannot combine --type flag with type: field",
+        test_id="grep-default-scope-flag-and-field",
+        argv=("grep", "--scope", "prompts", "scope:conversations", "bliss"),
+        expected_message_fragment="cannot combine --scope flag with scope: field",
     ),
     FlagFieldCollisionCase(
-        test_id="search-type-flag-and-field",
-        argv=("search", "--type", "history", "type:prompts", "bliss"),
-        expected_message_fragment="cannot combine --type flag with type: field",
+        test_id="search-scope-flag-and-field",
+        argv=("search", "--scope", "conversations", "scope:prompts", "bliss"),
+        expected_message_fragment="cannot combine --scope flag with scope: field",
     ),
     FlagFieldCollisionCase(
-        test_id="search-default-type-flag-and-field",
-        argv=("search", "--type", "prompts", "type:history", "bliss"),
-        expected_message_fragment="cannot combine --type flag with type: field",
-    ),
-    FlagFieldCollisionCase(
-        test_id="find-default-type-flag-and-field",
-        argv=("find", "--type", "all", "type:history"),
-        expected_message_fragment="cannot combine --type flag with type: field",
+        test_id="search-default-scope-flag-and-field",
+        argv=("search", "--scope", "prompts", "scope:conversations", "bliss"),
+        expected_message_fragment="cannot combine --scope flag with scope: field",
     ),
 )
 
@@ -901,7 +896,7 @@ def test_compiled_none_falls_through_to_legacy_path(
 
     query = agentgrep.SearchQuery(
         terms=("bliss",),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,

@@ -28,7 +28,7 @@ def _base_query() -> agentgrep.SearchQuery:
     """Build a synthetic base SearchQuery the helper inherits from."""
     return agentgrep.SearchQuery(
         terms=("placeholder",),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -134,10 +134,10 @@ def test_build_query_from_input_handles_every_shape(
 
 
 def test_build_query_inherits_base_filter_scope() -> None:
-    """The helper carries search_type / agents / limit through from base."""
+    """The helper carries scope / agents / limit through from base."""
     base = agentgrep.SearchQuery(
         terms=("placeholder",),
-        search_type="history",
+        scope="conversations",
         any_term=True,
         regex=True,
         case_sensitive=True,
@@ -147,7 +147,7 @@ def test_build_query_inherits_base_filter_scope() -> None:
     )
     result = build_query_from_input("agent:codex bliss", base, default_registry())
     assert result.query is not None
-    assert result.query.search_type == "history"
+    assert result.query.scope == "conversations"
     assert result.query.any_term is True
     assert result.query.regex is True
     assert result.query.case_sensitive is True

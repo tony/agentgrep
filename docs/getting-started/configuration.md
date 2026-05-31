@@ -14,15 +14,17 @@ $ uv run agentgrep grep "cache" --agent codex
 
 Supported agents are `codex`, `claude`, `cursor-cli`, `cursor-ide`, `gemini`, `grok`, `pi`, and `opencode`. Omitting `--agent` searches all supported agents.
 
-## Search type
+## Search scope
 
-Use `--type` to choose records:
+Search and grep default to prompt scope: user-authored prompts,
+including dedicated prompt-history logs and user turns projected from
+transcript-only stores. Use `--scope` to opt into broader records:
 
 ```console
-$ uv run agentgrep grep "docs deploy" --type prompts
+$ uv run agentgrep grep "docs deploy" --scope conversations
 ```
 
-Allowed values are `prompts`, `history`, and `all`.
+Allowed values are `prompts`, `conversations`, and `all`.
 
 ## Output
 

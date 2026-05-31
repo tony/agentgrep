@@ -31,7 +31,7 @@ class SearchQueryLike(t.Protocol):
     """Structural type for search query echoes."""
 
     terms: list[str]
-    search_type: str
+    scope: str
     agent: str
 
 
@@ -190,14 +190,14 @@ async def test_mcp_search_tool_returns_full_prompt(
             {
                 "terms": ["serenity", "bliss"],
                 "agent": "codex",
-                "search_type": "prompts",
+                "scope": "prompts",
                 "limit": 5,
             },
         )
 
     data = t.cast("SearchToolDataLike", result.data)
     assert data.query.terms == ["serenity", "bliss"]
-    assert data.query.search_type == "prompts"
+    assert data.query.scope == "prompts"
     assert data.query.agent == "codex"
     assert len(data.results) == 1
     assert data.results[0].kind == "prompt"
@@ -253,7 +253,9 @@ async def test_mcp_capabilities_resource_reports_read_only() -> None:
     assert "find" in tools_advertised
     assert "list_stores" in tools_advertised
     prompts = t.cast("list[str]", data["prompts"])
-    assert "search_history" in prompts
+    assert "search_conversations" in prompts
+    assert "search_scopes" in data
+    assert data["search_scopes"] == ["prompts", "conversations", "all"]
 
 
 async def test_mcp_capabilities_lists_every_supported_agent_and_adapter() -> None:
@@ -299,6 +301,25 @@ async def test_mcp_prompt_guides_search() -> None:
     assert "search" in rendered
     assert "serenity" in rendered
     assert "codex" in rendered
+
+
+async def test_mcp_search_tool_rejects_legacy_search_type() -> None:
+    """The MCP search tool accepts ``scope`` instead of legacy ``search_type``."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        result = await client.call_tool(
+            "search",
+            {
+                "terms": ["serenity"],
+                "agent": "codex",
+                "search_type": "history",
+                "limit": 5,
+            },
+            raise_on_error=False,
+        )
+
+    assert result.is_error is True
 
 
 async def test_audit_middleware_emits_extras(

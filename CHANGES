@@ -42,6 +42,47 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+agentgrep 0.1.0a14 makes prompt search the default search scope and
+requires explicit opt-in for full conversation records. This release
+renames the search breadth selector to `scope` across the CLI, MCP,
+query language, and Python library so prompt-history logs are no
+longer confused with conversation history.
+
+### Breaking changes
+
+Search and grep now use `--scope`, not `--type`, for prompt versus
+conversation breadth. `find --type` is unchanged because it still
+filters discovered files and stores.
+
+Before:
+
+```console
+$ agentgrep grep "release notes" --type history
+```
+
+After:
+
+```console
+$ agentgrep grep "release notes" --scope conversations
+```
+
+MCP search requests now send `scope` instead of `search_type`, and
+library callers construct {class}`~agentgrep.SearchQuery` with
+`scope=...`.
+
+### What's new
+
+#### Search scope vocabulary (#38)
+
+Bare CLI and MCP searches now run in `prompts` scope. Dedicated
+prompt-history stores are included in that default, and transcript-only
+backends still project user turns into prompt scope when an app does
+not keep a separate prompt log.
+
+Full conversation, session, assistant, tool, and event records require
+`--scope conversations`, `scope="conversations"`, or `scope:conversations`.
+Use `all` to search prompts and conversations together.
+
 ## agentgrep 0.1.0a13 (2026-05-31)
 
 agentgrep 0.1.0a13 adds OpenCode (anomalyco/opencode, formerly

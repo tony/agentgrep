@@ -72,6 +72,11 @@ stores expose safe structural samples for `inspect_record_sample`, but
 they still stay outside default search. Private stores are documented
 but intentionally not enumerated from disk.
 
+Search scope is record-level. `--scope prompts` is the default and
+includes dedicated prompt-history logs plus user turns projected from
+transcript-only backends. Full conversation, assistant, tool, and event
+records require `--scope conversations` or `--scope all`.
+
 ## Version detection
 
 Source discovery reports version metadata separately from record

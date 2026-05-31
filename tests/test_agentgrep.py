@@ -72,7 +72,7 @@ class SearchQueryFactory(t.Protocol):
         self,
         *,
         terms: tuple[str, ...],
-        search_type: str,
+        scope: str,
         any_term: bool,
         regex: bool,
         case_sensitive: bool,
@@ -438,7 +438,7 @@ def test_search_codex_prompt_match_returns_full_prompt(
 
     query = agentgrep.SearchQuery(
         terms=("serenity", "bliss"),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -479,7 +479,7 @@ def test_search_reports_source_and_match_progress(
 
     query = agentgrep.SearchQuery(
         terms=("bliss",),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -573,7 +573,7 @@ def test_collect_search_records_calls_record_added_with_each_unique_record(
     )
     query = agentgrep.SearchQuery(
         terms=("bliss",),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -640,7 +640,7 @@ def test_collect_search_records_reports_in_source_progress_and_yields_gil(
     )
     query = agentgrep.SearchQuery(
         terms=("bliss",),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -864,7 +864,7 @@ def test_streaming_search_progress_translates_progress_callbacks(
     progress = agentgrep.StreamingSearchProgress(emit=emitted.append)
     query = agentgrep.SearchQuery(
         terms=("bliss",),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -1043,7 +1043,7 @@ def _build_empty_ui_app(
     )
     query = agentgrep.SearchQuery(
         terms=(),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -2308,7 +2308,7 @@ async def test_show_detail_memoizes_first_match_line(
     )
     query = agentgrep.SearchQuery(
         terms=("needle",),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -2385,7 +2385,7 @@ async def test_show_detail_scrolls_to_first_match(
     # uses ``terms=()``, which would make first_match always return None.
     query = agentgrep.SearchQuery(
         terms=("needle",),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -2516,7 +2516,7 @@ async def test_show_detail_keeps_text_highlighting_for_plain_body(
     monkeypatch.setattr(agentgrep, "run_search_query", lambda *args, **kwargs: [])
     query = agentgrep.SearchQuery(
         terms=("libtmux",),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -2614,7 +2614,7 @@ def test_collect_search_records_returns_partial_results_on_answer_now(
     )
     query = agentgrep.SearchQuery(
         terms=("bliss",),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -2649,7 +2649,7 @@ def test_run_search_query_interrupts_progress_on_keyboard_interrupt(
     )
     query = agentgrep.SearchQuery(
         terms=("bliss",),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -2742,7 +2742,7 @@ def test_plan_search_sources_prefilters_one_root_once(
 
     query = agentgrep.SearchQuery(
         terms=("bliss",),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -2775,6 +2775,64 @@ def test_plan_search_sources_prefilters_one_root_once(
     assert [source.path for source in planned] == [first]
 
 
+def test_plan_search_sources_prunes_chat_sources_from_prompt_scope(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prompt-scope planning skips Claude transcript files before parsing."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    history = agentgrep.SourceHandle(
+        agent="claude",
+        store="claude.history",
+        adapter_id="claude.history_jsonl.v1",
+        path=tmp_path / "history.jsonl",
+        path_kind="history_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=2,
+    )
+    transcript = agentgrep.SourceHandle(
+        agent="claude",
+        store="claude.projects",
+        adapter_id="claude.projects_jsonl.v1",
+        path=tmp_path / "projects" / "session.jsonl",
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=1,
+    )
+    query = agentgrep.SearchQuery(
+        terms=("biome",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("claude",),
+        limit=None,
+    )
+    checked: list[str] = []
+
+    def direct_source_matches(
+        source: object,
+        query: object,
+        backends: object,
+        control: object | None = None,
+    ) -> bool:
+        checked.append(t.cast("t.Any", source).store)
+        return True
+
+    monkeypatch.setattr(agentgrep, "direct_source_matches", direct_source_matches)
+
+    planned = agentgrep.plan_search_sources(
+        query,
+        [history, transcript],
+        agentgrep.BackendSelection(None, None, None),
+    )
+
+    assert [source.store for source in planned] == ["claude.history"]
+    assert checked == ["claude.history"]
+
+
 def test_search_prefers_newer_sources_when_limiting(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2805,7 +2863,7 @@ def test_search_prefers_newer_sources_when_limiting(
 
     query = agentgrep.SearchQuery(
         terms=("bliss",),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -2858,7 +2916,7 @@ def test_search_dedupes_identical_prompts_within_session(
 
     query = agentgrep.SearchQuery(
         terms=("bliss",),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -2902,7 +2960,7 @@ def test_search_keeps_identical_prompts_across_sessions(
 
     query = agentgrep.SearchQuery(
         terms=("bliss",),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -2964,7 +3022,7 @@ def test_search_limit_applies_to_unique_results(
 
     query = agentgrep.SearchQuery(
         terms=("bliss",),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -3006,7 +3064,7 @@ def test_search_codex_history_json_returns_history_record(
 
     query = agentgrep.SearchQuery(
         terms=("serenity",),
-        search_type="history",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -3021,7 +3079,7 @@ def test_search_codex_history_json_returns_history_record(
     records = agentgrep.search_sources(query, sources, agentgrep.BackendSelection(None, None, None))
 
     assert len(records) == 1
-    assert records[0].kind == "history"
+    assert records[0].kind == "prompt"
     assert records[0].text == "serenity command example"
 
 
@@ -3071,7 +3129,7 @@ def test_cursor_ai_tracking_summary_is_exposed_as_history(
 
     query = agentgrep.SearchQuery(
         terms=("serenity", "bliss"),
-        search_type="history",
+        scope="conversations",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -3118,7 +3176,7 @@ def test_cursor_state_itemtable_extracts_prompt(
 
     query = agentgrep.SearchQuery(
         terms=("serenity", "bliss"),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -3614,7 +3672,7 @@ def test_progress_no_color_overrides_color_always(monkeypatch: pytest.MonkeyPatc
     )
     query = agentgrep.SearchQuery(
         terms=("bliss",),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -3646,7 +3704,7 @@ def test_progress_force_color_enables_auto_for_non_tty(
     )
     query = agentgrep.SearchQuery(
         terms=("bliss",),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -3738,7 +3796,7 @@ def test_non_tty_progress_emits_start_heartbeat_and_finish() -> None:
     )
     query = agentgrep.SearchQuery(
         terms=("bliss",),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -3830,7 +3888,7 @@ def test_tty_progress_renders_spinner_and_clears(monkeypatch: pytest.MonkeyPatch
     )
     query = agentgrep.SearchQuery(
         terms=("bliss",),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -3868,7 +3926,7 @@ def test_tty_progress_renders_answer_now_hint() -> None:
     )
     query = agentgrep.SearchQuery(
         terms=("bliss",),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -3908,7 +3966,7 @@ def test_tty_progress_render_fits_terminal_width(
     )
     query = agentgrep.SearchQuery(
         terms=("libtmux",),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -3946,7 +4004,7 @@ def test_tty_progress_answer_now_hint_is_white(monkeypatch: pytest.MonkeyPatch) 
     )
     query = agentgrep.SearchQuery(
         terms=("bliss",),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -3976,7 +4034,7 @@ def test_tty_progress_interrupt_preserves_current_summary(
     )
     query = agentgrep.SearchQuery(
         terms=("bliss",),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -4013,7 +4071,7 @@ def test_tty_progress_prefilter_uses_private_directory_path(
     )
     query = agentgrep.SearchQuery(
         terms=("bliss",),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -4043,7 +4101,7 @@ def test_non_tty_progress_interrupt_emits_current_summary() -> None:
     )
     query = agentgrep.SearchQuery(
         terms=("bliss",),
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -4069,7 +4127,7 @@ def test_main_handles_keyboard_interrupt_without_traceback(
     args = agentgrep.GrepArgs(
         patterns=("bliss",),
         agents=("codex",),
-        search_type="prompts",
+        scope="prompts",
         case_mode="smart",
         pattern_mode="regex",
         invert_match=False,
@@ -4197,7 +4255,7 @@ def _make_query(agentgrep: object, agents: tuple[AgentName, ...], terms: tuple[s
     mod = t.cast("t.Any", agentgrep)
     return mod.SearchQuery(
         terms=terms,
-        search_type="all",
+        scope="all",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -4294,7 +4352,7 @@ def test_search_codex_history_jsonl_uses_modern_text_schema(
     backends = agentgrep.BackendSelection(None, None, None)
     query = agentgrep.SearchQuery(
         terms=("modern",),
-        search_type="history",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -4352,7 +4410,7 @@ def test_search_codex_legacy_root_rollout_json_session(
     backends = agentgrep.BackendSelection(None, None, None)
     query = agentgrep.SearchQuery(
         terms=("legacy",),
-        search_type="all",
+        scope="all",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -5519,7 +5577,7 @@ def test_search_claude_history_expands_external_pasted_text(
     backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
     query = t.cast("t.Any", agentgrep).SearchQuery(
         terms=("bliss",),
-        search_type="history",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -5534,7 +5592,7 @@ def test_search_claude_history_expands_external_pasted_text(
     assert record.agent == "claude"
     assert record.store == "claude.history"
     assert record.adapter_id == "claude.history_jsonl.v1"
-    assert record.kind == "history"
+    assert record.kind == "prompt"
     assert record.role == "user"
     assert record.timestamp == "2023-11-14T22:13:20Z"
     assert record.session_id == "session-1"
@@ -5542,6 +5600,57 @@ def test_search_claude_history_expands_external_pasted_text(
     assert "inline serenity paste" in record.text
     assert "external bliss paste" in record.text
     assert "[Pasted text" not in record.text
+
+
+def test_prompt_scope_excludes_claude_project_user_turns_when_history_exists(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default prompt scope uses Claude's prompt history, not transcript replay."""
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    claude_home = home / ".claude"
+    write_jsonl(
+        claude_home / "history.jsonl",
+        [
+            {
+                "display": "biome from prompt history",
+                "timestamp": 1_700_000_000_000,
+                "project": "/synthetic/project",
+                "sessionId": "session-1",
+                "pastedContents": {},
+            },
+        ],
+    )
+    write_jsonl(
+        claude_home / "projects" / "-synthetic-project" / "session-1.jsonl",
+        [
+            {
+                "type": "user",
+                "sessionId": "session-1",
+                "version": "2.1.157",
+                "message": {"role": "user", "content": "biome from transcript"},
+            },
+        ],
+    )
+
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    query = t.cast("t.Any", agentgrep).SearchQuery(
+        terms=("biome",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("claude",),
+        limit=None,
+    )
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("claude",), backends)
+    records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
+
+    assert [(record.store, record.text) for record in records] == [
+        ("claude.history", "biome from prompt history"),
+    ]
 
 
 def test_search_claude_history_tolerates_missing_paste_cache(
@@ -5575,7 +5684,7 @@ def test_search_claude_history_tolerates_missing_paste_cache(
     backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
     query = t.cast("t.Any", agentgrep).SearchQuery(
         terms=("missing",),
-        search_type="history",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -6091,7 +6200,7 @@ def test_search_gemini_logs_returns_user_message(
     assert log_records, "expected at least one gemini.tmp_logs record"
     assert log_records[0].text == "libtmux trace"
     assert log_records[0].role == "user"
-    assert log_records[0].kind == "history"
+    assert log_records[0].kind == "prompt"
     assert log_records[0].timestamp == "2026-05-17T12:00:05Z"
     assert log_records[0].session_id == "sess-1"
 
@@ -6146,7 +6255,7 @@ def test_search_grok_prompt_history(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Grok prompt_history.jsonl records surface as kind=history, role=user."""
+    """Grok prompt_history.jsonl records surface as kind=prompt, role=user."""
     agentgrep = load_agentgrep_module()
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
@@ -6173,7 +6282,7 @@ def test_search_grok_prompt_history(
     backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
     query = t.cast("t.Any", agentgrep).SearchQuery(
         terms=("summarise",),
-        search_type="all",
+        scope="all",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -6184,7 +6293,7 @@ def test_search_grok_prompt_history(
     records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
 
     assert records, "expected at least one grok prompt history record"
-    assert records[0].kind == "history"
+    assert records[0].kind == "prompt"
     assert records[0].role == "user"
     assert records[0].agent == "grok"
     assert "summarise" in records[0].text
@@ -6218,7 +6327,7 @@ def test_search_grok_chat_history_session(
     backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
     query = t.cast("t.Any", agentgrep).SearchQuery(
         terms=("design",),
-        search_type="all",
+        scope="all",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -6259,7 +6368,7 @@ def test_search_grok_chat_history_drops_empty_content(
     backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
     query = t.cast("t.Any", agentgrep).SearchQuery(
         terms=(),
-        search_type="all",
+        scope="all",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -6315,7 +6424,7 @@ def test_search_grok_session_search_db(
     backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
     query = t.cast("t.Any", agentgrep).SearchQuery(
         terms=("middleware",),
-        search_type="all",
+        scope="all",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -6484,7 +6593,7 @@ def test_search_pi_sessions(
     backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
     query = t.cast("t.Any", agentgrep).SearchQuery(
         terms=("streaming",),
-        search_type="all",
+        scope="all",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -6954,7 +7063,7 @@ def test_search_opencode_sessions(
     backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
     query = t.cast("t.Any", agentgrep).SearchQuery(
         terms=("streaming",),
-        search_type="all",
+        scope="all",
         any_term=False,
         regex=False,
         case_sensitive=False,

@@ -13,7 +13,7 @@ from pydantic import Field
 from agentgrep.mcp._library import (
     READONLY_TAGS,
     AgentSelector,
-    SearchTypeName,
+    SearchScopeName,
     agentgrep,
     normalize_agent_selection,
 )
@@ -35,7 +35,7 @@ def _search_sync(request: SearchRequestModel) -> SearchToolResponse:
     """Run the blocking search work and build a typed response."""
     query = agentgrep.SearchQuery(
         terms=tuple(request.terms),
-        search_type=request.search_type,
+        scope=request.scope,
         any_term=False,
         regex=False,
         case_sensitive=request.case_sensitive,
@@ -47,7 +47,7 @@ def _search_sync(request: SearchRequestModel) -> SearchToolResponse:
         query=SearchToolQuery(
             terms=request.terms,
             agent=request.agent,
-            search_type=request.search_type,
+            scope=request.scope,
             case_sensitive=request.case_sensitive,
             limit=request.limit,
         ),
@@ -84,7 +84,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(
         name="search",
         tags=READONLY_TAGS | {"search"},
-        description="Search normalized prompts or history across local agent stores.",
+        description=("Search normalized prompts by default; opt into conversations with scope."),
     )
     async def search_tool(
         terms: t.Annotated[
@@ -98,9 +98,9 @@ def register(mcp: FastMCP) -> None:
             AgentSelector,
             Field(description="Limit search to one agent or search all agents."),
         ] = "all",
-        search_type: t.Annotated[
-            SearchTypeName,
-            Field(description="Search prompts, history, or both."),
+        scope: t.Annotated[
+            SearchScopeName,
+            Field(description="Search prompts, conversations, or both."),
         ] = "prompts",
         case_sensitive: t.Annotated[
             bool,
@@ -118,7 +118,7 @@ def register(mcp: FastMCP) -> None:
         request = SearchRequestModel(
             terms=terms,
             agent=agent,
-            search_type=search_type,
+            scope=scope,
             case_sensitive=case_sensitive,
             limit=limit,
         )

@@ -22,7 +22,7 @@ $ uv run agentgrep find cursor-cli --agent cursor-cli --json
   "arguments": {
     "terms": ["database migration"],
     "agent": "codex",
-    "search_type": "prompts",
+    "scope": "prompts",
     "limit": 10
   }
 }

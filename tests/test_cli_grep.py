@@ -162,6 +162,23 @@ def test_grep_max_count_propagates() -> None:
     assert parsed.max_count == 5
 
 
+def test_grep_scope_conversations_propagates() -> None:
+    """``--scope conversations`` selects full conversation/session content."""
+    parsed = agentgrep.parse_args(["grep", "--scope", "conversations", "foo"])
+    assert isinstance(parsed, agentgrep.GrepArgs)
+    assert parsed.scope == "conversations"
+
+
+def test_grep_type_flag_is_rejected(capsys: pytest.CaptureFixture[str]) -> None:
+    """``grep --type`` is no longer the public search-breadth selector."""
+    with pytest.raises(SystemExit) as exc_info:
+        _ = agentgrep.parse_args(["grep", "--type", "history", "foo"])
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert "unrecognized arguments" in captured.err
+    assert "--type" in captured.err
+
+
 class QueryTranslationCase(t.NamedTuple):
     """Parametrized case for :func:`agentgrep.build_grep_query`."""
 
@@ -267,7 +284,7 @@ def test_build_grep_query_translates_modes(case: QueryTranslationCase) -> None:
     args = agentgrep.GrepArgs(
         patterns=case.patterns,
         agents=agentgrep.AGENT_CHOICES,
-        search_type="prompts",
+        scope="prompts",
         case_mode=case.case_mode,
         pattern_mode=case.pattern_mode,
         invert_match=False,
@@ -289,6 +306,55 @@ def test_build_grep_query_translates_modes(case: QueryTranslationCase) -> None:
     assert query.regex is case.expected_regex
     assert query.dedupe is case.expected_dedupe
     assert query.terms == case.expected_terms
+    assert query.match_surface == "text"
+
+
+class GrepMatchSurfaceCase(t.NamedTuple):
+    """Parametrized case for grep's record-level match surface."""
+
+    test_id: str
+    record_path: str
+    record_text: str
+    expected_matches: bool
+
+
+GREP_MATCH_SURFACE_CASES: tuple[GrepMatchSurfaceCase, ...] = (
+    GrepMatchSurfaceCase(
+        test_id="term-in-text",
+        record_path="/tmp/plain-project/prompt_history.jsonl",
+        record_text="tmux prompt investigation",
+        expected_matches=True,
+    ),
+    GrepMatchSurfaceCase(
+        test_id="term-only-in-path",
+        record_path="/tmp/vibe-tmux-py/prompt_history.jsonl",
+        record_text="prompt without the needle",
+        expected_matches=False,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    GREP_MATCH_SURFACE_CASES,
+    ids=[c.test_id for c in GREP_MATCH_SURFACE_CASES],
+)
+def test_grep_query_matches_record_text_not_source_path(case: GrepMatchSurfaceCase) -> None:
+    """Line-oriented grep should only emit records with matching text lines."""
+    args = _make_grep_args(patterns=("tmux",), pattern_mode="fixed")
+    query = agentgrep.build_grep_query(args)
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="grok",
+        store="grok.prompt_history",
+        adapter_id="grok.prompt_history_jsonl.v1",
+        path=pathlib.Path(case.record_path),
+        text=case.record_text,
+        title="Grok prompt history",
+        role="user",
+    )
+
+    assert agentgrep.matches_record(record, query) is case.expected_matches
 
 
 def _make_grep_args(**overrides: object) -> agentgrep.GrepArgs:
@@ -296,7 +362,7 @@ def _make_grep_args(**overrides: object) -> agentgrep.GrepArgs:
     base: dict[str, object] = {
         "patterns": ("foo",),
         "agents": agentgrep.AGENT_CHOICES,
-        "search_type": "prompts",
+        "scope": "prompts",
         "case_mode": "smart",
         "pattern_mode": "regex",
         "invert_match": False,
@@ -894,7 +960,7 @@ def _make_grep_args_for_helpers(**overrides: t.Any) -> agentgrep.GrepArgs:
     base: dict[str, t.Any] = {
         "patterns": ("foo",),
         "agents": agentgrep.AGENT_CHOICES,
-        "search_type": "prompts",
+        "scope": "prompts",
         "case_mode": "smart",
         "pattern_mode": "regex",
         "invert_match": False,

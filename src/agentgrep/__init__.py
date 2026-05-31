@@ -3,7 +3,7 @@
 # requires-python = ">=3.14"
 # dependencies = ["pydantic>=2.11.3", "textual>=3.2.0"]
 # ///
-"""Search local AI agent prompts and history without mutating agent stores.
+"""Search local AI agent prompts and conversations without mutating agent stores.
 
 The tool discovers known read-only stores under ``~/.codex``, ``~/.claude``,
 ``~/.cursor``, and Cursor's official IDE storage locations, then normalizes
@@ -15,7 +15,7 @@ List prompts containing both ``serenity`` and ``bliss``:
 
 >>> query = SearchQuery(
 ...     terms=("serenity", "bliss"),
-...     search_type="prompts",
+...     scope="prompts",
 ...     any_term=False,
 ...     regex=False,
 ...     case_sensitive=False,
@@ -36,6 +36,7 @@ import collections
 import contextlib
 import dataclasses
 import datetime
+import functools
 import importlib
 import itertools
 import json
@@ -67,6 +68,7 @@ from agentgrep.stores import (
     SourceKind,
     StoreCoverage,
     StoreDescriptor,
+    StoreRole,
     VersionDetectionConfidence,
     VersionDetectionStrategy,
 )
@@ -88,7 +90,8 @@ AgentName = t.Literal[
 ]
 OutputMode = t.Literal["text", "json", "ndjson", "ui"]
 ProgressMode = t.Literal["auto", "always", "never"]
-SearchType = t.Literal["prompts", "history", "all"]
+SearchScope = t.Literal["prompts", "conversations", "all"]
+SearchMatchSurface = t.Literal["haystack", "text"]
 ColorMode = t.Literal["auto", "always", "never"]
 GrepStyle = t.Literal["default", "pretty"]
 type JSONScalar = str | int | float | bool | None
@@ -185,6 +188,7 @@ EnvelopeFactory = t.Callable[[str, dict[str, object], list[dict[str, object]]], 
 OPTIONS_EXPECTING_VALUE: frozenset[str] = frozenset(
     {
         "--agent",
+        "--scope",
         "--type",
         "--limit",
         "--color",
@@ -239,7 +243,7 @@ CLI_DESCRIPTION = build_description(
             (
                 "agentgrep grep bliss",
                 "agentgrep grep -i 'serene bliss'",
-                "agentgrep grep -F --type history TODO",
+                "agentgrep grep -F --scope conversations TODO",
                 "agentgrep grep --json design",
             ),
         ),
@@ -322,7 +326,7 @@ GREP_DESCRIPTION = build_description(
             (
                 "agentgrep grep bliss",
                 "agentgrep grep -i 'serene bliss'",
-                "agentgrep grep -F --type history TODO",
+                "agentgrep grep -F --scope conversations TODO",
                 "agentgrep grep --json design",
                 "agentgrep grep --vimgrep --no-dedupe foo",
             ),
@@ -1175,10 +1179,13 @@ class SearchQuery:
     ``compiled.source_predicate`` to prune sources before any file
     is opened, and :func:`matches_record` consults
     ``compiled.record_predicate`` after the existing text match.
+    ``match_surface`` lets line-oriented callers such as ``grep``
+    require a match in record text while fuzzy search and filtering
+    can keep using the metadata-rich haystack.
     """
 
     terms: tuple[str, ...]
-    search_type: SearchType
+    scope: SearchScope
     any_term: bool
     regex: bool
     case_sensitive: bool
@@ -1186,6 +1193,7 @@ class SearchQuery:
     limit: int | None
     dedupe: bool = True
     compiled: CompiledQuery | None = None
+    match_surface: SearchMatchSurface = "haystack"
 
 
 @dataclasses.dataclass(slots=True)
@@ -3482,10 +3490,20 @@ def plan_search_sources(
     """Return the candidate sources to parse for a search query."""
     active_progress = noop_search_progress() if progress is None else progress
     active_control = SearchControl() if control is None else control
+    prompt_history_agents = prompt_history_agents_for_sources(sources)
+    scoped_sources = [
+        source
+        for source in sources
+        if source_matches_scope(
+            source,
+            query.scope,
+            prompt_history_agents=prompt_history_agents,
+        )
+    ]
     if not query.terms:
-        return sources
+        return scoped_sources
 
-    planned_sources = list(sources)
+    planned_sources = scoped_sources
     if backends.grep_tool is not None:
         planned_sources = prefilter_sources_by_root(
             query,
@@ -3649,11 +3667,18 @@ def collect_search_records(
         return len(deduped) if query.dedupe else len(raw)
 
     source_predicate = query.compiled.source_predicate if query.compiled is not None else None
+    prompt_history_agents = prompt_history_agents_for_sources(sources)
     for index, source in enumerate(sources, start=1):
         if active_control.answer_now_requested() or (
             query.limit is not None and current_count() >= query.limit
         ):
             break
+        if not source_matches_scope(
+            source,
+            query.scope,
+            prompt_history_agents=prompt_history_agents,
+        ):
+            continue
         # Compiled-query source pruning: when a field predicate like
         # ``agent:codex`` can be decided from the SourceHandle alone,
         # skip the source without opening it. Mirrors the same guard
@@ -4009,7 +4034,7 @@ def parse_codex_history_file(
                 .replace("+00:00", "Z")
             )
         yield SearchRecord(
-            kind="history",
+            kind="prompt",
             agent=source.agent,
             store=source.store,
             adapter_id=source.adapter_id,
@@ -4407,7 +4432,7 @@ def parse_claude_history_file(
             continue
         session_id = as_optional_str(mapping.get("sessionId"))
         yield SearchRecord(
-            kind="history",
+            kind="prompt",
             agent=source.agent,
             store=source.store,
             adapter_id=source.adapter_id,
@@ -4667,7 +4692,7 @@ def parse_gemini_logs_file(
 ) -> cabc.Iterator[SearchRecord]:
     """Parse a Gemini CLI ``logs.json`` file (flat JSON array of LogEntry).
 
-    Records are emitted as ``kind="history"`` — the file is an audit log of
+    Records are emitted as ``kind="prompt"`` — the file is an audit log of
     user prompts, the same role ``codex.history`` plays for Codex.
     """
     payload = read_json_file(source.path)
@@ -4681,7 +4706,7 @@ def parse_gemini_logs_file(
             continue
         session_id = as_optional_str(mapping.get("sessionId"))
         yield SearchRecord(
-            kind="history",
+            kind="prompt",
             agent=source.agent,
             store=source.store,
             adapter_id=source.adapter_id,
@@ -4713,7 +4738,7 @@ def parse_grok_prompt_history(
             continue
         session_id = as_optional_str(mapping.get("session_id"))
         yield SearchRecord(
-            kind="history",
+            kind="prompt",
             agent=source.agent,
             store=source.store,
             adapter_id=source.adapter_id,
@@ -5538,7 +5563,7 @@ def parse_cursor_prompt_history(
             continue
         seen.add(prompt)
         yield SearchRecord(
-            kind="history",
+            kind="prompt",
             agent=source.agent,
             store=source.store,
             adapter_id=source.adapter_id,
@@ -6299,24 +6324,92 @@ def build_search_record(source: SourceHandle, candidate: MessageCandidate) -> Se
     )
 
 
+CONVERSATION_STORE_ROLES: frozenset[StoreRole] = frozenset(
+    {StoreRole.PRIMARY_CHAT, StoreRole.SUPPLEMENTARY_CHAT},
+)
+
+
+@functools.cache
+def store_descriptor_for_record(store: str, adapter_id: str) -> StoreDescriptor | None:
+    """Return the catalog descriptor for a normalized record's source store."""
+    from agentgrep.store_catalog import CATALOG
+
+    for descriptor in CATALOG.stores:
+        for spec in descriptor.discovery:
+            if spec.store == store and spec.adapter_id == adapter_id:
+                return descriptor
+    return None
+
+
+def store_role_for_record(store: str, adapter_id: str) -> StoreRole | None:
+    """Return the catalog role for a normalized record's source store."""
+    descriptor = store_descriptor_for_record(store, adapter_id)
+    if descriptor is None:
+        return None
+    return descriptor.role
+
+
+def record_matches_scope(record: SearchRecord, scope: SearchScope) -> bool:
+    """Return whether ``record`` belongs to the requested search scope."""
+    if scope == "all":
+        return True
+    if scope == "prompts":
+        return record.kind == "prompt"
+    role = store_role_for_record(record.store, record.adapter_id)
+    return role in CONVERSATION_STORE_ROLES
+
+
+def prompt_history_agents_for_sources(sources: cabc.Iterable[SourceHandle]) -> frozenset[str]:
+    """Return agents with a dedicated prompt-history source in ``sources``."""
+    return frozenset(
+        source.agent
+        for source in sources
+        if store_role_for_record(source.store, source.adapter_id) == StoreRole.PROMPT_HISTORY
+    )
+
+
+def source_matches_scope(
+    source: SourceHandle,
+    scope: SearchScope,
+    *,
+    prompt_history_agents: frozenset[str] = frozenset(),
+) -> bool:
+    """Return whether ``source`` can yield records for the requested scope."""
+    if scope == "all":
+        return True
+    role = store_role_for_record(source.store, source.adapter_id)
+    if scope == "conversations":
+        return role in CONVERSATION_STORE_ROLES
+    if role == StoreRole.PROMPT_HISTORY:
+        return True
+    if role in CONVERSATION_STORE_ROLES:
+        return source.agent not in prompt_history_agents
+    return True
+
+
 def matches_record(record: SearchRecord, query: SearchQuery) -> bool:
     """Return whether a normalized record should be included.
 
     When ``query.compiled`` carries a record-level predicate, the
-    record must satisfy it in addition to the existing text + kind
+    record must satisfy it in addition to the existing text + scope
     checks. Pure-text queries skip the predicate evaluation since
     the compiler leaves ``compiled = None`` for them.
     """
-    if query.search_type == "prompts" and record.kind != "prompt":
+    if not record_matches_scope(record, query.scope):
         return False
-    if query.search_type == "history" and record.kind != "history":
-        return False
-    if not matches_text(build_search_haystack(record), query):
+    if not matches_text(build_record_match_surface(record, query.match_surface), query):
         return False
     compiled = query.compiled
     if compiled is not None and compiled.record_predicate is not None:
         return compiled.record_predicate(record)
     return True
+
+
+def build_record_match_surface(record: SearchRecord, surface: SearchMatchSurface) -> str:
+    """Build the text surface used for unfielded query terms."""
+    if surface == "text":
+        return record.text
+    return build_search_haystack(record)
 
 
 def build_search_haystack(record: SearchRecord) -> str:

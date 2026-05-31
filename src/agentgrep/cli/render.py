@@ -285,7 +285,7 @@ def _type_matches(record: FindRecord, args: FindArgs) -> bool:
     transcripts) and ``history``/``prompts`` -> ``history_file`` (the
     prompt-history audit logs, where standalone prompt records live).
     The prompt/history distinction is a record-level concept (``search``
-    ``--type``); at the file granularity ``find`` operates on, both map
+    ``--scope``); at the file granularity ``find`` operates on, both map
     to the same path kind.
     """
     if args.type_filter == "all":
@@ -388,14 +388,14 @@ def run_find_command(args: FindArgs) -> int:
     for the routing decision.
 
     The ``--ui`` overlay translates the find filters into a
-    :class:`SearchQuery` seeded with the same agent / type narrowing,
+    :class:`SearchQuery` seeded with the same agent / scope narrowing,
     then opens the Textual explorer. This mirrors the ``tig`` model:
     same query semantics, different presentation.
     """
     if args.output_mode == "ui":
         query = agentgrep.SearchQuery(
             terms=(args.pattern,) if args.pattern else (),
-            search_type="all",
+            scope="all",
             any_term=False,
             regex=args.pattern_mode == "regex",
             case_sensitive=args.case_mode == "respect",
@@ -444,7 +444,7 @@ def run_ui_command(args: UIArgs) -> int:
     initial_terms = tuple(args.initial_query.split()) if args.initial_query else ()
     query = agentgrep.SearchQuery(
         terms=initial_terms,
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -469,7 +469,7 @@ def run_search_command(args: SearchArgs) -> int:
         raise SystemExit(msg)
     query = agentgrep.SearchQuery(
         terms=args.terms,
-        search_type=args.search_type,
+        scope=args.scope,
         any_term=False,
         regex=False,
         case_sensitive=args.case_sensitive,
@@ -877,7 +877,7 @@ def build_grep_query(args: GrepArgs) -> agentgrep.SearchQuery:
 
     return agentgrep.SearchQuery(
         terms=terms,
-        search_type=args.search_type,
+        scope=args.scope,
         any_term=False,
         regex=regex,
         case_sensitive=case_sensitive,
@@ -885,6 +885,7 @@ def build_grep_query(args: GrepArgs) -> agentgrep.SearchQuery:
         limit=args.max_count,
         dedupe=not args.no_dedupe,
         compiled=args.compiled,
+        match_surface="text",
     )
 
 

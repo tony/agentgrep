@@ -51,7 +51,7 @@ def _make_query(
     """Build a :class:`agentgrep.SearchQuery` with the helper defaults."""
     return agentgrep.SearchQuery(
         terms=terms,
-        search_type="prompts",
+        scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,

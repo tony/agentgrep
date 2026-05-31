@@ -16,8 +16,8 @@ from pydantic import Field
 from agentgrep.mcp import (
     AgentSelector,
     FindToolResponse,
+    SearchScopeName,
     SearchToolResponse,
-    SearchTypeName,
 )
 from agentgrep.mcp.models import (
     DiscoverySummaryResponse,
@@ -45,9 +45,9 @@ async def search(
         AgentSelector,
         Field(description="Limit search to one agent or search all agents."),
     ] = "all",
-    search_type: t.Annotated[
-        SearchTypeName,
-        Field(description="Search prompts, history, or both."),
+    scope: t.Annotated[
+        SearchScopeName,
+        Field(description="Search prompts, conversations, or both."),
     ] = "prompts",
     case_sensitive: t.Annotated[
         bool,
@@ -62,7 +62,7 @@ async def search(
         ),
     ] = 20,
 ) -> SearchToolResponse:
-    """Search normalized prompts or history across local agent stores."""
+    """Search normalized prompts or conversations across local agent stores."""
     raise NotImplementedError(DOCS_ONLY_MESSAGE)
 
 

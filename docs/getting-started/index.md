@@ -13,9 +13,9 @@ From the repository root:
 $ uv sync --all-groups
 ```
 
-## 2. Search local agent history
+## 2. Search local agent prompts
 
-Search all supported stores:
+Search prompt-scope records across supported stores:
 
 ```console
 $ uv run agentgrep grep "release notes"
@@ -24,7 +24,13 @@ $ uv run agentgrep grep "release notes"
 Search one agent's prompt records:
 
 ```console
-$ uv run agentgrep grep "deploy docs" --agent codex --type prompts
+$ uv run agentgrep grep "deploy docs" --agent codex
+```
+
+Search full conversation records explicitly:
+
+```console
+$ uv run agentgrep grep "deploy docs" --agent codex --scope conversations
 ```
 
 ## 3. Inspect the stores

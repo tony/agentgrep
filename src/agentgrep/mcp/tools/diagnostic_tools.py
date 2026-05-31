@@ -19,7 +19,7 @@ def _validate_query_sync(request: ValidateQueryRequest) -> ValidateQueryResponse
     """Dry-run a ``SearchQuery`` against sample text without searching files."""
     query = agentgrep.SearchQuery(
         terms=tuple(request.terms),
-        search_type="all",
+        scope="all",
         any_term=False,
         regex=False,
         case_sensitive=request.case_sensitive,

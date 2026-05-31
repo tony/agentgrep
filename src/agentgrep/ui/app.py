@@ -935,7 +935,7 @@ def build_streaming_ui_app(
                 initial_search = " ".join(self.query.terms) if self.query.terms else ""
             yield SearchInput(
                 value=initial_search,
-                placeholder="Search prompts and history",
+                placeholder="Search prompts",
                 id="search",
             )
             with horizontal(id="body"):
@@ -1123,7 +1123,7 @@ def build_streaming_ui_app(
             terms = tuple(text.split()) if text else ()
             return SearchQuery(
                 terms=terms,
-                search_type=self.query.search_type,
+                scope=self.query.scope,
                 any_term=self.query.any_term,
                 regex=self.query.regex,
                 case_sensitive=self.query.case_sensitive,

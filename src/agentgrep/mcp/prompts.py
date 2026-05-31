@@ -19,25 +19,25 @@ def register_prompts(mcp: FastMCP) -> None:
     def search_prompts_prompt(topic: str, agent: str = "all") -> str:
         return (
             "Use the `search` tool to find full user prompts about "
-            f"{topic!r}. Search `prompts` only, keep newest-first ordering, "
+            f"{topic!r}. Search scope `prompts` only, keep newest-first ordering, "
             f"and limit the search to agent={agent!r} if requested."
         )
 
     _ = search_prompts_prompt
 
     @mcp.prompt(
-        name="search_history",
-        description="Guide the client to search assistant or command history records.",
-        tags={"search", "history", "readonly"},
+        name="search_conversations",
+        description="Guide the client to search full conversation/session records.",
+        tags={"search", "conversations", "readonly"},
     )
-    def search_history_prompt(topic: str, agent: str = "all") -> str:
+    def search_conversations_prompt(topic: str, agent: str = "all") -> str:
         return (
-            "Use the `search` tool to find matching history records about "
-            f"{topic!r}. Search `history` only, and restrict to "
+            "Use the `search` tool to find matching conversation records about "
+            f"{topic!r}. Search scope `conversations` only, and restrict to "
             f"agent={agent!r} when appropriate."
         )
 
-    _ = search_history_prompt
+    _ = search_conversations_prompt
 
     @mcp.prompt(
         name="inspect_stores",

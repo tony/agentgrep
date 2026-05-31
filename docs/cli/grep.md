@@ -2,10 +2,11 @@
 
 # agentgrep grep
 
-The `agentgrep grep` command searches normalized prompt and history
-records with the flag grammar and output behavior of `ripgrep` and
+The `agentgrep grep` command searches normalized prompt records by
+default, with explicit scope controls for conversation records. It
+uses the flag grammar and output behavior of `ripgrep` and
 `the_silver_searcher`. If you already reach for `rg -i` or `ag -F`
-without thinking, the same flags work here against your AI history.
+without thinking, the same flags work here against your AI prompts.
 
 Defaults follow rg: smart-case (case-insensitive unless the pattern
 contains uppercase), regex pattern interpretation, color on TTY,
@@ -32,10 +33,10 @@ Force case-insensitive matching:
 $ agentgrep grep -i 'serene bliss'
 ```
 
-Treat the pattern as a literal substring (not a regex):
+Search full conversation records with a literal substring:
 
 ```console
-$ agentgrep grep -F --type history 'v1.2.3'
+$ agentgrep grep -F --scope conversations 'v1.2.3'
 ```
 
 Stream an rg-style event stream as JSON:
@@ -103,6 +104,14 @@ appear within milliseconds, not after the whole scan finishes.
 The eager output modes (`--json`, `-c`, `-l`, `-v`) buffer
 because their output shape needs the final tally or cross-record
 deduplication.
+
+## Search scope
+
+`grep` searches `--scope prompts` by default. That includes dedicated
+prompt-history logs and user turns projected from transcript-only
+stores. Pass `--scope conversations` for full conversation, session,
+assistant, tool, and event records, or `--scope all` to search both
+surfaces together.
 
 ## Progress
 
@@ -190,7 +199,7 @@ question that the engine's current output supports. Tracking issue:
 By default `grep` deduplicates matches by session so a single
 conversation that repeats near-identical text doesn't drown the
 output. This is the one place where `agentgrep grep` deliberately
-diverges from `rg`'s raw behavior — AI history stores often replay
+diverges from `rg`'s raw behavior — AI conversation stores often replay
 the same message text many times across one session, which makes the
 raw rg view noisier than a filesystem grep.
 

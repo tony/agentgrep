@@ -144,7 +144,7 @@ def _validate_ast(node: QueryNode, registry: FieldRegistry) -> None:
     - **comparison against non-comparable field**: e.g.
       ``agent:>codex`` (the agent enum doesn't support comparison).
     - **range against non-range field**: e.g.
-      ``type:[prompts TO history]``.
+      ``scope:[prompts TO conversations]``.
 
     The walk is O(nodes) and runs once before the closures are
     built; the closures themselves keep their defensive raises so
@@ -261,7 +261,7 @@ def build_query_from_input(
       compiled query through ``SearchQuery.compiled`` so source and
       record predicates apply on the next search.
 
-    Inherits ``search_type``, ``any_term``, ``regex``,
+    Inherits ``scope``, ``any_term``, ``regex``,
     ``case_sensitive``, ``agents``, ``limit``, and ``dedupe`` from
     ``base_query`` so the search bar lives on top of the existing
     filter scope rather than resetting it.
@@ -305,7 +305,7 @@ def _rebuild(
     """Clone ``base`` with new ``terms`` / ``compiled``; carry the rest forward."""
     return agentgrep.SearchQuery(
         terms=terms,
-        search_type=base.search_type,
+        scope=base.scope,
         any_term=base.any_term,
         regex=base.regex,
         case_sensitive=base.case_sensitive,
@@ -313,6 +313,7 @@ def _rebuild(
         limit=base.limit,
         dedupe=base.dedupe,
         compiled=compiled,
+        match_surface=base.match_surface,
     )
 
 
@@ -491,9 +492,11 @@ def _field_matches_record(
     if spec.layer == "source":
         # Source-level fields can be read off the record too.
         return _field_matches_record_via_source(node, record, spec)
-    if spec.name == "type":
-        target = "prompt" if node.value == "prompts" else "history"
-        return record.kind == target
+    if spec.name == "scope":
+        return agentgrep.record_matches_scope(
+            record,
+            t.cast("agentgrep.SearchScope", node.value),
+        )
     if spec.name == "timestamp":
         return _date_predicate_matches(
             node,

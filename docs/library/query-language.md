@@ -2,7 +2,7 @@
 
 # Query language
 
-`agentgrep grep`, `agentgrep grep`, and `agentgrep find` accept a
+`agentgrep search`, `agentgrep grep`, and `agentgrep find` accept a
 Lucene-style query language for inline field predicates, boolean
 composition, and date ranges. The same syntax works across all three
 subcommands; each interprets the predicates against its natural
@@ -64,7 +64,7 @@ predicate has admitted the source.
 
 | Field | Kind | Notes |
 |---|---|---|
-| `type` | enum | One of `prompts`, `history` |
+| `scope` | enum | One of `prompts`, `conversations`, `all` |
 | `timestamp` | date | Record timestamp; supports comparison + range; alias `date` |
 | `model` | string | Substring against `record.model` |
 | `role` | string | Substring against `record.role` |
@@ -145,6 +145,14 @@ $ agentgrep grep 'timestamp:[2026-01 TO 2026-03] model:claude'
 Records in Q1 2026 from any claude-* model.
 
 ```console
+$ agentgrep grep 'scope:conversations pytest'
+```
+
+Conversation-scope records mentioning "pytest". A bare search uses
+prompt scope; `scope:conversations` is the inline form of
+`--scope conversations`.
+
+```console
 $ agentgrep find path:~/.codex agent:codex
 ```
 
@@ -167,7 +175,7 @@ $ agentgrep grep --agent codex agent:claude bliss
 agentgrep grep: error: cannot combine --agent flag with agent: field predicate; pick one syntax
 ```
 
-Currently checked: `--agent` × `agent:`, `--type` × `type:`. Other
+Currently checked: `--agent` × `agent:`, `--scope` × `scope:`. Other
 flags don't yet have query-field counterparts.
 
 ## Performance

@@ -2,7 +2,7 @@
 
 # agentgrep
 
-Read-only search for local AI agent prompts and history across Codex, Claude Code, Cursor, Gemini, Grok, Pi, and OpenCode.
+Read-only search for local AI agent prompts and opt-in conversations across Codex, Claude Code, Cursor, Gemini, Grok, Pi, and OpenCode.
 
 ```{warning}
 **Pre-alpha.** APIs may change. [Feedback welcome](https://github.com/tony/agentgrep/issues).
@@ -34,7 +34,7 @@ Search and find from the terminal. Pipe `--json` / `--ndjson` for scripts and ag
 :::{grid-item-card} TUI
 :link: tui/index
 :link-type: doc
-Interactive Textual explorer for browsing prompts and history.
+Interactive Textual explorer for browsing prompt and conversation records.
 :::
 
 :::{grid-item-card} MCP
@@ -73,7 +73,7 @@ Per-agent store layouts, record schemas, and support matrix.
 
 ### Prompt Search
 
-Find full prompt and history records by literal term or regular expression.
+Find prompt records by literal term or regular expression, with explicit opt-in for conversations.
 
 <a class="reference internal" href="mcp/tools/#fastmcp-tool-search"><code>search</code></a>
 
@@ -87,7 +87,7 @@ List the stores, session files, and SQLite databases that agentgrep can read.
 
 Use prompts for common agent workflows:
 
-{ref}`fastmcp-prompt-search-prompts` · {ref}`fastmcp-prompt-search-history` · {ref}`fastmcp-prompt-inspect-stores`
+{ref}`fastmcp-prompt-search-prompts` · {ref}`fastmcp-prompt-search-conversations` · {ref}`fastmcp-prompt-inspect-stores`
 
 ```{toctree}
 :hidden:
