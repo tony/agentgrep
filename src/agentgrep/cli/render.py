@@ -272,16 +272,27 @@ def _pattern_matches(record: FindRecord, args: FindArgs) -> bool:
         return False
 
 
+_FIND_TYPE_PATH_KINDS: dict[str, str] = {
+    "sessions": "session_file",
+    "history": "history_file",
+    "prompts": "history_file",
+}
+
+
 def _type_matches(record: FindRecord, args: FindArgs) -> bool:
-    """Apply the ``-t/--type`` filter against the record's source kind."""
+    """Apply the ``-t/--type`` filter against the record's path kind.
+
+    ``--type`` selects on the record's ``path_kind`` (the on-disk file
+    role), not its parse format: ``sessions`` -> ``session_file`` (full
+    transcripts) and ``history``/``prompts`` -> ``history_file`` (the
+    prompt-history audit logs, where standalone prompt records live).
+    The prompt/history distinction is a record-level concept (``search``
+    ``--type``); at the file granularity ``find`` operates on, both map
+    to the same path kind.
+    """
     if args.type_filter == "all":
         return True
-    source_kind = t.cast("str | None", record.metadata.get("source_kind"))
-    if source_kind is None:
-        return False
-    if args.type_filter == "sessions":
-        return "session" in source_kind
-    return args.type_filter in source_kind
+    return record.path_kind == _FIND_TYPE_PATH_KINDS.get(args.type_filter)
 
 
 def _extensions_match(record: FindRecord, args: FindArgs) -> bool:
@@ -1373,6 +1384,17 @@ def run_fuzzy_command(args: FuzzyArgs) -> int:
     raw = sys.stdin.read()
     lines = [line for line in raw.split(separator) if line]
     ranked = fuzzy_filter_lines(lines, args)
+    if args.output_mode in {"json", "ndjson"}:
+        matches: list[dict[str, object]] = [
+            {"text": original, "score": score} for original, score in ranked
+        ]
+        if args.output_mode == "json":
+            payload = build_envelope("fuzzy", {"query": args.query}, matches)
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            for match in matches:
+                print(json.dumps(match, ensure_ascii=False))
+        return 0 if ranked else 1
     out_sep = "\0" if args.print0 else "\n"
     out = sys.stdout
 

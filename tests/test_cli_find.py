@@ -157,8 +157,8 @@ def _make_find_record(
     store: str = "sessions",
     adapter_id: str = "codex.sessions_jsonl.v1",
     path: str = "/tmp/codex/sessions/2025/01/abc.jsonl",
-    path_kind: str = "sessions",
-    source_kind: str = "history",
+    path_kind: str = "session_file",
+    source_kind: str = "jsonl",
 ) -> agentgrep.FindRecord:
     """Build a synthetic FindRecord for filter tests."""
     return agentgrep.FindRecord(
@@ -246,15 +246,45 @@ FILTER_CASES: tuple[FilterCase, ...] = (
         True,
     ),
     FilterCase(
-        "type-prompts-rejects-history",
-        {"type_filter": "prompts"},
-        {"source_kind": "history"},
+        "type-sessions-matches-session-file",
+        {"type_filter": "sessions"},
+        {"path_kind": "session_file"},
+        True,
+    ),
+    FilterCase(
+        "type-sessions-rejects-history-file",
+        {"type_filter": "sessions"},
+        {"path_kind": "history_file"},
         False,
     ),
     FilterCase(
-        "type-history-accepts-history",
+        "type-history-matches-history-file",
         {"type_filter": "history"},
-        {"source_kind": "history"},
+        {"path_kind": "history_file"},
+        True,
+    ),
+    FilterCase(
+        "type-history-rejects-session-file",
+        {"type_filter": "history"},
+        {"path_kind": "session_file"},
+        False,
+    ),
+    FilterCase(
+        "type-prompts-matches-history-file",
+        {"type_filter": "prompts"},
+        {"path_kind": "history_file"},
+        True,
+    ),
+    FilterCase(
+        "type-prompts-rejects-session-file",
+        {"type_filter": "prompts"},
+        {"path_kind": "session_file"},
+        False,
+    ),
+    FilterCase(
+        "type-all-accepts-store-file",
+        {"type_filter": "all"},
+        {"path_kind": "store_file"},
         True,
     ),
     FilterCase(

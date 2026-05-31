@@ -10,6 +10,7 @@ filter flow.
 from __future__ import annotations
 
 import io
+import json
 import typing as t
 
 import pytest
@@ -322,3 +323,69 @@ def test_run_fuzzy_command_read0_splits_stdin_by_nul(
     captured = capsys.readouterr().out.splitlines()
     assert exit_code == 0
     assert captured == ["two"]
+
+
+class FuzzyOutputModeCase(t.NamedTuple):
+    """Parametrized case for fuzzy structured (``--json``/``--ndjson``) output."""
+
+    test_id: str
+    output_mode: str
+
+
+FUZZY_OUTPUT_MODE_CASES: tuple[FuzzyOutputModeCase, ...] = (
+    FuzzyOutputModeCase("json", "json"),
+    FuzzyOutputModeCase("ndjson", "ndjson"),
+)
+
+
+@pytest.mark.parametrize(
+    FuzzyOutputModeCase._fields,
+    FUZZY_OUTPUT_MODE_CASES,
+    ids=[case.test_id for case in FUZZY_OUTPUT_MODE_CASES],
+)
+def test_run_fuzzy_command_emits_structured_output(
+    test_id: str,
+    output_mode: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--json``/``--ndjson`` emit scored matches, not plain text lines."""
+    _ = test_id
+    monkeypatch.setattr("sys.stdin", io.StringIO("design notes\nconfig design\nother\n"))
+    args = _make_fuzzy_args(query="design", output_mode=output_mode)
+    exit_code = agentgrep.run_fuzzy_command(args)
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    if output_mode == "json":
+        payload = json.loads(out)
+        assert payload["command"] == "fuzzy"
+        assert payload["query"]["query"] == "design"
+        matches = payload["results"]
+    else:
+        matches = [json.loads(line) for line in out.splitlines() if line.strip()]
+    assert {match["text"] for match in matches} == {"design notes", "config design"}
+    assert all("score" in match for match in matches)
+
+
+def test_run_fuzzy_command_ndjson_no_match_returns_one(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Structured fuzzy output exits 1 and emits nothing when nothing matches."""
+    monkeypatch.setattr("sys.stdin", io.StringIO("alpha\nbeta\n"))
+    args = _make_fuzzy_args(query="zzqq", output_mode="ndjson")
+    exit_code = agentgrep.run_fuzzy_command(args)
+    assert exit_code == 1
+    assert capsys.readouterr().out == ""
+
+
+def test_run_fuzzy_command_empty_query_matches_all_lines(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An empty query passes every line through, like ``fzf --filter ''``."""
+    monkeypatch.setattr("sys.stdin", io.StringIO("apple\nbanana\ncherry\n"))
+    args = _make_fuzzy_args(query="")
+    exit_code = agentgrep.run_fuzzy_command(args)
+    assert exit_code == 0
+    assert capsys.readouterr().out.splitlines() == ["apple", "banana", "cherry"]
