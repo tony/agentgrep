@@ -11,7 +11,7 @@ $ uv run agentgrep grep "database migration" --agent codex --limit 10
 ## CLI discovery
 
 ```console
-$ uv run agentgrep find cursor --agent cursor --json
+$ uv run agentgrep find cursor-cli --agent cursor-cli --json
 ```
 
 ## MCP search call

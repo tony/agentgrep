@@ -88,7 +88,7 @@ class VersionDetectionConfidence(enum.StrEnum):
     LOW = "low"
 
 
-AgentName = t.Literal["claude", "cursor", "codex", "gemini", "grok"]
+AgentName = t.Literal["claude", "cursor-cli", "cursor-ide", "codex", "gemini", "grok"]
 PathKind = t.Literal["history_file", "session_file", "sqlite_db", "store_file"]
 SourceKind = t.Literal["json", "jsonl", "sqlite", "text", "opaque"]
 

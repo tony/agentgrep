@@ -13,8 +13,8 @@ import importlib
 import pathlib
 import typing as t
 
-AgentName = t.Literal["codex", "claude", "cursor", "gemini", "grok"]
-AgentSelector = t.Literal["codex", "claude", "cursor", "gemini", "grok", "all"]
+AgentName = t.Literal["codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok"]
+AgentSelector = t.Literal["codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "all"]
 SearchTypeName = t.Literal["prompts", "history", "all"]
 
 SERVER_VERSION = "0.1.0"
@@ -63,10 +63,12 @@ KNOWN_ADAPTERS: tuple[str, ...] = (
     "claude.plugin_instruction_text.v1",
     "claude.plugin_manifest_json.v1",
     "claude.project_instruction_text.v1",
-    "cursor.ai_tracking_sqlite.v1",
-    "cursor.cli_jsonl.v1",
-    "cursor.state_vscdb_legacy.v1",
-    "cursor.state_vscdb_modern.v1",
+    "cursor_cli.ai_tracking_sqlite.v1",
+    "cursor_cli.chats_protobuf.v1",
+    "cursor_cli.prompt_history_json.v1",
+    "cursor_cli.transcripts_jsonl.v1",
+    "cursor_ide.state_vscdb_legacy.v1",
+    "cursor_ide.state_vscdb_modern.v1",
     "gemini.tmp_chats_jsonl.v1",
     "gemini.tmp_chats_legacy_json.v1",
     "gemini.tmp_logs_json.v1",

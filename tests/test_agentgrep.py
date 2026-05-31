@@ -27,7 +27,7 @@ import agentgrep as _agentgrep_module
 if t.TYPE_CHECKING:
     import collections.abc as cabc
 
-AgentName = t.Literal["codex", "claude", "cursor", "gemini", "grok"]
+AgentName = t.Literal["codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok"]
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
@@ -274,7 +274,7 @@ def test_help_examples_are_present_for_help_flags() -> None:
 
     assert root_help.returncode == 0
     assert find_help.returncode == 0
-    assert "agentgrep find cursor --json" in find_help.stdout
+    assert "agentgrep find cursor-cli --json" in find_help.stdout
 
 
 def test_build_docs_parser_returns_root_parser() -> None:
@@ -3073,18 +3073,18 @@ def test_cursor_ai_tracking_summary_is_exposed_as_history(
         any_term=False,
         regex=False,
         case_sensitive=False,
-        agents=("cursor",),
+        agents=("cursor-cli",),
         limit=None,
     )
     sources = agentgrep.discover_sources(
         home,
-        ("cursor",),
+        ("cursor-cli",),
         agentgrep.BackendSelection(None, None, None),
     )
     records = agentgrep.search_sources(query, sources, agentgrep.BackendSelection(None, None, None))
 
     assert len(records) == 1
-    assert records[0].agent == "cursor"
+    assert records[0].agent == "cursor-cli"
     assert records[0].kind == "history"
     assert "bliss summary" in records[0].text
 
@@ -3120,12 +3120,12 @@ def test_cursor_state_itemtable_extracts_prompt(
         any_term=False,
         regex=False,
         case_sensitive=False,
-        agents=("cursor",),
+        agents=("cursor-ide",),
         limit=None,
     )
     sources = agentgrep.discover_sources(
         home,
-        ("cursor",),
+        ("cursor-ide",),
         agentgrep.BackendSelection(None, None, None),
     )
     records = agentgrep.search_sources(query, sources, agentgrep.BackendSelection(None, None, None))
@@ -3133,6 +3133,203 @@ def test_cursor_state_itemtable_extracts_prompt(
     assert len(records) == 1
     assert records[0].kind == "prompt"
     assert records[0].text == "serenity and bliss live here"
+
+
+class ProtobufTextCase(t.NamedTuple):
+    """Parametrized case for :func:`agentgrep.iter_protobuf_text_fields`."""
+
+    test_id: str
+    data: bytes
+    min_length: int
+    expected: list[str]
+
+
+_PROTOBUF_TEXT_CASES: tuple[ProtobufTextCase, ...] = (
+    ProtobufTextCase("leaf-text", b"\x0a\x05hello", 2, ["hello"]),
+    ProtobufTextCase("nested-message-recurses", b"\x0a\x07\x0a\x05world", 2, ["world"]),
+    ProtobufTextCase("varint-field-skipped", b"\x08\x96\x01", 2, []),
+    ProtobufTextCase("two-text-fields", b"\x0a\x05alpha\x12\x04beta", 2, ["alpha", "beta"]),
+    ProtobufTextCase("min-length-filters-short", b"\x0a\x05hello", 8, []),
+    ProtobufTextCase("truncated-length-stops", b"\x0a\x05hel", 2, []),
+    ProtobufTextCase("empty-input", b"", 2, []),
+)
+
+
+@pytest.mark.parametrize(
+    ProtobufTextCase._fields,
+    _PROTOBUF_TEXT_CASES,
+    ids=[case.test_id for case in _PROTOBUF_TEXT_CASES],
+)
+def test_iter_protobuf_text_fields(
+    test_id: str,
+    data: bytes,
+    min_length: int,
+    expected: list[str],
+) -> None:
+    """The schema-less protobuf walker recovers text and skips non-text fields."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    assert list(agentgrep.iter_protobuf_text_fields(data, min_length=min_length)) == expected
+
+
+class CursorPromptShapeCase(t.NamedTuple):
+    """Parametrized case for :func:`agentgrep.iter_cursor_prompt_candidates`."""
+
+    test_id: str
+    value: object
+    expected: list[str]
+
+
+_CURSOR_PROMPT_SHAPE_CASES: tuple[CursorPromptShapeCase, ...] = (
+    CursorPromptShapeCase(
+        "prompts-wrapper",
+        {"prompts": [{"text": "first prompt", "commandType": 1}]},
+        ["first prompt"],
+    ),
+    CursorPromptShapeCase(
+        "bare-list-with-marker",
+        [{"text": "second prompt", "commandType": 2}],
+        ["second prompt"],
+    ),
+    CursorPromptShapeCase(
+        "bare-list-without-marker-ignored",
+        [{"text": "not a prompt"}],
+        [],
+    ),
+    CursorPromptShapeCase(
+        "empty-text-skipped",
+        {"prompts": [{"text": "", "commandType": 1}]},
+        [],
+    ),
+    CursorPromptShapeCase(
+        "messages-shape-ignored",
+        {"messages": [{"role": "user", "content": "hi"}]},
+        [],
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    CursorPromptShapeCase._fields,
+    _CURSOR_PROMPT_SHAPE_CASES,
+    ids=[case.test_id for case in _CURSOR_PROMPT_SHAPE_CASES],
+)
+def test_iter_cursor_prompt_candidates(
+    test_id: str,
+    value: object,
+    expected: list[str],
+) -> None:
+    """Cursor ``aiService.prompts`` entries surface as user prompts."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    candidates = list(agentgrep.iter_cursor_prompt_candidates(value))
+    assert [candidate.text for candidate in candidates] == expected
+    assert all(candidate.role == "user" for candidate in candidates)
+
+
+def test_cursor_cli_prompt_history_surfaces_user_prompts(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``~/.config/cursor/prompt_history.json`` becomes cursor-cli prompt records."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+
+    history = home / ".config" / "cursor" / "prompt_history.json"
+    history.parent.mkdir(parents=True)
+    _ = history.write_text(
+        json.dumps(["serenity prompt", "bliss prompt", "serenity prompt"]),
+        encoding="utf-8",
+    )
+
+    sources = agentgrep.discover_sources(
+        home,
+        ("cursor-cli",),
+        agentgrep.BackendSelection(None, None, None),
+    )
+    history_sources = [s for s in sources if s.store == "cursor-cli.prompt_history"]
+    assert len(history_sources) == 1
+
+    records = list(agentgrep.iter_source_records(history_sources[0]))
+    assert [r.text for r in records] == ["serenity prompt", "bliss prompt"]
+    assert all(r.role == "user" and r.agent == "cursor-cli" for r in records)
+    assert records[0].timestamp is not None
+
+
+def test_cursor_cli_chats_db_is_opt_in_and_extracts_protobuf_text(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The chats ``store.db`` is inspectable-only and yields readable blob text."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+
+    db_path = home / ".config" / "cursor" / "chats" / "phash" / "sess-1234" / "store.db"
+    db_path.parent.mkdir(parents=True)
+    connection = sqlite3.connect(db_path)
+    _ = connection.execute("CREATE TABLE blobs (id TEXT PRIMARY KEY, data BLOB)")
+    _ = connection.execute("CREATE TABLE meta (key TEXT, value TEXT)")
+    message = "Reviewing the engine lazy imports for merge readiness"
+    inner = b"\x0a" + bytes([len(message)]) + message.encode("utf-8")
+    blob = b"\x0a" + bytes([len(inner)]) + inner
+    _ = connection.execute("INSERT INTO blobs VALUES (?, ?)", ("h1", blob))
+    connection.commit()
+    connection.close()
+
+    backends = agentgrep.BackendSelection(None, None, None)
+    default_sources = agentgrep.discover_sources(home, ("cursor-cli",), backends)
+    assert not any(s.store == "cursor-cli.chats" for s in default_sources)
+
+    inventory = agentgrep.discover_sources(
+        home,
+        ("cursor-cli",),
+        backends,
+        include_non_default=True,
+    )
+    chat_sources = [s for s in inventory if s.store == "cursor-cli.chats"]
+    assert len(chat_sources) == 1
+
+    records = list(agentgrep.iter_source_records(chat_sources[0]))
+    assert any("lazy imports" in r.text for r in records)
+    assert records[0].session_id == "sess-1234"
+
+
+def test_cursor_ide_workspace_state_extracts_aiservice_prompts(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Per-workspace ``state.vscdb`` surfaces its ``aiService.prompts`` history."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+
+    workspace_root = agentgrep._cursor_ide_workspace_root(home)
+    db_path = workspace_root / "wshash" / "state.vscdb"
+    db_path.parent.mkdir(parents=True)
+    connection = sqlite3.connect(db_path)
+    _ = connection.execute("CREATE TABLE ItemTable (key TEXT, value TEXT)")
+    _ = connection.execute(
+        "INSERT INTO ItemTable VALUES (?, ?)",
+        (
+            "aiService.prompts",
+            json.dumps({"prompts": [{"text": "serenity workspace prompt", "commandType": 1}]}),
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+    sources = agentgrep.discover_sources(
+        home,
+        ("cursor-ide",),
+        agentgrep.BackendSelection(None, None, None),
+    )
+    workspace_sources = [s for s in sources if s.store == "cursor-ide.workspace_state"]
+    assert len(workspace_sources) == 1
+
+    records = list(agentgrep.iter_source_records(workspace_sources[0]))
+    assert [r.text for r in records] == ["serenity workspace prompt"]
+    assert records[0].role == "user"
+    assert records[0].agent == "cursor-ide"
 
 
 def test_find_discovers_sources_and_filters_pattern(
@@ -3154,13 +3351,13 @@ def test_find_discovers_sources_and_filters_pattern(
 
     sources = agentgrep.discover_sources(
         home,
-        ("codex", "cursor"),
+        ("codex", "cursor-ide"),
         agentgrep.BackendSelection(None, None, None),
     )
     records = agentgrep.find_sources("state", sources, None)
 
     assert len(records) == 1
-    assert records[0].agent == "cursor"
+    assert records[0].agent == "cursor-ide"
     assert records[0].path.name == "state.vscdb"
 
 
@@ -5527,13 +5724,13 @@ def test_search_cursor_cli_transcript_user_prompt(
         ],
     )
 
-    query = _make_query(agentgrep, ("cursor",), ("libtmux",))
+    query = _make_query(agentgrep, ("cursor-cli",), ("libtmux",))
     backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
-    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("cursor",), backends)
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("cursor-cli",), backends)
     records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
 
-    assert any(r.agent == "cursor" and "libtmux" in r.text for r in records)
-    cursor_records = [r for r in records if r.agent == "cursor"]
+    assert any(r.agent == "cursor-cli" and "libtmux" in r.text for r in records)
+    cursor_records = [r for r in records if r.agent == "cursor-cli"]
     assert cursor_records[0].timestamp is not None  # mtime-derived fallback
 
 
@@ -5562,12 +5759,12 @@ def test_search_cursor_cli_transcript_assistant_text(
         ],
     )
 
-    query = _make_query(agentgrep, ("cursor",), ("libtmux",))
+    query = _make_query(agentgrep, ("cursor-cli",), ("libtmux",))
     backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
-    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("cursor",), backends)
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("cursor-cli",), backends)
     records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
 
-    roles = {r.role for r in records if r.agent == "cursor"}
+    roles = {r.role for r in records if r.agent == "cursor-cli"}
     assert "user" in roles
     assert "assistant" in roles
 
@@ -5603,9 +5800,9 @@ def test_search_cursor_cli_transcript_ignores_tool_use_blocks(
         ],
     )
 
-    query = _make_query(agentgrep, ("cursor",), ("libtmux",))
+    query = _make_query(agentgrep, ("cursor-cli",), ("libtmux",))
     backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
-    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("cursor",), backends)
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("cursor-cli",), backends)
     records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
 
     assert all(r.text.strip() for r in records)  # no empty-text records leak through

@@ -23,10 +23,16 @@ OpenAI Codex CLI history, sessions, instructions, memory, goals, and SQLite stat
 Claude Code history, project transcripts, tasks, memory, settings, and plugin surfaces.
 :::
 
-:::{grid-item-card} Cursor
-:link: cursor
+:::{grid-item-card} Cursor CLI
+:link: cursor-cli
 :link-type: doc
-Cursor CLI agent transcripts and Cursor IDE SQLite state.
+`cursor-agent` transcripts, prompt history, chat blobs, and AI-tracking summaries.
+:::
+
+:::{grid-item-card} Cursor IDE
+:link: cursor-ide
+:link-type: doc
+Cursor desktop app `state.vscdb` SQLite — global and per-workspace chat history.
 :::
 
 :::{grid-item-card} Gemini CLI
@@ -74,7 +80,8 @@ low-confidence fallback.
 
 codex
 claude
-cursor
+cursor-cli
+cursor-ide
 gemini
 grok
 ```

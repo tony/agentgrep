@@ -227,17 +227,17 @@ async def test_mcp_find_tool_and_sources_resource(
             {"pattern": "state", "agent": "all", "limit": 10},
         )
         source_text = extract_resource_text(
-            await client.read_resource("agentgrep://sources/cursor")
+            await client.read_resource("agentgrep://sources/cursor-ide")
         )
 
     data = t.cast("FindToolDataLike", find_result.data)
     assert len(data.results) == 1
-    assert data.results[0].agent == "cursor"
+    assert data.results[0].agent == "cursor-ide"
     assert data.results[0].path.endswith("state.vscdb")
 
     source_payload = t.cast("list[dict[str, object]]", json.loads(source_text))
     assert source_payload
-    assert all(row["agent"] == "cursor" for row in source_payload)
+    assert all(row["agent"] == "cursor-ide" for row in source_payload)
 
 
 async def test_mcp_capabilities_resource_reports_read_only() -> None:
@@ -279,7 +279,7 @@ async def test_mcp_capabilities_lists_every_supported_agent_and_adapter() -> Non
         "claude.projects_memory_text.v1",
         "codex.config_toml.v1",
         "codex.plugin_instruction_text.v1",
-        "cursor.cli_jsonl.v1",
+        "cursor_cli.transcripts_jsonl.v1",
         "gemini.tmp_chats_jsonl.v1",
         "gemini.tmp_logs_json.v1",
     ):
@@ -401,7 +401,7 @@ async def test_mcp_list_stores_returns_catalog_entries() -> None:
 
     data = tool_payload(result)
     assert data["total"] >= 10
-    assert {s["agent"] for s in data["stores"]} >= {"codex", "claude", "cursor", "gemini"}
+    assert {s["agent"] for s in data["stores"]} >= {"codex", "claude", "cursor-cli", "cursor-ide"}
 
 
 async def test_mcp_list_stores_filters_by_agent() -> None:
@@ -409,11 +409,11 @@ async def test_mcp_list_stores_filters_by_agent() -> None:
     agentgrep_mcp = load_agentgrep_mcp_module()
 
     async with Client(agentgrep_mcp.build_mcp_server()) as client:
-        result = await client.call_tool("list_stores", {"agent": "cursor"})
+        result = await client.call_tool("list_stores", {"agent": "cursor-cli"})
 
     data = tool_payload(result)
     assert data["total"] >= 1
-    assert {s["agent"] for s in data["stores"]} == {"cursor"}
+    assert {s["agent"] for s in data["stores"]} == {"cursor-cli"}
 
 
 async def test_mcp_get_store_descriptor_known_and_unknown() -> None:

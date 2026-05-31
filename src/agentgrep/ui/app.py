@@ -465,7 +465,8 @@ def build_streaming_ui_app(
         _AGENT_COLORS: t.ClassVar[dict[str, str]] = {
             "codex": "cyan",
             "claude": "magenta",
-            "cursor": "yellow",
+            "cursor-cli": "yellow",
+            "cursor-ide": "bright_yellow",
         }
         _KIND_COLORS: t.ClassVar[dict[str, str]] = {
             "prompt": "green",

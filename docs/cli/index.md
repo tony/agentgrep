@@ -98,7 +98,7 @@ $ agentgrep grep prompt history --type history --ndjson
 List stores for one agent as JSON:
 
 ```console
-$ agentgrep find cursor --json
+$ agentgrep find cursor-cli --json
 ```
 
 Open the directory of choices:

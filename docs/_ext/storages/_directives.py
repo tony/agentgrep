@@ -39,7 +39,8 @@ if t.TYPE_CHECKING:
 _AGENT_LABELS: dict[str, str] = {
     "claude": "Claude",
     "codex": "Codex",
-    "cursor": "Cursor",
+    "cursor-cli": "Cursor CLI",
+    "cursor-ide": "Cursor IDE",
     "gemini": "Gemini",
     "grok": "Grok",
 }

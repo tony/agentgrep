@@ -51,7 +51,7 @@ predicates prune sources before any file is opened.
 
 | Field | Kind | Notes |
 |---|---|---|
-| `agent` | enum | One of `codex`, `claude`, `cursor`, `gemini` |
+| `agent` | enum | One of `codex`, `claude`, `cursor-cli`, `cursor-ide`, `gemini`, `grok` |
 | `store` | string | Substring against the source's store name |
 | `adapter_id` | string | Substring; alias `adapter` |
 | `path` | path | Glob (with `*` / `?` / `[…]`) or substring |
@@ -119,7 +119,7 @@ Records from codex matching "bliss". Claude / cursor / gemini sources
 are never opened.
 
 ```console
-$ agentgrep grep '(agent:codex OR agent:cursor) AND deploy'
+$ agentgrep grep '(agent:codex OR agent:cursor-cli) AND deploy'
 ```
 
 Records from either codex or cursor mentioning "deploy". Claude /

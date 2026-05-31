@@ -24,7 +24,7 @@ _NO_COLORS = agentgrep.AnsiColors(enabled=False)
 def _make_grep_args(**overrides: t.Any) -> GrepArgs:
     defaults: dict[str, t.Any] = {
         "patterns": ("streaming",),
-        "agents": ("codex", "claude", "cursor", "gemini"),
+        "agents": ("codex", "claude", "cursor-cli", "gemini"),
         "search_type": "prompts",
         "case_mode": "smart",
         "pattern_mode": "fixed",
