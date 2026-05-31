@@ -120,6 +120,66 @@ just start-docs
 just design-docs
 ```
 
+### Required Pre-commit Gate
+
+Before every commit, run the full repository gate:
+
+```console
+$ rm -rf docs/_build; uv run ruff check . --fix --show-fixes; uv run ruff format .; uv run ty check; uv run py.test --reruns 0 -vvv; just build-docs;
+```
+
+Do not commit until that command exits successfully. If it fails, fix the
+failure and rerun the full command rather than committing from partial checks.
+
+### Profiling and Benchmarking
+
+Use `scripts/profile_engine.py` for local engine-profile evidence. It emits
+privacy-safe JSON with counts, span names, durations, and coarse subprocess
+metadata. It must not emit prompt text, raw argv, or local absolute paths.
+
+Supported profiler components:
+
+| Component | Use |
+| --- | --- |
+| `search-prompts` | Prompt-scope search engine timing |
+| `search-conversations` | Conversation-scope search engine timing |
+| `grep-prompts` | Prompt-scope grep-shaped engine timing |
+| `grep-conversations` | Conversation-scope grep-shaped engine timing |
+| `find-prompts` | Prompt-source enumeration timing |
+| `all` | Run every profiler component above |
+
+Run one profiler component:
+
+```console
+$ uv run python scripts/profile_engine.py grep-prompts --agent all --max-count 500 tmux > .tmp/profile-grep-prompts.json
+```
+
+Run the full profiler matrix:
+
+```console
+$ uv run python scripts/profile_engine.py all --agent all --limit 500 tmux > .tmp/profile-all.json
+```
+
+Use `scripts/benchmark.py` for timed benchmark sweeps. The profiler-oriented
+benchmark entries are named `profile-engine-*`; each committed benchmark name
+and description must disclose `--limit N` or `--max-count N` when a cap is
+present.
+
+Run one profiler benchmark:
+
+```console
+$ uv run scripts/benchmark.py run \
+    --target HEAD \
+    --commands profile-engine-grep-all-prompts-max-count-500 \
+    --format json \
+    --output .tmp/benchmark-grep-prompts.json \
+    --allow-dirty
+```
+
+Local profiles are the source of real bottleneck evidence because CI runners do
+not have representative agent-history stores. If CI artifact upload is needed,
+keep it scoped to a separate issue and use sanitized fixture-only payloads.
+
 ## Code Architecture
 
 agentgrep is a small surface — a single package with a CLI/TUI module and an MCP module that share the search engine:
@@ -615,4 +675,3 @@ to identify which commits this branch actually introduced. Then:
 - **Scope guard:** If cleaning prior slop would touch a colleague's
   work or expand the branch beyond its stated goal, stay in lane:
   protect the current goal and leave prior slop alone.
-

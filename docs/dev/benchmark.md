@@ -169,6 +169,37 @@ profiling run can expose planner, discovery, parsing, ranking, and
 output bottlenecks. They are useful evidence for bottleneck work even
 when their distributions are noisier across machines.
 
+## Engine profiler
+
+`scripts/profile_engine.py` runs the search engine directly and emits
+sanitized JSON timings without CLI rendering overhead. Use it when you
+need to explain which engine phase is expensive before changing planner,
+discovery, parser, or rendering behavior.
+
+Profile one component:
+
+```console
+$ uv run python scripts/profile_engine.py grep-prompts \
+    --agent all \
+    --max-count 500 \
+    tmux > .tmp/profile-grep-prompts.json
+```
+
+Profile every component:
+
+```console
+$ uv run python scripts/profile_engine.py all \
+    --agent all \
+    --limit 500 \
+    tmux > .tmp/profile-all.json
+```
+
+Available components are `search-prompts`, `search-conversations`,
+`grep-prompts`, `grep-conversations`, `find-prompts`, and `all`.
+The JSON payload reports counts, phase timings, and coarse subprocess
+metadata. It does not include prompt text, raw argv, or local absolute
+paths.
+
 ## Templating
 
 Command strings in `[bench.X].command` support these placeholders:

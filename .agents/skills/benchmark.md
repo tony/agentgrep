@@ -1,6 +1,6 @@
 ---
 name: benchmark
-description: Run the agentgrep cross-commit benchmark harness and detect performance regressions. Use when asked to benchmark, profile performance across commits, check for regressions, or compare HEAD vs trunk timing.
+description: Run the agentgrep cross-commit benchmark harness and detect performance regressions. Use when asked for $benchmark, benchmark timing, profile-engine benchmark selectors, performance comparisons, or benchmark evidence for agentgrep.
 ---
 
 # Benchmark regression detector
@@ -10,10 +10,17 @@ parse the results, and flag any performance regressions. This skill
 is project-internal — it assumes `scripts/benchmark.py` and
 `scripts/benchmark.toml` exist in the repo root.
 
+Use `$benchmark <component> [query]` for the local engine profiler
+benchmark selectors. Component names keep profiling caps visible in
+the benchmark name and report.
+
 ## Arguments
 
 The user may provide:
 
+- A **component** via `$benchmark <component>` — one of
+  `search-prompts`, `search-conversations`, `grep-prompts`,
+  `grep-conversations`, `find-prompts`, or `all`
 - A **commit range** — e.g. "last 10 commits", "HEAD vs trunk",
   "since the query-language landing", a git range like `master..HEAD`
 - A **bench subset** — e.g. "just grep", "import-time only",
@@ -24,6 +31,25 @@ If no arguments are given, default to ALL configured benches across
 `--range origin/master..HEAD`. **Never silently drop to a single
 bench (e.g. import-time only)** — the user wants the full picture
 unless they explicitly ask for a subset.
+
+## Component shortcuts
+
+`$benchmark <component>` maps to committed profile-engine benchmark
+selectors:
+
+| Component | Benchmark selector |
+|---|---|
+| `search-prompts` | `profile-engine-search-all-prompts-limit-500` |
+| `search-conversations` | `profile-engine-search-all-conversations-limit-500` |
+| `grep-prompts` | `profile-engine-grep-all-prompts-max-count-500` |
+| `grep-conversations` | `profile-engine-grep-all-conversations-max-count-500` |
+| `find-prompts` | `profile-engine-find-all-prompts-limit-500` |
+| `all` | every `profile-engine-*` benchmark selector above |
+
+If a component is supplied, use its selector as `--commands`. For
+`all`, pass the comma-separated selector list above. Keep the cap
+visible in reports: if a selector includes `limit-500` or
+`max-count-500`, say `limit 500` or `max-count 500`.
 
 ## Procedure
 
