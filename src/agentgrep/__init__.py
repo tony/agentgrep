@@ -93,6 +93,7 @@ ProgressMode = t.Literal["auto", "always", "never"]
 SearchScope = t.Literal["prompts", "conversations", "all"]
 SearchMatchSurface = t.Literal["haystack", "text"]
 DiscoveryVersionDetail = t.Literal["none", "catalog", "shape"]
+DiscoveryStoreRoles = frozenset[StoreRole] | None
 ColorMode = t.Literal["auto", "always", "never"]
 GrepStyle = t.Literal["default", "pretty"]
 type JSONScalar = str | int | float | bool | None
@@ -2303,13 +2304,16 @@ def discover_sources(
     *,
     include_non_default: bool = False,
     version_detail: DiscoveryVersionDetail = "shape",
+    store_roles: DiscoveryStoreRoles = None,
 ) -> list[SourceHandle]:
     """Discover all known parseable sources for the selected agents.
 
     ``version_detail`` controls how eagerly source handles are enriched:
     ``"none"`` leaves ``version_detection`` empty for fast search paths,
     ``"catalog"`` attaches low-cost catalog observations, and ``"shape"``
-    inspects concrete source shape for inventory surfaces.
+    inspects concrete source shape for inventory surfaces. ``store_roles``
+    lets latency-sensitive search paths enumerate only the catalogue roles
+    that can satisfy a coarse query scope.
     """
     discovered: list[SourceHandle] = []
     for agent in agents:
@@ -2320,6 +2324,7 @@ def discover_sources(
                     backends,
                     include_non_default=include_non_default,
                     version_detail=version_detail,
+                    store_roles=store_roles,
                 ),
             )
         elif agent == "claude":
@@ -2329,6 +2334,7 @@ def discover_sources(
                     backends,
                     include_non_default=include_non_default,
                     version_detail=version_detail,
+                    store_roles=store_roles,
                 ),
             )
         elif agent == "cursor-cli":
@@ -2338,6 +2344,7 @@ def discover_sources(
                     backends,
                     include_non_default=include_non_default,
                     version_detail=version_detail,
+                    store_roles=store_roles,
                 ),
             )
         elif agent == "cursor-ide":
@@ -2347,6 +2354,7 @@ def discover_sources(
                     backends,
                     include_non_default=include_non_default,
                     version_detail=version_detail,
+                    store_roles=store_roles,
                 ),
             )
         elif agent == "gemini":
@@ -2356,6 +2364,7 @@ def discover_sources(
                     backends,
                     include_non_default=include_non_default,
                     version_detail=version_detail,
+                    store_roles=store_roles,
                 ),
             )
         elif agent == "grok":
@@ -2365,6 +2374,7 @@ def discover_sources(
                     backends,
                     include_non_default=include_non_default,
                     version_detail=version_detail,
+                    store_roles=store_roles,
                 ),
             )
         elif agent == "pi":
@@ -2374,6 +2384,7 @@ def discover_sources(
                     backends,
                     include_non_default=include_non_default,
                     version_detail=version_detail,
+                    store_roles=store_roles,
                 ),
             )
         elif agent == "opencode":
@@ -2383,6 +2394,7 @@ def discover_sources(
                     backends,
                     include_non_default=include_non_default,
                     version_detail=version_detail,
+                    store_roles=store_roles,
                 ),
             )
     discovered.sort(key=lambda item: (item.agent, item.store, str(item.path)))
@@ -3099,6 +3111,7 @@ def discover_from_catalog(
     *,
     include_non_default: bool = False,
     version_detail: DiscoveryVersionDetail = "shape",
+    store_roles: DiscoveryStoreRoles = None,
 ) -> list[SourceHandle]:
     """Walk every catalogue row for ``agent`` and emit ``SourceHandle``s.
 
@@ -3111,7 +3124,8 @@ def discover_from_catalog(
     ``CATALOG_ONLY`` rows that carry discovery specs. ``PRIVATE`` rows are
     never enumerated from disk. ``version_detail`` lets latency-sensitive
     callers skip source-version enrichment until a metadata-rich surface asks
-    for it.
+    for it. ``store_roles`` restricts enumeration before any filesystem walk,
+    which lets search avoid stores its scope cannot consume.
     """
     from agentgrep.store_catalog import CATALOG
 
@@ -3127,6 +3141,8 @@ def discover_from_catalog(
     for descriptor in CATALOG.for_agent(agent):
         coverage = descriptor.coverage_level
         if coverage is StoreCoverage.PRIVATE:
+            continue
+        if store_roles is not None and descriptor.role not in store_roles:
             continue
         if coverage is not StoreCoverage.DEFAULT_SEARCH and not include_non_default:
             continue
@@ -3170,6 +3186,7 @@ def discover_codex_sources(
     *,
     include_non_default: bool = False,
     version_detail: DiscoveryVersionDetail = "shape",
+    store_roles: DiscoveryStoreRoles = None,
 ) -> list[SourceHandle]:
     """Discover Codex sessions and command history.
 
@@ -3193,6 +3210,7 @@ def discover_codex_sources(
         backends,
         include_non_default=include_non_default,
         version_detail=version_detail,
+        store_roles=store_roles,
     )
 
 
@@ -3202,6 +3220,7 @@ def discover_claude_sources(
     *,
     include_non_default: bool = False,
     version_detail: DiscoveryVersionDetail = "shape",
+    store_roles: DiscoveryStoreRoles = None,
 ) -> list[SourceHandle]:
     """Discover Claude Code project session files.
 
@@ -3222,6 +3241,7 @@ def discover_claude_sources(
         backends,
         include_non_default=include_non_default,
         version_detail=version_detail,
+        store_roles=store_roles,
     )
 
 
@@ -3231,6 +3251,7 @@ def discover_cursor_cli_sources(
     *,
     include_non_default: bool = False,
     version_detail: DiscoveryVersionDetail = "shape",
+    store_roles: DiscoveryStoreRoles = None,
 ) -> list[SourceHandle]:
     """Discover Cursor CLI (``cursor-agent``) sources.
 
@@ -3246,6 +3267,7 @@ def discover_cursor_cli_sources(
         backends,
         include_non_default=include_non_default,
         version_detail=version_detail,
+        store_roles=store_roles,
     )
 
 
@@ -3264,6 +3286,7 @@ def discover_cursor_ide_sources(
     *,
     include_non_default: bool = False,
     version_detail: DiscoveryVersionDetail = "shape",
+    store_roles: DiscoveryStoreRoles = None,
 ) -> list[SourceHandle]:
     """Discover Cursor IDE (desktop app) sources.
 
@@ -3285,6 +3308,7 @@ def discover_cursor_ide_sources(
         backends,
         include_non_default=include_non_default,
         version_detail=version_detail,
+        store_roles=store_roles,
     )
 
 
@@ -3294,6 +3318,7 @@ def discover_gemini_sources(
     *,
     include_non_default: bool = False,
     version_detail: DiscoveryVersionDetail = "shape",
+    store_roles: DiscoveryStoreRoles = None,
 ) -> list[SourceHandle]:
     """Discover Gemini CLI sessions and prompt logs.
 
@@ -3312,6 +3337,7 @@ def discover_gemini_sources(
         backends,
         include_non_default=include_non_default,
         version_detail=version_detail,
+        store_roles=store_roles,
     )
 
 
@@ -3321,6 +3347,7 @@ def discover_grok_sources(
     *,
     include_non_default: bool = False,
     version_detail: DiscoveryVersionDetail = "shape",
+    store_roles: DiscoveryStoreRoles = None,
 ) -> list[SourceHandle]:
     """Discover Grok CLI sessions and prompt history.
 
@@ -3339,6 +3366,7 @@ def discover_grok_sources(
         backends,
         include_non_default=include_non_default,
         version_detail=version_detail,
+        store_roles=store_roles,
     )
 
 
@@ -3348,6 +3376,7 @@ def discover_pi_sources(
     *,
     include_non_default: bool = False,
     version_detail: DiscoveryVersionDetail = "shape",
+    store_roles: DiscoveryStoreRoles = None,
 ) -> list[SourceHandle]:
     """Discover pi (earendil-works/pi) session transcripts.
 
@@ -3378,6 +3407,7 @@ def discover_pi_sources(
         backends,
         include_non_default=include_non_default,
         version_detail=version_detail,
+        store_roles=store_roles,
     )
 
 
@@ -3387,6 +3417,7 @@ def discover_opencode_sources(
     *,
     include_non_default: bool = False,
     version_detail: DiscoveryVersionDetail = "shape",
+    store_roles: DiscoveryStoreRoles = None,
 ) -> list[SourceHandle]:
     """Discover OpenCode (anomalyco/opencode) SQLite databases.
 
@@ -3413,6 +3444,8 @@ def discover_opencode_sources(
             from agentgrep.store_catalog import CATALOG
 
             descriptor = CATALOG.by_id("opencode.db")
+            if store_roles is not None and descriptor.role not in store_roles:
+                return []
             handle = SourceHandle(
                 agent="opencode",
                 store="opencode.db",
@@ -3446,6 +3479,7 @@ def discover_opencode_sources(
         backends,
         include_non_default=include_non_default,
         version_detail=version_detail,
+        store_roles=store_roles,
     )
 
 
@@ -3531,9 +3565,9 @@ def run_search_query(
     active_progress.start(query)
     interrupted = False
     try:
-        sources = discover_sources(
+        sources = discover_sources_for_search(
             home,
-            query.agents,
+            query,
             active_backends,
             version_detail="none",
         )
@@ -6399,6 +6433,8 @@ def build_search_record(source: SourceHandle, candidate: MessageCandidate) -> Se
     )
 
 
+PROMPT_HISTORY_STORE_ROLES: frozenset[StoreRole] = frozenset({StoreRole.PROMPT_HISTORY})
+
 CONVERSATION_STORE_ROLES: frozenset[StoreRole] = frozenset(
     {StoreRole.PRIMARY_CHAT, StoreRole.SUPPLEMENTARY_CHAT},
 )
@@ -6441,6 +6477,69 @@ def prompt_history_agents_for_sources(sources: cabc.Iterable[SourceHandle]) -> f
         for source in sources
         if store_role_for_record(source.store, source.adapter_id) == StoreRole.PROMPT_HISTORY
     )
+
+
+def discover_sources_for_search(
+    home: pathlib.Path,
+    query: SearchQuery,
+    backends: BackendSelection,
+    *,
+    version_detail: DiscoveryVersionDetail = "none",
+) -> list[SourceHandle]:
+    """Discover only the source roles needed for a search query scope."""
+    if query.scope == "all":
+        return discover_sources(
+            home,
+            query.agents,
+            backends,
+            version_detail=version_detail,
+        )
+    if query.scope == "conversations":
+        return discover_sources(
+            home,
+            query.agents,
+            backends,
+            version_detail=version_detail,
+            store_roles=CONVERSATION_STORE_ROLES,
+        )
+
+    prompt_sources = discover_sources(
+        home,
+        query.agents,
+        backends,
+        version_detail=version_detail,
+        store_roles=PROMPT_HISTORY_STORE_ROLES,
+    )
+    agents_with_prompt_history = frozenset(
+        source.agent
+        for source in prompt_sources
+        if store_role_for_record(source.store, source.adapter_id) == StoreRole.PROMPT_HISTORY
+    )
+    fallback_agents = tuple(
+        agent for agent in query.agents if agent not in agents_with_prompt_history
+    )
+    if not fallback_agents:
+        return prompt_sources
+
+    sources = [
+        *prompt_sources,
+        *discover_sources(
+            home,
+            fallback_agents,
+            backends,
+            version_detail=version_detail,
+            store_roles=CONVERSATION_STORE_ROLES,
+        ),
+    ]
+    deduped: list[SourceHandle] = []
+    seen: set[tuple[AgentName, str, str, pathlib.Path]] = set()
+    for source in sources:
+        key = (source.agent, source.store, source.adapter_id, source.path)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(source)
+    return deduped
 
 
 def source_matches_scope(

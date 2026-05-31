@@ -96,9 +96,9 @@ def iter_search_events(
     active_control = agentgrep.SearchControl() if control is None else control
     start_time = time.monotonic()
 
-    sources = agentgrep.discover_sources(
+    sources = agentgrep.discover_sources_for_search(
         home,
-        query.agents,
+        query,
         active_backends,
         version_detail="none",
     )
