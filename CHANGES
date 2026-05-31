@@ -62,6 +62,7 @@ embedded transcript version metadata when available.
 
 - `agentgrep find --type` (`prompts`, `history`, `sessions`) now returns the matching stores again instead of nothing. (#31)
 - `agentgrep fuzzy --json` and `--ndjson` now emit structured output (scored matches) instead of silently printing plain text. (#31)
+- `agentgrep fuzzy` with an empty query now passes every line through (like `fzf --filter ''`) instead of emitting nothing. (#31)
 
 ## agentgrep 0.1.0a8 (2026-05-25)
 
