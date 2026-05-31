@@ -773,11 +773,11 @@ class AnsiColors:
     HIGHLIGHT: t.ClassVar[str] = "\x1b[35m"
     MATCH: t.ClassVar[str] = "\x1b[1;31m"
     LINE_NUMBER: t.ClassVar[str] = "\x1b[32m"
-    PATH: t.ClassVar[str] = "\x1b[35m"
+    PATH: t.ClassVar[str] = "\x1b[38;5;177m"
     MUTED: t.ClassVar[str] = "\x1b[34m"
     WHITE: t.ClassVar[str] = "\x1b[37m"
     ACCENT: t.ClassVar[str] = "\x1b[38;5;179m"
-    DIM: t.ClassVar[str] = "\x1b[2m"
+    DIM: t.ClassVar[str] = "\x1b[38;5;245m"
     RESET: t.ClassVar[str] = "\x1b[0m"
 
     @classmethod
@@ -824,7 +824,7 @@ class AnsiColors:
         return self.colorize(text, self.LINE_NUMBER)
 
     def path(self, text: str) -> str:
-        """Format text as a path prefix (rg-style magenta)."""
+        """Format text as a path prefix (bright purple)."""
         return self.colorize(text, self.PATH)
 
     def muted(self, text: str) -> str:

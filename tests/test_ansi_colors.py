@@ -81,9 +81,18 @@ def test_accent_class_var_is_256_color_amber() -> None:
     assert agentgrep.AnsiColors.ACCENT == "\x1b[38;5;179m"
 
 
-def test_dim_class_var_is_ansi_dim_attribute() -> None:
-    """DIM uses the ANSI dim/faint attribute (SGR 2)."""
-    assert agentgrep.AnsiColors.DIM == "\x1b[2m"
+def test_path_class_var_is_256_color_purple() -> None:
+    """PATH uses a 256-color bright purple (color 177)."""
+    assert agentgrep.AnsiColors.PATH == "\x1b[38;5;177m"
+
+
+def test_dim_class_var_is_256_color_grey() -> None:
+    """DIM uses a 256-color legible grey (color 245), not the faint attribute.
+
+    The SGR-2 faint attribute renders inconsistently (often near-invisible
+    on dark themes), so provenance/secondary text uses an explicit grey.
+    """
+    assert agentgrep.AnsiColors.DIM == "\x1b[38;5;245m"
 
 
 def test_for_stream_produces_working_accent() -> None:
