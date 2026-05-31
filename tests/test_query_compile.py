@@ -325,9 +325,34 @@ RECORD_PREDICATE_CASES: tuple[RecordPredicateCase, ...] = (
         expected_matches=True,
     ),
     RecordPredicateCase(
-        test_id="scope-prompts-on-prompt-kind",
+        test_id="scope-prompts-on-prompt-history",
         query="scope:prompts",
-        record_kwargs={"kind": "prompt"},
+        record_kwargs={
+            "kind": "prompt",
+            "store": "codex.history",
+            "adapter_id": "codex.history_jsonl.v1",
+        },
+        expected_matches=True,
+    ),
+    RecordPredicateCase(
+        test_id="scope-prompts-on-chat-prompt-record-layer",
+        query="scope:prompts",
+        record_kwargs={
+            "kind": "prompt",
+            "store": "codex.sessions",
+            "adapter_id": "codex.sessions_jsonl.v1",
+        },
+        expected_matches=True,
+    ),
+    RecordPredicateCase(
+        test_id="scope-prompts-includes-transcript-only-prompt",
+        query="scope:prompts",
+        record_kwargs={
+            "kind": "prompt",
+            "agent": "pi",
+            "store": "pi.sessions",
+            "adapter_id": "pi.sessions_jsonl.v1",
+        },
         expected_matches=True,
     ),
     RecordPredicateCase(

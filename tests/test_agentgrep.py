@@ -2775,6 +2775,64 @@ def test_plan_search_sources_prefilters_one_root_once(
     assert [source.path for source in planned] == [first]
 
 
+def test_plan_search_sources_prunes_chat_sources_from_prompt_scope(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prompt-scope planning skips Claude transcript files before parsing."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    history = agentgrep.SourceHandle(
+        agent="claude",
+        store="claude.history",
+        adapter_id="claude.history_jsonl.v1",
+        path=tmp_path / "history.jsonl",
+        path_kind="history_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=2,
+    )
+    transcript = agentgrep.SourceHandle(
+        agent="claude",
+        store="claude.projects",
+        adapter_id="claude.projects_jsonl.v1",
+        path=tmp_path / "projects" / "session.jsonl",
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=1,
+    )
+    query = agentgrep.SearchQuery(
+        terms=("biome",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("claude",),
+        limit=None,
+    )
+    checked: list[str] = []
+
+    def direct_source_matches(
+        source: object,
+        query: object,
+        backends: object,
+        control: object | None = None,
+    ) -> bool:
+        checked.append(t.cast("t.Any", source).store)
+        return True
+
+    monkeypatch.setattr(agentgrep, "direct_source_matches", direct_source_matches)
+
+    planned = agentgrep.plan_search_sources(
+        query,
+        [history, transcript],
+        agentgrep.BackendSelection(None, None, None),
+    )
+
+    assert [source.store for source in planned] == ["claude.history"]
+    assert checked == ["claude.history"]
+
+
 def test_search_prefers_newer_sources_when_limiting(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -5542,6 +5600,57 @@ def test_search_claude_history_expands_external_pasted_text(
     assert "inline serenity paste" in record.text
     assert "external bliss paste" in record.text
     assert "[Pasted text" not in record.text
+
+
+def test_prompt_scope_excludes_claude_project_user_turns_when_history_exists(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default prompt scope uses Claude's prompt history, not transcript replay."""
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    claude_home = home / ".claude"
+    write_jsonl(
+        claude_home / "history.jsonl",
+        [
+            {
+                "display": "biome from prompt history",
+                "timestamp": 1_700_000_000_000,
+                "project": "/synthetic/project",
+                "sessionId": "session-1",
+                "pastedContents": {},
+            },
+        ],
+    )
+    write_jsonl(
+        claude_home / "projects" / "-synthetic-project" / "session-1.jsonl",
+        [
+            {
+                "type": "user",
+                "sessionId": "session-1",
+                "version": "2.1.157",
+                "message": {"role": "user", "content": "biome from transcript"},
+            },
+        ],
+    )
+
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    query = t.cast("t.Any", agentgrep).SearchQuery(
+        terms=("biome",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("claude",),
+        limit=None,
+    )
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("claude",), backends)
+    records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
+
+    assert [(record.store, record.text) for record in records] == [
+        ("claude.history", "biome from prompt history"),
+    ]
 
 
 def test_search_claude_history_tolerates_missing_paste_cache(

@@ -3485,10 +3485,20 @@ def plan_search_sources(
     """Return the candidate sources to parse for a search query."""
     active_progress = noop_search_progress() if progress is None else progress
     active_control = SearchControl() if control is None else control
+    prompt_history_agents = prompt_history_agents_for_sources(sources)
+    scoped_sources = [
+        source
+        for source in sources
+        if source_matches_scope(
+            source,
+            query.scope,
+            prompt_history_agents=prompt_history_agents,
+        )
+    ]
     if not query.terms:
-        return sources
+        return scoped_sources
 
-    planned_sources = list(sources)
+    planned_sources = scoped_sources
     if backends.grep_tool is not None:
         planned_sources = prefilter_sources_by_root(
             query,
@@ -3652,11 +3662,18 @@ def collect_search_records(
         return len(deduped) if query.dedupe else len(raw)
 
     source_predicate = query.compiled.source_predicate if query.compiled is not None else None
+    prompt_history_agents = prompt_history_agents_for_sources(sources)
     for index, source in enumerate(sources, start=1):
         if active_control.answer_now_requested() or (
             query.limit is not None and current_count() >= query.limit
         ):
             break
+        if not source_matches_scope(
+            source,
+            query.scope,
+            prompt_history_agents=prompt_history_agents,
+        ):
+            continue
         # Compiled-query source pruning: when a field predicate like
         # ``agent:codex`` can be decided from the SourceHandle alone,
         # skip the source without opening it. Mirrors the same guard
@@ -6308,15 +6325,23 @@ CONVERSATION_STORE_ROLES: frozenset[StoreRole] = frozenset(
 
 
 @functools.cache
-def store_role_for_record(store: str, adapter_id: str) -> StoreRole | None:
-    """Return the catalog role for a normalized record's source store."""
+def store_descriptor_for_record(store: str, adapter_id: str) -> StoreDescriptor | None:
+    """Return the catalog descriptor for a normalized record's source store."""
     from agentgrep.store_catalog import CATALOG
 
     for descriptor in CATALOG.stores:
         for spec in descriptor.discovery:
             if spec.store == store and spec.adapter_id == adapter_id:
-                return descriptor.role
+                return descriptor
     return None
+
+
+def store_role_for_record(store: str, adapter_id: str) -> StoreRole | None:
+    """Return the catalog role for a normalized record's source store."""
+    descriptor = store_descriptor_for_record(store, adapter_id)
+    if descriptor is None:
+        return None
+    return descriptor.role
 
 
 def record_matches_scope(record: SearchRecord, scope: SearchScope) -> bool:
@@ -6327,6 +6352,34 @@ def record_matches_scope(record: SearchRecord, scope: SearchScope) -> bool:
         return record.kind == "prompt"
     role = store_role_for_record(record.store, record.adapter_id)
     return role in CONVERSATION_STORE_ROLES
+
+
+def prompt_history_agents_for_sources(sources: cabc.Iterable[SourceHandle]) -> frozenset[str]:
+    """Return agents with a dedicated prompt-history source in ``sources``."""
+    return frozenset(
+        source.agent
+        for source in sources
+        if store_role_for_record(source.store, source.adapter_id) == StoreRole.PROMPT_HISTORY
+    )
+
+
+def source_matches_scope(
+    source: SourceHandle,
+    scope: SearchScope,
+    *,
+    prompt_history_agents: frozenset[str] = frozenset(),
+) -> bool:
+    """Return whether ``source`` can yield records for the requested scope."""
+    if scope == "all":
+        return True
+    role = store_role_for_record(source.store, source.adapter_id)
+    if scope == "conversations":
+        return role in CONVERSATION_STORE_ROLES
+    if role == StoreRole.PROMPT_HISTORY:
+        return True
+    if role in CONVERSATION_STORE_ROLES:
+        return source.agent not in prompt_history_agents
+    return True
 
 
 def matches_record(record: SearchRecord, query: SearchQuery) -> bool:
