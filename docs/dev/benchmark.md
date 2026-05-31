@@ -137,8 +137,9 @@ order (each layer overlays the previous):
 1. **Built-in pydantic defaults** — `runs = 3`, `warmup = 1`, `trunk =
    "master"`, etc.
 2. **`scripts/benchmark.toml`** — the committed defaults shipped with
-   the repo. Defines `[bench.grep]`, `[bench.find]`, `[bench.search]`,
-   `[bench.import-time]` for agentgrep against `libtmux`.
+   the repo. Defines small single-result benches plus broad all-agent
+   prompt, conversation, search, and find benches that exercise the
+   discovery planner.
 3. **`scripts/benchmark.local.toml`** — per-machine overrides
    (gitignored). Copy `scripts/benchmark.local.toml.example` to start.
 4. **CLI flags** — `--runs N`, `--warmup N`, `--query STR`,
