@@ -79,6 +79,21 @@ description = "Profiling: all-agent source enumeration, JSON output, limit 500"
 command = "{venv}/bin/agentgrep find --no-progress --agent all --json --limit 500"
 default_query = ""
 
+[bench.profile-engine-search-all-prompts-limit-500]
+description = "Profiling: engine-only all-agent prompt search, sanitized JSON profile, limit 500"
+command = "{venv}/bin/python scripts/profile_engine.py search --agent all --scope prompts --limit 500 {query}"
+default_query = "tmux"
+
+[bench.profile-engine-search-all-conversations-limit-500]
+description = "Profiling: engine-only all-agent conversation search, sanitized JSON profile, limit 500"
+command = "{venv}/bin/python scripts/profile_engine.py search --agent all --scope conversations --limit 500 {query}"
+default_query = "tmux"
+
+[bench.profile-engine-find-all-prompts-limit-500]
+description = "Profiling: engine-only all-agent prompt-source enumeration, sanitized JSON profile, limit 500"
+command = "{venv}/bin/python scripts/profile_engine.py find --agent all --type prompts --limit 500"
+default_query = ""
+
 [bench.import-time]
 description = "Cold-start CLI import + arg parse only"
 command = "{venv}/bin/agentgrep --help"

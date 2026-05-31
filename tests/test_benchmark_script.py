@@ -372,6 +372,25 @@ def test_committed_benchmarks_name_every_command_limit(case: BenchmarkLimitCase)
         assert f"limit {value}" in description
 
 
+def test_committed_benchmarks_include_engine_only_profile_entries() -> None:
+    """Committed profiling coverage separates engine timing from CLI rendering."""
+    config = benchmark.load_config(
+        config_path=benchmark.DEFAULT_CONFIG,
+        local_path=_REPO_ROOT / "scripts" / "__missing_benchmark.local.toml",
+    )
+    expected = {
+        "profile-engine-search-all-prompts-limit-500",
+        "profile-engine-search-all-conversations-limit-500",
+        "profile-engine-find-all-prompts-limit-500",
+    }
+    assert expected <= set(config.bench)
+    for name in expected:
+        bench = config.bench[name]
+        assert "scripts/profile_engine.py" in bench.command
+        assert "--limit 500" in bench.command
+        assert "limit 500" in bench.description.casefold()
+
+
 # ---------------------------------------------------------------------------
 # Templating
 # ---------------------------------------------------------------------------

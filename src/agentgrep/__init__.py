@@ -2263,13 +2263,16 @@ def run_readonly_command(
     control: SearchControl | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run a command without a shell and capture text output."""
+    started_at = time.perf_counter()
     if control is None:
-        return subprocess.run(
+        completed = subprocess.run(
             command,
             capture_output=True,
             text=True,
             check=False,
         )
+        _record_readonly_command_profile(command, started_at, completed)
+        return completed
     process = subprocess.Popen(
         command,
         stdout=subprocess.PIPE,
@@ -2287,14 +2290,35 @@ def run_readonly_command(
                 except subprocess.TimeoutExpired:
                     process.kill()
                     stdout, stderr = process.communicate()
-                return subprocess.CompletedProcess(
+                completed = subprocess.CompletedProcess(
                     command,
                     process.returncode,
                     stdout,
                     stderr,
                 )
+                _record_readonly_command_profile(command, started_at, completed)
+                return completed
             continue
-        return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+        completed = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+        _record_readonly_command_profile(command, started_at, completed)
+        return completed
+
+
+def _record_readonly_command_profile(
+    command: list[str],
+    started_at: float,
+    completed: subprocess.CompletedProcess[str],
+) -> None:
+    """Record optional engine profiling metadata for a completed subprocess."""
+    if "agentgrep._engine.profiling" not in sys.modules:
+        return
+    from agentgrep._engine.profiling import record_subprocess_run
+
+    record_subprocess_run(
+        command,
+        duration_seconds=time.perf_counter() - started_at,
+        completed=completed,
+    )
 
 
 def discover_sources(
