@@ -71,8 +71,10 @@ dev = [
   "tomlkit>=0.13",
   # scripts/benchmark.py is another PEP 723 standalone; same rationale —
   # tests/test_benchmark_script.py imports the script directly so its
-  # third-party deps (typer; pydantic and rich are already in the runtime
-  # graph via the project itself / textual) need to be project-importable.
+  # third-party deps (typer plus the direct click import; pydantic and rich
+  # are already in the runtime graph via the project itself / textual) need
+  # to be project-importable.
+  "click>=8.1",
   "typer>=0.12",
 ]
 docs = [
