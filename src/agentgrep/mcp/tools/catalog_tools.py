@@ -85,6 +85,7 @@ def _inspect_record_sample_sync(request: InspectSampleRequest) -> InspectSampleR
         agentgrep.AGENT_CHOICES,
         backends,
         include_non_default=True,
+        version_detail="none",
     )
     requested = pathlib.Path(request.source_path).expanduser().resolve()
     target = next(

@@ -85,7 +85,12 @@ def iter_find_events(
     active_backends = agentgrep.select_backends() if backends is None else backends
     start_time = time.monotonic()
 
-    sources = agentgrep.discover_sources(home, agents, active_backends)
+    sources = agentgrep.discover_sources(
+        home,
+        agents,
+        active_backends,
+        version_detail="none",
+    )
     yield _events.FindStarted(source_count=len(sources))
 
     query = pattern.casefold() if pattern is not None else None

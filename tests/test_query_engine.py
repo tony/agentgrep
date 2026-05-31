@@ -619,6 +619,90 @@ def test_find_eager_path_honors_source_predicate(
     assert emitted_agents == set(case.expected_agents)
 
 
+class FastDiscoveryEntrypointCase(t.NamedTuple):
+    """One frontend entrypoint that should use metadata-free discovery."""
+
+    test_id: str
+    entrypoint: str
+
+
+FAST_DISCOVERY_ENTRYPOINT_CASES: tuple[FastDiscoveryEntrypointCase, ...] = (
+    FastDiscoveryEntrypointCase(test_id="run-search-query", entrypoint="run_search_query"),
+    FastDiscoveryEntrypointCase(test_id="iter-search-events", entrypoint="iter_search_events"),
+    FastDiscoveryEntrypointCase(test_id="run-find-query", entrypoint="run_find_query"),
+    FastDiscoveryEntrypointCase(test_id="iter-find-events", entrypoint="iter_find_events"),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    FAST_DISCOVERY_ENTRYPOINT_CASES,
+    ids=[c.test_id for c in FAST_DISCOVERY_ENTRYPOINT_CASES],
+)
+def test_fast_entrypoints_request_metadata_free_discovery(
+    case: FastDiscoveryEntrypointCase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Search and find frontends request the fastest discovery path."""
+    source = _make_source(agent="codex", path="/tmp/codex.jsonl")
+    calls: list[dict[str, object]] = []
+
+    def fake_discover_sources(
+        home: pathlib.Path,
+        agents: tuple[agentgrep.AgentName, ...],
+        backends: agentgrep.BackendSelection,
+        **kwargs: object,
+    ) -> list[agentgrep.SourceHandle]:
+        del home, agents, backends
+        calls.append(kwargs)
+        return [source]
+
+    monkeypatch.setattr(agentgrep, "discover_sources", fake_discover_sources)
+    monkeypatch.setattr(
+        agentgrep,
+        "plan_search_sources",
+        lambda query, sources, backends, **kwargs: list(sources),
+    )
+    monkeypatch.setattr(agentgrep, "iter_source_records", lambda source: iter(()))
+
+    query = agentgrep.SearchQuery(
+        terms=("bliss",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=1,
+    )
+
+    if case.entrypoint == "run_search_query":
+        _ = agentgrep.run_search_query(pathlib.Path.home(), query)
+    elif case.entrypoint == "iter_search_events":
+        _ = list(agentgrep.iter_search_events(pathlib.Path.home(), query))
+    elif case.entrypoint == "run_find_query":
+        _ = agentgrep.run_find_query(
+            pathlib.Path.home(),
+            ("codex",),
+            pattern=None,
+            limit=1,
+        )
+    elif case.entrypoint == "iter_find_events":
+        _ = list(
+            agentgrep.iter_find_events(
+                pathlib.Path.home(),
+                ("codex",),
+                pattern=None,
+                limit=1,
+            ),
+        )
+    else:
+        msg = f"unknown entrypoint: {case.entrypoint}"
+        raise AssertionError(msg)
+
+    assert calls
+    assert all(call.get("version_detail") == "none" for call in calls)
+
+
 class QueryPassesThroughCase(t.NamedTuple):
     """Parametrized case verifying CLI parsing routes query syntax to compiled."""
 

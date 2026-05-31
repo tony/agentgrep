@@ -62,6 +62,7 @@ def _recent_sessions_sync(request: RecentSessionsRequest) -> RecentSessionsRespo
         pathlib.Path.home(),
         normalize_agent_selection(request.agent),
         backends,
+        version_detail="none",
     )
     cutoff_ns = time.time_ns() - request.hours * 3600 * 1_000_000_000
     recent = [source for source in sources if source.mtime_ns >= cutoff_ns]
