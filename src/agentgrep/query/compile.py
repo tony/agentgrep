@@ -313,6 +313,7 @@ def _rebuild(
         limit=base.limit,
         dedupe=base.dedupe,
         compiled=compiled,
+        match_surface=base.match_surface,
     )
 
 

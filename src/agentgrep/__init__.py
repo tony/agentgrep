@@ -91,6 +91,7 @@ AgentName = t.Literal[
 OutputMode = t.Literal["text", "json", "ndjson", "ui"]
 ProgressMode = t.Literal["auto", "always", "never"]
 SearchScope = t.Literal["prompts", "conversations", "all"]
+SearchMatchSurface = t.Literal["haystack", "text"]
 ColorMode = t.Literal["auto", "always", "never"]
 GrepStyle = t.Literal["default", "pretty"]
 type JSONScalar = str | int | float | bool | None
@@ -1178,6 +1179,9 @@ class SearchQuery:
     ``compiled.source_predicate`` to prune sources before any file
     is opened, and :func:`matches_record` consults
     ``compiled.record_predicate`` after the existing text match.
+    ``match_surface`` lets line-oriented callers such as ``grep``
+    require a match in record text while fuzzy search and filtering
+    can keep using the metadata-rich haystack.
     """
 
     terms: tuple[str, ...]
@@ -1189,6 +1193,7 @@ class SearchQuery:
     limit: int | None
     dedupe: bool = True
     compiled: CompiledQuery | None = None
+    match_surface: SearchMatchSurface = "haystack"
 
 
 @dataclasses.dataclass(slots=True)
@@ -6392,12 +6397,19 @@ def matches_record(record: SearchRecord, query: SearchQuery) -> bool:
     """
     if not record_matches_scope(record, query.scope):
         return False
-    if not matches_text(build_search_haystack(record), query):
+    if not matches_text(build_record_match_surface(record, query.match_surface), query):
         return False
     compiled = query.compiled
     if compiled is not None and compiled.record_predicate is not None:
         return compiled.record_predicate(record)
     return True
+
+
+def build_record_match_surface(record: SearchRecord, surface: SearchMatchSurface) -> str:
+    """Build the text surface used for unfielded query terms."""
+    if surface == "text":
+        return record.text
+    return build_search_haystack(record)
 
 
 def build_search_haystack(record: SearchRecord) -> str:

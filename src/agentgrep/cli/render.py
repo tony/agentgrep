@@ -885,6 +885,7 @@ def build_grep_query(args: GrepArgs) -> agentgrep.SearchQuery:
         limit=args.max_count,
         dedupe=not args.no_dedupe,
         compiled=args.compiled,
+        match_surface="text",
     )
 
 
