@@ -100,7 +100,7 @@ NDJSON output emit each match as the engine finds it, then flush so
 your terminal sees rows live. On a slow store the first matches
 appear within milliseconds, not after the whole scan finishes.
 
-The eager output modes (`--json`, `-c`, `-l`, `-L`, `-v`) buffer
+The eager output modes (`--json`, `-c`, `-l`, `-v`) buffer
 because their output shape needs the final tally or cross-record
 deduplication.
 
@@ -175,30 +175,13 @@ implemented and is refused at parse time:
 $ agentgrep grep -v bliss
 usage: agentgrep grep [...]
 agentgrep grep: error: --invert-match for text output is not yet
-implemented (see https://github.com/tony/agentgrep/issues/8); use
--c or -L
+implemented (see https://github.com/tony/agentgrep/issues/8); use -c
 ```
 
 The flag is still honored under `-c` (returns `0` if any record
-matched, `1` if none) and `-L` (lists sources with no matches),
-since both reduce to a "did anything match?" question that the
-engine's current output supports. Tracking issue:
+matched, `1` if none), since it reduces to a "did anything match?"
+question that the engine's current output supports. Tracking issue:
 [tony/agentgrep#8](https://github.com/tony/agentgrep/issues/8).
-
-## Files without matches
-
-`-L` / `--files-without-match` lists every planned source whose
-records produced no matches — the rg-style "what did I miss?"
-view:
-
-```console
-$ agentgrep grep -L bliss
-~/.codex/sessions/2026/05/b.jsonl
-```
-
-Exit code follows `rg`: `0` when at least one path is printed
-(the listed paths are themselves the "match" for `-L`), `1` when
-every planned source contains a match.
 
 (cli-grep-dedupe)=
 

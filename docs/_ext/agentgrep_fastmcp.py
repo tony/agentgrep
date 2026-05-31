@@ -38,7 +38,7 @@ async def search(
         list[str],
         Field(
             min_length=1,
-            description="One or more literal or regex search terms.",
+            description="One or more literal search terms (AND-matched).",
         ),
     ],
     agent: t.Annotated[
@@ -49,14 +49,6 @@ async def search(
         SearchTypeName,
         Field(description="Search prompts, history, or both."),
     ] = "prompts",
-    any_term: t.Annotated[
-        bool,
-        Field(description="Match any term instead of requiring all terms."),
-    ] = False,
-    regex: t.Annotated[
-        bool,
-        Field(description="Treat search terms as regular expressions."),
-    ] = False,
     case_sensitive: t.Annotated[
         bool,
         Field(description="Perform case-sensitive matching."),
@@ -295,25 +287,17 @@ async def validate_query(
         list[str],
         Field(
             min_length=1,
-            description="One or more literal or regex search terms.",
-            examples=[["alpha"], ["foo.*bar"]],
+            description="One or more literal search terms (AND-matched).",
+            examples=[["alpha"], ["foo", "bar"]],
         ),
     ],
     sample_text: t.Annotated[
         str,
         Field(description="Sample text to test the query against."),
     ],
-    regex: t.Annotated[
-        bool,
-        Field(description="Treat terms as regular expressions."),
-    ] = False,
     case_sensitive: t.Annotated[
         bool,
         Field(description="Perform case-sensitive matching."),
-    ] = False,
-    any_term: t.Annotated[
-        bool,
-        Field(description="Match any term instead of requiring all terms."),
     ] = False,
 ) -> ValidateQueryResponse:
     """Dry-run a query against sample text without searching files."""
