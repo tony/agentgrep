@@ -53,6 +53,12 @@ Grok CLI prompt history, session transcripts, memory, logs, and config.
 Pi (earendil-works) session transcripts, settings, prompts, and managed extensions.
 :::
 
+:::{grid-item-card} OpenCode
+:link: opencode
+:link-type: doc
+OpenCode (anomalyco) SQLite session store, config, snapshots, and caches.
+:::
+
 ::::
 
 ## Coverage levels
@@ -91,4 +97,5 @@ cursor-ide
 gemini
 grok
 pi
+opencode
 ```

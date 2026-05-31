@@ -307,6 +307,34 @@ Documentary-only entries cover settings, auth (private credentials),
 models, themes, tools, managed binaries, prompt templates, the debug
 log, and the npm extension install root.
 
+### OpenCode
+
+`observed_version`: ``opencode v1.15.11`` (observed 2026-05-30).
+
+OpenCode (anomalyco/opencode) stores conversations in a single SQLite
+database under `${XDG_DATA_HOME or ${HOME}/.local/share}/opencode/`,
+unlike the JSONL-transcript backends:
+
+- `opencode.db_sqlite.v1` parses the `opencode.db` SQLite database. It
+  joins the relational `part → message → session` tables: each
+  text-bearing `part` row becomes a record whose `kind` comes from the
+  joined message `role` (`user` → prompt, else history). Searchable text
+  is `part.data` of type `text`/`reasoning` (the `text` field) and
+  `subtask` (the `prompt`); the session `title`, `directory`, and the
+  message `model`/timestamp are attached. Message times are
+  unix-milliseconds, normalized to ISO-8601.
+
+Discovery resolves the data root via `XDG_DATA_HOME` (default
+`~/.local/share`) plus the `opencode` segment and finds `opencode.db` by
+filename — not a glob, so the binary SQLite file bypasses the text
+prefilter. An absolute `OPENCODE_DB` value is discovered as that exact
+file, so channel installs are reachable by pointing `OPENCODE_DB` at
+their `opencode-<channel>.db`.
+
+Documentary-only entries cover the legacy per-file JSON layout, config,
+auth (private credentials), snapshots, the repo cache, logs, and tool
+output.
+
 ## Adding or updating a store
 
 1. Edit `src/agentgrep/store_catalog.py`. Stamp `observed_version`

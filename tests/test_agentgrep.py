@@ -27,7 +27,9 @@ import agentgrep as _agentgrep_module
 if t.TYPE_CHECKING:
     import collections.abc as cabc
 
-AgentName = t.Literal["codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi"]
+AgentName = t.Literal[
+    "codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi", "opencode"
+]
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
@@ -6789,6 +6791,301 @@ UNIX_TO_ISO_CASES: tuple[UnixToIsoCase, ...] = (
         expected=None,
     ),
 )
+
+
+def _build_opencode_db(
+    db_path: pathlib.Path,
+    *,
+    messages: list[tuple[str, list[dict[str, object]]]],
+    session_title: str = "Test session",
+    directory: str = "/work/proj",
+    model: str = "example/model",
+    created: int = 1780000000000,
+) -> None:
+    """Build a minimal OpenCode ``opencode.db`` with session/message/part rows."""
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute("CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT, directory TEXT)")
+        conn.execute("CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, data TEXT)")
+        conn.execute(
+            "CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, data TEXT)",
+        )
+        conn.execute("INSERT INTO session VALUES (?, ?, ?)", ("ses_1", session_title, directory))
+        part_index = 0
+        for message_index, (role, parts) in enumerate(messages):
+            message_id = f"msg_{message_index}"
+            conn.execute(
+                "INSERT INTO message VALUES (?, ?, ?)",
+                (
+                    message_id,
+                    "ses_1",
+                    json.dumps({"role": role, "time": {"created": created}, "modelID": model}),
+                ),
+            )
+            for part in parts:
+                conn.execute(
+                    "INSERT INTO part VALUES (?, ?, ?, ?)",
+                    (f"prt_{part_index}", message_id, "ses_1", json.dumps(part)),
+                )
+                part_index += 1
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _parse_opencode_records(
+    agentgrep: AgentGrepModule,
+    home: pathlib.Path,
+) -> list[t.Any]:
+    """Discover and parse every ``opencode.db`` record under ``home``."""
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("opencode",), backends)
+    records: list[t.Any] = []
+    for source in sources:
+        if source.store == "opencode.db":
+            records.extend(t.cast("t.Any", agentgrep).iter_source_records(source))
+    return records
+
+
+def test_discover_opencode_sources_default_xdg_location(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """opencode.db under the default ``~/.local/share/opencode`` is discovered."""
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    monkeypatch.delenv("OPENCODE_DB", raising=False)
+    db_path = home / ".local" / "share" / "opencode" / "opencode.db"
+    _build_opencode_db(db_path, messages=[("user", [{"type": "text", "text": "hi"}])])
+
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    sources = t.cast("t.Any", agentgrep).discover_opencode_sources(home, backends)
+
+    assert db_path in {s.path for s in sources}
+
+
+def test_discover_opencode_sources_honours_xdg_data_home(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``XDG_DATA_HOME`` relocates the opencode data directory."""
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    alt = tmp_path / "xdg"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_DATA_HOME", str(alt))
+    monkeypatch.delenv("OPENCODE_DB", raising=False)
+    decoy = home / ".local" / "share" / "opencode" / "opencode.db"
+    _build_opencode_db(decoy, messages=[("user", [{"type": "text", "text": "decoy"}])])
+    real = alt / "opencode" / "opencode.db"
+    _build_opencode_db(real, messages=[("user", [{"type": "text", "text": "real"}])])
+
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    paths = {s.path for s in t.cast("t.Any", agentgrep).discover_opencode_sources(home, backends)}
+
+    assert real in paths
+    assert decoy not in paths
+
+
+class OpencodeOverrideCase(t.NamedTuple):
+    """Parametrized case for the ``OPENCODE_DB`` absolute-path override."""
+
+    test_id: str
+    db_filename: str
+
+
+OPENCODE_OVERRIDE_CASES: tuple[OpencodeOverrideCase, ...] = (
+    OpencodeOverrideCase("default-name", "opencode.db"),
+    OpencodeOverrideCase("custom-name", "my-sessions.db"),
+    OpencodeOverrideCase("channel-name", "opencode-canary.db"),
+)
+
+
+@pytest.mark.parametrize(
+    OpencodeOverrideCase._fields,
+    OPENCODE_OVERRIDE_CASES,
+    ids=[case.test_id for case in OPENCODE_OVERRIDE_CASES],
+)
+def test_discover_opencode_sources_honours_opencode_db_override(
+    test_id: str,
+    db_filename: str,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An absolute ``OPENCODE_DB`` is discovered as that exact file, any filename."""
+    _ = test_id
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    custom = tmp_path / "custom" / db_filename
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    monkeypatch.setenv("OPENCODE_DB", str(custom))
+    _build_opencode_db(custom, messages=[("user", [{"type": "text", "text": "custom"}])])
+
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    sources = t.cast("t.Any", agentgrep).discover_opencode_sources(home, backends)
+
+    assert {s.path for s in sources} == {custom}
+    assert sources[0].store == "opencode.db"
+
+
+def test_search_opencode_sessions(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """opencode.db yields user prompts and assistant history carrying the model."""
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    monkeypatch.delenv("OPENCODE_DB", raising=False)
+    db_path = home / ".local" / "share" / "opencode" / "opencode.db"
+    _build_opencode_db(
+        db_path,
+        messages=[
+            ("user", [{"type": "text", "text": "explain the streaming design"}]),
+            ("assistant", [{"type": "text", "text": "the streaming design is event-driven"}]),
+        ],
+    )
+
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    query = t.cast("t.Any", agentgrep).SearchQuery(
+        terms=("streaming",),
+        search_type="all",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("opencode",),
+        limit=None,
+    )
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("opencode",), backends)
+    records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
+
+    assert len(records) >= 2, "expected user + assistant records"
+    by_role = {r.role: r for r in records}
+    assert by_role["user"].kind == "prompt"
+    assert by_role["user"].agent == "opencode"
+    assert by_role["user"].metadata.get("directory") == "/work/proj"
+    assert by_role["assistant"].kind == "history"
+    assert by_role["assistant"].model == "example/model"
+
+
+class OpencodePartCase(t.NamedTuple):
+    """Parametrized case for one OpenCode message part through the parser."""
+
+    test_id: str
+    message_role: str
+    part: dict[str, object]
+    expected_count: int
+    expected_kind: str | None
+    expected_text_contains: str | None
+
+
+OPENCODE_PART_CASES: tuple[OpencodePartCase, ...] = (
+    OpencodePartCase(
+        "user-text-is-prompt",
+        "user",
+        {"type": "text", "text": "a design question"},
+        1,
+        "prompt",
+        "a design question",
+    ),
+    OpencodePartCase(
+        "assistant-text-is-history",
+        "assistant",
+        {"type": "text", "text": "an answer"},
+        1,
+        "history",
+        "an answer",
+    ),
+    OpencodePartCase(
+        "reasoning-is-history",
+        "assistant",
+        {"type": "reasoning", "text": "internal thinking"},
+        1,
+        "history",
+        "internal thinking",
+    ),
+    OpencodePartCase(
+        "subtask-prompt-is-searchable",
+        "assistant",
+        {"type": "subtask", "prompt": "spawn a search subtask", "description": "desc"},
+        1,
+        "history",
+        "spawn a search subtask",
+    ),
+    OpencodePartCase(
+        "tool-part-is-skipped",
+        "assistant",
+        {"type": "tool", "tool": "read", "state": {"status": "completed", "output": "x"}},
+        0,
+        None,
+        None,
+    ),
+    OpencodePartCase(
+        "file-part-is-skipped",
+        "assistant",
+        {"type": "file", "mime": "text/plain", "url": "file://x"},
+        0,
+        None,
+        None,
+    ),
+    OpencodePartCase(
+        "step-start-is-skipped",
+        "assistant",
+        {"type": "step-start"},
+        0,
+        None,
+        None,
+    ),
+    OpencodePartCase(
+        "empty-text-is-skipped",
+        "user",
+        {"type": "text", "text": ""},
+        0,
+        None,
+        None,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    OpencodePartCase._fields,
+    OPENCODE_PART_CASES,
+    ids=[case.test_id for case in OPENCODE_PART_CASES],
+)
+def test_parse_opencode_part(
+    test_id: str,
+    message_role: str,
+    part: dict[str, object],
+    expected_count: int,
+    expected_kind: str | None,
+    expected_text_contains: str | None,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each OpenCode part type maps to the expected record (or is skipped)."""
+    _ = test_id
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    monkeypatch.delenv("OPENCODE_DB", raising=False)
+    db_path = home / ".local" / "share" / "opencode" / "opencode.db"
+    _build_opencode_db(db_path, messages=[(message_role, [part])])
+
+    records = _parse_opencode_records(agentgrep, home)
+
+    assert len(records) == expected_count
+    if expected_count:
+        record = records[0]
+        assert record.agent == "opencode"
+        assert record.kind == expected_kind
+        if expected_text_contains is not None:
+            assert expected_text_contains in record.text
 
 
 @pytest.mark.parametrize(

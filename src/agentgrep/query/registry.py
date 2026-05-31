@@ -100,7 +100,8 @@ def default_registry() -> FieldRegistry:
     ============= ====== ======= ===========================================
     Field         Kind   Layer   Notes
     ============= ====== ======= ===========================================
-    ``agent``     enum   source  Values: codex, claude, cursor-cli, cursor-ide, gemini, grok, pi
+    ``agent``     enum   source  Values: codex, claude, cursor-cli, cursor-ide,
+                                         gemini, grok, pi, opencode
     ``store``     string source  Substring against :attr:`SourceHandle.store`
     ``adapter``   string source  Alias of ``adapter_id``
     ``path``      path   source  Glob against the file basename by default
@@ -117,7 +118,16 @@ def default_registry() -> FieldRegistry:
             name="agent",
             kind="enum",
             layer="source",
-            enum_values=("codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi"),
+            enum_values=(
+                "codex",
+                "claude",
+                "cursor-cli",
+                "cursor-ide",
+                "gemini",
+                "grok",
+                "pi",
+                "opencode",
+            ),
         ),
         FieldSpec(name="store", kind="string", layer="source"),
         FieldSpec(

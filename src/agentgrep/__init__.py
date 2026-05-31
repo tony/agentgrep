@@ -83,7 +83,9 @@ if t.TYPE_CHECKING:
 else:
     PrivatePathBase = type(pathlib.Path())
 
-AgentName = t.Literal["codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi"]
+AgentName = t.Literal[
+    "codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi", "opencode"
+]
 OutputMode = t.Literal["text", "json", "ndjson", "ui"]
 ProgressMode = t.Literal["auto", "always", "never"]
 SearchType = t.Literal["prompts", "history", "all"]
@@ -103,6 +105,7 @@ AGENT_CHOICES: tuple[AgentName, ...] = (
     "gemini",
     "grok",
     "pi",
+    "opencode",
 )
 JSON_FILE_SUFFIXES: frozenset[str] = frozenset({".json", ".jsonl"})
 SCHEMA_VERSION: str = "agentgrep.v1"
@@ -174,6 +177,7 @@ ITER_SOURCE_RECORD_ADAPTERS: frozenset[str] = frozenset(
         "grok.session_search_sqlite.v1",
         "grok.sessions_jsonl.v1",
         "pi.sessions_jsonl.v1",
+        "opencode.db_sqlite.v1",
     },
 )
 EnvelopeFactory = t.Callable[[str, dict[str, object], list[dict[str, object]]], dict[str, object]]
@@ -223,8 +227,8 @@ def build_description(
 
 CLI_DESCRIPTION = build_description(
     """
-    Read-only search across Codex, Claude, Cursor, Gemini, Grok, and
-    Pi local stores. Pick a subcommand from the list below:
+    Read-only search across Codex, Claude, Cursor, Gemini, Grok, Pi,
+    and OpenCode local stores. Pick a subcommand from the list below:
     ``search`` for ranked results with dedup and session grouping,
     ``grep`` for rg-shaped content search, ``find`` for store
     enumeration, ``ui`` for the interactive Textual explorer.
@@ -2342,6 +2346,14 @@ def discover_sources(
                     include_non_default=include_non_default,
                 ),
             )
+        elif agent == "opencode":
+            discovered.extend(
+                discover_opencode_sources(
+                    home,
+                    backends,
+                    include_non_default=include_non_default,
+                ),
+            )
     discovered.sort(key=lambda item: (item.agent, item.store, str(item.path)))
     return discovered
 
@@ -3299,6 +3311,66 @@ def discover_pi_sources(
     )
 
 
+def discover_opencode_sources(
+    home: pathlib.Path,
+    backends: BackendSelection,
+    *,
+    include_non_default: bool = False,
+) -> list[SourceHandle]:
+    """Discover OpenCode (anomalyco/opencode) SQLite databases.
+
+    OpenCode stores conversations in ``opencode.db`` under its XDG data
+    directory (``${XDG_DATA_HOME}/opencode``, falling back to
+    ``${HOME}/.local/share/opencode``). The store is discovered by
+    filename (not a glob) so the binary SQLite file bypasses the
+    text prefilter, the same way the Grok SQLite store is.
+
+    ``OPENCODE_DB`` overrides the database location: when it points at an
+    absolute file, OpenCode uses that file (any filename) instead of the
+    default, so agentgrep discovers that exact file directly — which also
+    makes non-stable channel databases (``opencode-<channel>.db``)
+    reachable by pointing ``OPENCODE_DB`` at them. The default lookup and
+    adapter metadata come from the ``opencode.*`` rows of
+    :data:`agentgrep.store_catalog.CATALOG`.
+    """
+    db_override = os.environ.get("OPENCODE_DB")
+    if db_override and db_override != ":memory:":
+        candidate = pathlib.Path(os.path.expandvars(db_override)).expanduser()
+        if candidate.is_absolute():
+            if not candidate.is_file():
+                return []
+            from agentgrep.store_catalog import CATALOG
+
+            descriptor = CATALOG.by_id("opencode.db")
+            handle = SourceHandle(
+                agent="opencode",
+                store="opencode.db",
+                adapter_id="opencode.db_sqlite.v1",
+                path=candidate,
+                path_kind="sqlite_db",
+                source_kind="sqlite",
+                search_root=None,
+                mtime_ns=file_mtime_ns(candidate),
+            )
+            handle.version_detection = detect_source_version(
+                handle,
+                descriptor,
+                descriptor.discovery[0],
+                {},
+            )
+            return [handle]
+    base = resolve_env_root("XDG_DATA_HOME", home / ".local" / "share") / "opencode"
+    if not base.exists():
+        return []
+    return discover_from_catalog(
+        home,
+        "opencode",
+        base,
+        backends,
+        include_non_default=include_non_default,
+    )
+
+
 def list_files_matching(
     root: pathlib.Path,
     glob_pattern: str,
@@ -3829,6 +3901,9 @@ def iter_source_records(
         return
     if source.adapter_id == "pi.sessions_jsonl.v1":
         yield from parse_pi_session_file(source)
+        return
+    if source.adapter_id == "opencode.db_sqlite.v1":
+        yield from parse_opencode_db(source)
         return
 
 
@@ -5287,6 +5362,100 @@ def parse_grok_session_search_db(
                 timestamp=_unix_to_isoformat(updated_at_raw),
                 session_id=session_id,
                 conversation_id=session_id,
+            )
+    except sqlite3.DatabaseError:
+        return
+    finally:
+        connection.close()
+
+
+def _opencode_json_object(raw: object) -> dict[str, object] | None:
+    """Parse a JSON object from an OpenCode SQLite ``data`` text column."""
+    if not isinstance(raw, str):
+        return None
+    try:
+        value = json.loads(raw)
+    except ValueError, TypeError:
+        return None
+    return t.cast("dict[str, object]", value) if isinstance(value, dict) else None
+
+
+def _opencode_part_text(part_type: str, part_data: dict[str, object]) -> str | None:
+    """Return the searchable text for an OpenCode message part.
+
+    ``text``/``reasoning`` parts carry the prompt, reply, or model thinking
+    under ``text``; ``subtask`` parts carry a ``prompt``/``description``.
+    Other part types (tool, file, snapshot, patch, step markers, …) are
+    metadata or opt-in and contribute no default-search text.
+    """
+    if part_type in {"text", "reasoning"}:
+        return as_optional_str(part_data.get("text"))
+    if part_type == "subtask":
+        return as_optional_str(part_data.get("prompt")) or as_optional_str(
+            part_data.get("description"),
+        )
+    return None
+
+
+def parse_opencode_db(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse an OpenCode ``opencode.db`` SQLite store.
+
+    Joins ``part`` -> ``message`` -> ``session``: each text-bearing part
+    becomes one record whose ``kind`` is derived from the joined message
+    ``role`` (user -> prompt, else history), with the session title,
+    working directory, and the message model/timestamp attached. Degrades
+    gracefully when the expected tables or columns are absent.
+    """
+    connection = open_readonly_sqlite(source.path)
+    try:
+        if not {"session", "message", "part"}.issubset(sqlite_table_names(connection)):
+            return
+        cursor = connection.execute(
+            "SELECT p.data, m.data, s.title, s.directory, s.id "
+            "FROM part p "
+            "JOIN message m ON p.message_id = m.id "
+            "JOIN session s ON p.session_id = s.id "
+            "ORDER BY s.id, m.id, p.id",
+        )
+        for part_raw, message_raw, title_raw, directory_raw, session_id_raw in cursor:
+            part_data = _opencode_json_object(part_raw)
+            if part_data is None:
+                continue
+            part_type = as_optional_str(part_data.get("type"))
+            if not part_type:
+                continue
+            text = _opencode_part_text(part_type, part_data)
+            if not text:
+                continue
+            message_data = _opencode_json_object(message_raw) or {}
+            role = as_optional_str(message_data.get("role")) or "assistant"
+            kind: t.Literal["prompt", "history"] = (
+                "prompt" if role.casefold() in USER_ROLES else "history"
+            )
+            time_obj = message_data.get("time")
+            created = (
+                t.cast("dict[str, object]", time_obj).get("created")
+                if isinstance(time_obj, dict)
+                else None
+            )
+            session_id = as_optional_str(session_id_raw)
+            directory = as_optional_str(directory_raw)
+            yield SearchRecord(
+                kind=kind,
+                agent=source.agent,
+                store=source.store,
+                adapter_id=source.adapter_id,
+                path=source.path,
+                text=text,
+                title=as_optional_str(title_raw),
+                role=role,
+                timestamp=_unix_millis_to_isoformat(created),
+                model=as_optional_str(message_data.get("modelID")),
+                session_id=session_id,
+                conversation_id=session_id,
+                metadata={"directory": directory} if directory else {},
             )
     except sqlite3.DatabaseError:
         return
