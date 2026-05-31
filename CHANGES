@@ -36,11 +36,20 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a8 (Yet to be released)
+## agentgrep 0.1.0a9 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a9 (2026-05-30)
+
+agentgrep 0.1.0a9 reports how each discovered source's version was
+detected. App-version context, data-shape version, detection
+strategy, confidence, and concise evidence now ride along with source
+discovery and the MCP `list_sources` payload. The release also
+restores `find --type` filtering and corrects `fuzzy` output for
+`--json` / `--ndjson` and empty queries.
 
 ### What's new
 
