@@ -381,14 +381,20 @@ def test_committed_benchmarks_include_engine_only_profile_entries() -> None:
     expected = {
         "profile-engine-search-all-prompts-limit-500",
         "profile-engine-search-all-conversations-limit-500",
+        "profile-engine-grep-all-prompts-max-count-500",
+        "profile-engine-grep-all-conversations-max-count-500",
         "profile-engine-find-all-prompts-limit-500",
     }
     assert expected <= set(config.bench)
     for name in expected:
         bench = config.bench[name]
         assert "scripts/profile_engine.py" in bench.command
-        assert "--limit 500" in bench.command
-        assert "limit 500" in bench.description.casefold()
+        if "max-count" in name:
+            assert "--max-count 500" in bench.command
+            assert "max-count 500" in bench.description.casefold()
+        else:
+            assert "--limit 500" in bench.command
+            assert "limit 500" in bench.description.casefold()
 
 
 # ---------------------------------------------------------------------------
