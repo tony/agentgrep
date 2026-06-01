@@ -10,6 +10,7 @@ code path stays out of pytest where it would take minutes per test.
 from __future__ import annotations
 
 import importlib.util
+import json
 import math
 import pathlib
 import shlex
@@ -484,15 +485,54 @@ def test_measurement_json_shape_preserves_documented_keys() -> None:
         "dry_run",
         "profile_payload",
         "profile_capture_error",
+        "schema_version",
+        "artifact_kind",
     }
     assert payload["samples"] == [0.5, 0.6, 0.55]
     assert payload["dry_run"] is False
     assert payload["profile_payload"] is None
     assert payload["profile_capture_error"] is None
+    assert payload["schema_version"] == 1
+    assert payload["artifact_kind"] == "agentgrep.benchmark.measurement"
     # Computed stats are properties, not stored fields — they should not leak
     # into model_dump (consumers compute their own from the raw samples).
     assert "avg_s" not in payload
     assert "min_s" not in payload
+
+
+def test_benchmark_json_renderer_includes_artifact_metadata() -> None:
+    """Benchmark JSON artifacts carry a stable root shape marker."""
+    measurement = benchmark.Measurement(
+        sha="0" * 40,
+        short_sha="0000000",
+        subject="subject",
+        command_name="grep",
+        command_string="{venv}/bin/agentgrep grep {query}",
+        samples=[0.1],
+    )
+
+    payload = json.loads(benchmark.render_json([measurement], []))
+
+    assert payload["schema_version"] == 1
+    assert payload["artifact_kind"] == "agentgrep.benchmark.runs"
+    assert payload["runs"][0]["artifact_kind"] == "agentgrep.benchmark.measurement"
+
+
+def test_benchmark_ndjson_rows_include_artifact_metadata() -> None:
+    """Benchmark NDJSON rows are self-describing without a root object."""
+    measurement = benchmark.Measurement(
+        sha="0" * 40,
+        short_sha="0000000",
+        subject="subject",
+        command_name="grep",
+        command_string="{venv}/bin/agentgrep grep {query}",
+        samples=[0.1],
+    )
+
+    row = json.loads(benchmark.render_ndjson([measurement], []))
+
+    assert row["schema_version"] == 1
+    assert row["artifact_kind"] == "agentgrep.benchmark.measurement"
 
 
 def test_sanitize_command_string_replaces_local_context_values(tmp_path: pathlib.Path) -> None:

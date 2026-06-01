@@ -51,6 +51,9 @@ LOCAL_CONFIG = REPO_ROOT / "scripts" / "benchmark.local.toml"
 Status = t.Literal["ok", "checkout_fail", "sync_fail", "command_missing", "bench_fail"]
 OutputFormat = t.Literal["rich", "json", "ndjson", "md", "csv"]
 PERCENTILE_LABELS: tuple[str, ...] = ("min", "max", "avg", "p50", "p90", "p95", "p99")
+SCHEMA_VERSION = 1
+BENCHMARK_RUNS_ARTIFACT_KIND = "agentgrep.benchmark.runs"
+BENCHMARK_MEASUREMENT_ARTIFACT_KIND = "agentgrep.benchmark.measurement"
 type CommandContext = dict[str, str]
 type ProfilePayload = dict[str, object]
 
@@ -106,6 +109,8 @@ class Config(pydantic.BaseModel):
 class Measurement(pydantic.BaseModel):
     """One (commit, bench) result — preserves raw samples for downstream stats."""
 
+    schema_version: int = SCHEMA_VERSION
+    artifact_kind: str = BENCHMARK_MEASUREMENT_ARTIFACT_KIND
     sha: str
     short_sha: str
     subject: str
@@ -600,7 +605,11 @@ def render_rich(measurements: list[Measurement], percentile_labels: list[str]) -
 def render_json(measurements: list[Measurement], _labels: list[str]) -> str:
     """Single JSON document — ``{"runs": [...]}`` — with raw samples preserved."""
     return json.dumps(
-        {"runs": [m.model_dump(mode="json") for m in measurements]},
+        {
+            "schema_version": SCHEMA_VERSION,
+            "artifact_kind": BENCHMARK_RUNS_ARTIFACT_KIND,
+            "runs": [m.model_dump(mode="json") for m in measurements],
+        },
         indent=2,
     )
 

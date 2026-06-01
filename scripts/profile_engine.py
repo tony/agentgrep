@@ -43,6 +43,9 @@ ProfileComponent = t.Literal[
 ]
 ComponentArgument = ProfileComponent | t.Literal["all", "search", "find"]
 OutputFormat = t.Literal["json", "ndjson", "rich"]
+SCHEMA_VERSION = 1
+PROFILE_RUN_ARTIFACT_KIND = "agentgrep.profile.run"
+PROFILE_BATCH_ARTIFACT_KIND = "agentgrep.profile.batch"
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -261,6 +264,8 @@ def _run_spec(
         terms = query.terms
     payload["profile_command"] = spec.command
     payload["profile_component"] = spec.component
+    payload["schema_version"] = SCHEMA_VERSION
+    payload["artifact_kind"] = PROFILE_RUN_ARTIFACT_KIND
     payload["agent_count"] = len(agents)
     payload["term_count"] = len(terms)
     payload["limit"] = limit
@@ -279,6 +284,8 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
         return _run_spec(args, specs[0], home=home, agents=agents, limit=limit)
     runs = [_run_spec(args, spec, home=home, agents=agents, limit=limit) for spec in specs]
     return {
+        "schema_version": SCHEMA_VERSION,
+        "artifact_kind": PROFILE_BATCH_ARTIFACT_KIND,
         "kind": "profile_batch",
         "profile_command": "all",
         "profile_component": "all",

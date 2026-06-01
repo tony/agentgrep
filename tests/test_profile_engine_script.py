@@ -207,6 +207,17 @@ def test_render_payload_machine_formats_preserve_profile_samples(
     assert [sample["name"] for sample in samples] == ["search.discover", "search.collect"]
 
 
+def test_profile_payloads_include_artifact_metadata() -> None:
+    """Single-run profile artifacts are self-describing for long-lived consumers."""
+    parser = profile_engine._build_parser()
+    args = parser.parse_args(["grep-prompts", "tmux", "--agent", "codex", "--max-count", "1"])
+
+    payload = profile_engine._run(args)
+
+    assert payload["schema_version"] == 1
+    assert payload["artifact_kind"] == "agentgrep.profile.run"
+
+
 def test_render_payload_ndjson_expands_batch_to_one_line_per_component() -> None:
     """Batch NDJSON emits child profile runs, not one nested batch document."""
     payload = {
@@ -231,6 +242,24 @@ def test_render_payload_ndjson_expands_batch_to_one_line_per_component() -> None
         "search-prompts",
         "find-prompts",
     ]
+
+
+def test_profile_batch_payload_includes_artifact_metadata(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Batch profile artifacts carry root metadata while child runs stay typed."""
+    _ = _write_codex_session(tmp_path, name="match.jsonl", text="tmux prompt")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    parser = profile_engine._build_parser()
+    args = parser.parse_args(["all", "tmux", "--agent", "codex", "--limit", "1"])
+
+    payload = profile_engine._run(args)
+
+    assert payload["schema_version"] == 1
+    assert payload["artifact_kind"] == "agentgrep.profile.batch"
+    runs = t.cast("list[dict[str, object]]", payload["runs"])
+    assert {run["artifact_kind"] for run in runs} == {"agentgrep.profile.run"}
 
 
 def test_render_payload_rich_reports_top_spans_without_sensitive_text() -> None:
