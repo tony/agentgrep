@@ -597,6 +597,318 @@ def test_benchmark_ndjson_rows_include_artifact_metadata() -> None:
     assert row["artifact_kind"] == "agentgrep.benchmark.measurement"
 
 
+class SafeProfileAttributeCase(t.NamedTuple):
+    """One sanitizer expectation — feed ``attributes``, assert the safe dict."""
+
+    test_id: str
+    attributes: dict[object, object]
+    expected: dict[str, object]
+
+
+_SAFE_PROFILE_ATTRIBUTE_CASES: tuple[SafeProfileAttributeCase, ...] = (
+    SafeProfileAttributeCase(
+        test_id="path-kind-kept",
+        attributes={"agentgrep_path_kind": "sqlite_db"},
+        expected={"agentgrep_path_kind": "sqlite_db"},
+    ),
+    SafeProfileAttributeCase(
+        test_id="env-path-status-kept",
+        attributes={"agentgrep_env_path_status": "not_found"},
+        expected={"agentgrep_env_path_status": "not_found"},
+    ),
+    SafeProfileAttributeCase(
+        test_id="override-path-status-kept",
+        attributes={"agentgrep_override_path_status": "not_a_directory"},
+        expected={"agentgrep_override_path_status": "not_a_directory"},
+    ),
+    SafeProfileAttributeCase(
+        test_id="agentgrep-path-dropped",
+        attributes={"agentgrep_path": "/home/private/project"},
+        expected={},
+    ),
+    SafeProfileAttributeCase(
+        test_id="agentgrep-query-dropped",
+        attributes={"agentgrep_query": "private-token"},
+        expected={},
+    ),
+    SafeProfileAttributeCase(
+        test_id="non-string-key-dropped",
+        attributes={1: "value"},
+        expected={},
+    ),
+    SafeProfileAttributeCase(
+        test_id="non-scalar-value-dropped",
+        attributes={"agentgrep_extra": ["nested"]},
+        expected={},
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    _SAFE_PROFILE_ATTRIBUTE_CASES,
+    ids=[c.test_id for c in _SAFE_PROFILE_ATTRIBUTE_CASES],
+)
+def test_safe_profile_attribute_dict_allowlists_safe_classifiers(
+    case: SafeProfileAttributeCase,
+) -> None:
+    """Denied substrings drop sensitive keys but spare allowlisted classifiers."""
+    assert benchmark._safe_profile_attribute_dict(case.attributes) == case.expected
+
+
+def _analysis_fixture_measurements() -> list[benchmark.Measurement]:
+    """Build benchmark rows with nested profile spans for analyzer tests."""
+    return [
+        benchmark.Measurement(
+            sha="a" * 40,
+            short_sha="aaaaaaa",
+            subject="profile search",
+            command_name="profile-engine-search-all-conversations-limit-500",
+            command_string=(
+                "{venv}/bin/python scripts/profile_engine.py search-conversations {query}"
+            ),
+            samples=[0.5, 0.7],
+            profile_payload={
+                "profile_component": "search-conversations",
+                "profile": {
+                    "samples": [
+                        {
+                            "name": "search.collect",
+                            "duration_seconds": 1.2,
+                            "attributes": {
+                                "agentgrep_source_count": 2,
+                                "agentgrep_path_kind": "sqlite_db",
+                                "agentgrep_query": "private-token",
+                                "agentgrep_path": "/home/private/project",
+                            },
+                        },
+                        {
+                            "name": "search.discover",
+                            "duration_seconds": 0.3,
+                            "attributes": {"agentgrep_agent_count": 8},
+                        },
+                    ],
+                },
+            },
+        ),
+        benchmark.Measurement(
+            sha="b" * 40,
+            short_sha="bbbbbbb",
+            subject="profile grep",
+            command_name="profile-engine-grep-all-conversations-max-count-500",
+            command_string="{venv}/bin/python scripts/profile_engine.py grep-conversations {query}",
+            samples=[0.4],
+            profile_payload={
+                "profile_component": "grep-conversations",
+                "profile": {
+                    "samples": [
+                        {
+                            "name": "search.collect",
+                            "duration_seconds": 1.0,
+                            "attributes": {"agentgrep_source_count": 2},
+                        },
+                    ],
+                },
+            },
+        ),
+        benchmark.Measurement(
+            sha="c" * 40,
+            short_sha="ccccccc",
+            subject="failed bench",
+            command_name="profile-engine-find-all-prompts-limit-500",
+            command_string="{venv}/bin/python scripts/profile_engine.py find-prompts",
+            samples=[],
+            status="bench_fail",
+            error="boom",
+        ),
+    ]
+
+
+class AnalysisLoadCase(t.NamedTuple):
+    """One benchmark artifact shape the analyzer can load."""
+
+    test_id: str
+    suffix: str
+    renderer_name: str
+
+
+ANALYSIS_LOAD_CASES: tuple[AnalysisLoadCase, ...] = (
+    AnalysisLoadCase(test_id="json-root", suffix=".json", renderer_name="render_json"),
+    AnalysisLoadCase(test_id="ndjson-rows", suffix=".ndjson", renderer_name="render_ndjson"),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    ANALYSIS_LOAD_CASES,
+    ids=[c.test_id for c in ANALYSIS_LOAD_CASES],
+)
+def test_load_measurement_artifact_accepts_benchmark_json_and_ndjson(
+    case: AnalysisLoadCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Analyzer input loading accepts the benchmark artifact formats."""
+    rows = _analysis_fixture_measurements()
+    artifact = tmp_path / f"benchmark{case.suffix}"
+    renderer = getattr(benchmark, case.renderer_name)
+    artifact.write_text(renderer(rows, []))
+
+    loaded = benchmark.load_measurement_artifact(artifact)
+
+    assert [row.command_name for row in loaded] == [row.command_name for row in rows]
+    assert loaded[0].profile_payload == rows[0].profile_payload
+
+
+def test_load_measurement_artifact_rejects_unknown_shapes(tmp_path: pathlib.Path) -> None:
+    """Analyzer loading fails loud for non-benchmark JSON shapes."""
+    artifact = tmp_path / "not-benchmark.json"
+    artifact.write_text(json.dumps({"profile": {"samples": []}}))
+
+    with pytest.raises(typer.BadParameter, match="unsupported benchmark artifact"):
+        benchmark.load_measurement_artifact(artifact)
+
+
+def test_build_analysis_report_summarizes_commands_and_profile_spans() -> None:
+    """Analysis reports expose timing summaries and nested profile bottlenecks."""
+    report = benchmark.build_analysis_report(
+        _analysis_fixture_measurements(),
+        artifact_label="benchmark.json",
+        percentile_labels=["min", "avg", "p90"],
+        top_spans=2,
+        top_groups=2,
+    )
+
+    assert report.artifact_label == "benchmark.json"
+    assert report.command_summaries[0].command_name == (
+        "profile-engine-search-all-conversations-limit-500"
+    )
+    assert report.command_summaries[0].status_counts == {"ok": 1}
+    assert report.command_summaries[0].sample_count == 2
+    assert report.command_summaries[0].stats["avg"] == pytest.approx(0.6)
+    assert report.top_spans[0].name == "search.collect"
+    assert report.top_spans[0].duration_seconds == pytest.approx(1.2)
+    assert "agentgrep_query" not in report.top_spans[0].attributes
+    assert "agentgrep_path" not in report.top_spans[0].attributes
+    assert report.top_spans[0].attributes["agentgrep_path_kind"] == "sqlite_db"
+    assert report.span_groups[0].component == "search-conversations"
+    assert report.span_groups[0].name == "search.collect"
+    assert report.warnings == ["1 measurement(s) have no samples"]
+
+
+class AnalysisRenderCase(t.NamedTuple):
+    """One analysis reporter expectation."""
+
+    test_id: str
+    output_format: str
+    expected_fragment: str
+
+
+ANALYSIS_RENDER_CASES: tuple[AnalysisRenderCase, ...] = (
+    AnalysisRenderCase(
+        test_id="rich",
+        output_format="rich",
+        expected_fragment="benchmark analysis",
+    ),
+    AnalysisRenderCase(
+        test_id="json",
+        output_format="json",
+        expected_fragment="agentgrep.benchmark.analysis",
+    ),
+    AnalysisRenderCase(
+        test_id="ndjson",
+        output_format="ndjson",
+        expected_fragment="agentgrep.benchmark.analysis.command_summary",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    ANALYSIS_RENDER_CASES,
+    ids=[c.test_id for c in ANALYSIS_RENDER_CASES],
+)
+def test_render_analysis_report_supports_human_and_machine_formats(
+    case: AnalysisRenderCase,
+) -> None:
+    """Analysis reports render as plain rich text, JSON, or NDJSON."""
+    report = benchmark.build_analysis_report(
+        _analysis_fixture_measurements(),
+        artifact_label="/home/private/benchmark.json",
+        percentile_labels=["min", "avg"],
+        top_spans=1,
+        top_groups=1,
+    )
+
+    text = benchmark.render_analysis_report(report, output_format=case.output_format)
+
+    assert case.expected_fragment in text
+    assert "\x1b[" not in text
+    assert "/home/private" not in text
+    assert "private-token" not in text
+    if case.output_format == "json":
+        payload = json.loads(text)
+        assert payload["schema_version"] == 1
+        assert payload["artifact_kind"] == "agentgrep.benchmark.analysis"
+        assert payload["artifact_label"] == "benchmark.json"
+        assert payload["top_spans"][0]["attributes"] == {
+            "agentgrep_path_kind": "sqlite_db",
+            "agentgrep_source_count": 2,
+        }
+    if case.output_format == "ndjson":
+        rows = [json.loads(line) for line in text.splitlines()]
+        assert {row["artifact_kind"] for row in rows} >= {
+            "agentgrep.benchmark.analysis.command_summary",
+            "agentgrep.benchmark.analysis.span",
+            "agentgrep.benchmark.analysis.span_group",
+            "agentgrep.benchmark.analysis.warning",
+        }
+
+
+def test_build_analysis_report_can_suppress_spans_and_groups() -> None:
+    """Zero limits suppress optional span sections while keeping command summaries."""
+    report = benchmark.build_analysis_report(
+        _analysis_fixture_measurements(),
+        artifact_label="benchmark.json",
+        percentile_labels=["min"],
+        top_spans=0,
+        top_groups=0,
+    )
+
+    assert report.command_summaries
+    assert report.top_spans == ()
+    assert report.span_groups == ()
+
+
+def test_analyze_command_writes_requested_format(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The analyze CLI reads a benchmark artifact and writes the rendered report."""
+    artifact = tmp_path / "benchmark.json"
+    output = tmp_path / "analysis.json"
+    artifact.write_text(benchmark.render_json(_analysis_fixture_measurements(), []))
+
+    rc = benchmark.main(
+        [
+            "analyze",
+            str(artifact),
+            "--format",
+            "json",
+            "--output",
+            str(output),
+            "--top-spans",
+            "1",
+            "--top-groups",
+            "1",
+        ],
+    )
+
+    payload = json.loads(output.read_text())
+    assert rc == 0
+    assert payload["artifact_kind"] == "agentgrep.benchmark.analysis"
+    assert len(payload["top_spans"]) == 1
+    assert len(payload["span_groups"]) == 1
+
+
 def test_sanitize_command_string_replaces_local_context_values(tmp_path: pathlib.Path) -> None:
     """Rendered commands can be shared without local paths or query text."""
     context = {

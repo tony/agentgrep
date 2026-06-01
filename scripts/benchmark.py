@@ -51,10 +51,16 @@ LOCAL_CONFIG = REPO_ROOT / "scripts" / "benchmark.local.toml"
 
 Status = t.Literal["ok", "checkout_fail", "sync_fail", "command_missing", "bench_fail"]
 OutputFormat = t.Literal["rich", "json", "ndjson", "md", "csv"]
+AnalysisOutputFormat = t.Literal["rich", "json", "ndjson"]
 PERCENTILE_LABELS: tuple[str, ...] = ("min", "max", "avg", "p50", "p90", "p95", "p99")
 SCHEMA_VERSION = 1
 BENCHMARK_RUNS_ARTIFACT_KIND = "agentgrep.benchmark.runs"
 BENCHMARK_MEASUREMENT_ARTIFACT_KIND = "agentgrep.benchmark.measurement"
+BENCHMARK_ANALYSIS_ARTIFACT_KIND = "agentgrep.benchmark.analysis"
+BENCHMARK_ANALYSIS_COMMAND_ARTIFACT_KIND = "agentgrep.benchmark.analysis.command_summary"
+BENCHMARK_ANALYSIS_SPAN_ARTIFACT_KIND = "agentgrep.benchmark.analysis.span"
+BENCHMARK_ANALYSIS_SPAN_GROUP_ARTIFACT_KIND = "agentgrep.benchmark.analysis.span_group"
+BENCHMARK_ANALYSIS_WARNING_ARTIFACT_KIND = "agentgrep.benchmark.analysis.warning"
 type CommandContext = dict[str, str]
 type ProfilePayload = dict[str, object]
 
@@ -80,6 +86,40 @@ class ProfileSpanSummary:
     name: str
     duration_seconds: float
     attributes: dict[str, object]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class AnalysisCommandSummary:
+    """Timing summary for one benchmark command across measurements."""
+
+    command_name: str
+    measurement_count: int
+    sample_count: int
+    status_counts: dict[str, int]
+    stats: dict[str, float | None]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class AnalysisSpanGroup:
+    """Aggregate timing for one profile component/span pair."""
+
+    component: str
+    name: str
+    count: int
+    total_duration_seconds: float
+    max_duration_seconds: float
+    avg_duration_seconds: float
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class AnalysisReport:
+    """Derived benchmark artifact analysis, ready for reporters."""
+
+    artifact_label: str
+    command_summaries: tuple[AnalysisCommandSummary, ...]
+    top_spans: tuple[ProfileSpanSummary, ...]
+    span_groups: tuple[AnalysisSpanGroup, ...]
+    warnings: list[str]
 
 
 # ---------------------------------------------------------------------------
@@ -590,19 +630,40 @@ def _profile_payload_samples(payload: ProfilePayload) -> tuple[dict[str, object]
     return tuple(sample for sample in samples if isinstance(sample, dict))
 
 
-def _safe_profile_attributes(attributes: object) -> str:
-    """Render sanitized scalar profile attributes for rich benchmark output."""
+#: Attribute keys that match a denied substring but carry only safe
+#: classifier values (path kinds and probe-status enums), never real paths.
+_PROFILE_ATTRIBUTE_ALLOWLIST = frozenset(
+    {
+        "agentgrep_path_kind",
+        "agentgrep_env_path_status",
+        "agentgrep_override_path_status",
+    },
+)
+
+
+def _safe_profile_attribute_dict(attributes: object) -> dict[str, object]:
+    """Return sanitized scalar profile attributes safe for reports."""
     if not isinstance(attributes, dict):
-        return ""
-    cells: list[str] = []
+        return {}
+    safe: dict[str, object] = {}
     denied_key_parts = ("argv", "command", "path", "query")
     for key, value in sorted(attributes.items()):
         if not isinstance(key, str):
             continue
-        if any(part in key.casefold() for part in denied_key_parts):
+        if key not in _PROFILE_ATTRIBUTE_ALLOWLIST and any(
+            part in key.casefold() for part in denied_key_parts
+        ):
             continue
         if isinstance(value, str | int | float | bool) or value is None:
-            cells.append(f"{key}={value}")
+            safe[key] = value
+    return safe
+
+
+def _safe_profile_attributes(attributes: object) -> str:
+    """Render sanitized scalar profile attributes for rich benchmark output."""
+    cells: list[str] = []
+    for key, value in _safe_profile_attribute_dict(attributes).items():
+        cells.append(f"{key}={value}")
         if len(cells) >= 5:
             break
     return ", ".join(cells)
@@ -634,7 +695,7 @@ def _profile_span_summaries(
                     component=component_text,
                     name=name if isinstance(name, str) else "unknown",
                     duration_seconds=float(duration) if isinstance(duration, int | float) else 0.0,
-                    attributes=dict(attributes) if isinstance(attributes, dict) else {},
+                    attributes=_safe_profile_attribute_dict(attributes),
                 ),
             )
     return tuple(
@@ -787,6 +848,332 @@ def render_csv(measurements: list[Measurement], percentile_labels: list[str]) ->
         ]
         writer.writerow(row)
     return buffer.getvalue()
+
+
+def _measurement_from_artifact_row(row: object, *, source: pathlib.Path) -> Measurement:
+    """Validate one benchmark measurement row from an artifact."""
+    if not isinstance(row, dict):
+        msg = f"unsupported benchmark artifact row in {source.name}: expected object"
+        raise typer.BadParameter(msg)
+    try:
+        return Measurement.model_validate(row)
+    except pydantic.ValidationError as exc:
+        msg = f"unsupported benchmark artifact row in {source.name}: {exc.errors()[0]['msg']}"
+        raise typer.BadParameter(msg) from exc
+
+
+def load_measurement_artifact(path: pathlib.Path) -> list[Measurement]:
+    """Load benchmark JSON or NDJSON artifacts into measurements."""
+    try:
+        text = path.read_text()
+    except OSError as exc:
+        msg = f"failed to read benchmark artifact {path}: {exc}"
+        raise typer.BadParameter(msg) from exc
+    if not text.strip():
+        msg = f"unsupported benchmark artifact {path.name}: file is empty"
+        raise typer.BadParameter(msg)
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        rows: list[Measurement] = []
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                msg = f"unsupported benchmark artifact {path.name}: invalid JSON on line {line_number}"
+                raise typer.BadParameter(msg) from exc
+            rows.append(_measurement_from_artifact_row(row, source=path))
+        if rows:
+            return rows
+        msg = f"unsupported benchmark artifact {path.name}: no measurement rows found"
+        raise typer.BadParameter(msg) from None
+    if isinstance(payload, dict):
+        runs = payload.get("runs")
+        if isinstance(runs, list):
+            return [_measurement_from_artifact_row(row, source=path) for row in runs]
+    msg = f"unsupported benchmark artifact {path.name}: expected benchmark JSON or NDJSON"
+    raise typer.BadParameter(msg)
+
+
+def _analysis_artifact_label(label: str) -> str:
+    """Return a shareable artifact label without local directories."""
+    return pathlib.Path(label).name or "benchmark-artifact"
+
+
+def _json_stat_value(value: float) -> float | None:
+    """Convert NaN stats to JSON-friendly null values."""
+    return None if math.isnan(value) else value
+
+
+def _stats_for_samples(samples: list[float], labels: list[str]) -> dict[str, float | None]:
+    """Compute selected stats for one flattened sample list."""
+    if not samples:
+        return dict.fromkeys(labels)
+    return {label: _json_stat_value(stat_for_label(samples, label)) for label in labels}
+
+
+def _command_summaries(
+    measurements: list[Measurement],
+    *,
+    percentile_labels: list[str],
+) -> tuple[AnalysisCommandSummary, ...]:
+    """Summarize timing samples by benchmark command name."""
+    by_command: dict[str, list[Measurement]] = {}
+    for measurement in measurements:
+        by_command.setdefault(measurement.command_name, []).append(measurement)
+
+    summaries: list[AnalysisCommandSummary] = []
+    for command_name, rows in by_command.items():
+        status_counts: dict[str, int] = {}
+        samples: list[float] = []
+        for row in rows:
+            status_counts[row.status] = status_counts.get(row.status, 0) + 1
+            samples.extend(row.samples)
+        summaries.append(
+            AnalysisCommandSummary(
+                command_name=command_name,
+                measurement_count=len(rows),
+                sample_count=len(samples),
+                status_counts=status_counts,
+                stats=_stats_for_samples(samples, percentile_labels),
+            ),
+        )
+    return tuple(summaries)
+
+
+def _span_groups(
+    spans: tuple[ProfileSpanSummary, ...],
+    *,
+    top_groups: int,
+) -> tuple[AnalysisSpanGroup, ...]:
+    """Aggregate span durations by profile component and span name."""
+    if top_groups <= 0:
+        return ()
+    groups: dict[tuple[str, str], list[float]] = {}
+    for span in spans:
+        groups.setdefault((span.component, span.name), []).append(span.duration_seconds)
+
+    summaries = [
+        AnalysisSpanGroup(
+            component=component,
+            name=name,
+            count=len(durations),
+            total_duration_seconds=sum(durations),
+            max_duration_seconds=max(durations),
+            avg_duration_seconds=sum(durations) / len(durations),
+        )
+        for (component, name), durations in groups.items()
+    ]
+    return tuple(
+        sorted(
+            summaries,
+            key=lambda group: group.total_duration_seconds,
+            reverse=True,
+        )[:top_groups],
+    )
+
+
+def build_analysis_report(
+    measurements: list[Measurement],
+    *,
+    artifact_label: str,
+    percentile_labels: list[str],
+    top_spans: int,
+    top_groups: int,
+) -> AnalysisReport:
+    """Build a benchmark analysis report from loaded measurement rows."""
+    all_spans = _profile_span_summaries(measurements, top_spans=sys.maxsize)
+    sampleless_count = sum(1 for measurement in measurements if not measurement.samples)
+    profile_capture_errors = sum(
+        1 for measurement in measurements if measurement.profile_capture_error
+    )
+    warnings: list[str] = []
+    if sampleless_count:
+        warnings.append(f"{sampleless_count} measurement(s) have no samples")
+    if profile_capture_errors:
+        warnings.append(f"{profile_capture_errors} profile capture(s) failed")
+    return AnalysisReport(
+        artifact_label=_analysis_artifact_label(artifact_label),
+        command_summaries=_command_summaries(
+            measurements,
+            percentile_labels=percentile_labels,
+        ),
+        top_spans=all_spans[:top_spans] if top_spans > 0 else (),
+        span_groups=_span_groups(all_spans, top_groups=top_groups),
+        warnings=warnings,
+    )
+
+
+def _analysis_command_payload(summary: AnalysisCommandSummary) -> dict[str, object]:
+    """Serialize one command summary."""
+    return dataclasses.asdict(summary)
+
+
+def _analysis_span_payload(span: ProfileSpanSummary) -> dict[str, object]:
+    """Serialize one profile span summary."""
+    return dataclasses.asdict(span)
+
+
+def _analysis_group_payload(group: AnalysisSpanGroup) -> dict[str, object]:
+    """Serialize one grouped span summary."""
+    return dataclasses.asdict(group)
+
+
+def _analysis_report_payload(report: AnalysisReport) -> dict[str, object]:
+    """Serialize the full analysis report."""
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "artifact_kind": BENCHMARK_ANALYSIS_ARTIFACT_KIND,
+        "artifact_label": report.artifact_label,
+        "command_summaries": [
+            _analysis_command_payload(summary) for summary in report.command_summaries
+        ],
+        "top_spans": [_analysis_span_payload(span) for span in report.top_spans],
+        "span_groups": [_analysis_group_payload(group) for group in report.span_groups],
+        "warnings": report.warnings,
+    }
+
+
+def render_analysis_json(report: AnalysisReport) -> str:
+    """Render an analysis report as one JSON document."""
+    return json.dumps(_analysis_report_payload(report), indent=2)
+
+
+def render_analysis_ndjson(report: AnalysisReport) -> str:
+    """Render an analysis report as self-describing NDJSON rows."""
+    rows: list[dict[str, object]] = [
+        {
+            "schema_version": SCHEMA_VERSION,
+            "artifact_kind": BENCHMARK_ANALYSIS_COMMAND_ARTIFACT_KIND,
+            "artifact_label": report.artifact_label,
+            **_analysis_command_payload(summary),
+        }
+        for summary in report.command_summaries
+    ]
+    rows.extend(
+        {
+            "schema_version": SCHEMA_VERSION,
+            "artifact_kind": BENCHMARK_ANALYSIS_SPAN_ARTIFACT_KIND,
+            "artifact_label": report.artifact_label,
+            **_analysis_span_payload(span),
+        }
+        for span in report.top_spans
+    )
+    rows.extend(
+        {
+            "schema_version": SCHEMA_VERSION,
+            "artifact_kind": BENCHMARK_ANALYSIS_SPAN_GROUP_ARTIFACT_KIND,
+            "artifact_label": report.artifact_label,
+            **_analysis_group_payload(group),
+        }
+        for group in report.span_groups
+    )
+    rows.extend(
+        {
+            "schema_version": SCHEMA_VERSION,
+            "artifact_kind": BENCHMARK_ANALYSIS_WARNING_ARTIFACT_KIND,
+            "artifact_label": report.artifact_label,
+            "message": warning,
+        }
+        for warning in report.warnings
+    )
+    return "\n".join(json.dumps(row) for row in rows)
+
+
+def render_analysis_rich(report: AnalysisReport) -> str:
+    """Render an analysis report as plain Rich tables."""
+    console = rich.console.Console(
+        record=True,
+        file=io.StringIO(),
+        width=120,
+        no_color=True,
+        color_system=None,
+    )
+    summary = rich.table.Table(title=f"benchmark analysis: {report.artifact_label}")
+    summary.add_column("command")
+    summary.add_column("measurements", justify="right")
+    summary.add_column("samples", justify="right")
+    summary.add_column("status")
+    stat_labels = list(report.command_summaries[0].stats) if report.command_summaries else []
+    for label in stat_labels:
+        summary.add_column(label, justify="right")
+    for command_summary in report.command_summaries:
+        status = ", ".join(
+            f"{name}={count}" for name, count in sorted(command_summary.status_counts.items())
+        )
+        summary.add_row(
+            command_summary.command_name,
+            str(command_summary.measurement_count),
+            str(command_summary.sample_count),
+            status,
+            *(
+                _fmt_seconds(value) if value is not None else "—"
+                for value in command_summary.stats.values()
+            ),
+        )
+    console.print(summary)
+
+    if report.top_spans:
+        spans = rich.table.Table(title="slowest profile spans")
+        spans.add_column("sha")
+        spans.add_column("command")
+        spans.add_column("component")
+        spans.add_column("span")
+        spans.add_column("duration", justify="right")
+        spans.add_column("attributes", overflow="fold")
+        for span in report.top_spans:
+            spans.add_row(
+                span.short_sha,
+                span.command_name,
+                span.component,
+                span.name,
+                _fmt_seconds(span.duration_seconds),
+                _safe_profile_attributes(span.attributes),
+            )
+        console.print(spans)
+
+    if report.span_groups:
+        groups = rich.table.Table(title="profile span groups")
+        groups.add_column("component")
+        groups.add_column("span")
+        groups.add_column("count", justify="right")
+        groups.add_column("total", justify="right")
+        groups.add_column("max", justify="right")
+        groups.add_column("avg", justify="right")
+        for group in report.span_groups:
+            groups.add_row(
+                group.component,
+                group.name,
+                str(group.count),
+                _fmt_seconds(group.total_duration_seconds),
+                _fmt_seconds(group.max_duration_seconds),
+                _fmt_seconds(group.avg_duration_seconds),
+            )
+        console.print(groups)
+
+    if report.warnings:
+        warnings = rich.table.Table(title="warnings")
+        warnings.add_column("message")
+        for warning in report.warnings:
+            warnings.add_row(warning)
+        console.print(warnings)
+
+    return console.export_text()
+
+
+def render_analysis_report(
+    report: AnalysisReport,
+    *,
+    output_format: AnalysisOutputFormat,
+) -> str:
+    """Render an analysis report in the requested format."""
+    if output_format == "json":
+        return render_analysis_json(report)
+    if output_format == "ndjson":
+        return render_analysis_ndjson(report)
+    return render_analysis_rich(report)
 
 
 RENDERERS: dict[OutputFormat, t.Callable[[list[Measurement], list[str]], str]] = {
@@ -1401,6 +1788,57 @@ def cmd_compare(
         dry_run=dry_run,
         no_hyperfine=no_hyperfine,
     )
+
+
+@app.command("analyze")
+def cmd_analyze(
+    artifact: pathlib.Path = typer.Argument(..., help="Benchmark JSON or NDJSON artifact."),
+    output_format: AnalysisOutputFormat = typer.Option("rich", "--format", help="Output renderer."),
+    output: pathlib.Path | None = typer.Option(
+        None,
+        "--output",
+        help="Write rendered analysis to file.",
+    ),
+    show_percentiles: str = typer.Option("min,avg,p50,p90,p95,p99,max", "--show-percentiles"),
+    top_spans: int = typer.Option(
+        20,
+        "--top-spans",
+        min=0,
+        help="Slowest nested profile_payload spans to include; 0 disables.",
+    ),
+    top_groups: int = typer.Option(
+        10,
+        "--top-groups",
+        min=0,
+        help="Slowest grouped profile spans to include; 0 disables.",
+    ),
+) -> None:
+    """Analyze saved benchmark JSON/NDJSON artifacts without rerunning benchmarks."""
+    if output is not None:
+        if output.is_dir():
+            typer.echo(f"error: --output points at a directory: {output}", err=True)
+            raise typer.Exit(code=2)
+        if not output.parent.exists():
+            typer.echo(
+                f"error: --output parent does not exist: {output.parent}",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+
+    percentile_labels = _parse_percentile_labels(show_percentiles)
+    measurements = load_measurement_artifact(artifact)
+    report = build_analysis_report(
+        measurements,
+        artifact_label=artifact.name,
+        percentile_labels=percentile_labels,
+        top_spans=top_spans,
+        top_groups=top_groups,
+    )
+    rendered = render_analysis_report(report, output_format=output_format)
+    if output is not None:
+        output.write_text(rendered)
+    else:
+        typer.echo(rendered)
 
 
 @app.command("list-commits")
