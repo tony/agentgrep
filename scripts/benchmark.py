@@ -24,6 +24,7 @@ from __future__ import annotations
 import atexit
 import contextlib
 import csv
+import dataclasses
 import io
 import json
 import math
@@ -56,6 +57,18 @@ BENCHMARK_RUNS_ARTIFACT_KIND = "agentgrep.benchmark.runs"
 BENCHMARK_MEASUREMENT_ARTIFACT_KIND = "agentgrep.benchmark.measurement"
 type CommandContext = dict[str, str]
 type ProfilePayload = dict[str, object]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class ProfileSpanSummary:
+    """One flattened profile span from a benchmark row's child profile payload."""
+
+    short_sha: str
+    command_name: str
+    component: str
+    name: str
+    duration_seconds: float
+    attributes: dict[str, object]
 
 
 # ---------------------------------------------------------------------------
@@ -555,7 +568,79 @@ def _fmt_seconds(value: float) -> str:
     return f"{value:.3f}s"
 
 
-def render_rich(measurements: list[Measurement], percentile_labels: list[str]) -> str:
+def _profile_payload_samples(payload: ProfilePayload) -> tuple[dict[str, object], ...]:
+    """Return sample dictionaries from one child profile payload."""
+    profile = payload.get("profile")
+    if not isinstance(profile, dict):
+        return ()
+    samples = profile.get("samples")
+    if not isinstance(samples, list):
+        return ()
+    return tuple(sample for sample in samples if isinstance(sample, dict))
+
+
+def _safe_profile_attributes(attributes: object) -> str:
+    """Render sanitized scalar profile attributes for rich benchmark output."""
+    if not isinstance(attributes, dict):
+        return ""
+    cells: list[str] = []
+    denied_key_parts = ("argv", "command", "path", "query")
+    for key, value in sorted(attributes.items()):
+        if not isinstance(key, str):
+            continue
+        if any(part in key.casefold() for part in denied_key_parts):
+            continue
+        if isinstance(value, str | int | float | bool) or value is None:
+            cells.append(f"{key}={value}")
+        if len(cells) >= 5:
+            break
+    return ", ".join(cells)
+
+
+def _profile_span_summaries(
+    measurements: list[Measurement],
+    *,
+    top_spans: int,
+) -> tuple[ProfileSpanSummary, ...]:
+    """Return the slowest nested profile spans across benchmark measurements."""
+    if top_spans <= 0:
+        return ()
+    summaries: list[ProfileSpanSummary] = []
+    for measurement in measurements:
+        payload = measurement.profile_payload
+        if payload is None:
+            continue
+        component = payload.get("profile_component")
+        component_text = component if isinstance(component, str) else "unknown"
+        for sample in _profile_payload_samples(payload):
+            name = sample.get("name")
+            duration = sample.get("duration_seconds")
+            attributes = sample.get("attributes")
+            summaries.append(
+                ProfileSpanSummary(
+                    short_sha=measurement.short_sha,
+                    command_name=measurement.command_name,
+                    component=component_text,
+                    name=name if isinstance(name, str) else "unknown",
+                    duration_seconds=float(duration) if isinstance(duration, int | float) else 0.0,
+                    attributes=dict(attributes) if isinstance(attributes, dict) else {},
+                ),
+            )
+    return tuple(
+        sorted(
+            summaries,
+            key=lambda summary: summary.duration_seconds,
+            reverse=True,
+        )[:top_spans],
+    )
+
+
+def render_rich(
+    measurements: list[Measurement],
+    percentile_labels: list[str],
+    *,
+    top_spans: int = 10,
+) -> str:
     """Render results as a Rich table (per command, one row per commit)."""
     console = rich.console.Console(record=True, file=io.StringIO(), width=120)
     by_cmd: dict[str, list[Measurement]] = {}
@@ -598,6 +683,26 @@ def render_rich(measurements: list[Measurement], percentile_labels: list[str]) -
             ]
             agg.add_row(*cells)
         console.print(agg)
+
+    profile_spans = _profile_span_summaries(measurements, top_spans=top_spans)
+    if profile_spans:
+        profile_table = rich.table.Table(title="[bold]profile payload slowest spans[/bold]")
+        profile_table.add_column("sha", style="cyan")
+        profile_table.add_column("command")
+        profile_table.add_column("component", style="cyan")
+        profile_table.add_column("span")
+        profile_table.add_column("duration", justify="right")
+        profile_table.add_column("attributes", overflow="fold")
+        for span in profile_spans:
+            profile_table.add_row(
+                span.short_sha,
+                span.command_name,
+                span.component,
+                span.name,
+                _fmt_seconds(span.duration_seconds),
+                _safe_profile_attributes(span.attributes),
+            )
+        console.print(profile_table)
 
     return console.export_text()
 
@@ -1105,6 +1210,12 @@ def cmd_run(
         "--show-percentiles",
         help="Comma-separated subset of stat labels to display.",
     ),
+    top_spans: int = typer.Option(
+        10,
+        "--top-spans",
+        min=0,
+        help="Slowest nested profile_payload spans to show in rich output; 0 disables.",
+    ),
     no_progress: bool = typer.Option(
         False, "--no-progress", help="Suppress progress notes on stderr."
     ),
@@ -1202,7 +1313,10 @@ def cmd_run(
             ),
         )
 
-    rendered = RENDERERS[output_format](measurements, percentile_labels)
+    if output_format == "rich":
+        rendered = render_rich(measurements, percentile_labels, top_spans=top_spans)
+    else:
+        rendered = RENDERERS[output_format](measurements, percentile_labels)
     if output is not None:
         output.write_text(rendered)
         notify(f"wrote {output}")
@@ -1222,6 +1336,7 @@ def cmd_compare(
     output_format: OutputFormat = typer.Option("rich", "--format"),
     output: pathlib.Path | None = typer.Option(None, "--output"),
     show_percentiles: str = typer.Option("min,avg,p50,p90,p95,p99,max", "--show-percentiles"),
+    top_spans: int = typer.Option(10, "--top-spans", min=0),
     no_sync: bool = typer.Option(False, "--no-sync"),
     keep_checkout: bool = typer.Option(False, "--keep-checkout"),
     allow_dirty: bool = typer.Option(False, "--allow-dirty"),
@@ -1249,6 +1364,7 @@ def cmd_compare(
         output_format=output_format,
         output=output,
         show_percentiles=show_percentiles,
+        top_spans=top_spans,
         no_progress=no_progress,
         dry_run=dry_run,
         no_hyperfine=no_hyperfine,

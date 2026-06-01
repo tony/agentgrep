@@ -890,6 +890,132 @@ def test_render_rich_no_duplicate_max_column() -> None:
     assert header_line.count("max") == 1
 
 
+def test_render_rich_reports_nested_profile_payload_top_spans() -> None:
+    """Rich benchmark output can show slow profile spans beside timing rows."""
+    measurement = benchmark.Measurement(
+        sha="a" * 40,
+        short_sha="aaaaaaa",
+        subject="profile commit",
+        command_name="profile-engine-grep-all-prompts-max-count-500",
+        command_string="{venv}/bin/python scripts/profile_engine.py grep-prompts {query}",
+        samples=[0.25],
+        profile_payload={
+            "profile_component": "grep-prompts",
+            "profile": {
+                "samples": [
+                    {
+                        "name": "search.discover",
+                        "duration_seconds": 0.1,
+                        "attributes": {"agentgrep_source_count": 2},
+                    },
+                    {
+                        "name": "search.collect",
+                        "duration_seconds": 1.2,
+                        "attributes": {
+                            "agentgrep_source_count": 1,
+                            "agentgrep_query": "private-token",
+                            "agentgrep_path": "/home/private/project",
+                        },
+                    },
+                ],
+            },
+        },
+    )
+
+    text = benchmark.render_rich([measurement], ["min", "avg"], top_spans=1)
+
+    assert "profile payload slowest spans" in text
+    assert "grep-prompts" in text
+    assert "search.collect" in text
+    assert "search.discover" not in text
+    assert "private-token" not in text
+    assert "/home/private" not in text
+
+
+def test_render_rich_top_spans_zero_suppresses_profile_payload_table() -> None:
+    """Users can disable nested profile span rendering for compact rich output."""
+    measurement = benchmark.Measurement(
+        sha="a" * 40,
+        short_sha="aaaaaaa",
+        subject="profile commit",
+        command_name="profile",
+        command_string="{venv}/bin/python scripts/profile_engine.py grep-prompts",
+        samples=[0.25],
+        profile_payload={
+            "profile_component": "grep-prompts",
+            "profile": {
+                "samples": [
+                    {
+                        "name": "search.collect",
+                        "duration_seconds": 1.2,
+                        "attributes": {"agentgrep_source_count": 1},
+                    },
+                ],
+            },
+        },
+    )
+
+    text = benchmark.render_rich([measurement], ["min"], top_spans=0)
+
+    assert "profile payload slowest spans" not in text
+    assert "search.collect" not in text
+
+
+def test_run_accepts_top_spans_flag_for_rich_output(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The run command exposes --top-spans without requiring a real benchmark."""
+    config = benchmark.Config(
+        bench={"profile": benchmark.BenchCommand(command="echo {query}", default_query="tmux")},
+        settings=benchmark.Settings(sync_command=""),
+    )
+    output = tmp_path / "rich.txt"
+    monkeypatch.setattr(benchmark, "load_config", lambda **_kwargs: config)
+    monkeypatch.setattr(
+        benchmark,
+        "_select_targets",
+        lambda **_kwargs: [
+            benchmark.CommitRef(sha="a" * 40, short_sha="aaaaaaa", subject="subject"),
+        ],
+    )
+    monkeypatch.setattr(benchmark, "_git_dirty", lambda _repo: False)
+    monkeypatch.setattr(benchmark, "_git", lambda *_args, **_kwargs: "streamline-02")
+    monkeypatch.setattr(benchmark, "_install_restore_guard", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        benchmark,
+        "_run_one_commit",
+        lambda **_kwargs: [
+            benchmark.Measurement(
+                sha="a" * 40,
+                short_sha="aaaaaaa",
+                subject="subject",
+                command_name="profile",
+                command_string="echo {query}",
+                samples=[0.1],
+            ),
+        ],
+    )
+
+    rc = benchmark.main(
+        [
+            "run",
+            "--commands",
+            "profile",
+            "--format",
+            "rich",
+            "--top-spans",
+            "3",
+            "--output",
+            str(output),
+            "--no-progress",
+        ],
+    )
+
+    assert rc == 0
+    assert output.exists()
+
+
 # ---------------------------------------------------------------------------
 # Regression: load_config rejects malformed TOML, extra keys, missing fields
 # ---------------------------------------------------------------------------
