@@ -34,6 +34,19 @@ def _write_codex_session(
     return path
 
 
+def _write_codex_history(
+    home: pathlib.Path,
+    *,
+    text: str,
+) -> pathlib.Path:
+    """Write a synthetic Codex prompt-history file the profiler can discover."""
+    path = home / ".codex" / "history.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"session_id": "history-session", "ts": 1_700_000_000, "text": text}
+    path.write_text(json.dumps(payload) + "\n")
+    return path
+
+
 class ProfileComponentCase(t.NamedTuple):
     """Expected profiler expansion for one component argument."""
 
@@ -113,6 +126,12 @@ def _profile_scopes(payload: dict[str, object]) -> tuple[str, ...]:
         if isinstance(scope, str):
             scopes.append(scope)
     return tuple(scopes)
+
+
+def _find_profile_run(payload: dict[str, object]) -> dict[str, object]:
+    """Return the find-prompts child payload from a batch profile."""
+    runs = t.cast("list[dict[str, object]]", payload["runs"])
+    return next(run for run in runs if run["profile_component"] == "find-prompts")
 
 
 @pytest.mark.parametrize(
@@ -218,6 +237,43 @@ def test_profile_all_runs_every_component(
         None,
     ]
     assert runs[-1]["type_filter"] == "prompts"
+
+
+def test_profile_all_does_not_apply_content_terms_to_find_prompts(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The all component keeps content terms out of prompt-source enumeration."""
+    _ = _write_codex_history(tmp_path, text="tmux prompt")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    parser = profile_engine._build_parser()
+
+    all_args = parser.parse_args(["all", "tmux", "--agent", "codex", "--limit", "500"])
+    find_args = parser.parse_args(["find-prompts", "--agent", "codex", "--limit", "500"])
+
+    find_run = _find_profile_run(profile_engine._run(all_args))
+    standalone = profile_engine._run(find_args)
+
+    assert find_run["result_count"] == standalone["result_count"] == 1
+    assert find_run["term_count"] == 0
+    assert standalone["term_count"] == 0
+
+
+def test_profile_legacy_find_applies_terms_as_source_pattern(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The legacy find component still uses terms as source metadata filters."""
+    _ = _write_codex_history(tmp_path, text="tmux prompt")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    parser = profile_engine._build_parser()
+    args = parser.parse_args(["find", "tmux", "--agent", "codex", "--type", "prompts"])
+
+    payload = profile_engine._run(args)
+
+    assert payload["profile_component"] == "find"
+    assert payload["result_count"] == 0
+    assert payload["term_count"] == 1
 
 
 def test_profile_rejects_conflicting_limit_aliases() -> None:

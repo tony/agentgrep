@@ -49,6 +49,7 @@ class ProfileRunSpec:
     scope: agentgrep.SearchScope | None = None
     type_filter: FindProfileType | None = None
     match_surface: agentgrep.SearchMatchSurface = "haystack"
+    find_uses_terms: bool = False
 
 
 PROFILE_COMPONENTS: dict[ProfileComponent, ProfileRunSpec] = {
@@ -184,6 +185,7 @@ def _resolve_component_specs(args: argparse.Namespace) -> tuple[ProfileRunSpec, 
                 component="find",
                 command="find",
                 type_filter=t.cast("FindProfileType", args.type_filter),
+                find_uses_terms=True,
             ),
         )
     return (PROFILE_COMPONENTS[t.cast("ProfileComponent", component)],)
@@ -200,10 +202,11 @@ def _run_spec(
     """Run one profiler spec and return a sanitized JSON-ready payload."""
     if spec.command == "find":
         type_filter = t.cast("FindProfileType", spec.type_filter)
+        terms = tuple(t.cast("list[str]", args.terms)) if spec.find_uses_terms else ()
         profiled_find = profile_find_query(
             home,
             agents,
-            pattern=" ".join(args.terms) if args.terms else None,
+            pattern=" ".join(terms) if terms else None,
             limit=limit,
             type_filter=type_filter,
         )
@@ -227,10 +230,11 @@ def _run_spec(
         profiled_search = profile_search_query(home, query)
         payload = profiled_search.to_payload()
         payload["scope"] = scope
+        terms = query.terms
     payload["profile_command"] = spec.command
     payload["profile_component"] = spec.component
     payload["agent_count"] = len(agents)
-    payload["term_count"] = len(args.terms)
+    payload["term_count"] = len(terms)
     payload["limit"] = limit
     if spec.command == "grep":
         payload["max_count"] = limit
