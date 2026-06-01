@@ -171,12 +171,27 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Search with case-sensitive matching",
     )
-    parser.add_argument(
+    output_group = parser.add_mutually_exclusive_group()
+    parser.set_defaults(output_format="rich")
+    output_group.add_argument(
         "--format",
         choices=("json", "ndjson", "rich"),
-        default="json",
         dest="output_format",
         help="Output renderer",
+    )
+    output_group.add_argument(
+        "--json",
+        action="store_const",
+        const="json",
+        dest="output_format",
+        help="Emit one JSON profile document",
+    )
+    output_group.add_argument(
+        "--ndjson",
+        action="store_const",
+        const="ndjson",
+        dest="output_format",
+        help="Emit one profile run per JSON line",
     )
     parser.add_argument(
         "--top-spans",

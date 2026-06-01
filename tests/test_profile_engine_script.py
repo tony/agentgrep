@@ -177,6 +177,72 @@ PROFILE_RENDER_CASES: tuple[ProfileRenderCase, ...] = (
 )
 
 
+class ProfileDefaultOutputCase(t.NamedTuple):
+    """One profiler component that should default to rich terminal output."""
+
+    test_id: str
+    argv: tuple[str, ...]
+    expected_component: str
+
+
+PROFILE_DEFAULT_OUTPUT_CASES: tuple[ProfileDefaultOutputCase, ...] = (
+    ProfileDefaultOutputCase(
+        test_id="search-prompts",
+        argv=("search-prompts", "--agent", "codex", "--limit", "1"),
+        expected_component="search-prompts",
+    ),
+    ProfileDefaultOutputCase(
+        test_id="search-conversations",
+        argv=("search-conversations", "tmux", "--agent", "codex", "--limit", "1"),
+        expected_component="search-conversations",
+    ),
+    ProfileDefaultOutputCase(
+        test_id="grep-prompts",
+        argv=("grep-prompts", "tmux", "--agent", "codex", "--max-count", "1"),
+        expected_component="grep-prompts",
+    ),
+    ProfileDefaultOutputCase(
+        test_id="grep-conversations",
+        argv=("grep-conversations", "tmux", "--agent", "codex", "--max-count", "1"),
+        expected_component="grep-conversations",
+    ),
+    ProfileDefaultOutputCase(
+        test_id="find-prompts",
+        argv=("find-prompts", "--agent", "codex", "--limit", "1"),
+        expected_component="find-prompts",
+    ),
+    ProfileDefaultOutputCase(
+        test_id="all",
+        argv=("all", "tmux", "--agent", "codex", "--limit", "1"),
+        expected_component="find-prompts",
+    ),
+    ProfileDefaultOutputCase(
+        test_id="legacy-search",
+        argv=("search", "tmux", "--agent", "codex", "--scope", "prompts", "--limit", "1"),
+        expected_component="search",
+    ),
+    ProfileDefaultOutputCase(
+        test_id="legacy-find",
+        argv=("find", "--agent", "codex", "--type", "prompts", "--limit", "1"),
+        expected_component="find",
+    ),
+)
+
+
+class ProfileMachineShortcutCase(t.NamedTuple):
+    """One machine-output shortcut flag for the profiler CLI."""
+
+    test_id: str
+    flag: str
+    expected_line_count: int
+
+
+PROFILE_MACHINE_SHORTCUT_CASES: tuple[ProfileMachineShortcutCase, ...] = (
+    ProfileMachineShortcutCase(test_id="json", flag="--json", expected_line_count=1),
+    ProfileMachineShortcutCase(test_id="ndjson", flag="--ndjson", expected_line_count=1),
+)
+
+
 @pytest.mark.parametrize(
     "case",
     PROFILE_RENDER_CASES,
@@ -293,6 +359,57 @@ def test_fmt_attributes_drops_denied_keys_and_keeps_safe_classifiers() -> None:
     )
 
     assert rendered == "agentgrep_path_kind=sqlite_db, agentgrep_source_count=2"
+
+
+@pytest.mark.parametrize(
+    "case",
+    PROFILE_DEFAULT_OUTPUT_CASES,
+    ids=[c.test_id for c in PROFILE_DEFAULT_OUTPUT_CASES],
+)
+def test_profile_main_defaults_to_rich_output_for_components(
+    case: ProfileDefaultOutputCase,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Profiler components default to human-readable rich output."""
+    _ = _write_codex_history(tmp_path, text="tmux prompt")
+    _ = _write_codex_session(tmp_path, name="match.jsonl", text="tmux prompt")
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    exit_code = profile_engine.main(list(case.argv))
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "profile summary" in output
+    assert "slowest spans" in output
+    assert case.expected_component in output
+    assert not output.lstrip().startswith("{")
+
+
+@pytest.mark.parametrize(
+    "case",
+    PROFILE_MACHINE_SHORTCUT_CASES,
+    ids=[c.test_id for c in PROFILE_MACHINE_SHORTCUT_CASES],
+)
+def test_profile_main_honors_machine_format_shortcuts(
+    case: ProfileMachineShortcutCase,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--json and --ndjson request machine output explicitly."""
+    _ = _write_codex_session(tmp_path, name="match.jsonl", text="tmux prompt")
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    exit_code = profile_engine.main(
+        ["grep-prompts", "tmux", "--agent", "codex", "--max-count", "1", case.flag],
+    )
+
+    assert exit_code == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == case.expected_line_count
+    assert json.loads(lines[0])["profile_component"] == "grep-prompts"
 
 
 def test_profile_main_honors_ndjson_format(
