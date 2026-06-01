@@ -164,7 +164,8 @@ order (each layer overlays the previous):
 3. **`scripts/benchmark.local.toml`** — per-machine overrides
    (gitignored). Copy `scripts/benchmark.local.toml.example` to start.
 4. **CLI flags** — `--runs N`, `--warmup N`, `--query STR`,
-   `--commands grep,find` always trump the TOML.
+   `--commands grep,find`, or `--commands profile-engine` always
+   trump the TOML.
 
 Deep-merge semantics: only the keys you set in a higher layer are
 replaced. So adding `[bench.fuzzy]` in `benchmark.local.toml` extends
@@ -189,6 +190,12 @@ they intentionally cover broader or different lookup paths so a
 profiling run can expose planner, discovery, parsing, ranking, and
 output bottlenecks. They are useful evidence for bottleneck work even
 when their distributions are noisier across machines.
+
+Use `--commands profile-engine` to run every committed
+`profile-engine-*` benchmark. Exact benchmark keys and comma-separated
+mixes still work, so `--commands grep,profile-engine` runs the `grep`
+bench plus the profiler benchmark group. `list-commands` prints
+available command groups after the configured `[bench.X]` entries.
 
 ## Engine profiler
 

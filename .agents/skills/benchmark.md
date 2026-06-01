@@ -44,11 +44,12 @@ selectors:
 | `grep-prompts` | `profile-engine-grep-all-prompts-max-count-500` |
 | `grep-conversations` | `profile-engine-grep-all-conversations-max-count-500` |
 | `find-prompts` | `profile-engine-find-all-prompts-limit-500` |
-| `all` | every `profile-engine-*` benchmark selector above |
+| `all` | `profile-engine` |
 
 If a component is supplied, use its selector as `--commands`. For
-`all`, pass the comma-separated selector list above. Keep the cap
-visible in reports: if a selector includes `limit-500` or
+`all`, pass `--commands profile-engine`; the benchmark harness expands
+that command group into every committed `profile-engine-*` benchmark.
+Keep the cap visible in reports: if a selector includes `limit-500` or
 `max-count-500`, say `limit 500` or `max-count 500`.
 
 ## Procedure

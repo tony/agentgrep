@@ -175,7 +175,8 @@ agent/store/adapter/count metadata without prompt text or local paths.
 Use `scripts/benchmark.py` for timed benchmark sweeps. The profiler-oriented
 benchmark entries are named `profile-engine-*`; each committed benchmark name
 and description must disclose `--limit N` or `--max-count N` when a cap is
-present.
+present. Use `--commands profile-engine` for the full profiler benchmark
+group, or pass an exact `profile-engine-*` key for one profiler benchmark.
 
 Run one profiler benchmark:
 
@@ -185,6 +186,17 @@ $ uv run scripts/benchmark.py run \
     --commands profile-engine-grep-all-prompts-max-count-500 \
     --format json \
     --output .tmp/benchmark-grep-prompts.json \
+    --allow-dirty
+```
+
+Run every profiler benchmark:
+
+```console
+$ uv run scripts/benchmark.py run \
+    --target HEAD \
+    --commands profile-engine \
+    --format json \
+    --output .tmp/benchmark-profile-engine.json \
     --allow-dirty
 ```
 

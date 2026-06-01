@@ -29,6 +29,7 @@ AGENT_SKILL_CASES: tuple[AgentSkillCase, ...] = (
             "search-prompts",
             "grep-conversations",
             "find-prompts",
+            "--commands profile-engine",
             "artifact_kind",
             "profile_payload.profile.samples",
             "search.collect.source",

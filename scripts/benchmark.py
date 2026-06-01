@@ -58,6 +58,17 @@ BENCHMARK_MEASUREMENT_ARTIFACT_KIND = "agentgrep.benchmark.measurement"
 type CommandContext = dict[str, str]
 type ProfilePayload = dict[str, object]
 
+PROFILE_ENGINE_BENCHMARK_GROUP: tuple[str, ...] = (
+    "profile-engine-search-all-prompts-limit-500",
+    "profile-engine-search-all-conversations-limit-500",
+    "profile-engine-grep-all-prompts-max-count-500",
+    "profile-engine-grep-all-conversations-max-count-500",
+    "profile-engine-find-all-prompts-limit-500",
+)
+BENCHMARK_COMMAND_GROUPS: dict[str, tuple[str, ...]] = {
+    "profile-engine": PROFILE_ENGINE_BENCHMARK_GROUP,
+}
+
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class ProfileSpanSummary:
@@ -1110,7 +1121,13 @@ def _parse_percentile_labels(raw: str) -> list[str]:
 def _select_bench_names(config: Config, commands: str | None) -> list[str]:
     if commands is None:
         return list(config.bench)
-    names = [c.strip() for c in commands.split(",") if c.strip()]
+    names: list[str] = []
+    for selector in (c.strip() for c in commands.split(",") if c.strip()):
+        group = BENCHMARK_COMMAND_GROUPS.get(selector)
+        if group is None:
+            names.append(selector)
+        else:
+            names.extend(group)
     missing = [n for n in names if n not in config.bench]
     if missing:
         msg = (
@@ -1118,6 +1135,15 @@ def _select_bench_names(config: Config, commands: str | None) -> list[str]:
         )
         raise typer.BadParameter(msg)
     return names
+
+
+def _available_command_groups(config: Config) -> dict[str, tuple[str, ...]]:
+    """Return command groups whose member benchmarks all exist in ``config``."""
+    return {
+        group_name: group_names
+        for group_name, group_names in BENCHMARK_COMMAND_GROUPS.items()
+        if all(bench_name in config.bench for bench_name in group_names)
+    }
 
 
 def _select_targets(
@@ -1176,6 +1202,11 @@ _OPT_TAGS = typer.Option(False, "--tags", help="All git tags (sorted by v:refnam
 _OPT_COMMITS = typer.Option(None, "--commits", help="Comma-separated list of refs.")
 _OPT_HEAD_VS_TRUNK = typer.Option(False, "--head-vs-trunk", help="Shortcut: HEAD + trunk.")
 _OPT_CONFIG = typer.Option(None, "--config", help="Override scripts/benchmark.toml path.")
+_OPT_COMMANDS = typer.Option(
+    None,
+    "--commands",
+    help="Subset selector matching [bench.X] keys or command groups (comma-separated).",
+)
 
 
 @app.command("run")
@@ -1188,9 +1219,7 @@ def cmd_run(
     commits: str | None = _OPT_COMMITS,
     head_vs_trunk: bool = _OPT_HEAD_VS_TRUNK,
     config_path: pathlib.Path | None = _OPT_CONFIG,
-    commands: str | None = typer.Option(
-        None, "--commands", help="Subset selector matching [bench.X] keys (comma-separated)."
-    ),
+    commands: str | None = _OPT_COMMANDS,
     runs: int | None = typer.Option(None, "--runs", help="Override sample count."),
     warmup: int | None = typer.Option(None, "--warmup", help="Override discarded pre-runs."),
     query: str | None = typer.Option(
@@ -1329,7 +1358,7 @@ def cmd_compare(
     a: str = typer.Argument(..., help="First ref (tag / branch / SHA)."),
     b: str = typer.Argument(..., help="Second ref (tag / branch / SHA)."),
     config_path: pathlib.Path | None = _OPT_CONFIG,
-    commands: str | None = typer.Option(None, "--commands"),
+    commands: str | None = _OPT_COMMANDS,
     runs: int | None = typer.Option(None, "--runs"),
     warmup: int | None = typer.Option(None, "--warmup"),
     query: str | None = typer.Option(None, "--query"),
@@ -1411,6 +1440,11 @@ def cmd_list_commands(config_path: pathlib.Path | None = _OPT_CONFIG) -> None:
             typer.echo(f"  query:       {bench.default_query}")
         if bench.skip_if_missing:
             typer.echo(f"  skip-probe:  {bench.skip_if_missing}")
+    groups = _available_command_groups(config)
+    if groups:
+        typer.echo("command groups:")
+        for name, members in groups.items():
+            typer.echo(f"  {name}: {', '.join(members)}")
 
 
 @app.command("show-config")
@@ -1427,16 +1461,17 @@ def main(argv: list[str] | None = None) -> int:
     In that mode Click *converts* :class:`typer.Exit` into the return value
     of ``app(...)`` instead of re-raising it — so commands that
     ``raise typer.Exit(code=2)`` deliver that 2 via the ``result`` below,
-    not via an except clause. Only :class:`click.exceptions.UsageError`
-    (the parent of ``BadParameter`` and ``MissingParameter``) still
-    propagates as an exception — we catch it so a bad flag value prints a
-    one-line error instead of a stack trace. typer only re-exports
-    ``BadParameter``; ``MissingParameter`` lives in click.
+    not via an except clause. Click and Typer validation exceptions still
+    propagate as exceptions, so catch both families and print a one-line
+    error instead of a rich traceback.
     """
     try:
         result = app(args=argv, standalone_mode=False)
     except click.exceptions.UsageError as exc:
         typer.echo(f"error: {exc.format_message()}", err=True)
+        return 2
+    except typer.BadParameter as exc:
+        typer.echo(f"error: {exc}", err=True)
         return 2
     if isinstance(result, int):
         return result
