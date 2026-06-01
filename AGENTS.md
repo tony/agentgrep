@@ -148,21 +148,23 @@ Supported profiler components:
 | `find-prompts` | Prompt-source enumeration timing |
 | `all` | Run every profiler component above |
 
-Run one profiler component:
+Run one profiler component and save a machine-readable artifact:
 
 ```console
-$ uv run python scripts/profile_engine.py grep-prompts --agent all --max-count 500 tmux > .tmp/profile-grep-prompts.json
+$ uv run python scripts/profile_engine.py grep-prompts --agent all --max-count 500 --json tmux > .tmp/profile-grep-prompts.json
 ```
 
-Run the full profiler matrix:
+Run the full profiler matrix and save a machine-readable artifact:
 
 ```console
-$ uv run python scripts/profile_engine.py all --agent all --limit 500 tmux > .tmp/profile-all.json
+$ uv run python scripts/profile_engine.py all --agent all --limit 500 --json tmux > .tmp/profile-all.json
 ```
 
-Use `--format json` for one sanitized payload, `--format ndjson` for one child
-profile run per line, and `--format rich --top-spans N` for a terminal summary
-with the slowest spans.
+Profiler output defaults to a Rich terminal summary. Use `--json` for one
+sanitized payload, `--ndjson` for one child profile run per line, and
+`--top-spans N` to control the terminal summary. The explicit
+`--format json`, `--format ndjson`, and `--format rich` forms remain available
+for templated invocations.
 
 Profiler artifacts include `schema_version` and `artifact_kind`. Use those
 fields when a local profile file needs to be distinguished from benchmark rows

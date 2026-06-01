@@ -29,11 +29,12 @@ prompt text, raw argv, or local absolute paths.
 1. Pick the component from the table. If no component is provided, use `all`.
 2. Use a narrow query for search and grep components. Avoid common terms unless
    the user explicitly asks for a broad profile.
-3. Use `--format json` for a single payload, `--format ndjson` for one child
-   profile run per line, or `--format rich --top-spans N` for an interactive
-   slow-span table. Use `--top-spans 0` to hide the slow-span table.
-4. Redirect JSON to `.tmp/profile-<component>.json` when the output will be
-   reused in an issue or PR note.
+3. No output flag means the default Rich slow-span table. Use `--json` for a
+   single payload or `--ndjson` for one child profile run per line. The
+   `--format json`, `--format ndjson`, and `--format rich` forms still work
+   for templated invocations. Use `--top-spans 0` to hide the slow-span table.
+4. Add `--json` before redirecting to `.tmp/profile-<component>.json` when the
+   output will be reused in an issue or PR note.
 5. Summarize the slowest spans and source/result counts; do not paste private
    prompt text or local paths.
 6. For bottleneck diagnosis, inspect source-level spans:
@@ -47,6 +48,7 @@ Example:
 $ uv run python scripts/profile_engine.py grep-prompts \
     --agent all \
     --max-count 500 \
+    --json \
     tmux > .tmp/profile-grep-prompts.json
 ```
 
@@ -56,7 +58,6 @@ Interactive slow-span summary:
 $ uv run python scripts/profile_engine.py all \
     --agent all \
     --limit 500 \
-    --format rich \
     --top-spans 20 \
     tmux
 ```

@@ -233,6 +233,7 @@ Profile one component:
 $ uv run python scripts/profile_engine.py grep-prompts \
     --agent all \
     --max-count 500 \
+    --json \
     tmux > .tmp/profile-grep-prompts.json
 ```
 
@@ -242,6 +243,7 @@ Profile every component:
 $ uv run python scripts/profile_engine.py all \
     --agent all \
     --limit 500 \
+    --json \
     tmux > .tmp/profile-all.json
 ```
 
@@ -249,9 +251,9 @@ Choose the renderer with `--format`:
 
 | Format | Use case |
 |---|---|
-| `json` | One sanitized payload; default |
+| `rich` | Terminal summary plus the slowest spans; default |
+| `json` | One sanitized payload |
 | `ndjson` | One sanitized child profile run per line |
-| `rich` | Terminal summary plus the slowest spans |
 
 Show a compact terminal summary:
 
@@ -259,10 +261,13 @@ Show a compact terminal summary:
 $ uv run python scripts/profile_engine.py all \
     --agent all \
     --limit 500 \
-    --format rich \
     --top-spans 20 \
     tmux
 ```
+
+`--json` and `--ndjson` are shortcuts for the machine-readable
+renderers. `--format json`, `--format ndjson`, and `--format rich`
+remain available when a single flag shape is easier to template.
 
 Available components are `search-prompts`, `search-conversations`,
 `grep-prompts`, `grep-conversations`, `find-prompts`, and `all`.

@@ -49,6 +49,8 @@ AGENT_SKILL_CASES: tuple[AgentSkillCase, ...] = (
             "grep-conversations",
             "find-prompts",
             "schema_version",
+            "--json",
+            "--ndjson",
             "--top-spans 0",
             "find.filter.source",
         ),
