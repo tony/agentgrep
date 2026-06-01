@@ -134,7 +134,7 @@ failure and rerun the full command rather than committing from partial checks.
 ### Profiling and Benchmarking
 
 Use `scripts/profile_engine.py` for local engine-profile evidence. It emits
-privacy-safe JSON with counts, span names, durations, and coarse subprocess
+privacy-safe timings with counts, span names, durations, and coarse subprocess
 metadata. It must not emit prompt text, raw argv, or local absolute paths.
 
 Supported profiler components:
@@ -160,6 +160,10 @@ Run the full profiler matrix:
 $ uv run python scripts/profile_engine.py all --agent all --limit 500 tmux > .tmp/profile-all.json
 ```
 
+Use `--format json` for one sanitized payload, `--format ndjson` for one child
+profile run per line, and `--format rich --top-spans N` for a terminal summary
+with the slowest spans.
+
 Use `scripts/benchmark.py` for timed benchmark sweeps. The profiler-oriented
 benchmark entries are named `profile-engine-*`; each committed benchmark name
 and description must disclose `--limit N` or `--max-count N` when a cap is
@@ -175,6 +179,12 @@ $ uv run scripts/benchmark.py run \
     --output .tmp/benchmark-grep-prompts.json \
     --allow-dirty
 ```
+
+Benchmark `json` and `ndjson` artifacts include `dry_run`,
+`profile_payload`, and `profile_capture_error`. `command_string` is sanitized
+with `{repo}`, `{venv}`, `{home}`, and `{query}` placeholders. For
+`profile-engine-*` rows, `profile_payload` is a separate post-timing profile
+capture; timing conclusions must come from `samples`.
 
 Local profiles are the source of real bottleneck evidence because CI runners do
 not have representative agent-history stores. If CI artifact upload is needed,

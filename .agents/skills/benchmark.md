@@ -117,6 +117,13 @@ Always include `--allow-dirty` (the working tree may have unstaged
 changes). Always `--format json` for analysis. Always
 `--no-progress` (progress goes to stderr and clutters the output).
 
+JSON and NDJSON rows include `dry_run`, `profile_payload`, and
+`profile_capture_error`. Treat `samples` as the timing evidence. For
+`profile-engine-*` rows, `profile_payload` is a post-timing profile
+capture that explains where the engine spent time; it is not another
+timing sample. `command_string` is sanitized with `{repo}`, `{venv}`,
+`{home}`, and `{query}` placeholders before serialization.
+
 For long runs (>5 minutes estimated), launch in background via
 `run_in_background: true` so the user can continue working.
 

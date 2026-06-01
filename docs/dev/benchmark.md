@@ -115,6 +115,20 @@ will actually run" inspection.
 | `md` | Markdown tables (mirrors the prototype `performance.md`) |
 | `csv` | Flat row-per-measurement; raw samples joined by `;` |
 
+`json` and `ndjson` are the artifact formats. Every measurement keeps
+the raw `samples`, `status`, `error`, `dry_run`, and a sanitized
+`command_string`. Rendered command strings replace local values with
+placeholders such as `{repo}`, `{venv}`, `{home}`, and `{query}` so the
+artifact can be copied into issues without exposing the local checkout
+or search term.
+
+Dry-run rows set `dry_run: true` and keep `samples: []`. Rows for
+`profile-engine-*` benchmarks also include `profile_payload` when the
+post-timing profile capture succeeds, or `profile_capture_error` when
+that capture fails. The timing samples still come from the configured
+benchmark runs; `profile_payload` is the explainability artifact that
+preserves engine span detail beside those timings.
+
 ```console
 $ uv run scripts/benchmark.py run --lookback 50 --format md --output performance.md
 ```
@@ -172,8 +186,8 @@ when their distributions are noisier across machines.
 ## Engine profiler
 
 `scripts/profile_engine.py` runs the search engine directly and emits
-sanitized JSON timings without CLI rendering overhead. Use it when you
-need to explain which engine phase is expensive before changing planner,
+sanitized timings without CLI rendering overhead. Use it when you need
+to explain which engine phase is expensive before changing planner,
 discovery, parser, or rendering behavior.
 
 Profile one component:
@@ -192,6 +206,25 @@ $ uv run python scripts/profile_engine.py all \
     --agent all \
     --limit 500 \
     tmux > .tmp/profile-all.json
+```
+
+Choose the renderer with `--format`:
+
+| Format | Use case |
+|---|---|
+| `json` | One sanitized payload; default |
+| `ndjson` | One sanitized child profile run per line |
+| `rich` | Terminal summary plus the slowest spans |
+
+Show a compact terminal summary:
+
+```console
+$ uv run python scripts/profile_engine.py all \
+    --agent all \
+    --limit 500 \
+    --format rich \
+    --top-spans 20 \
+    tmux
 ```
 
 Available components are `search-prompts`, `search-conversations`,

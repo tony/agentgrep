@@ -28,9 +28,12 @@ absolute paths.
 1. Pick the component from the table. If no component is provided, use `all`.
 2. Use a narrow query for search and grep components. Avoid common terms unless
    the user explicitly asks for a broad profile.
-3. Redirect JSON to `.tmp/profile-<component>.json` when the output will be
+3. Use `--format json` for a single payload, `--format ndjson` for one child
+   profile run per line, or `--format rich --top-spans N` for an interactive
+   slow-span table.
+4. Redirect JSON to `.tmp/profile-<component>.json` when the output will be
    reused in an issue or PR note.
-4. Summarize the slowest spans and source/result counts; do not paste private
+5. Summarize the slowest spans and source/result counts; do not paste private
    prompt text or local paths.
 
 Example:
@@ -40,4 +43,15 @@ $ uv run python scripts/profile_engine.py grep-prompts \
     --agent all \
     --max-count 500 \
     tmux > .tmp/profile-grep-prompts.json
+```
+
+Interactive slow-span summary:
+
+```console
+$ uv run python scripts/profile_engine.py all \
+    --agent all \
+    --limit 500 \
+    --format rich \
+    --top-spans 20 \
+    tmux
 ```
