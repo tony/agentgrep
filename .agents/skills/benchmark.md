@@ -139,7 +139,34 @@ The script handles:
 - hyperfine (or pure-Python fallback) timing
 - HEAD restoration on exit (atexit + signal trap)
 
-### Step 4: Parse results and detect regressions
+### Step 4: Analyze saved benchmark artifacts
+
+Use the benchmark analyzer before hand-written summaries:
+
+```bash
+uv run scripts/benchmark.py analyze \
+  /tmp/bench-<branch>.json \
+  --format rich \
+  --top-spans 20 \
+  --top-groups 10
+```
+
+For machine-readable evidence, write a sanitized analysis artifact:
+
+```bash
+uv run scripts/benchmark.py analyze \
+  /tmp/bench-<branch>.json \
+  --format json \
+  --output /tmp/bench-<branch>-analysis.json
+```
+
+Analysis artifacts use `artifact_kind:
+agentgrep.benchmark.analysis`. Their child rows/objects summarize
+command timings, slow profile spans, profile span groups, and warnings.
+Use them as the first-pass bottleneck summary; only drop to custom
+Python snippets when the analyzer output is missing a specific view.
+
+### Step 5: Parse results and detect regressions
 
 Read the JSON output. For each command, compute:
 
@@ -183,12 +210,15 @@ Only STEPs are actionable. SPIKEs are noise.
   `find.filter.source`
 - Compare agent/store/adapter/count attributes, not local paths or
   prompt text
+- Prefer the analyzer's profile span groups for the first pass; they
+  aggregate repeated source-level spans without leaking local paths or
+  prompt text.
 
 **End-to-end delta:**
 - First measurable commit → HEAD, per bench
 - Report: `grep: 1.17s → 1.15s (-1.6%)`
 
-### Step 5: Report findings
+### Step 6: Report findings
 
 ```
 ## Benchmark results — <benches> × <N> commits (<depth> depth)
@@ -226,7 +256,7 @@ Only STEPs are actionable. SPIKEs are noise.
 "N persistent regressions at <commits>">
 ```
 
-### Step 6: Follow-up suggestions
+### Step 7: Follow-up suggestions
 
 - STEP found → "Profile with `python -X importtime` or `py-spy`
   at the regressing commit."

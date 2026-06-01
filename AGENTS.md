@@ -209,6 +209,21 @@ conclusions must come from `samples`. Use `--format rich --top-spans N` to
 render nested `profile_payload` spans in the terminal, or `--top-spans 0` to
 hide that table.
 
+Analyze saved benchmark artifacts before writing bottleneck summaries:
+
+```console
+$ uv run scripts/benchmark.py analyze \
+    .tmp/benchmark-profile-engine.json \
+    --format rich \
+    --top-spans 20 \
+    --top-groups 10
+```
+
+Use `--format json` or `--format ndjson` for machine-readable analysis
+artifacts. Analyzer output uses `agentgrep.benchmark.analysis` metadata and
+summarizes command timings, slow profile spans, profile span groups, and
+warnings without local paths, raw argv, or prompt text.
+
 Local profiles are the source of real bottleneck evidence because CI runners do
 not have representative agent-history stores. If CI artifact upload is needed,
 keep it scoped to a separate issue and use sanitized fixture-only payloads.

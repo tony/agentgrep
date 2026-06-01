@@ -136,6 +136,29 @@ The rich renderer shows timing tables by default and, when
 table. Use `--top-spans N` to choose how many child profiler spans to
 show, or `--top-spans 0` to suppress that table.
 
+Analyze a saved benchmark artifact when you want a repeatable
+bottleneck summary without rerunning the benchmark. The analyzer
+accepts benchmark `json` and `ndjson` artifacts, emits no-color rich
+tables by default, and can render machine-readable `json` or `ndjson`
+with `agentgrep.benchmark.analysis` artifact metadata.
+
+```console
+$ uv run scripts/benchmark.py analyze \
+    .tmp/benchmark-profile-engine.json \
+    --format rich \
+    --top-spans 20 \
+    --top-groups 10
+```
+
+Write a machine-readable analysis artifact:
+
+```console
+$ uv run scripts/benchmark.py analyze \
+    .tmp/benchmark-profile-engine.json \
+    --format json \
+    --output .tmp/benchmark-analysis.json
+```
+
 ```console
 $ uv run scripts/benchmark.py run --lookback 50 --format md --output performance.md
 ```
