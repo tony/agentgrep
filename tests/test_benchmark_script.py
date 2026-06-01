@@ -390,12 +390,102 @@ def test_committed_benchmarks_include_engine_only_profile_entries() -> None:
     for name in expected:
         bench = config.bench[name]
         assert "scripts/profile_engine.py" in bench.command
+        tokens = shlex.split(bench.command)
+        format_indexes = [index for index, token in enumerate(tokens) if token == "--format"]
+        assert format_indexes, f"{name} must request machine-readable profiler output"
+        assert tokens[format_indexes[-1] + 1] == "json"
         if "max-count" in name:
             assert "--max-count 500" in bench.command
             assert "max-count 500" in bench.description.casefold()
         else:
             assert "--limit 500" in bench.command
             assert "limit 500" in bench.description.casefold()
+
+
+class ProfileEngineFormatCase(t.NamedTuple):
+    """One profiler-command output-format validation expectation."""
+
+    test_id: str
+    command: str
+    valid: bool
+
+
+_PROFILE_ENGINE_FORMAT_CASES: tuple[ProfileEngineFormatCase, ...] = (
+    ProfileEngineFormatCase(
+        test_id="format-json-passes",
+        command="{venv}/bin/python scripts/profile_engine.py search-prompts --format json",
+        valid=True,
+    ),
+    ProfileEngineFormatCase(
+        test_id="json-flag-passes",
+        command="{venv}/bin/python scripts/profile_engine.py search-prompts --json",
+        valid=True,
+    ),
+    ProfileEngineFormatCase(
+        test_id="format-equals-json-passes",
+        command="{venv}/bin/python scripts/profile_engine.py search-prompts --format=json",
+        valid=True,
+    ),
+    ProfileEngineFormatCase(
+        test_id="format-ndjson-fails",
+        command="{venv}/bin/python scripts/profile_engine.py search-prompts --format ndjson",
+        valid=False,
+    ),
+    ProfileEngineFormatCase(
+        test_id="no-format-flag-fails",
+        command="{venv}/bin/python scripts/profile_engine.py search-prompts",
+        valid=False,
+    ),
+    ProfileEngineFormatCase(
+        test_id="non-profile-engine-passes",
+        command="{venv}/bin/agentgrep search {query}",
+        valid=True,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    _PROFILE_ENGINE_FORMAT_CASES,
+    ids=[c.test_id for c in _PROFILE_ENGINE_FORMAT_CASES],
+)
+def test_validate_profile_engine_commands_requires_json_output(
+    case: ProfileEngineFormatCase,
+) -> None:
+    """Profiler benchmarks must request JSON stdout for payload capture."""
+    config = benchmark.Config(
+        bench={"bench-under-test": benchmark.BenchCommand(command=case.command)}
+    )
+    if case.valid:
+        benchmark._validate_profile_engine_commands(config)
+    else:
+        with pytest.raises(typer.BadParameter, match="bench-under-test"):
+            benchmark._validate_profile_engine_commands(config)
+
+
+def test_load_config_tolerates_non_json_profile_engine_commands(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Informational commands can still load a config with a Rich profiler bench.
+
+    Only ``run`` and ``compare`` capture profile payloads, so the JSON-output
+    validation fires there — ``list-commands`` and ``show-config`` must stay
+    usable while the config is being debugged.
+    """
+    toml_file = tmp_path / "benchmark.toml"
+    toml_file.write_text(
+        "[bench.profile-engine-debug]\n"
+        'command = "{venv}/bin/python scripts/profile_engine.py search-prompts --format rich"\n',
+    )
+
+    config = benchmark.load_config(
+        config_path=toml_file,
+        local_path=tmp_path / "no-local.toml",
+    )
+
+    assert "profile-engine-debug" in config.bench
+    with pytest.raises(typer.BadParameter, match="profile-engine-debug"):
+        benchmark._validate_profile_engine_commands(config)
 
 
 class BenchmarkSelectorCase(t.NamedTuple):

@@ -328,7 +328,7 @@ def load_config(
     for layer in layers:
         merged = _deep_merge(merged, layer)
     try:
-        return Config.model_validate(merged)
+        config = Config.model_validate(merged)
     except pydantic.ValidationError as exc:
         # Surface each field that failed validation on its own line so
         # the user sees exactly which TOML key (or layered CLI key)
@@ -341,6 +341,7 @@ def load_config(
         ]
         msg = "invalid config:\n" + "\n".join(lines)
         raise typer.BadParameter(msg) from exc
+    return config
 
 
 # ---------------------------------------------------------------------------
@@ -575,6 +576,40 @@ def _is_profile_engine_command(cmd_str: str) -> bool:
     return any(token.endswith("scripts/profile_engine.py") for token in shlex.split(cmd_str))
 
 
+def _profile_engine_command_requests_json(cmd_str: str) -> bool:
+    """Return True when a profiler command requests single-document JSON output."""
+    tokens = shlex.split(cmd_str)
+    if "--json" in tokens or "--format=json" in tokens:
+        return True
+    return any(
+        token == "--format" and index + 1 < len(tokens) and tokens[index + 1] == "json"
+        for index, token in enumerate(tokens)
+    )
+
+
+def _validate_profile_engine_commands(config: Config) -> None:
+    """Reject profiler benchmarks whose stdout the payload capture cannot parse.
+
+    ``--format``/``--json``/``--ndjson`` form a mutually exclusive argparse
+    group in ``scripts/profile_engine.py``, so the capture step cannot
+    inject ``--format json`` itself — the configured command has to ask
+    for it. Only ``run`` and ``compare`` capture payloads, so only they
+    validate; informational commands stay usable while a config is being
+    debugged.
+    """
+    for name, bench in config.bench.items():
+        if not _is_profile_engine_command(bench.command):
+            continue
+        if _profile_engine_command_requests_json(bench.command):
+            continue
+        msg = (
+            f"benchmark {name!r} runs profile_engine.py without requesting "
+            "JSON output; add '--format json' or '--json' so profile "
+            "capture can parse stdout"
+        )
+        raise typer.BadParameter(msg)
+
+
 def _capture_profile_payload(
     cmd_str: str,
     *,
@@ -596,7 +631,7 @@ def _capture_profile_payload(
     try:
         payload = json.loads(completed.stdout)
     except json.JSONDecodeError:
-        return None, "profile capture emitted invalid JSON"
+        return None, "profile capture emitted invalid JSON (did the command request --format json?)"
     if not isinstance(payload, dict):
         return None, "profile capture emitted non-object JSON"
     return t.cast("ProfilePayload", payload), None
@@ -1661,6 +1696,7 @@ def cmd_run(
         config_path=config_path,
         cli_overrides=cli_overrides or None,
     )
+    _validate_profile_engine_commands(config)
 
     if not config.bench:
         typer.echo("error: no [bench.*] entries in config — nothing to benchmark.", err=True)
