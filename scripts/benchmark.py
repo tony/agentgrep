@@ -1128,6 +1128,9 @@ def _select_bench_names(config: Config, commands: str | None) -> list[str]:
             names.append(selector)
         else:
             names.extend(group)
+    if not names:
+        msg = "--commands did not select any benchmarks; pass a benchmark name or command group"
+        raise typer.BadParameter(msg)
     missing = [n for n in names if n not in config.bench]
     if missing:
         msg = (

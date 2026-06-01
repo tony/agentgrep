@@ -802,6 +802,28 @@ VALIDATION_REJECT_CASES: tuple[ValidationRejectCase, ...] = (
         ),
         match="unknown benchmark name",
     ),
+    ValidationRejectCase(
+        test_id="empty-bench-selector",
+        fn_name="_select_bench_names",
+        args=(
+            benchmark.Config(
+                bench={"grep": benchmark.BenchCommand(command="echo x")},
+            ),
+            "",
+        ),
+        match="did not select any benchmarks",
+    ),
+    ValidationRejectCase(
+        test_id="separator-only-bench-selector",
+        fn_name="_select_bench_names",
+        args=(
+            benchmark.Config(
+                bench={"grep": benchmark.BenchCommand(command="echo x")},
+            ),
+            ",,,",
+        ),
+        match="did not select any benchmarks",
+    ),
 )
 
 
