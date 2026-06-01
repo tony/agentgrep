@@ -134,6 +134,157 @@ def _find_profile_run(payload: dict[str, object]) -> dict[str, object]:
     return next(run for run in runs if run["profile_component"] == "find-prompts")
 
 
+def _sample_payload() -> dict[str, object]:
+    """Return a small sanitized profile payload for renderer tests."""
+    return {
+        "kind": "search",
+        "profile_command": "search",
+        "profile_component": "search-prompts",
+        "agent_count": 1,
+        "term_count": 1,
+        "limit": 1,
+        "result_count": 1,
+        "discovered_source_count": 2,
+        "planned_source_count": 1,
+        "scope": "prompts",
+        "profile": {
+            "samples": [
+                {
+                    "name": "search.discover",
+                    "duration_seconds": 0.1,
+                    "attributes": {"agentgrep_source_count": 2},
+                },
+                {
+                    "name": "search.collect",
+                    "duration_seconds": 1.2,
+                    "attributes": {"agentgrep_source_count": 1},
+                },
+            ],
+        },
+    }
+
+
+class ProfileRenderCase(t.NamedTuple):
+    """Expected renderer behavior for one profiler output format."""
+
+    test_id: str
+    output_format: str
+
+
+PROFILE_RENDER_CASES: tuple[ProfileRenderCase, ...] = (
+    ProfileRenderCase(test_id="json", output_format="json"),
+    ProfileRenderCase(test_id="ndjson", output_format="ndjson"),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    PROFILE_RENDER_CASES,
+    ids=[c.test_id for c in PROFILE_RENDER_CASES],
+)
+def test_render_payload_machine_formats_preserve_profile_samples(
+    case: ProfileRenderCase,
+) -> None:
+    """Machine renderers preserve the sanitized child profile payload."""
+    payload = _sample_payload()
+
+    rendered = profile_engine._render_payload(
+        payload,
+        output_format=case.output_format,
+        top_spans=5,
+    )
+
+    lines = rendered.splitlines()
+    if case.output_format == "json":
+        decoded = json.loads(rendered)
+        assert decoded == payload
+    else:
+        assert len(lines) == 1
+        decoded = json.loads(lines[0])
+        assert decoded["profile_component"] == "search-prompts"
+    profile = t.cast("dict[str, object]", decoded["profile"])
+    samples = t.cast("list[dict[str, object]]", profile["samples"])
+    assert [sample["name"] for sample in samples] == ["search.discover", "search.collect"]
+
+
+def test_render_payload_ndjson_expands_batch_to_one_line_per_component() -> None:
+    """Batch NDJSON emits child profile runs, not one nested batch document."""
+    payload = {
+        "kind": "profile_batch",
+        "profile_command": "all",
+        "profile_component": "all",
+        "runs": [
+            _sample_payload(),
+            {
+                **_sample_payload(),
+                "profile_command": "find",
+                "profile_component": "find-prompts",
+            },
+        ],
+    }
+
+    rendered = profile_engine._render_payload(payload, output_format="ndjson", top_spans=5)
+    lines = rendered.splitlines()
+
+    assert len(lines) == 2
+    assert [json.loads(line)["profile_component"] for line in lines] == [
+        "search-prompts",
+        "find-prompts",
+    ]
+
+
+def test_render_payload_rich_reports_top_spans_without_sensitive_text() -> None:
+    """The rich renderer gives a readable top-spans view from sanitized payloads."""
+    payload = _sample_payload()
+
+    rendered = profile_engine._render_payload(payload, output_format="rich", top_spans=1)
+
+    assert "profile summary" in rendered
+    assert "slowest spans" in rendered
+    assert "search-prompts" in rendered
+    assert "search.collect" in rendered
+    assert "search.discover" not in rendered
+    assert "private-token" not in rendered
+
+
+def test_fmt_attributes_drops_denied_keys_and_keeps_safe_classifiers() -> None:
+    """Rich attribute cells deny argv/command/path/query keys as defense in depth.
+
+    Payloads are sanitized at construction, so this guards against a
+    future attribute addition leaking into terminal output. Classifier
+    keys that merely contain "path" in the name stay visible.
+    """
+    rendered = profile_engine._fmt_attributes(
+        {
+            "agentgrep_path": "/home/private/project",
+            "agentgrep_query": "private-token",
+            "agentgrep_path_kind": "sqlite_db",
+            "agentgrep_source_count": 2,
+        },
+    )
+
+    assert rendered == "agentgrep_path_kind=sqlite_db, agentgrep_source_count=2"
+
+
+def test_profile_main_honors_ndjson_format(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The script entry point supports pipe-friendly NDJSON output."""
+    _ = _write_codex_session(tmp_path, name="match.jsonl", text="tmux prompt")
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    exit_code = profile_engine.main(
+        ["grep-prompts", "tmux", "--agent", "codex", "--max-count", "1", "--format", "ndjson"],
+    )
+
+    assert exit_code == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0])["profile_component"] == "grep-prompts"
+
+
 @pytest.mark.parametrize(
     "case",
     PROFILE_COMPONENT_CASES,
