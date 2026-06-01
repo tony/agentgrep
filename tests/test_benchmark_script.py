@@ -481,12 +481,156 @@ def test_measurement_json_shape_preserves_documented_keys() -> None:
         "samples",
         "status",
         "error",
+        "dry_run",
+        "profile_payload",
+        "profile_capture_error",
     }
     assert payload["samples"] == [0.5, 0.6, 0.55]
+    assert payload["dry_run"] is False
+    assert payload["profile_payload"] is None
+    assert payload["profile_capture_error"] is None
     # Computed stats are properties, not stored fields — they should not leak
     # into model_dump (consumers compute their own from the raw samples).
     assert "avg_s" not in payload
     assert "min_s" not in payload
+
+
+def test_sanitize_command_string_replaces_local_context_values(tmp_path: pathlib.Path) -> None:
+    """Rendered commands can be shared without local paths or query text."""
+    context = {
+        "repo": str(tmp_path),
+        "venv": str(tmp_path / ".venv"),
+        "query": "private-token",
+        "sha": "a" * 40,
+        "short_sha": "aaaaaaa",
+    }
+    raw = f"{tmp_path}/.venv/bin/agentgrep grep --max-count 500 private-token --repo {tmp_path}"
+
+    sanitized = benchmark.sanitize_command_string(raw, context)
+
+    assert str(tmp_path) not in sanitized
+    assert "private-token" not in sanitized
+    assert "{venv}/bin/agentgrep grep" in sanitized
+    assert "--max-count 500 {query}" in sanitized
+    assert "--repo {repo}" in sanitized
+
+
+def test_run_for_commit_captures_profile_payload_and_sanitizes_command(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Profile-engine benches preserve child profile JSON next to timing samples."""
+    config = benchmark.Config(
+        bench={
+            "profile": benchmark.BenchCommand(
+                command=(
+                    "{venv}/bin/python scripts/profile_engine.py grep-prompts "
+                    "--agent all --max-count 500 {query}"
+                ),
+                default_query="private-token",
+            ),
+        },
+        settings=benchmark.Settings(sync_command="", venv=".venv"),
+    )
+    profile_payload: dict[str, object] = {
+        "kind": "search",
+        "profile_component": "grep-prompts",
+        "profile": {"samples": [{"name": "search.collect", "duration_seconds": 1.0}]},
+    }
+    captured_commands: list[str] = []
+
+    monkeypatch.setattr(benchmark, "_checkout", lambda _sha, _repo: None)
+    monkeypatch.setattr(
+        benchmark,
+        "time_command",
+        lambda _cmd_str, **_kwargs: [0.25],
+    )
+
+    def fake_capture_profile_payload(
+        cmd_str: str,
+        *,
+        timeout_seconds: int,
+    ) -> tuple[dict[str, object] | None, str | None]:
+        captured_commands.append(cmd_str)
+        assert timeout_seconds == config.settings.timeout_seconds
+        return profile_payload, None
+
+    monkeypatch.setattr(benchmark, "_capture_profile_payload", fake_capture_profile_payload)
+
+    rows = benchmark._run_one_commit(
+        commit=benchmark.CommitRef(sha="a" * 40, short_sha="aaaaaaa", subject="subject"),
+        config=config,
+        bench_names=["profile"],
+        query_overrides={},
+        runs=1,
+        warmup=0,
+        no_sync=True,
+        dry_run=False,
+        repo=tmp_path,
+        prefer_hyperfine=False,
+        notify=lambda _message: None,
+    )
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert captured_commands
+    assert row.samples == [0.25]
+    assert row.profile_payload == profile_payload
+    assert row.profile_capture_error is None
+    assert row.dry_run is False
+    assert str(tmp_path) not in row.command_string
+    assert "private-token" not in row.command_string
+    assert "{venv}/bin/python scripts/profile_engine.py" in row.command_string
+    assert "--max-count 500 {query}" in row.command_string
+
+
+def test_run_for_commit_marks_dry_run_and_skips_profile_capture(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dry-run rows are machine distinguishable without executing profiles."""
+    config = benchmark.Config(
+        bench={
+            "profile": benchmark.BenchCommand(
+                command="{venv}/bin/python scripts/profile_engine.py find-prompts --limit 500",
+            ),
+        },
+        settings=benchmark.Settings(sync_command="", venv=".venv"),
+    )
+
+    monkeypatch.setattr(benchmark, "_checkout", lambda _sha, _repo: None)
+
+    def fail_capture_profile_payload(
+        _cmd_str: str,
+        *,
+        timeout_seconds: int,
+    ) -> tuple[dict[str, object] | None, str | None]:
+        msg = "dry-run should not capture profile payloads"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(benchmark, "_capture_profile_payload", fail_capture_profile_payload)
+
+    rows = benchmark._run_one_commit(
+        commit=benchmark.CommitRef(sha="a" * 40, short_sha="aaaaaaa", subject="subject"),
+        config=config,
+        bench_names=["profile"],
+        query_overrides={},
+        runs=1,
+        warmup=0,
+        no_sync=True,
+        dry_run=True,
+        repo=tmp_path,
+        prefer_hyperfine=False,
+        notify=lambda _message: None,
+    )
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.status == "ok"
+    assert row.samples == []
+    assert row.dry_run is True
+    assert row.profile_payload is None
+    assert row.profile_capture_error is None
 
 
 def test_measurement_property_stats_match_manual_calculation() -> None:

@@ -51,6 +51,8 @@ LOCAL_CONFIG = REPO_ROOT / "scripts" / "benchmark.local.toml"
 Status = t.Literal["ok", "checkout_fail", "sync_fail", "command_missing", "bench_fail"]
 OutputFormat = t.Literal["rich", "json", "ndjson", "md", "csv"]
 PERCENTILE_LABELS: tuple[str, ...] = ("min", "max", "avg", "p50", "p90", "p95", "p99")
+type CommandContext = dict[str, str]
+type ProfilePayload = dict[str, object]
 
 
 # ---------------------------------------------------------------------------
@@ -112,6 +114,9 @@ class Measurement(pydantic.BaseModel):
     samples: list[float] = pydantic.Field(default_factory=list)
     status: Status = "ok"
     error: str | None = None
+    dry_run: bool = False
+    profile_payload: ProfilePayload | None = None
+    profile_capture_error: str | None = None
 
     @property
     def min_s(self) -> float:
@@ -281,6 +286,27 @@ def render_command(template: str, context: dict[str, str]) -> str:
     nonsensical command. Curly braces in literal queries should be doubled.
     """
     return template.format_map(context)
+
+
+def sanitize_command_string(command_string: str, context: CommandContext) -> str:
+    """Return a shareable command string with local values replaced."""
+    replacements = {
+        context.get("repo", ""): "{repo}",
+        context.get("venv", ""): "{venv}",
+        str(pathlib.Path.home()): "{home}",
+    }
+    query = context.get("query", "")
+    if query:
+        replacements[query] = "{query}"
+    sanitized = command_string
+    for raw, placeholder in sorted(
+        replacements.items(),
+        key=lambda item: len(item[0]),
+        reverse=True,
+    ):
+        if raw:
+            sanitized = sanitized.replace(raw, placeholder)
+    return sanitized
 
 
 # ---------------------------------------------------------------------------
@@ -473,6 +499,38 @@ def time_command(
         runs=runs,
         timeout_seconds=timeout_seconds,
     )
+
+
+def _is_profile_engine_command(cmd_str: str) -> bool:
+    """Return True when ``cmd_str`` invokes the engine profiler helper."""
+    return any(token.endswith("scripts/profile_engine.py") for token in shlex.split(cmd_str))
+
+
+def _capture_profile_payload(
+    cmd_str: str,
+    *,
+    timeout_seconds: int,
+) -> tuple[ProfilePayload | None, str | None]:
+    """Run an engine-profiler command once and parse its sanitized JSON payload."""
+    try:
+        completed = subprocess.run(
+            shlex.split(cmd_str),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        return None, f"profile capture timed out after {timeout_seconds}s"
+    if completed.returncode != 0:
+        return None, f"profile capture exited {completed.returncode}"
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        return None, "profile capture emitted invalid JSON"
+    if not isinstance(payload, dict):
+        return None, "profile capture emitted non-object JSON"
+    return t.cast("ProfilePayload", payload), None
 
 
 # ---------------------------------------------------------------------------
@@ -723,6 +781,7 @@ def _run_one_commit(
                     samples=[],
                     status="checkout_fail",
                     error=exc.stderr.strip() or "checkout failed",
+                    dry_run=dry_run,
                 ),
             )
         return results
@@ -755,6 +814,7 @@ def _run_one_commit(
                             f"`{config.settings.sync_command}` exited "
                             f"{sync_result.returncode}: {error[:300]}"
                         ),
+                        dry_run=dry_run,
                     ),
                 )
             return results
@@ -783,9 +843,11 @@ def _run_one_commit(
                     samples=[],
                     status="bench_fail",
                     error=f"unknown template token: {exc.args[0]}",
+                    dry_run=dry_run,
                 ),
             )
             continue
+        sanitized_cmd_str = sanitize_command_string(cmd_str, context)
 
         if dry_run:
             notify(f"[{commit.short_sha}] {name}: {cmd_str}  (dry-run)")
@@ -795,9 +857,10 @@ def _run_one_commit(
                     short_sha=commit.short_sha,
                     subject=commit.subject,
                     command_name=name,
-                    command_string=cmd_str,
+                    command_string=sanitized_cmd_str,
                     samples=[],
                     status="ok",
+                    dry_run=True,
                 ),
             )
             continue
@@ -809,10 +872,11 @@ def _run_one_commit(
                     short_sha=commit.short_sha,
                     subject=commit.subject,
                     command_name=name,
-                    command_string=cmd_str,
+                    command_string=sanitized_cmd_str,
                     samples=[],
                     status="command_missing",
                     error=f"subcommand {bench.skip_if_missing!r} not available",
+                    dry_run=dry_run,
                 ),
             )
             continue
@@ -833,22 +897,33 @@ def _run_one_commit(
                     short_sha=commit.short_sha,
                     subject=commit.subject,
                     command_name=name,
-                    command_string=cmd_str,
+                    command_string=sanitized_cmd_str,
                     samples=[],
                     status="bench_fail",
                     error=str(exc),
+                    dry_run=dry_run,
                 ),
             )
             continue
+        profile_payload: ProfilePayload | None = None
+        profile_capture_error: str | None = None
+        if _is_profile_engine_command(cmd_str):
+            profile_payload, profile_capture_error = _capture_profile_payload(
+                cmd_str,
+                timeout_seconds=config.settings.timeout_seconds,
+            )
         results.append(
             Measurement(
                 sha=commit.sha,
                 short_sha=commit.short_sha,
                 subject=commit.subject,
                 command_name=name,
-                command_string=cmd_str,
+                command_string=sanitized_cmd_str,
                 samples=samples,
                 status="ok",
+                dry_run=dry_run,
+                profile_payload=profile_payload,
+                profile_capture_error=profile_capture_error,
             ),
         )
     return results
