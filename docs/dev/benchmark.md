@@ -115,12 +115,14 @@ will actually run" inspection.
 | `md` | Markdown tables (mirrors the prototype `performance.md`) |
 | `csv` | Flat row-per-measurement; raw samples joined by `;` |
 
-`json` and `ndjson` are the artifact formats. Every measurement keeps
-the raw `samples`, `status`, `error`, `dry_run`, and a sanitized
-`command_string`. Rendered command strings replace local values with
-placeholders such as `{repo}`, `{venv}`, `{home}`, and `{query}` so the
-artifact can be copied into issues without exposing the local checkout
-or search term.
+`json` and `ndjson` are the artifact formats. Both include
+`schema_version` and `artifact_kind` fields so local files can be
+distinguished from profiler payloads, benchmark rows, and future CI
+artifacts. Every measurement keeps the raw `samples`, `status`,
+`error`, `dry_run`, and a sanitized `command_string`. Rendered command
+strings replace local values with placeholders such as `{repo}`,
+`{venv}`, `{home}`, and `{query}` so the artifact can be copied into
+issues without exposing the local checkout or search term.
 
 Dry-run rows set `dry_run: true` and keep `samples: []`. Rows for
 `profile-engine-*` benchmarks also include `profile_payload` when the
@@ -128,6 +130,11 @@ post-timing profile capture succeeds, or `profile_capture_error` when
 that capture fails. The timing samples still come from the configured
 benchmark runs; `profile_payload` is the explainability artifact that
 preserves engine span detail beside those timings.
+
+The rich renderer shows timing tables by default and, when
+`profile_payload` is present, appends a `profile payload slowest spans`
+table. Use `--top-spans N` to choose how many child profiler spans to
+show, or `--top-spans 0` to suppress that table.
 
 ```console
 $ uv run scripts/benchmark.py run --lookback 50 --format md --output performance.md
@@ -230,8 +237,13 @@ $ uv run python scripts/profile_engine.py all \
 Available components are `search-prompts`, `search-conversations`,
 `grep-prompts`, `grep-conversations`, `find-prompts`, and `all`.
 The JSON payload reports counts, phase timings, and coarse subprocess
-metadata. It does not include prompt text, raw argv, or local absolute
-paths.
+metadata. Profile runs include phase spans such as `search.discover`,
+`search.plan`, and `search.collect`, plus source-level spans such as
+`search.discover.group`, `search.plan.prefilter_root`,
+`search.plan.direct_source`, `search.collect.source`, and
+`find.filter.source`. Those source-level spans report agent, store,
+adapter, path kind, source kind, counts, and match decisions without
+including prompt text, raw argv, or local absolute paths.
 
 ## Templating
 

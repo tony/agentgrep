@@ -9,8 +9,9 @@ Use this skill for `$profile <component> [query]`.
 
 This is a developer-local workflow. It runs `scripts/profile_engine.py` and
 emits sanitized JSON: result counts, source counts, span names, durations, and
-coarse subprocess metadata. It must not emit prompt text, raw argv, or local
-absolute paths.
+coarse subprocess metadata. Artifacts include `schema_version` and
+`artifact_kind` so saved outputs can be identified later. They must not emit
+prompt text, raw argv, or local absolute paths.
 
 ## Components
 
@@ -30,11 +31,15 @@ absolute paths.
    the user explicitly asks for a broad profile.
 3. Use `--format json` for a single payload, `--format ndjson` for one child
    profile run per line, or `--format rich --top-spans N` for an interactive
-   slow-span table.
+   slow-span table. Use `--top-spans 0` to hide the slow-span table.
 4. Redirect JSON to `.tmp/profile-<component>.json` when the output will be
    reused in an issue or PR note.
 5. Summarize the slowest spans and source/result counts; do not paste private
    prompt text or local paths.
+6. For bottleneck diagnosis, inspect source-level spans:
+   `search.discover.group`, `search.plan.prefilter_root`,
+   `search.plan.direct_source`, `search.collect.source`, and
+   `find.filter.source`.
 
 Example:
 

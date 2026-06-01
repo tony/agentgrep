@@ -118,11 +118,16 @@ changes). Always `--format json` for analysis. Always
 `--no-progress` (progress goes to stderr and clutters the output).
 
 JSON and NDJSON rows include `dry_run`, `profile_payload`, and
-`profile_capture_error`. Treat `samples` as the timing evidence. For
+`profile_capture_error`, plus `schema_version` and `artifact_kind` for
+machine parsing. Treat `samples` as the timing evidence. For
 `profile-engine-*` rows, `profile_payload` is a post-timing profile
 capture that explains where the engine spent time; it is not another
 timing sample. `command_string` is sanitized with `{repo}`, `{venv}`,
 `{home}`, and `{query}` placeholders before serialization.
+
+Use `--format rich --top-spans N` for a local terminal report that
+includes nested `profile_payload` slow spans. Use `--top-spans 0` when
+you want the rich timing table without nested profile detail.
 
 For long runs (>5 minutes estimated), launch in background via
 `run_in_background: true` so the user can continue working.
@@ -169,6 +174,14 @@ Only STEPs are actionable. SPIKEs are noise.
 **Phase analysis** — divide commits into thirds:
 - Early / Middle / Late averages
 - Warming/cooling trend percentage
+
+**Nested profile analysis** for `profile-engine-*` rows:
+- Inspect `profile_payload.profile.samples`
+- Start with `search.plan.prefilter_root`, `search.plan.direct_source`,
+  `search.collect.source`, `search.discover.group`, and
+  `find.filter.source`
+- Compare agent/store/adapter/count attributes, not local paths or
+  prompt text
 
 **End-to-end delta:**
 - First measurable commit → HEAD, per bench

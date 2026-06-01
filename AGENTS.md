@@ -164,6 +164,14 @@ Use `--format json` for one sanitized payload, `--format ndjson` for one child
 profile run per line, and `--format rich --top-spans N` for a terminal summary
 with the slowest spans.
 
+Profiler artifacts include `schema_version` and `artifact_kind`. Use those
+fields when a local profile file needs to be distinguished from benchmark rows
+or future fixture-only CI artifacts. Engine profiles include coarse phase spans
+and source-level spans such as `search.discover.group`,
+`search.plan.prefilter_root`, `search.plan.direct_source`,
+`search.collect.source`, and `find.filter.source`; those spans carry
+agent/store/adapter/count metadata without prompt text or local paths.
+
 Use `scripts/benchmark.py` for timed benchmark sweeps. The profiler-oriented
 benchmark entries are named `profile-engine-*`; each committed benchmark name
 and description must disclose `--limit N` or `--max-count N` when a cap is
@@ -181,10 +189,13 @@ $ uv run scripts/benchmark.py run \
 ```
 
 Benchmark `json` and `ndjson` artifacts include `dry_run`,
-`profile_payload`, and `profile_capture_error`. `command_string` is sanitized
-with `{repo}`, `{venv}`, `{home}`, and `{query}` placeholders. For
-`profile-engine-*` rows, `profile_payload` is a separate post-timing profile
-capture; timing conclusions must come from `samples`.
+`profile_payload`, `profile_capture_error`, `schema_version`, and
+`artifact_kind`. `command_string` is sanitized with `{repo}`, `{venv}`,
+`{home}`, and `{query}` placeholders. For `profile-engine-*` rows,
+`profile_payload` is a separate post-timing profile capture; timing
+conclusions must come from `samples`. Use `--format rich --top-spans N` to
+render nested `profile_payload` spans in the terminal, or `--top-spans 0` to
+hide that table.
 
 Local profiles are the source of real bottleneck evidence because CI runners do
 not have representative agent-history stores. If CI artifact upload is needed,
