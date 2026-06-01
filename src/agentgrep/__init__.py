@@ -2321,6 +2321,22 @@ def _record_readonly_command_profile(
     )
 
 
+def _record_engine_profile_sample(
+    name: str,
+    duration_seconds: float,
+    **attributes: JSONScalar,
+) -> None:
+    """Record an optional engine profile sample when profiling is active."""
+    if "agentgrep._engine.profiling" not in sys.modules:
+        return
+    from agentgrep._engine.profiling import current_engine_profiler
+
+    profiler = current_engine_profiler()
+    if profiler is None:
+        return
+    profiler.record(name, duration_seconds, **attributes)
+
+
 def discover_sources(
     home: pathlib.Path,
     agents: tuple[AgentName, ...],
@@ -3663,6 +3679,17 @@ def source_order_key(source: SourceHandle) -> tuple[int, str]:
     return (-source.mtime_ns, str(source.path))
 
 
+def _source_profile_attributes(source: SourceHandle) -> dict[str, JSONScalar]:
+    """Return privacy-safe profiler attributes for a source handle."""
+    return {
+        "agentgrep_agent": source.agent,
+        "agentgrep_store": source.store,
+        "agentgrep_adapter_id": source.adapter_id,
+        "agentgrep_path_kind": source.path_kind,
+        "agentgrep_source_kind": source.source_kind,
+    }
+
+
 def prefilter_sources_by_root(
     query: SearchQuery,
     sources: list[SourceHandle],
@@ -3686,11 +3713,24 @@ def prefilter_sources_by_root(
 
         if search_root not in matched_paths_by_root:
             active_progress.prefilter_started(search_root)
+            started_at = time.perf_counter()
             matched_paths_by_root[search_root] = grep_root_paths(
                 search_root,
                 query,
                 grep_program,
                 control=active_control,
+            )
+            matched_paths = matched_paths_by_root[search_root]
+            _record_engine_profile_sample(
+                "search.plan.prefilter_root",
+                time.perf_counter() - started_at,
+                agentgrep_source_count=sum(
+                    1 for candidate in sources if candidate.search_root == search_root
+                ),
+                agentgrep_matched_source_count=len(matched_paths)
+                if matched_paths is not None
+                else None,
+                agentgrep_unknown=matched_paths is None,
             )
             if active_control.answer_now_requested():
                 break
@@ -3752,34 +3792,55 @@ def direct_source_matches(
 ) -> bool:
     """Return whether a direct source should be parsed."""
     active_control = SearchControl() if control is None else control
+    started_at = time.perf_counter()
+    matched = False
+    aborted = False
     if active_control.answer_now_requested():
         return False
-    if source.adapter_id == "claude.history_jsonl.v1":
-        return True
-    if source.source_kind == "sqlite":
-        return True
-    if backends.grep_tool is not None:
-        grep_match = grep_file_matches(
-            source.path,
-            query,
-            backends.grep_tool,
-            control=active_control,
-        )
-        if active_control.answer_now_requested():
-            return False
-        if grep_match is not None:
-            return grep_match
-    if source.path.suffix in JSON_FILE_SUFFIXES and backends.json_tool is not None:
-        extracted = flatten_json_strings_with_tool(
-            source.path,
-            backends.json_tool,
-            control=active_control,
-        )
-        if active_control.answer_now_requested():
-            return False
-        if extracted is not None:
-            return matches_text(extracted, query)
-    return matches_text(read_text_file(source.path), query)
+    try:
+        if source.adapter_id == "claude.history_jsonl.v1":
+            matched = True
+            return matched
+        if source.source_kind == "sqlite":
+            matched = True
+            return matched
+        if backends.grep_tool is not None:
+            grep_match = grep_file_matches(
+                source.path,
+                query,
+                backends.grep_tool,
+                control=active_control,
+            )
+            if active_control.answer_now_requested():
+                aborted = True
+                return False
+            if grep_match is not None:
+                matched = grep_match
+                return matched
+        if source.path.suffix in JSON_FILE_SUFFIXES and backends.json_tool is not None:
+            extracted = flatten_json_strings_with_tool(
+                source.path,
+                backends.json_tool,
+                control=active_control,
+            )
+            if active_control.answer_now_requested():
+                aborted = True
+                return False
+            if extracted is not None:
+                matched = matches_text(extracted, query)
+                return matched
+        matched = matches_text(read_text_file(source.path), query)
+        return matched
+    finally:
+        # An answer-now abort is not a non-match; record nothing, matching
+        # the pre-try early return above.
+        if not aborted:
+            _record_engine_profile_sample(
+                "search.plan.direct_source",
+                time.perf_counter() - started_at,
+                **_source_profile_attributes(source),
+                agentgrep_matched=matched,
+            )
 
 
 def collect_search_records(
@@ -3822,6 +3883,7 @@ def collect_search_records(
         if source_predicate is not None and not source_predicate(source):
             continue
         active_progress.source_started(index, total, source)
+        source_started_at = time.perf_counter()
         records_seen = 0
         matches_seen = 0
         matching_records: list[SearchRecord] = []
@@ -3843,6 +3905,13 @@ def collect_search_records(
                 )
                 time.sleep(0)
         active_progress.source_finished(index, total, source, records_seen, matches_seen)
+        _record_engine_profile_sample(
+            "search.collect.source",
+            time.perf_counter() - source_started_at,
+            **_source_profile_attributes(source),
+            agentgrep_records_seen=records_seen,
+            agentgrep_matches_seen=matches_seen,
+        )
         matching_records.sort(key=search_record_sort_key, reverse=True)
         for record in matching_records:
             if query.dedupe:

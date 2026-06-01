@@ -7,6 +7,7 @@ a runtime dependency or emitting logs from library code.
 
 from __future__ import annotations
 
+import collections
 import collections.abc as cabc
 import contextlib
 import contextvars
@@ -223,6 +224,7 @@ def profile_search_query(
                 active_backends,
                 version_detail="none",
             )
+        _record_source_groups(profiler, "search.discover.group", sources)
         source_predicate = query.compiled.source_predicate if query.compiled is not None else None
         if source_predicate is not None:
             sources_for_plan = [source for source in sources if source_predicate(source)]
@@ -287,6 +289,7 @@ def profile_find_query(
                 active_backends,
                 version_detail="none",
             )
+        _record_source_groups(profiler, "find.discover.group", sources)
         with profiler.span(
             "find.filter",
             agentgrep_source_count=len(sources),
@@ -298,6 +301,7 @@ def profile_find_query(
                 limit=limit,
                 type_filter=type_filter,
                 compiled=compiled,
+                profiler=profiler,
             )
     return ProfiledFindResult(
         records=tuple(records),
@@ -313,6 +317,7 @@ def _profile_find_records(
     limit: int | None,
     type_filter: FindProfileType,
     compiled: CompiledQuery | None,
+    profiler: EngineProfiler,
 ) -> list[agentgrep.FindRecord]:
     """Build filtered ``find`` records for profiling."""
     import agentgrep
@@ -321,7 +326,10 @@ def _profile_find_records(
     source_predicate = compiled.source_predicate if compiled is not None else None
     results: list[agentgrep.FindRecord] = []
     for source in sources:
+        started_at = time.perf_counter()
+        matched = False
         if source_predicate is not None and not source_predicate(source):
+            _record_find_source_sample(profiler, source, started_at, matched=matched)
             continue
         record = agentgrep.FindRecord(
             kind="find",
@@ -333,13 +341,70 @@ def _profile_find_records(
             metadata={"source_kind": source.source_kind},
         )
         if not _find_type_matches(record, type_filter):
+            _record_find_source_sample(profiler, source, started_at, matched=matched)
             continue
         if query is not None and query not in _find_record_haystack(record):
+            _record_find_source_sample(profiler, source, started_at, matched=matched)
             continue
+        matched = True
+        _record_find_source_sample(profiler, source, started_at, matched=matched)
         results.append(record)
         if limit is not None and len(results) >= limit:
             break
     return results
+
+
+def _record_source_groups(
+    profiler: EngineProfiler,
+    name: str,
+    sources: cabc.Sequence[agentgrep.SourceHandle],
+) -> None:
+    """Record aggregate source discovery groups without source paths."""
+    groups: collections.Counter[tuple[str, str, str, str, str]] = collections.Counter(
+        (
+            source.agent,
+            source.store,
+            source.adapter_id,
+            source.path_kind,
+            source.source_kind,
+        )
+        for source in sources
+    )
+    for (
+        agent,
+        store,
+        adapter_id,
+        path_kind,
+        source_kind,
+    ), source_count in sorted(groups.items()):
+        profiler.record(
+            name,
+            0.0,
+            agentgrep_agent=agent,
+            agentgrep_store=store,
+            agentgrep_adapter_id=adapter_id,
+            agentgrep_path_kind=path_kind,
+            agentgrep_source_kind=source_kind,
+            agentgrep_source_count=source_count,
+        )
+
+
+def _record_find_source_sample(
+    profiler: EngineProfiler,
+    source: agentgrep.SourceHandle,
+    started_at: float,
+    *,
+    matched: bool,
+) -> None:
+    """Record one profiled find-source filter decision."""
+    import agentgrep
+
+    profiler.record(
+        "find.filter.source",
+        time.perf_counter() - started_at,
+        **agentgrep._source_profile_attributes(source),
+        agentgrep_matched=matched,
+    )
 
 
 def _find_type_matches(

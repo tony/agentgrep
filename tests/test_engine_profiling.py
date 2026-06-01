@@ -12,6 +12,8 @@ import pytest
 
 import agentgrep
 from agentgrep._engine.profiling import (
+    EnginePhaseSample,
+    EngineProfile,
     EngineProfiler,
     profile_find_query,
     profile_search_query,
@@ -69,6 +71,75 @@ PROFILE_PHASE_CASES: tuple[ProfilePhaseCase, ...] = (
 )
 
 
+class ProfileSampleCase(t.NamedTuple):
+    """Expected sample attributes for one source-level profile span."""
+
+    test_id: str
+    sample_name: str
+    expected_attributes: dict[str, object]
+
+
+SEARCH_SOURCE_SAMPLE_CASES: tuple[ProfileSampleCase, ...] = (
+    ProfileSampleCase(
+        test_id="discovery-group",
+        sample_name="search.discover.group",
+        expected_attributes={
+            "agentgrep_agent": "codex",
+            "agentgrep_adapter_id": "codex.sessions_jsonl.v1",
+            "agentgrep_source_count": 1,
+        },
+    ),
+    ProfileSampleCase(
+        test_id="collect-source",
+        sample_name="search.collect.source",
+        expected_attributes={
+            "agentgrep_agent": "codex",
+            "agentgrep_adapter_id": "codex.sessions_jsonl.v1",
+            "agentgrep_records_seen": 1,
+            "agentgrep_matches_seen": 1,
+        },
+    ),
+)
+
+
+class SearchPlanSampleCase(t.NamedTuple):
+    """Expected search-planning profile sample."""
+
+    test_id: str
+    sample_kind: t.Literal["prefilter-root", "direct-source"]
+    sample_name: str
+    expected_attributes: dict[str, object]
+
+
+SEARCH_PLAN_SAMPLE_CASES: tuple[SearchPlanSampleCase, ...] = (
+    SearchPlanSampleCase(
+        test_id="prefilter-root",
+        sample_kind="prefilter-root",
+        sample_name="search.plan.prefilter_root",
+        expected_attributes={
+            "agentgrep_source_count": 1,
+            "agentgrep_matched_source_count": 1,
+            "agentgrep_unknown": False,
+        },
+    ),
+    SearchPlanSampleCase(
+        test_id="direct-source",
+        sample_kind="direct-source",
+        sample_name="search.plan.direct_source",
+        expected_attributes={
+            "agentgrep_agent": "codex",
+            "agentgrep_adapter_id": "codex.sessions_jsonl.v1",
+            "agentgrep_matched": True,
+        },
+    ),
+)
+
+
+def _samples_named(profile: EngineProfile, name: str) -> tuple[EnginePhaseSample, ...]:
+    """Return profile samples matching ``name``."""
+    return tuple(sample for sample in profile.samples if sample.name == name)
+
+
 @pytest.mark.parametrize(
     "case",
     PROFILE_PHASE_CASES,
@@ -100,6 +171,175 @@ def test_profile_helpers_report_engine_phase_counts(
     for expected in case.expected_phases:
         assert expected in sample_names
     assert all(sample.duration_seconds >= 0 for sample in profiled.profile.samples)
+
+
+@pytest.mark.parametrize(
+    "case",
+    SEARCH_SOURCE_SAMPLE_CASES,
+    ids=[c.test_id for c in SEARCH_SOURCE_SAMPLE_CASES],
+)
+def test_profile_search_query_reports_source_level_samples(
+    case: ProfileSampleCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Search profiling identifies hot source groups without paths or prompt text."""
+    _ = _write_codex_session(tmp_path, name="match.jsonl", text="tmux private-token")
+
+    profiled = profile_search_query(tmp_path, _make_query())
+
+    samples = _samples_named(profiled.profile, case.sample_name)
+    assert len(samples) == 1
+    sample = samples[0]
+    for key, expected in case.expected_attributes.items():
+        assert sample.attributes[key] == expected
+
+    payload = json.dumps(profiled.to_payload(), sort_keys=True)
+    assert str(tmp_path) not in payload
+    assert "private-token" not in payload
+
+
+def test_profile_find_query_reports_filter_source_samples(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Find profiling reports per-source filter outcomes without source paths."""
+    _ = _write_codex_session(tmp_path, name="match.jsonl", text="tmux prompt")
+
+    profiled = profile_find_query(
+        tmp_path,
+        ("codex",),
+        pattern="match",
+        limit=10,
+    )
+
+    samples = _samples_named(profiled.profile, "find.filter.source")
+    assert len(samples) == 1
+    sample = samples[0]
+    assert sample.attributes["agentgrep_agent"] == "codex"
+    assert sample.attributes["agentgrep_adapter_id"] == "codex.sessions_jsonl.v1"
+    assert sample.attributes["agentgrep_matched"] is True
+
+    payload = json.dumps(profiled.to_payload(), sort_keys=True)
+    assert str(tmp_path) not in payload
+
+
+@pytest.mark.parametrize(
+    "case",
+    SEARCH_PLAN_SAMPLE_CASES,
+    ids=[c.test_id for c in SEARCH_PLAN_SAMPLE_CASES],
+)
+def test_search_planning_reports_source_level_samples(
+    case: SearchPlanSampleCase,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Search planning reports fast-path decisions without source paths."""
+    path = tmp_path / "session.jsonl"
+    path.write_text("tmux prompt", encoding="utf-8")
+    query = _make_query()
+    source = agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=path,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=tmp_path if case.sample_kind == "prefilter-root" else None,
+        mtime_ns=1,
+    )
+    profiler = EngineProfiler()
+
+    if case.sample_kind == "prefilter-root":
+
+        def grep_root_paths(
+            _search_root: pathlib.Path,
+            _query: agentgrep.SearchQuery,
+            _grep_program: str,
+            *,
+            control: agentgrep.SearchControl | None = None,
+        ) -> set[pathlib.Path]:
+            assert control is not None
+            return {path}
+
+        monkeypatch.setattr(agentgrep, "grep_root_paths", grep_root_paths)
+        with use_engine_profiler(profiler):
+            filtered = agentgrep.prefilter_sources_by_root(query, [source], "rg")
+        assert filtered == [source]
+    else:
+        with use_engine_profiler(profiler):
+            matched = agentgrep.direct_source_matches(
+                source,
+                query,
+                agentgrep.BackendSelection(None, None, None),
+            )
+        assert matched is True
+
+    samples = _samples_named(profiler.snapshot(), case.sample_name)
+    assert len(samples) == 1
+    sample = samples[0]
+    for key, expected in case.expected_attributes.items():
+        assert sample.attributes[key] == expected
+
+    payload = json.dumps(profiler.snapshot().to_payload(), sort_keys=True)
+    assert str(tmp_path) not in payload
+
+
+def test_direct_source_matches_skips_sample_when_aborted(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An answer-now abort records no direct-source sample.
+
+    Recording the abort as ``agentgrep_matched=False`` would conflate
+    "stopped early" with "did not match" and skew profiling statistics.
+    """
+
+    class _AbortAfterFirstCheckControl(agentgrep.SearchControl):
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls = 0
+
+        def answer_now_requested(self) -> bool:
+            self.calls += 1
+            return self.calls > 1
+
+    path = tmp_path / "session.jsonl"
+    path.write_text("tmux prompt", encoding="utf-8")
+    source = agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=path,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=1,
+    )
+
+    def fake_grep_file_matches(
+        _path: pathlib.Path,
+        _query: agentgrep.SearchQuery,
+        _program: str,
+        *,
+        control: agentgrep.SearchControl | None = None,
+    ) -> bool | None:
+        assert control is not None
+        return None
+
+    monkeypatch.setattr(agentgrep, "grep_file_matches", fake_grep_file_matches)
+    profiler = EngineProfiler()
+    control = _AbortAfterFirstCheckControl()
+
+    with use_engine_profiler(profiler):
+        matched = agentgrep.direct_source_matches(
+            source,
+            _make_query(),
+            agentgrep.BackendSelection(None, "rg", None),
+            control,
+        )
+
+    assert matched is False
+    assert control.calls > 1
+    assert _samples_named(profiler.snapshot(), "search.plan.direct_source") == ()
 
 
 def test_run_readonly_command_records_redacted_subprocess_sample(
@@ -163,4 +403,41 @@ def test_run_readonly_command_does_not_import_profiler_when_inactive(
     completed = agentgrep.run_readonly_command(["rg", "--version"])
 
     assert completed.returncode == 0
+    assert "agentgrep._engine.profiling" not in sys.modules
+
+
+def test_collect_search_records_does_not_import_profiler_when_inactive(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The non-profiled collection path keeps the profiler module unloaded."""
+    source = agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "session.jsonl",
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=1,
+    )
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=source.path,
+        text="tmux",
+    )
+    query = _make_query()
+
+    def iter_records(_source: agentgrep.SourceHandle) -> t.Iterator[agentgrep.SearchRecord]:
+        yield record
+
+    monkeypatch.setattr(agentgrep, "iter_source_records", iter_records)
+    monkeypatch.delitem(sys.modules, "agentgrep._engine.profiling", raising=False)
+
+    records = agentgrep.collect_search_records(query, [source])
+
+    assert records == [record]
     assert "agentgrep._engine.profiling" not in sys.modules
