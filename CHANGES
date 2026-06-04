@@ -42,6 +42,39 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### Fixes
+
+#### Cursor IDE search results no longer go missing (#44)
+
+Searches now reliably find matches stored in Cursor IDE's history
+database. Previously, a fast pre-scan could mistake the database for
+an ordinary text file and skip it, silently leaving Cursor IDE
+matches out of search results.
+
+### Development
+
+#### New script: `scripts/profile_engine.py` (#44)
+
+See where search time goes. Profile prompt search, conversation
+search, grep-style search, or source discovery — one component or
+the whole matrix — and get a readable terminal summary. Add `--json`
+or `--ndjson` to save a shareable, privacy-safe report: timings
+only, never prompt text or local paths. Dev-only; not shipped in
+the wheel.
+
+#### `scripts/benchmark.py`: profiler benchmarks built in (#44)
+
+Run the profiler suite with `--commands profile-engine`, or just the
+Cursor IDE set with `profile-engine-cursor-ide`. Benchmark results
+now carry the matching profile data, and `--top-spans` shows the
+slowest steps right in the terminal. Asking for zero benchmarks by
+mistake is now an error instead of an empty report.
+
+#### New subcommand: `benchmark.py analyze` (#44)
+
+Turn a saved benchmark file into a bottleneck report — slowest
+commands, slowest steps, and warnings — without rerunning anything.
+
 ## agentgrep 0.1.0a15 (2026-05-31)
 
 agentgrep 0.1.0a15 speeds up broad lookup paths by separating lightweight
