@@ -219,6 +219,8 @@ Use `--commands profile-engine` to run every committed
 mixes still work, so `--commands grep,profile-engine` runs the `grep`
 bench plus the profiler benchmark group. `list-commands` prints
 available command groups after the configured `[bench.X]` entries.
+Use `--commands profile-engine-cursor-ide` for the Cursor IDE SQLite
+profile-engine set without expanding the all-agent profiler group.
 
 ## Engine profiler
 
@@ -235,6 +237,16 @@ $ uv run python scripts/profile_engine.py grep-prompts \
     --max-count 500 \
     --json \
     tmux > .tmp/profile-grep-prompts.json
+```
+
+Profile Cursor IDE SQLite stores directly:
+
+```console
+$ uv run python scripts/profile_engine.py search-prompts \
+    --agent cursor-ide \
+    --limit 500 \
+    --format json \
+    agentgrep-cursor-db-no-match > .tmp/profile-cursor-ide.json
 ```
 
 Profile every component:

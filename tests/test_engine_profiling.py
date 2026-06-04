@@ -283,6 +283,67 @@ def test_search_planning_reports_source_level_samples(
     assert str(tmp_path) not in payload
 
 
+def test_prefilter_source_count_excludes_sqlite_candidates(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SQLite candidates sharing a search root stay out of the prefilter count.
+
+    They bypass root prefiltering entirely, so counting them would
+    over-report how many sources the grep pass covered.
+    """
+    file_path = tmp_path / "session.jsonl"
+    file_path.write_text("tmux prompt", encoding="utf-8")
+    sqlite_path = tmp_path / "state.vscdb"
+    sqlite_path.write_bytes(b"")
+    file_source = agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=file_path,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=tmp_path,
+        mtime_ns=1,
+    )
+    sqlite_source = agentgrep.SourceHandle(
+        agent="cursor-ide",
+        store="cursor_ide.state",
+        adapter_id="cursor_ide.state_vscdb.v1",
+        path=sqlite_path,
+        path_kind="sqlite_db",
+        source_kind="sqlite",
+        search_root=tmp_path,
+        mtime_ns=1,
+    )
+
+    def fake_grep_root_paths(
+        _search_root: pathlib.Path,
+        _query: agentgrep.SearchQuery,
+        _grep_program: str,
+        *,
+        control: agentgrep.SearchControl | None = None,
+    ) -> set[pathlib.Path]:
+        assert control is not None
+        return {file_path}
+
+    monkeypatch.setattr(agentgrep, "grep_root_paths", fake_grep_root_paths)
+    profiler = EngineProfiler()
+
+    with use_engine_profiler(profiler):
+        filtered = agentgrep.prefilter_sources_by_root(
+            _make_query(),
+            [sqlite_source, file_source],
+            "rg",
+        )
+
+    assert sqlite_source in filtered
+    assert file_source in filtered
+    samples = _samples_named(profiler.snapshot(), "search.plan.prefilter_root")
+    assert len(samples) == 1
+    assert samples[0].attributes["agentgrep_source_count"] == 1
+
+
 def test_direct_source_matches_skips_sample_when_aborted(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -45,10 +45,14 @@ selectors:
 | `grep-conversations` | `profile-engine-grep-all-conversations-max-count-500` |
 | `find-prompts` | `profile-engine-find-all-prompts-limit-500` |
 | `all` | `profile-engine` |
+| `cursor-ide` | `profile-engine-cursor-ide` |
 
 If a component is supplied, use its selector as `--commands`. For
 `all`, pass `--commands profile-engine`; the benchmark harness expands
 that command group into every committed `profile-engine-*` benchmark.
+For Cursor IDE SQLite profiling, pass `--commands profile-engine-cursor-ide`;
+that group runs the Cursor-only search, grep, and find profile-engine
+benchmarks without expanding the all-agent profiler group.
 Keep the cap visible in reports: if a selector includes `limit-500` or
 `max-count-500`, say `limit 500` or `max-count 500`.
 

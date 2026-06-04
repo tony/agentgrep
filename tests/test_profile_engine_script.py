@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import pathlib
+import sqlite3
 import sys
 import typing as t
 
@@ -44,6 +45,28 @@ def _write_codex_history(
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"session_id": "history-session", "ts": 1_700_000_000, "text": text}
     path.write_text(json.dumps(payload) + "\n")
+    return path
+
+
+def _write_cursor_state_vscdb(
+    home: pathlib.Path,
+    *,
+    text: str,
+) -> pathlib.Path:
+    """Write a synthetic Cursor IDE state database the engine can parse."""
+    path = home / ".cursor" / "state.vscdb"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(path)
+    try:
+        _ = connection.execute("CREATE TABLE ItemTable (key TEXT, value TEXT)")
+        payload = {"messages": [{"role": "user", "content": text}]}
+        _ = connection.execute(
+            "INSERT INTO ItemTable VALUES (?, ?)",
+            ("workbench.panel.chat.composerData", json.dumps(payload)),
+        )
+        connection.commit()
+    finally:
+        connection.close()
     return path
 
 
@@ -501,6 +524,55 @@ def test_profile_component_run_redacts_query_and_home(
     assert payload["max_count"] == 1
     encoded = json.dumps(payload, sort_keys=True)
     assert "private-token" not in encoded
+    assert str(tmp_path) not in encoded
+
+
+def test_profile_cursor_ide_run_reports_sqlite_source_spans(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cursor IDE profiling walks state.vscdb sources with SQLite metadata."""
+    _ = _write_cursor_state_vscdb(tmp_path, text="private-cursor-token prompt")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    parser = profile_engine._build_parser()
+    args = parser.parse_args(
+        [
+            "search-prompts",
+            "private-cursor-token",
+            "--agent",
+            "cursor-ide",
+            "--limit",
+            "1",
+        ],
+    )
+
+    payload = profile_engine._run(args)
+
+    assert payload["profile_component"] == "search-prompts"
+    assert payload["profile_command"] == "search"
+    assert payload["agent_count"] == 1
+    assert payload["discovered_source_count"] == 1
+    assert payload["planned_source_count"] == 1
+    assert payload["result_count"] == 1
+    profile = t.cast("dict[str, object]", payload["profile"])
+    samples = t.cast("list[dict[str, object]]", profile["samples"])
+    sqlite_samples = [
+        sample
+        for sample in samples
+        if t.cast("dict[str, object]", sample["attributes"]).get("agentgrep_source_kind")
+        == "sqlite"
+    ]
+    assert sqlite_samples
+    assert {
+        t.cast("dict[str, object]", sample["attributes"]).get("agentgrep_agent")
+        for sample in sqlite_samples
+    } == {"cursor-ide"}
+    assert {
+        t.cast("dict[str, object]", sample["attributes"]).get("agentgrep_store")
+        for sample in sqlite_samples
+    } == {"cursor-ide.state_vscdb"}
+    encoded = json.dumps(payload, sort_keys=True)
+    assert "private-cursor-token" not in encoded
     assert str(tmp_path) not in encoded
 
 

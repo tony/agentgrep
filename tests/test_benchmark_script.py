@@ -402,6 +402,36 @@ def test_committed_benchmarks_include_engine_only_profile_entries() -> None:
             assert "limit 500" in bench.description.casefold()
 
 
+def test_committed_benchmarks_include_cursor_ide_profile_entries() -> None:
+    """Committed profiling coverage includes Cursor IDE SQLite stores."""
+    config = benchmark.load_config(
+        config_path=benchmark.DEFAULT_CONFIG,
+        local_path=_REPO_ROOT / "scripts" / "__missing_benchmark.local.toml",
+    )
+    expected = {
+        "profile-engine-search-cursor-ide-prompts-limit-500",
+        "profile-engine-search-cursor-ide-conversations-limit-500",
+        "profile-engine-grep-cursor-ide-prompts-max-count-500",
+        "profile-engine-grep-cursor-ide-conversations-max-count-500",
+        "profile-engine-find-cursor-ide-prompts-limit-500",
+    }
+    assert expected <= set(config.bench)
+    for name in expected:
+        bench = config.bench[name]
+        assert "scripts/profile_engine.py" in bench.command
+        assert "--agent cursor-ide" in bench.command
+        tokens = shlex.split(bench.command)
+        format_indexes = [index for index, token in enumerate(tokens) if token == "--format"]
+        assert format_indexes, f"{name} must request machine-readable profiler output"
+        assert tokens[format_indexes[-1] + 1] == "json"
+        if "max-count" in name:
+            assert "--max-count 500" in bench.command
+            assert "max-count 500" in bench.description.casefold()
+        else:
+            assert "--limit 500" in bench.command
+            assert "limit 500" in bench.description.casefold()
+
+
 class ProfileEngineFormatCase(t.NamedTuple):
     """One profiler-command output-format validation expectation."""
 
@@ -504,12 +534,25 @@ PROFILE_ENGINE_BENCHMARKS: list[str] = [
     "profile-engine-find-all-prompts-limit-500",
 ]
 
+PROFILE_ENGINE_CURSOR_IDE_BENCHMARKS: list[str] = [
+    "profile-engine-search-cursor-ide-prompts-limit-500",
+    "profile-engine-search-cursor-ide-conversations-limit-500",
+    "profile-engine-grep-cursor-ide-prompts-max-count-500",
+    "profile-engine-grep-cursor-ide-conversations-max-count-500",
+    "profile-engine-find-cursor-ide-prompts-limit-500",
+]
+
 
 BENCHMARK_SELECTOR_CASES: tuple[BenchmarkSelectorCase, ...] = (
     BenchmarkSelectorCase(
         test_id="none-keeps-config-order",
         commands=None,
-        expected_names=["grep", *PROFILE_ENGINE_BENCHMARKS, "import-time"],
+        expected_names=[
+            "grep",
+            *PROFILE_ENGINE_BENCHMARKS,
+            *PROFILE_ENGINE_CURSOR_IDE_BENCHMARKS,
+            "import-time",
+        ],
     ),
     BenchmarkSelectorCase(
         test_id="exact-name",
@@ -520,6 +563,11 @@ BENCHMARK_SELECTOR_CASES: tuple[BenchmarkSelectorCase, ...] = (
         test_id="profile-engine-group",
         commands="profile-engine",
         expected_names=PROFILE_ENGINE_BENCHMARKS,
+    ),
+    BenchmarkSelectorCase(
+        test_id="profile-engine-cursor-ide-group",
+        commands="profile-engine-cursor-ide",
+        expected_names=PROFILE_ENGINE_CURSOR_IDE_BENCHMARKS,
     ),
     BenchmarkSelectorCase(
         test_id="mixed-exact-and-group",
@@ -542,6 +590,10 @@ def test_select_bench_names_expands_command_groups(case: BenchmarkSelectorCase) 
             **{
                 name: benchmark.BenchCommand(command=f"echo {name}")
                 for name in PROFILE_ENGINE_BENCHMARKS
+            },
+            **{
+                name: benchmark.BenchCommand(command=f"echo {name}")
+                for name in PROFILE_ENGINE_CURSOR_IDE_BENCHMARKS
             },
             "import-time": benchmark.BenchCommand(command="echo import"),
         },
@@ -1575,6 +1627,67 @@ def test_run_accepts_profile_engine_command_group(
     assert output.exists()
 
 
+def test_run_accepts_profile_engine_cursor_ide_command_group(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The run command expands ``--commands profile-engine-cursor-ide``."""
+    config = benchmark.Config(
+        bench={
+            name: benchmark.BenchCommand(command=f"echo {name}", default_query="tmux")
+            for name in benchmark.PROFILE_ENGINE_CURSOR_IDE_BENCHMARK_GROUP
+        },
+        settings=benchmark.Settings(sync_command=""),
+    )
+    output = tmp_path / "profile-engine-cursor-ide.json"
+    captured_bench_names: list[str] = []
+    monkeypatch.setattr(benchmark, "load_config", lambda **_kwargs: config)
+    monkeypatch.setattr(
+        benchmark,
+        "_select_targets",
+        lambda **_kwargs: [
+            benchmark.CommitRef(sha="a" * 40, short_sha="aaaaaaa", subject="subject"),
+        ],
+    )
+    monkeypatch.setattr(benchmark, "_git_dirty", lambda _repo: False)
+    monkeypatch.setattr(benchmark, "_git", lambda *_args, **_kwargs: "streamline-02")
+    monkeypatch.setattr(benchmark, "_install_restore_guard", lambda **_kwargs: None)
+
+    def run_one_commit(**kwargs: t.Any) -> list[benchmark.Measurement]:
+        names = t.cast("list[str]", kwargs["bench_names"])
+        captured_bench_names.extend(names)
+        return [
+            benchmark.Measurement(
+                sha="a" * 40,
+                short_sha="aaaaaaa",
+                subject="subject",
+                command_name=name,
+                command_string=config.bench[name].command,
+                samples=[0.1],
+            )
+            for name in names
+        ]
+
+    monkeypatch.setattr(benchmark, "_run_one_commit", run_one_commit)
+
+    rc = benchmark.main(
+        [
+            "run",
+            "--commands",
+            "profile-engine-cursor-ide",
+            "--format",
+            "json",
+            "--output",
+            str(output),
+            "--no-progress",
+        ],
+    )
+
+    assert rc == 0
+    assert captured_bench_names == list(benchmark.PROFILE_ENGINE_CURSOR_IDE_BENCHMARK_GROUP)
+    assert output.exists()
+
+
 def test_list_commands_prints_command_groups(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
@@ -1583,7 +1696,10 @@ def test_list_commands_prints_command_groups(
     config = benchmark.Config(
         bench={
             name: benchmark.BenchCommand(command=f"echo {name}", default_query="tmux")
-            for name in benchmark.PROFILE_ENGINE_BENCHMARK_GROUP
+            for name in (
+                *benchmark.PROFILE_ENGINE_BENCHMARK_GROUP,
+                *benchmark.PROFILE_ENGINE_CURSOR_IDE_BENCHMARK_GROUP,
+            )
         },
     )
     monkeypatch.setattr(benchmark, "load_config", lambda **_kwargs: config)
@@ -1593,7 +1709,9 @@ def test_list_commands_prints_command_groups(
     output = capsys.readouterr().out
     assert "command groups:" in output
     assert "profile-engine:" in output
+    assert "profile-engine-cursor-ide:" in output
     assert "profile-engine-grep-all-prompts-max-count-500" in output
+    assert "profile-engine-grep-cursor-ide-prompts-max-count-500" in output
 
 
 # ---------------------------------------------------------------------------

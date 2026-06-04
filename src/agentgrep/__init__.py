@@ -3706,6 +3706,9 @@ def prefilter_sources_by_root(
     for source in sources:
         if active_control.answer_now_requested():
             break
+        if source.source_kind == "sqlite":
+            filtered_sources.append(source)
+            continue
         search_root = source.search_root
         if search_root is None:
             filtered_sources.append(source)
@@ -3724,8 +3727,12 @@ def prefilter_sources_by_root(
             _record_engine_profile_sample(
                 "search.plan.prefilter_root",
                 time.perf_counter() - started_at,
+                # SQLite candidates bypass root prefiltering above, so they
+                # do not count toward the sources this grep pass covers.
                 agentgrep_source_count=sum(
-                    1 for candidate in sources if candidate.search_root == search_root
+                    1
+                    for candidate in sources
+                    if candidate.search_root == search_root and candidate.source_kind != "sqlite"
                 ),
                 agentgrep_matched_source_count=len(matched_paths)
                 if matched_paths is not None

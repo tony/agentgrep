@@ -154,6 +154,16 @@ Run one profiler component and save a machine-readable artifact:
 $ uv run python scripts/profile_engine.py grep-prompts --agent all --max-count 500 --json tmux > .tmp/profile-grep-prompts.json
 ```
 
+Run the Cursor IDE SQLite path directly:
+
+```console
+$ uv run python scripts/profile_engine.py search-prompts \
+    --agent cursor-ide \
+    --limit 500 \
+    --format json \
+    agentgrep-cursor-db-no-match > .tmp/profile-cursor-ide.json
+```
+
 Run the full profiler matrix and save a machine-readable artifact:
 
 ```console
@@ -177,8 +187,11 @@ agent/store/adapter/count metadata without prompt text or local paths.
 Use `scripts/benchmark.py` for timed benchmark sweeps. The profiler-oriented
 benchmark entries are named `profile-engine-*`; each committed benchmark name
 and description must disclose `--limit N` or `--max-count N` when a cap is
-present. Use `--commands profile-engine` for the full profiler benchmark
-group, or pass an exact `profile-engine-*` key for one profiler benchmark.
+present. Use `--commands profile-engine` for the all-agent profiler
+benchmark group, or pass an exact `profile-engine-*` key for one profiler
+benchmark.
+Use `--commands profile-engine-cursor-ide` for the Cursor IDE SQLite benchmark
+set without expanding the all-agent profiler group.
 
 Run one profiler benchmark:
 
@@ -200,6 +213,20 @@ $ uv run scripts/benchmark.py run \
     --format json \
     --output .tmp/benchmark-profile-engine.json \
     --allow-dirty
+```
+
+Run the Cursor IDE SQLite profiler benchmark set against two branch tips:
+
+```console
+$ uv run scripts/benchmark.py run \
+    --commits streamline-02,streamline-03 \
+    --commands profile-engine-cursor-ide \
+    --runs 25 \
+    --show-percentiles min,avg,max,p90,p95,p99 \
+    --format json \
+    --output .tmp/benchmark-cursor-ide-profile-engine.json \
+    --allow-dirty \
+    --no-progress
 ```
 
 Benchmark `json` and `ndjson` artifacts include `dry_run`,
