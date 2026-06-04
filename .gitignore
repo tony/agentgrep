@@ -213,3 +213,6 @@ __marimo__/
 # Per-machine overrides for scripts/benchmark.py (deep-merged on top of
 # the committed scripts/benchmark.toml).
 /scripts/benchmark.local.toml
+
+# Benchmark and profiling temp files
+.tmp/
