@@ -36,11 +36,18 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a17 (Yet to be released)
+## agentgrep 0.1.0a18 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a17 (2026-06-04)
+
+agentgrep 0.1.0a17 makes searches fast on huge Cursor IDE databases.
+The `state.vscdb` reader now scans keys first and fetches values only
+for chat and prompt entries, so multi-gigabyte databases stop funneling
+unrelated editor data through memory on every search.
 
 ### Fixes
 
