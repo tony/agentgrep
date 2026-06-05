@@ -3246,6 +3246,169 @@ def test_cursor_state_itemtable_extracts_prompt(
     assert records[0].text == "serenity and bliss live here"
 
 
+class CursorStateTwoStageCase(t.NamedTuple):
+    """Parametrized case for the two-stage Cursor state key/value read."""
+
+    test_id: str
+    table: str
+    rows: tuple[tuple[str, str], ...]
+    expected_rows: tuple[tuple[str, str], ...]
+    expected_value_fetches: int
+
+
+_CURSOR_STATE_TWO_STAGE_CASES: tuple[CursorStateTwoStageCase, ...] = (
+    CursorStateTwoStageCase(
+        test_id="legacy-itemtable",
+        table="ItemTable",
+        rows=(
+            ("workbench.panel.chat.composerData", "matched"),
+            ("extension.unrelated.largeCache", "ignored"),
+        ),
+        expected_rows=(("workbench.panel.chat.composerData", "matched"),),
+        expected_value_fetches=1,
+    ),
+    CursorStateTwoStageCase(
+        test_id="modern-cursor-disk-kv",
+        table="cursorDiskKV",
+        rows=(
+            ("aiService.prompts", "matched"),
+            ("workbench.colorTheme", "ignored"),
+        ),
+        expected_rows=(("aiService.prompts", "matched"),),
+        expected_value_fetches=1,
+    ),
+    CursorStateTwoStageCase(
+        test_id="case-insensitive-key",
+        table="cursorDiskKV",
+        rows=(("AISERVICE.PROMPTS", "matched"),),
+        expected_rows=(("AISERVICE.PROMPTS", "matched"),),
+        expected_value_fetches=1,
+    ),
+    CursorStateTwoStageCase(
+        test_id="duplicate-key-no-pk",
+        table="ItemTable",
+        rows=(
+            ("aiService.prompts", "first"),
+            ("aiService.prompts", "second"),
+        ),
+        expected_rows=(
+            ("aiService.prompts", "first"),
+            ("aiService.prompts", "second"),
+        ),
+        expected_value_fetches=1,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    CursorStateTwoStageCase._fields,
+    _CURSOR_STATE_TWO_STAGE_CASES,
+    ids=[case.test_id for case in _CURSOR_STATE_TWO_STAGE_CASES],
+)
+def test_iter_key_value_rows_reads_values_only_for_matched_keys(
+    test_id: str,
+    table: str,
+    rows: tuple[tuple[str, str], ...],
+    expected_rows: tuple[tuple[str, str], ...],
+    expected_value_fetches: int,
+) -> None:
+    """The key/value iterator scans keys first and point-fetches values."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    connection = sqlite3.connect(":memory:")
+    _ = connection.execute(f"CREATE TABLE {table} (key TEXT, value TEXT)")
+    for key, value in rows:
+        _ = connection.execute(f"INSERT INTO {table} VALUES (?, ?)", (key, value))
+    connection.commit()
+    traces: list[str] = []
+    connection.set_trace_callback(traces.append)
+
+    fetched = list(
+        agentgrep.iter_key_value_rows(
+            connection,
+            table,
+            key_tokens=agentgrep.CURSOR_STATE_TOKENS,
+        ),
+    )
+
+    assert fetched == list(expected_rows)
+    key_scans = [trace for trace in traces if trace.upper().startswith("SELECT KEY FROM")]
+    assert key_scans
+    assert " WHERE " in key_scans[-1].upper()
+    assert " LIKE " in key_scans[-1].upper()
+    assert "COLLATE NOCASE" in key_scans[-1].upper()
+    assert "VALUE" not in key_scans[-1].upper()
+    value_fetches = [trace for trace in traces if trace.upper().startswith("SELECT VALUE FROM")]
+    assert len(value_fetches) == expected_value_fetches
+    assert all(" WHERE KEY = " in trace.upper() for trace in value_fetches)
+
+
+def test_cursor_state_parser_skips_irrelevant_blob_values(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Large non-matching ``cursorDiskKV`` blobs are never fetched by the parser.
+
+    The fixture mirrors a real Cursor database where a few small chat and
+    prompt keys sit beside many large unrelated blobs; the traced SQL
+    proves value reads stay keyed to the matching rows.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+
+    db_path = home / ".cursor" / "state.vscdb"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(db_path)
+    _ = connection.execute("CREATE TABLE cursorDiskKV (key TEXT PRIMARY KEY, value BLOB)")
+    irrelevant_keys = [f"editor.cache.{index}" for index in range(20)] + [
+        f"telemetry.blob.{index}" for index in range(20)
+    ]
+    large_blob = b"x" * (256 * 1024)
+    for key in irrelevant_keys:
+        _ = connection.execute("INSERT INTO cursorDiskKV VALUES (?, ?)", (key, large_blob))
+    matching_payloads = {
+        "aiService.prompts": json.dumps(
+            {"prompts": [{"text": "serenity blob prompt", "commandType": 1}]},
+        ),
+        "workbench.panel.chat.composerData": json.dumps(
+            {"messages": [{"role": "user", "content": "bliss blob prompt"}]},
+        ),
+    }
+    for key, value in matching_payloads.items():
+        _ = connection.execute("INSERT INTO cursorDiskKV VALUES (?, ?)", (key, value))
+    connection.commit()
+    connection.close()
+
+    traces: list[str] = []
+    original_open_readonly_sqlite = agentgrep.open_readonly_sqlite
+
+    def traced_open_readonly_sqlite(path: pathlib.Path) -> sqlite3.Connection:
+        traced_connection = t.cast("sqlite3.Connection", original_open_readonly_sqlite(path))
+        traced_connection.set_trace_callback(traces.append)
+        return traced_connection
+
+    monkeypatch.setattr(agentgrep, "open_readonly_sqlite", traced_open_readonly_sqlite)
+
+    sources = agentgrep.discover_sources(
+        home,
+        ("cursor-ide",),
+        agentgrep.BackendSelection(None, None, None),
+    )
+    state_sources = [source for source in sources if source.path == db_path]
+    assert len(state_sources) == 1
+    records = list(agentgrep.iter_source_records(state_sources[0]))
+
+    assert sorted(record.text for record in records) == [
+        "bliss blob prompt",
+        "serenity blob prompt",
+    ]
+    value_fetches = [trace for trace in traces if trace.upper().startswith("SELECT VALUE FROM")]
+    assert len(value_fetches) == len(matching_payloads)
+    for trace in value_fetches:
+        assert all(key not in trace for key in irrelevant_keys)
+    assert not [trace for trace in traces if "VALUE" in trace.upper() and " LIKE " in trace.upper()]
+
+
 class ProtobufTextCase(t.NamedTuple):
     """Parametrized case for :func:`agentgrep.iter_protobuf_text_fields`."""
 

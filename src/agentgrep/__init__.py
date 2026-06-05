@@ -5980,10 +5980,11 @@ def parse_cursor_state_db(
         candidate_tables = [name for name in ("ItemTable", "cursorDiskKV") if name in tables]
         seen: set[tuple[str | None, str, str | None, str | None]] = set()
         for table in candidate_tables:
-            for key, raw_value in iter_key_value_rows(connection, table):
-                lowered_key = key.casefold()
-                if not any(token in lowered_key for token in CURSOR_STATE_TOKENS):
-                    continue
+            for key, raw_value in iter_key_value_rows(
+                connection,
+                table,
+                key_tokens=CURSOR_STATE_TOKENS,
+            ):
                 decoded = decode_sqlite_value(raw_value)
                 if decoded is None:
                     continue
@@ -6052,8 +6053,17 @@ def sqlite_column_names(connection: sqlite3.Connection, table: str) -> set[str]:
 def iter_key_value_rows(
     connection: sqlite3.Connection,
     table: str,
+    *,
+    key_tokens: cabc.Sequence[str] | None = None,
 ) -> cabc.Iterator[tuple[str, object]]:
-    """Yield likely key/value rows from a SQLite table."""
+    """Yield likely key/value rows, reading values only for matched keys.
+
+    Stage 1 selects keys only — optionally filtered in SQL by
+    ``key_tokens`` substrings — so large non-matching ``value`` BLOBs are
+    never materialized; on the real Cursor schema the key scan rides a
+    covering index. Stage 2 point-fetches ``value`` per distinct matched
+    key, yielding every row for keys that repeat in index-less databases.
+    """
     if table not in {"ItemTable", "cursorDiskKV"}:
         return
     info = t.cast(
@@ -6063,12 +6073,31 @@ def iter_key_value_rows(
     columns = [str(row[1]) for row in info]
     if "key" not in columns or "value" not in columns:
         return
-    query = "SELECT key, value FROM ItemTable"
-    if table == "cursorDiskKV":
-        query = "SELECT key, value FROM cursorDiskKV"
-    rows = t.cast("cabc.Iterable[KeyValueRow]", connection.execute(query))
-    for key, value in rows:
-        if isinstance(key, str):
+    key_query = f"SELECT key FROM {table}"  # table validated against the allowlist above
+    parameters: tuple[str, ...] = ()
+    if key_tokens is not None:
+        tokens = tuple(token for token in key_tokens if token)
+        if tokens:
+            predicates = " OR ".join("key LIKE ? COLLATE NOCASE" for _ in tokens)
+            key_query = f"{key_query} WHERE {predicates}"
+            parameters = tuple(f"%{token}%" for token in tokens)
+    seen_keys: set[str] = set()
+    matched_keys: list[str] = []
+    key_rows = t.cast(
+        "cabc.Iterable[tuple[object]]",
+        connection.execute(key_query, parameters),
+    )
+    for (key,) in key_rows:
+        if isinstance(key, str) and key not in seen_keys:
+            seen_keys.add(key)
+            matched_keys.append(key)
+    value_query = f"SELECT value FROM {table} WHERE key = ?"  # table validated above
+    for key in matched_keys:
+        value_rows = t.cast(
+            "cabc.Iterable[tuple[object]]",
+            connection.execute(value_query, (key,)),
+        )
+        for (value,) in value_rows:
             yield key, value
 
 
