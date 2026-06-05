@@ -10,6 +10,7 @@ code path stays out of pytest where it would take minutes per test.
 from __future__ import annotations
 
 import importlib.util
+import json
 import math
 import pathlib
 import shlex
@@ -372,6 +373,235 @@ def test_committed_benchmarks_name_every_command_limit(case: BenchmarkLimitCase)
         assert f"limit {value}" in description
 
 
+def test_committed_benchmarks_include_engine_only_profile_entries() -> None:
+    """Committed profiling coverage separates engine timing from CLI rendering."""
+    config = benchmark.load_config(
+        config_path=benchmark.DEFAULT_CONFIG,
+        local_path=_REPO_ROOT / "scripts" / "__missing_benchmark.local.toml",
+    )
+    expected = {
+        "profile-engine-search-all-prompts-limit-500",
+        "profile-engine-search-all-conversations-limit-500",
+        "profile-engine-grep-all-prompts-max-count-500",
+        "profile-engine-grep-all-conversations-max-count-500",
+        "profile-engine-find-all-prompts-limit-500",
+    }
+    assert expected <= set(config.bench)
+    for name in expected:
+        bench = config.bench[name]
+        assert "scripts/profile_engine.py" in bench.command
+        tokens = shlex.split(bench.command)
+        format_indexes = [index for index, token in enumerate(tokens) if token == "--format"]
+        assert format_indexes, f"{name} must request machine-readable profiler output"
+        assert tokens[format_indexes[-1] + 1] == "json"
+        if "max-count" in name:
+            assert "--max-count 500" in bench.command
+            assert "max-count 500" in bench.description.casefold()
+        else:
+            assert "--limit 500" in bench.command
+            assert "limit 500" in bench.description.casefold()
+
+
+def test_committed_benchmarks_include_cursor_ide_profile_entries() -> None:
+    """Committed profiling coverage includes Cursor IDE SQLite stores."""
+    config = benchmark.load_config(
+        config_path=benchmark.DEFAULT_CONFIG,
+        local_path=_REPO_ROOT / "scripts" / "__missing_benchmark.local.toml",
+    )
+    expected = {
+        "profile-engine-search-cursor-ide-prompts-limit-500",
+        "profile-engine-search-cursor-ide-conversations-limit-500",
+        "profile-engine-grep-cursor-ide-prompts-max-count-500",
+        "profile-engine-grep-cursor-ide-conversations-max-count-500",
+        "profile-engine-find-cursor-ide-prompts-limit-500",
+    }
+    assert expected <= set(config.bench)
+    for name in expected:
+        bench = config.bench[name]
+        assert "scripts/profile_engine.py" in bench.command
+        assert "--agent cursor-ide" in bench.command
+        tokens = shlex.split(bench.command)
+        format_indexes = [index for index, token in enumerate(tokens) if token == "--format"]
+        assert format_indexes, f"{name} must request machine-readable profiler output"
+        assert tokens[format_indexes[-1] + 1] == "json"
+        if "max-count" in name:
+            assert "--max-count 500" in bench.command
+            assert "max-count 500" in bench.description.casefold()
+        else:
+            assert "--limit 500" in bench.command
+            assert "limit 500" in bench.description.casefold()
+
+
+class ProfileEngineFormatCase(t.NamedTuple):
+    """One profiler-command output-format validation expectation."""
+
+    test_id: str
+    command: str
+    valid: bool
+
+
+_PROFILE_ENGINE_FORMAT_CASES: tuple[ProfileEngineFormatCase, ...] = (
+    ProfileEngineFormatCase(
+        test_id="format-json-passes",
+        command="{venv}/bin/python scripts/profile_engine.py search-prompts --format json",
+        valid=True,
+    ),
+    ProfileEngineFormatCase(
+        test_id="json-flag-passes",
+        command="{venv}/bin/python scripts/profile_engine.py search-prompts --json",
+        valid=True,
+    ),
+    ProfileEngineFormatCase(
+        test_id="format-equals-json-passes",
+        command="{venv}/bin/python scripts/profile_engine.py search-prompts --format=json",
+        valid=True,
+    ),
+    ProfileEngineFormatCase(
+        test_id="format-ndjson-fails",
+        command="{venv}/bin/python scripts/profile_engine.py search-prompts --format ndjson",
+        valid=False,
+    ),
+    ProfileEngineFormatCase(
+        test_id="no-format-flag-fails",
+        command="{venv}/bin/python scripts/profile_engine.py search-prompts",
+        valid=False,
+    ),
+    ProfileEngineFormatCase(
+        test_id="non-profile-engine-passes",
+        command="{venv}/bin/agentgrep search {query}",
+        valid=True,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    _PROFILE_ENGINE_FORMAT_CASES,
+    ids=[c.test_id for c in _PROFILE_ENGINE_FORMAT_CASES],
+)
+def test_validate_profile_engine_commands_requires_json_output(
+    case: ProfileEngineFormatCase,
+) -> None:
+    """Profiler benchmarks must request JSON stdout for payload capture."""
+    config = benchmark.Config(
+        bench={"bench-under-test": benchmark.BenchCommand(command=case.command)}
+    )
+    if case.valid:
+        benchmark._validate_profile_engine_commands(config)
+    else:
+        with pytest.raises(typer.BadParameter, match="bench-under-test"):
+            benchmark._validate_profile_engine_commands(config)
+
+
+def test_load_config_tolerates_non_json_profile_engine_commands(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Informational commands can still load a config with a Rich profiler bench.
+
+    Only ``run`` and ``compare`` capture profile payloads, so the JSON-output
+    validation fires there — ``list-commands`` and ``show-config`` must stay
+    usable while the config is being debugged.
+    """
+    toml_file = tmp_path / "benchmark.toml"
+    toml_file.write_text(
+        "[bench.profile-engine-debug]\n"
+        'command = "{venv}/bin/python scripts/profile_engine.py search-prompts --format rich"\n',
+    )
+
+    config = benchmark.load_config(
+        config_path=toml_file,
+        local_path=tmp_path / "no-local.toml",
+    )
+
+    assert "profile-engine-debug" in config.bench
+    with pytest.raises(typer.BadParameter, match="profile-engine-debug"):
+        benchmark._validate_profile_engine_commands(config)
+
+
+class BenchmarkSelectorCase(t.NamedTuple):
+    """One benchmark selector expansion expectation."""
+
+    test_id: str
+    commands: str | None
+    expected_names: list[str]
+
+
+PROFILE_ENGINE_BENCHMARKS: list[str] = [
+    "profile-engine-search-all-prompts-limit-500",
+    "profile-engine-search-all-conversations-limit-500",
+    "profile-engine-grep-all-prompts-max-count-500",
+    "profile-engine-grep-all-conversations-max-count-500",
+    "profile-engine-find-all-prompts-limit-500",
+]
+
+PROFILE_ENGINE_CURSOR_IDE_BENCHMARKS: list[str] = [
+    "profile-engine-search-cursor-ide-prompts-limit-500",
+    "profile-engine-search-cursor-ide-conversations-limit-500",
+    "profile-engine-grep-cursor-ide-prompts-max-count-500",
+    "profile-engine-grep-cursor-ide-conversations-max-count-500",
+    "profile-engine-find-cursor-ide-prompts-limit-500",
+]
+
+
+BENCHMARK_SELECTOR_CASES: tuple[BenchmarkSelectorCase, ...] = (
+    BenchmarkSelectorCase(
+        test_id="none-keeps-config-order",
+        commands=None,
+        expected_names=[
+            "grep",
+            *PROFILE_ENGINE_BENCHMARKS,
+            *PROFILE_ENGINE_CURSOR_IDE_BENCHMARKS,
+            "import-time",
+        ],
+    ),
+    BenchmarkSelectorCase(
+        test_id="exact-name",
+        commands="grep",
+        expected_names=["grep"],
+    ),
+    BenchmarkSelectorCase(
+        test_id="profile-engine-group",
+        commands="profile-engine",
+        expected_names=PROFILE_ENGINE_BENCHMARKS,
+    ),
+    BenchmarkSelectorCase(
+        test_id="profile-engine-cursor-ide-group",
+        commands="profile-engine-cursor-ide",
+        expected_names=PROFILE_ENGINE_CURSOR_IDE_BENCHMARKS,
+    ),
+    BenchmarkSelectorCase(
+        test_id="mixed-exact-and-group",
+        commands="grep,profile-engine,import-time",
+        expected_names=["grep", *PROFILE_ENGINE_BENCHMARKS, "import-time"],
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    BENCHMARK_SELECTOR_CASES,
+    ids=[c.test_id for c in BENCHMARK_SELECTOR_CASES],
+)
+def test_select_bench_names_expands_command_groups(case: BenchmarkSelectorCase) -> None:
+    """Benchmark command selectors support exact names and curated groups."""
+    config = benchmark.Config(
+        bench={
+            "grep": benchmark.BenchCommand(command="echo grep"),
+            **{
+                name: benchmark.BenchCommand(command=f"echo {name}")
+                for name in PROFILE_ENGINE_BENCHMARKS
+            },
+            **{
+                name: benchmark.BenchCommand(command=f"echo {name}")
+                for name in PROFILE_ENGINE_CURSOR_IDE_BENCHMARKS
+            },
+            "import-time": benchmark.BenchCommand(command="echo import"),
+        },
+    )
+
+    assert benchmark._select_bench_names(config, case.commands) == case.expected_names
+
+
 # ---------------------------------------------------------------------------
 # Templating
 # ---------------------------------------------------------------------------
@@ -456,12 +686,507 @@ def test_measurement_json_shape_preserves_documented_keys() -> None:
         "samples",
         "status",
         "error",
+        "dry_run",
+        "profile_payload",
+        "profile_capture_error",
+        "schema_version",
+        "artifact_kind",
     }
     assert payload["samples"] == [0.5, 0.6, 0.55]
+    assert payload["dry_run"] is False
+    assert payload["profile_payload"] is None
+    assert payload["profile_capture_error"] is None
+    assert payload["schema_version"] == 1
+    assert payload["artifact_kind"] == "agentgrep.benchmark.measurement"
     # Computed stats are properties, not stored fields — they should not leak
     # into model_dump (consumers compute their own from the raw samples).
     assert "avg_s" not in payload
     assert "min_s" not in payload
+
+
+def test_benchmark_json_renderer_includes_artifact_metadata() -> None:
+    """Benchmark JSON artifacts carry a stable root shape marker."""
+    measurement = benchmark.Measurement(
+        sha="0" * 40,
+        short_sha="0000000",
+        subject="subject",
+        command_name="grep",
+        command_string="{venv}/bin/agentgrep grep {query}",
+        samples=[0.1],
+    )
+
+    payload = json.loads(benchmark.render_json([measurement], []))
+
+    assert payload["schema_version"] == 1
+    assert payload["artifact_kind"] == "agentgrep.benchmark.runs"
+    assert payload["runs"][0]["artifact_kind"] == "agentgrep.benchmark.measurement"
+
+
+def test_benchmark_ndjson_rows_include_artifact_metadata() -> None:
+    """Benchmark NDJSON rows are self-describing without a root object."""
+    measurement = benchmark.Measurement(
+        sha="0" * 40,
+        short_sha="0000000",
+        subject="subject",
+        command_name="grep",
+        command_string="{venv}/bin/agentgrep grep {query}",
+        samples=[0.1],
+    )
+
+    row = json.loads(benchmark.render_ndjson([measurement], []))
+
+    assert row["schema_version"] == 1
+    assert row["artifact_kind"] == "agentgrep.benchmark.measurement"
+
+
+class SafeProfileAttributeCase(t.NamedTuple):
+    """One sanitizer expectation — feed ``attributes``, assert the safe dict."""
+
+    test_id: str
+    attributes: dict[object, object]
+    expected: dict[str, object]
+
+
+_SAFE_PROFILE_ATTRIBUTE_CASES: tuple[SafeProfileAttributeCase, ...] = (
+    SafeProfileAttributeCase(
+        test_id="path-kind-kept",
+        attributes={"agentgrep_path_kind": "sqlite_db"},
+        expected={"agentgrep_path_kind": "sqlite_db"},
+    ),
+    SafeProfileAttributeCase(
+        test_id="env-path-status-kept",
+        attributes={"agentgrep_env_path_status": "not_found"},
+        expected={"agentgrep_env_path_status": "not_found"},
+    ),
+    SafeProfileAttributeCase(
+        test_id="override-path-status-kept",
+        attributes={"agentgrep_override_path_status": "not_a_directory"},
+        expected={"agentgrep_override_path_status": "not_a_directory"},
+    ),
+    SafeProfileAttributeCase(
+        test_id="agentgrep-path-dropped",
+        attributes={"agentgrep_path": "/home/private/project"},
+        expected={},
+    ),
+    SafeProfileAttributeCase(
+        test_id="agentgrep-query-dropped",
+        attributes={"agentgrep_query": "private-token"},
+        expected={},
+    ),
+    SafeProfileAttributeCase(
+        test_id="non-string-key-dropped",
+        attributes={1: "value"},
+        expected={},
+    ),
+    SafeProfileAttributeCase(
+        test_id="non-scalar-value-dropped",
+        attributes={"agentgrep_extra": ["nested"]},
+        expected={},
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    _SAFE_PROFILE_ATTRIBUTE_CASES,
+    ids=[c.test_id for c in _SAFE_PROFILE_ATTRIBUTE_CASES],
+)
+def test_safe_profile_attribute_dict_allowlists_safe_classifiers(
+    case: SafeProfileAttributeCase,
+) -> None:
+    """Denied substrings drop sensitive keys but spare allowlisted classifiers."""
+    assert benchmark._safe_profile_attribute_dict(case.attributes) == case.expected
+
+
+def _analysis_fixture_measurements() -> list[benchmark.Measurement]:
+    """Build benchmark rows with nested profile spans for analyzer tests."""
+    return [
+        benchmark.Measurement(
+            sha="a" * 40,
+            short_sha="aaaaaaa",
+            subject="profile search",
+            command_name="profile-engine-search-all-conversations-limit-500",
+            command_string=(
+                "{venv}/bin/python scripts/profile_engine.py search-conversations {query}"
+            ),
+            samples=[0.5, 0.7],
+            profile_payload={
+                "profile_component": "search-conversations",
+                "profile": {
+                    "samples": [
+                        {
+                            "name": "search.collect",
+                            "duration_seconds": 1.2,
+                            "attributes": {
+                                "agentgrep_source_count": 2,
+                                "agentgrep_path_kind": "sqlite_db",
+                                "agentgrep_query": "private-token",
+                                "agentgrep_path": "/home/private/project",
+                            },
+                        },
+                        {
+                            "name": "search.discover",
+                            "duration_seconds": 0.3,
+                            "attributes": {"agentgrep_agent_count": 8},
+                        },
+                    ],
+                },
+            },
+        ),
+        benchmark.Measurement(
+            sha="b" * 40,
+            short_sha="bbbbbbb",
+            subject="profile grep",
+            command_name="profile-engine-grep-all-conversations-max-count-500",
+            command_string="{venv}/bin/python scripts/profile_engine.py grep-conversations {query}",
+            samples=[0.4],
+            profile_payload={
+                "profile_component": "grep-conversations",
+                "profile": {
+                    "samples": [
+                        {
+                            "name": "search.collect",
+                            "duration_seconds": 1.0,
+                            "attributes": {"agentgrep_source_count": 2},
+                        },
+                    ],
+                },
+            },
+        ),
+        benchmark.Measurement(
+            sha="c" * 40,
+            short_sha="ccccccc",
+            subject="failed bench",
+            command_name="profile-engine-find-all-prompts-limit-500",
+            command_string="{venv}/bin/python scripts/profile_engine.py find-prompts",
+            samples=[],
+            status="bench_fail",
+            error="boom",
+        ),
+    ]
+
+
+class AnalysisLoadCase(t.NamedTuple):
+    """One benchmark artifact shape the analyzer can load."""
+
+    test_id: str
+    suffix: str
+    renderer_name: str
+
+
+ANALYSIS_LOAD_CASES: tuple[AnalysisLoadCase, ...] = (
+    AnalysisLoadCase(test_id="json-root", suffix=".json", renderer_name="render_json"),
+    AnalysisLoadCase(test_id="ndjson-rows", suffix=".ndjson", renderer_name="render_ndjson"),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    ANALYSIS_LOAD_CASES,
+    ids=[c.test_id for c in ANALYSIS_LOAD_CASES],
+)
+def test_load_measurement_artifact_accepts_benchmark_json_and_ndjson(
+    case: AnalysisLoadCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Analyzer input loading accepts the benchmark artifact formats."""
+    rows = _analysis_fixture_measurements()
+    artifact = tmp_path / f"benchmark{case.suffix}"
+    renderer = getattr(benchmark, case.renderer_name)
+    artifact.write_text(renderer(rows, []))
+
+    loaded = benchmark.load_measurement_artifact(artifact)
+
+    assert [row.command_name for row in loaded] == [row.command_name for row in rows]
+    assert loaded[0].profile_payload == rows[0].profile_payload
+
+
+def test_load_measurement_artifact_rejects_unknown_shapes(tmp_path: pathlib.Path) -> None:
+    """Analyzer loading fails loud for non-benchmark JSON shapes."""
+    artifact = tmp_path / "not-benchmark.json"
+    artifact.write_text(json.dumps({"profile": {"samples": []}}))
+
+    with pytest.raises(typer.BadParameter, match="unsupported benchmark artifact"):
+        benchmark.load_measurement_artifact(artifact)
+
+
+def test_build_analysis_report_summarizes_commands_and_profile_spans() -> None:
+    """Analysis reports expose timing summaries and nested profile bottlenecks."""
+    report = benchmark.build_analysis_report(
+        _analysis_fixture_measurements(),
+        artifact_label="benchmark.json",
+        percentile_labels=["min", "avg", "p90"],
+        top_spans=2,
+        top_groups=2,
+    )
+
+    assert report.artifact_label == "benchmark.json"
+    assert report.command_summaries[0].command_name == (
+        "profile-engine-search-all-conversations-limit-500"
+    )
+    assert report.command_summaries[0].status_counts == {"ok": 1}
+    assert report.command_summaries[0].sample_count == 2
+    assert report.command_summaries[0].stats["avg"] == pytest.approx(0.6)
+    assert report.top_spans[0].name == "search.collect"
+    assert report.top_spans[0].duration_seconds == pytest.approx(1.2)
+    assert "agentgrep_query" not in report.top_spans[0].attributes
+    assert "agentgrep_path" not in report.top_spans[0].attributes
+    assert report.top_spans[0].attributes["agentgrep_path_kind"] == "sqlite_db"
+    assert report.span_groups[0].component == "search-conversations"
+    assert report.span_groups[0].name == "search.collect"
+    assert report.warnings == ["1 measurement(s) have no samples"]
+
+
+class AnalysisRenderCase(t.NamedTuple):
+    """One analysis reporter expectation."""
+
+    test_id: str
+    output_format: str
+    expected_fragment: str
+
+
+ANALYSIS_RENDER_CASES: tuple[AnalysisRenderCase, ...] = (
+    AnalysisRenderCase(
+        test_id="rich",
+        output_format="rich",
+        expected_fragment="benchmark analysis",
+    ),
+    AnalysisRenderCase(
+        test_id="json",
+        output_format="json",
+        expected_fragment="agentgrep.benchmark.analysis",
+    ),
+    AnalysisRenderCase(
+        test_id="ndjson",
+        output_format="ndjson",
+        expected_fragment="agentgrep.benchmark.analysis.command_summary",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    ANALYSIS_RENDER_CASES,
+    ids=[c.test_id for c in ANALYSIS_RENDER_CASES],
+)
+def test_render_analysis_report_supports_human_and_machine_formats(
+    case: AnalysisRenderCase,
+) -> None:
+    """Analysis reports render as plain rich text, JSON, or NDJSON."""
+    report = benchmark.build_analysis_report(
+        _analysis_fixture_measurements(),
+        artifact_label="/home/private/benchmark.json",
+        percentile_labels=["min", "avg"],
+        top_spans=1,
+        top_groups=1,
+    )
+
+    text = benchmark.render_analysis_report(report, output_format=case.output_format)
+
+    assert case.expected_fragment in text
+    assert "\x1b[" not in text
+    assert "/home/private" not in text
+    assert "private-token" not in text
+    if case.output_format == "json":
+        payload = json.loads(text)
+        assert payload["schema_version"] == 1
+        assert payload["artifact_kind"] == "agentgrep.benchmark.analysis"
+        assert payload["artifact_label"] == "benchmark.json"
+        assert payload["top_spans"][0]["attributes"] == {
+            "agentgrep_path_kind": "sqlite_db",
+            "agentgrep_source_count": 2,
+        }
+    if case.output_format == "ndjson":
+        rows = [json.loads(line) for line in text.splitlines()]
+        assert {row["artifact_kind"] for row in rows} >= {
+            "agentgrep.benchmark.analysis.command_summary",
+            "agentgrep.benchmark.analysis.span",
+            "agentgrep.benchmark.analysis.span_group",
+            "agentgrep.benchmark.analysis.warning",
+        }
+
+
+def test_build_analysis_report_can_suppress_spans_and_groups() -> None:
+    """Zero limits suppress optional span sections while keeping command summaries."""
+    report = benchmark.build_analysis_report(
+        _analysis_fixture_measurements(),
+        artifact_label="benchmark.json",
+        percentile_labels=["min"],
+        top_spans=0,
+        top_groups=0,
+    )
+
+    assert report.command_summaries
+    assert report.top_spans == ()
+    assert report.span_groups == ()
+
+
+def test_analyze_command_writes_requested_format(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The analyze CLI reads a benchmark artifact and writes the rendered report."""
+    artifact = tmp_path / "benchmark.json"
+    output = tmp_path / "analysis.json"
+    artifact.write_text(benchmark.render_json(_analysis_fixture_measurements(), []))
+
+    rc = benchmark.main(
+        [
+            "analyze",
+            str(artifact),
+            "--format",
+            "json",
+            "--output",
+            str(output),
+            "--top-spans",
+            "1",
+            "--top-groups",
+            "1",
+        ],
+    )
+
+    payload = json.loads(output.read_text())
+    assert rc == 0
+    assert payload["artifact_kind"] == "agentgrep.benchmark.analysis"
+    assert len(payload["top_spans"]) == 1
+    assert len(payload["span_groups"]) == 1
+
+
+def test_sanitize_command_string_replaces_local_context_values(tmp_path: pathlib.Path) -> None:
+    """Rendered commands can be shared without local paths or query text."""
+    context = {
+        "repo": str(tmp_path),
+        "venv": str(tmp_path / ".venv"),
+        "query": "private-token",
+        "sha": "a" * 40,
+        "short_sha": "aaaaaaa",
+    }
+    raw = f"{tmp_path}/.venv/bin/agentgrep grep --max-count 500 private-token --repo {tmp_path}"
+
+    sanitized = benchmark.sanitize_command_string(raw, context)
+
+    assert str(tmp_path) not in sanitized
+    assert "private-token" not in sanitized
+    assert "{venv}/bin/agentgrep grep" in sanitized
+    assert "--max-count 500 {query}" in sanitized
+    assert "--repo {repo}" in sanitized
+
+
+def test_run_for_commit_captures_profile_payload_and_sanitizes_command(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Profile-engine benches preserve child profile JSON next to timing samples."""
+    config = benchmark.Config(
+        bench={
+            "profile": benchmark.BenchCommand(
+                command=(
+                    "{venv}/bin/python scripts/profile_engine.py grep-prompts "
+                    "--agent all --max-count 500 {query}"
+                ),
+                default_query="private-token",
+            ),
+        },
+        settings=benchmark.Settings(sync_command="", venv=".venv"),
+    )
+    profile_payload: dict[str, object] = {
+        "kind": "search",
+        "profile_component": "grep-prompts",
+        "profile": {"samples": [{"name": "search.collect", "duration_seconds": 1.0}]},
+    }
+    captured_commands: list[str] = []
+
+    monkeypatch.setattr(benchmark, "_checkout", lambda _sha, _repo: None)
+    monkeypatch.setattr(
+        benchmark,
+        "time_command",
+        lambda _cmd_str, **_kwargs: [0.25],
+    )
+
+    def fake_capture_profile_payload(
+        cmd_str: str,
+        *,
+        timeout_seconds: int,
+    ) -> tuple[dict[str, object] | None, str | None]:
+        captured_commands.append(cmd_str)
+        assert timeout_seconds == config.settings.timeout_seconds
+        return profile_payload, None
+
+    monkeypatch.setattr(benchmark, "_capture_profile_payload", fake_capture_profile_payload)
+
+    rows = benchmark._run_one_commit(
+        commit=benchmark.CommitRef(sha="a" * 40, short_sha="aaaaaaa", subject="subject"),
+        config=config,
+        bench_names=["profile"],
+        query_overrides={},
+        runs=1,
+        warmup=0,
+        no_sync=True,
+        dry_run=False,
+        repo=tmp_path,
+        prefer_hyperfine=False,
+        notify=lambda _message: None,
+    )
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert captured_commands
+    assert row.samples == [0.25]
+    assert row.profile_payload == profile_payload
+    assert row.profile_capture_error is None
+    assert row.dry_run is False
+    assert str(tmp_path) not in row.command_string
+    assert "private-token" not in row.command_string
+    assert "{venv}/bin/python scripts/profile_engine.py" in row.command_string
+    assert "--max-count 500 {query}" in row.command_string
+
+
+def test_run_for_commit_marks_dry_run_and_skips_profile_capture(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dry-run rows are machine distinguishable without executing profiles."""
+    config = benchmark.Config(
+        bench={
+            "profile": benchmark.BenchCommand(
+                command="{venv}/bin/python scripts/profile_engine.py find-prompts --limit 500",
+            ),
+        },
+        settings=benchmark.Settings(sync_command="", venv=".venv"),
+    )
+
+    monkeypatch.setattr(benchmark, "_checkout", lambda _sha, _repo: None)
+
+    def fail_capture_profile_payload(
+        _cmd_str: str,
+        *,
+        timeout_seconds: int,
+    ) -> tuple[dict[str, object] | None, str | None]:
+        msg = "dry-run should not capture profile payloads"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(benchmark, "_capture_profile_payload", fail_capture_profile_payload)
+
+    rows = benchmark._run_one_commit(
+        commit=benchmark.CommitRef(sha="a" * 40, short_sha="aaaaaaa", subject="subject"),
+        config=config,
+        bench_names=["profile"],
+        query_overrides={},
+        runs=1,
+        warmup=0,
+        no_sync=True,
+        dry_run=True,
+        repo=tmp_path,
+        prefer_hyperfine=False,
+        notify=lambda _message: None,
+    )
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.status == "ok"
+    assert row.samples == []
+    assert row.dry_run is True
+    assert row.profile_payload is None
+    assert row.profile_capture_error is None
 
 
 def test_measurement_property_stats_match_manual_calculation() -> None:
@@ -530,6 +1255,28 @@ VALIDATION_REJECT_CASES: tuple[ValidationRejectCase, ...] = (
             "bogus",
         ),
         match="unknown benchmark name",
+    ),
+    ValidationRejectCase(
+        test_id="empty-bench-selector",
+        fn_name="_select_bench_names",
+        args=(
+            benchmark.Config(
+                bench={"grep": benchmark.BenchCommand(command="echo x")},
+            ),
+            "",
+        ),
+        match="did not select any benchmarks",
+    ),
+    ValidationRejectCase(
+        test_id="separator-only-bench-selector",
+        fn_name="_select_bench_names",
+        args=(
+            benchmark.Config(
+                bench={"grep": benchmark.BenchCommand(command="echo x")},
+            ),
+            ",,,",
+        ),
+        match="did not select any benchmarks",
     ),
 )
 
@@ -602,6 +1349,18 @@ def test_main_returns_expected_exit_code(
         argv[argv.index("__EMPTY_TOML__")] = str(empty)
     rc = benchmark.main(argv)
     assert rc == case.expected_rc
+
+
+def test_main_formats_unknown_benchmark_selector_without_traceback(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Unknown ``--commands`` selectors return a one-line CLI error."""
+    rc = benchmark.main(["run", "--commands", "bogus", "--no-progress"])
+
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "unknown benchmark name" in captured.err
+    assert "Traceback" not in captured.err
 
 
 # ---------------------------------------------------------------------------
@@ -679,6 +1438,280 @@ def test_render_rich_no_duplicate_max_column() -> None:
     agg_section = text[text.index("Distribution across") :]
     header_line = next(line for line in agg_section.splitlines() if "min" in line and "avg" in line)
     assert header_line.count("max") == 1
+
+
+def test_render_rich_reports_nested_profile_payload_top_spans() -> None:
+    """Rich benchmark output can show slow profile spans beside timing rows."""
+    measurement = benchmark.Measurement(
+        sha="a" * 40,
+        short_sha="aaaaaaa",
+        subject="profile commit",
+        command_name="profile-engine-grep-all-prompts-max-count-500",
+        command_string="{venv}/bin/python scripts/profile_engine.py grep-prompts {query}",
+        samples=[0.25],
+        profile_payload={
+            "profile_component": "grep-prompts",
+            "profile": {
+                "samples": [
+                    {
+                        "name": "search.discover",
+                        "duration_seconds": 0.1,
+                        "attributes": {"agentgrep_source_count": 2},
+                    },
+                    {
+                        "name": "search.collect",
+                        "duration_seconds": 1.2,
+                        "attributes": {
+                            "agentgrep_source_count": 1,
+                            "agentgrep_query": "private-token",
+                            "agentgrep_path": "/home/private/project",
+                        },
+                    },
+                ],
+            },
+        },
+    )
+
+    text = benchmark.render_rich([measurement], ["min", "avg"], top_spans=1)
+
+    assert "profile payload slowest spans" in text
+    assert "grep-prompts" in text
+    assert "search.collect" in text
+    assert "search.discover" not in text
+    assert "private-token" not in text
+    assert "/home/private" not in text
+
+
+def test_render_rich_top_spans_zero_suppresses_profile_payload_table() -> None:
+    """Users can disable nested profile span rendering for compact rich output."""
+    measurement = benchmark.Measurement(
+        sha="a" * 40,
+        short_sha="aaaaaaa",
+        subject="profile commit",
+        command_name="profile",
+        command_string="{venv}/bin/python scripts/profile_engine.py grep-prompts",
+        samples=[0.25],
+        profile_payload={
+            "profile_component": "grep-prompts",
+            "profile": {
+                "samples": [
+                    {
+                        "name": "search.collect",
+                        "duration_seconds": 1.2,
+                        "attributes": {"agentgrep_source_count": 1},
+                    },
+                ],
+            },
+        },
+    )
+
+    text = benchmark.render_rich([measurement], ["min"], top_spans=0)
+
+    assert "profile payload slowest spans" not in text
+    assert "search.collect" not in text
+
+
+def test_run_accepts_top_spans_flag_for_rich_output(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The run command exposes --top-spans without requiring a real benchmark."""
+    config = benchmark.Config(
+        bench={"profile": benchmark.BenchCommand(command="echo {query}", default_query="tmux")},
+        settings=benchmark.Settings(sync_command=""),
+    )
+    output = tmp_path / "rich.txt"
+    monkeypatch.setattr(benchmark, "load_config", lambda **_kwargs: config)
+    monkeypatch.setattr(
+        benchmark,
+        "_select_targets",
+        lambda **_kwargs: [
+            benchmark.CommitRef(sha="a" * 40, short_sha="aaaaaaa", subject="subject"),
+        ],
+    )
+    monkeypatch.setattr(benchmark, "_git_dirty", lambda _repo: False)
+    monkeypatch.setattr(benchmark, "_git", lambda *_args, **_kwargs: "streamline-02")
+    monkeypatch.setattr(benchmark, "_install_restore_guard", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        benchmark,
+        "_run_one_commit",
+        lambda **_kwargs: [
+            benchmark.Measurement(
+                sha="a" * 40,
+                short_sha="aaaaaaa",
+                subject="subject",
+                command_name="profile",
+                command_string="echo {query}",
+                samples=[0.1],
+            ),
+        ],
+    )
+
+    rc = benchmark.main(
+        [
+            "run",
+            "--commands",
+            "profile",
+            "--format",
+            "rich",
+            "--top-spans",
+            "3",
+            "--output",
+            str(output),
+            "--no-progress",
+        ],
+    )
+
+    assert rc == 0
+    assert output.exists()
+
+
+def test_run_accepts_profile_engine_command_group(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The run command expands ``--commands profile-engine`` before execution."""
+    config = benchmark.Config(
+        bench={
+            name: benchmark.BenchCommand(command=f"echo {name}", default_query="tmux")
+            for name in benchmark.PROFILE_ENGINE_BENCHMARK_GROUP
+        },
+        settings=benchmark.Settings(sync_command=""),
+    )
+    output = tmp_path / "profile-engine.json"
+    captured_bench_names: list[str] = []
+    monkeypatch.setattr(benchmark, "load_config", lambda **_kwargs: config)
+    monkeypatch.setattr(
+        benchmark,
+        "_select_targets",
+        lambda **_kwargs: [
+            benchmark.CommitRef(sha="a" * 40, short_sha="aaaaaaa", subject="subject"),
+        ],
+    )
+    monkeypatch.setattr(benchmark, "_git_dirty", lambda _repo: False)
+    monkeypatch.setattr(benchmark, "_git", lambda *_args, **_kwargs: "streamline-02")
+    monkeypatch.setattr(benchmark, "_install_restore_guard", lambda **_kwargs: None)
+
+    def run_one_commit(**kwargs: t.Any) -> list[benchmark.Measurement]:
+        names = t.cast("list[str]", kwargs["bench_names"])
+        captured_bench_names.extend(names)
+        return [
+            benchmark.Measurement(
+                sha="a" * 40,
+                short_sha="aaaaaaa",
+                subject="subject",
+                command_name=name,
+                command_string=config.bench[name].command,
+                samples=[0.1],
+            )
+            for name in names
+        ]
+
+    monkeypatch.setattr(benchmark, "_run_one_commit", run_one_commit)
+
+    rc = benchmark.main(
+        [
+            "run",
+            "--commands",
+            "profile-engine",
+            "--format",
+            "json",
+            "--output",
+            str(output),
+            "--no-progress",
+        ],
+    )
+
+    assert rc == 0
+    assert captured_bench_names == list(benchmark.PROFILE_ENGINE_BENCHMARK_GROUP)
+    assert output.exists()
+
+
+def test_run_accepts_profile_engine_cursor_ide_command_group(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The run command expands ``--commands profile-engine-cursor-ide``."""
+    config = benchmark.Config(
+        bench={
+            name: benchmark.BenchCommand(command=f"echo {name}", default_query="tmux")
+            for name in benchmark.PROFILE_ENGINE_CURSOR_IDE_BENCHMARK_GROUP
+        },
+        settings=benchmark.Settings(sync_command=""),
+    )
+    output = tmp_path / "profile-engine-cursor-ide.json"
+    captured_bench_names: list[str] = []
+    monkeypatch.setattr(benchmark, "load_config", lambda **_kwargs: config)
+    monkeypatch.setattr(
+        benchmark,
+        "_select_targets",
+        lambda **_kwargs: [
+            benchmark.CommitRef(sha="a" * 40, short_sha="aaaaaaa", subject="subject"),
+        ],
+    )
+    monkeypatch.setattr(benchmark, "_git_dirty", lambda _repo: False)
+    monkeypatch.setattr(benchmark, "_git", lambda *_args, **_kwargs: "streamline-02")
+    monkeypatch.setattr(benchmark, "_install_restore_guard", lambda **_kwargs: None)
+
+    def run_one_commit(**kwargs: t.Any) -> list[benchmark.Measurement]:
+        names = t.cast("list[str]", kwargs["bench_names"])
+        captured_bench_names.extend(names)
+        return [
+            benchmark.Measurement(
+                sha="a" * 40,
+                short_sha="aaaaaaa",
+                subject="subject",
+                command_name=name,
+                command_string=config.bench[name].command,
+                samples=[0.1],
+            )
+            for name in names
+        ]
+
+    monkeypatch.setattr(benchmark, "_run_one_commit", run_one_commit)
+
+    rc = benchmark.main(
+        [
+            "run",
+            "--commands",
+            "profile-engine-cursor-ide",
+            "--format",
+            "json",
+            "--output",
+            str(output),
+            "--no-progress",
+        ],
+    )
+
+    assert rc == 0
+    assert captured_bench_names == list(benchmark.PROFILE_ENGINE_CURSOR_IDE_BENCHMARK_GROUP)
+    assert output.exists()
+
+
+def test_list_commands_prints_command_groups(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Command discovery output includes ergonomic command groups."""
+    config = benchmark.Config(
+        bench={
+            name: benchmark.BenchCommand(command=f"echo {name}", default_query="tmux")
+            for name in (
+                *benchmark.PROFILE_ENGINE_BENCHMARK_GROUP,
+                *benchmark.PROFILE_ENGINE_CURSOR_IDE_BENCHMARK_GROUP,
+            )
+        },
+    )
+    monkeypatch.setattr(benchmark, "load_config", lambda **_kwargs: config)
+
+    benchmark.cmd_list_commands()
+
+    output = capsys.readouterr().out
+    assert "command groups:" in output
+    assert "profile-engine:" in output
+    assert "profile-engine-cursor-ide:" in output
+    assert "profile-engine-grep-all-prompts-max-count-500" in output
+    assert "profile-engine-grep-cursor-ide-prompts-max-count-500" in output
 
 
 # ---------------------------------------------------------------------------

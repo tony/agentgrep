@@ -1,6 +1,6 @@
 ---
 name: benchmark
-description: Run the agentgrep cross-commit benchmark harness and detect performance regressions. Use when asked to benchmark, profile performance across commits, check for regressions, or compare HEAD vs trunk timing.
+description: Run the agentgrep cross-commit benchmark harness and detect performance regressions. Use when asked for $benchmark, benchmark timing, profile-engine benchmark selectors, performance comparisons, or benchmark evidence for agentgrep.
 ---
 
 # Benchmark regression detector
@@ -10,10 +10,17 @@ parse the results, and flag any performance regressions. This skill
 is project-internal — it assumes `scripts/benchmark.py` and
 `scripts/benchmark.toml` exist in the repo root.
 
+Use `$benchmark <component> [query]` for the local engine profiler
+benchmark selectors. Component names keep profiling caps visible in
+the benchmark name and report.
+
 ## Arguments
 
 The user may provide:
 
+- A **component** via `$benchmark <component>` — one of
+  `search-prompts`, `search-conversations`, `grep-prompts`,
+  `grep-conversations`, `find-prompts`, or `all`
 - A **commit range** — e.g. "last 10 commits", "HEAD vs trunk",
   "since the query-language landing", a git range like `master..HEAD`
 - A **bench subset** — e.g. "just grep", "import-time only",
@@ -24,6 +31,30 @@ If no arguments are given, default to ALL configured benches across
 `--range origin/master..HEAD`. **Never silently drop to a single
 bench (e.g. import-time only)** — the user wants the full picture
 unless they explicitly ask for a subset.
+
+## Component shortcuts
+
+`$benchmark <component>` maps to committed profile-engine benchmark
+selectors:
+
+| Component | Benchmark selector |
+|---|---|
+| `search-prompts` | `profile-engine-search-all-prompts-limit-500` |
+| `search-conversations` | `profile-engine-search-all-conversations-limit-500` |
+| `grep-prompts` | `profile-engine-grep-all-prompts-max-count-500` |
+| `grep-conversations` | `profile-engine-grep-all-conversations-max-count-500` |
+| `find-prompts` | `profile-engine-find-all-prompts-limit-500` |
+| `all` | `profile-engine` |
+| `cursor-ide` | `profile-engine-cursor-ide` |
+
+If a component is supplied, use its selector as `--commands`. For
+`all`, pass `--commands profile-engine`; the benchmark harness expands
+that command group into every committed `profile-engine-*` benchmark.
+For Cursor IDE SQLite profiling, pass `--commands profile-engine-cursor-ide`;
+that group runs the Cursor-only search, grep, and find profile-engine
+benchmarks without expanding the all-agent profiler group.
+Keep the cap visible in reports: if a selector includes `limit-500` or
+`max-count-500`, say `limit 500` or `max-count 500`.
 
 ## Procedure
 
@@ -91,6 +122,18 @@ Always include `--allow-dirty` (the working tree may have unstaged
 changes). Always `--format json` for analysis. Always
 `--no-progress` (progress goes to stderr and clutters the output).
 
+JSON and NDJSON rows include `dry_run`, `profile_payload`, and
+`profile_capture_error`, plus `schema_version` and `artifact_kind` for
+machine parsing. Treat `samples` as the timing evidence. For
+`profile-engine-*` rows, `profile_payload` is a post-timing profile
+capture that explains where the engine spent time; it is not another
+timing sample. `command_string` is sanitized with `{repo}`, `{venv}`,
+`{home}`, and `{query}` placeholders before serialization.
+
+Use `--format rich --top-spans N` for a local terminal report that
+includes nested `profile_payload` slow spans. Use `--top-spans 0` when
+you want the rich timing table without nested profile detail.
+
 For long runs (>5 minutes estimated), launch in background via
 `run_in_background: true` so the user can continue working.
 
@@ -100,7 +143,34 @@ The script handles:
 - hyperfine (or pure-Python fallback) timing
 - HEAD restoration on exit (atexit + signal trap)
 
-### Step 4: Parse results and detect regressions
+### Step 4: Analyze saved benchmark artifacts
+
+Use the benchmark analyzer before hand-written summaries:
+
+```bash
+uv run scripts/benchmark.py analyze \
+  /tmp/bench-<branch>.json \
+  --format rich \
+  --top-spans 20 \
+  --top-groups 10
+```
+
+For machine-readable evidence, write a sanitized analysis artifact:
+
+```bash
+uv run scripts/benchmark.py analyze \
+  /tmp/bench-<branch>.json \
+  --format json \
+  --output /tmp/bench-<branch>-analysis.json
+```
+
+Analysis artifacts use `artifact_kind:
+agentgrep.benchmark.analysis`. Their child rows/objects summarize
+command timings, slow profile spans, profile span groups, and warnings.
+Use them as the first-pass bottleneck summary; only drop to custom
+Python snippets when the analyzer output is missing a specific view.
+
+### Step 5: Parse results and detect regressions
 
 Read the JSON output. For each command, compute:
 
@@ -137,11 +207,22 @@ Only STEPs are actionable. SPIKEs are noise.
 - Early / Middle / Late averages
 - Warming/cooling trend percentage
 
+**Nested profile analysis** for `profile-engine-*` rows:
+- Inspect `profile_payload.profile.samples`
+- Start with `search.plan.prefilter_root`, `search.plan.direct_source`,
+  `search.collect.source`, `search.discover.group`, and
+  `find.filter.source`
+- Compare agent/store/adapter/count attributes, not local paths or
+  prompt text
+- Prefer the analyzer's profile span groups for the first pass; they
+  aggregate repeated source-level spans without leaking local paths or
+  prompt text.
+
 **End-to-end delta:**
 - First measurable commit → HEAD, per bench
 - Report: `grep: 1.17s → 1.15s (-1.6%)`
 
-### Step 5: Report findings
+### Step 6: Report findings
 
 ```
 ## Benchmark results — <benches> × <N> commits (<depth> depth)
@@ -179,7 +260,7 @@ Only STEPs are actionable. SPIKEs are noise.
 "N persistent regressions at <commits>">
 ```
 
-### Step 6: Follow-up suggestions
+### Step 7: Follow-up suggestions
 
 - STEP found → "Profile with `python -X importtime` or `py-spy`
   at the regressing commit."

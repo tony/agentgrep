@@ -120,6 +120,143 @@ just start-docs
 just design-docs
 ```
 
+### Required Pre-commit Gate
+
+Before every commit, run the full repository gate:
+
+```console
+$ rm -rf docs/_build; uv run ruff check . --fix --show-fixes; uv run ruff format .; uv run ty check; uv run py.test --reruns 0 -vvv; just build-docs;
+```
+
+Do not commit until that command exits successfully. If it fails, fix the
+failure and rerun the full command rather than committing from partial checks.
+
+### Profiling and Benchmarking
+
+Use `scripts/profile_engine.py` for local engine-profile evidence. It emits
+privacy-safe timings with counts, span names, durations, and coarse subprocess
+metadata. It must not emit prompt text, raw argv, or local absolute paths.
+
+Supported profiler components:
+
+| Component | Use |
+| --- | --- |
+| `search-prompts` | Prompt-scope search engine timing |
+| `search-conversations` | Conversation-scope search engine timing |
+| `grep-prompts` | Prompt-scope grep-shaped engine timing |
+| `grep-conversations` | Conversation-scope grep-shaped engine timing |
+| `find-prompts` | Prompt-source enumeration timing |
+| `all` | Run every profiler component above |
+
+Run one profiler component and save a machine-readable artifact:
+
+```console
+$ uv run python scripts/profile_engine.py grep-prompts --agent all --max-count 500 --json tmux > .tmp/profile-grep-prompts.json
+```
+
+Run the Cursor IDE SQLite path directly:
+
+```console
+$ uv run python scripts/profile_engine.py search-prompts \
+    --agent cursor-ide \
+    --limit 500 \
+    --format json \
+    agentgrep-cursor-db-no-match > .tmp/profile-cursor-ide.json
+```
+
+Run the full profiler matrix and save a machine-readable artifact:
+
+```console
+$ uv run python scripts/profile_engine.py all --agent all --limit 500 --json tmux > .tmp/profile-all.json
+```
+
+Profiler output defaults to a Rich terminal summary. Use `--json` for one
+sanitized payload, `--ndjson` for one child profile run per line, and
+`--top-spans N` to control the terminal summary. The explicit
+`--format json`, `--format ndjson`, and `--format rich` forms remain available
+for templated invocations.
+
+Profiler artifacts include `schema_version` and `artifact_kind`. Use those
+fields when a local profile file needs to be distinguished from benchmark rows
+or future fixture-only CI artifacts. Engine profiles include coarse phase spans
+and source-level spans such as `search.discover.group`,
+`search.plan.prefilter_root`, `search.plan.direct_source`,
+`search.collect.source`, and `find.filter.source`; those spans carry
+agent/store/adapter/count metadata without prompt text or local paths.
+
+Use `scripts/benchmark.py` for timed benchmark sweeps. The profiler-oriented
+benchmark entries are named `profile-engine-*`; each committed benchmark name
+and description must disclose `--limit N` or `--max-count N` when a cap is
+present. Use `--commands profile-engine` for the all-agent profiler
+benchmark group, or pass an exact `profile-engine-*` key for one profiler
+benchmark.
+Use `--commands profile-engine-cursor-ide` for the Cursor IDE SQLite benchmark
+set without expanding the all-agent profiler group.
+
+Run one profiler benchmark:
+
+```console
+$ uv run scripts/benchmark.py run \
+    --target HEAD \
+    --commands profile-engine-grep-all-prompts-max-count-500 \
+    --format json \
+    --output .tmp/benchmark-grep-prompts.json \
+    --allow-dirty
+```
+
+Run every profiler benchmark:
+
+```console
+$ uv run scripts/benchmark.py run \
+    --target HEAD \
+    --commands profile-engine \
+    --format json \
+    --output .tmp/benchmark-profile-engine.json \
+    --allow-dirty
+```
+
+Run the Cursor IDE SQLite profiler benchmark set against two branch tips:
+
+```console
+$ uv run scripts/benchmark.py run \
+    --commits streamline-02,streamline-03 \
+    --commands profile-engine-cursor-ide \
+    --runs 25 \
+    --show-percentiles min,avg,max,p90,p95,p99 \
+    --format json \
+    --output .tmp/benchmark-cursor-ide-profile-engine.json \
+    --allow-dirty \
+    --no-progress
+```
+
+Benchmark `json` and `ndjson` artifacts include `dry_run`,
+`profile_payload`, `profile_capture_error`, `schema_version`, and
+`artifact_kind`. `command_string` is sanitized with `{repo}`, `{venv}`,
+`{home}`, and `{query}` placeholders. For `profile-engine-*` rows,
+`profile_payload` is a separate post-timing profile capture; timing
+conclusions must come from `samples`. Use `--format rich --top-spans N` to
+render nested `profile_payload` spans in the terminal, or `--top-spans 0` to
+hide that table.
+
+Analyze saved benchmark artifacts before writing bottleneck summaries:
+
+```console
+$ uv run scripts/benchmark.py analyze \
+    .tmp/benchmark-profile-engine.json \
+    --format rich \
+    --top-spans 20 \
+    --top-groups 10
+```
+
+Use `--format json` or `--format ndjson` for machine-readable analysis
+artifacts. Analyzer output uses `agentgrep.benchmark.analysis` metadata and
+summarizes command timings, slow profile spans, profile span groups, and
+warnings without local paths, raw argv, or prompt text.
+
+Local profiles are the source of real bottleneck evidence because CI runners do
+not have representative agent-history stores. If CI artifact upload is needed,
+keep it scoped to a separate issue and use sanitized fixture-only payloads.
+
 ## Code Architecture
 
 agentgrep is a small surface — a single package with a CLI/TUI module and an MCP module that share the search engine:
@@ -615,4 +752,3 @@ to identify which commits this branch actually introduced. Then:
 - **Scope guard:** If cleaning prior slop would touch a colleague's
   work or expand the branch beyond its stated goal, stay in lane:
   protect the current goal and leave prior slop alone.
-

@@ -24,6 +24,7 @@ from __future__ import annotations
 import atexit
 import contextlib
 import csv
+import dataclasses
 import io
 import json
 import math
@@ -50,7 +51,83 @@ LOCAL_CONFIG = REPO_ROOT / "scripts" / "benchmark.local.toml"
 
 Status = t.Literal["ok", "checkout_fail", "sync_fail", "command_missing", "bench_fail"]
 OutputFormat = t.Literal["rich", "json", "ndjson", "md", "csv"]
+AnalysisOutputFormat = t.Literal["rich", "json", "ndjson"]
 PERCENTILE_LABELS: tuple[str, ...] = ("min", "max", "avg", "p50", "p90", "p95", "p99")
+SCHEMA_VERSION = 1
+BENCHMARK_RUNS_ARTIFACT_KIND = "agentgrep.benchmark.runs"
+BENCHMARK_MEASUREMENT_ARTIFACT_KIND = "agentgrep.benchmark.measurement"
+BENCHMARK_ANALYSIS_ARTIFACT_KIND = "agentgrep.benchmark.analysis"
+BENCHMARK_ANALYSIS_COMMAND_ARTIFACT_KIND = "agentgrep.benchmark.analysis.command_summary"
+BENCHMARK_ANALYSIS_SPAN_ARTIFACT_KIND = "agentgrep.benchmark.analysis.span"
+BENCHMARK_ANALYSIS_SPAN_GROUP_ARTIFACT_KIND = "agentgrep.benchmark.analysis.span_group"
+BENCHMARK_ANALYSIS_WARNING_ARTIFACT_KIND = "agentgrep.benchmark.analysis.warning"
+type CommandContext = dict[str, str]
+type ProfilePayload = dict[str, object]
+
+PROFILE_ENGINE_BENCHMARK_GROUP: tuple[str, ...] = (
+    "profile-engine-search-all-prompts-limit-500",
+    "profile-engine-search-all-conversations-limit-500",
+    "profile-engine-grep-all-prompts-max-count-500",
+    "profile-engine-grep-all-conversations-max-count-500",
+    "profile-engine-find-all-prompts-limit-500",
+)
+PROFILE_ENGINE_CURSOR_IDE_BENCHMARK_GROUP: tuple[str, ...] = (
+    "profile-engine-search-cursor-ide-prompts-limit-500",
+    "profile-engine-search-cursor-ide-conversations-limit-500",
+    "profile-engine-grep-cursor-ide-prompts-max-count-500",
+    "profile-engine-grep-cursor-ide-conversations-max-count-500",
+    "profile-engine-find-cursor-ide-prompts-limit-500",
+)
+BENCHMARK_COMMAND_GROUPS: dict[str, tuple[str, ...]] = {
+    "profile-engine": PROFILE_ENGINE_BENCHMARK_GROUP,
+    "profile-engine-cursor-ide": PROFILE_ENGINE_CURSOR_IDE_BENCHMARK_GROUP,
+}
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class ProfileSpanSummary:
+    """One flattened profile span from a benchmark row's child profile payload."""
+
+    short_sha: str
+    command_name: str
+    component: str
+    name: str
+    duration_seconds: float
+    attributes: dict[str, object]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class AnalysisCommandSummary:
+    """Timing summary for one benchmark command across measurements."""
+
+    command_name: str
+    measurement_count: int
+    sample_count: int
+    status_counts: dict[str, int]
+    stats: dict[str, float | None]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class AnalysisSpanGroup:
+    """Aggregate timing for one profile component/span pair."""
+
+    component: str
+    name: str
+    count: int
+    total_duration_seconds: float
+    max_duration_seconds: float
+    avg_duration_seconds: float
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class AnalysisReport:
+    """Derived benchmark artifact analysis, ready for reporters."""
+
+    artifact_label: str
+    command_summaries: tuple[AnalysisCommandSummary, ...]
+    top_spans: tuple[ProfileSpanSummary, ...]
+    span_groups: tuple[AnalysisSpanGroup, ...]
+    warnings: list[str]
 
 
 # ---------------------------------------------------------------------------
@@ -104,6 +181,8 @@ class Config(pydantic.BaseModel):
 class Measurement(pydantic.BaseModel):
     """One (commit, bench) result — preserves raw samples for downstream stats."""
 
+    schema_version: int = SCHEMA_VERSION
+    artifact_kind: str = BENCHMARK_MEASUREMENT_ARTIFACT_KIND
     sha: str
     short_sha: str
     subject: str
@@ -112,6 +191,9 @@ class Measurement(pydantic.BaseModel):
     samples: list[float] = pydantic.Field(default_factory=list)
     status: Status = "ok"
     error: str | None = None
+    dry_run: bool = False
+    profile_payload: ProfilePayload | None = None
+    profile_capture_error: str | None = None
 
     @property
     def min_s(self) -> float:
@@ -254,7 +336,7 @@ def load_config(
     for layer in layers:
         merged = _deep_merge(merged, layer)
     try:
-        return Config.model_validate(merged)
+        config = Config.model_validate(merged)
     except pydantic.ValidationError as exc:
         # Surface each field that failed validation on its own line so
         # the user sees exactly which TOML key (or layered CLI key)
@@ -267,6 +349,7 @@ def load_config(
         ]
         msg = "invalid config:\n" + "\n".join(lines)
         raise typer.BadParameter(msg) from exc
+    return config
 
 
 # ---------------------------------------------------------------------------
@@ -281,6 +364,27 @@ def render_command(template: str, context: dict[str, str]) -> str:
     nonsensical command. Curly braces in literal queries should be doubled.
     """
     return template.format_map(context)
+
+
+def sanitize_command_string(command_string: str, context: CommandContext) -> str:
+    """Return a shareable command string with local values replaced."""
+    replacements = {
+        context.get("repo", ""): "{repo}",
+        context.get("venv", ""): "{venv}",
+        str(pathlib.Path.home()): "{home}",
+    }
+    query = context.get("query", "")
+    if query:
+        replacements[query] = "{query}"
+    sanitized = command_string
+    for raw, placeholder in sorted(
+        replacements.items(),
+        key=lambda item: len(item[0]),
+        reverse=True,
+    ):
+        if raw:
+            sanitized = sanitized.replace(raw, placeholder)
+    return sanitized
 
 
 # ---------------------------------------------------------------------------
@@ -475,6 +579,72 @@ def time_command(
     )
 
 
+def _is_profile_engine_command(cmd_str: str) -> bool:
+    """Return True when ``cmd_str`` invokes the engine profiler helper."""
+    return any(token.endswith("scripts/profile_engine.py") for token in shlex.split(cmd_str))
+
+
+def _profile_engine_command_requests_json(cmd_str: str) -> bool:
+    """Return True when a profiler command requests single-document JSON output."""
+    tokens = shlex.split(cmd_str)
+    if "--json" in tokens or "--format=json" in tokens:
+        return True
+    return any(
+        token == "--format" and index + 1 < len(tokens) and tokens[index + 1] == "json"
+        for index, token in enumerate(tokens)
+    )
+
+
+def _validate_profile_engine_commands(config: Config) -> None:
+    """Reject profiler benchmarks whose stdout the payload capture cannot parse.
+
+    ``--format``/``--json``/``--ndjson`` form a mutually exclusive argparse
+    group in ``scripts/profile_engine.py``, so the capture step cannot
+    inject ``--format json`` itself — the configured command has to ask
+    for it. Only ``run`` and ``compare`` capture payloads, so only they
+    validate; informational commands stay usable while a config is being
+    debugged.
+    """
+    for name, bench in config.bench.items():
+        if not _is_profile_engine_command(bench.command):
+            continue
+        if _profile_engine_command_requests_json(bench.command):
+            continue
+        msg = (
+            f"benchmark {name!r} runs profile_engine.py without requesting "
+            "JSON output; add '--format json' or '--json' so profile "
+            "capture can parse stdout"
+        )
+        raise typer.BadParameter(msg)
+
+
+def _capture_profile_payload(
+    cmd_str: str,
+    *,
+    timeout_seconds: int,
+) -> tuple[ProfilePayload | None, str | None]:
+    """Run an engine-profiler command once and parse its sanitized JSON payload."""
+    try:
+        completed = subprocess.run(
+            shlex.split(cmd_str),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        return None, f"profile capture timed out after {timeout_seconds}s"
+    if completed.returncode != 0:
+        return None, f"profile capture exited {completed.returncode}"
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        return None, "profile capture emitted invalid JSON (did the command request --format json?)"
+    if not isinstance(payload, dict):
+        return None, "profile capture emitted non-object JSON"
+    return t.cast("ProfilePayload", payload), None
+
+
 # ---------------------------------------------------------------------------
 # Renderers
 # ---------------------------------------------------------------------------
@@ -492,7 +662,100 @@ def _fmt_seconds(value: float) -> str:
     return f"{value:.3f}s"
 
 
-def render_rich(measurements: list[Measurement], percentile_labels: list[str]) -> str:
+def _profile_payload_samples(payload: ProfilePayload) -> tuple[dict[str, object], ...]:
+    """Return sample dictionaries from one child profile payload."""
+    profile = payload.get("profile")
+    if not isinstance(profile, dict):
+        return ()
+    samples = profile.get("samples")
+    if not isinstance(samples, list):
+        return ()
+    return tuple(sample for sample in samples if isinstance(sample, dict))
+
+
+#: Attribute keys that match a denied substring but carry only safe
+#: classifier values (path kinds and probe-status enums), never real paths.
+_PROFILE_ATTRIBUTE_ALLOWLIST = frozenset(
+    {
+        "agentgrep_path_kind",
+        "agentgrep_env_path_status",
+        "agentgrep_override_path_status",
+    },
+)
+
+
+def _safe_profile_attribute_dict(attributes: object) -> dict[str, object]:
+    """Return sanitized scalar profile attributes safe for reports."""
+    if not isinstance(attributes, dict):
+        return {}
+    safe: dict[str, object] = {}
+    denied_key_parts = ("argv", "command", "path", "query")
+    for key, value in sorted(attributes.items()):
+        if not isinstance(key, str):
+            continue
+        if key not in _PROFILE_ATTRIBUTE_ALLOWLIST and any(
+            part in key.casefold() for part in denied_key_parts
+        ):
+            continue
+        if isinstance(value, str | int | float | bool) or value is None:
+            safe[key] = value
+    return safe
+
+
+def _safe_profile_attributes(attributes: object) -> str:
+    """Render sanitized scalar profile attributes for rich benchmark output."""
+    cells: list[str] = []
+    for key, value in _safe_profile_attribute_dict(attributes).items():
+        cells.append(f"{key}={value}")
+        if len(cells) >= 5:
+            break
+    return ", ".join(cells)
+
+
+def _profile_span_summaries(
+    measurements: list[Measurement],
+    *,
+    top_spans: int,
+) -> tuple[ProfileSpanSummary, ...]:
+    """Return the slowest nested profile spans across benchmark measurements."""
+    if top_spans <= 0:
+        return ()
+    summaries: list[ProfileSpanSummary] = []
+    for measurement in measurements:
+        payload = measurement.profile_payload
+        if payload is None:
+            continue
+        component = payload.get("profile_component")
+        component_text = component if isinstance(component, str) else "unknown"
+        for sample in _profile_payload_samples(payload):
+            name = sample.get("name")
+            duration = sample.get("duration_seconds")
+            attributes = sample.get("attributes")
+            summaries.append(
+                ProfileSpanSummary(
+                    short_sha=measurement.short_sha,
+                    command_name=measurement.command_name,
+                    component=component_text,
+                    name=name if isinstance(name, str) else "unknown",
+                    duration_seconds=float(duration) if isinstance(duration, int | float) else 0.0,
+                    attributes=_safe_profile_attribute_dict(attributes),
+                ),
+            )
+    return tuple(
+        sorted(
+            summaries,
+            key=lambda summary: summary.duration_seconds,
+            reverse=True,
+        )[:top_spans],
+    )
+
+
+def render_rich(
+    measurements: list[Measurement],
+    percentile_labels: list[str],
+    *,
+    top_spans: int = 10,
+) -> str:
     """Render results as a Rich table (per command, one row per commit)."""
     console = rich.console.Console(record=True, file=io.StringIO(), width=120)
     by_cmd: dict[str, list[Measurement]] = {}
@@ -536,13 +799,37 @@ def render_rich(measurements: list[Measurement], percentile_labels: list[str]) -
             agg.add_row(*cells)
         console.print(agg)
 
+    profile_spans = _profile_span_summaries(measurements, top_spans=top_spans)
+    if profile_spans:
+        profile_table = rich.table.Table(title="[bold]profile payload slowest spans[/bold]")
+        profile_table.add_column("sha", style="cyan")
+        profile_table.add_column("command")
+        profile_table.add_column("component", style="cyan")
+        profile_table.add_column("span")
+        profile_table.add_column("duration", justify="right")
+        profile_table.add_column("attributes", overflow="fold")
+        for span in profile_spans:
+            profile_table.add_row(
+                span.short_sha,
+                span.command_name,
+                span.component,
+                span.name,
+                _fmt_seconds(span.duration_seconds),
+                _safe_profile_attributes(span.attributes),
+            )
+        console.print(profile_table)
+
     return console.export_text()
 
 
 def render_json(measurements: list[Measurement], _labels: list[str]) -> str:
     """Single JSON document — ``{"runs": [...]}`` — with raw samples preserved."""
     return json.dumps(
-        {"runs": [m.model_dump(mode="json") for m in measurements]},
+        {
+            "schema_version": SCHEMA_VERSION,
+            "artifact_kind": BENCHMARK_RUNS_ARTIFACT_KIND,
+            "runs": [m.model_dump(mode="json") for m in measurements],
+        },
         indent=2,
     )
 
@@ -604,6 +891,332 @@ def render_csv(measurements: list[Measurement], percentile_labels: list[str]) ->
         ]
         writer.writerow(row)
     return buffer.getvalue()
+
+
+def _measurement_from_artifact_row(row: object, *, source: pathlib.Path) -> Measurement:
+    """Validate one benchmark measurement row from an artifact."""
+    if not isinstance(row, dict):
+        msg = f"unsupported benchmark artifact row in {source.name}: expected object"
+        raise typer.BadParameter(msg)
+    try:
+        return Measurement.model_validate(row)
+    except pydantic.ValidationError as exc:
+        msg = f"unsupported benchmark artifact row in {source.name}: {exc.errors()[0]['msg']}"
+        raise typer.BadParameter(msg) from exc
+
+
+def load_measurement_artifact(path: pathlib.Path) -> list[Measurement]:
+    """Load benchmark JSON or NDJSON artifacts into measurements."""
+    try:
+        text = path.read_text()
+    except OSError as exc:
+        msg = f"failed to read benchmark artifact {path}: {exc}"
+        raise typer.BadParameter(msg) from exc
+    if not text.strip():
+        msg = f"unsupported benchmark artifact {path.name}: file is empty"
+        raise typer.BadParameter(msg)
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        rows: list[Measurement] = []
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                msg = f"unsupported benchmark artifact {path.name}: invalid JSON on line {line_number}"
+                raise typer.BadParameter(msg) from exc
+            rows.append(_measurement_from_artifact_row(row, source=path))
+        if rows:
+            return rows
+        msg = f"unsupported benchmark artifact {path.name}: no measurement rows found"
+        raise typer.BadParameter(msg) from None
+    if isinstance(payload, dict):
+        runs = payload.get("runs")
+        if isinstance(runs, list):
+            return [_measurement_from_artifact_row(row, source=path) for row in runs]
+    msg = f"unsupported benchmark artifact {path.name}: expected benchmark JSON or NDJSON"
+    raise typer.BadParameter(msg)
+
+
+def _analysis_artifact_label(label: str) -> str:
+    """Return a shareable artifact label without local directories."""
+    return pathlib.Path(label).name or "benchmark-artifact"
+
+
+def _json_stat_value(value: float) -> float | None:
+    """Convert NaN stats to JSON-friendly null values."""
+    return None if math.isnan(value) else value
+
+
+def _stats_for_samples(samples: list[float], labels: list[str]) -> dict[str, float | None]:
+    """Compute selected stats for one flattened sample list."""
+    if not samples:
+        return dict.fromkeys(labels)
+    return {label: _json_stat_value(stat_for_label(samples, label)) for label in labels}
+
+
+def _command_summaries(
+    measurements: list[Measurement],
+    *,
+    percentile_labels: list[str],
+) -> tuple[AnalysisCommandSummary, ...]:
+    """Summarize timing samples by benchmark command name."""
+    by_command: dict[str, list[Measurement]] = {}
+    for measurement in measurements:
+        by_command.setdefault(measurement.command_name, []).append(measurement)
+
+    summaries: list[AnalysisCommandSummary] = []
+    for command_name, rows in by_command.items():
+        status_counts: dict[str, int] = {}
+        samples: list[float] = []
+        for row in rows:
+            status_counts[row.status] = status_counts.get(row.status, 0) + 1
+            samples.extend(row.samples)
+        summaries.append(
+            AnalysisCommandSummary(
+                command_name=command_name,
+                measurement_count=len(rows),
+                sample_count=len(samples),
+                status_counts=status_counts,
+                stats=_stats_for_samples(samples, percentile_labels),
+            ),
+        )
+    return tuple(summaries)
+
+
+def _span_groups(
+    spans: tuple[ProfileSpanSummary, ...],
+    *,
+    top_groups: int,
+) -> tuple[AnalysisSpanGroup, ...]:
+    """Aggregate span durations by profile component and span name."""
+    if top_groups <= 0:
+        return ()
+    groups: dict[tuple[str, str], list[float]] = {}
+    for span in spans:
+        groups.setdefault((span.component, span.name), []).append(span.duration_seconds)
+
+    summaries = [
+        AnalysisSpanGroup(
+            component=component,
+            name=name,
+            count=len(durations),
+            total_duration_seconds=sum(durations),
+            max_duration_seconds=max(durations),
+            avg_duration_seconds=sum(durations) / len(durations),
+        )
+        for (component, name), durations in groups.items()
+    ]
+    return tuple(
+        sorted(
+            summaries,
+            key=lambda group: group.total_duration_seconds,
+            reverse=True,
+        )[:top_groups],
+    )
+
+
+def build_analysis_report(
+    measurements: list[Measurement],
+    *,
+    artifact_label: str,
+    percentile_labels: list[str],
+    top_spans: int,
+    top_groups: int,
+) -> AnalysisReport:
+    """Build a benchmark analysis report from loaded measurement rows."""
+    all_spans = _profile_span_summaries(measurements, top_spans=sys.maxsize)
+    sampleless_count = sum(1 for measurement in measurements if not measurement.samples)
+    profile_capture_errors = sum(
+        1 for measurement in measurements if measurement.profile_capture_error
+    )
+    warnings: list[str] = []
+    if sampleless_count:
+        warnings.append(f"{sampleless_count} measurement(s) have no samples")
+    if profile_capture_errors:
+        warnings.append(f"{profile_capture_errors} profile capture(s) failed")
+    return AnalysisReport(
+        artifact_label=_analysis_artifact_label(artifact_label),
+        command_summaries=_command_summaries(
+            measurements,
+            percentile_labels=percentile_labels,
+        ),
+        top_spans=all_spans[:top_spans] if top_spans > 0 else (),
+        span_groups=_span_groups(all_spans, top_groups=top_groups),
+        warnings=warnings,
+    )
+
+
+def _analysis_command_payload(summary: AnalysisCommandSummary) -> dict[str, object]:
+    """Serialize one command summary."""
+    return dataclasses.asdict(summary)
+
+
+def _analysis_span_payload(span: ProfileSpanSummary) -> dict[str, object]:
+    """Serialize one profile span summary."""
+    return dataclasses.asdict(span)
+
+
+def _analysis_group_payload(group: AnalysisSpanGroup) -> dict[str, object]:
+    """Serialize one grouped span summary."""
+    return dataclasses.asdict(group)
+
+
+def _analysis_report_payload(report: AnalysisReport) -> dict[str, object]:
+    """Serialize the full analysis report."""
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "artifact_kind": BENCHMARK_ANALYSIS_ARTIFACT_KIND,
+        "artifact_label": report.artifact_label,
+        "command_summaries": [
+            _analysis_command_payload(summary) for summary in report.command_summaries
+        ],
+        "top_spans": [_analysis_span_payload(span) for span in report.top_spans],
+        "span_groups": [_analysis_group_payload(group) for group in report.span_groups],
+        "warnings": report.warnings,
+    }
+
+
+def render_analysis_json(report: AnalysisReport) -> str:
+    """Render an analysis report as one JSON document."""
+    return json.dumps(_analysis_report_payload(report), indent=2)
+
+
+def render_analysis_ndjson(report: AnalysisReport) -> str:
+    """Render an analysis report as self-describing NDJSON rows."""
+    rows: list[dict[str, object]] = [
+        {
+            "schema_version": SCHEMA_VERSION,
+            "artifact_kind": BENCHMARK_ANALYSIS_COMMAND_ARTIFACT_KIND,
+            "artifact_label": report.artifact_label,
+            **_analysis_command_payload(summary),
+        }
+        for summary in report.command_summaries
+    ]
+    rows.extend(
+        {
+            "schema_version": SCHEMA_VERSION,
+            "artifact_kind": BENCHMARK_ANALYSIS_SPAN_ARTIFACT_KIND,
+            "artifact_label": report.artifact_label,
+            **_analysis_span_payload(span),
+        }
+        for span in report.top_spans
+    )
+    rows.extend(
+        {
+            "schema_version": SCHEMA_VERSION,
+            "artifact_kind": BENCHMARK_ANALYSIS_SPAN_GROUP_ARTIFACT_KIND,
+            "artifact_label": report.artifact_label,
+            **_analysis_group_payload(group),
+        }
+        for group in report.span_groups
+    )
+    rows.extend(
+        {
+            "schema_version": SCHEMA_VERSION,
+            "artifact_kind": BENCHMARK_ANALYSIS_WARNING_ARTIFACT_KIND,
+            "artifact_label": report.artifact_label,
+            "message": warning,
+        }
+        for warning in report.warnings
+    )
+    return "\n".join(json.dumps(row) for row in rows)
+
+
+def render_analysis_rich(report: AnalysisReport) -> str:
+    """Render an analysis report as plain Rich tables."""
+    console = rich.console.Console(
+        record=True,
+        file=io.StringIO(),
+        width=120,
+        no_color=True,
+        color_system=None,
+    )
+    summary = rich.table.Table(title=f"benchmark analysis: {report.artifact_label}")
+    summary.add_column("command")
+    summary.add_column("measurements", justify="right")
+    summary.add_column("samples", justify="right")
+    summary.add_column("status")
+    stat_labels = list(report.command_summaries[0].stats) if report.command_summaries else []
+    for label in stat_labels:
+        summary.add_column(label, justify="right")
+    for command_summary in report.command_summaries:
+        status = ", ".join(
+            f"{name}={count}" for name, count in sorted(command_summary.status_counts.items())
+        )
+        summary.add_row(
+            command_summary.command_name,
+            str(command_summary.measurement_count),
+            str(command_summary.sample_count),
+            status,
+            *(
+                _fmt_seconds(value) if value is not None else "—"
+                for value in command_summary.stats.values()
+            ),
+        )
+    console.print(summary)
+
+    if report.top_spans:
+        spans = rich.table.Table(title="slowest profile spans")
+        spans.add_column("sha")
+        spans.add_column("command")
+        spans.add_column("component")
+        spans.add_column("span")
+        spans.add_column("duration", justify="right")
+        spans.add_column("attributes", overflow="fold")
+        for span in report.top_spans:
+            spans.add_row(
+                span.short_sha,
+                span.command_name,
+                span.component,
+                span.name,
+                _fmt_seconds(span.duration_seconds),
+                _safe_profile_attributes(span.attributes),
+            )
+        console.print(spans)
+
+    if report.span_groups:
+        groups = rich.table.Table(title="profile span groups")
+        groups.add_column("component")
+        groups.add_column("span")
+        groups.add_column("count", justify="right")
+        groups.add_column("total", justify="right")
+        groups.add_column("max", justify="right")
+        groups.add_column("avg", justify="right")
+        for group in report.span_groups:
+            groups.add_row(
+                group.component,
+                group.name,
+                str(group.count),
+                _fmt_seconds(group.total_duration_seconds),
+                _fmt_seconds(group.max_duration_seconds),
+                _fmt_seconds(group.avg_duration_seconds),
+            )
+        console.print(groups)
+
+    if report.warnings:
+        warnings = rich.table.Table(title="warnings")
+        warnings.add_column("message")
+        for warning in report.warnings:
+            warnings.add_row(warning)
+        console.print(warnings)
+
+    return console.export_text()
+
+
+def render_analysis_report(
+    report: AnalysisReport,
+    *,
+    output_format: AnalysisOutputFormat,
+) -> str:
+    """Render an analysis report in the requested format."""
+    if output_format == "json":
+        return render_analysis_json(report)
+    if output_format == "ndjson":
+        return render_analysis_ndjson(report)
+    return render_analysis_rich(report)
 
 
 RENDERERS: dict[OutputFormat, t.Callable[[list[Measurement], list[str]], str]] = {
@@ -723,6 +1336,7 @@ def _run_one_commit(
                     samples=[],
                     status="checkout_fail",
                     error=exc.stderr.strip() or "checkout failed",
+                    dry_run=dry_run,
                 ),
             )
         return results
@@ -755,6 +1369,7 @@ def _run_one_commit(
                             f"`{config.settings.sync_command}` exited "
                             f"{sync_result.returncode}: {error[:300]}"
                         ),
+                        dry_run=dry_run,
                     ),
                 )
             return results
@@ -783,9 +1398,11 @@ def _run_one_commit(
                     samples=[],
                     status="bench_fail",
                     error=f"unknown template token: {exc.args[0]}",
+                    dry_run=dry_run,
                 ),
             )
             continue
+        sanitized_cmd_str = sanitize_command_string(cmd_str, context)
 
         if dry_run:
             notify(f"[{commit.short_sha}] {name}: {cmd_str}  (dry-run)")
@@ -795,9 +1412,10 @@ def _run_one_commit(
                     short_sha=commit.short_sha,
                     subject=commit.subject,
                     command_name=name,
-                    command_string=cmd_str,
+                    command_string=sanitized_cmd_str,
                     samples=[],
                     status="ok",
+                    dry_run=True,
                 ),
             )
             continue
@@ -809,10 +1427,11 @@ def _run_one_commit(
                     short_sha=commit.short_sha,
                     subject=commit.subject,
                     command_name=name,
-                    command_string=cmd_str,
+                    command_string=sanitized_cmd_str,
                     samples=[],
                     status="command_missing",
                     error=f"subcommand {bench.skip_if_missing!r} not available",
+                    dry_run=dry_run,
                 ),
             )
             continue
@@ -833,22 +1452,33 @@ def _run_one_commit(
                     short_sha=commit.short_sha,
                     subject=commit.subject,
                     command_name=name,
-                    command_string=cmd_str,
+                    command_string=sanitized_cmd_str,
                     samples=[],
                     status="bench_fail",
                     error=str(exc),
+                    dry_run=dry_run,
                 ),
             )
             continue
+        profile_payload: ProfilePayload | None = None
+        profile_capture_error: str | None = None
+        if _is_profile_engine_command(cmd_str):
+            profile_payload, profile_capture_error = _capture_profile_payload(
+                cmd_str,
+                timeout_seconds=config.settings.timeout_seconds,
+            )
         results.append(
             Measurement(
                 sha=commit.sha,
                 short_sha=commit.short_sha,
                 subject=commit.subject,
                 command_name=name,
-                command_string=cmd_str,
+                command_string=sanitized_cmd_str,
                 samples=samples,
                 status="ok",
+                dry_run=dry_run,
+                profile_payload=profile_payload,
+                profile_capture_error=profile_capture_error,
             ),
         )
     return results
@@ -921,7 +1551,16 @@ def _parse_percentile_labels(raw: str) -> list[str]:
 def _select_bench_names(config: Config, commands: str | None) -> list[str]:
     if commands is None:
         return list(config.bench)
-    names = [c.strip() for c in commands.split(",") if c.strip()]
+    names: list[str] = []
+    for selector in (c.strip() for c in commands.split(",") if c.strip()):
+        group = BENCHMARK_COMMAND_GROUPS.get(selector)
+        if group is None:
+            names.append(selector)
+        else:
+            names.extend(group)
+    if not names:
+        msg = "--commands did not select any benchmarks; pass a benchmark name or command group"
+        raise typer.BadParameter(msg)
     missing = [n for n in names if n not in config.bench]
     if missing:
         msg = (
@@ -929,6 +1568,15 @@ def _select_bench_names(config: Config, commands: str | None) -> list[str]:
         )
         raise typer.BadParameter(msg)
     return names
+
+
+def _available_command_groups(config: Config) -> dict[str, tuple[str, ...]]:
+    """Return command groups whose member benchmarks all exist in ``config``."""
+    return {
+        group_name: group_names
+        for group_name, group_names in BENCHMARK_COMMAND_GROUPS.items()
+        if all(bench_name in config.bench for bench_name in group_names)
+    }
 
 
 def _select_targets(
@@ -987,6 +1635,11 @@ _OPT_TAGS = typer.Option(False, "--tags", help="All git tags (sorted by v:refnam
 _OPT_COMMITS = typer.Option(None, "--commits", help="Comma-separated list of refs.")
 _OPT_HEAD_VS_TRUNK = typer.Option(False, "--head-vs-trunk", help="Shortcut: HEAD + trunk.")
 _OPT_CONFIG = typer.Option(None, "--config", help="Override scripts/benchmark.toml path.")
+_OPT_COMMANDS = typer.Option(
+    None,
+    "--commands",
+    help="Subset selector matching [bench.X] keys or command groups (comma-separated).",
+)
 
 
 @app.command("run")
@@ -999,9 +1652,7 @@ def cmd_run(
     commits: str | None = _OPT_COMMITS,
     head_vs_trunk: bool = _OPT_HEAD_VS_TRUNK,
     config_path: pathlib.Path | None = _OPT_CONFIG,
-    commands: str | None = typer.Option(
-        None, "--commands", help="Subset selector matching [bench.X] keys (comma-separated)."
-    ),
+    commands: str | None = _OPT_COMMANDS,
     runs: int | None = typer.Option(None, "--runs", help="Override sample count."),
     warmup: int | None = typer.Option(None, "--warmup", help="Override discarded pre-runs."),
     query: str | None = typer.Option(
@@ -1020,6 +1671,12 @@ def cmd_run(
         "min,avg,p50,p90,p95,p99,max",
         "--show-percentiles",
         help="Comma-separated subset of stat labels to display.",
+    ),
+    top_spans: int = typer.Option(
+        10,
+        "--top-spans",
+        min=0,
+        help="Slowest nested profile_payload spans to show in rich output; 0 disables.",
     ),
     no_progress: bool = typer.Option(
         False, "--no-progress", help="Suppress progress notes on stderr."
@@ -1047,6 +1704,7 @@ def cmd_run(
         config_path=config_path,
         cli_overrides=cli_overrides or None,
     )
+    _validate_profile_engine_commands(config)
 
     if not config.bench:
         typer.echo("error: no [bench.*] entries in config — nothing to benchmark.", err=True)
@@ -1118,7 +1776,10 @@ def cmd_run(
             ),
         )
 
-    rendered = RENDERERS[output_format](measurements, percentile_labels)
+    if output_format == "rich":
+        rendered = render_rich(measurements, percentile_labels, top_spans=top_spans)
+    else:
+        rendered = RENDERERS[output_format](measurements, percentile_labels)
     if output is not None:
         output.write_text(rendered)
         notify(f"wrote {output}")
@@ -1131,13 +1792,14 @@ def cmd_compare(
     a: str = typer.Argument(..., help="First ref (tag / branch / SHA)."),
     b: str = typer.Argument(..., help="Second ref (tag / branch / SHA)."),
     config_path: pathlib.Path | None = _OPT_CONFIG,
-    commands: str | None = typer.Option(None, "--commands"),
+    commands: str | None = _OPT_COMMANDS,
     runs: int | None = typer.Option(None, "--runs"),
     warmup: int | None = typer.Option(None, "--warmup"),
     query: str | None = typer.Option(None, "--query"),
     output_format: OutputFormat = typer.Option("rich", "--format"),
     output: pathlib.Path | None = typer.Option(None, "--output"),
     show_percentiles: str = typer.Option("min,avg,p50,p90,p95,p99,max", "--show-percentiles"),
+    top_spans: int = typer.Option(10, "--top-spans", min=0),
     no_sync: bool = typer.Option(False, "--no-sync"),
     keep_checkout: bool = typer.Option(False, "--keep-checkout"),
     allow_dirty: bool = typer.Option(False, "--allow-dirty"),
@@ -1165,10 +1827,62 @@ def cmd_compare(
         output_format=output_format,
         output=output,
         show_percentiles=show_percentiles,
+        top_spans=top_spans,
         no_progress=no_progress,
         dry_run=dry_run,
         no_hyperfine=no_hyperfine,
     )
+
+
+@app.command("analyze")
+def cmd_analyze(
+    artifact: pathlib.Path = typer.Argument(..., help="Benchmark JSON or NDJSON artifact."),
+    output_format: AnalysisOutputFormat = typer.Option("rich", "--format", help="Output renderer."),
+    output: pathlib.Path | None = typer.Option(
+        None,
+        "--output",
+        help="Write rendered analysis to file.",
+    ),
+    show_percentiles: str = typer.Option("min,avg,p50,p90,p95,p99,max", "--show-percentiles"),
+    top_spans: int = typer.Option(
+        20,
+        "--top-spans",
+        min=0,
+        help="Slowest nested profile_payload spans to include; 0 disables.",
+    ),
+    top_groups: int = typer.Option(
+        10,
+        "--top-groups",
+        min=0,
+        help="Slowest grouped profile spans to include; 0 disables.",
+    ),
+) -> None:
+    """Analyze saved benchmark JSON/NDJSON artifacts without rerunning benchmarks."""
+    if output is not None:
+        if output.is_dir():
+            typer.echo(f"error: --output points at a directory: {output}", err=True)
+            raise typer.Exit(code=2)
+        if not output.parent.exists():
+            typer.echo(
+                f"error: --output parent does not exist: {output.parent}",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+
+    percentile_labels = _parse_percentile_labels(show_percentiles)
+    measurements = load_measurement_artifact(artifact)
+    report = build_analysis_report(
+        measurements,
+        artifact_label=artifact.name,
+        percentile_labels=percentile_labels,
+        top_spans=top_spans,
+        top_groups=top_groups,
+    )
+    rendered = render_analysis_report(report, output_format=output_format)
+    if output is not None:
+        output.write_text(rendered)
+    else:
+        typer.echo(rendered)
 
 
 @app.command("list-commits")
@@ -1211,6 +1925,11 @@ def cmd_list_commands(config_path: pathlib.Path | None = _OPT_CONFIG) -> None:
             typer.echo(f"  query:       {bench.default_query}")
         if bench.skip_if_missing:
             typer.echo(f"  skip-probe:  {bench.skip_if_missing}")
+    groups = _available_command_groups(config)
+    if groups:
+        typer.echo("command groups:")
+        for name, members in groups.items():
+            typer.echo(f"  {name}: {', '.join(members)}")
 
 
 @app.command("show-config")
@@ -1227,16 +1946,17 @@ def main(argv: list[str] | None = None) -> int:
     In that mode Click *converts* :class:`typer.Exit` into the return value
     of ``app(...)`` instead of re-raising it — so commands that
     ``raise typer.Exit(code=2)`` deliver that 2 via the ``result`` below,
-    not via an except clause. Only :class:`click.exceptions.UsageError`
-    (the parent of ``BadParameter`` and ``MissingParameter``) still
-    propagates as an exception — we catch it so a bad flag value prints a
-    one-line error instead of a stack trace. typer only re-exports
-    ``BadParameter``; ``MissingParameter`` lives in click.
+    not via an except clause. Click and Typer validation exceptions still
+    propagate as exceptions, so catch both families and print a one-line
+    error instead of a rich traceback.
     """
     try:
         result = app(args=argv, standalone_mode=False)
     except click.exceptions.UsageError as exc:
         typer.echo(f"error: {exc.format_message()}", err=True)
+        return 2
+    except typer.BadParameter as exc:
+        typer.echo(f"error: {exc}", err=True)
         return 2
     if isinstance(result, int):
         return result

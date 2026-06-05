@@ -115,6 +115,50 @@ will actually run" inspection.
 | `md` | Markdown tables (mirrors the prototype `performance.md`) |
 | `csv` | Flat row-per-measurement; raw samples joined by `;` |
 
+`json` and `ndjson` are the artifact formats. Both include
+`schema_version` and `artifact_kind` fields so local files can be
+distinguished from profiler payloads, benchmark rows, and future CI
+artifacts. Every measurement keeps the raw `samples`, `status`,
+`error`, `dry_run`, and a sanitized `command_string`. Rendered command
+strings replace local values with placeholders such as `{repo}`,
+`{venv}`, `{home}`, and `{query}` so the artifact can be copied into
+issues without exposing the local checkout or search term.
+
+Dry-run rows set `dry_run: true` and keep `samples: []`. Rows for
+`profile-engine-*` benchmarks also include `profile_payload` when the
+post-timing profile capture succeeds, or `profile_capture_error` when
+that capture fails. The timing samples still come from the configured
+benchmark runs; `profile_payload` is the explainability artifact that
+preserves engine span detail beside those timings.
+
+The rich renderer shows timing tables by default and, when
+`profile_payload` is present, appends a `profile payload slowest spans`
+table. Use `--top-spans N` to choose how many child profiler spans to
+show, or `--top-spans 0` to suppress that table.
+
+Analyze a saved benchmark artifact when you want a repeatable
+bottleneck summary without rerunning the benchmark. The analyzer
+accepts benchmark `json` and `ndjson` artifacts, emits no-color rich
+tables by default, and can render machine-readable `json` or `ndjson`
+with `agentgrep.benchmark.analysis` artifact metadata.
+
+```console
+$ uv run scripts/benchmark.py analyze \
+    .tmp/benchmark-profile-engine.json \
+    --format rich \
+    --top-spans 20 \
+    --top-groups 10
+```
+
+Write a machine-readable analysis artifact:
+
+```console
+$ uv run scripts/benchmark.py analyze \
+    .tmp/benchmark-profile-engine.json \
+    --format json \
+    --output .tmp/benchmark-analysis.json
+```
+
 ```console
 $ uv run scripts/benchmark.py run --lookback 50 --format md --output performance.md
 ```
@@ -143,7 +187,8 @@ order (each layer overlays the previous):
 3. **`scripts/benchmark.local.toml`** — per-machine overrides
    (gitignored). Copy `scripts/benchmark.local.toml.example` to start.
 4. **CLI flags** — `--runs N`, `--warmup N`, `--query STR`,
-   `--commands grep,find` always trump the TOML.
+   `--commands grep,find`, or `--commands profile-engine` always
+   trump the TOML.
 
 Deep-merge semantics: only the keys you set in a higher layer are
 replaced. So adding `[bench.fuzzy]` in `benchmark.local.toml` extends
@@ -168,6 +213,84 @@ they intentionally cover broader or different lookup paths so a
 profiling run can expose planner, discovery, parsing, ranking, and
 output bottlenecks. They are useful evidence for bottleneck work even
 when their distributions are noisier across machines.
+
+Use `--commands profile-engine` to run every committed
+`profile-engine-*` benchmark. Exact benchmark keys and comma-separated
+mixes still work, so `--commands grep,profile-engine` runs the `grep`
+bench plus the profiler benchmark group. `list-commands` prints
+available command groups after the configured `[bench.X]` entries.
+Use `--commands profile-engine-cursor-ide` for the Cursor IDE SQLite
+profile-engine set without expanding the all-agent profiler group.
+
+## Engine profiler
+
+`scripts/profile_engine.py` runs the search engine directly and emits
+sanitized timings without CLI rendering overhead. Use it when you need
+to explain which engine phase is expensive before changing planner,
+discovery, parser, or rendering behavior.
+
+Profile one component:
+
+```console
+$ uv run python scripts/profile_engine.py grep-prompts \
+    --agent all \
+    --max-count 500 \
+    --json \
+    tmux > .tmp/profile-grep-prompts.json
+```
+
+Profile Cursor IDE SQLite stores directly:
+
+```console
+$ uv run python scripts/profile_engine.py search-prompts \
+    --agent cursor-ide \
+    --limit 500 \
+    --format json \
+    agentgrep-cursor-db-no-match > .tmp/profile-cursor-ide.json
+```
+
+Profile every component:
+
+```console
+$ uv run python scripts/profile_engine.py all \
+    --agent all \
+    --limit 500 \
+    --json \
+    tmux > .tmp/profile-all.json
+```
+
+Choose the renderer with `--format`:
+
+| Format | Use case |
+|---|---|
+| `rich` | Terminal summary plus the slowest spans; default |
+| `json` | One sanitized payload |
+| `ndjson` | One sanitized child profile run per line |
+
+Show a compact terminal summary:
+
+```console
+$ uv run python scripts/profile_engine.py all \
+    --agent all \
+    --limit 500 \
+    --top-spans 20 \
+    tmux
+```
+
+`--json` and `--ndjson` are shortcuts for the machine-readable
+renderers. `--format json`, `--format ndjson`, and `--format rich`
+remain available when a single flag shape is easier to template.
+
+Available components are `search-prompts`, `search-conversations`,
+`grep-prompts`, `grep-conversations`, `find-prompts`, and `all`.
+The JSON payload reports counts, phase timings, and coarse subprocess
+metadata. Profile runs include phase spans such as `search.discover`,
+`search.plan`, and `search.collect`, plus source-level spans such as
+`search.discover.group`, `search.plan.prefilter_root`,
+`search.plan.direct_source`, `search.collect.source`, and
+`find.filter.source`. Those source-level spans report agent, store,
+adapter, path kind, source kind, counts, and match decisions without
+including prompt text, raw argv, or local absolute paths.
 
 ## Templating
 

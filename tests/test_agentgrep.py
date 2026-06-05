@@ -2833,6 +2833,57 @@ def test_plan_search_sources_prunes_chat_sources_from_prompt_scope(
     assert checked == ["claude.history"]
 
 
+def test_plan_search_sources_skips_root_prefilter_for_sqlite_sources(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SQLite sources bypass binary root grep and stay parse candidates."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    root = tmp_path / "cursor-workspaces"
+    source = agentgrep.SourceHandle(
+        agent="cursor-ide",
+        store="cursor-ide.workspace_state",
+        adapter_id="cursor_ide.state_vscdb_modern.v1",
+        path=root / "project" / "state.vscdb",
+        path_kind="sqlite_db",
+        source_kind="sqlite",
+        search_root=root,
+        mtime_ns=1,
+    )
+    query = agentgrep.SearchQuery(
+        terms=("serenity",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("cursor-ide",),
+        limit=None,
+    )
+    grep_calls: list[tuple[pathlib.Path, object]] = []
+
+    def grep_root_paths(
+        search_root: pathlib.Path,
+        query: object,
+        grep_program: str,
+        *,
+        control: object | None = None,
+    ) -> set[pathlib.Path]:
+        _ = grep_program, control
+        grep_calls.append((search_root, query))
+        return set()
+
+    monkeypatch.setattr(agentgrep, "grep_root_paths", grep_root_paths)
+
+    planned = agentgrep.plan_search_sources(
+        query,
+        [source],
+        agentgrep.BackendSelection(None, "/fake/rg", None),
+    )
+
+    assert planned == [source]
+    assert grep_calls == []
+
+
 def test_search_prefers_newer_sources_when_limiting(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

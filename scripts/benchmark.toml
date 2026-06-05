@@ -79,6 +79,56 @@ description = "Profiling: all-agent source enumeration, JSON output, limit 500"
 command = "{venv}/bin/agentgrep find --no-progress --agent all --json --limit 500"
 default_query = ""
 
+[bench.profile-engine-search-all-prompts-limit-500]
+description = "Profiling: engine-only all-agent prompt search, sanitized JSON profile, limit 500"
+command = "{venv}/bin/python scripts/profile_engine.py search-prompts --agent all --limit 500 --format json {query}"
+default_query = "tmux"
+
+[bench.profile-engine-search-all-conversations-limit-500]
+description = "Profiling: engine-only all-agent conversation search, sanitized JSON profile, limit 500"
+command = "{venv}/bin/python scripts/profile_engine.py search-conversations --agent all --limit 500 --format json {query}"
+default_query = "tmux"
+
+[bench.profile-engine-grep-all-prompts-max-count-500]
+description = "Profiling: engine-only all-agent prompt grep, sanitized JSON profile, max-count 500"
+command = "{venv}/bin/python scripts/profile_engine.py grep-prompts --agent all --max-count 500 --format json {query}"
+default_query = "tmux"
+
+[bench.profile-engine-grep-all-conversations-max-count-500]
+description = "Profiling: engine-only all-agent conversation grep, sanitized JSON profile, max-count 500"
+command = "{venv}/bin/python scripts/profile_engine.py grep-conversations --agent all --max-count 500 --format json {query}"
+default_query = "tmux"
+
+[bench.profile-engine-find-all-prompts-limit-500]
+description = "Profiling: engine-only all-agent prompt-source enumeration, sanitized JSON profile, limit 500"
+command = "{venv}/bin/python scripts/profile_engine.py find-prompts --agent all --limit 500 --format json"
+default_query = ""
+
+[bench.profile-engine-search-cursor-ide-prompts-limit-500]
+description = "Profiling: engine-only Cursor IDE SQLite prompt search, sanitized JSON profile, limit 500"
+command = "{venv}/bin/python scripts/profile_engine.py search-prompts --agent cursor-ide --limit 500 --format json {query}"
+default_query = "agentgrep-cursor-db-no-match"
+
+[bench.profile-engine-search-cursor-ide-conversations-limit-500]
+description = "Profiling: engine-only Cursor IDE SQLite conversation search, sanitized JSON profile, limit 500"
+command = "{venv}/bin/python scripts/profile_engine.py search-conversations --agent cursor-ide --limit 500 --format json {query}"
+default_query = "agentgrep-cursor-db-no-match"
+
+[bench.profile-engine-grep-cursor-ide-prompts-max-count-500]
+description = "Profiling: engine-only Cursor IDE SQLite prompt grep, sanitized JSON profile, max-count 500"
+command = "{venv}/bin/python scripts/profile_engine.py grep-prompts --agent cursor-ide --max-count 500 --format json {query}"
+default_query = "agentgrep-cursor-db-no-match"
+
+[bench.profile-engine-grep-cursor-ide-conversations-max-count-500]
+description = "Profiling: engine-only Cursor IDE SQLite conversation grep, sanitized JSON profile, max-count 500"
+command = "{venv}/bin/python scripts/profile_engine.py grep-conversations --agent cursor-ide --max-count 500 --format json {query}"
+default_query = "agentgrep-cursor-db-no-match"
+
+[bench.profile-engine-find-cursor-ide-prompts-limit-500]
+description = "Profiling: engine-only Cursor IDE SQLite prompt-source enumeration, sanitized JSON profile, limit 500"
+command = "{venv}/bin/python scripts/profile_engine.py find-prompts --agent cursor-ide --limit 500 --format json"
+default_query = ""
+
 [bench.import-time]
 description = "Cold-start CLI import + arg parse only"
 command = "{venv}/bin/agentgrep --help"
