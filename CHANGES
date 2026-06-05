@@ -42,6 +42,16 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### Fixes
+
+#### Huge Cursor IDE databases no longer slow every search (#45)
+
+Searching Cursor IDE history now reads only the chat and prompt entries
+from `state.vscdb` instead of loading the whole database. On
+multi-gigabyte databases — common after heavy Cursor use — searches
+previously pulled gigabytes of unrelated editor data through memory
+just to throw it away.
+
 ## agentgrep 0.1.0a16 (2026-06-04)
 
 agentgrep 0.1.0a16 fixes broad searches silently skipping Cursor IDE's
