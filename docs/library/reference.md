@@ -143,3 +143,23 @@ every surface (CLI, TUI, MCP).
 
 .. autofunction:: agentgrep.store_catalog.gemini_project_hash
 ```
+
+## DB
+
+```{eval-rst}
+.. autofunction:: agentgrep.db.default_db_path
+.. autofunction:: agentgrep.db.normalize_record_text
+.. autofunction:: agentgrep.db.text_hash
+
+.. autoclass:: agentgrep.db.DbStatus
+   :members:
+
+.. autoclass:: agentgrep.db.SyncResult
+   :members:
+
+.. autoclass:: agentgrep.db.DbRecordRow
+   :members:
+
+.. autoclass:: agentgrep.db.DbRuntime
+   :members:
+```

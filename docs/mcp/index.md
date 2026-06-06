@@ -52,6 +52,10 @@ Payload models, server factory, and MCP helpers.
 
 {tool}`find`
 
+## DB
+
+<a class="reference internal" href="tools/#fastmcp-tool-db_status"><code>db_status</code></a>
+
 
 ```{toctree}
 :hidden:

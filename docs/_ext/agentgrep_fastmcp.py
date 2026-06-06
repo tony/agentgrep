@@ -16,6 +16,7 @@ from pydantic import Field
 from agentgrep.mcp import (
     AgentSelector,
     CatalogAgentSelector,
+    DbStatusModel,
     FindToolResponse,
     SearchScopeName,
     SearchToolResponse,
@@ -448,5 +449,23 @@ t.cast(t.Any, recent_sessions).__fastmcp__ = types.SimpleNamespace(
     name="recent_sessions",
     title="Recent Sessions",
     tags=READONLY_TAGS | {"search"},
+    annotations=None,
+)
+
+
+async def db_status(
+    db_path: t.Annotated[
+        str | None,
+        Field(default=None, description="Optional agentgrep db path."),
+    ] = None,
+) -> DbStatusModel:
+    """Return row counts for the persistent DB index."""
+    raise NotImplementedError(DOCS_ONLY_MESSAGE)
+
+
+t.cast(t.Any, db_status).__fastmcp__ = types.SimpleNamespace(
+    name="db_status",
+    title="DB Status",
+    tags=READONLY_TAGS | {"db"},
     annotations=None,
 )
