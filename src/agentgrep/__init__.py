@@ -3655,19 +3655,9 @@ def _db_search_result(
         return False, []
     if runtime.cache_mode == "auto" and not records:
         return False, []
-    if query.dedupe:
-        # The live path dedups per session inside the execution driver;
-        # cached records bypass it, so the event-stream invariant that
-        # emitted records are unique-and-included is enforced here.
-        seen: set[tuple[str, str, str, str, str]] = set()
-        deduped: list[SearchRecord] = []
-        for record in records:
-            key = record_dedupe_key(record)
-            if key in seen:
-                continue
-            seen.add(key)
-            deduped.append(record)
-        records = deduped
+    # Per-session dedup happens inside DbStore.search_records, before
+    # the limit slice, so cached results keep the event-stream invariant
+    # and result caps count unique records like the live driver.
     return True, records
 
 
