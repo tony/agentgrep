@@ -90,6 +90,7 @@ def _source(
     path: str,
     store: str = "codex.sessions",
     adapter_id: str = "codex.sessions_jsonl.v1",
+    path_kind: agentgrep.PathKind = "session_file",
     search_root: pathlib.Path | None = None,
     source_kind: agentgrep.SourceKind = "jsonl",
     mtime_ns: int = 0,
@@ -100,7 +101,7 @@ def _source(
         store=store,
         adapter_id=adapter_id,
         path=pathlib.Path(path),
-        path_kind="session_file",
+        path_kind=path_kind,
         source_kind=source_kind,
         search_root=search_root,
         mtime_ns=mtime_ns,
@@ -227,6 +228,52 @@ def test_bounded_text_append_only_jsonl_root_source_uses_lazy_admission(
     ]
     assert plan.decisions[1].source_count == 1
     assert plan.decisions[1].detail == "bounded_append_only_jsonl"
+
+
+def test_sqlite_root_source_skips_binary_grep_prefilter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SQLite sources are admitted so adapters can apply SQL-side predicates."""
+    root = pathlib.Path("/tmp/cursor-workspaces")
+    source = _source(
+        agent="cursor-ide",
+        path="/tmp/cursor-workspaces/project/state.vscdb",
+        store="cursor-ide.workspace_state",
+        adapter_id="cursor_ide.state_vscdb_modern.v1",
+        path_kind="sqlite_db",
+        search_root=root,
+        source_kind="sqlite",
+        mtime_ns=2,
+    )
+
+    def fail_prefilter_sources_by_root(
+        _query: agentgrep.SearchQuery,
+        _sources: list[agentgrep.SourceHandle],
+        _grep_program: str,
+        *,
+        progress: agentgrep.SearchProgress | None = None,
+        control: agentgrep.SearchControl | None = None,
+    ) -> list[agentgrep.SourceHandle]:
+        _ = progress, control
+        pytest.fail("SQLite sources should not use binary root grep prefiltering")
+
+    monkeypatch.setattr(agentgrep, "prefilter_sources_by_root", fail_prefilter_sources_by_root)
+
+    plan = build_physical_search_plan(
+        _query(scope="all", limit=5),
+        (source,),
+        agentgrep.BackendSelection(find_tool=None, grep_tool="rg", json_tool=None),
+    )
+
+    assert [task.source for task in plan.tasks] == [source]
+    assert [task.strategy for task in plan.tasks] == ["root_full_scan"]
+    assert [decision.name for decision in plan.decisions] == [
+        "scope_prune",
+        "root_prefilter_skipped",
+        "candidate_order",
+    ]
+    assert plan.decisions[1].source_count == 1
+    assert plan.decisions[1].detail == "sqlite_source"
 
 
 def test_bounded_haystack_root_source_without_path_match_keeps_eager_prefilter(

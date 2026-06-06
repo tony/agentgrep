@@ -241,8 +241,11 @@ def build_physical_search_plan(
     if backends.grep_tool is not None:
         eager_sources: list[agentgrep.SourceHandle] = []
         lazy_sources: list[agentgrep.SourceHandle] = []
+        sqlite_sources: list[agentgrep.SourceHandle] = []
         for source in scoped_sources:
-            if _can_use_lazy_source_admission(query, source):
+            if source.source_kind == "sqlite":
+                sqlite_sources.append(source)
+            elif _can_use_lazy_source_admission(query, source):
                 lazy_sources.append(source)
             else:
                 eager_sources.append(source)
@@ -269,6 +272,15 @@ def build_physical_search_plan(
                     name="root_prefilter_skipped",
                     source_count=len(lazy_sources),
                     detail="bounded_append_only_jsonl",
+                ),
+            )
+        if sqlite_sources:
+            planned_sources = [*planned_sources, *sqlite_sources]
+            decisions.append(
+                PlannerDecision(
+                    name="root_prefilter_skipped",
+                    source_count=len(sqlite_sources),
+                    detail="sqlite_source",
                 ),
             )
 
