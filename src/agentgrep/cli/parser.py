@@ -185,6 +185,8 @@ class DbArgs:
     agents: tuple[AgentName, ...]
     scope: SearchScope
     output_mode: OutputMode
+    color_mode: ColorMode
+    progress_mode: ProgressMode
     limit_sources: int | None = None
 
 
@@ -671,6 +673,19 @@ def create_parser(
         type=int,
         metavar="N",
         help="Limit the number of sources synced",
+    )
+    _ = db_sync_parser.add_argument(
+        "--progress",
+        choices=["auto", "always", "never"],
+        default="auto",
+        help="Show DB sync progress on stderr",
+    )
+    _ = db_sync_parser.add_argument(
+        "--no-progress",
+        dest="progress",
+        action="store_const",
+        const="never",
+        help="Silence the stderr progress spinner (alias for --progress=never)",
     )
     add_output_mode_options(db_sync_parser, allow_ui=False)
 
@@ -1161,6 +1176,8 @@ def _build_db_args(
         agents=parse_agents(t.cast("list[str]", getattr(namespace, "agent", []))),
         scope=t.cast("SearchScope", getattr(namespace, "scope", "all")),
         output_mode=parse_output_mode(namespace),
+        color_mode=color_mode,
+        progress_mode=t.cast("ProgressMode", getattr(namespace, "progress", "never")),
         limit_sources=limit_sources,
     )
 
