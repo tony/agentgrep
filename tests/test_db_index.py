@@ -101,15 +101,20 @@ DUPLICATE_RECORD_CASES: tuple[DuplicateRecordCase, ...] = (
 )
 
 
-def _source(path: pathlib.Path) -> agentgrep.SourceHandle:
+def _source(
+    path: pathlib.Path,
+    *,
+    source_kind: agentgrep.SourceKind = "jsonl",
+    adapter_id: str = "codex.sessions_jsonl.v1",
+) -> agentgrep.SourceHandle:
     """Build a synthetic source handle for db tests."""
     return agentgrep.SourceHandle(
         agent="codex",
         store="codex.sessions",
-        adapter_id="codex.sessions_jsonl.v1",
+        adapter_id=adapter_id,
         path=path,
         path_kind="session_file",
-        source_kind="jsonl",
+        source_kind=source_kind,
         search_root=path.parent,
         mtime_ns=path.stat().st_mtime_ns if path.exists() else 0,
     )
@@ -397,3 +402,66 @@ def test_resync_keeps_fts_index_consistent(tmp_path: pathlib.Path) -> None:
     assert [record.text for record in runtime.search_records(_query("pytest"))] == [
         "Run pytest for the focused suite.",
     ]
+
+
+class WalFreshnessCase(t.NamedTuple):
+    """Named case for WAL-sidecar freshness behavior during DB sync."""
+
+    test_id: str
+    source_kind: agentgrep.SourceKind
+    touch_wal: bool
+    expected_synced: int
+    expected_skipped: int
+
+
+WAL_FRESHNESS_CASES: tuple[WalFreshnessCase, ...] = (
+    WalFreshnessCase(
+        test_id="sqlite-wal-write-resyncs",
+        source_kind="sqlite",
+        touch_wal=True,
+        expected_synced=1,
+        expected_skipped=0,
+    ),
+    WalFreshnessCase(
+        test_id="sqlite-unchanged-skips",
+        source_kind="sqlite",
+        touch_wal=False,
+        expected_synced=0,
+        expected_skipped=1,
+    ),
+    WalFreshnessCase(
+        test_id="jsonl-ignores-wal-sidecar",
+        source_kind="jsonl",
+        touch_wal=True,
+        expected_synced=0,
+        expected_skipped=1,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    WAL_FRESHNESS_CASES,
+    ids=[case.test_id for case in WAL_FRESHNESS_CASES],
+)
+def test_sync_freshness_tracks_wal_sidecars(
+    case: WalFreshnessCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """WAL-only writes invalidate freshness for sqlite sources only."""
+    source_path = tmp_path / "store.db"
+    source_path.write_text("primary", encoding="utf-8")
+    source = _source(source_path, source_kind=case.source_kind)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    _ = runtime.sync_records(
+        ((source, (_record(source, "Run ruff check before committing."),)),),
+    )
+    if case.touch_wal:
+        (tmp_path / "store.db-wal").write_text("wal frame", encoding="utf-8")
+
+    result = runtime.sync_records(
+        ((source, (_record(source, "Run ruff check before committing."),)),),
+    )
+
+    assert result.sources_synced == case.expected_synced
+    assert result.sources_skipped == case.expected_skipped
