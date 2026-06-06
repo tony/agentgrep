@@ -23,6 +23,7 @@ type SourceStrategy = t.Literal[
     "jsonl_raw_text_prefilter",
     "jsonl_bounded_reverse_scan",
     "jsonl_bounded_reverse_raw_text_prefilter",
+    "jsonl_bounded_reverse_haystack_raw_text_prefilter",
 ]
 type SourceRecordOrder = t.Literal["unknown", "newest_first"]
 type SourceLimitBehavior = t.Literal["drain_source", "bounded_source"]
@@ -41,6 +42,15 @@ RAW_TEXT_PREFILTER_ADAPTERS: frozenset[str] = frozenset(
 
 APPEND_ONLY_JSONL_ADAPTERS: frozenset[str] = RAW_TEXT_PREFILTER_ADAPTERS
 """Adapters whose JSONL files are append-only enough for newest-first bounded scans."""
+
+HAYSTACK_RAW_TEXT_PREFILTER_ADAPTERS: frozenset[str] = frozenset(
+    {
+        "claude.projects_jsonl.v1",
+        "grok.sessions_jsonl.v1",
+        "pi.sessions_jsonl.v1",
+    },
+)
+"""Adapters whose haystack-bearing JSONL records can use raw candidate checks."""
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -262,6 +272,8 @@ def _source_strategy(
 ) -> SourceStrategy:
     """Return the cheapest safe execution strategy for one source."""
     if _can_use_bounded_reverse_jsonl(query, source):
+        if _can_use_jsonl_haystack_raw_text_prefilter(query, source):
+            return "jsonl_bounded_reverse_haystack_raw_text_prefilter"
         if _can_use_jsonl_raw_text_prefilter(query, source):
             return "jsonl_bounded_reverse_raw_text_prefilter"
         return "jsonl_bounded_reverse_scan"
@@ -287,6 +299,22 @@ def _can_use_jsonl_raw_text_prefilter(
     )
 
 
+def _can_use_jsonl_haystack_raw_text_prefilter(
+    query: agentgrep.SearchQuery,
+    source: agentgrep.SourceHandle,
+) -> bool:
+    """Return whether raw JSONL filtering can safely prefilter haystack queries."""
+    return (
+        bool(query.terms)
+        and query.limit is not None
+        and query.match_surface == "haystack"
+        and not query.regex
+        and query.compiled is None
+        and source.source_kind == "jsonl"
+        and source.adapter_id in HAYSTACK_RAW_TEXT_PREFILTER_ADAPTERS
+    )
+
+
 def _can_use_bounded_reverse_jsonl(
     query: agentgrep.SearchQuery,
     source: agentgrep.SourceHandle,
@@ -306,6 +334,7 @@ def _source_record_order(strategy: SourceStrategy) -> SourceRecordOrder:
     if strategy in {
         "jsonl_bounded_reverse_scan",
         "jsonl_bounded_reverse_raw_text_prefilter",
+        "jsonl_bounded_reverse_haystack_raw_text_prefilter",
     }:
         return "newest_first"
     return "unknown"
@@ -316,6 +345,7 @@ def _source_limit_behavior(strategy: SourceStrategy) -> SourceLimitBehavior:
     if strategy in {
         "jsonl_bounded_reverse_scan",
         "jsonl_bounded_reverse_raw_text_prefilter",
+        "jsonl_bounded_reverse_haystack_raw_text_prefilter",
     }:
         return "bounded_source"
     return "drain_source"

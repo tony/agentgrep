@@ -490,6 +490,13 @@ def iter_source_task_records(
             reverse=True,
         )
         return
+    if task.strategy == "jsonl_bounded_reverse_haystack_raw_text_prefilter":
+        yield from agentgrep.iter_source_records(
+            task.source,
+            raw_skip_line=raw_text_skip_line_for_haystack_query(query, task.source),
+            reverse=True,
+        )
+        return
     if task.strategy == "jsonl_bounded_reverse_scan":
         yield from agentgrep.iter_source_records(task.source, reverse=True)
         return
@@ -500,7 +507,44 @@ def raw_text_skip_line_for_query(
     query: agentgrep.SearchQuery,
 ) -> cabc.Callable[[str], bool]:
     """Return a raw JSONL line skip predicate for a text-surface query."""
+    return _raw_text_skip_line_for_terms(query, query.terms)
+
+
+def raw_text_skip_line_for_haystack_query(
+    query: agentgrep.SearchQuery,
+    source: agentgrep.SourceHandle,
+) -> cabc.Callable[[str], bool]:
+    """Return a source-aware raw skip predicate for a haystack-surface query."""
     if not query.terms:
+        return lambda _raw_line: False
+    if query.regex:
+        return lambda _raw_line: False
+
+    source_text = str(source.path)
+    source_haystack = source_text if query.case_sensitive else source_text.casefold()
+    terms = query.terms if query.case_sensitive else tuple(term.casefold() for term in query.terms)
+    source_matches = tuple(term in source_haystack for term in terms)
+    if query.any_term:
+        if any(source_matches):
+            return lambda _raw_line: False
+        return _raw_text_skip_line_for_terms(query, query.terms)
+
+    remaining_terms = tuple(
+        original_term
+        for original_term, matched in zip(query.terms, source_matches, strict=True)
+        if not matched
+    )
+    if not remaining_terms:
+        return lambda _raw_line: False
+    return _raw_text_skip_line_for_terms(query, remaining_terms)
+
+
+def _raw_text_skip_line_for_terms(
+    query: agentgrep.SearchQuery,
+    terms: tuple[str, ...],
+) -> cabc.Callable[[str], bool]:
+    """Return a raw JSONL line skip predicate for literal query terms."""
+    if not terms:
         return lambda _raw_line: False
     if query.regex:
         return lambda raw_line: (
@@ -511,9 +555,7 @@ def raw_text_skip_line_for_query(
             )
         )
 
-    needles = (
-        query.terms if query.case_sensitive else tuple(term.casefold() for term in query.terms)
-    )
+    needles = terms if query.case_sensitive else tuple(term.casefold() for term in terms)
     escaped_needles = tuple(json.dumps(needle, ensure_ascii=True)[1:-1] for needle in needles)
     any_term = query.any_term
     case_sensitive = query.case_sensitive

@@ -51,12 +51,13 @@ def _query(
 def _source(
     path: pathlib.Path,
     *,
+    agent: agentgrep.AgentName = "codex",
     store: str = "codex.sessions",
     adapter_id: str = "codex.sessions_jsonl.v1",
 ) -> agentgrep.SourceHandle:
     """Build a synthetic source handle for execution tests."""
     return agentgrep.SourceHandle(
-        agent="codex",
+        agent=agent,
         store=store,
         adapter_id=adapter_id,
         path=path,
@@ -104,6 +105,7 @@ def _plan(
                     in {
                         "jsonl_bounded_reverse_scan",
                         "jsonl_bounded_reverse_raw_text_prefilter",
+                        "jsonl_bounded_reverse_haystack_raw_text_prefilter",
                     }
                     else "unknown"
                 ),
@@ -113,6 +115,7 @@ def _plan(
                     in {
                         "jsonl_bounded_reverse_scan",
                         "jsonl_bounded_reverse_raw_text_prefilter",
+                        "jsonl_bounded_reverse_haystack_raw_text_prefilter",
                     }
                     else "drain_source"
                 ),
@@ -143,6 +146,7 @@ def _multi_plan(
                     in {
                         "jsonl_bounded_reverse_scan",
                         "jsonl_bounded_reverse_raw_text_prefilter",
+                        "jsonl_bounded_reverse_haystack_raw_text_prefilter",
                     }
                     else "unknown"
                 ),
@@ -152,6 +156,7 @@ def _multi_plan(
                     in {
                         "jsonl_bounded_reverse_scan",
                         "jsonl_bounded_reverse_raw_text_prefilter",
+                        "jsonl_bounded_reverse_haystack_raw_text_prefilter",
                     }
                     else "drain_source"
                 ),
@@ -371,6 +376,146 @@ def test_raw_text_skip_line_does_not_rebuild_matches_per_line(
 
     assert skip_line('{"content":"bliss"}') is False
     assert skip_line('{"content":"miss"}') is True
+
+
+class HaystackRawTextSkipCase(t.NamedTuple):
+    """One source-aware haystack raw-line prefilter case."""
+
+    test_id: str
+    terms: tuple[str, ...]
+    any_term: bool
+    source_path: str
+    raw_line: str
+    expected_skip: bool
+
+
+HAYSTACK_RAW_TEXT_SKIP_CASES: tuple[HaystackRawTextSkipCase, ...] = (
+    HaystackRawTextSkipCase(
+        test_id="any-term-source-path-match-keeps-line",
+        terms=("project-tmux", "bliss"),
+        any_term=True,
+        source_path="/tmp/project-tmux/session.jsonl",
+        raw_line='{"content":"unrelated"}',
+        expected_skip=False,
+    ),
+    HaystackRawTextSkipCase(
+        test_id="all-terms-source-path-match-removes-static-term",
+        terms=("project-tmux", "bliss"),
+        any_term=False,
+        source_path="/tmp/project-tmux/session.jsonl",
+        raw_line='{"content":"bliss"}',
+        expected_skip=False,
+    ),
+    HaystackRawTextSkipCase(
+        test_id="all-terms-source-path-match-requires-remaining-term",
+        terms=("project-tmux", "bliss"),
+        any_term=False,
+        source_path="/tmp/project-tmux/session.jsonl",
+        raw_line='{"content":"unrelated"}',
+        expected_skip=True,
+    ),
+    HaystackRawTextSkipCase(
+        test_id="all-terms-all-source-path-matches-keep-line",
+        terms=("project-tmux", "session.jsonl"),
+        any_term=False,
+        source_path="/tmp/project-tmux/session.jsonl",
+        raw_line='{"content":"unrelated"}',
+        expected_skip=False,
+    ),
+    HaystackRawTextSkipCase(
+        test_id="unicode-escape-kept",
+        terms=("bliss",),
+        any_term=False,
+        source_path="/tmp/session.jsonl",
+        raw_line='{"content":"\\u0062liss"}',
+        expected_skip=False,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    HAYSTACK_RAW_TEXT_SKIP_CASES,
+    ids=[c.test_id for c in HAYSTACK_RAW_TEXT_SKIP_CASES],
+)
+def test_haystack_raw_text_skip_line_accounts_for_source_path(
+    case: HaystackRawTextSkipCase,
+) -> None:
+    """Haystack raw-line prefiltering preserves source-path matches."""
+    query = agentgrep.SearchQuery(
+        terms=case.terms,
+        scope="conversations",
+        any_term=case.any_term,
+        regex=False,
+        case_sensitive=False,
+        agents=("claude",),
+        limit=500,
+        dedupe=True,
+        match_surface="haystack",
+    )
+    source = _source(
+        pathlib.Path(case.source_path),
+        agent="claude",
+        store="claude.projects",
+        adapter_id="claude.projects_jsonl.v1",
+    )
+
+    skip_line = execution.raw_text_skip_line_for_haystack_query(query, source)
+
+    assert skip_line(case.raw_line) is case.expected_skip
+
+
+def test_bounded_haystack_raw_prefilter_keeps_source_path_matches(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Haystack raw prefiltering keeps rows matched only by source metadata."""
+    query = agentgrep.SearchQuery(
+        terms=("project-tmux",),
+        scope="conversations",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("claude",),
+        limit=1,
+        dedupe=True,
+        match_surface="haystack",
+    )
+    source = _source(
+        tmp_path / "project-tmux" / "session.jsonl",
+        agent="claude",
+        store="claude.projects",
+        adapter_id="claude.projects_jsonl.v1",
+    )
+    source.path.parent.mkdir()
+    source.path.write_text(
+        '{"type":"response_item","payload":{"role":"user","content":"metadata only"}}\n',
+        encoding="utf-8",
+    )
+    decoded_inputs: list[str] = []
+    original_loads = agentgrep.json.loads
+
+    def loads_with_capture(payload: str) -> object:
+        decoded_inputs.append(payload)
+        return t.cast("object", original_loads(payload))
+
+    monkeypatch.setattr(agentgrep.json, "loads", loads_with_capture)
+
+    events = list(
+        InlineExecutionDriver().iter_search_plan(
+            query,
+            _plan(
+                query,
+                source,
+                strategy="jsonl_bounded_reverse_haystack_raw_text_prefilter",
+            ),
+        ),
+    )
+
+    assert [event.record.text for event in events if isinstance(event, ExecutionRecordEmitted)] == [
+        "metadata only",
+    ]
+    assert len(decoded_inputs) == 1
 
 
 class BoundedExecutionCase(t.NamedTuple):

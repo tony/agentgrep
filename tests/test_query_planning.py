@@ -232,6 +232,19 @@ STRATEGY_CASES: tuple[SourceStrategyCase, ...] = (
         expected_limit_behavior="bounded_source",
     ),
     SourceStrategyCase(
+        test_id="search-haystack-safe-jsonl-limited-uses-bounded-raw-prefilter",
+        query=_query(scope="conversations", match_surface="haystack"),
+        source=_source(
+            agent="claude",
+            path="/tmp/claude-project.jsonl",
+            store="claude.projects",
+            adapter_id="claude.projects_jsonl.v1",
+        ),
+        expected_strategy="jsonl_bounded_reverse_haystack_raw_text_prefilter",
+        expected_record_order="newest_first",
+        expected_limit_behavior="bounded_source",
+    ),
+    SourceStrategyCase(
         test_id="regex-text-jsonl-limited-uses-bounded-reverse",
         query=_query(regex=True, match_surface="text"),
         source=_source(
