@@ -77,7 +77,31 @@ class ExecutionDriver(t.Protocol):
         control: agentgrep.SearchControl | None = None,
         runtime: SearchRuntime | None = None,
     ) -> cabc.Iterator[SearchExecutionEvent]:
-        """Yield internal search execution events."""
+        """Yield internal search execution events.
+
+        Parameters
+        ----------
+        query : agentgrep.SearchQuery
+            Compiled query — terms, agents, dedup choice, limit.
+        plan : PhysicalSearchPlan
+            Planned source tasks from
+            :func:`agentgrep._engine.planning.build_physical_search_plan`.
+        progress : agentgrep.SearchProgress or None
+            Progress sink for source and record events. ``None`` uses
+            the no-op sink.
+        control : agentgrep.SearchControl or None
+            Optional control handle polled between records and source
+            tasks so consumers can stop the scan early.
+        runtime : SearchRuntime or None
+            Optional reusable runtime state; supplies the source-scan
+            cache when one is configured.
+
+        Yields
+        ------
+        SearchExecutionEvent
+            One started and one finished event per submitted source,
+            plus deduplicated record events.
+        """
         ...
 
 
@@ -923,7 +947,25 @@ def select_execution_driver(
     *,
     config: ExecutionDriverConfig | None = None,
 ) -> ExecutionDriver:
-    """Choose the cheapest safe execution driver for one physical plan."""
+    """Choose the cheapest safe execution driver for one physical plan.
+
+    Parameters
+    ----------
+    query : agentgrep.SearchQuery
+        Compiled query — terms, agents, dedup choice, limit.
+    plan : PhysicalSearchPlan
+        Planned source tasks whose strategies and limit behaviors
+        gate frontier-driver eligibility.
+    config : ExecutionDriverConfig or None
+        Worker-count and batch-scheduling tuning. ``None`` uses the
+        defaults.
+
+    Returns
+    -------
+    ExecutionDriver
+        The frontier driver for limited bounded haystack plans;
+        otherwise the inline driver.
+    """
     active_config = ExecutionDriverConfig() if config is None else config
     if _should_use_frontier_driver(query, plan, config=active_config):
         return FrontierExecutionDriver(active_config)
