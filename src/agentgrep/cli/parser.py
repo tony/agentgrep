@@ -50,6 +50,7 @@ FindPatternMode = t.Literal["regex", "glob", "fixed", "exact"]
 FindTypeFilter = t.Literal["prompts", "history", "sessions", "all"]
 DbAction = t.Literal["sync", "status", "explain"]
 
+
 __all__ = [
     "CaseMode",
     "DbArgs",
