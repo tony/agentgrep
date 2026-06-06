@@ -21,7 +21,11 @@ type SourceStrategy = t.Literal[
     "direct_full_scan",
     "root_full_scan",
     "jsonl_raw_text_prefilter",
+    "jsonl_bounded_reverse_scan",
+    "jsonl_bounded_reverse_raw_text_prefilter",
 ]
+type SourceRecordOrder = t.Literal["unknown", "newest_first"]
+type SourceLimitBehavior = t.Literal["drain_source", "bounded_source"]
 
 RAW_TEXT_PREFILTER_ADAPTERS: frozenset[str] = frozenset(
     {
@@ -34,6 +38,9 @@ RAW_TEXT_PREFILTER_ADAPTERS: frozenset[str] = frozenset(
     },
 )
 """Adapters whose text-bearing records can be prefiltered from raw JSONL lines."""
+
+APPEND_ONLY_JSONL_ADAPTERS: frozenset[str] = RAW_TEXT_PREFILTER_ADAPTERS
+"""Adapters whose JSONL files are append-only enough for newest-first bounded scans."""
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -89,6 +96,8 @@ class SourceTask:
 
     source: agentgrep.SourceHandle
     strategy: SourceStrategy
+    record_order: SourceRecordOrder
+    limit_behavior: SourceLimitBehavior
     can_stream_records: bool
     restore_order_key: tuple[int, str]
 
@@ -238,6 +247,8 @@ def _source_task(source: agentgrep.SourceHandle, strategy: SourceStrategy) -> So
     return SourceTask(
         source=source,
         strategy=strategy,
+        record_order=_source_record_order(strategy),
+        limit_behavior=_source_limit_behavior(strategy),
         can_stream_records=True,
         restore_order_key=_source_order_key(source),
     )
@@ -250,6 +261,10 @@ def _source_strategy(
     source_route: t.Literal["direct", "root"],
 ) -> SourceStrategy:
     """Return the cheapest safe execution strategy for one source."""
+    if _can_use_bounded_reverse_jsonl(query, source):
+        if _can_use_jsonl_raw_text_prefilter(query, source):
+            return "jsonl_bounded_reverse_raw_text_prefilter"
+        return "jsonl_bounded_reverse_scan"
     if _can_use_jsonl_raw_text_prefilter(query, source):
         return "jsonl_raw_text_prefilter"
     if source_route == "root":
@@ -270,6 +285,40 @@ def _can_use_jsonl_raw_text_prefilter(
         and source.source_kind == "jsonl"
         and source.adapter_id in RAW_TEXT_PREFILTER_ADAPTERS
     )
+
+
+def _can_use_bounded_reverse_jsonl(
+    query: agentgrep.SearchQuery,
+    source: agentgrep.SourceHandle,
+) -> bool:
+    """Return whether a limited query can read a source newest-first."""
+    return (
+        bool(query.terms)
+        and query.limit is not None
+        and query.compiled is None
+        and source.source_kind == "jsonl"
+        and source.adapter_id in APPEND_ONLY_JSONL_ADAPTERS
+    )
+
+
+def _source_record_order(strategy: SourceStrategy) -> SourceRecordOrder:
+    """Return the record order promised by one source strategy."""
+    if strategy in {
+        "jsonl_bounded_reverse_scan",
+        "jsonl_bounded_reverse_raw_text_prefilter",
+    }:
+        return "newest_first"
+    return "unknown"
+
+
+def _source_limit_behavior(strategy: SourceStrategy) -> SourceLimitBehavior:
+    """Return whether a source strategy may stop after satisfying the query limit."""
+    if strategy in {
+        "jsonl_bounded_reverse_scan",
+        "jsonl_bounded_reverse_raw_text_prefilter",
+    }:
+        return "bounded_source"
+    return "drain_source"
 
 
 def _source_order_key(source: agentgrep.SourceHandle) -> tuple[int, str]:

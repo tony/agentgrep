@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import collections.abc as cabc
 import pathlib
 import typing as t
 
 import pytest
 
 import agentgrep
+import agentgrep._engine.execution as execution
 from agentgrep._engine.execution import (
     ExecutionRecordEmitted,
     ExecutionSourceFinished,
@@ -86,6 +88,24 @@ def _plan(
             SourceTask(
                 source=source,
                 strategy=strategy,
+                record_order=(
+                    "newest_first"
+                    if strategy
+                    in {
+                        "jsonl_bounded_reverse_scan",
+                        "jsonl_bounded_reverse_raw_text_prefilter",
+                    }
+                    else "unknown"
+                ),
+                limit_behavior=(
+                    "bounded_source"
+                    if strategy
+                    in {
+                        "jsonl_bounded_reverse_scan",
+                        "jsonl_bounded_reverse_raw_text_prefilter",
+                    }
+                    else "drain_source"
+                ),
                 can_stream_records=True,
                 restore_order_key=(0, str(source.path)),
             ),
@@ -182,3 +202,112 @@ def test_jsonl_raw_text_prefilter_keeps_escaped_candidate_lines(
     assert [event.record.text for event in events if isinstance(event, ExecutionRecordEmitted)] == [
         "bliss escaped",
     ]
+
+
+class BoundedExecutionCase(t.NamedTuple):
+    """One bounded source strategy and its expected early-stop behavior."""
+
+    test_id: str
+    strategy: SourceStrategy
+
+
+BOUNDED_EXECUTION_CASES: tuple[BoundedExecutionCase, ...] = (
+    BoundedExecutionCase(
+        test_id="reverse-scan",
+        strategy="jsonl_bounded_reverse_scan",
+    ),
+    BoundedExecutionCase(
+        test_id="reverse-raw-prefilter",
+        strategy="jsonl_bounded_reverse_raw_text_prefilter",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    BOUNDED_EXECUTION_CASES,
+    ids=[c.test_id for c in BOUNDED_EXECUTION_CASES],
+)
+def test_bounded_source_execution_stops_after_unique_limit(
+    case: BoundedExecutionCase,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bounded source execution can stop without draining older records."""
+    query = _query(limit=2)
+    source = _source(tmp_path / "session.jsonl")
+    records = (
+        _record(source, "newest bliss", "2026-01-04T00:00:00Z"),
+        _record(source, "newest bliss", "2026-01-03T00:00:00Z"),
+        _record(source, "second bliss", "2026-01-02T00:00:00Z"),
+        _record(source, "extra bliss", "2026-01-01T00:00:00Z"),
+    )
+    consumed_texts: list[str] = []
+
+    def iter_records(
+        task: SourceTask,
+        _query: agentgrep.SearchQuery,
+    ) -> cabc.Iterator[agentgrep.SearchRecord]:
+        assert task.strategy == case.strategy
+        for record in records:
+            consumed_texts.append(record.text)
+            yield record
+
+    monkeypatch.setattr(execution, "iter_source_task_records", iter_records)
+
+    events = list(
+        InlineExecutionDriver().iter_search_plan(
+            query,
+            _plan(query, source, strategy=case.strategy),
+        ),
+    )
+
+    assert [event.record.text for event in events if isinstance(event, ExecutionRecordEmitted)] == [
+        "newest bliss",
+        "second bliss",
+    ]
+    assert consumed_texts == ["newest bliss", "newest bliss", "second bliss"]
+    finished = [event for event in events if isinstance(event, ExecutionSourceFinished)]
+    assert len(finished) == 1
+    assert finished[0].records_seen == 3
+    assert finished[0].matches_seen == 3
+
+
+def test_bounded_reverse_raw_prefilter_reads_newest_matching_jsonl_first(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Reverse raw prefiltering can satisfy a limit from the newest JSONL match."""
+    query = _query(limit=1, match_surface="text")
+    source = _source(tmp_path / "session.jsonl")
+    source.path.write_text(
+        "\n".join(
+            (
+                '{"timestamp":"2026-01-01T00:00:00Z","type":"response_item",'
+                '"payload":{"role":"user","content":"old bliss"}}',
+                '{"timestamp":"2026-01-02T00:00:00Z","type":"response_item",'
+                '"payload":{"role":"user","content":"newer bliss"}}',
+                '{"timestamp":"2026-01-03T00:00:00Z","type":"response_item",'
+                '"payload":{"role":"user","content":"latest miss"}}',
+            ),
+        ),
+        encoding="utf-8",
+    )
+
+    events = list(
+        InlineExecutionDriver().iter_search_plan(
+            query,
+            _plan(
+                query,
+                source,
+                strategy="jsonl_bounded_reverse_raw_text_prefilter",
+            ),
+        ),
+    )
+
+    assert [event.record.text for event in events if isinstance(event, ExecutionRecordEmitted)] == [
+        "newer bliss",
+    ]
+    finished = [event for event in events if isinstance(event, ExecutionSourceFinished)]
+    assert len(finished) == 1
+    assert finished[0].records_seen == 1
+    assert finished[0].matches_seen == 1

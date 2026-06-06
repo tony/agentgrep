@@ -87,6 +87,23 @@ class InlineExecutionDriver:
         def current_count() -> int:
             return len(deduped) if query.dedupe else raw_count
 
+        def accept_matching_record(
+            record: agentgrep.SearchRecord,
+        ) -> ExecutionRecordEmitted | None:
+            nonlocal raw_count
+            if query.dedupe:
+                dedupe_key = agentgrep.record_dedupe_key(record)
+                if dedupe_key in deduped:
+                    return None
+                deduped[dedupe_key] = record
+                result_count = len(deduped)
+            else:
+                raw_count += 1
+                result_count = raw_count
+            active_progress.record_added(record)
+            active_progress.result_added(result_count)
+            return ExecutionRecordEmitted(record=record, result_count=result_count)
+
         for index, task in enumerate(tasks, start=1):
             source = task.source
             if active_control.answer_now_requested() or (
@@ -115,7 +132,16 @@ class InlineExecutionDriver:
                 records_seen += 1
                 if agentgrep.matches_record(record, query):
                     matches_seen += 1
-                    matching_records.append(record)
+                    if task.limit_behavior == "bounded_source":
+                        emitted = accept_matching_record(record)
+                        if emitted is not None:
+                            yield emitted
+                        if active_control.answer_now_requested() or (
+                            query.limit is not None and current_count() >= query.limit
+                        ):
+                            break
+                    else:
+                        matching_records.append(record)
                 if records_seen % agentgrep._SOURCE_PROGRESS_RECORD_INTERVAL == 0:
                     agentgrep._report_source_progress(
                         active_progress,
@@ -143,24 +169,16 @@ class InlineExecutionDriver:
                 agentgrep_matches_seen=matches_seen,
             )
 
-            matching_records.sort(key=agentgrep.search_record_sort_key, reverse=True)
-            for record in matching_records:
-                if query.dedupe:
-                    dedupe_key = agentgrep.record_dedupe_key(record)
-                    if dedupe_key in deduped:
-                        continue
-                    deduped[dedupe_key] = record
-                    result_count = len(deduped)
-                else:
-                    raw_count += 1
-                    result_count = raw_count
-                active_progress.record_added(record)
-                active_progress.result_added(result_count)
-                yield ExecutionRecordEmitted(record=record, result_count=result_count)
-                if active_control.answer_now_requested() or (
-                    query.limit is not None and current_count() >= query.limit
-                ):
-                    break
+            if task.limit_behavior == "drain_source":
+                matching_records.sort(key=agentgrep.search_record_sort_key, reverse=True)
+                for record in matching_records:
+                    emitted = accept_matching_record(record)
+                    if emitted is not None:
+                        yield emitted
+                    if active_control.answer_now_requested() or (
+                        query.limit is not None and current_count() >= query.limit
+                    ):
+                        break
 
             yield ExecutionSourceFinished(
                 index=index,
@@ -182,6 +200,16 @@ def iter_source_task_records(
             task.source,
             raw_skip_line=raw_text_skip_line_for_query(query),
         )
+        return
+    if task.strategy == "jsonl_bounded_reverse_raw_text_prefilter":
+        yield from agentgrep.iter_source_records(
+            task.source,
+            raw_skip_line=raw_text_skip_line_for_query(query),
+            reverse=True,
+        )
+        return
+    if task.strategy == "jsonl_bounded_reverse_scan":
+        yield from agentgrep.iter_source_records(task.source, reverse=True)
         return
     yield from agentgrep.iter_source_records(task.source)
 

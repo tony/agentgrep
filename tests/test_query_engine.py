@@ -670,7 +670,14 @@ def test_fast_entrypoints_request_metadata_free_discovery(
         lambda query, sources, backends, **kwargs: list(sources),
     )
     monkeypatch.setattr(agentgrep, "direct_source_matches", lambda *args, **kwargs: True)
-    monkeypatch.setattr(agentgrep, "iter_source_records", lambda source: iter(()))
+
+    def iter_no_records(
+        _source: agentgrep.SourceHandle,
+        **_kwargs: object,
+    ) -> t.Iterator[agentgrep.SearchRecord]:
+        return iter(())
+
+    monkeypatch.setattr(agentgrep, "iter_source_records", iter_no_records)
 
     query = agentgrep.SearchQuery(
         terms=("bliss",),

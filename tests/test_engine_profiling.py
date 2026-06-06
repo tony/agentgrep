@@ -152,10 +152,10 @@ class ProfilePhysicalPlanCase(t.NamedTuple):
 
 PROFILE_PHYSICAL_PLAN_CASES: tuple[ProfilePhysicalPlanCase, ...] = (
     ProfilePhysicalPlanCase(
-        test_id="grep-conversations-jsonl-raw-prefilter",
+        test_id="grep-conversations-jsonl-bounded-raw-prefilter",
         scope="conversations",
         match_surface="text",
-        expected_strategy="jsonl_raw_text_prefilter",
+        expected_strategy="jsonl_bounded_reverse_raw_text_prefilter",
     ),
 )
 
@@ -170,14 +170,14 @@ class ProfileStrategyGroupCase(t.NamedTuple):
 
 PROFILE_STRATEGY_GROUP_CASES: tuple[ProfileStrategyGroupCase, ...] = (
     ProfileStrategyGroupCase(
-        test_id="grep-jsonl-raw-prefilter",
+        test_id="grep-jsonl-bounded-raw-prefilter",
         match_surface="text",
-        expected_strategy="jsonl_raw_text_prefilter",
+        expected_strategy="jsonl_bounded_reverse_raw_text_prefilter",
     ),
     ProfileStrategyGroupCase(
-        test_id="search-jsonl-root-full-scan",
+        test_id="search-jsonl-bounded-reverse",
         match_surface="haystack",
-        expected_strategy="root_full_scan",
+        expected_strategy="jsonl_bounded_reverse_scan",
     ),
 )
 

@@ -16,6 +16,7 @@ from agentgrep._engine.planning import (
     build_logical_search_plan,
     build_physical_search_plan,
 )
+from agentgrep.query.compile import CompiledQuery
 
 
 class LogicalPlanCase(t.NamedTuple):
@@ -55,6 +56,8 @@ def _query(
     terms: tuple[str, ...] = ("tmux",),
     regex: bool = False,
     match_surface: agentgrep.SearchMatchSurface = "haystack",
+    limit: int | None = 10,
+    compiled: CompiledQuery | None = None,
 ) -> agentgrep.SearchQuery:
     """Build a search query for planner tests."""
     return agentgrep.SearchQuery(
@@ -64,9 +67,20 @@ def _query(
         regex=regex,
         case_sensitive=False,
         agents=("codex", "claude"),
-        limit=10,
+        limit=limit,
         dedupe=True,
+        compiled=compiled,
         match_surface=match_surface,
+    )
+
+
+def _compiled_query() -> CompiledQuery:
+    """Build a record-filtered query marker for planner tests."""
+    return CompiledQuery(
+        source_predicate=None,
+        record_predicate=lambda record: record.kind == "prompt",
+        text_terms=("tmux",),
+        is_pure_text=False,
     )
 
 
@@ -166,7 +180,7 @@ def test_plan_search_sources_delegates_to_physical_plan(
     legacy_sources = agentgrep.plan_search_sources(query, [matched, missed], backends)
 
     assert [task.source for task in plan.tasks] == legacy_sources == [matched]
-    assert [task.strategy for task in plan.tasks] == ["root_full_scan"]
+    assert [task.strategy for task in plan.tasks] == ["jsonl_bounded_reverse_scan"]
 
 
 class SourceStrategyCase(t.NamedTuple):
@@ -176,38 +190,70 @@ class SourceStrategyCase(t.NamedTuple):
     query: agentgrep.SearchQuery
     source: agentgrep.SourceHandle
     expected_strategy: str
+    expected_record_order: str
+    expected_limit_behavior: str
 
 
 STRATEGY_CASES: tuple[SourceStrategyCase, ...] = (
     SourceStrategyCase(
-        test_id="grep-text-jsonl-uses-raw-prefilter",
+        test_id="grep-text-jsonl-limited-uses-bounded-raw-prefilter",
         query=_query(match_surface="text"),
         source=_source(
             agent="codex",
             path="/tmp/codex-session.jsonl",
             adapter_id="codex.sessions_jsonl.v1",
         ),
-        expected_strategy="jsonl_raw_text_prefilter",
+        expected_strategy="jsonl_bounded_reverse_raw_text_prefilter",
+        expected_record_order="newest_first",
+        expected_limit_behavior="bounded_source",
     ),
     SourceStrategyCase(
-        test_id="search-haystack-jsonl-keeps-full-scan",
+        test_id="grep-text-jsonl-unlimited-uses-raw-prefilter",
+        query=_query(match_surface="text", limit=None),
+        source=_source(
+            agent="codex",
+            path="/tmp/codex-session.jsonl",
+            adapter_id="codex.sessions_jsonl.v1",
+        ),
+        expected_strategy="jsonl_raw_text_prefilter",
+        expected_record_order="unknown",
+        expected_limit_behavior="drain_source",
+    ),
+    SourceStrategyCase(
+        test_id="search-haystack-jsonl-limited-uses-bounded-reverse",
         query=_query(match_surface="haystack"),
         source=_source(
             agent="codex",
             path="/tmp/codex-session.jsonl",
             adapter_id="codex.sessions_jsonl.v1",
         ),
-        expected_strategy="direct_full_scan",
+        expected_strategy="jsonl_bounded_reverse_scan",
+        expected_record_order="newest_first",
+        expected_limit_behavior="bounded_source",
     ),
     SourceStrategyCase(
-        test_id="regex-text-jsonl-keeps-full-scan",
+        test_id="regex-text-jsonl-limited-uses-bounded-reverse",
         query=_query(regex=True, match_surface="text"),
         source=_source(
             agent="codex",
             path="/tmp/codex-session.jsonl",
             adapter_id="codex.sessions_jsonl.v1",
         ),
+        expected_strategy="jsonl_bounded_reverse_scan",
+        expected_record_order="newest_first",
+        expected_limit_behavior="bounded_source",
+    ),
+    SourceStrategyCase(
+        test_id="compiled-jsonl-keeps-full-scan",
+        query=_query(compiled=_compiled_query()),
+        source=_source(
+            agent="codex",
+            path="/tmp/codex-session.jsonl",
+            adapter_id="codex.sessions_jsonl.v1",
+        ),
         expected_strategy="direct_full_scan",
+        expected_record_order="unknown",
+        expected_limit_behavior="drain_source",
     ),
     SourceStrategyCase(
         test_id="json-source-keeps-full-scan",
@@ -220,6 +266,8 @@ STRATEGY_CASES: tuple[SourceStrategyCase, ...] = (
             source_kind="json",
         ),
         expected_strategy="direct_full_scan",
+        expected_record_order="unknown",
+        expected_limit_behavior="drain_source",
     ),
 )
 
@@ -243,3 +291,5 @@ def test_physical_plan_selects_source_execution_strategy(
     )
 
     assert [task.strategy for task in plan.tasks] == [case.expected_strategy]
+    assert [task.record_order for task in plan.tasks] == [case.expected_record_order]
+    assert [task.limit_behavior for task in plan.tasks] == [case.expected_limit_behavior]
