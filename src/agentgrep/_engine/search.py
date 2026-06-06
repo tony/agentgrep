@@ -11,15 +11,14 @@ The generator owns these invariants:
 - Exactly one :class:`agentgrep.events.SearchStarted` is yielded at
   the start. Even when the candidate-source list is empty, the
   ``Started`` / ``Finished`` pair fires.
-- Per source: one :class:`agentgrep.events.SourceStarted`, zero or
-  more :class:`agentgrep.events.RecordEmitted`, one
-  :class:`agentgrep.events.SourceFinished`.
+- Per submitted source: one :class:`agentgrep.events.SourceStarted`
+  and one :class:`agentgrep.events.SourceFinished`. The execution
+  driver may merge records after source completion so concurrent
+  scans can preserve deterministic newest-first output.
 - :class:`agentgrep.events.RecordEmitted` fires only after the
-  per-session dedup decision has decided "unique-and-included". The
-  legacy ``collect_search_records`` function buffers per-source
-  matches, sorts them, then emits in newest-first order; this
-  generator follows the same shape so the event order matches what
-  the list-return wrapper produces.
+  per-session dedup decision has decided "unique-and-included".
+  Drivers restore final result ordering before emitting records, so
+  the event order matches what the list-return wrapper produces.
 - Exactly one :class:`agentgrep.events.SearchFinished` is yielded
   last with the total match count and elapsed time. A stream that
   exits early via :attr:`agentgrep.SearchControl.request_answer_now`
@@ -94,7 +93,7 @@ def iter_search_events(
         ExecutionRecordEmitted,
         ExecutionSourceFinished,
         ExecutionSourceStarted,
-        InlineExecutionDriver,
+        select_execution_driver,
     )
     from agentgrep._engine.planning import build_physical_search_plan
 
@@ -121,7 +120,7 @@ def iter_search_events(
     yield _events.SearchStarted(source_count=len(plan.tasks))
 
     match_count = 0
-    for execution_event in InlineExecutionDriver().iter_search_plan(
+    for execution_event in select_execution_driver(query, plan).iter_search_plan(
         query,
         plan,
         control=active_control,

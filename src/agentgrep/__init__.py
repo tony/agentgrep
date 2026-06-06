@@ -3880,11 +3880,11 @@ def collect_search_records_from_plan(
     control: SearchControl | None = None,
 ) -> list[SearchRecord]:
     """Execute a physical search plan and collect matching records."""
-    from agentgrep._engine.execution import ExecutionRecordEmitted, InlineExecutionDriver
+    from agentgrep._engine.execution import ExecutionRecordEmitted, select_execution_driver
 
     results = [
         event.record
-        for event in InlineExecutionDriver().iter_search_plan(
+        for event in select_execution_driver(query, plan).iter_search_plan(
             query,
             plan,
             progress=progress,
