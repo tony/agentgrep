@@ -122,8 +122,10 @@ APIs until implemented and documented.
 
 `PhysicalSearchPlan`
 : Executable plan made of `SourceTask` items. Each task chooses one adapter
-  strategy, declares whether it can stream records, and records how output
-  order will be restored when work runs concurrently.
+  strategy, declares whether it can stream records, records whether it emits
+  newest-first records, records whether it may stop after satisfying the query
+  limit, and records how output order will be restored when work runs
+  concurrently.
 
 `ExecutionDriver`
 : The scheduling boundary. The first required drivers are an inline
@@ -160,14 +162,18 @@ Planning must choose the cheapest correct adapter strategy:
 - SQLite predicates for stores whose schema can answer them safely.
 - Path or source prefiltering before JSON/JSONL parsing.
 - Raw text prefiltering only when it preserves parser semantics.
+- Bounded newest-first JSONL scans for limited append-only sources when record
+  predicates do not require metadata that only appears earlier in the file.
 - Full Python parsing when the store format, query semantics, or privacy rules
   require it.
 
 Execution must be cancellable and bounded. Drivers poll cancellation between
-source tasks and record batches. Interactive CLI runs may map blank Enter to
-an answer-early request. The TUI maps Esc/Ctrl-C and replacement searches to
-the same cancellation contract. MCP maps client cancellation or timeout to the
-same contract when the framework exposes it.
+source tasks and record batches. A task that declares bounded source behavior
+can emit records while scanning and stop before older records are parsed once
+the unique result limit is satisfied. Interactive CLI runs may map blank Enter
+to an answer-early request. The TUI maps Esc/Ctrl-C and replacement searches
+to the same cancellation contract. MCP maps client cancellation or timeout to
+the same contract when the framework exposes it.
 
 The TUI must remain non-blocking. It may receive events on the event loop, but
 broad discovery, subprocess work, SQLite reads, JSON/JSONL parsing, ranking,
