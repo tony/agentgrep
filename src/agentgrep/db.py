@@ -230,7 +230,13 @@ def _json_loads_mapping(value: str) -> dict[str, object]:
 
 
 def _source_fingerprint(source: agentgrep.SourceHandle) -> str:
-    """Return a cheap source fingerprint for cache freshness checks."""
+    """Return a cheap source fingerprint for cache freshness checks.
+
+    WAL-mode SQLite stores commit into a ``-wal`` sidecar while the main
+    database file's size and mtime stay unchanged until a checkpoint, so
+    sqlite sources fold the sidecar's stat into the fingerprint — the
+    same invariant the engine's source-scan cache keys rely on.
+    """
     try:
         stat = source.path.stat()
     except OSError:
@@ -239,7 +245,16 @@ def _source_fingerprint(source: agentgrep.SourceHandle) -> str:
     else:
         size = stat.st_size
         mtime_ns = stat.st_mtime_ns
-    return text_hash(f"{source.path}\0{size}\0{mtime_ns}")
+    wal_part = ""
+    if source.source_kind == "sqlite":
+        wal_path = source.path.with_name(source.path.name + "-wal")
+        try:
+            wal_stat = wal_path.stat()
+        except OSError:
+            wal_part = "\0wal:none"
+        else:
+            wal_part = f"\0wal:{wal_stat.st_size}\0{wal_stat.st_mtime_ns}"
+    return text_hash(f"{source.path}\0{size}\0{mtime_ns}{wal_part}")
 
 
 def _quote_fts_term(term: str) -> str:
