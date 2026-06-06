@@ -29,6 +29,30 @@ Limit source count while profiling:
 $ agentgrep db sync --limit-sources 50
 ```
 
+Show progress even when writing structured output:
+
+```console
+$ agentgrep db sync \
+    --json \
+    --progress always
+```
+
+Disable progress for quiet scripts:
+
+```console
+$ agentgrep db sync --progress never
+```
+
+## Progress
+
+Text-mode sync shows stderr progress by default. In an interactive
+terminal, press Enter on a blank line to stop before the next source
+transaction and return the partial sync counters. The active source
+finishes before the command exits.
+
+Progress output always goes to stderr. JSON and NDJSON stdout stay
+machine-readable even when progress is forced with `--progress always`.
+
 ## Command
 
 ```{eval-rst}
