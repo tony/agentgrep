@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import collections.abc as cabc
+import concurrent.futures
 import dataclasses
 import datetime
 import hashlib
@@ -42,6 +43,7 @@ from agentgrep.records import (
 logger = logging.getLogger(__name__)
 
 CacheMode = t.Literal["auto", "require", "off"]
+FeatureMode = t.Literal["defer", "inline"]
 
 SCHEMA_VERSION = 1
 DEFAULT_DB_FILENAME = "agentgrep.sqlite"
@@ -49,6 +51,14 @@ DEFAULT_DB_FILENAME = "agentgrep.sqlite"
 #: limit-50 searches at every measured term frequency.
 _PROBE_WINDOW_FLOOR = 200
 _TOKEN_RE = re.compile(r"[a-z0-9_./:-]+")
+_FEATURE_PROGRESS_INTERVAL = 1024
+
+
+class FeatureRefreshProgress(t.Protocol):
+    """Progress sink for deterministic feature-refresh phases."""
+
+    def set_activity(self, activity: str, *, detail: str | None = None) -> None:
+        """Report the current feature-refresh activity."""
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -59,6 +69,10 @@ class DbStatus:
     schema_version: int
     sources: int
     records: int
+    features: int
+    variant_edges: int
+    omission_findings: int
+    suggestions: int
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -91,6 +105,7 @@ class SyncResult:
     records_removed: int
     sources_skipped: int = 0
     sources_pruned: int = 0
+    features_deferred: int = 0
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -115,6 +130,38 @@ class DbRecordRow:
 
     record_id: str
     record: SearchRecord
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class DbSimilarityRow:
+    """One record id plus its normalized text hash for similarity analysis."""
+
+    record_id: str
+    normalized_hash: str
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _FeatureInput:
+    """Minimal pickleable input for deterministic feature building."""
+
+    record_id: str
+    text: str
+    normalized_hash: str
+    timestamp: str | None
+    updated_at: str
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _FeatureValues:
+    """Feature row values ready for SQLite insertion."""
+
+    record_id: str
+    normalized_hash: str
+    simhash_hex: str
+    minhash_json: str
+    token_count: int
+    quality_flags_json: str
+    updated_at: str
 
 
 class DbQueryUnsupportedError(RuntimeError):
@@ -451,7 +498,7 @@ def _sql_explain_enabled() -> bool:
 
 
 class DbStore:
-    """SQLite-backed store for the persistent DB index."""
+    """SQLite-backed store for DB, insight, and suggestion artifacts."""
 
     def __init__(self, db_path: pathlib.Path, *, readonly: bool = False) -> None:
         self.db_path = db_path
@@ -656,6 +703,14 @@ class DbStore:
                 self._executescript(
                     "schema.drop",
                     """
+                    DROP TABLE IF EXISTS suggestion_evidence;
+                    DROP TABLE IF EXISTS suggestions;
+                    DROP TABLE IF EXISTS omission_findings;
+                    DROP TABLE IF EXISTS variant_edges;
+                    DROP TABLE IF EXISTS cluster_members;
+                    DROP TABLE IF EXISTS clusters;
+                    DROP TABLE IF EXISTS insight_runs;
+                    DROP TABLE IF EXISTS record_features;
                     DROP TABLE IF EXISTS record_text_fts;
                     DROP TABLE IF EXISTS source_state;
                     DROP TABLE IF EXISTS record_details;
@@ -732,6 +787,95 @@ class DbStore:
 
                 CREATE INDEX IF NOT EXISTS idx_records_search_source_id
                 ON records_search(source_id);
+                CREATE TABLE IF NOT EXISTS record_features (
+                    record_id TEXT PRIMARY KEY
+                        REFERENCES records_search(record_id) ON DELETE CASCADE,
+                    normalized_hash TEXT NOT NULL,
+                    simhash_hex TEXT NOT NULL,
+                    minhash_json TEXT NOT NULL,
+                    token_count INTEGER NOT NULL,
+                    quality_flags_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS insight_runs (
+                    run_id TEXT PRIMARY KEY,
+                    kind TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    finished_at TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    algorithm_version TEXT NOT NULL,
+                    input_json TEXT NOT NULL,
+                    counters_json TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS clusters (
+                    cluster_id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL REFERENCES insight_runs(run_id) ON DELETE CASCADE,
+                    kind TEXT NOT NULL,
+                    label TEXT NOT NULL,
+                    centroid_record_id TEXT,
+                    confidence REAL NOT NULL,
+                    evidence_json TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS cluster_members (
+                    cluster_id TEXT NOT NULL REFERENCES clusters(cluster_id) ON DELETE CASCADE,
+                    record_id TEXT NOT NULL REFERENCES records_search(record_id) ON DELETE CASCADE,
+                    score REAL NOT NULL,
+                    signals_json TEXT NOT NULL,
+                    PRIMARY KEY(cluster_id, record_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS variant_edges (
+                    edge_id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL REFERENCES insight_runs(run_id) ON DELETE CASCADE,
+                    left_record_id TEXT NOT NULL
+                        REFERENCES records_search(record_id) ON DELETE CASCADE,
+                    right_record_id TEXT NOT NULL
+                        REFERENCES records_search(record_id) ON DELETE CASCADE,
+                    variant_type TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    signals_json TEXT NOT NULL,
+                    explanation TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS omission_findings (
+                    finding_id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL REFERENCES insight_runs(run_id) ON DELETE CASCADE,
+                    target_path TEXT NOT NULL,
+                    cluster_id TEXT,
+                    representative_record_id TEXT NOT NULL
+                        REFERENCES records_search(record_id) ON DELETE CASCADE,
+                    confidence REAL NOT NULL,
+                    status TEXT NOT NULL,
+                    evidence_json TEXT NOT NULL,
+                    rationale TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS suggestions (
+                    suggestion_id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL REFERENCES insight_runs(run_id) ON DELETE CASCADE,
+                    target_path TEXT NOT NULL,
+                    surface_kind TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    body TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    status TEXT NOT NULL,
+                    rationale TEXT NOT NULL,
+                    reload_note TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS suggestion_evidence (
+                    suggestion_id TEXT NOT NULL
+                        REFERENCES suggestions(suggestion_id) ON DELETE CASCADE,
+                    record_id TEXT NOT NULL REFERENCES records_search(record_id) ON DELETE CASCADE,
+                    evidence_role TEXT NOT NULL,
+                    score REAL NOT NULL,
+                    signals_json TEXT NOT NULL,
+                    PRIMARY KEY(suggestion_id, record_id, evidence_role)
+                );
                 """,
             )
             _ = self._execute(
@@ -748,6 +892,10 @@ class DbStore:
                 schema_version=SCHEMA_VERSION,
                 sources=self._count("sources"),
                 records=self._count("records_search"),
+                features=self._count("record_features"),
+                variant_edges=self._count("variant_edges"),
+                omission_findings=self._count("omission_findings"),
+                suggestions=self._count("suggestions"),
             )
         finally:
             self._flush_sql_samples()
@@ -862,13 +1010,15 @@ class DbStore:
         self,
         source: SourceHandle,
         records: cabc.Iterable[SearchRecord],
-    ) -> tuple[int, int]:
+        *,
+        features_mode: FeatureMode = "defer",
+    ) -> tuple[int, int, int]:
         """Replace every indexed record for ``source``.
 
         Returns
         -------
-        tuple[int, int]
-            ``(records_indexed, records_removed)``.
+        tuple[int, int, int]
+            ``(records_indexed, records_removed, features_deferred)``.
         """
         source_id = source_id_for(source)
         now = _now_iso()
@@ -879,6 +1029,7 @@ class DbStore:
             removed = self._remove_source_records(source_id)
             indexed = 0
             seen_record_ids: dict[str, int] = {}
+            features_deferred = 0
             for record in record_list:
                 raw_hash = text_hash(record.text)
                 normalized_text = normalize_record_text(record.text)
@@ -901,9 +1052,13 @@ class DbStore:
                     record_id=record_id,
                     now=now,
                     raw_hash=raw_hash,
+                    normalized_text=normalized_text,
                     normalized_hash=normalized_hash,
+                    features_mode=features_mode,
                 )
                 indexed += 1
+                if features_mode == "defer":
+                    features_deferred += 1
             _ = self._execute(
                 "source_state.upsert",
                 """
@@ -915,7 +1070,7 @@ class DbStore:
                 """,
                 (source_id, source.mtime_ns, fingerprint, now),
             )
-        return indexed, removed
+        return indexed, removed, features_deferred
 
     def source_is_current(self, source: SourceHandle) -> bool:
         """Return whether ``source`` has an up-to-date successful sync state.
@@ -1050,9 +1205,11 @@ class DbStore:
         record_id: str,
         now: str,
         raw_hash: str,
+        normalized_text: str,
         normalized_hash: str,
+        features_mode: FeatureMode,
     ) -> str:
-        """Insert one normalized record across the search/details/FTS surfaces."""
+        """Insert one normalized record across the search, details, FTS, and feature surfaces."""
         haystack = build_record_match_surface(record, "haystack").casefold()
         cursor = self._execute(
             "records_search.insert",
@@ -1105,6 +1262,20 @@ class DbStore:
             "INSERT INTO record_text_fts(rowid, haystack) VALUES(?, ?)",
             (rowid, haystack),
         )
+        if features_mode == "defer":
+            return record_id
+        self._insert_feature_values(
+            _feature_values_for_input(
+                _FeatureInput(
+                    record_id=record_id,
+                    text=record.text,
+                    normalized_hash=normalized_hash,
+                    timestamp=record.timestamp,
+                    updated_at=now,
+                ),
+                normalized_text=normalized_text,
+            ),
+        )
         return record_id
 
     def _scope_catalog(self) -> tuple[frozenset[str], frozenset[tuple[str, str]]]:
@@ -1132,6 +1303,87 @@ class DbStore:
             if role in CONVERSATION_STORE_ROLES:
                 conversation_pairs.add((store, adapter_id))
         return frozenset(prompt_history_agents), frozenset(conversation_pairs)
+
+    def _insert_feature_values(self, values: _FeatureValues) -> None:
+        """Insert one precomputed feature row."""
+        self.connection.execute(
+            """
+            INSERT INTO record_features(
+                record_id, normalized_hash, simhash_hex, minhash_json,
+                token_count, quality_flags_json, updated_at
+            )
+            VALUES(?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                values.record_id,
+                values.normalized_hash,
+                values.simhash_hex,
+                values.minhash_json,
+                values.token_count,
+                values.quality_flags_json,
+                values.updated_at,
+            ),
+        )
+
+    def refresh_missing_features(
+        self,
+        *,
+        limit: int | None = None,
+        workers: int | None = None,
+        progress: FeatureRefreshProgress | None = None,
+    ) -> int:
+        """Build deterministic feature rows missing from deferred syncs."""
+        if progress is not None:
+            progress.set_activity(
+                "checking feature cache",
+                detail="querying records missing deterministic features",
+            )
+        sql = """
+            SELECT r.record_id, d.text, r.normalized_text_hash, r.timestamp
+            FROM records_search r
+            JOIN record_details d ON d.rowid = r.rowid
+            LEFT JOIN record_features f ON f.record_id = r.record_id
+            WHERE f.record_id IS NULL
+            ORDER BY r.rowid
+        """
+        params: tuple[object, ...] = ()
+        if limit is not None:
+            sql += " LIMIT ?"
+            params = (limit,)
+        rows = self.connection.execute(sql, params).fetchall()
+        if not rows:
+            if progress is not None:
+                progress.set_activity(
+                    "checking feature cache",
+                    detail="feature cache already complete",
+                )
+            return 0
+        now = _now_iso()
+        inputs = tuple(
+            _FeatureInput(
+                record_id=str(row["record_id"]),
+                text=str(row["text"]),
+                normalized_hash=str(row["normalized_text_hash"]),
+                timestamp=t.cast("str | None", row["timestamp"]),
+                updated_at=now,
+            )
+            for row in rows
+        )
+        values = _build_feature_values_batch(inputs, workers=workers, progress=progress)
+        if progress is not None:
+            progress.set_activity(
+                "writing feature cache",
+                detail=_format_feature_write_progress(0, len(values)),
+            )
+        with self.connection:
+            for done, item in enumerate(values, start=1):
+                self._insert_feature_values(item)
+                if progress is not None and _should_report_feature_progress(done, len(values)):
+                    progress.set_activity(
+                        "writing feature cache",
+                        detail=_format_feature_write_progress(done, len(values)),
+                    )
+        return len(values)
 
     def search_records(self, query: SearchQuery) -> list[SearchRecord]:
         """Return SearchRecord objects matching ``query`` from SQLite/FTS."""
@@ -1409,6 +1661,23 @@ class DbStore:
             for row in rows
         )
 
+    def iter_similarity_rows(self) -> tuple[DbSimilarityRow, ...]:
+        """Return record ids with precomputed normalized hashes for similarity."""
+        rows = self.connection.execute(
+            """
+            SELECT record_id, normalized_text_hash
+            FROM records_search
+            ORDER BY rowid
+            """,
+        ).fetchall()
+        return tuple(
+            DbSimilarityRow(
+                record_id=str(row["record_id"]),
+                normalized_hash=str(row["normalized_text_hash"]),
+            )
+            for row in rows
+        )
+
     def get_record_row(self, record_id: str) -> DbRecordRow | None:
         """Return one indexed record row by id."""
         rows = self._query(
@@ -1483,6 +1752,7 @@ class DbRuntime:
         *,
         control: SearchControl | None = None,
         progress: DbSyncProgress | None = None,
+        features_mode: FeatureMode = "defer",
         force: bool = False,
         coverage: SyncCoverage | None = None,
         prune_missing: bool = False,
@@ -1503,6 +1773,7 @@ class DbRuntime:
                 batches,
                 control=control,
                 progress=progress,
+                features_mode=features_mode,
                 force=force,
                 coverage=coverage,
                 prune_missing=prune_missing,
@@ -1516,6 +1787,7 @@ class DbRuntime:
         *,
         control: SearchControl | None = None,
         progress: DbSyncProgress | None = None,
+        features_mode: FeatureMode = "defer",
         force: bool = False,
         coverage: SyncCoverage | None = None,
         prune_missing: bool = False,
@@ -1536,6 +1808,7 @@ class DbRuntime:
                     source,
                     records,
                     result=result,
+                    features_mode=features_mode,
                     force=force,
                 )
             return self._finish_complete_sync(
@@ -1558,6 +1831,7 @@ class DbRuntime:
                 source,
                 records,
                 result=result,
+                features_mode=features_mode,
                 force=force,
             )
             progress.source_finished(index, total, source, indexed, removed, result)
@@ -1605,6 +1879,7 @@ class DbRuntime:
         records: cabc.Iterable[SearchRecord],
         *,
         result: SyncResult,
+        features_mode: FeatureMode,
         force: bool,
     ) -> tuple[SyncResult, int, int]:
         """Sync one source and return updated counters plus source deltas."""
@@ -1615,17 +1890,23 @@ class DbRuntime:
                     records_indexed=result.records_indexed,
                     records_removed=result.records_removed,
                     sources_skipped=result.sources_skipped + 1,
+                    features_deferred=result.features_deferred,
                 ),
                 0,
                 0,
             )
-        indexed, removed = self.store.replace_source_records(source, records)
+        indexed, removed, deferred = self.store.replace_source_records(
+            source,
+            records,
+            features_mode=features_mode,
+        )
         return (
             SyncResult(
                 sources_synced=result.sources_synced + 1,
                 records_indexed=result.records_indexed + indexed,
                 records_removed=result.records_removed + removed,
                 sources_skipped=result.sources_skipped,
+                features_deferred=result.features_deferred + deferred,
             ),
             indexed,
             removed,
@@ -1637,6 +1918,7 @@ class DbRuntime:
         *,
         control: SearchControl | None = None,
         progress: DbSyncProgress | None = None,
+        features_mode: FeatureMode = "defer",
         force: bool = False,
         coverage: SyncCoverage | None = None,
         prune_missing: bool = False,
@@ -1646,6 +1928,7 @@ class DbRuntime:
             ((source, iter_source_records(source)) for source in sources),
             control=control,
             progress=progress,
+            features_mode=features_mode,
             force=force,
             coverage=coverage,
             prune_missing=prune_missing,
@@ -1654,3 +1937,159 @@ class DbRuntime:
     def search_records(self, query: SearchQuery) -> list[SearchRecord]:
         """Search the DB index."""
         return self.store.search_records(query)
+
+
+def simhash_hex(text: str) -> str:
+    """Return a deterministic 64-bit SimHash as fixed-width hex."""
+    return _simhash_hex_from_tokens(token_set(text))
+
+
+def _simhash_hex_from_tokens(tokens: cabc.Iterable[str]) -> str:
+    """Return a deterministic 64-bit SimHash for pre-tokenized text."""
+    weights = [0] * 64
+    for token in tokens:
+        digest = int(hashlib.blake2b(token.encode("utf-8"), digest_size=8).hexdigest(), 16)
+        for bit in range(64):
+            weights[bit] += 1 if digest & (1 << bit) else -1
+    value = 0
+    for bit, weight in enumerate(weights):
+        if weight > 0:
+            value |= 1 << bit
+    return f"{value:016x}"
+
+
+def minhash_signature(text: str, *, size: int = 16) -> list[str]:
+    """Return a small deterministic MinHash-style signature."""
+    return _minhash_signature_from_tokens(token_set(text), size=size)
+
+
+def _minhash_signature_from_tokens(tokens: cabc.Iterable[str], *, size: int = 16) -> list[str]:
+    """Return a small deterministic MinHash-style signature for tokens."""
+    sorted_tokens = sorted(tokens)
+    if not sorted_tokens:
+        return []
+    signature: list[str] = []
+    for index in range(size):
+        minimum = min(
+            hashlib.blake2b(
+                f"{index}\0{token}".encode(),
+                digest_size=8,
+            ).hexdigest()
+            for token in sorted_tokens
+        )
+        signature.append(minimum)
+    return signature
+
+
+def _quality_flags_for_text(text: str, *, timestamp: str | None) -> dict[str, object]:
+    """Return lightweight quality/noise flags from scalar record fields."""
+    stripped = text.strip()
+    return {
+        "empty": not stripped,
+        "short": len(stripped) < 12,
+        "has_timestamp": timestamp is not None,
+    }
+
+
+def quality_flags(record: SearchRecord) -> dict[str, object]:
+    """Return lightweight quality/noise flags for a record."""
+    return _quality_flags_for_text(record.text, timestamp=record.timestamp)
+
+
+def _feature_values_for_input(
+    item: _FeatureInput,
+    *,
+    normalized_text: str | None = None,
+) -> _FeatureValues:
+    """Build feature values for one record without touching SQLite."""
+    effective_normalized_text = (
+        normalize_record_text(item.text) if normalized_text is None else normalized_text
+    )
+    tokens = frozenset(effective_normalized_text.split())
+    return _FeatureValues(
+        record_id=item.record_id,
+        normalized_hash=item.normalized_hash,
+        simhash_hex=_simhash_hex_from_tokens(tokens),
+        minhash_json=_json_dumps(_minhash_signature_from_tokens(tokens)),
+        token_count=len(tokens),
+        quality_flags_json=_json_dumps(
+            _quality_flags_for_text(item.text, timestamp=item.timestamp),
+        ),
+        updated_at=item.updated_at,
+    )
+
+
+def _build_feature_values_batch(
+    inputs: tuple[_FeatureInput, ...],
+    *,
+    workers: int | None,
+    progress: FeatureRefreshProgress | None = None,
+) -> tuple[_FeatureValues, ...]:
+    """Build feature rows, using processes only for sufficiently large batches."""
+    if not inputs:
+        return ()
+    worker_count = workers
+    if worker_count is None:
+        worker_count = min(4, os.cpu_count() or 1)
+    if worker_count <= 1 or len(inputs) < 512:
+        return _build_feature_values_inline(inputs, progress=progress)
+    if progress is not None:
+        progress.set_activity(
+            "building feature signatures",
+            detail=_format_feature_build_progress(0, len(inputs), workers=worker_count),
+        )
+    values: list[_FeatureValues] = []
+    with concurrent.futures.ProcessPoolExecutor(max_workers=worker_count) as executor:
+        for done, value in enumerate(
+            executor.map(_feature_values_for_input, inputs, chunksize=128),
+            start=1,
+        ):
+            values.append(value)
+            if progress is not None and _should_report_feature_progress(done, len(inputs)):
+                progress.set_activity(
+                    "building feature signatures",
+                    detail=_format_feature_build_progress(done, len(inputs), workers=worker_count),
+                )
+    return tuple(values)
+
+
+def _build_feature_values_inline(
+    inputs: tuple[_FeatureInput, ...],
+    *,
+    progress: FeatureRefreshProgress | None,
+) -> tuple[_FeatureValues, ...]:
+    """Build feature rows in-process while reporting bounded progress."""
+    if progress is not None:
+        progress.set_activity(
+            "building feature signatures",
+            detail=_format_feature_build_progress(0, len(inputs), workers=1),
+        )
+    values: list[_FeatureValues] = []
+    for done, item in enumerate(inputs, start=1):
+        values.append(_feature_values_for_input(item))
+        if progress is not None and _should_report_feature_progress(done, len(inputs)):
+            progress.set_activity(
+                "building feature signatures",
+                detail=_format_feature_build_progress(done, len(inputs), workers=1),
+            )
+    return tuple(values)
+
+
+def _should_report_feature_progress(done: int, total: int) -> bool:
+    """Return whether feature progress should emit for this count."""
+    if done == total:
+        return True
+    interval = min(_FEATURE_PROGRESS_INTERVAL, max(1, total // 20))
+    return done % interval == 0
+
+
+def _format_feature_build_progress(done: int, total: int, *, workers: int) -> str:
+    """Return a compact feature-build progress detail."""
+    percent = 100.0 if total == 0 else done / total * 100
+    return f"{done:,}/{total:,} rows built ({percent:.1f}%, {workers:,}w)"
+
+
+def _format_feature_write_progress(done: int, total: int) -> str:
+    """Return a compact feature-cache write progress detail."""
+    percent = 100.0 if total == 0 else done / total * 100
+    return f"{done:,}/{total:,} rows written ({percent:.1f}%)"
