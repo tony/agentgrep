@@ -483,16 +483,22 @@ class DbStore:
         _ = now
 
     def _remove_source_records(self, source_id: str) -> int:
-        """Delete indexed records for one source and return the removed count."""
+        """Delete indexed records for one source and return the removed count.
+
+        External-content FTS5 ``'delete'`` commands must receive the
+        originally indexed column values; deleting with placeholder
+        values leaves stale token mappings behind and corrupts later
+        ``MATCH`` queries against reused rowids.
+        """
         rows = self.connection.execute(
-            "SELECT rowid FROM records WHERE source_id = ?",
+            "SELECT rowid, title, text FROM records WHERE source_id = ?",
             (source_id,),
         ).fetchall()
         for row in rows:
             self.connection.execute(
                 "INSERT INTO record_text_fts(record_text_fts, rowid, title, text) "
-                "VALUES('delete', ?, '', '')",
-                (int(row["rowid"]),),
+                "VALUES('delete', ?, ?, ?)",
+                (int(row["rowid"]), row["title"] or "", row["text"]),
             )
         self.connection.execute("DELETE FROM records WHERE source_id = ?", (source_id,))
         return len(rows)
