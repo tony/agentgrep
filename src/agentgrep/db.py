@@ -757,6 +757,18 @@ class DbStore:
         records = [self._row_to_record(row) for row in rows]
         filtered = [record for record in records if agentgrep.matches_record(record, query)]
         filtered.sort(key=agentgrep.search_record_sort_key, reverse=True)
+        if query.dedupe:
+            # Dedup before the limit slice so a result cap counts unique
+            # records, matching the live driver's dedup-during-collection.
+            seen: set[tuple[str, str, str, str, str]] = set()
+            unique: list[agentgrep.SearchRecord] = []
+            for record in filtered:
+                key = agentgrep.record_dedupe_key(record)
+                if key in seen:
+                    continue
+                seen.add(key)
+                unique.append(record)
+            filtered = unique
         return filtered[: query.limit] if query.limit is not None else filtered
 
     def iter_record_rows(self) -> tuple[DbRecordRow, ...]:
