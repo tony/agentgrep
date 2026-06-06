@@ -60,6 +60,87 @@ type SourceRecordBatch = tuple[
 ]
 
 
+class DbSyncProgress(t.Protocol):
+    """Progress reporter used by DB sync internals."""
+
+    def start(self, total_sources: int) -> None:
+        """Report the planned source count."""
+        ...
+
+    def source_started(
+        self,
+        index: int,
+        total: int,
+        source: agentgrep.SourceHandle,
+        result: SyncResult,
+    ) -> None:
+        """Report that one source transaction is starting."""
+        ...
+
+    def source_finished(
+        self,
+        index: int,
+        total: int,
+        source: agentgrep.SourceHandle,
+        records_indexed: int,
+        records_removed: int,
+        result: SyncResult,
+    ) -> None:
+        """Report that one source transaction has committed."""
+        ...
+
+    def finish(self, result: SyncResult) -> None:
+        """Report normal sync completion."""
+        ...
+
+    def exiting_early(self, result: SyncResult) -> None:
+        """Report cooperative early exit with partial counters."""
+        ...
+
+
+class NoopDbSyncProgress:
+    """Silent DB sync progress reporter."""
+
+    def start(self, total_sources: int) -> None:
+        """Ignore the planned source count."""
+        _ = total_sources
+
+    def source_started(
+        self,
+        index: int,
+        total: int,
+        source: agentgrep.SourceHandle,
+        result: SyncResult,
+    ) -> None:
+        """Ignore source start."""
+        _ = (index, total, source, result)
+
+    def source_finished(
+        self,
+        index: int,
+        total: int,
+        source: agentgrep.SourceHandle,
+        records_indexed: int,
+        records_removed: int,
+        result: SyncResult,
+    ) -> None:
+        """Ignore source completion."""
+        _ = (index, total, source, records_indexed, records_removed, result)
+
+    def finish(self, result: SyncResult) -> None:
+        """Ignore sync completion."""
+        _ = result
+
+    def exiting_early(self, result: SyncResult) -> None:
+        """Ignore early exit."""
+        _ = result
+
+
+def noop_db_sync_progress() -> DbSyncProgress:
+    """Return a silent DB sync progress reporter."""
+    return NoopDbSyncProgress()
+
+
 def default_db_path() -> pathlib.Path:
     """Return the default path for the local DB cache."""
     configured = os.environ.get("AGENTGREP_DB")
@@ -502,29 +583,61 @@ class DbRuntime:
         """Return DB status counters."""
         return self.store.status()
 
-    def sync_records(self, batches: cabc.Iterable[SourceRecordBatch]) -> SyncResult:
+    def sync_records(
+        self,
+        batches: cabc.Iterable[SourceRecordBatch],
+        *,
+        control: agentgrep.SearchControl | None = None,
+        progress: DbSyncProgress | None = None,
+    ) -> SyncResult:
         """Sync explicit source/record batches into the DB."""
-        sources_synced = 0
-        records_indexed = 0
-        records_removed = 0
-        for source, records in batches:
-            indexed, removed = self.store.replace_source_records(source, records)
-            sources_synced += 1
-            records_indexed += indexed
-            records_removed += removed
-        return SyncResult(
-            sources_synced=sources_synced,
-            records_indexed=records_indexed,
-            records_removed=records_removed,
+        result = SyncResult(
+            sources_synced=0,
+            records_indexed=0,
+            records_removed=0,
         )
+        if progress is None:
+            for source, records in batches:
+                if control is not None and control.answer_now_requested():
+                    return result
+                indexed, removed = self.store.replace_source_records(source, records)
+                result = SyncResult(
+                    sources_synced=result.sources_synced + 1,
+                    records_indexed=result.records_indexed + indexed,
+                    records_removed=result.records_removed + removed,
+                )
+            return result
+
+        batch_list = tuple(batches)
+        total = len(batch_list)
+        progress.start(total)
+        for index, (source, records) in enumerate(batch_list, start=1):
+            if control is not None and control.answer_now_requested():
+                progress.exiting_early(result)
+                return result
+            progress.source_started(index, total, source, result)
+            indexed, removed = self.store.replace_source_records(source, records)
+            result = SyncResult(
+                sources_synced=result.sources_synced + 1,
+                records_indexed=result.records_indexed + indexed,
+                records_removed=result.records_removed + removed,
+            )
+            progress.source_finished(index, total, source, indexed, removed, result)
+        progress.finish(result)
+        return result
 
     def sync_sources(
         self,
         sources: cabc.Iterable[agentgrep.SourceHandle],
+        *,
+        control: agentgrep.SearchControl | None = None,
+        progress: DbSyncProgress | None = None,
     ) -> SyncResult:
         """Read records from existing adapters and sync them into the DB."""
         return self.sync_records(
-            (source, agentgrep.iter_source_records(source)) for source in sources
+            ((source, agentgrep.iter_source_records(source)) for source in sources),
+            control=control,
+            progress=progress,
         )
 
     def search_records(self, query: agentgrep.SearchQuery) -> list[agentgrep.SearchRecord]:

@@ -8,7 +8,7 @@ import typing as t
 import pytest
 
 import agentgrep
-from agentgrep.db import DbRuntime, DbStatus
+from agentgrep.db import DbRuntime, DbStatus, SyncResult
 
 
 class CachedSearchCase(t.NamedTuple):
@@ -25,6 +25,54 @@ class DuplicateRecordCase(t.NamedTuple):
     test_id: str
     texts: tuple[str, ...]
     expected_records: int
+
+
+class StopAfterFirstSourceProgress:
+    """Progress stub that requests early exit after one source transaction."""
+
+    def __init__(self, control: agentgrep.SearchControl) -> None:
+        self._control = control
+        self.started_total: int | None = None
+        self.finished_sources: list[str] = []
+        self.finished_cleanly = False
+        self.early_result: SyncResult | None = None
+
+    def start(self, total_sources: int) -> None:
+        """Capture the planned source count."""
+        self.started_total = total_sources
+
+    def source_started(
+        self,
+        index: int,
+        total: int,
+        source: agentgrep.SourceHandle,
+        result: SyncResult,
+    ) -> None:
+        """Accept source-start events."""
+        _ = (index, total, source, result)
+
+    def source_finished(
+        self,
+        index: int,
+        total: int,
+        source: agentgrep.SourceHandle,
+        records_indexed: int,
+        records_removed: int,
+        result: SyncResult,
+    ) -> None:
+        """Request early exit once the first source is fully committed."""
+        _ = (index, total, records_indexed, records_removed, result)
+        self.finished_sources.append(source.path.name)
+        self._control.request_answer_now()
+
+    def finish(self, result: SyncResult) -> None:
+        """Record an unexpected clean finish."""
+        _ = result
+        self.finished_cleanly = True
+
+    def exiting_early(self, result: SyncResult) -> None:
+        """Capture the partial result returned after early exit."""
+        self.early_result = result
 
 
 CACHED_SEARCH_CASES: tuple[CachedSearchCase, ...] = (
@@ -161,6 +209,38 @@ def test_db_runtime_preserves_duplicate_source_records(
     assert runtime.status().records == case.expected_records
     assert len({row.record_id for row in rows}) == case.expected_records
     assert [record.text for record in runtime.search_records(_query("ruff"))] == list(case.texts)
+
+
+def test_db_runtime_sync_can_exit_early_between_sources(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The DB sync control stops before the next source without partial writes."""
+    first_path = tmp_path / "first.jsonl"
+    second_path = tmp_path / "second.jsonl"
+    first_path.write_text("ruff", encoding="utf-8")
+    second_path.write_text("pytest", encoding="utf-8")
+    first = _source(first_path)
+    second = _source(second_path)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    control = agentgrep.SearchControl()
+    progress = StopAfterFirstSourceProgress(control)
+
+    result = runtime.sync_records(
+        (
+            (first, (_record(first, "Run ruff check before committing."),)),
+            (second, (_record(second, "Run pytest before committing."),)),
+        ),
+        control=control,
+        progress=progress,
+    )
+
+    assert result == SyncResult(sources_synced=1, records_indexed=1, records_removed=0)
+    assert progress.started_total == 2
+    assert progress.finished_sources == ["first.jsonl"]
+    assert progress.finished_cleanly is False
+    assert progress.early_result == result
+    assert runtime.status().sources == 1
+    assert [record.text for record in runtime.search_records(_query("pytest"))] == []
 
 
 @pytest.mark.parametrize(
