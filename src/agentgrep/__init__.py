@@ -3532,6 +3532,8 @@ def list_files_matching(
     """List files under ``root`` that match a glob."""
     if not root.exists():
         return []
+    if "/" in glob_pattern or "\\" in glob_pattern:
+        return sorted(path for path in root.glob(glob_pattern) if path.is_file())
     if fd_program is not None:
         command = [
             fd_program,

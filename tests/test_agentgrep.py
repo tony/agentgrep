@@ -243,6 +243,59 @@ def test_list_files_matching_ignores_gitignore(tmp_path: pathlib.Path) -> None:
     assert {p.name for p in paths} == {"a.jsonl", "b.jsonl"}
 
 
+class PathGlobCase(t.NamedTuple):
+    """One path-qualified glob shape for source discovery."""
+
+    test_id: str
+    pattern: str
+    files: tuple[str, ...]
+    expected: tuple[str, ...]
+
+
+PATH_GLOB_CASES: tuple[PathGlobCase, ...] = (
+    PathGlobCase(
+        test_id="cursor-workspace-state",
+        pattern="*/state.vscdb",
+        files=("project/state.vscdb", "project/nested/state.vscdb"),
+        expected=("project/state.vscdb",),
+    ),
+    PathGlobCase(
+        test_id="cursor-cli-store-db",
+        pattern="*/*/store.db",
+        files=("scope/thread/store.db", "scope/store.db", "scope/thread/nested/store.db"),
+        expected=("scope/thread/store.db",),
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    PATH_GLOB_CASES,
+    ids=[case.test_id for case in PATH_GLOB_CASES],
+)
+def test_list_files_matching_path_qualified_globs_skip_fd(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: PathGlobCase,
+) -> None:
+    """Path-qualified discovery globs use bounded relative matching."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    for relative_path in case.files:
+        path = tmp_path / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _ = path.write_text("{}", encoding="utf-8")
+
+    def run_readonly_command(_command: list[str]) -> subprocess.CompletedProcess[str]:
+        message = "path-qualified globs should not spawn fd"
+        raise AssertionError(message)
+
+    monkeypatch.setattr(agentgrep, "run_readonly_command", run_readonly_command)
+
+    paths = agentgrep.list_files_matching(tmp_path, case.pattern, "fd")
+
+    assert tuple(str(path.relative_to(tmp_path)) for path in paths) == case.expected
+
+
 def test_cli_without_subcommand_prints_main_help() -> None:
     completed = run_agentgrep_cli()
 

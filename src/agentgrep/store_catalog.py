@@ -1328,7 +1328,7 @@ _CURSOR_IDE_STORES: tuple[StoreDescriptor, ...] = (
                 path_kind="sqlite_db",
                 source_kind="sqlite",
                 home_subpath=(".cursor",),
-                glob="state.vscdb",
+                files=("state.vscdb",),
             ),
         ),
     ),
