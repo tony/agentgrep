@@ -171,19 +171,45 @@ def default_db_path() -> pathlib.Path:
 
 
 def normalize_record_text(text: str) -> str:
-    """Normalize text for deterministic hashes and similarity features."""
+    """Normalize text for deterministic hashes and similarity features.
+
+    Examples
+    --------
+    >>> normalize_record_text("Run RUFF check!  ")
+    'run ruff check'
+    >>> normalize_record_text("paths like src/agentgrep/db.py survive")
+    'paths like src/agentgrep/db.py survive'
+    >>> normalize_record_text("")
+    ''
+    """
     normalized = unicodedata.normalize("NFKC", text).casefold()
     tokens = [token.strip(".,;:!?") for token in _TOKEN_RE.findall(normalized)]
     return " ".join(token for token in tokens if token)
 
 
 def token_set(text: str) -> frozenset[str]:
-    """Return deterministic lowercase tokens for lightweight similarity."""
+    """Return deterministic lowercase tokens for lightweight similarity.
+
+    Examples
+    --------
+    >>> sorted(token_set("Run ruff check, run ruff check"))
+    ['check', 'ruff', 'run']
+    >>> token_set("")
+    frozenset()
+    """
     return frozenset(normalize_record_text(text).split())
 
 
 def text_hash(text: str) -> str:
-    """Return a stable SHA-256 hex digest for ``text``."""
+    """Return a stable SHA-256 hex digest for ``text``.
+
+    Examples
+    --------
+    >>> text_hash("ruff")[:12]
+    'acadbba99747'
+    >>> len(text_hash(""))
+    64
+    """
     return hashlib.sha256(text.encode("utf-8", errors="surrogatepass")).hexdigest()
 
 
@@ -276,7 +302,15 @@ def _source_fingerprint(source: agentgrep.SourceHandle) -> str:
 
 
 def _quote_fts_term(term: str) -> str:
-    """Quote one user term for an FTS5 MATCH expression."""
+    """Quote one user term for an FTS5 MATCH expression.
+
+    Examples
+    --------
+    >>> _quote_fts_term("ruff")
+    '"ruff"'
+    >>> _quote_fts_term('say "hi" now')
+    '"say ""hi"" now"'
+    """
     return '"' + term.replace('"', '""') + '"'
 
 

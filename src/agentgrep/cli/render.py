@@ -1139,25 +1139,57 @@ class ConsoleDbSyncProgress:
 
 
 def format_db_source_count(count: int) -> str:
-    """Return a human-readable DB source count."""
+    """Return a human-readable DB source count.
+
+    Examples
+    --------
+    >>> format_db_source_count(1)
+    '1 source'
+    >>> format_db_source_count(3)
+    '3 sources'
+    """
     suffix = "source" if count == 1 else "sources"
     return f"{count} {suffix}"
 
 
 def format_db_indexed_count(count: int) -> str:
-    """Return a human-readable indexed-record count."""
+    """Return a human-readable indexed-record count.
+
+    Examples
+    --------
+    >>> format_db_indexed_count(1)
+    '1 record indexed'
+    >>> format_db_indexed_count(3)
+    '3 records indexed'
+    """
     suffix = "record indexed" if count == 1 else "records indexed"
     return f"{count} {suffix}"
 
 
 def format_db_removed_count(count: int) -> str:
-    """Return a human-readable removed-record count."""
+    """Return a human-readable removed-record count.
+
+    Examples
+    --------
+    >>> format_db_removed_count(1)
+    '1 record removed'
+    >>> format_db_removed_count(3)
+    '3 records removed'
+    """
     suffix = "record removed" if count == 1 else "records removed"
     return f"{count} {suffix}"
 
 
 def format_db_skipped_count(count: int) -> str:
-    """Return a human-readable skipped-source count."""
+    """Return a human-readable skipped-source count.
+
+    Examples
+    --------
+    >>> format_db_skipped_count(1)
+    '1 source skipped'
+    >>> format_db_skipped_count(3)
+    '3 sources skipped'
+    """
     suffix = "source skipped" if count == 1 else "sources skipped"
     return f"{count} {suffix}"
 
