@@ -263,6 +263,17 @@ def _quote_fts_term(term: str) -> str:
     return '"' + term.replace('"', '""') + '"'
 
 
+def _fts_indexable(term: str) -> bool:
+    """Return whether the trigram index can serve ``term`` losslessly.
+
+    The trigram tokenizer indexes nothing shorter than three
+    characters, and its case folding can disagree with Python's
+    ``str.casefold`` outside ASCII, so those terms take the exact
+    table scan instead.
+    """
+    return len(term) >= 3 and term.isascii()
+
+
 class DbStore:
     """SQLite-backed store for the persistent DB index."""
 
@@ -289,9 +300,39 @@ class DbStore:
         _ = self.connection.execute("PRAGMA journal_mode=WAL")
         _ = self.connection.execute("PRAGMA foreign_keys=ON")
 
+    def _stored_schema_version(self) -> int | None:
+        """Return the schema version recorded in ``meta``, if any."""
+        try:
+            row = self.connection.execute(
+                "SELECT value FROM meta WHERE key = 'schema_version'",
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return None
+        if row is None:
+            return None
+        try:
+            return int(str(row["value"]))
+        except ValueError:
+            return None
+
     def _migrate(self) -> None:
-        """Create or upgrade the SQLite schema."""
+        """Create or upgrade the SQLite schema.
+
+        The database is a derived cache, so a schema-version mismatch
+        drops and recreates every table; the next sync repopulates it.
+        """
         with self.connection:
+            stored = self._stored_schema_version()
+            if stored is not None and stored != SCHEMA_VERSION:
+                self.connection.executescript(
+                    """
+                    DROP TABLE IF EXISTS record_text_fts;
+                    DROP TABLE IF EXISTS source_state;
+                    DROP TABLE IF EXISTS records;
+                    DROP TABLE IF EXISTS sources;
+                    DROP TABLE IF EXISTS meta;
+                    """
+                )
             self.connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS meta (
@@ -349,7 +390,11 @@ class DbStore:
                 );
 
                 CREATE VIRTUAL TABLE IF NOT EXISTS record_text_fts
-                USING fts5(title, text, content='records', content_rowid='rowid');
+                USING fts5(
+                    title, text,
+                    content='records', content_rowid='rowid',
+                    tokenize='trigram'
+                );
 
                 CREATE INDEX IF NOT EXISTS idx_records_source_id
                 ON records(source_id);
@@ -593,7 +638,9 @@ class DbStore:
             where.append("r.kind = 'prompt'")
         elif query.scope == "conversations":
             where.append("r.kind = 'history'")
-        if query.terms:
+        if query.terms and all(_fts_indexable(term) for term in query.terms):
+            # Trigram candidates are a superset of substring matches:
+            # any row containing the term contains all of its trigrams.
             match_expr = " AND ".join(_quote_fts_term(term) for term in query.terms)
             sql = (
                 "SELECT r.* FROM record_text_fts f "
@@ -602,9 +649,17 @@ class DbStore:
             )
             rows = self.connection.execute(sql, (match_expr, *params)).fetchall()
         else:
+            scan_where = list(where)
+            scan_params = list(params)
+            for term in query.terms:
+                if term.isascii():
+                    scan_where.append(
+                        "instr(lower(r.text || ' ' || coalesce(r.title, '')), ?) > 0",
+                    )
+                    scan_params.append(term.lower())
             rows = self.connection.execute(
-                f"SELECT r.* FROM records r WHERE {' AND '.join(where)}",
-                params,
+                f"SELECT r.* FROM records r WHERE {' AND '.join(scan_where)}",
+                scan_params,
             ).fetchall()
         records = [self._row_to_record(row) for row in rows]
         filtered = [record for record in records if agentgrep.matches_record(record, query)]
