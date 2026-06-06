@@ -1113,6 +1113,143 @@ def test_frontier_batch_path_raises_deferred_error_without_deadlock(
     assert [str(error) for error in errors] == ["boom"]
 
 
+class BatchCacheCase(t.NamedTuple):
+    """One batch-scheduling worker shape exercising the source scan cache."""
+
+    test_id: str
+    max_workers: int
+
+
+BATCH_CACHE_CASES: tuple[BatchCacheCase, ...] = (
+    BatchCacheCase(test_id="single-worker-batch-path", max_workers=1),
+    BatchCacheCase(test_id="multi-worker-batch-path", max_workers=2),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    BATCH_CACHE_CASES,
+    ids=[c.test_id for c in BATCH_CACHE_CASES],
+)
+def test_frontier_batch_path_reuses_runtime_source_scan_cache(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: BatchCacheCase,
+) -> None:
+    """Batch scheduling consults the runtime source scan cache like whole-source scans."""
+    query = _query(limit=5)
+    newest = _source(tmp_path / "newest.jsonl")
+    older = _source(tmp_path / "older.jsonl")
+    newest.mtime_ns = 2
+    older.mtime_ns = 1
+    newest.path.write_text("newest\n", encoding="utf-8")
+    older.path.write_text("older\n", encoding="utf-8")
+    scan_calls = 0
+
+    def iter_batches(
+        _query: agentgrep.SearchQuery,
+        task: SourceTask,
+        *,
+        index: int,
+        total: int,
+        control: agentgrep.SearchControl,
+        progress: agentgrep.SearchProgress | None = None,
+        batch_size: int = 32,
+    ) -> cabc.Iterator[SourceScanBatch]:
+        _ = control, progress, batch_size
+        nonlocal scan_calls
+        scan_calls += 1
+        yield SourceScanBatch(
+            index=index,
+            total=total,
+            source=task.source,
+            task=task,
+            records=(
+                _record(task.source, f"{task.source.path.stem} bliss", "2026-01-02T00:00:00Z"),
+            ),
+            records_seen=1,
+            matches_seen=1,
+            duration_seconds=0.0,
+            is_final=True,
+        )
+
+    monkeypatch.setattr(scanning, "iter_source_task_batches", iter_batches)
+    runtime = agentgrep.SearchRuntime.with_source_scan_cache()
+    driver = scheduling.FrontierExecutionDriver(
+        ExecutionDriverConfig(max_workers=case.max_workers, use_source_batches=True),
+    )
+    plan = _multi_plan(query, (newest, older))
+
+    def emitted_texts() -> list[str]:
+        return [
+            event.record.text
+            for event in driver.iter_search_plan(query, plan, runtime=runtime)
+            if isinstance(event, ExecutionRecordEmitted)
+        ]
+
+    first = emitted_texts()
+    second = emitted_texts()
+
+    assert sorted(first) == sorted(second) == ["newest bliss", "older bliss"]
+    assert scan_calls == 2, "second run should be served entirely from the cache"
+    assert runtime.source_scan_cache is not None
+    stats = runtime.source_scan_cache.stats()
+    assert stats.stores == 2
+    assert stats.hits == 2
+
+
+def test_frontier_batch_path_skips_cache_store_on_cancellation(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancelled batch scans are partial and must not populate the cache."""
+    query = _query(limit=5)
+    source = _source(tmp_path / "session.jsonl")
+    source.path.write_text("first\n", encoding="utf-8")
+
+    def iter_batches(
+        _query: agentgrep.SearchQuery,
+        task: SourceTask,
+        *,
+        index: int,
+        total: int,
+        control: agentgrep.SearchControl,
+        progress: agentgrep.SearchProgress | None = None,
+        batch_size: int = 32,
+    ) -> cabc.Iterator[SourceScanBatch]:
+        _ = progress, batch_size
+        yield SourceScanBatch(
+            index=index,
+            total=total,
+            source=task.source,
+            task=task,
+            records=(_record(task.source, "partial bliss", "2026-01-02T00:00:00Z"),),
+            records_seen=1,
+            matches_seen=1,
+            duration_seconds=0.0,
+            is_final=False,
+        )
+        control.request_answer_now()
+
+    monkeypatch.setattr(scanning, "iter_source_task_batches", iter_batches)
+    runtime = agentgrep.SearchRuntime.with_source_scan_cache()
+    driver = scheduling.FrontierExecutionDriver(
+        ExecutionDriverConfig(max_workers=1, use_source_batches=True),
+    )
+
+    events = list(
+        driver.iter_search_plan(
+            query,
+            _multi_plan(query, (source,)),
+            runtime=runtime,
+        ),
+    )
+
+    assert any(isinstance(event, ExecutionRecordEmitted) for event in events)
+    assert runtime.source_scan_cache is not None
+    assert runtime.source_scan_cache.stats().stores == 0
+
+
 def test_select_execution_driver_uses_frontier_for_bounded_haystack_search(
     tmp_path: pathlib.Path,
 ) -> None:

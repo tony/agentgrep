@@ -178,28 +178,25 @@ def scan_source_task(
     """Scan one source task and return source-local matching candidates."""
     cache = runtime.source_scan_cache if runtime is not None else None
     cache_started_at = time.perf_counter()
-    cache_key = _source_scan_cache_key(query, task, cache)
-    if cache_key is not None and not control.answer_now_requested():
-        assert cache is not None
-        cached = cache._lookup(cache_key)
-        _record_source_scan_cache_sample(
-            task,
-            hit=cached is not None,
+    cache_key, cached = cached_source_scan_lookup(
+        query,
+        task,
+        control=control,
+        cache=cache,
+    )
+    if cached is not None:
+        return SourceScanResult(
+            index=index,
+            total=total,
+            source=task.source,
+            task=task,
+            records=cached.records,
+            records_seen=cached.records_seen,
+            matches_seen=cached.matches_seen,
             duration_seconds=time.perf_counter() - cache_started_at,
+            batch_count=cached.batch_count,
+            cache_hit=True,
         )
-        if cached is not None:
-            return SourceScanResult(
-                index=index,
-                total=total,
-                source=task.source,
-                task=task,
-                records=cached.records,
-                records_seen=cached.records_seen,
-                matches_seen=cached.matches_seen,
-                duration_seconds=time.perf_counter() - cache_started_at,
-                batch_count=cached.batch_count,
-                cache_hit=True,
-            )
 
     source_started_at = time.perf_counter()
     matching_records: list[agentgrep.SearchRecord] = []
@@ -232,10 +229,52 @@ def scan_source_task(
         duration_seconds=time.perf_counter() - source_started_at,
         batch_count=batch_count,
     )
-    if cache_key is not None and not control.answer_now_requested():
-        assert cache is not None
-        cache._remember(cache_key, result)
+    remember_source_scan(cache, cache_key, control=control, result=result)
     return result
+
+
+def cached_source_scan_lookup(
+    query: agentgrep.SearchQuery,
+    task: SourceTask,
+    *,
+    control: agentgrep.SearchControl,
+    cache: SourceScanCache | None,
+) -> tuple[_SourceScanCacheKey | None, _SourceScanCacheEntry | None]:
+    """Return the scan cache key and any cached entry for one source task.
+
+    Records a hit/miss profile sample only when a real lookup happens; a
+    cancelled task skips the lookup but keeps its key so a caller can still
+    decide whether to remember a clean completion.
+    """
+    cache_key = _source_scan_cache_key(query, task, cache)
+    if cache_key is None or control.answer_now_requested():
+        return cache_key, None
+    assert cache is not None
+    lookup_started_at = time.perf_counter()
+    cached = cache._lookup(cache_key)
+    _record_source_scan_cache_sample(
+        task,
+        hit=cached is not None,
+        duration_seconds=time.perf_counter() - lookup_started_at,
+    )
+    return cache_key, cached
+
+
+def remember_source_scan(
+    cache: SourceScanCache | None,
+    cache_key: _SourceScanCacheKey | None,
+    *,
+    control: agentgrep.SearchControl,
+    result: SourceScanResult,
+) -> None:
+    """Store a cleanly completed source scan when caching is enabled.
+
+    Mirrors the :func:`scan_source_task` guard: cancelled scans are partial
+    and must not populate the cache.
+    """
+    if cache is None or cache_key is None or control.answer_now_requested():
+        return
+    cache._remember(cache_key, result)
 
 
 def clear_source_scan_cache() -> None:

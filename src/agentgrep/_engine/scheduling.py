@@ -232,8 +232,10 @@ class FrontierExecutionDriver:
                 progress=active_progress,
                 control=active_control,
                 scheduler_started_at=scheduler_started_at,
+                runtime=runtime,
             )
             return
+        cache = runtime.source_scan_cache if runtime is not None else None
         next_task_index = 0
         batch_queue: queue.Queue[_QueueItem] = queue.Queue()
         running: dict[int, _RunningSourceTask] = {}
@@ -242,8 +244,8 @@ class FrontierExecutionDriver:
 
         def submit_next(
             executor: concurrent.futures.ThreadPoolExecutor,
-        ) -> cabc.Iterator[ExecutionSourceStarted]:
-            nonlocal next_task_index, skipped_count, submitted_count
+        ) -> cabc.Iterator[SearchExecutionEvent]:
+            nonlocal next_task_index, skipped_count, submitted_count, completed_count
             while len(running) < max_workers and next_task_index < total:
                 index = next_task_index + 1
                 task = tasks[next_task_index]
@@ -253,18 +255,61 @@ class FrontierExecutionDriver:
                     break
                 next_task_index += 1
                 submitted_count += 1
-                task_control = _TaskSearchControl(active_control)
-                running[index] = _RunningSourceTask(
-                    index=index,
-                    task=task,
-                    control=task_control,
-                )
                 active_progress.source_started(index, total, task.source)
                 yield ExecutionSourceStarted(
                     index=index,
                     total=total,
                     source=task.source,
                     task=task,
+                )
+                # Cache lookups happen on the owner thread so workers never
+                # touch cache state and completion ordering stays simple.
+                lookup_started_at = time.perf_counter()
+                cache_key, cached = scanning.cached_source_scan_lookup(
+                    query,
+                    task,
+                    control=active_control,
+                    cache=cache,
+                )
+                if cached is not None:
+                    frontier.add_records(cached.records)
+                    completed_count += 1
+                    active_progress.source_finished(
+                        index,
+                        total,
+                        task.source,
+                        cached.records_seen,
+                        cached.matches_seen,
+                    )
+                    scanning.record_source_profile_sample(
+                        scanning.SourceScanResult(
+                            index=index,
+                            total=total,
+                            source=task.source,
+                            task=task,
+                            records=(),
+                            records_seen=cached.records_seen,
+                            matches_seen=cached.matches_seen,
+                            duration_seconds=time.perf_counter() - lookup_started_at,
+                            batch_count=cached.batch_count,
+                            cache_hit=True,
+                        ),
+                    )
+                    yield ExecutionSourceFinished(
+                        index=index,
+                        total=total,
+                        source=task.source,
+                        task=task,
+                        records_seen=cached.records_seen,
+                        matches_seen=cached.matches_seen,
+                    )
+                    continue
+                task_control = _TaskSearchControl(active_control)
+                running[index] = _RunningSourceTask(
+                    index=index,
+                    task=task,
+                    control=task_control,
+                    cache_key=cache_key,
                 )
                 future = executor.submit(
                     _scan_source_task_to_queue,
@@ -316,6 +361,8 @@ class FrontierExecutionDriver:
                         running_task.batch_count += 1
                         running_task.records_seen = item.records_seen
                         running_task.matches_seen = item.matches_seen
+                        if running_task.cache_key is not None:
+                            running_task.records.extend(item.records)
                     frontier.add_records(item.records)
                     if frontier.is_satisfied:
                         request_lower_priority_cancellation(item.index)
@@ -342,18 +389,23 @@ class FrontierExecutionDriver:
                     item.records_seen,
                     item.matches_seen,
                 )
-                scanning.record_source_profile_sample(
-                    scanning.SourceScanResult(
-                        index=item.index,
-                        total=total,
-                        source=item.task.source,
-                        task=item.task,
-                        records=(),
-                        records_seen=item.records_seen,
-                        matches_seen=item.matches_seen,
-                        duration_seconds=item.duration_seconds,
-                        batch_count=running_task.batch_count,
-                    ),
+                completed_result = scanning.SourceScanResult(
+                    index=item.index,
+                    total=total,
+                    source=item.task.source,
+                    task=item.task,
+                    records=tuple(running_task.records),
+                    records_seen=item.records_seen,
+                    matches_seen=item.matches_seen,
+                    duration_seconds=item.duration_seconds,
+                    batch_count=running_task.batch_count,
+                )
+                scanning.record_source_profile_sample(completed_result)
+                scanning.remember_source_scan(
+                    cache,
+                    running_task.cache_key,
+                    control=running_task.control,
+                    result=completed_result,
                 )
                 yield ExecutionSourceFinished(
                     index=item.index,
@@ -408,9 +460,11 @@ class _RunningSourceTask:
     index: int
     task: SourceTask
     control: _TaskSearchControl
+    cache_key: scanning._SourceScanCacheKey | None = None
     batch_count: int = 0
     records_seen: int = 0
     matches_seen: int = 0
+    records: list[agentgrep.SearchRecord] = dataclasses.field(default_factory=list)
 
 
 def _iter_search_plan_whole_sources(
@@ -538,10 +592,12 @@ def _iter_search_plan_single_worker_batches(
     progress: agentgrep.SearchProgress,
     control: agentgrep.SearchControl,
     scheduler_started_at: float,
+    runtime: SearchRuntime | None = None,
 ) -> cabc.Iterator[SearchExecutionEvent]:
     """Yield search events by consuming source batches on the owner thread."""
     total = len(tasks)
     frontier = _FrontierState(query)
+    cache = runtime.source_scan_cache if runtime is not None else None
     submitted_count = 0
     completed_count = 0
     skipped_count = 0
@@ -561,9 +617,50 @@ def _iter_search_plan_single_worker_batches(
         yield ExecutionSourceStarted(index=index, total=total, source=task.source, task=task)
 
         source_started_at = time.perf_counter()
+        cache_key, cached = scanning.cached_source_scan_lookup(
+            query,
+            task,
+            control=control,
+            cache=cache,
+        )
+        if cached is not None:
+            frontier.add_records(cached.records)
+            completed_count += 1
+            progress.source_finished(
+                index,
+                total,
+                task.source,
+                cached.records_seen,
+                cached.matches_seen,
+            )
+            scanning.record_source_profile_sample(
+                scanning.SourceScanResult(
+                    index=index,
+                    total=total,
+                    source=task.source,
+                    task=task,
+                    records=(),
+                    records_seen=cached.records_seen,
+                    matches_seen=cached.matches_seen,
+                    duration_seconds=time.perf_counter() - source_started_at,
+                    batch_count=cached.batch_count,
+                    cache_hit=True,
+                ),
+            )
+            yield ExecutionSourceFinished(
+                index=index,
+                total=total,
+                source=task.source,
+                task=task,
+                records_seen=cached.records_seen,
+                matches_seen=cached.matches_seen,
+            )
+            continue
+
         source_batch_count = 0
         records_seen = 0
         matches_seen = 0
+        collected_records: list[agentgrep.SearchRecord] = []
         for batch in scanning.iter_source_task_batches(
             query,
             task,
@@ -577,24 +674,30 @@ def _iter_search_plan_single_worker_batches(
             source_batch_count += 1
             records_seen = batch.records_seen
             matches_seen = batch.matches_seen
+            collected_records.extend(batch.records)
             frontier.add_records(batch.records)
             if control.answer_now_requested():
                 break
 
         completed_count += 1
         progress.source_finished(index, total, task.source, records_seen, matches_seen)
-        scanning.record_source_profile_sample(
-            scanning.SourceScanResult(
-                index=index,
-                total=total,
-                source=task.source,
-                task=task,
-                records=(),
-                records_seen=records_seen,
-                matches_seen=matches_seen,
-                duration_seconds=time.perf_counter() - source_started_at,
-                batch_count=source_batch_count,
-            ),
+        completed_result = scanning.SourceScanResult(
+            index=index,
+            total=total,
+            source=task.source,
+            task=task,
+            records=tuple(collected_records),
+            records_seen=records_seen,
+            matches_seen=matches_seen,
+            duration_seconds=time.perf_counter() - source_started_at,
+            batch_count=source_batch_count,
+        )
+        scanning.record_source_profile_sample(completed_result)
+        scanning.remember_source_scan(
+            cache,
+            cache_key,
+            control=control,
+            result=completed_result,
         )
         yield ExecutionSourceFinished(
             index=index,
