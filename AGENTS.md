@@ -22,6 +22,154 @@ Key features:
 - Pydantic models for every CLI/MCP output, with a pydantic-free fallback
 - Full type safety (ty, strict warning-as-error)
 
+## Engineering Policies
+
+### Python First
+
+Python is the default implementation language, public API surface, and user
+experience for this project. Start with clear, typed Python before reaching for
+native code. Native implementation is appropriate only for measured hot paths,
+control/latency-sensitive internals, or platform interfaces that Python cannot
+reasonably handle on its own.
+
+### Native Boundary Policy
+
+Native boundary shapes and the rules for choosing them are ADR 0003. Default
+to no native code. Prove the bottleneck first: a measurement of the
+user-visible path, against a named baseline, must show a performance, latency,
+scale, memory, reliability, or platform-interface limit Python cannot resolve
+algorithmically or structurally before you reach for Rust. Native code must not
+define public behavior, add public API, or be required to install, import, or
+run the package.
+
+Classify the boundary, not the component, before writing native code. Take the
+narrowest shape that honestly fits:
+
+1. Accelerator - a drop-in for a public Python callable. Removing the native
+   build changes nothing observable except speed. Follows ADR 0002.
+2. Engine - in-process native code that executes a normalized plan or batch
+   the Python runtime builds; runs to completion, no user Python in the hot
+   loop; may be approximate, tested within a documented tolerance. Follows ADR
+   0003.
+3. Worker - an independent process, binary, or long-lived native thread behind
+   a versioned message-passing protocol. A separate execution mode, not a
+   hidden accelerator; its execution mode and protocol ship under a follow-up
+   ADR. Follows ADR 0003.
+
+A component exposing more than one boundary must satisfy every shape it
+touches. On a genuine tie between two adjacent shapes for one boundary, take
+the stricter shape: engine over accelerator, worker over engine. A boundary
+that fits none is not designed yet.
+
+Do not cross an engine or worker boundary inside per-source, per-record,
+per-line, per-event, or per-callback loops unless a user-visible benchmark
+proves the cost is acceptable, and do not call user Python from a native hot
+loop. Prefer plans, batches, buffers, and protocol messages. Release the
+interpreter lock during heavy native work that touches no Python objects.
+
+Keep native logic in a core with no Python-binding dependency; keep the
+binding thin and separate. The base package must install, import, and run
+without native code unless an ADR explicitly changes that policy; do not split
+native artifacts into separate user-facing distributions without documenting
+the trigger.
+
+### Pure Python / Rust Accelerator Compatibility
+
+This project is Python-first. The pure Python implementation is the reference
+implementation. Rust is an optional accelerator and must not redefine public
+behavior.
+
+Required engineering policy:
+
+- Implement every public API in pure Python before adding Rust acceleration.
+- Treat the Python implementation as the semantic source of truth.
+- Keep Rust acceleration optional. The package must import, install, and pass
+  tests without the Rust extension.
+- Do not expose public Rust-only functions, classes, attributes, argument
+  forms, return shapes, or behaviors.
+- Run the same behavioral tests against both the pure Python path and the
+  Rust-accelerated path.
+- Preserve Python duck typing. If Python accepts an iterable, mapping,
+  sequence, path-like object, buffer-like object, subclass, or file-like
+  object, Rust must not narrow that contract.
+- Preserve observable behavior: return values, return types where public,
+  exceptions, mutation, ordering, equality, hashing, warnings, serialization,
+  context-manager behavior, and async behavior.
+- Rust-specific tests are allowed, but they do not replace shared
+  compatibility tests.
+- Public documentation and type hints describe the Python API, not Rust
+  internals.
+- `unsafe` Rust must be minimal, justified with a nearby `SAFETY:` comment,
+  and covered by relevant tests.
+
+Import and fallback rule:
+
+```python
+from ._module_py import normalize, parse
+
+_HAS_RUST_ACCELERATOR = False
+
+try:
+    from ._native import normalize as normalize
+    from ._native import parse as parse
+except ImportError:
+    pass
+else:
+    _HAS_RUST_ACCELERATOR = True
+```
+
+Do not use broad fallback in normal imports:
+
+```python
+# Avoid: this can hide real defects in the Rust extension.
+try:
+    from ._native import parse
+except Exception:
+    from ._module_py import parse
+```
+
+Tests may deliberately fail on unexpected Rust import errors so native defects
+are not silently masked.
+
+Compatibility test requirement: each accelerated API must have shared
+behavioral tests that run against both implementations. Those tests must
+include normal cases, empty inputs, boundary values, invalid inputs, subclass
+or duck-typed inputs where relevant, mutation and aliasing behavior, repeated
+calls, large inputs, Unicode or binary edge cases, and error paths.
+
+CI must exercise both modes:
+
+```text
+Python-only job:
+  - install without the Rust extension or force the Python fallback
+  - run the full shared behavioral test suite
+
+Rust-enabled job:
+  - build/install the Rust extension
+  - run the same shared behavioral test suite
+  - run Rust-specific tests where applicable
+```
+
+A green Rust-enabled job does not compensate for a broken Python-only job.
+
+Before merging a change that adds or modifies Rust acceleration, confirm:
+
+```text
+[ ] Public behavior exists first in pure Python.
+[ ] Shared tests cover the Python behavior.
+[ ] The same tests pass with Rust enabled.
+[ ] The package imports and runs without Rust.
+[ ] Rust exposes no additional public API.
+[ ] Error behavior matches the Python implementation.
+[ ] Duck-typed inputs remain supported.
+[ ] Type hints and documentation remain accurate.
+[ ] Benchmarks or a clear performance rationale justify the accelerator.
+[ ] Unsafe Rust, if present, is documented and reviewed.
+```
+
+Final rule: Rust may make agentgrep faster. Rust must not make it less
+Pythonic, less portable, less tested, or less predictable.
+
 ## Development Environment
 
 This project uses:
@@ -180,9 +328,17 @@ Profiler artifacts include `schema_version` and `artifact_kind`. Use those
 fields when a local profile file needs to be distinguished from benchmark rows
 or future fixture-only CI artifacts. Engine profiles include coarse phase spans
 and source-level spans such as `search.discover.group`,
-`search.plan.prefilter_root`, `search.plan.direct_source`,
-`search.collect.source`, and `find.filter.source`; those spans carry
+`search.plan.decision`, `search.plan.strategy_group`,
+`search.plan.prefilter_root`,
+`search.plan.direct_source`, `search.collect.source`, optional
+`search.collect.scheduler`, optional `search.collect.source_scan_cache`,
+and `find.filter.source`; those spans carry
 agent/store/adapter/count metadata without prompt text or local paths.
+`search.collect.scheduler` is the driver
+summary for source-level scheduling and reports worker, submitted, completed,
+skipped, cancellation-requested, batch, queued-batch, queue-wait, and emitted
+counts. `search.collect.source_scan_cache` reports cache-hit lookups when a
+runtime source-scan cache is active.
 
 Use `scripts/benchmark.py` for timed benchmark sweeps. The profiler-oriented
 benchmark entries are named `profile-engine-*`; each committed benchmark name

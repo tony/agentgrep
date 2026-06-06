@@ -60,6 +60,9 @@ BENCHMARK_ANALYSIS_ARTIFACT_KIND = "agentgrep.benchmark.analysis"
 BENCHMARK_ANALYSIS_COMMAND_ARTIFACT_KIND = "agentgrep.benchmark.analysis.command_summary"
 BENCHMARK_ANALYSIS_SPAN_ARTIFACT_KIND = "agentgrep.benchmark.analysis.span"
 BENCHMARK_ANALYSIS_SPAN_GROUP_ARTIFACT_KIND = "agentgrep.benchmark.analysis.span_group"
+BENCHMARK_ANALYSIS_SOURCE_STRATEGY_GROUP_ARTIFACT_KIND = (
+    "agentgrep.benchmark.analysis.source_strategy_group"
+)
 BENCHMARK_ANALYSIS_WARNING_ARTIFACT_KIND = "agentgrep.benchmark.analysis.warning"
 type CommandContext = dict[str, str]
 type ProfilePayload = dict[str, object]
@@ -120,6 +123,24 @@ class AnalysisSpanGroup:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class AnalysisSourceStrategyGroup:
+    """Aggregate source timing by physical source strategy."""
+
+    component: str
+    agent: str
+    store: str
+    adapter_id: str
+    source_kind: str
+    source_strategy: str
+    count: int
+    total_duration_seconds: float
+    max_duration_seconds: float
+    avg_duration_seconds: float
+    records_seen: int
+    matches_seen: int
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class AnalysisReport:
     """Derived benchmark artifact analysis, ready for reporters."""
 
@@ -127,6 +148,7 @@ class AnalysisReport:
     command_summaries: tuple[AnalysisCommandSummary, ...]
     top_spans: tuple[ProfileSpanSummary, ...]
     span_groups: tuple[AnalysisSpanGroup, ...]
+    source_strategy_groups: tuple[AnalysisSourceStrategyGroup, ...]
     warnings: list[str]
 
 
@@ -1018,6 +1040,89 @@ def _span_groups(
     )
 
 
+def _span_attribute_text(attributes: dict[str, object], key: str) -> str:
+    """Read one sanitized text attribute with an ``unknown`` fallback."""
+    value = attributes.get(key)
+    return value if isinstance(value, str) and value else "unknown"
+
+
+def _span_attribute_int(attributes: dict[str, object], key: str) -> int:
+    """Read one sanitized integer attribute with a zero fallback."""
+    value = attributes.get(key)
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return value
+    return 0
+
+
+def _source_strategy_groups(
+    spans: tuple[ProfileSpanSummary, ...],
+    *,
+    top_groups: int,
+) -> tuple[AnalysisSourceStrategyGroup, ...]:
+    """Aggregate source-level profile spans by physical execution strategy."""
+    if top_groups <= 0:
+        return ()
+
+    groups: dict[tuple[str, str, str, str, str, str], list[ProfileSpanSummary]] = {}
+    for span in spans:
+        if span.name != "search.collect.source":
+            continue
+        source_strategy = _span_attribute_text(span.attributes, "agentgrep_source_strategy")
+        if source_strategy == "unknown":
+            continue
+        group_key = (
+            span.component,
+            _span_attribute_text(span.attributes, "agentgrep_agent"),
+            _span_attribute_text(span.attributes, "agentgrep_store"),
+            _span_attribute_text(span.attributes, "agentgrep_adapter_id"),
+            _span_attribute_text(span.attributes, "agentgrep_source_kind"),
+            source_strategy,
+        )
+        groups.setdefault(group_key, []).append(span)
+
+    summaries: list[AnalysisSourceStrategyGroup] = []
+    for (
+        component,
+        agent,
+        store,
+        adapter_id,
+        source_kind,
+        source_strategy,
+    ), grouped_spans in groups.items():
+        durations = [span.duration_seconds for span in grouped_spans]
+        summaries.append(
+            AnalysisSourceStrategyGroup(
+                component=component,
+                agent=agent,
+                store=store,
+                adapter_id=adapter_id,
+                source_kind=source_kind,
+                source_strategy=source_strategy,
+                count=len(grouped_spans),
+                total_duration_seconds=sum(durations),
+                max_duration_seconds=max(durations),
+                avg_duration_seconds=sum(durations) / len(durations),
+                records_seen=sum(
+                    _span_attribute_int(span.attributes, "agentgrep_records_seen")
+                    for span in grouped_spans
+                ),
+                matches_seen=sum(
+                    _span_attribute_int(span.attributes, "agentgrep_matches_seen")
+                    for span in grouped_spans
+                ),
+            ),
+        )
+    return tuple(
+        sorted(
+            summaries,
+            key=lambda group: group.total_duration_seconds,
+            reverse=True,
+        )[:top_groups],
+    )
+
+
 def build_analysis_report(
     measurements: list[Measurement],
     *,
@@ -1045,6 +1150,7 @@ def build_analysis_report(
         ),
         top_spans=all_spans[:top_spans] if top_spans > 0 else (),
         span_groups=_span_groups(all_spans, top_groups=top_groups),
+        source_strategy_groups=_source_strategy_groups(all_spans, top_groups=top_groups),
         warnings=warnings,
     )
 
@@ -1064,6 +1170,13 @@ def _analysis_group_payload(group: AnalysisSpanGroup) -> dict[str, object]:
     return dataclasses.asdict(group)
 
 
+def _analysis_source_strategy_group_payload(
+    group: AnalysisSourceStrategyGroup,
+) -> dict[str, object]:
+    """Serialize one grouped source-strategy summary."""
+    return dataclasses.asdict(group)
+
+
 def _analysis_report_payload(report: AnalysisReport) -> dict[str, object]:
     """Serialize the full analysis report."""
     return {
@@ -1075,6 +1188,10 @@ def _analysis_report_payload(report: AnalysisReport) -> dict[str, object]:
         ],
         "top_spans": [_analysis_span_payload(span) for span in report.top_spans],
         "span_groups": [_analysis_group_payload(group) for group in report.span_groups],
+        "source_strategy_groups": [
+            _analysis_source_strategy_group_payload(group)
+            for group in report.source_strategy_groups
+        ],
         "warnings": report.warnings,
     }
 
@@ -1116,6 +1233,15 @@ def render_analysis_ndjson(report: AnalysisReport) -> str:
     rows.extend(
         {
             "schema_version": SCHEMA_VERSION,
+            "artifact_kind": BENCHMARK_ANALYSIS_SOURCE_STRATEGY_GROUP_ARTIFACT_KIND,
+            "artifact_label": report.artifact_label,
+            **_analysis_source_strategy_group_payload(group),
+        }
+        for group in report.source_strategy_groups
+    )
+    rows.extend(
+        {
+            "schema_version": SCHEMA_VERSION,
             "artifact_kind": BENCHMARK_ANALYSIS_WARNING_ARTIFACT_KIND,
             "artifact_label": report.artifact_label,
             "message": warning,
@@ -1130,7 +1256,7 @@ def render_analysis_rich(report: AnalysisReport) -> str:
     console = rich.console.Console(
         record=True,
         file=io.StringIO(),
-        width=120,
+        width=160,
         no_color=True,
         color_system=None,
     )
@@ -1195,6 +1321,33 @@ def render_analysis_rich(report: AnalysisReport) -> str:
                 _fmt_seconds(group.avg_duration_seconds),
             )
         console.print(groups)
+
+    if report.source_strategy_groups:
+        source_groups = rich.table.Table(title="source strategy groups")
+        source_groups.add_column("component")
+        source_groups.add_column("agent")
+        source_groups.add_column("store")
+        source_groups.add_column("adapter", overflow="fold")
+        source_groups.add_column("kind")
+        source_groups.add_column("strategy", overflow="fold")
+        source_groups.add_column("count", justify="right")
+        source_groups.add_column("total", justify="right")
+        source_groups.add_column("records", justify="right")
+        source_groups.add_column("matches", justify="right")
+        for group in report.source_strategy_groups:
+            source_groups.add_row(
+                group.component,
+                group.agent,
+                group.store,
+                group.adapter_id,
+                group.source_kind,
+                group.source_strategy,
+                str(group.count),
+                _fmt_seconds(group.total_duration_seconds),
+                str(group.records_seen),
+                str(group.matches_seen),
+            )
+        console.print(source_groups)
 
     if report.warnings:
         warnings = rich.table.Table(title="warnings")

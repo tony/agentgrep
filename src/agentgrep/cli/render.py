@@ -356,6 +356,7 @@ def stream_find_results(args: FindArgs) -> int:
         pattern=None,
         limit=None,
         compiled=args.compiled,
+        type_filter=args.type_filter,
     ):
         if not isinstance(event, events.FindRecordEmitted):
             continue
@@ -427,6 +428,7 @@ def run_find_command(args: FindArgs) -> int:
             pattern=None,
             limit=None,
             compiled=args.compiled,
+            type_filter=args.type_filter,
         )
         if isinstance(event, events.FindRecordEmitted)
     ]

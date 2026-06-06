@@ -43,6 +43,15 @@ every surface (CLI, TUI, MCP).
 
 .. autoclass:: agentgrep.ConsoleSearchProgress
    :members:
+
+.. autoclass:: agentgrep.SearchRuntime
+   :members:
+
+.. autoclass:: agentgrep.SourceScanCache
+   :members:
+
+.. autoclass:: agentgrep.SourceScanCacheStats
+   :members:
 ```
 
 ## Discovery and search

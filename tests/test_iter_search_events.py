@@ -12,6 +12,7 @@ NumPy docstrings, ty-strict.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import pathlib
 import typing as t
@@ -251,3 +252,66 @@ def test_iter_search_events_match_count_matches_emitted_records(
     finished = [ev for ev in out if isinstance(ev, events.SearchFinished)]
     assert len(finished) == 1
     assert finished[0].match_count == record_count
+
+
+async def test_aiter_search_events_streams_through_bounded_async_queue(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Async event streaming preserves order while yielding to the event loop."""
+    _ = _write_codex_session(
+        tmp_path,
+        name="async.jsonl",
+        messages=[
+            ("user", "bliss one"),
+            ("user", "bliss two"),
+        ],
+    )
+    ticks = 0
+
+    async def ticker() -> None:
+        nonlocal ticks
+        for _index in range(3):
+            await asyncio.sleep(0)
+            ticks += 1
+
+    tick_task = asyncio.create_task(ticker())
+    out: list[events.SearchEvent] = []
+    async for event in agentgrep.aiter_search_events(
+        tmp_path,
+        _make_query(dedupe=False),
+        max_queue_size=1,
+    ):
+        out.append(event)
+        await asyncio.sleep(0)
+    await tick_task
+
+    assert [event.type for event in out] == [
+        "search_started",
+        "source_started",
+        "record_emitted",
+        "record_emitted",
+        "source_finished",
+        "search_finished",
+    ]
+    assert ticks == 3
+
+
+async def test_aiter_search_events_finishes_when_control_is_already_requested(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Async event streaming terminates when an external control is already closed."""
+    control = agentgrep.SearchControl()
+    control.request_answer_now()
+
+    async with asyncio.timeout(1.0):
+        out = [
+            event
+            async for event in agentgrep.aiter_search_events(
+                tmp_path,
+                _make_query(),
+                control=control,
+                max_queue_size=1,
+            )
+        ]
+
+    assert out == []

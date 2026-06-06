@@ -651,7 +651,7 @@ def test_discover_from_catalog_deduplicates_paths_within_descriptor(
     """Two ``DiscoverySpec``s on one descriptor yield one handle per file.
 
     Mirrors the Cursor IDE ``state.vscdb`` case: the modern
-    ``platform_paths`` spec and the legacy home-subpath glob can both
+    ``platform_paths`` spec and the legacy home-subpath lookup can both
     match a single file on non-standard layouts.
     """
     import agentgrep
@@ -818,6 +818,36 @@ def test_actual_cursor_discovery_splits_main_and_subagent_transcripts(
     stores_by_path = {source.path: source.store for source in sources}
     assert stores_by_path[main] == "cursor-cli.transcripts"
     assert stores_by_path[subagent] == "cursor-cli.subagent_transcripts"
+
+
+def test_actual_cursor_ide_legacy_state_file_uses_direct_lookup(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The legacy Cursor IDE state file must not spawn a recursive finder."""
+    import agentgrep
+
+    home = tmp_path / "home"
+    legacy = home / ".cursor" / "state.vscdb"
+    legacy.parent.mkdir(parents=True)
+    _ = legacy.write_text("placeholder", encoding="utf-8")
+
+    def run_readonly_command(_command: list[str]) -> object:
+        message = "legacy state.vscdb should be a direct file lookup"
+        raise AssertionError(message)
+
+    monkeypatch.setattr(agentgrep, "run_readonly_command", run_readonly_command)
+
+    sources = agentgrep.discover_sources(
+        home,
+        ("cursor-ide",),
+        agentgrep.BackendSelection(find_tool="fd", grep_tool=None, json_tool=None),
+    )
+
+    legacy_sources = [source for source in sources if source.path == legacy]
+    assert [source.adapter_id for source in legacy_sources] == [
+        "cursor_ide.state_vscdb_legacy.v1",
+    ]
 
 
 def test_descriptor_round_trips_through_json() -> None:

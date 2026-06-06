@@ -384,6 +384,34 @@ def test_fmt_attributes_drops_denied_keys_and_keeps_safe_classifiers() -> None:
     assert rendered == "agentgrep_path_kind=sqlite_db, agentgrep_source_count=2"
 
 
+def test_render_payload_rich_reports_physical_strategy_groups() -> None:
+    """Rich output gives physical-plan strategy counts without requiring jq."""
+    payload = _sample_payload()
+    profile = t.cast("dict[str, object]", payload["profile"])
+    samples = t.cast("list[dict[str, object]]", profile["samples"])
+    samples.append(
+        {
+            "name": "search.plan.strategy_group",
+            "duration_seconds": 0.0,
+            "attributes": {
+                "agentgrep_agent": "codex",
+                "agentgrep_store": "codex.sessions",
+                "agentgrep_adapter_id": "codex.sessions_jsonl.v1",
+                "agentgrep_path_kind": "session_file",
+                "agentgrep_source_kind": "jsonl",
+                "agentgrep_source_strategy": "jsonl_raw_text_prefilter",
+                "agentgrep_source_count": 3,
+            },
+        },
+    )
+
+    rendered = profile_engine._render_payload(payload, output_format="rich", top_spans=0)
+
+    assert "physical strategies" in rendered
+    assert "jsonl_raw_text_prefilter" in rendered
+    assert "codex.sessions_jsonl.v1" in rendered
+
+
 @pytest.mark.parametrize(
     "case",
     PROFILE_DEFAULT_OUTPUT_CASES,

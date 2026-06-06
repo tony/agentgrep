@@ -209,8 +209,12 @@ Only STEPs are actionable. SPIKEs are noise.
 
 **Nested profile analysis** for `profile-engine-*` rows:
 - Inspect `profile_payload.profile.samples`
-- Start with `search.plan.prefilter_root`, `search.plan.direct_source`,
-  `search.collect.source`, `search.discover.group`, and
+- Start with `search.plan.decision`, `search.plan.strategy_group`,
+  `search.plan.prefilter_root`,
+  `search.plan.direct_source`,
+  `search.collect.source`, optional `search.collect.scheduler`,
+  optional `search.collect.source_scan_cache`,
+  `search.discover.group`, and
   `find.filter.source`
 - Compare agent/store/adapter/count attributes, not local paths or
   prompt text

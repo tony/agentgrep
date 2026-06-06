@@ -829,6 +829,26 @@ def _analysis_fixture_measurements() -> list[benchmark.Measurement]:
                             "duration_seconds": 0.3,
                             "attributes": {"agentgrep_agent_count": 8},
                         },
+                        {
+                            "name": "search.collect.source",
+                            "duration_seconds": 0.7,
+                            "attributes": {
+                                "agentgrep_adapter_id": "codex.sessions_jsonl.v1",
+                                "agentgrep_source_strategy": "jsonl_raw_text_prefilter",
+                                "agentgrep_records_seen": 20,
+                                "agentgrep_matches_seen": 4,
+                            },
+                        },
+                        {
+                            "name": "search.collect.source",
+                            "duration_seconds": 0.2,
+                            "attributes": {
+                                "agentgrep_adapter_id": "codex.sessions_jsonl.v1",
+                                "agentgrep_source_strategy": "jsonl_raw_text_prefilter",
+                                "agentgrep_records_seen": 8,
+                                "agentgrep_matches_seen": 1,
+                            },
+                        },
                     ],
                 },
             },
@@ -937,6 +957,65 @@ def test_build_analysis_report_summarizes_commands_and_profile_spans() -> None:
     assert report.warnings == ["1 measurement(s) have no samples"]
 
 
+class AnalysisSourceStrategyCase(t.NamedTuple):
+    """One analyzer source-strategy grouping expectation."""
+
+    test_id: str
+    top_groups: int
+    expected_strategy: str | None
+    expected_group_count: int
+    expected_span_count: int
+
+
+ANALYSIS_SOURCE_STRATEGY_CASES: tuple[AnalysisSourceStrategyCase, ...] = (
+    AnalysisSourceStrategyCase(
+        test_id="source-strategy-groups-enabled",
+        top_groups=3,
+        expected_strategy="jsonl_raw_text_prefilter",
+        expected_group_count=1,
+        expected_span_count=2,
+    ),
+    AnalysisSourceStrategyCase(
+        test_id="source-strategy-groups-suppressed",
+        top_groups=0,
+        expected_strategy=None,
+        expected_group_count=0,
+        expected_span_count=0,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    ANALYSIS_SOURCE_STRATEGY_CASES,
+    ids=[c.test_id for c in ANALYSIS_SOURCE_STRATEGY_CASES],
+)
+def test_build_analysis_report_groups_source_strategies(
+    case: AnalysisSourceStrategyCase,
+) -> None:
+    """Analysis reports group source-level costs by physical strategy."""
+    report = benchmark.build_analysis_report(
+        _analysis_fixture_measurements(),
+        artifact_label="benchmark.json",
+        percentile_labels=["min"],
+        top_spans=0,
+        top_groups=case.top_groups,
+    )
+
+    assert len(report.source_strategy_groups) == case.expected_group_count
+    if case.expected_strategy is None:
+        return
+
+    group = report.source_strategy_groups[0]
+    assert group.component == "search-conversations"
+    assert group.adapter_id == "codex.sessions_jsonl.v1"
+    assert group.source_strategy == case.expected_strategy
+    assert group.count == case.expected_span_count
+    assert group.total_duration_seconds == pytest.approx(0.9)
+    assert group.records_seen == 28
+    assert group.matches_seen == 5
+
+
 class AnalysisRenderCase(t.NamedTuple):
     """One analysis reporter expectation."""
 
@@ -996,12 +1075,19 @@ def test_render_analysis_report_supports_human_and_machine_formats(
             "agentgrep_path_kind": "sqlite_db",
             "agentgrep_source_count": 2,
         }
+        assert payload["source_strategy_groups"][0]["source_strategy"] == (
+            "jsonl_raw_text_prefilter"
+        )
+    if case.output_format == "rich":
+        assert "source strategy groups" in text
+        assert "jsonl_raw_text_prefilter" in text
     if case.output_format == "ndjson":
         rows = [json.loads(line) for line in text.splitlines()]
         assert {row["artifact_kind"] for row in rows} >= {
             "agentgrep.benchmark.analysis.command_summary",
             "agentgrep.benchmark.analysis.span",
             "agentgrep.benchmark.analysis.span_group",
+            "agentgrep.benchmark.analysis.source_strategy_group",
             "agentgrep.benchmark.analysis.warning",
         }
 
@@ -1049,6 +1135,7 @@ def test_analyze_command_writes_requested_format(
     assert payload["artifact_kind"] == "agentgrep.benchmark.analysis"
     assert len(payload["top_spans"]) == 1
     assert len(payload["span_groups"]) == 1
+    assert len(payload["source_strategy_groups"]) == 1
 
 
 def test_sanitize_command_string_replaces_local_context_values(tmp_path: pathlib.Path) -> None:

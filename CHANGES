@@ -42,6 +42,53 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### What's new
+
+#### Faster searches on large histories (#46)
+
+Searches now skip lines that cannot match before parsing them, and
+searches with a result limit read supported history files newest-first
+and stop as soon as enough matches are found, instead of scanning whole
+files. Results are the same as before — searches just finish sooner.
+
+#### The MCP server and TUI reuse earlier search work (#46)
+
+Long-running sessions now remember what each history file contained and
+reuse it when the file has not changed since, so repeating or refining
+a search no longer re-reads everything from disk.
+
+### Fixes
+
+#### OR queries return every matching record (#46)
+
+Search queries combining terms with `OR` — like `(deploy OR release)` —
+previously required all branches to appear at once, so records matching
+only one branch were silently dropped. Negated terms had the same
+problem and could match nothing at all. Boolean queries now follow
+their written meaning.
+
+#### Searching a project's folder name finds its conversations (#46)
+
+Searches whose term appears in a conversation's file path — most often
+a project directory name — could come back empty because a fast
+content-only pre-scan dropped those files before they were read. Path
+matches are now always followed up.
+
+#### Cursor IDE workspace history reliably appears in broad searches (#46)
+
+Broad searches could skip Cursor IDE workspace databases during a fast
+pre-scan — the same way the main history database used to go missing.
+Workspace databases are now always handed to the proper reader.
+
+### Development
+
+#### Architecture records for the search engine (#46)
+
+Three new architecture decision records document how searches are
+planned and executed, and the ground rules for any future native-code
+acceleration. Profiling and benchmark reports now also show which scan
+strategy each source used.
+
 ## agentgrep 0.1.0a17 (2026-06-04)
 
 agentgrep 0.1.0a17 makes searches fast on huge Cursor IDE databases.

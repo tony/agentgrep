@@ -49,6 +49,8 @@ class SearchRecordLike(t.Protocol):
     text: str
     timestamp: str | None
     session_id: str | None
+    conversation_id: str | None
+    model: str | None
     path: pathlib.Path
 
 
@@ -78,6 +80,7 @@ class SearchQueryFactory(t.Protocol):
         case_sensitive: bool,
         agents: tuple[AgentName, ...],
         limit: int | None,
+        match_surface: str = ...,
     ) -> object: ...
 
 
@@ -241,6 +244,59 @@ def test_list_files_matching_ignores_gitignore(tmp_path: pathlib.Path) -> None:
     paths = agentgrep.list_files_matching(tmp_path, "*.jsonl", backends.find_tool)
 
     assert {p.name for p in paths} == {"a.jsonl", "b.jsonl"}
+
+
+class PathGlobCase(t.NamedTuple):
+    """One path-qualified glob shape for source discovery."""
+
+    test_id: str
+    pattern: str
+    files: tuple[str, ...]
+    expected: tuple[str, ...]
+
+
+PATH_GLOB_CASES: tuple[PathGlobCase, ...] = (
+    PathGlobCase(
+        test_id="cursor-workspace-state",
+        pattern="*/state.vscdb",
+        files=("project/state.vscdb", "project/nested/state.vscdb"),
+        expected=("project/state.vscdb",),
+    ),
+    PathGlobCase(
+        test_id="cursor-cli-store-db",
+        pattern="*/*/store.db",
+        files=("scope/thread/store.db", "scope/store.db", "scope/thread/nested/store.db"),
+        expected=("scope/thread/store.db",),
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    PATH_GLOB_CASES,
+    ids=[case.test_id for case in PATH_GLOB_CASES],
+)
+def test_list_files_matching_path_qualified_globs_skip_fd(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: PathGlobCase,
+) -> None:
+    """Path-qualified discovery globs use bounded relative matching."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    for relative_path in case.files:
+        path = tmp_path / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _ = path.write_text("{}", encoding="utf-8")
+
+    def run_readonly_command(_command: list[str]) -> subprocess.CompletedProcess[str]:
+        message = "path-qualified globs should not spawn fd"
+        raise AssertionError(message)
+
+    monkeypatch.setattr(agentgrep, "run_readonly_command", run_readonly_command)
+
+    paths = agentgrep.list_files_matching(tmp_path, case.pattern, "fd")
+
+    assert tuple(str(path.relative_to(tmp_path)) for path in paths) == case.expected
 
 
 def test_cli_without_subcommand_prints_main_help() -> None:
@@ -456,6 +512,277 @@ def test_search_codex_prompt_match_returns_full_prompt(
     assert records[0].kind == "prompt"
     assert records[0].text == "A serenity prompt with bliss and detail."
     assert records[0].session_id == "session-1"
+
+
+def test_limited_codex_session_search_preserves_session_model(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Limited searches keep the session_meta model on Codex records.
+
+    Regression guard: bounded newest-first scans would read the trailing
+    records before the leading ``session_meta`` line, so limited haystack
+    searches for a model name returned no Codex records at all.
+    """
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+
+    session_path = home / ".codex" / "sessions" / "2026" / "01" / "01" / "rollout.jsonl"
+    write_jsonl(
+        session_path,
+        [
+            {
+                "type": "session_meta",
+                "payload": {"id": "session-1", "model": "gpt-test-o5"},
+            },
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "first prompt"}],
+                },
+            },
+            {
+                "timestamp": "2026-01-01T00:01:00Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "second prompt"}],
+                },
+            },
+        ],
+    )
+
+    query = agentgrep.SearchQuery(
+        terms=("gpt-test-o5",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=1,
+    )
+    backends = agentgrep.BackendSelection(None, None, None)
+    sources = agentgrep.discover_sources(home, ("codex",), backends)
+    records = agentgrep.search_sources(query, sources, backends)
+
+    assert len(records) == 1
+    assert records[0].model == "gpt-test-o5"
+
+
+def test_limited_pi_session_search_preserves_conversation_id(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Limited searches keep the session-header cwd on pi records.
+
+    Regression guard: bounded newest-first scans would read message lines
+    before the leading ``session`` header, dropping ``conversation_id``.
+    """
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+    monkeypatch.delenv("PI_CODING_AGENT_SESSION_DIR", raising=False)
+    session_file = home / ".pi" / "agent" / "sessions" / "--home-user-proj--" / "sess.jsonl"
+    write_jsonl(
+        session_file,
+        [
+            _pi_session_header(cwd="/home/user/proj"),
+            {
+                "type": "message",
+                "id": "u1",
+                "parentId": None,
+                "timestamp": "2026-05-30T12:00:02.000Z",
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "explain the streaming design"}],
+                    "timestamp": 1780228802000,
+                },
+            },
+        ],
+    )
+
+    query = agentgrep.SearchQuery(
+        terms=("streaming",),
+        scope="all",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("pi",),
+        limit=1,
+    )
+    backends = agentgrep.BackendSelection(None, None, None)
+    sources = agentgrep.discover_sources(home, ("pi",), backends)
+    records = agentgrep.search_sources(query, sources, backends)
+
+    assert len(records) == 1
+    assert records[0].conversation_id == "/home/user/proj"
+
+
+def test_text_search_codex_session_preserves_session_metadata(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Text-surface searches keep canonical Codex session metadata.
+
+    Regression guard: the raw text prefilter dropped the session_meta
+    header before decode, so grep-style matches carried model=None and the
+    file stem instead of the canonical session id.
+    """
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+
+    session_path = home / ".codex" / "sessions" / "2026" / "01" / "01" / "rollout-abc.jsonl"
+    write_jsonl(
+        session_path,
+        [
+            {
+                "type": "session_meta",
+                "payload": {"id": "canonical-session-id", "model": "gpt-test-o5"},
+            },
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "needle prompt"}],
+                },
+            },
+        ],
+    )
+
+    query = agentgrep.SearchQuery(
+        terms=("needle",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+        match_surface="text",
+    )
+    backends = agentgrep.BackendSelection(None, None, None)
+    sources = agentgrep.discover_sources(home, ("codex",), backends)
+    records = agentgrep.search_sources(query, sources, backends)
+
+    assert len(records) == 1
+    assert records[0].model == "gpt-test-o5"
+    assert records[0].session_id == "canonical-session-id"
+
+
+def test_text_search_pi_session_preserves_conversation_id(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Text-surface searches keep canonical pi session metadata.
+
+    Regression guard: the raw text prefilter dropped the session header
+    before decode, so grep-style matches lost the cwd and carried the file
+    stem instead of the canonical session id.
+    """
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+    monkeypatch.delenv("PI_CODING_AGENT_SESSION_DIR", raising=False)
+    session_file = home / ".pi" / "agent" / "sessions" / "--home-user-proj--" / "sess.jsonl"
+    write_jsonl(
+        session_file,
+        [
+            _pi_session_header(cwd="/home/user/proj"),
+            {
+                "type": "message",
+                "id": "u1",
+                "parentId": None,
+                "timestamp": "2026-05-30T12:00:02.000Z",
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "needle prompt"}],
+                    "timestamp": 1780228802000,
+                },
+            },
+        ],
+    )
+
+    query = agentgrep.SearchQuery(
+        terms=("needle",),
+        scope="all",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("pi",),
+        limit=None,
+        match_surface="text",
+    )
+    backends = agentgrep.BackendSelection(None, None, None)
+    sources = agentgrep.discover_sources(home, ("pi",), backends)
+    records = agentgrep.search_sources(query, sources, backends)
+
+    assert len(records) == 1
+    assert records[0].session_id == "019e0000-0000-7000-8000-000000000abc"
+    assert records[0].conversation_id == "/home/user/proj"
+
+
+def test_unbounded_haystack_search_finds_path_only_matches(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Project-name searches find conversations whose content lacks the term.
+
+    Regression guard: content-only root prefiltering dropped sources whose
+    haystack match lived in the file path, so unlimited searches for a
+    project directory name returned nothing.
+    """
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+
+    session_path = home / ".claude" / "projects" / "-home-user-tmux-proj" / "session-1.jsonl"
+    write_jsonl(
+        session_path,
+        [
+            {
+                "type": "user",
+                "sessionId": "session-1",
+                "message": {"role": "user", "content": "unrelated words only"},
+            },
+        ],
+    )
+
+    def grep_root_paths(
+        _root: pathlib.Path,
+        _query: t.Any,
+        _grep_program: str,
+        *,
+        control: t.Any = None,
+    ) -> set[pathlib.Path]:
+        _ = control
+        return set()
+
+    monkeypatch.setattr(agentgrep, "grep_root_paths", grep_root_paths)
+
+    query = agentgrep.SearchQuery(
+        terms=("tmux-proj",),
+        scope="conversations",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("claude",),
+        limit=None,
+        match_surface="haystack",
+    )
+    backends = agentgrep.BackendSelection(None, "rg", None)
+    sources = agentgrep.discover_sources(home, ("claude",), backends)
+    records = agentgrep.search_sources(query, sources, backends)
+
+    assert [record.text for record in records] == ["unrelated words only"]
 
 
 def test_search_reports_source_and_match_progress(
@@ -725,6 +1052,100 @@ def test_iter_jsonl_cooperatively_yields_during_large_files(
     assert sleep_calls == [0]
 
 
+class ReverseJsonlCase(t.NamedTuple):
+    """One reverse JSONL parsing shape."""
+
+    test_id: str
+    rows: tuple[object, ...]
+    trailing_newline: bool
+    chunk_bytes: int
+    expected_indexes: tuple[int, ...]
+
+
+REVERSE_JSONL_CASES: tuple[ReverseJsonlCase, ...] = (
+    ReverseJsonlCase(
+        test_id="trailing-newline",
+        rows=({"index": 0}, {"index": 1}, {"index": 2}),
+        trailing_newline=True,
+        chunk_bytes=11,
+        expected_indexes=(2, 1, 0),
+    ),
+    ReverseJsonlCase(
+        test_id="no-trailing-newline",
+        rows=({"index": 0}, {"index": 1}, {"index": 2}),
+        trailing_newline=False,
+        chunk_bytes=13,
+        expected_indexes=(2, 1, 0),
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    REVERSE_JSONL_CASES,
+    ids=[c.test_id for c in REVERSE_JSONL_CASES],
+)
+def test_iter_jsonl_reverse_reads_newest_lines_first(
+    case: ReverseJsonlCase,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Private reverse JSONL parsing yields valid rows from file end to start."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    path = tmp_path / "events.jsonl"
+    text = "\n".join(json.dumps(row) for row in case.rows)
+    if case.trailing_newline:
+        text += "\n"
+    path.write_text(text, encoding="utf-8")
+    monkeypatch.setattr(agentgrep, "_JSONL_REVERSE_CHUNK_BYTES", case.chunk_bytes)
+
+    parsed = list(agentgrep._iter_jsonl(path, reverse=True))
+
+    assert [row["index"] for row in parsed if isinstance(row, dict)] == list(
+        case.expected_indexes,
+    )
+
+
+def test_iter_jsonl_reverse_raw_skip_avoids_decoding_skipped_lines(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reverse raw-line filtering skips lines before JSON decode."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    path = tmp_path / "events.jsonl"
+    path.write_text(
+        "\n".join(
+            (
+                '{"index":0,"text":"skip me"}',
+                '{"index":1,"text":"keep me"}',
+                '{"index":2,"text":"skip me too"}',
+            ),
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(agentgrep, "_JSONL_REVERSE_CHUNK_BYTES", 9)
+    decoded_inputs: list[str] = []
+    original_loads = agentgrep.json.loads
+
+    def loads_with_capture(payload: str) -> object:
+        decoded_inputs.append(payload)
+        return t.cast("object", original_loads(payload))
+
+    monkeypatch.setattr(agentgrep.json, "loads", loads_with_capture)
+
+    parsed = list(
+        agentgrep._iter_jsonl(
+            path,
+            skip_line=lambda raw_line: "skip" in raw_line,
+            skip_line_mode="line",
+            reverse=True,
+        ),
+    )
+
+    assert [row["index"] for row in parsed if isinstance(row, dict)] == [1]
+    assert decoded_inputs == ['{"index":1,"text":"keep me"}']
+
+
 def test_parse_codex_session_skips_function_call_output_before_json_decode(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -774,6 +1195,421 @@ def test_parse_codex_session_skips_function_call_output_before_json_decode(
 
     assert [record.text for record in records] == ["bliss prompt"]
     assert decoded_payloads == [message_line]
+
+
+def test_iter_jsonl_prefix_skip_with_full_line_predicate(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Prefix skips stay cheap while full-line predicates see whole lines."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    prefix_bytes = int(agentgrep._JSONL_PREFIX_BYTES)
+    skip_target = json.dumps({"type": "skipme", "data": "x" * (prefix_bytes * 2)})
+    keep_target = json.dumps(
+        {"type": "keep", "pad": "y" * (prefix_bytes * 2), "marker": "needle-far"},
+    )
+    drop_target = json.dumps({"type": "keep", "marker": "drop-me"})
+    path = tmp_path / "lines.jsonl"
+    path.write_text(f"{skip_target}\n{keep_target}\n{drop_target}\n", encoding="utf-8")
+
+    prefix_calls: list[str] = []
+    full_calls: list[str] = []
+
+    def prefix_skip(line: str) -> bool:
+        prefix_calls.append(line)
+        return '"skipme"' in line
+
+    def full_skip(line: str) -> bool:
+        full_calls.append(line)
+        return "drop-me" in line
+
+    values = list(
+        agentgrep._iter_jsonl(
+            path,
+            skip_line=prefix_skip,
+            skip_line_mode="prefix",
+            full_line_skip=full_skip,
+        ),
+    )
+
+    assert values == [json.loads(keep_target)]
+    assert all(len(call) <= prefix_bytes for call in prefix_calls)
+    assert all('"skipme"' not in call for call in full_calls)
+    assert any("needle-far" in call for call in full_calls)
+
+
+class TwoStageSkipCase(t.NamedTuple):
+    """One Codex session layout and its expected raw-prefilter skip path."""
+
+    test_id: str
+    oversize_tool_output: bool
+    expected_discard: bool
+
+
+TWO_STAGE_SKIP_CASES: tuple[TwoStageSkipCase, ...] = (
+    TwoStageSkipCase(
+        test_id="oversized-session-keeps-chunked-prefix-discard",
+        oversize_tool_output=True,
+        expected_discard=True,
+    ),
+    TwoStageSkipCase(
+        test_id="small-session-keeps-full-line-mode",
+        oversize_tool_output=False,
+        expected_discard=False,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    TWO_STAGE_SKIP_CASES,
+    ids=[c.test_id for c in TWO_STAGE_SKIP_CASES],
+)
+def test_codex_session_raw_prefilter_keeps_prefix_tool_output_skip(
+    case: TwoStageSkipCase,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Raw text prefilters do not disable the chunked Codex tool-output skip."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    path = tmp_path / "session.jsonl"
+    output_pad = int(agentgrep._CODEX_RAW_SKIP_MIN_BYTES) if case.oversize_tool_output else 64
+    tool_output_line = json.dumps(
+        {
+            "timestamp": "2026-01-01T00:00:00Z",
+            "type": "response_item",
+            "payload": {
+                "type": "function_call_output",
+                "call_id": "call_1",
+                "output": "bliss" + ("x" * output_pad),
+            },
+        },
+    )
+    message_line = json.dumps(
+        {
+            "timestamp": "2026-01-01T00:00:01Z",
+            "type": "response_item",
+            "payload": {"role": "user", "content": "bliss prompt"},
+        },
+    )
+    decoy_line = json.dumps(
+        {
+            "timestamp": "2026-01-01T00:00:02Z",
+            "type": "response_item",
+            "payload": {"role": "user", "content": "other prompt"},
+        },
+    )
+    path.write_text(
+        f"{tool_output_line}\n{message_line}\n{decoy_line}\n",
+        encoding="utf-8",
+    )
+    source = agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=path,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=1,
+    )
+    discard_calls: list[bytes] = []
+    original_discard = agentgrep._discard_rest_of_line
+
+    def tracking_discard(handle: t.BinaryIO, prefix: bytes) -> None:
+        discard_calls.append(prefix)
+        original_discard(handle, prefix)
+
+    monkeypatch.setattr(agentgrep, "_discard_rest_of_line", tracking_discard)
+
+    def raw_skip_line(line: str) -> bool:
+        return "bliss" not in line
+
+    records = list(
+        agentgrep.parse_codex_session_file(source, raw_skip_line=raw_skip_line),
+    )
+
+    assert [record.text for record in records] == ["bliss prompt"]
+    assert bool(discard_calls) is case.expected_discard
+
+
+class CodexHeaderPrefilterCase(t.NamedTuple):
+    """One Codex session layout for header preservation under raw prefilters."""
+
+    test_id: str
+    oversize_tool_output: bool
+
+
+CODEX_HEADER_PREFILTER_CASES: tuple[CodexHeaderPrefilterCase, ...] = (
+    CodexHeaderPrefilterCase(
+        test_id="small-session-line-mode",
+        oversize_tool_output=False,
+    ),
+    CodexHeaderPrefilterCase(
+        test_id="oversized-session-prefix-mode",
+        oversize_tool_output=True,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    CODEX_HEADER_PREFILTER_CASES,
+    ids=[c.test_id for c in CODEX_HEADER_PREFILTER_CASES],
+)
+def test_parse_codex_session_raw_prefilter_preserves_header(
+    case: CodexHeaderPrefilterCase,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Raw text prefilters never drop the session_meta header.
+
+    Regression guard: the header rarely contains the search term, so the
+    prefilter skipped it before decode and matching records emitted with
+    model=None and the file stem as session_id.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    path = tmp_path / "session.jsonl"
+    meta_line = json.dumps(
+        {
+            "type": "session_meta",
+            "payload": {"id": "canonical-session-id", "model": "gpt-test-o5"},
+        },
+    )
+    lines = [meta_line]
+    if case.oversize_tool_output:
+        lines.append(
+            json.dumps(
+                {
+                    "timestamp": "2026-01-01T00:00:00Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call_output",
+                        "call_id": "call_1",
+                        "output": "bliss" + ("x" * int(agentgrep._CODEX_RAW_SKIP_MIN_BYTES)),
+                    },
+                },
+            ),
+        )
+    miss_line = json.dumps(
+        {
+            "timestamp": "2026-01-01T00:00:01Z",
+            "type": "response_item",
+            "payload": {"role": "user", "content": "other prompt"},
+        },
+    )
+    match_line = json.dumps(
+        {
+            "timestamp": "2026-01-01T00:00:02Z",
+            "type": "response_item",
+            "payload": {"role": "user", "content": "bliss prompt"},
+        },
+    )
+    lines.extend((miss_line, match_line))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    source = agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=path,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=1,
+    )
+    decoded_payloads: list[str] = []
+    original_loads = agentgrep.json.loads
+
+    def tracking_loads(payload: str) -> object:
+        decoded_payloads.append(payload)
+        return original_loads(payload)
+
+    monkeypatch.setattr(agentgrep.json, "loads", tracking_loads)
+
+    def raw_skip_line(line: str) -> bool:
+        return "bliss" not in line
+
+    records = list(
+        agentgrep.parse_codex_session_file(source, raw_skip_line=raw_skip_line),
+    )
+
+    assert [record.text for record in records] == ["bliss prompt"]
+    assert records[0].model == "gpt-test-o5"
+    assert records[0].session_id == "canonical-session-id"
+    assert decoded_payloads == [meta_line, match_line]
+
+
+def test_parse_pi_session_raw_prefilter_preserves_header(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Raw text prefilters never drop the pi session header.
+
+    Regression guard: skipping the header before decode emitted records
+    with conversation_id=None and the file stem as session_id.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    path = tmp_path / "sess.jsonl"
+    header_line = json.dumps(
+        {
+            "type": "session",
+            "id": "pi-sess-1",
+            "timestamp": "2026-05-30T12:00:00.000Z",
+            "cwd": "/home/user/proj",
+            "version": 3,
+        },
+    )
+    miss_line = json.dumps(
+        {
+            "type": "message",
+            "id": "u0",
+            "parentId": None,
+            "timestamp": "2026-05-30T12:00:01.000Z",
+            "message": {
+                "role": "user",
+                "content": [{"type": "text", "text": "other prompt"}],
+                "timestamp": 1780228801000,
+            },
+        },
+    )
+    match_line = json.dumps(
+        {
+            "type": "message",
+            "id": "u1",
+            "parentId": "u0",
+            "timestamp": "2026-05-30T12:00:02.000Z",
+            "message": {
+                "role": "user",
+                "content": [{"type": "text", "text": "bliss prompt"}],
+                "timestamp": 1780228802000,
+            },
+        },
+    )
+    path.write_text("\n".join((header_line, miss_line, match_line)) + "\n", encoding="utf-8")
+    source = agentgrep.SourceHandle(
+        agent="pi",
+        store="pi.sessions",
+        adapter_id="pi.sessions_jsonl.v1",
+        path=path,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=1,
+    )
+    decoded_payloads: list[str] = []
+    original_loads = agentgrep.json.loads
+
+    def tracking_loads(payload: str) -> object:
+        decoded_payloads.append(payload)
+        return original_loads(payload)
+
+    monkeypatch.setattr(agentgrep.json, "loads", tracking_loads)
+
+    def raw_skip_line(line: str) -> bool:
+        return "bliss" not in line
+
+    records = list(
+        agentgrep.parse_pi_session_file(source, raw_skip_line=raw_skip_line),
+    )
+
+    assert [record.text for record in records] == ["bliss prompt"]
+    assert records[0].session_id == "pi-sess-1"
+    assert records[0].conversation_id == "/home/user/proj"
+    assert decoded_payloads == [header_line, match_line]
+
+
+def test_parse_codex_session_reverse_preserves_header(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Manual reverse parses still carry canonical session metadata.
+
+    Regression guard: reverse iteration reads the leading session_meta
+    header last, so direct ``reverse=True`` callers received records with
+    model=None and the file stem as session_id.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    path = tmp_path / "rollout-abc.jsonl"
+    write_jsonl(
+        path,
+        [
+            {
+                "type": "session_meta",
+                "payload": {"id": "canonical-session-id", "model": "gpt-test-o5"},
+            },
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "type": "response_item",
+                "payload": {"role": "user", "content": "first prompt"},
+            },
+            {
+                "timestamp": "2026-01-01T00:01:00Z",
+                "type": "response_item",
+                "payload": {"role": "user", "content": "second prompt"},
+            },
+        ],
+    )
+    source = agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=path,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=1,
+    )
+
+    records = list(agentgrep.parse_codex_session_file(source, reverse=True))
+
+    assert [record.text for record in records] == ["second prompt", "first prompt"]
+    assert {record.model for record in records} == {"gpt-test-o5"}
+    assert {record.session_id for record in records} == {"canonical-session-id"}
+
+
+def test_parse_pi_session_reverse_preserves_header(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Manual reverse parses still carry the pi session header state."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    path = tmp_path / "sess.jsonl"
+    write_jsonl(
+        path,
+        [
+            {
+                "type": "session",
+                "id": "pi-sess-1",
+                "timestamp": "2026-05-30T12:00:00.000Z",
+                "cwd": "/home/user/proj",
+                "version": 3,
+            },
+            {
+                "type": "message",
+                "id": "u1",
+                "parentId": None,
+                "timestamp": "2026-05-30T12:00:02.000Z",
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "needle prompt"}],
+                    "timestamp": 1780228802000,
+                },
+            },
+        ],
+    )
+    source = agentgrep.SourceHandle(
+        agent="pi",
+        store="pi.sessions",
+        adapter_id="pi.sessions_jsonl.v1",
+        path=path,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=1,
+    )
+
+    records = list(agentgrep.parse_pi_session_file(source, reverse=True))
+
+    assert [record.text for record in records] == ["needle prompt"]
+    assert records[0].session_id == "pi-sess-1"
+    assert records[0].conversation_id == "/home/user/proj"
 
 
 def test_streaming_search_progress_buffers_and_flushes_records(
@@ -1084,6 +1920,44 @@ async def test_empty_query_focuses_search_input_and_marks_search_done(
         assert app.focused is not None
         assert app.focused.id == "search"
         assert app._search_done is True
+
+
+def test_streaming_ui_app_passes_runtime_to_search_worker(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The TUI owns one runtime and passes it to backend searches."""
+    from agentgrep.ui import app as ui_app
+
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    runtimes: list[object] = []
+
+    def record_runtime(*_args: object, **kwargs: object) -> list[object]:
+        runtimes.append(kwargs.get("runtime"))
+        return []
+
+    monkeypatch.setattr(ui_app, "run_search_query", record_runtime)
+    home = tmp_path / "home"
+    home.mkdir(parents=True, exist_ok=True)
+    query = agentgrep.SearchQuery(
+        terms=("bliss",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+    app = agentgrep.build_streaming_ui_app(home, query, control=agentgrep.SearchControl())
+
+    app._reset_search_chrome()
+    app._run_search()
+    app._run_search()
+
+    assert len(runtimes) == 2
+    assert isinstance(runtimes[0], agentgrep.SearchRuntime)
+    assert runtimes[0] is runtimes[1]
+    assert runtimes[0].source_scan_cache is not None
 
 
 async def test_search_input_posts_search_requested_only_on_enter(
@@ -5814,6 +6688,61 @@ def test_search_claude_history_expands_external_pasted_text(
     assert "inline serenity paste" in record.text
     assert "external bliss paste" in record.text
     assert "[Pasted text" not in record.text
+
+
+def test_paste_cache_only_terms_survive_grep_backends(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Terms living only in paste-cache files still match with a grep backend.
+
+    Pins the unconditional Claude history admission: content grep over
+    history.jsonl cannot see paste-cache expansions, so source admission
+    must never depend on it. The grep helper is stubbed to report a miss
+    so any future conditional admission fails here.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    paste_hash = "0123456789abcdef"
+    paste_path = home / ".claude" / "paste-cache" / f"{paste_hash}.txt"
+    paste_path.parent.mkdir(parents=True, exist_ok=True)
+    _ = paste_path.write_text("hidden serenity needle", encoding="utf-8")
+    history_path = home / ".claude" / "history.jsonl"
+    write_jsonl(
+        history_path,
+        [
+            {
+                "display": "Review [Pasted text #1]",
+                "pastedContents": {
+                    "1": {"id": 1, "type": "text", "contentHash": paste_hash},
+                },
+                "timestamp": 1_700_000_000_000,
+                "project": "/synthetic/project",
+                "sessionId": "session-1",
+            },
+        ],
+    )
+
+    def grep_misses(*_args: t.Any, **_kwargs: t.Any) -> bool:
+        return False
+
+    monkeypatch.setattr(agentgrep, "grep_file_matches", grep_misses)
+
+    query = agentgrep.SearchQuery(
+        terms=("needle",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("claude",),
+        limit=None,
+    )
+    backends = agentgrep.BackendSelection(None, "rg", None)
+    sources = agentgrep.discover_sources(home, ("claude",), backends)
+    records = agentgrep.search_sources(query, sources, backends)
+
+    assert any("hidden serenity needle" in record.text for record in records)
 
 
 def test_prompt_scope_excludes_claude_project_user_turns_when_history_exists(

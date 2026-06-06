@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import pathlib
 import typing as t
 
@@ -203,6 +204,66 @@ async def test_mcp_search_tool_returns_full_prompt(
     assert data.results[0].kind == "prompt"
     assert data.results[0].agent == "codex"
     assert data.results[0].text == "serenity and bliss live here"
+
+
+async def test_mcp_search_tool_sorts_records_across_sources(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unlimited multi-source searches return records newest-first.
+
+    Regression guard: the async event stream emits records per source in
+    source-mtime order, so a source with a newer mtime but older record
+    timestamps would surface its records first without a final sort.
+    """
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+
+    def codex_session(timestamp: str, text: str) -> list[dict[str, object]]:
+        return [
+            {
+                "type": "session_meta",
+                "payload": {"id": f"session-{text}", "model_provider": "openai"},
+            },
+            {
+                "timestamp": timestamp,
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": text}],
+                },
+            },
+        ]
+
+    sessions = home / ".codex" / "sessions" / "2026" / "01" / "01"
+    newer_mtime_older_record = sessions / "newer-mtime.jsonl"
+    older_mtime_newer_record = sessions / "older-mtime.jsonl"
+    write_jsonl(
+        newer_mtime_older_record,
+        codex_session("2026-01-01T00:00:00Z", "bliss old"),
+    )
+    write_jsonl(
+        older_mtime_newer_record,
+        codex_session("2026-06-01T00:00:00Z", "bliss new"),
+    )
+    os.utime(newer_mtime_older_record, ns=(2_000_000_000, 2_000_000_000))
+    os.utime(older_mtime_newer_record, ns=(1_000_000_000, 1_000_000_000))
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        result = await client.call_tool(
+            "search",
+            {
+                "terms": ["bliss"],
+                "agent": "codex",
+                "scope": "prompts",
+                "limit": None,
+            },
+        )
+
+    data = t.cast("SearchToolDataLike", result.data)
+    assert [record.text for record in data.results] == ["bliss new", "bliss old"]
 
 
 async def test_mcp_find_tool_and_sources_resource(

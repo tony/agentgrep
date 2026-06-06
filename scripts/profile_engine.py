@@ -59,6 +59,19 @@ class SpanSummary:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class StrategyGroupSummary:
+    """One physical strategy group from profiler planning samples."""
+
+    component: str
+    agent: str
+    store: str
+    adapter_id: str
+    source_kind: str
+    strategy: str
+    source_count: int
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class ProfileRunSpec:
     """One profiler component invocation."""
 
@@ -365,6 +378,55 @@ def _span_summaries(
     )
 
 
+def _attr_text(attributes: dict[str, object], key: str) -> str:
+    """Return a string profile attribute, or an empty string."""
+    value = attributes.get(key)
+    return value if isinstance(value, str) else ""
+
+
+def _attr_int(attributes: dict[str, object], key: str) -> int:
+    """Return an integer profile attribute, or zero."""
+    value = attributes.get(key)
+    return value if isinstance(value, int) else 0
+
+
+def _strategy_group_summaries(payload: dict[str, object]) -> tuple[StrategyGroupSummary, ...]:
+    """Return physical strategy groups from profiler planning samples."""
+    summaries: list[StrategyGroupSummary] = []
+    for run in _profile_runs(payload):
+        component = run.get("profile_component")
+        component_text = component if isinstance(component, str) else "unknown"
+        for sample in _profile_samples(run):
+            if sample.get("name") != "search.plan.strategy_group":
+                continue
+            attributes = sample.get("attributes")
+            if not isinstance(attributes, dict):
+                continue
+            summaries.append(
+                StrategyGroupSummary(
+                    component=component_text,
+                    agent=_attr_text(attributes, "agentgrep_agent"),
+                    store=_attr_text(attributes, "agentgrep_store"),
+                    adapter_id=_attr_text(attributes, "agentgrep_adapter_id"),
+                    source_kind=_attr_text(attributes, "agentgrep_source_kind"),
+                    strategy=_attr_text(attributes, "agentgrep_source_strategy"),
+                    source_count=_attr_int(attributes, "agentgrep_source_count"),
+                ),
+            )
+    return tuple(
+        sorted(
+            summaries,
+            key=lambda summary: (
+                summary.component,
+                summary.agent,
+                summary.store,
+                summary.adapter_id,
+                summary.strategy,
+            ),
+        ),
+    )
+
+
 def _fmt_duration(seconds: float) -> str:
     """Render a duration in seconds."""
     return f"{seconds:.3f}s"
@@ -433,6 +495,28 @@ def _render_rich(payload: dict[str, object], *, top_spans: int) -> str:
             str(len(_profile_samples(run))),
         )
     console.print(summary)
+
+    strategy_groups = _strategy_group_summaries(payload)
+    if strategy_groups:
+        strategies = rich.table.Table(title="[bold]physical strategies[/bold]")
+        strategies.add_column("component", style="cyan")
+        strategies.add_column("agent")
+        strategies.add_column("store")
+        strategies.add_column("adapter")
+        strategies.add_column("kind")
+        strategies.add_column("strategy")
+        strategies.add_column("sources", justify="right")
+        for group in strategy_groups:
+            strategies.add_row(
+                group.component,
+                group.agent,
+                group.store,
+                group.adapter_id,
+                group.source_kind,
+                group.strategy,
+                str(group.source_count),
+            )
+        console.print(strategies)
 
     spans = _span_summaries(payload, top_spans=top_spans)
     span_table = rich.table.Table(title="[bold]slowest spans[/bold]")

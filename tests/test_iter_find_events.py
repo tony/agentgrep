@@ -65,6 +65,75 @@ def test_iter_find_events_pattern_filters_sources(tmp_path: pathlib.Path) -> Non
     assert "alpha" in str(records[0].record.path)
 
 
+class FindTypeDiscoveryCase(t.NamedTuple):
+    """Expected discovery role narrowing for one find type filter."""
+
+    test_id: str
+    type_filter: str
+    expected_store_roles: frozenset[agentgrep.StoreRole] | None
+
+
+FIND_TYPE_DISCOVERY_CASES: tuple[FindTypeDiscoveryCase, ...] = (
+    FindTypeDiscoveryCase(
+        test_id="all-keeps-default-discovery",
+        type_filter="all",
+        expected_store_roles=None,
+    ),
+    FindTypeDiscoveryCase(
+        test_id="prompts-discovers-prompt-history",
+        type_filter="prompts",
+        expected_store_roles=agentgrep.PROMPT_HISTORY_STORE_ROLES,
+    ),
+    FindTypeDiscoveryCase(
+        test_id="history-discovers-prompt-history",
+        type_filter="history",
+        expected_store_roles=agentgrep.PROMPT_HISTORY_STORE_ROLES,
+    ),
+    FindTypeDiscoveryCase(
+        test_id="sessions-discovers-conversations",
+        type_filter="sessions",
+        expected_store_roles=agentgrep.CONVERSATION_STORE_ROLES,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    FIND_TYPE_DISCOVERY_CASES,
+    ids=[c.test_id for c in FIND_TYPE_DISCOVERY_CASES],
+)
+def test_iter_find_events_pushes_type_filter_into_discovery(
+    case: FindTypeDiscoveryCase,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Find type filters prune catalogue roles before source enumeration."""
+    observed_store_roles: list[frozenset[agentgrep.StoreRole] | None] = []
+
+    def discover_sources(
+        *_args: object,
+        **kwargs: object,
+    ) -> list[agentgrep.SourceHandle]:
+        observed_store_roles.append(
+            t.cast("frozenset[agentgrep.StoreRole] | None", kwargs.get("store_roles")),
+        )
+        return []
+
+    monkeypatch.setattr(agentgrep, "discover_sources", discover_sources)
+
+    _ = list(
+        agentgrep.iter_find_events(
+            tmp_path,
+            ("codex",),
+            pattern=None,
+            limit=None,
+            type_filter=t.cast("agentgrep.FindSourceTypeFilter", case.type_filter),
+        ),
+    )
+
+    assert observed_store_roles == [case.expected_store_roles]
+
+
 class LimitCase(t.NamedTuple):
     """Parametrized case for ``limit`` early-stop on find."""
 

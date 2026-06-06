@@ -79,6 +79,8 @@ logger.addHandler(logging.NullHandler())
 if t.TYPE_CHECKING:
     import collections.abc as cabc
 
+    from agentgrep._engine.planning import PhysicalSearchPlan
+    from agentgrep._engine.runtime import SearchRuntime
     from agentgrep.query.compile import CompiledQuery
 
     PrivatePathBase = pathlib.Path
@@ -98,9 +100,11 @@ ColorMode = t.Literal["auto", "always", "never"]
 GrepStyle = t.Literal["default", "pretty"]
 type JSONScalar = str | int | float | bool | None
 type JSONValue = JSONScalar | list[JSONValue] | dict[str, JSONValue]
+type RawJsonlSkipLine = t.Callable[[str], bool]
 type SummaryRow = tuple[object, object, object, object, object, object, object, object]
 type KeyValueRow = tuple[object, object]
 type DiscoveryRoot = pathlib.Path | tuple[pathlib.Path, ...]
+type FindSourceTypeFilter = t.Literal["prompts", "history", "sessions", "all"]
 
 AGENT_CHOICES: tuple[AgentName, ...] = (
     "codex",
@@ -1255,6 +1259,9 @@ _JSONL_PREFIX_BYTES = 4096
 
 _JSONL_SKIP_CHUNK_BYTES = 1024 * 1024
 """Chunk size for discarding skipped oversized JSONL lines."""
+
+_JSONL_REVERSE_CHUNK_BYTES = 1024 * 1024
+"""Chunk size for reading JSONL files from end to start."""
 
 _CODEX_RAW_SKIP_MIN_BYTES = 1024 * 1024
 """Minimum Codex session size before enabling raw-line output skipping."""
@@ -3531,6 +3538,8 @@ def list_files_matching(
     """List files under ``root`` that match a glob."""
     if not root.exists():
         return []
+    if "/" in glob_pattern or "\\" in glob_pattern:
+        return sorted(path for path in root.glob(glob_pattern) if path.is_file())
     if fd_program is not None:
         command = [
             fd_program,
@@ -3555,6 +3564,7 @@ def search_sources(
     *,
     progress: SearchProgress | None = None,
     control: SearchControl | None = None,
+    runtime: SearchRuntime | None = None,
 ) -> list[SearchRecord]:
     """Parse and filter search results across all selected sources."""
     active_progress = noop_search_progress() if progress is None else progress
@@ -3566,7 +3576,9 @@ def search_sources(
     # when ``agent:codex`` could rule most out from metadata alone.
     if query.compiled is not None and query.compiled.source_predicate is not None:
         sources = [s for s in sources if query.compiled.source_predicate(s)]
-    planned_sources = plan_search_sources(
+    from agentgrep._engine.planning import build_physical_search_plan
+
+    plan = build_physical_search_plan(
         query,
         sources,
         backends,
@@ -3576,12 +3588,13 @@ def search_sources(
     if active_control.answer_now_requested():
         active_progress.answer_now(0)
         return []
-    active_progress.sources_planned(len(planned_sources), len(sources))
-    records = collect_search_records(
+    active_progress.sources_planned(len(plan.tasks), len(sources))
+    records = collect_search_records_from_plan(
         query,
-        planned_sources,
+        plan,
         progress=active_progress,
         control=active_control,
+        runtime=runtime,
     )
     if active_control.answer_now_requested():
         active_progress.answer_now(len(records))
@@ -3597,6 +3610,7 @@ def run_search_query(
     backends: BackendSelection | None = None,
     progress: SearchProgress | None = None,
     control: SearchControl | None = None,
+    runtime: SearchRuntime | None = None,
 ) -> list[SearchRecord]:
     """Discover sources and run a normalized search query."""
     active_backends = select_backends() if backends is None else backends
@@ -3618,6 +3632,7 @@ def run_search_query(
             active_backends,
             progress=active_progress,
             control=active_control,
+            runtime=runtime,
         )
     except KeyboardInterrupt:
         interrupted = True
@@ -3637,41 +3652,16 @@ def plan_search_sources(
     control: SearchControl | None = None,
 ) -> list[SourceHandle]:
     """Return the candidate sources to parse for a search query."""
-    active_progress = noop_search_progress() if progress is None else progress
-    active_control = SearchControl() if control is None else control
-    prompt_history_agents = prompt_history_agents_for_sources(sources)
-    scoped_sources = [
-        source
-        for source in sources
-        if source_matches_scope(
-            source,
-            query.scope,
-            prompt_history_agents=prompt_history_agents,
-        )
-    ]
-    if not query.terms:
-        return scoped_sources
+    from agentgrep._engine.planning import build_physical_search_plan
 
-    planned_sources = scoped_sources
-    if backends.grep_tool is not None:
-        planned_sources = prefilter_sources_by_root(
-            query,
-            planned_sources,
-            backends.grep_tool,
-            progress=active_progress,
-            control=active_control,
-        )
-    ordered_sources = [
-        source
-        for source in planned_sources
-        if not active_control.answer_now_requested()
-        and (
-            source.search_root is not None
-            or direct_source_matches(source, query, backends, active_control)
-        )
-    ]
-    ordered_sources.sort(key=source_order_key)
-    return ordered_sources
+    plan = build_physical_search_plan(
+        query,
+        sources,
+        backends,
+        progress=progress,
+        control=control,
+    )
+    return [task.source for task in plan.tasks]
 
 
 def source_order_key(source: SourceHandle) -> tuple[int, str]:
@@ -3806,6 +3796,10 @@ def direct_source_matches(
         return False
     try:
         if source.adapter_id == "claude.history_jsonl.v1":
+            # Claude history expands sibling paste-cache files into record
+            # text, so a query term can match content that no grep over
+            # history.jsonl itself can see. Admission must stay
+            # unconditional; the record matcher filters after expansion.
             matched = True
             return matched
         if source.source_kind == "sqlite":
@@ -3856,86 +3850,85 @@ def collect_search_records(
     *,
     progress: SearchProgress | None = None,
     control: SearchControl | None = None,
+    runtime: SearchRuntime | None = None,
 ) -> list[SearchRecord]:
     """Parse candidate sources and collect matching records."""
-    active_progress = noop_search_progress() if progress is None else progress
-    active_control = SearchControl() if control is None else control
-    deduped: dict[tuple[str, str, str, str, str], SearchRecord] = {}
-    raw: list[SearchRecord] = []
-    total = len(sources)
+    from agentgrep._engine.planning import (
+        PhysicalSearchPlan,
+        SourceTask,
+        build_logical_search_plan,
+    )
 
-    def current_count() -> int:
-        return len(deduped) if query.dedupe else len(raw)
+    plan = PhysicalSearchPlan(
+        logical=build_logical_search_plan(query),
+        tasks=tuple(
+            SourceTask(
+                source=source,
+                strategy="direct_full_scan",
+                record_order="unknown",
+                limit_behavior="drain_source",
+                can_stream_records=True,
+                restore_order_key=source_order_key(source),
+            )
+            for source in sources
+        ),
+        decisions=(),
+    )
+    return collect_search_records_from_plan(
+        query,
+        plan,
+        progress=progress,
+        control=control,
+        runtime=runtime,
+    )
 
-    source_predicate = query.compiled.source_predicate if query.compiled is not None else None
-    prompt_history_agents = prompt_history_agents_for_sources(sources)
-    for index, source in enumerate(sources, start=1):
-        if active_control.answer_now_requested() or (
-            query.limit is not None and current_count() >= query.limit
-        ):
-            break
-        if not source_matches_scope(
-            source,
-            query.scope,
-            prompt_history_agents=prompt_history_agents,
-        ):
-            continue
-        # Compiled-query source pruning: when a field predicate like
-        # ``agent:codex`` can be decided from the SourceHandle alone,
-        # skip the source without opening it. Mirrors the same guard
-        # in ``iter_search_events``; without it the eager search path
-        # was paradoxically slower than its unfiltered counterpart
-        # because every source got read just to be rejected at the
-        # record-level predicate.
-        if source_predicate is not None and not source_predicate(source):
-            continue
-        active_progress.source_started(index, total, source)
-        source_started_at = time.perf_counter()
-        records_seen = 0
-        matches_seen = 0
-        matching_records: list[SearchRecord] = []
-        for record in iter_source_records(source):
-            if active_control.answer_now_requested():
-                break
-            records_seen += 1
-            if matches_record(record, query):
-                matches_seen += 1
-                matching_records.append(record)
-            if records_seen % _SOURCE_PROGRESS_RECORD_INTERVAL == 0:
-                _report_source_progress(
-                    active_progress,
-                    index,
-                    total,
-                    source,
-                    records_seen,
-                    matches_seen,
-                )
-                time.sleep(0)
-        active_progress.source_finished(index, total, source, records_seen, matches_seen)
-        _record_engine_profile_sample(
-            "search.collect.source",
-            time.perf_counter() - source_started_at,
-            **_source_profile_attributes(source),
-            agentgrep_records_seen=records_seen,
-            agentgrep_matches_seen=matches_seen,
+
+def collect_search_records_from_plan(
+    query: SearchQuery,
+    plan: PhysicalSearchPlan,
+    *,
+    progress: SearchProgress | None = None,
+    control: SearchControl | None = None,
+    runtime: SearchRuntime | None = None,
+) -> list[SearchRecord]:
+    """Execute a physical search plan and collect matching records.
+
+    Parameters
+    ----------
+    query : SearchQuery
+        Compiled query — terms, agents, dedup choice, limit.
+    plan : PhysicalSearchPlan
+        Planned source tasks from :func:`build_physical_search_plan`.
+    progress : SearchProgress or None
+        Progress sink for source and record events. ``None`` uses the
+        no-op sink.
+    control : SearchControl or None
+        Optional control handle polled between records so consumers
+        can stop the scan early.
+    runtime : SearchRuntime or None
+        Optional reusable runtime state; supplies the source-scan
+        cache when one is configured.
+
+    Returns
+    -------
+    list of SearchRecord
+        Matching records sorted newest-first by
+        :func:`search_record_sort_key`, truncated to ``query.limit``
+        when set.
+    """
+    from agentgrep._engine.execution import ExecutionRecordEmitted, select_execution_driver
+
+    results = [
+        event.record
+        for event in select_execution_driver(query, plan).iter_search_plan(
+            query,
+            plan,
+            progress=progress,
+            control=control,
+            runtime=runtime,
         )
-        matching_records.sort(key=search_record_sort_key, reverse=True)
-        for record in matching_records:
-            if query.dedupe:
-                dedupe_key = record_dedupe_key(record)
-                if dedupe_key not in deduped:
-                    deduped[dedupe_key] = record
-                    active_progress.record_added(record)
-                    active_progress.result_added(len(deduped))
-            else:
-                raw.append(record)
-                active_progress.record_added(record)
-                active_progress.result_added(len(raw))
-            if active_control.answer_now_requested() or (
-                query.limit is not None and current_count() >= query.limit
-            ):
-                break
-    results = list(deduped.values()) if query.dedupe else list(raw)
+        if isinstance(event, ExecutionRecordEmitted)
+    ]
     results.sort(key=search_record_sort_key, reverse=True)
     return results
 
@@ -3992,16 +3985,27 @@ def run_find_query(
 
 def iter_source_records(
     source: SourceHandle,
+    *,
+    raw_skip_line: RawJsonlSkipLine | None = None,
+    reverse: bool = False,
 ) -> cabc.Iterator[SearchRecord]:
     """Dispatch to the adapter parser for one source."""
     if source.adapter_id == "codex.sessions_jsonl.v1":
-        yield from parse_codex_session_file(source)
+        yield from parse_codex_session_file(
+            source,
+            raw_skip_line=raw_skip_line,
+            reverse=reverse,
+        )
         return
     if source.adapter_id == "codex.sessions_legacy_json.v1":
         yield from parse_codex_legacy_session_file(source)
         return
     if source.adapter_id in {"codex.history_json.v1", "codex.history_jsonl.v1"}:
-        yield from parse_codex_history_file(source)
+        yield from parse_codex_history_file(
+            source,
+            raw_skip_line=raw_skip_line,
+            reverse=reverse,
+        )
         return
     if source.adapter_id == "codex.session_index_jsonl.v1":
         yield from parse_codex_session_index_file(source)
@@ -4010,7 +4014,11 @@ def iter_source_records(
         yield from parse_claude_history_file(source)
         return
     if source.adapter_id == "claude.projects_jsonl.v1":
-        yield from parse_claude_project_file(source)
+        yield from parse_claude_project_file(
+            source,
+            raw_skip_line=raw_skip_line,
+            reverse=reverse,
+        )
         return
     if source.adapter_id == "claude.store_sqlite.v1":
         yield from parse_claude_store_db(source)
@@ -4125,16 +4133,28 @@ def iter_source_records(
         yield from parse_gemini_logs_file(source)
         return
     if source.adapter_id == "grok.prompt_history_jsonl.v1":
-        yield from parse_grok_prompt_history(source)
+        yield from parse_grok_prompt_history(
+            source,
+            raw_skip_line=raw_skip_line,
+            reverse=reverse,
+        )
         return
     if source.adapter_id == "grok.sessions_jsonl.v1":
-        yield from parse_grok_chat_history(source)
+        yield from parse_grok_chat_history(
+            source,
+            raw_skip_line=raw_skip_line,
+            reverse=reverse,
+        )
         return
     if source.adapter_id == "grok.session_search_sqlite.v1":
         yield from parse_grok_session_search_db(source)
         return
     if source.adapter_id == "pi.sessions_jsonl.v1":
-        yield from parse_pi_session_file(source)
+        yield from parse_pi_session_file(
+            source,
+            raw_skip_line=raw_skip_line,
+            reverse=reverse,
+        )
         return
     if source.adapter_id == "opencode.db_sqlite.v1":
         yield from parse_opencode_db(source)
@@ -4143,15 +4163,64 @@ def iter_source_records(
 
 def parse_codex_session_file(
     source: SourceHandle,
+    *,
+    raw_skip_line: RawJsonlSkipLine | None = None,
+    reverse: bool = False,
 ) -> cabc.Iterator[SearchRecord]:
     """Parse Codex session JSONL files."""
     session_id = source.path.stem
     session_model: str | None = None
-    events = (
-        _iter_jsonl(source.path, skip_line=_is_codex_function_call_output_line)
+    if reverse:
+        # Reverse iteration reads the leading session_meta header last,
+        # so seed its state up front to keep emitted records canonical.
+        header = _read_first_jsonl_header(source.path, _CODEX_SESSION_META_MARKER)
+        header_payload = header.get("payload") if header is not None else None
+        if (
+            header is not None
+            and str(header.get("type", "")) == "session_meta"
+            and isinstance(header_payload, dict)
+        ):
+            payload = t.cast("dict[str, object]", header_payload)
+            session_id = as_optional_str(payload.get("id")) or session_id
+            session_model = (
+                as_optional_str(payload.get("model"))
+                or as_optional_str(payload.get("model_name"))
+                or as_optional_str(payload.get("model_provider"))
+                or session_model
+            )
+    codex_skip_line = (
+        _is_codex_function_call_output_line
         if _file_size(source.path) >= _CODEX_RAW_SKIP_MIN_BYTES
-        else iter_jsonl(source.path)
+        else None
     )
+    # The session_meta header feeds session_id/model into later records,
+    # so the text prefilter must never drop it.
+    kept_raw_skip = (
+        None
+        if raw_skip_line is None
+        else _keep_jsonl_header_lines(raw_skip_line, _CODEX_SESSION_META_MARKER)
+    )
+    if codex_skip_line is not None:
+        # Keep the cheap prefix-mode tool-output skip even when a raw text
+        # prefilter is active: the prefix predicate discards oversized
+        # function_call_output lines in chunks while the text prefilter
+        # still sees every surviving line in full before JSON decode.
+        events = _iter_jsonl(
+            source.path,
+            skip_line=codex_skip_line,
+            skip_line_mode="prefix",
+            full_line_skip=kept_raw_skip,
+            reverse=reverse,
+        )
+    elif kept_raw_skip is not None:
+        events = _iter_jsonl(
+            source.path,
+            skip_line=kept_raw_skip,
+            skip_line_mode="line",
+            reverse=reverse,
+        )
+    else:
+        events = _iter_jsonl(source.path, reverse=reverse)
     for event in events:
         if not isinstance(event, dict):
             continue
@@ -4218,14 +4287,26 @@ def parse_codex_legacy_session_file(
 
 def parse_codex_history_file(
     source: SourceHandle,
+    *,
+    raw_skip_line: RawJsonlSkipLine | None = None,
+    reverse: bool = False,
 ) -> cabc.Iterator[SearchRecord]:
     """Parse Codex prompt/command history files."""
-    entries: list[JSONValue]
+    entries: cabc.Iterable[JSONValue]
     if source.source_kind == "json":
         payload = read_json_file(source.path)
         entries = payload if isinstance(payload, list) else []
     else:
-        entries = list(iter_jsonl(source.path))
+        entries = (
+            _iter_jsonl(
+                source.path,
+                skip_line=raw_skip_line,
+                skip_line_mode="line",
+                reverse=reverse,
+            )
+            if raw_skip_line is not None
+            else _iter_jsonl(source.path, reverse=reverse)
+        )
 
     for entry in entries:
         if not isinstance(entry, dict):
@@ -4286,11 +4367,24 @@ def parse_codex_session_index_file(
 
 def parse_claude_project_file(
     source: SourceHandle,
+    *,
+    raw_skip_line: RawJsonlSkipLine | None = None,
+    reverse: bool = False,
 ) -> cabc.Iterator[SearchRecord]:
     """Parse Claude Code project JSONL files using lightweight heuristics."""
     conversation_id = source.path.stem
     seen: set[tuple[str | None, str, str | None, str | None]] = set()
-    for event in iter_jsonl(source.path):
+    events = (
+        _iter_jsonl(
+            source.path,
+            skip_line=raw_skip_line,
+            skip_line_mode="line",
+            reverse=reverse,
+        )
+        if raw_skip_line is not None
+        else _iter_jsonl(source.path, reverse=reverse)
+    )
+    for event in events:
         for candidate in iter_message_candidates(
             event,
             fallback_conversation_id=conversation_id,
@@ -4931,6 +5025,9 @@ def parse_gemini_logs_file(
 
 def parse_grok_prompt_history(
     source: SourceHandle,
+    *,
+    raw_skip_line: RawJsonlSkipLine | None = None,
+    reverse: bool = False,
 ) -> cabc.Iterator[SearchRecord]:
     """Parse a Grok CLI ``prompt_history.jsonl`` file.
 
@@ -4938,7 +5035,17 @@ def parse_grok_prompt_history(
     "is_bash": bool}`` — one record per user prompt, append-only across
     all sessions within one project directory.
     """
-    for event in iter_jsonl(source.path):
+    events = (
+        _iter_jsonl(
+            source.path,
+            skip_line=raw_skip_line,
+            skip_line_mode="line",
+            reverse=reverse,
+        )
+        if raw_skip_line is not None
+        else _iter_jsonl(source.path, reverse=reverse)
+    )
+    for event in events:
         if not isinstance(event, dict):
             continue
         mapping = t.cast("dict[str, object]", event)
@@ -4964,6 +5071,9 @@ def parse_grok_prompt_history(
 
 def parse_grok_chat_history(
     source: SourceHandle,
+    *,
+    raw_skip_line: RawJsonlSkipLine | None = None,
+    reverse: bool = False,
 ) -> cabc.Iterator[SearchRecord]:
     """Parse a Grok CLI ``chat_history.jsonl`` session transcript.
 
@@ -4972,7 +5082,17 @@ def parse_grok_chat_history(
     record types are emitted to maximise searchable content.
     """
     conversation_id = source.path.parent.name
-    for event in iter_jsonl(source.path):
+    events = (
+        _iter_jsonl(
+            source.path,
+            skip_line=raw_skip_line,
+            skip_line_mode="line",
+            reverse=reverse,
+        )
+        if raw_skip_line is not None
+        else _iter_jsonl(source.path, reverse=reverse)
+    )
+    for event in events:
         if not isinstance(event, dict):
             continue
         mapping = t.cast("dict[str, object]", event)
@@ -5092,6 +5212,9 @@ def _pi_entry_text(entry_type: str, entry: dict[str, object]) -> str | None:
 
 def parse_pi_session_file(
     source: SourceHandle,
+    *,
+    raw_skip_line: RawJsonlSkipLine | None = None,
+    reverse: bool = False,
 ) -> cabc.Iterator[SearchRecord]:
     """Parse a pi (earendil-works/pi) session JSONL transcript.
 
@@ -5104,7 +5227,26 @@ def parse_pi_session_file(
     """
     session_id: str | None = source.path.stem
     conversation_id: str | None = None
-    for event in iter_jsonl(source.path):
+    if reverse:
+        # Reverse iteration reads the leading session header last, so
+        # seed its state up front to keep emitted records canonical.
+        header = _read_first_jsonl_header(source.path, _PI_SESSION_HEADER_MARKER)
+        if header is not None and as_optional_str(header.get("type")) == "session":
+            session_id = as_optional_str(header.get("id")) or session_id
+            conversation_id = as_optional_str(header.get("cwd"))
+    # The session header feeds session_id/cwd into later records, so the
+    # text prefilter must never drop it.
+    events = (
+        _iter_jsonl(
+            source.path,
+            skip_line=_keep_jsonl_header_lines(raw_skip_line, _PI_SESSION_HEADER_MARKER),
+            skip_line_mode="line",
+            reverse=reverse,
+        )
+        if raw_skip_line is not None
+        else _iter_jsonl(source.path, reverse=reverse)
+    )
+    for event in events:
         if not isinstance(event, dict):
             continue
         mapping = t.cast("dict[str, object]", event)
@@ -6220,11 +6362,43 @@ def iter_jsonl(path: pathlib.Path) -> cabc.Iterator[JSONValue]:
 def _iter_jsonl(
     path: pathlib.Path,
     *,
-    skip_line: cabc.Callable[[str], bool] | None = None,
+    skip_line: RawJsonlSkipLine | None = None,
+    skip_line_mode: t.Literal["prefix", "line"] = "prefix",
+    full_line_skip: RawJsonlSkipLine | None = None,
+    reverse: bool = False,
 ) -> cabc.Iterator[JSONValue]:
-    """Yield decoded JSON objects from a JSONL file with an optional raw-line filter."""
+    """Yield decoded JSON objects from a JSONL file with an optional raw-line filter.
+
+    ``skip_line`` runs in ``skip_line_mode``: ``"prefix"`` checks only the
+    first :data:`_JSONL_PREFIX_BYTES` of each line so oversized lines can be
+    discarded in chunks without full allocation, while ``"line"`` checks the
+    whole line. ``full_line_skip`` always sees the complete decoded line
+    before JSON decode, so predicates that may match past the prefix window
+    stay correct alongside a cheap prefix skip. Reverse iteration ignores
+    ``skip_line_mode``: both predicates are combined and run against full
+    decoded lines, because reverse reads already materialize each line from
+    tail chunks.
+    """
+    if reverse:
+        yield from _iter_jsonl_reverse(
+            path,
+            skip_line=_combine_raw_skip_lines(skip_line, full_line_skip),
+        )
+        return
     if skip_line is not None:
-        yield from _iter_jsonl_with_raw_skip(path, skip_line)
+        if skip_line_mode == "line":
+            combined = _combine_raw_skip_lines(skip_line, full_line_skip)
+            assert combined is not None
+            yield from _iter_jsonl_with_raw_line_skip(path, combined)
+        else:
+            yield from _iter_jsonl_with_raw_prefix_skip(
+                path,
+                skip_line,
+                full_line_skip=full_line_skip,
+            )
+        return
+    if full_line_skip is not None:
+        yield from _iter_jsonl_with_raw_line_skip(path, full_line_skip)
         return
     try:
         with path.open(encoding="utf-8") as handle:
@@ -6246,11 +6420,82 @@ def _iter_jsonl(
         return
 
 
-def _iter_jsonl_with_raw_skip(
+def _iter_jsonl_reverse(
     path: pathlib.Path,
-    skip_line: cabc.Callable[[str], bool],
+    *,
+    skip_line: RawJsonlSkipLine | None = None,
 ) -> cabc.Iterator[JSONValue]:
-    """Yield decoded JSON objects while skipping matched raw lines in chunks."""
+    """Yield decoded JSONL values from the end of ``path`` toward the start."""
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            position = handle.tell()
+            pending = b""
+            decoded_lines = 0
+            while position > 0:
+                read_size = min(_JSONL_REVERSE_CHUNK_BYTES, position)
+                position -= read_size
+                handle.seek(position)
+                pending = handle.read(read_size) + pending
+                lines = pending.split(b"\n")
+                pending = lines[0]
+                for raw_line in reversed(lines[1:]):
+                    decoded = _decode_jsonl_raw_line(raw_line, skip_line=skip_line)
+                    if decoded is _SKIPPED_JSONL_LINE:
+                        continue
+                    decoded_lines += 1
+                    if decoded_lines % _JSONL_YIELD_LINE_INTERVAL == 0:
+                        time.sleep(0)
+                    yield t.cast("JSONValue", decoded)
+            if pending.strip():
+                decoded = _decode_jsonl_raw_line(pending, skip_line=skip_line)
+                if decoded is not _SKIPPED_JSONL_LINE:
+                    decoded_lines += 1
+                    if decoded_lines % _JSONL_YIELD_LINE_INTERVAL == 0:
+                        time.sleep(0)
+                    yield t.cast("JSONValue", decoded)
+    except OSError:
+        return
+
+
+_SKIPPED_JSONL_LINE = object()
+
+
+def _decode_jsonl_raw_line(
+    raw_line: bytes,
+    *,
+    skip_line: RawJsonlSkipLine | None = None,
+) -> JSONValue | object:
+    """Decode one raw JSONL line, or return a sentinel for skipped/invalid lines."""
+    if not raw_line.strip():
+        return _SKIPPED_JSONL_LINE
+    line = raw_line.decode("utf-8", errors="replace")
+    if skip_line is not None and skip_line(line):
+        return _SKIPPED_JSONL_LINE
+    stripped = line.strip()
+    if not stripped:
+        return _SKIPPED_JSONL_LINE
+    try:
+        parsed = t.cast("object", json.loads(stripped))
+    except json.JSONDecodeError:
+        return _SKIPPED_JSONL_LINE
+    if isinstance(parsed, (dict, list, str, int, float, bool)) or parsed is None:
+        return t.cast("JSONValue", parsed)
+    return _SKIPPED_JSONL_LINE
+
+
+def _iter_jsonl_with_raw_prefix_skip(
+    path: pathlib.Path,
+    skip_line: RawJsonlSkipLine,
+    *,
+    full_line_skip: RawJsonlSkipLine | None = None,
+) -> cabc.Iterator[JSONValue]:
+    """Yield decoded JSON objects while skipping matched raw prefixes.
+
+    ``skip_line`` sees only the line prefix and gates the chunked discard
+    path; ``full_line_skip`` sees the fully accumulated line before JSON
+    decode.
+    """
     try:
         with path.open("rb") as handle:
             decoded_lines = 0
@@ -6274,7 +6519,10 @@ def _iter_jsonl_with_raw_skip(
                         break
                     raw_line.extend(chunk)
                     time.sleep(0)
-                stripped = raw_line.decode("utf-8", errors="replace").strip()
+                full_text = raw_line.decode("utf-8", errors="replace")
+                if full_line_skip is not None and full_line_skip(full_text):
+                    continue
+                stripped = full_text.strip()
                 if not stripped:
                     continue
                 try:
@@ -6285,6 +6533,128 @@ def _iter_jsonl_with_raw_skip(
                     yield t.cast("JSONValue", parsed)
     except OSError:
         return
+
+
+def _iter_jsonl_with_raw_line_skip(
+    path: pathlib.Path,
+    skip_line: RawJsonlSkipLine,
+) -> cabc.Iterator[JSONValue]:
+    """Yield decoded JSON objects while skipping matched full raw lines."""
+    try:
+        with path.open("rb") as handle:
+            decoded_lines = 0
+            for raw_line in handle:
+                if not raw_line.strip():
+                    continue
+                decoded_lines += 1
+                if decoded_lines % _JSONL_YIELD_LINE_INTERVAL == 0:
+                    time.sleep(0)
+                line = raw_line.decode("utf-8", errors="replace")
+                if skip_line(line):
+                    continue
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    parsed = t.cast("object", json.loads(stripped))
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(parsed, (dict, list, str, int, float, bool)) or parsed is None:
+                    yield t.cast("JSONValue", parsed)
+    except OSError:
+        return
+
+
+def _combine_raw_skip_lines(
+    first: RawJsonlSkipLine | None,
+    second: RawJsonlSkipLine | None,
+) -> RawJsonlSkipLine | None:
+    """Return a raw-line predicate that skips when either predicate skips."""
+    if first is None:
+        return second
+    if second is None:
+        return first
+
+    def skip_line(raw_line: str) -> bool:
+        return first(raw_line) or second(raw_line)
+
+    return skip_line
+
+
+_CODEX_SESSION_META_MARKER = '"type":"session_meta"'
+"""Space-stripped prefix marker for the Codex session header line."""
+
+_PI_SESSION_HEADER_MARKER = '"type":"session"'
+"""Space-stripped prefix marker for the pi session header line."""
+
+
+def _read_first_jsonl_header(
+    path: pathlib.Path,
+    marker: str,
+) -> dict[str, object] | None:
+    """Decode the first JSONL line bearing a header marker.
+
+    Scans forward with the bounded prefix check used by the raw skip
+    predicates, decoding only the matching line, so reverse scans can
+    seed header state without paying a full forward parse. Assumes the
+    canonical single leading header; later header updates are not
+    positionally attributed.
+    """
+    try:
+        with path.open("rb") as handle:
+            while True:
+                prefix = handle.readline(_JSONL_PREFIX_BYTES)
+                if not prefix:
+                    return None
+                if not prefix.strip():
+                    continue
+                prefix_text = prefix.decode("utf-8", errors="replace")
+                if marker not in prefix_text[:512].replace(" ", ""):
+                    _discard_rest_of_line(handle, prefix)
+                    continue
+                raw_line = bytearray(prefix)
+                while raw_line and not raw_line.endswith(b"\n"):
+                    chunk = handle.readline(_JSONL_SKIP_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    raw_line.extend(chunk)
+                try:
+                    parsed = t.cast(
+                        "object",
+                        json.loads(raw_line.decode("utf-8", errors="replace")),
+                    )
+                except json.JSONDecodeError:
+                    return None
+                if isinstance(parsed, dict):
+                    return t.cast("dict[str, object]", parsed)
+                return None
+    except OSError:
+        return None
+
+
+def _keep_jsonl_header_lines(
+    skip_line: RawJsonlSkipLine,
+    marker: str,
+) -> RawJsonlSkipLine:
+    """Wrap a raw skip predicate so header lines are always decoded.
+
+    Stateful session parsers learn canonical metadata (session id, model,
+    cwd) from a header line that rarely contains the search term, so a raw
+    text prefilter must never drop it.
+
+    >>> keep = _keep_jsonl_header_lines(lambda _line: True, '"type":"session_meta"')
+    >>> keep('{"type": "session_meta", "payload": {}}')
+    False
+    >>> keep('{"type": "response_item"}')
+    True
+    """
+
+    def wrapped(raw_line: str) -> bool:
+        if marker in raw_line[:512].replace(" ", ""):
+            return False
+        return skip_line(raw_line)
+
+    return wrapped
 
 
 def _discard_rest_of_line(handle: t.BinaryIO, prefix: bytes) -> None:
@@ -6569,6 +6939,17 @@ CONVERSATION_STORE_ROLES: frozenset[StoreRole] = frozenset(
 )
 
 
+def find_store_roles_for_type_filter(
+    type_filter: FindSourceTypeFilter,
+) -> DiscoveryStoreRoles:
+    """Return catalogue roles that can satisfy a ``find --type`` filter."""
+    if type_filter in {"prompts", "history"}:
+        return PROMPT_HISTORY_STORE_ROLES
+    if type_filter == "sessions":
+        return CONVERSATION_STORE_ROLES
+    return None
+
+
 @functools.cache
 def store_descriptor_for_record(store: str, adapter_id: str) -> StoreDescriptor | None:
     """Return the catalog descriptor for a normalized record's source store."""
@@ -6616,6 +6997,9 @@ def discover_sources_for_search(
     version_detail: DiscoveryVersionDetail = "none",
 ) -> list[SourceHandle]:
     """Discover only the source roles needed for a search query scope."""
+    from agentgrep._engine.planning import build_logical_search_plan
+
+    logical_plan = build_logical_search_plan(query)
     if query.scope == "all":
         return discover_sources(
             home,
@@ -6629,7 +7013,7 @@ def discover_sources_for_search(
             query.agents,
             backends,
             version_detail=version_detail,
-            store_roles=CONVERSATION_STORE_ROLES,
+            store_roles=logical_plan.initial_store_roles,
         )
 
     prompt_sources = discover_sources(
@@ -6637,7 +7021,7 @@ def discover_sources_for_search(
         query.agents,
         backends,
         version_detail=version_detail,
-        store_roles=PROMPT_HISTORY_STORE_ROLES,
+        store_roles=logical_plan.initial_store_roles,
     )
     agents_with_prompt_history = frozenset(
         source.agent
@@ -6698,14 +7082,9 @@ def matches_record(record: SearchRecord, query: SearchQuery) -> bool:
     checks. Pure-text queries skip the predicate evaluation since
     the compiler leaves ``compiled = None`` for them.
     """
-    if not record_matches_scope(record, query.scope):
-        return False
-    if not matches_text(build_record_match_surface(record, query.match_surface), query):
-        return False
-    compiled = query.compiled
-    if compiled is not None and compiled.record_predicate is not None:
-        return compiled.record_predicate(record)
-    return True
+    from agentgrep._engine.matching import matches_record as compiled_matches_record
+
+    return compiled_matches_record(record, query)
 
 
 def build_record_match_surface(record: SearchRecord, surface: SearchMatchSurface) -> str:
@@ -6951,6 +7330,10 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
 
 
 from agentgrep._engine import (  # noqa: E402  (re-exports must follow main definition)
+    SearchRuntime,
+    SourceScanCache,
+    SourceScanCacheStats,
+    aiter_search_events,
     iter_find_events,
     iter_search_events,
 )

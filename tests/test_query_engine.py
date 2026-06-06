@@ -111,6 +111,7 @@ def test_source_predicate_prunes_codex_sources_without_reading_records(
         "plan_search_sources",
         lambda query, sources, backends, **kwargs: list(sources),
     )
+    monkeypatch.setattr(agentgrep, "direct_source_matches", lambda *args, **kwargs: True)
     monkeypatch.setattr(agentgrep, "iter_source_records", _stub_iter)
 
     compiled = _compile_query("-agent:claude bliss")
@@ -167,6 +168,7 @@ def test_record_predicate_filters_after_source_predicate(
         "plan_search_sources",
         lambda query, sources, backends, **kwargs: list(sources),
     )
+    monkeypatch.setattr(agentgrep, "direct_source_matches", lambda *args, **kwargs: True)
     monkeypatch.setattr(agentgrep, "iter_source_records", _stub_iter)
 
     compiled = _compile_query("agent:codex model:claude bliss")
@@ -189,6 +191,139 @@ def test_record_predicate_filters_after_source_predicate(
 
     assert len(emitted) == 1
     assert emitted[0].model == "claude-3-sonnet"
+
+
+class CompiledTermCase(t.NamedTuple):
+    """One compiled boolean query evaluated against one record."""
+
+    test_id: str
+    query_text: str
+    record_text: str
+    expected: bool
+
+
+COMPILED_TERM_CASES: tuple[CompiledTermCase, ...] = (
+    CompiledTermCase(
+        test_id="or-single-branch-matches",
+        query_text="agent:codex (bliss OR absent)",
+        record_text="only bliss here",
+        expected=True,
+    ),
+    CompiledTermCase(
+        test_id="or-other-branch-matches",
+        query_text="agent:codex (bliss OR serenity)",
+        record_text="pure serenity",
+        expected=True,
+    ),
+    CompiledTermCase(
+        test_id="or-no-branch-misses",
+        query_text="agent:codex (bliss OR absent)",
+        record_text="nothing relevant",
+        expected=False,
+    ),
+    CompiledTermCase(
+        test_id="negated-term-matches-without-it",
+        query_text="agent:codex tmux -bliss",
+        record_text="tmux only",
+        expected=True,
+    ),
+    CompiledTermCase(
+        test_id="negated-term-rejects-with-it",
+        query_text="agent:codex tmux -bliss",
+        record_text="tmux bliss",
+        expected=False,
+    ),
+    CompiledTermCase(
+        test_id="and-terms-still-required",
+        query_text="agent:codex bliss tmux",
+        record_text="bliss without the other",
+        expected=False,
+    ),
+    CompiledTermCase(
+        test_id="and-terms-all-present",
+        query_text="agent:codex bliss tmux",
+        record_text="bliss and tmux together",
+        expected=True,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    COMPILED_TERM_CASES,
+    ids=[c.test_id for c in COMPILED_TERM_CASES],
+)
+def test_compiled_predicate_owns_text_term_semantics(case: CompiledTermCase) -> None:
+    """Boolean text terms follow the query's AND/OR/NOT structure.
+
+    Regression guard: the record matcher pre-required every collected
+    text term before the compiled predicate ran, so OR branches were
+    conjoined and negated terms could never match anything.
+    """
+    compiled = _compile_query(case.query_text)
+    query = agentgrep.SearchQuery(
+        terms=compiled.text_terms,
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=agentgrep.AGENT_CHOICES,
+        limit=None,
+        compiled=compiled,
+    )
+    record = _make_record(agent="codex", text=case.record_text)
+
+    assert agentgrep.matches_record(record, query) is case.expected
+
+
+def test_search_emits_every_or_branch_match(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An OR query returns records matching either branch end-to-end."""
+    source = _make_source(agent="codex", path="/tmp/codex.jsonl")
+    records = [
+        _make_record(agent="codex", text="only bliss here"),
+        _make_record(agent="codex", text="pure serenity"),
+        _make_record(agent="codex", text="nothing relevant"),
+    ]
+
+    def _stub_iter(
+        source: agentgrep.SourceHandle,
+    ) -> t.Iterator[agentgrep.SearchRecord]:
+        yield from records
+
+    monkeypatch.setattr(
+        agentgrep,
+        "discover_sources",
+        lambda *args, **kwargs: [source],
+    )
+    monkeypatch.setattr(
+        agentgrep,
+        "plan_search_sources",
+        lambda query, sources, backends, **kwargs: list(sources),
+    )
+    monkeypatch.setattr(agentgrep, "direct_source_matches", lambda *args, **kwargs: True)
+    monkeypatch.setattr(agentgrep, "iter_source_records", _stub_iter)
+
+    compiled = _compile_query("agent:codex (bliss OR serenity)")
+    query = agentgrep.SearchQuery(
+        terms=compiled.text_terms,
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=agentgrep.AGENT_CHOICES,
+        limit=None,
+        compiled=compiled,
+    )
+
+    emitted = [
+        event.record.text
+        for event in agentgrep.iter_search_events(pathlib.Path.home(), query)
+        if isinstance(event, ag_events.RecordEmitted)
+    ]
+
+    assert sorted(emitted) == ["only bliss here", "pure serenity"]
 
 
 def test_text_matches_finds_needle_in_model_and_path(
@@ -224,6 +359,7 @@ def test_text_matches_finds_needle_in_model_and_path(
         "plan_search_sources",
         lambda query, sources, backends, **kwargs: list(sources),
     )
+    monkeypatch.setattr(agentgrep, "direct_source_matches", lambda *args, **kwargs: True)
     monkeypatch.setattr(agentgrep, "iter_source_records", _stub_iter)
 
     compiled = _compile_query("agent:codex sonnet")
@@ -340,6 +476,7 @@ def test_engine_routes_query_through_predicates(
         "plan_search_sources",
         lambda query, sources, backends, **kwargs: list(sources),
     )
+    monkeypatch.setattr(agentgrep, "direct_source_matches", lambda *args, **kwargs: True)
     monkeypatch.setattr(agentgrep, "iter_source_records", _stub_iter)
 
     compiled = _compile_query(case.query)
@@ -520,6 +657,7 @@ def test_eager_search_path_prunes_sources_before_reading(
         "plan_search_sources",
         lambda query, sources_, backends, **kwargs: list(sources_),
     )
+    monkeypatch.setattr(agentgrep, "direct_source_matches", lambda *args, **kwargs: True)
     monkeypatch.setattr(agentgrep, "iter_source_records", _stub_iter)
 
     compiled = _compile_query(case.query)
@@ -664,7 +802,15 @@ def test_fast_entrypoints_request_metadata_free_discovery(
         "plan_search_sources",
         lambda query, sources, backends, **kwargs: list(sources),
     )
-    monkeypatch.setattr(agentgrep, "iter_source_records", lambda source: iter(()))
+    monkeypatch.setattr(agentgrep, "direct_source_matches", lambda *args, **kwargs: True)
+
+    def iter_no_records(
+        _source: agentgrep.SourceHandle,
+        **_kwargs: object,
+    ) -> t.Iterator[agentgrep.SearchRecord]:
+        return iter(())
+
+    monkeypatch.setattr(agentgrep, "iter_source_records", iter_no_records)
 
     query = agentgrep.SearchQuery(
         terms=("bliss",),
@@ -1090,6 +1236,7 @@ def test_compiled_none_falls_through_to_legacy_path(
         "plan_search_sources",
         lambda query, sources, backends, **kwargs: list(sources),
     )
+    monkeypatch.setattr(agentgrep, "direct_source_matches", lambda *args, **kwargs: True)
     monkeypatch.setattr(
         agentgrep,
         "iter_source_records",

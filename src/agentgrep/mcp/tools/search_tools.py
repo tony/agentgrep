@@ -10,9 +10,11 @@ import typing as t
 
 from pydantic import Field
 
+from agentgrep import events as ag_events
 from agentgrep.mcp._library import (
     READONLY_TAGS,
     AgentSelector,
+    SearchRecordLike,
     SearchScopeName,
     agentgrep,
     normalize_agent_selection,
@@ -30,9 +32,15 @@ from agentgrep.mcp.models import (
 if t.TYPE_CHECKING:
     from fastmcp import FastMCP
 
+    from agentgrep._engine.runtime import SearchRuntime
 
-def _search_sync(request: SearchRequestModel) -> SearchToolResponse:
-    """Run the blocking search work and build a typed response."""
+
+async def _search_async(
+    request: SearchRequestModel,
+    *,
+    runtime: SearchRuntime | None = None,
+) -> SearchToolResponse:
+    """Run the async search stream and build a typed response."""
     query = agentgrep.SearchQuery(
         terms=tuple(request.terms),
         scope=request.scope,
@@ -42,7 +50,19 @@ def _search_sync(request: SearchRequestModel) -> SearchToolResponse:
         agents=normalize_agent_selection(request.agent),
         limit=request.limit,
     )
-    records = agentgrep.run_search_query(pathlib.Path.home(), query)
+    records = [
+        t.cast("SearchRecordLike", event.record)
+        async for event in agentgrep.aiter_search_events(
+            pathlib.Path.home(),
+            query,
+            runtime=runtime,
+        )
+        if isinstance(event, ag_events.RecordEmitted)
+    ]
+    # The inline execution driver emits records per source, not in final
+    # result order; restore the newest-first contract the list-returning
+    # search path guarantees before building the response.
+    records.sort(key=agentgrep.search_record_sort_key, reverse=True)
     return SearchToolResponse(
         query=SearchToolQuery(
             terms=request.terms,
@@ -79,7 +99,7 @@ def _recent_sessions_sync(request: RecentSessionsRequest) -> RecentSessionsRespo
     )
 
 
-def register(mcp: FastMCP) -> None:
+def register(mcp: FastMCP, *, runtime: SearchRuntime | None = None) -> None:
     """Register search-domain tools."""
 
     @mcp.tool(
@@ -123,7 +143,7 @@ def register(mcp: FastMCP) -> None:
             case_sensitive=case_sensitive,
             limit=limit,
         )
-        return await asyncio.to_thread(_search_sync, request)
+        return await _search_async(request, runtime=runtime)
 
     _ = search_tool
 

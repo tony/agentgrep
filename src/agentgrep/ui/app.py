@@ -37,6 +37,7 @@ from agentgrep import (
     SearchQuery,
     SearchRecord,
     SearchRequestedPayload,
+    SearchRuntime,
     StaticLike,
     StreamingAppLike,
     StreamingRecordsBatch,
@@ -881,6 +882,7 @@ def build_streaming_ui_app(
             self.home = home
             self.query = query
             self.control = control
+            self._runtime = SearchRuntime.with_source_scan_cache()
             self.initial_search_text: str | None = initial_search_text
             self.all_records = []
             self.filtered_records = []
@@ -1070,6 +1072,7 @@ def build_streaming_ui_app(
                     self.query,
                     progress=progress,
                     control=self.control,
+                    runtime=self._runtime,
                 )
             except BaseException as exc:
                 streaming = t.cast("StreamingAppLike", t.cast("object", self))

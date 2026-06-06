@@ -35,17 +35,42 @@ def _write_codex_session(
     return path
 
 
-def _make_query(*, limit: int | None = 10) -> agentgrep.SearchQuery:
+def _write_claude_project_session(
+    home: pathlib.Path,
+    *,
+    name: str,
+    text: str,
+) -> pathlib.Path:
+    """Write a synthetic Claude project session the engine can parse."""
+    path = home / ".claude" / "projects" / "-synthetic-project" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "type": "user",
+        "sessionId": "session-1",
+        "message": {"role": "user", "content": text},
+    }
+    path.write_text(json.dumps(payload) + "\n")
+    return path
+
+
+def _make_query(
+    *,
+    limit: int | None = 10,
+    scope: agentgrep.SearchScope = "prompts",
+    match_surface: agentgrep.SearchMatchSurface = "haystack",
+    agents: tuple[agentgrep.AgentName, ...] = ("codex",),
+) -> agentgrep.SearchQuery:
     """Build a narrow search query for profiling fixtures."""
     return agentgrep.SearchQuery(
         terms=("tmux",),
-        scope="prompts",
+        scope=scope,
         any_term=False,
         regex=False,
         case_sensitive=False,
-        agents=("codex",),
+        agents=agents,
         limit=limit,
         dedupe=True,
+        match_surface=match_surface,
     )
 
 
@@ -135,6 +160,47 @@ SEARCH_PLAN_SAMPLE_CASES: tuple[SearchPlanSampleCase, ...] = (
 )
 
 
+class ProfilePhysicalPlanCase(t.NamedTuple):
+    """Expected physical strategy observed by one profiled search query."""
+
+    test_id: str
+    scope: agentgrep.SearchScope
+    match_surface: agentgrep.SearchMatchSurface
+    expected_strategy: str
+
+
+PROFILE_PHYSICAL_PLAN_CASES: tuple[ProfilePhysicalPlanCase, ...] = (
+    ProfilePhysicalPlanCase(
+        test_id="grep-conversations-jsonl-bounded-raw-prefilter",
+        scope="conversations",
+        match_surface="text",
+        expected_strategy="jsonl_bounded_reverse_raw_text_prefilter",
+    ),
+)
+
+
+class ProfileStrategyGroupCase(t.NamedTuple):
+    """Expected physical strategy group observed by one profiled search query."""
+
+    test_id: str
+    match_surface: agentgrep.SearchMatchSurface
+    expected_strategy: str
+
+
+PROFILE_STRATEGY_GROUP_CASES: tuple[ProfileStrategyGroupCase, ...] = (
+    ProfileStrategyGroupCase(
+        test_id="grep-jsonl-bounded-raw-prefilter",
+        match_surface="text",
+        expected_strategy="jsonl_bounded_reverse_raw_text_prefilter",
+    ),
+    ProfileStrategyGroupCase(
+        test_id="search-jsonl-bounded-haystack-prefilter",
+        match_surface="haystack",
+        expected_strategy="jsonl_bounded_reverse_haystack_raw_text_prefilter",
+    ),
+)
+
+
 def _samples_named(profile: EngineProfile, name: str) -> tuple[EnginePhaseSample, ...]:
     """Return profile samples matching ``name``."""
     return tuple(sample for sample in profile.samples if sample.name == name)
@@ -198,6 +264,93 @@ def test_profile_search_query_reports_source_level_samples(
     assert "private-token" not in payload
 
 
+@pytest.mark.parametrize(
+    "case",
+    PROFILE_PHYSICAL_PLAN_CASES,
+    ids=[c.test_id for c in PROFILE_PHYSICAL_PLAN_CASES],
+)
+def test_profile_search_query_preserves_physical_source_strategy(
+    case: ProfilePhysicalPlanCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Search profiling measures physical-plan execution strategies."""
+    _ = _write_claude_project_session(tmp_path, name="match.jsonl", text="tmux prompt")
+    query = _make_query(
+        scope=case.scope,
+        match_surface=case.match_surface,
+        agents=("claude",),
+    )
+
+    profiled = profile_search_query(tmp_path, query)
+
+    samples = _samples_named(profiled.profile, "search.collect.source")
+    assert len(samples) == 1
+    assert samples[0].attributes["agentgrep_source_strategy"] == case.expected_strategy
+
+
+@pytest.mark.parametrize(
+    "case",
+    PROFILE_STRATEGY_GROUP_CASES,
+    ids=[c.test_id for c in PROFILE_STRATEGY_GROUP_CASES],
+)
+def test_profile_search_query_reports_physical_strategy_groups(
+    case: ProfileStrategyGroupCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Search profiling summarizes physical strategies without source paths."""
+    _ = _write_claude_project_session(tmp_path, name="match.jsonl", text="tmux private-token")
+    query = _make_query(
+        scope="conversations",
+        match_surface=case.match_surface,
+        agents=("claude",),
+    )
+
+    profiled = profile_search_query(
+        tmp_path,
+        query,
+        backends=agentgrep.BackendSelection(find_tool=None, grep_tool=None, json_tool=None),
+    )
+
+    samples = _samples_named(profiled.profile, "search.plan.strategy_group")
+    assert len(samples) == 1
+    sample = samples[0]
+    assert sample.attributes["agentgrep_agent"] == "claude"
+    assert sample.attributes["agentgrep_adapter_id"] == "claude.projects_jsonl.v1"
+    assert sample.attributes["agentgrep_source_kind"] == "jsonl"
+    assert sample.attributes["agentgrep_source_strategy"] == case.expected_strategy
+    assert sample.attributes["agentgrep_source_count"] == 1
+
+    payload = json.dumps(profiled.to_payload(), sort_keys=True)
+    assert str(tmp_path) not in payload
+    assert "private-token" not in payload
+
+
+def test_profile_search_query_reports_planner_decisions(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Search profiling records privacy-safe planner decision summaries."""
+    _ = _write_claude_project_session(tmp_path, name="match.jsonl", text="tmux private-token")
+
+    profiled = profile_search_query(
+        tmp_path,
+        _make_query(scope="conversations", match_surface="text", agents=("claude",)),
+        backends=agentgrep.BackendSelection(find_tool=None, grep_tool="rg", json_tool=None),
+    )
+
+    samples = _samples_named(profiled.profile, "search.plan.decision")
+    decisions = {sample.attributes["agentgrep_planner_decision"]: sample for sample in samples}
+    assert decisions["scope_prune"].attributes["agentgrep_source_count"] == 1
+    assert decisions["root_prefilter_skipped"].attributes["agentgrep_source_count"] == 1
+    assert (
+        decisions["root_prefilter_skipped"].attributes["agentgrep_planner_detail"]
+        == "bounded_append_only_jsonl"
+    )
+
+    payload = json.dumps(profiled.to_payload(), sort_keys=True)
+    assert str(tmp_path) not in payload
+    assert "private-token" not in payload
+
+
 def test_profile_find_query_reports_filter_source_samples(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -220,6 +373,73 @@ def test_profile_find_query_reports_filter_source_samples(
 
     payload = json.dumps(profiled.to_payload(), sort_keys=True)
     assert str(tmp_path) not in payload
+
+
+class ProfileFindTypeDiscoveryCase(t.NamedTuple):
+    """Expected discovery role narrowing for one profiled find type filter."""
+
+    test_id: str
+    type_filter: str
+    expected_store_roles: frozenset[agentgrep.StoreRole] | None
+
+
+PROFILE_FIND_TYPE_DISCOVERY_CASES: tuple[ProfileFindTypeDiscoveryCase, ...] = (
+    ProfileFindTypeDiscoveryCase(
+        test_id="all-keeps-default-discovery",
+        type_filter="all",
+        expected_store_roles=None,
+    ),
+    ProfileFindTypeDiscoveryCase(
+        test_id="prompts-discovers-prompt-history",
+        type_filter="prompts",
+        expected_store_roles=agentgrep.PROMPT_HISTORY_STORE_ROLES,
+    ),
+    ProfileFindTypeDiscoveryCase(
+        test_id="history-discovers-prompt-history",
+        type_filter="history",
+        expected_store_roles=agentgrep.PROMPT_HISTORY_STORE_ROLES,
+    ),
+    ProfileFindTypeDiscoveryCase(
+        test_id="sessions-discovers-conversations",
+        type_filter="sessions",
+        expected_store_roles=agentgrep.CONVERSATION_STORE_ROLES,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    PROFILE_FIND_TYPE_DISCOVERY_CASES,
+    ids=[c.test_id for c in PROFILE_FIND_TYPE_DISCOVERY_CASES],
+)
+def test_profile_find_query_pushes_type_filter_into_discovery(
+    case: ProfileFindTypeDiscoveryCase,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Find profiling measures the same narrowed discovery path as runtime find."""
+    observed_store_roles: list[frozenset[agentgrep.StoreRole] | None] = []
+
+    def discover_sources(
+        *_args: object,
+        **kwargs: object,
+    ) -> list[agentgrep.SourceHandle]:
+        observed_store_roles.append(
+            t.cast("frozenset[agentgrep.StoreRole] | None", kwargs.get("store_roles")),
+        )
+        return []
+
+    monkeypatch.setattr(agentgrep, "discover_sources", discover_sources)
+
+    _ = profile_find_query(
+        tmp_path,
+        ("codex",),
+        pattern=None,
+        limit=None,
+        type_filter=t.cast("agentgrep.FindSourceTypeFilter", case.type_filter),
+    )
+
+    assert observed_store_roles == [case.expected_store_roles]
 
 
 @pytest.mark.parametrize(

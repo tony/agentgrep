@@ -19,6 +19,8 @@ import typing as t
 
 if t.TYPE_CHECKING:
     import agentgrep
+    from agentgrep._engine.planning import PlannerDecision, SourceTask
+    from agentgrep._engine.runtime import SearchRuntime
     from agentgrep.query.compile import CompiledQuery
 
 type ProfileAttribute = str | int | float | bool | None
@@ -205,9 +207,11 @@ def profile_search_query(
     *,
     backends: agentgrep.BackendSelection | None = None,
     control: agentgrep.SearchControl | None = None,
+    runtime: SearchRuntime | None = None,
 ) -> ProfiledSearchResult:
     """Run a search query and return engine-only phase timings."""
     import agentgrep
+    from agentgrep._engine.planning import build_physical_search_plan
 
     profiler = EngineProfiler()
     active_backends = agentgrep.select_backends() if backends is None else backends
@@ -235,30 +239,33 @@ def profile_search_query(
             agentgrep_scope=query.scope,
             agentgrep_source_count=len(sources_for_plan),
         ):
-            planned_sources = agentgrep.plan_search_sources(
+            plan = build_physical_search_plan(
                 query,
                 sources_for_plan,
                 active_backends,
                 control=active_control,
             )
+        _record_planner_decisions(profiler, plan.decisions)
+        _record_source_task_groups(profiler, "search.plan.strategy_group", plan.tasks)
         if active_control.answer_now_requested():
             records: list[agentgrep.SearchRecord] = []
         else:
             with profiler.span(
                 "search.collect",
                 agentgrep_scope=query.scope,
-                agentgrep_source_count=len(planned_sources),
+                agentgrep_source_count=len(plan.tasks),
             ):
-                records = agentgrep.collect_search_records(
+                records = agentgrep.collect_search_records_from_plan(
                     query,
-                    planned_sources,
+                    plan,
                     control=active_control,
+                    runtime=runtime,
                 )
     return ProfiledSearchResult(
         records=tuple(records),
         profile=profiler.snapshot(),
         discovered_source_count=len(sources),
-        planned_source_count=len(planned_sources),
+        planned_source_count=len(plan.tasks),
     )
 
 
@@ -288,6 +295,7 @@ def profile_find_query(
                 agents,
                 active_backends,
                 version_detail="none",
+                store_roles=agentgrep.find_store_roles_for_type_filter(type_filter),
             )
         _record_source_groups(profiler, "find.discover.group", sources)
         with profiler.span(
@@ -386,6 +394,67 @@ def _record_source_groups(
             agentgrep_path_kind=path_kind,
             agentgrep_source_kind=source_kind,
             agentgrep_source_count=source_count,
+        )
+
+
+def _record_source_task_groups(
+    profiler: EngineProfiler,
+    name: str,
+    tasks: cabc.Sequence[SourceTask],
+) -> None:
+    """Record aggregate physical source-task groups without source paths."""
+    group_counts: collections.Counter[tuple[str, str, str, str, str, str, str, int]] = (
+        collections.Counter(
+            (
+                task.source.agent,
+                task.source.store,
+                task.source.adapter_id,
+                task.source.path_kind,
+                task.source.source_kind,
+                task.strategy,
+                task.source_group,
+                task.cost_hint,
+            )
+            for task in tasks
+        )
+    )
+    for (
+        agent,
+        store,
+        adapter_id,
+        path_kind,
+        source_kind,
+        strategy,
+        source_group,
+        cost_hint,
+    ), source_count in sorted(group_counts.items()):
+        profiler.record(
+            name,
+            0.0,
+            agentgrep_agent=agent,
+            agentgrep_store=store,
+            agentgrep_adapter_id=adapter_id,
+            agentgrep_path_kind=path_kind,
+            agentgrep_source_kind=source_kind,
+            agentgrep_source_strategy=strategy,
+            agentgrep_source_group=source_group,
+            agentgrep_source_cost_hint=cost_hint,
+            agentgrep_source_count=source_count,
+        )
+
+
+def _record_planner_decisions(
+    profiler: EngineProfiler,
+    decisions: cabc.Sequence[PlannerDecision],
+) -> None:
+    """Record privacy-safe physical planner decision summaries."""
+    for decision in decisions:
+        profiler.record(
+            "search.plan.decision",
+            0.0,
+            agentgrep_planner_decision=decision.name,
+            agentgrep_source_count=decision.source_count,
+            agentgrep_planner_detail=decision.detail,
         )
 
 

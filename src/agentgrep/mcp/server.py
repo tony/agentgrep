@@ -7,6 +7,7 @@ from fastmcp.server.middleware.error_handling import ErrorHandlingMiddleware
 from fastmcp.server.middleware.response_limiting import ResponseLimitingMiddleware
 from fastmcp.server.middleware.timing import TimingMiddleware
 
+from agentgrep._engine.runtime import SearchRuntime
 from agentgrep.mcp._library import SERVER_VERSION
 from agentgrep.mcp.instructions import _build_instructions
 from agentgrep.mcp.middleware import AgentgrepAuditMiddleware
@@ -45,7 +46,8 @@ def build_mcp_server() -> FastMCP:
         ],
         on_duplicate="error",
     )
-    register_tools(mcp)
+    runtime = SearchRuntime.with_source_scan_cache()
+    register_tools(mcp, runtime=runtime)
     register_resources(mcp)
     register_prompts(mcp)
     return mcp
