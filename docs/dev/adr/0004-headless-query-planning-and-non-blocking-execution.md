@@ -170,6 +170,10 @@ Planning must choose the cheapest correct adapter strategy:
 - Raw text prefiltering only when it preserves parser semantics. Literal
   JSONL prefilters compare both raw and JSON-escaped query terms, while keeping
   Unicode-escaped lines conservative so decoded text matches are not lost.
+  Haystack JSONL prefilters may only run for adapters whose per-record text,
+  role, model, title, and source path are available without cross-record
+  context; source-path matches are treated as static terms so path-only matches
+  cannot be filtered before decoding.
 - Bounded newest-first JSONL scans for limited append-only sources when record
   predicates do not require metadata that only appears earlier in the file.
 - Full Python parsing when the store format, query semantics, or privacy rules
