@@ -288,9 +288,11 @@ metadata. Profile runs include phase spans such as `search.discover`,
 `search.plan`, and `search.collect`, plus source-level spans such as
 `search.discover.group`, `search.plan.prefilter_root`,
 `search.plan.direct_source`, `search.collect.source`, and
-`find.filter.source`. Those source-level spans report agent, store,
-adapter, path kind, source kind, counts, and match decisions without
-including prompt text, raw argv, or local absolute paths.
+`find.filter.source`. Concurrent source execution also reports
+`search.collect.scheduler` with driver, worker, submitted, completed,
+skipped, and emitted counts when the frontier driver is selected. Those spans
+report agent, store, adapter, path kind, source kind, counts, and match
+decisions without including prompt text, raw argv, or local absolute paths.
 
 ## Templating
 

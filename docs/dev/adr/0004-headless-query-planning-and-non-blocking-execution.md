@@ -133,6 +133,12 @@ APIs until implemented and documented.
   for CLI/TUI/MCP. Future process or worker drivers must keep the same logical
   and physical plan contracts.
 
+`SourceScanResult`
+: The source-local execution boundary. A worker scans one `SourceTask` and
+  returns candidates, counters, and timing. Global dedupe, top-K ordering,
+  frontier pruning, and record emission stay with the driver so worker
+  completion order cannot change search semantics.
+
 `SearchEvent` / `FindEvent`
 : The stream contract. Existing events remain the baseline. Future events may
   add planning, warning, cancellation, or profile summaries only if old
@@ -169,11 +175,15 @@ Planning must choose the cheapest correct adapter strategy:
 
 Execution must be cancellable and bounded. Drivers poll cancellation between
 source tasks and record batches. A task that declares bounded source behavior
-can emit records while scanning and stop before older records are parsed once
-the unique result limit is satisfied. Interactive CLI runs may map blank Enter
-to an answer-early request. The TUI maps Esc/Ctrl-C and replacement searches
-to the same cancellation contract. MCP maps client cancellation or timeout to
-the same contract when the framework exposes it.
+can stop before older records are parsed once the source-local candidate limit
+is satisfied. The frontier driver can run eligible source tasks concurrently,
+merges candidates on the owner thread, and stops submitting lower-priority
+bounded sources once the global result limit is filled. Profiling controls the
+default worker count because local JSONL parsing is often CPU-bound enough that
+unbounded worker fan-out hurts latency. Interactive CLI runs may map blank
+Enter to an answer-early request. The TUI maps Esc/Ctrl-C and replacement
+searches to the same cancellation contract. MCP maps client cancellation or
+timeout to the same contract when the framework exposes it.
 
 The TUI must remain non-blocking. It may receive events on the event loop, but
 broad discovery, subprocess work, SQLite reads, JSON/JSONL parsing, ranking,
@@ -202,8 +212,8 @@ The planner and executor must be easy to profile. Each run can emit:
 - discovery counts by agent, store, adapter, and path kind;
 - planner decisions: predicates pushed down, sources pruned, direct paths
   chosen, fallback reasons;
-- execution counts: sources started, records seen, matches seen, emitted
-  records, dedupe drops, cancellation point;
+- execution counts: sources started, submitted, completed, skipped, records
+  seen, matches seen, emitted records, dedupe drops, cancellation point;
 - timing spans: discovery, planning, per-source execution, output sink
   backpressure, subprocess families;
 - warning summaries: unsupported pushdown, malformed sources, unavailable

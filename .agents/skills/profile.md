@@ -40,7 +40,8 @@ prompt text, raw argv, or local absolute paths.
    prompt text or local paths.
 6. For bottleneck diagnosis, inspect source-level spans:
    `search.discover.group`, `search.plan.prefilter_root`,
-   `search.plan.direct_source`, `search.collect.source`, and
+   `search.plan.direct_source`, `search.collect.source`,
+   optional `search.collect.scheduler`, and
    `find.filter.source`.
 
 Example:

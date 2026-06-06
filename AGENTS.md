@@ -329,8 +329,11 @@ fields when a local profile file needs to be distinguished from benchmark rows
 or future fixture-only CI artifacts. Engine profiles include coarse phase spans
 and source-level spans such as `search.discover.group`,
 `search.plan.prefilter_root`, `search.plan.direct_source`,
-`search.collect.source`, and `find.filter.source`; those spans carry
-agent/store/adapter/count metadata without prompt text or local paths.
+`search.collect.source`, optional `search.collect.scheduler`, and
+`find.filter.source`; those spans carry agent/store/adapter/count metadata
+without prompt text or local paths. `search.collect.scheduler` is the driver
+summary for source-level scheduling and reports worker, submitted, completed,
+skipped, and emitted counts.
 
 Use `scripts/benchmark.py` for timed benchmark sweeps. The profiler-oriented
 benchmark entries are named `profile-engine-*`; each committed benchmark name
