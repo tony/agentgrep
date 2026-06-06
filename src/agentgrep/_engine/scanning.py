@@ -22,10 +22,15 @@ if t.TYPE_CHECKING:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class _SourceScanCacheKey:
-    """Hashable identity for one reusable source scan."""
+    """Hashable identity for one reusable source scan.
+
+    ``source_fingerprint`` carries the primary file's size and mtime plus
+    the SQLite ``-wal`` sidecar fingerprint (``None`` for non-SQLite
+    sources and for SQLite databases without a write-ahead log).
+    """
 
     source_identity: tuple[str, str, str, str, str]
-    source_fingerprint: tuple[int, int]
+    source_fingerprint: tuple[int, int, tuple[int, int] | None]
     query_shape: tuple[object, ...]
     task_shape: tuple[object, ...]
 
@@ -331,6 +336,18 @@ def _source_scan_cache_key(
         stat_result = task.source.path.stat()
     except OSError:
         return None
+    wal_fingerprint: tuple[int, int] | None = None
+    if task.source.source_kind == "sqlite":
+        # WAL-mode commits land in the -wal sidecar while the main file's
+        # size and mtime stay frozen until a checkpoint, yet read-only
+        # connections see those rows — so the sidecar must invalidate too.
+        wal_path = task.source.path.with_name(task.source.path.name + "-wal")
+        try:
+            wal_stat = wal_path.stat()
+        except OSError:
+            wal_fingerprint = None
+        else:
+            wal_fingerprint = (wal_stat.st_size, wal_stat.st_mtime_ns)
     return _SourceScanCacheKey(
         source_identity=(
             task.source.agent,
@@ -339,7 +356,7 @@ def _source_scan_cache_key(
             task.source.source_kind,
             str(task.source.path),
         ),
-        source_fingerprint=(stat_result.st_size, stat_result.st_mtime_ns),
+        source_fingerprint=(stat_result.st_size, stat_result.st_mtime_ns, wal_fingerprint),
         query_shape=(
             query.terms,
             query.scope,

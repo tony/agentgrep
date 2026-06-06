@@ -81,6 +81,8 @@ def _source(
     agent: agentgrep.AgentName = "codex",
     store: str = "codex.sessions",
     adapter_id: str = "codex.sessions_jsonl.v1",
+    path_kind: agentgrep.PathKind = "session_file",
+    source_kind: agentgrep.SourceKind = "jsonl",
 ) -> agentgrep.SourceHandle:
     """Build a synthetic source handle for execution tests."""
     return agentgrep.SourceHandle(
@@ -88,8 +90,8 @@ def _source(
         store=store,
         adapter_id=adapter_id,
         path=path,
-        path_kind="session_file",
-        source_kind="jsonl",
+        path_kind=path_kind,
+        source_kind=source_kind,
         search_root=None,
         mtime_ns=0,
     )
@@ -956,6 +958,132 @@ def test_scan_source_task_exempts_cross_file_adapters(
     stats = runtime.source_scan_cache.stats()
     assert stats.stores == 0
     assert stats.hits == 0
+
+
+class WalCacheCase(t.NamedTuple):
+    """One SQLite WAL sidecar shape and its expected cache behavior."""
+
+    test_id: str
+    wal_before_first_scan: bool
+    mutate_wal_between_scans: bool
+    expected_second_hit: bool
+
+
+WAL_CACHE_CASES: tuple[WalCacheCase, ...] = (
+    WalCacheCase(
+        test_id="wal-appears-invalidates",
+        wal_before_first_scan=False,
+        mutate_wal_between_scans=True,
+        expected_second_hit=False,
+    ),
+    WalCacheCase(
+        test_id="wal-grows-invalidates",
+        wal_before_first_scan=True,
+        mutate_wal_between_scans=True,
+        expected_second_hit=False,
+    ),
+    WalCacheCase(
+        test_id="wal-stable-still-hits",
+        wal_before_first_scan=True,
+        mutate_wal_between_scans=False,
+        expected_second_hit=True,
+    ),
+    WalCacheCase(
+        test_id="no-wal-still-hits",
+        wal_before_first_scan=False,
+        mutate_wal_between_scans=False,
+        expected_second_hit=True,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    WAL_CACHE_CASES,
+    ids=[c.test_id for c in WAL_CACHE_CASES],
+)
+def test_source_scan_cache_fingerprints_sqlite_wal_sidecars(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: WalCacheCase,
+) -> None:
+    """WAL sidecar changes invalidate cached SQLite scans.
+
+    Regression guard: WAL-mode commits land in the -wal sidecar while the
+    main database file's size and mtime stay frozen until a checkpoint, so
+    a fingerprint covering only the primary file kept serving pre-commit
+    records to long-lived runtimes.
+    """
+    query = _query(limit=5)
+    db_path = tmp_path / "state.vscdb"
+    db_path.write_text("main-db", encoding="utf-8")
+    wal_path = tmp_path / "state.vscdb-wal"
+    if case.wal_before_first_scan:
+        wal_path.write_text("wal-frame-a", encoding="utf-8")
+    source = _source(
+        db_path,
+        agent="cursor-ide",
+        store="cursor-ide.workspace_state",
+        adapter_id="cursor_ide.state_vscdb_modern.v1",
+        path_kind="sqlite_db",
+        source_kind="sqlite",
+    )
+    task = _plan(query, source, strategy="direct_full_scan").tasks[0]
+    scan_calls = 0
+
+    def iter_batches(
+        _query: agentgrep.SearchQuery,
+        task: SourceTask,
+        *,
+        index: int,
+        total: int,
+        control: agentgrep.SearchControl,
+        progress: agentgrep.SearchProgress | None = None,
+        batch_size: int = 32,
+    ) -> cabc.Iterator[SourceScanBatch]:
+        _ = control, progress, batch_size
+        nonlocal scan_calls
+        scan_calls += 1
+        yield SourceScanBatch(
+            index=index,
+            total=total,
+            source=task.source,
+            task=task,
+            records=(_record(task.source, "sqlite bliss", "2026-01-02T00:00:00Z"),),
+            records_seen=1,
+            matches_seen=1,
+            duration_seconds=0.0,
+            is_final=True,
+        )
+
+    monkeypatch.setattr(scanning, "iter_source_task_batches", iter_batches)
+    runtime = agentgrep.SearchRuntime.with_source_scan_cache()
+    main_stat = db_path.stat()
+
+    first = scanning.scan_source_task(
+        query,
+        task,
+        index=1,
+        total=1,
+        control=agentgrep.SearchControl(),
+        runtime=runtime,
+    )
+    if case.mutate_wal_between_scans:
+        with wal_path.open("a", encoding="utf-8") as handle:
+            handle.write("wal-frame-b")
+        os.utime(db_path, ns=(main_stat.st_atime_ns, main_stat.st_mtime_ns))
+    second = scanning.scan_source_task(
+        query,
+        task,
+        index=1,
+        total=1,
+        control=agentgrep.SearchControl(),
+        runtime=runtime,
+    )
+
+    assert first.cache_hit is False
+    assert second.cache_hit is case.expected_second_hit
+    assert scan_calls == (1 if case.expected_second_hit else 2)
 
 
 def test_source_scan_cache_never_serves_stale_paste_expansions(
