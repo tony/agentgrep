@@ -1,4 +1,4 @@
-"""Tests for the persistent DB index layer."""
+"""Tests for the persistent DB, insights, and suggestions layers."""
 
 from __future__ import annotations
 
@@ -11,6 +11,8 @@ import pytest
 
 import agentgrep
 from agentgrep.db import DbRuntime, DbStatus, DbSyncProgress, SyncCoverage, SyncResult
+from agentgrep.insights import InsightEngine, VariantEdge
+from agentgrep.suggestions import SuggestionArtifact, SuggestionEngine
 
 
 class CachedSearchCase(t.NamedTuple):
@@ -462,6 +464,122 @@ def test_run_search_query_respects_cache_mode(
     assert [record.text for record in records] == list(case.expected_texts)
 
 
+def test_insight_engine_records_duplicate_variant_edges(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Similarity insights persist deterministic variant edges with confidence."""
+    first_path = tmp_path / "one.jsonl"
+    second_path = tmp_path / "two.jsonl"
+    first_path.write_text("{}", encoding="utf-8")
+    second_path.write_text("{}", encoding="utf-8")
+    first = _source(first_path)
+    second = _source(second_path)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    _ = runtime.sync_records(
+        (
+            (first, (_record(first, "Run ruff check before committing.", session_id="one"),)),
+            (second, (_record(second, "run ruff check before committing", session_id="two"),)),
+        ),
+    )
+
+    result = InsightEngine(runtime.store).run_similarity()
+    edges = InsightEngine(runtime.store).list_variant_edges()
+
+    assert result.variant_edges == 1
+    assert runtime.status().features == 2
+    assert len(edges) == 1
+    assert isinstance(edges[0], VariantEdge)
+    assert edges[0].variant_type == "exact_duplicate"
+    assert edges[0].confidence == pytest.approx(1.0)
+
+
+def test_insight_engine_counts_and_limits_variant_edges(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Variant edge listing can be paged without materializing every row."""
+    source_path = tmp_path / "source.jsonl"
+    source_path.write_text("{}", encoding="utf-8")
+    source = _source(source_path)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    _ = runtime.sync_records(
+        (
+            (
+                source,
+                tuple(
+                    _record(
+                        source,
+                        "Run ruff check before committing.",
+                        session_id=f"duplicate-{index}",
+                    )
+                    for index in range(4)
+                ),
+            ),
+        ),
+    )
+    _ = InsightEngine(runtime.store).run_similarity()
+    engine = InsightEngine(runtime.store)
+
+    edges = engine.list_variant_edges(limit=2)
+
+    assert engine.count_variant_edges() == 6
+    assert len(edges) == 2
+
+
+def test_variant_edge_listing_uses_confidence_order_index(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The default variant-edge page can stop at the requested limit."""
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+
+    rows = runtime.store.connection.execute(
+        """
+        EXPLAIN QUERY PLAN
+        SELECT edge_id, run_id, left_record_id, right_record_id,
+               variant_type, confidence, explanation
+        FROM variant_edges
+        ORDER BY confidence DESC, edge_id
+        LIMIT 1
+        """,
+    ).fetchall()
+    plan = "\n".join(str(row["detail"]) for row in rows)
+
+    assert "idx_variant_edges_confidence_edge_id" in plan
+    assert "USE TEMP B-TREE" not in plan
+
+
+def test_insight_engine_reports_similarity_activity(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Similarity analysis reports the current backend phase."""
+    first_path = tmp_path / "one.jsonl"
+    second_path = tmp_path / "two.jsonl"
+    first_path.write_text("{}", encoding="utf-8")
+    second_path.write_text("{}", encoding="utf-8")
+    first = _source(first_path)
+    second = _source(second_path)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    _ = runtime.sync_records(
+        (
+            (first, (_record(first, "Run ruff check before committing.", session_id="one"),)),
+            (second, (_record(second, "run ruff check before committing", session_id="two"),)),
+        ),
+    )
+    progress = InsightActivityProgress()
+
+    _ = InsightEngine(runtime.store).run_similarity(progress=progress)
+
+    labels = [activity for activity, _detail in progress.activities]
+    first_seen_labels = tuple(dict.fromkeys(labels))
+    assert first_seen_labels == (
+        "checking feature cache",
+        "building feature signatures",
+        "writing feature cache",
+        "loading similarity rows",
+        "grouping duplicate prompts",
+        "writing similarity artifacts",
+    )
+
+
 def test_feature_refresh_reports_incremental_build_and_write_progress(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -497,6 +615,78 @@ def test_feature_refresh_reports_incremental_build_and_write_progress(
     ]
     assert build_details[-1] == "3/3 rows built (100.0%, 1w)"
     assert write_details[-1] == "3/3 rows written (100.0%)"
+
+
+def test_similarity_analysis_reports_artifact_write_progress(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Similarity analysis reports cluster and edge write counters."""
+    source_path = tmp_path / "source.jsonl"
+    source_path.write_text("{}", encoding="utf-8")
+    source = _source(source_path)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    _ = runtime.sync_records(
+        (
+            (
+                source,
+                tuple(
+                    _record(
+                        source,
+                        "Run ruff check before committing.",
+                        session_id=f"duplicate-{index}",
+                    )
+                    for index in range(4)
+                ),
+            ),
+        ),
+    )
+    progress = InsightActivityProgress()
+
+    result = InsightEngine(runtime.store).run_similarity(progress=progress)
+
+    write_details = [
+        detail
+        for activity, detail in progress.activities
+        if activity == "writing similarity artifacts"
+    ]
+    assert result.variant_edges == 6
+    assert write_details[-1] == "1/1 clusters, 6/6 edges"
+
+
+def test_suggestion_engine_renders_review_only_instruction_suggestion(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Omission suggestions are persisted artifacts and do not edit the target file."""
+    source_path = tmp_path / "source.jsonl"
+    target_path = tmp_path / "AGENTS.md"
+    source_path.write_text("{}", encoding="utf-8")
+    target_path.write_text("Run pytest before committing.\n", encoding="utf-8")
+    source = _source(source_path)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    _ = runtime.sync_records(
+        (
+            (
+                source,
+                (
+                    _record(
+                        source,
+                        "Run ruff check before committing.",
+                        session_id="instruction-source",
+                    ),
+                ),
+            ),
+        ),
+    )
+    insights = InsightEngine(runtime.store)
+    _ = insights.run_omissions(target_path=target_path, target_text=target_path.read_text())
+
+    suggestions = SuggestionEngine(runtime.store).create_from_omissions(target_path=target_path)
+
+    assert len(suggestions) == 1
+    assert isinstance(suggestions[0], SuggestionArtifact)
+    assert "Run ruff check before committing." in suggestions[0].body
+    assert "reload" in suggestions[0].reload_note.casefold()
+    assert target_path.read_text(encoding="utf-8") == "Run pytest before committing.\n"
 
 
 def test_resync_keeps_fts_index_consistent(tmp_path: pathlib.Path) -> None:

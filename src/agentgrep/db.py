@@ -855,6 +855,9 @@ class DbStore:
                     signals_json TEXT NOT NULL,
                     PRIMARY KEY(suggestion_id, record_id, evidence_role)
                 );
+
+                CREATE INDEX IF NOT EXISTS idx_variant_edges_confidence_edge_id
+                ON variant_edges(confidence DESC, edge_id);
                 """,
             )
             _ = self._execute(

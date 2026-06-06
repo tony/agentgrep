@@ -87,6 +87,8 @@ def build_capabilities() -> CapabilitiesModel:
             "inspect_result",
             "validate_query",
             "db_status",
+            "insights_list",
+            "suggestions_list",
         ],
         resources=[
             "agentgrep://capabilities",
