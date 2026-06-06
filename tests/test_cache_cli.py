@@ -978,6 +978,14 @@ def test_insights_list_uses_limited_pages_and_count_metadata(
         def close(self) -> None:
             """Accept the command's close call."""
 
+        def __enter__(self) -> RuntimeStub:
+            """Return the stub for context-managed reads."""
+            return self
+
+        def __exit__(self, *exc_info: object) -> None:
+            """Close on context exit."""
+            self.close()
+
     class EngineStub:
         """Insight engine stub that records list limits."""
 
@@ -1009,9 +1017,16 @@ def test_insights_list_uses_limited_pages_and_count_metadata(
             type(self).omission_limit = limit
             return [{"finding_id": "finding-1"}]
 
+    import agentgrep.db as agentgrep_db
     import agentgrep.insights as insights_module
 
-    monkeypatch.setattr(render, "_open_db_runtime", lambda _path: RuntimeStub())
+    db_file = pathlib.Path(os.environ["AGENTGREP_DB"])
+    db_file.touch()
+    monkeypatch.setattr(
+        agentgrep_db.DbRuntime,
+        "open_readonly",
+        classmethod(lambda _cls, _path=None: RuntimeStub()),
+    )
     monkeypatch.setattr(insights_module, "InsightEngine", EngineStub)
     args = agentgrep.InsightsArgs(
         action="list",
@@ -1049,6 +1064,14 @@ def test_insights_list_default_output_is_human_summary(
 
         def close(self) -> None:
             """Accept the command's close call."""
+
+        def __enter__(self) -> RuntimeStub:
+            """Return the stub for context-managed reads."""
+            return self
+
+        def __exit__(self, *exc_info: object) -> None:
+            """Close on context exit."""
+            self.close()
 
     class EngineStub:
         """Insight engine stub with one persisted edge sample."""
@@ -1088,9 +1111,16 @@ def test_insights_list_default_output_is_human_summary(
             assert limit == 7
             return []
 
+    import agentgrep.db as agentgrep_db
     import agentgrep.insights as insights_module
 
-    monkeypatch.setattr(render, "_open_db_runtime", lambda _path: RuntimeStub())
+    db_file = pathlib.Path(os.environ["AGENTGREP_DB"])
+    db_file.touch()
+    monkeypatch.setattr(
+        agentgrep_db.DbRuntime,
+        "open_readonly",
+        classmethod(lambda _cls, _path=None: RuntimeStub()),
+    )
     monkeypatch.setattr(insights_module, "InsightEngine", EngineStub)
     args = agentgrep.InsightsArgs(
         action="list",
@@ -1129,6 +1159,14 @@ def test_insights_explain_uses_counts_without_listing_rows(
         def close(self) -> None:
             """Accept the command's close call."""
 
+        def __enter__(self) -> RuntimeStub:
+            """Return the stub for context-managed reads."""
+            return self
+
+        def __exit__(self, *exc_info: object) -> None:
+            """Close on context exit."""
+            self.close()
+
     class EngineStub:
         """Insight engine stub that rejects unbounded list calls."""
 
@@ -1155,9 +1193,16 @@ def test_insights_explain_uses_counts_without_listing_rows(
             msg = "explain should not list omission findings"
             raise AssertionError(msg)
 
+    import agentgrep.db as agentgrep_db
     import agentgrep.insights as insights_module
 
-    monkeypatch.setattr(render, "_open_db_runtime", lambda _path: RuntimeStub())
+    db_file = pathlib.Path(os.environ["AGENTGREP_DB"])
+    db_file.touch()
+    monkeypatch.setattr(
+        agentgrep_db.DbRuntime,
+        "open_readonly",
+        classmethod(lambda _cls, _path=None: RuntimeStub()),
+    )
     monkeypatch.setattr(insights_module, "InsightEngine", EngineStub)
     args = agentgrep.InsightsArgs(
         action="explain",
@@ -2120,23 +2165,25 @@ def test_insights_command_closes_runtime_on_exit(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Insights actions close their per-call SQLite connection."""
+    """Insights read actions open read-only and close their connection."""
     import agentgrep.db as agentgrep_db
 
+    db_path = tmp_path / "agentgrep.sqlite"
+    agentgrep_db.DbRuntime.open(db_path).close()
     opened: list[agentgrep_db.DbRuntime] = []
-    real_open = agentgrep_db.DbRuntime.open
+    real_open_readonly = agentgrep_db.DbRuntime.open_readonly
 
-    def capturing_open(
+    def capturing_open_readonly(
         db_path: pathlib.Path | str | None = None,
     ) -> agentgrep_db.DbRuntime:
-        runtime = real_open(db_path)
+        runtime = real_open_readonly(db_path)
         opened.append(runtime)
         return runtime
 
-    monkeypatch.setattr(agentgrep_db.DbRuntime, "open", capturing_open)
+    monkeypatch.setattr(agentgrep_db.DbRuntime, "open_readonly", capturing_open_readonly)
     args = agentgrep.InsightsArgs(
         action="explain",
-        db_path=str(tmp_path / "agentgrep.sqlite"),
+        db_path=str(db_path),
         kind="all",
         target=None,
         output_mode="json",
@@ -2149,3 +2196,49 @@ def test_insights_command_closes_runtime_on_exit(
     assert len(opened) == 1
     with pytest.raises(sqlite3.ProgrammingError):
         _ = opened[0].store.connection.execute("SELECT 1")
+
+
+def test_insights_list_on_missing_db_reports_empty_without_creating(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Insights list on a missing cache reports zeros and creates nothing."""
+    db_path = tmp_path / "missing.sqlite"
+    args = agentgrep.InsightsArgs(
+        action="list",
+        db_path=str(db_path),
+        kind="all",
+        target=None,
+        output_mode="json",
+    )
+
+    exit_code = agentgrep.run_insights_command(args)
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert exit_code == 0
+    assert payload["variant_edges"]["total"] == 0
+    assert payload["omission_findings"]["truncated"] is False
+    assert not db_path.exists()
+
+
+def test_suggestions_list_on_missing_db_reports_empty_without_creating(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Suggestions list on a missing cache reports zero rows, creates nothing."""
+    db_path = tmp_path / "missing.sqlite"
+    args = agentgrep.SuggestionsArgs(
+        action="list",
+        db_path=str(db_path),
+        suggestion_id=None,
+        target=None,
+        output_mode="json",
+    )
+
+    exit_code = agentgrep.run_suggestions_command(args)
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert json.loads(captured.out) == []
+    assert not db_path.exists()
