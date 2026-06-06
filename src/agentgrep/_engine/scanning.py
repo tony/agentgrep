@@ -304,6 +304,17 @@ def remember_source_scan(
     cache._remember(cache_key, result)
 
 
+_CACHE_EXEMPT_ADAPTERS: frozenset[str] = frozenset({"claude.history_jsonl.v1"})
+"""Adapters whose record text depends on files outside ``source.path``.
+
+The cache fingerprint stats only the primary file, so adapters that
+expand sibling files into record text — Claude history resolves
+``paste-cache/<contentHash>.txt`` references — could serve stale
+expansions when an auxiliary file changes without the primary file's
+mtime moving.
+"""
+
+
 def _source_scan_cache_key(
     query: agentgrep.SearchQuery,
     task: SourceTask,
@@ -313,6 +324,8 @@ def _source_scan_cache_key(
     if cache is None:
         return None
     if query.compiled is not None:
+        return None
+    if task.source.adapter_id in _CACHE_EXEMPT_ADAPTERS:
         return None
     try:
         stat_result = task.source.path.stat()

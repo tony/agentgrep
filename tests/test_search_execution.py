@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import collections.abc as cabc
+import json
+import os
 import pathlib
 import queue
 import threading
@@ -893,6 +895,140 @@ def test_scan_source_task_uses_runtime_source_scan_cache(
         stats = case.runtime.source_scan_cache.stats()
         assert stats.hits == case.expected_hits
         assert stats.misses == case.expected_misses
+
+
+def test_scan_source_task_exempts_cross_file_adapters(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Adapters reading sibling files never populate the source scan cache."""
+    query = _query(limit=2)
+    source = _source(
+        tmp_path / "history.jsonl",
+        agent="claude",
+        store="claude.history",
+        adapter_id="claude.history_jsonl.v1",
+    )
+    source.path.write_text("first\n", encoding="utf-8")
+    task = _plan(query, source, strategy="direct_full_scan").tasks[0]
+    batch_reads = 0
+
+    def iter_batches(
+        _query: agentgrep.SearchQuery,
+        task: SourceTask,
+        *,
+        index: int,
+        total: int,
+        control: agentgrep.SearchControl,
+        progress: agentgrep.SearchProgress | None = None,
+        batch_size: int = 32,
+    ) -> cabc.Iterator[SourceScanBatch]:
+        _ = control, progress, batch_size
+        nonlocal batch_reads
+        batch_reads += 1
+        yield SourceScanBatch(
+            index=index,
+            total=total,
+            source=task.source,
+            task=task,
+            records=(_record(task.source, "history bliss", "2026-01-02T00:00:00Z"),),
+            records_seen=1,
+            matches_seen=1,
+            duration_seconds=0.0,
+            is_final=True,
+        )
+
+    monkeypatch.setattr(scanning, "iter_source_task_batches", iter_batches)
+    runtime = agentgrep.SearchRuntime.with_source_scan_cache()
+
+    for index in (1, 2):
+        scanning.scan_source_task(
+            query,
+            task,
+            index=index,
+            total=2,
+            control=agentgrep.SearchControl(),
+            runtime=runtime,
+        )
+
+    assert batch_reads == 2
+    assert runtime.source_scan_cache is not None
+    stats = runtime.source_scan_cache.stats()
+    assert stats.stores == 0
+    assert stats.hits == 0
+
+
+def test_source_scan_cache_never_serves_stale_paste_expansions(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Paste-cache changes are visible even when history.jsonl is untouched.
+
+    Regression guard: the cache fingerprint stats only the primary file,
+    so a cached Claude history scan kept serving the pre-expansion text
+    after a referenced paste-cache file appeared.
+    """
+    paste_hash = "0123456789abcdef"
+    history_path = tmp_path / "history.jsonl"
+    history_path.write_text(
+        json.dumps(
+            {
+                "display": "Review [Pasted text #1]",
+                "pastedContents": {
+                    "1": {"id": 1, "type": "text", "contentHash": paste_hash},
+                },
+                "timestamp": 1_700_000_000_000,
+                "project": "/synthetic/project",
+                "sessionId": "session-1",
+            },
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    source = _source(
+        history_path,
+        agent="claude",
+        store="claude.history",
+        adapter_id="claude.history_jsonl.v1",
+    )
+    query = agentgrep.SearchQuery(
+        terms=("review",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("claude",),
+        limit=None,
+    )
+    task = _plan(query, source, strategy="direct_full_scan").tasks[0]
+    runtime = agentgrep.SearchRuntime.with_source_scan_cache()
+    stat_before = history_path.stat()
+
+    first = scanning.scan_source_task(
+        query,
+        task,
+        index=1,
+        total=1,
+        control=agentgrep.SearchControl(),
+        runtime=runtime,
+    )
+    paste_dir = tmp_path / "paste-cache"
+    paste_dir.mkdir()
+    (paste_dir / f"{paste_hash}.txt").write_text(
+        "expanded serenity content",
+        encoding="utf-8",
+    )
+    os.utime(history_path, ns=(stat_before.st_atime_ns, stat_before.st_mtime_ns))
+    second = scanning.scan_source_task(
+        query,
+        task,
+        index=1,
+        total=1,
+        control=agentgrep.SearchControl(),
+        runtime=runtime,
+    )
+
+    assert "[Pasted text #1]" in first.records[0].text
+    assert "expanded serenity content" in second.records[0].text
 
 
 def test_source_scan_cache_evicts_least_recently_used_entry(
