@@ -483,3 +483,110 @@ def test_cross_file_adapters_always_resync(tmp_path: pathlib.Path) -> None:
 
     assert result.sources_synced == 1
     assert result.sources_skipped == 0
+
+
+class SubstringParityCase(t.NamedTuple):
+    """Named case for cached-search substring parity with the live engine."""
+
+    test_id: str
+    term: str
+    expected_texts: tuple[str, ...]
+
+
+SUBSTRING_PARITY_CASES: tuple[SubstringParityCase, ...] = (
+    SubstringParityCase(
+        test_id="token-prefix",
+        term="ruf",
+        expected_texts=("Run ruff check.", "the scruffy dog"),
+    ),
+    SubstringParityCase(
+        test_id="mid-token",
+        term="uff",
+        expected_texts=("Run ruff check.", "the scruffy dog"),
+    ),
+    SubstringParityCase(
+        test_id="token-and-substring",
+        term="ruff",
+        expected_texts=("Run ruff check.", "the scruffy dog"),
+    ),
+    SubstringParityCase(
+        test_id="uppercase-query",
+        term="RUFF",
+        expected_texts=("Run ruff check.", "the scruffy dog"),
+    ),
+    SubstringParityCase(
+        test_id="short-term-scan",
+        term="ty",
+        expected_texts=("run ty check",),
+    ),
+    SubstringParityCase(
+        test_id="non-ascii-term-scan",
+        term="café",
+        expected_texts=("visit the café notes",),
+    ),
+    SubstringParityCase(
+        test_id="genuine-zero",
+        term="zsh-plugin",
+        expected_texts=(),
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    SUBSTRING_PARITY_CASES,
+    ids=[case.test_id for case in SUBSTRING_PARITY_CASES],
+)
+def test_cached_search_matches_live_substring_semantics(
+    case: SubstringParityCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Cached term search returns exactly what live substring matching would."""
+    source_path = tmp_path / "session.jsonl"
+    source_path.write_text("ruff", encoding="utf-8")
+    source = _source(source_path)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    texts = (
+        "Run ruff check.",
+        "the scruffy dog",
+        "run ty check",
+        "visit the café notes",
+        "unrelated pytest line",
+    )
+    _ = runtime.sync_records(
+        (
+            (
+                source,
+                tuple(
+                    _record(source, text, session_id=f"session-{index}")
+                    for index, text in enumerate(texts)
+                ),
+            ),
+        ),
+    )
+
+    found = sorted(record.text for record in runtime.search_records(_query(case.term)))
+
+    assert found == sorted(case.expected_texts)
+
+
+def test_schema_version_mismatch_rebuilds_cache(tmp_path: pathlib.Path) -> None:
+    """A cache written by a different schema version is rebuilt on open."""
+    db_path = tmp_path / "agentgrep.sqlite"
+    source_path = tmp_path / "session.jsonl"
+    source_path.write_text("ruff", encoding="utf-8")
+    source = _source(source_path)
+    runtime = DbRuntime.open(db_path)
+    _ = runtime.sync_records(
+        ((source, (_record(source, "Run ruff check before committing."),)),),
+    )
+    with runtime.store.connection:
+        _ = runtime.store.connection.execute(
+            "UPDATE meta SET value = '999' WHERE key = 'schema_version'",
+        )
+    runtime.store.close()
+
+    reopened = DbRuntime.open(db_path)
+
+    assert reopened.status().records == 0
+    assert reopened.status().sources == 0
