@@ -36,6 +36,24 @@ $ uv run agentgrep grep "docs deploy" --scope all
 
 Allowed values are `prompts`, `conversations`, and `all`.
 
+## DB cache
+
+Search-shaped commands default to `--cache auto`. When an agentgrep
+database already exists and can answer the query, agentgrep can use the
+SQLite index; otherwise it falls back to the live scanner.
+
+Force a fresh live scan for cold-path checks and benchmarks:
+
+```console
+$ uv run agentgrep grep "release" --no-cache
+```
+
+Require the DB path:
+
+```console
+$ uv run agentgrep search "release" --cache require
+```
+
 ## Output
 
 Text output is optimized for terminal reading:
