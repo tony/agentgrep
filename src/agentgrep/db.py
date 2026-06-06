@@ -1946,7 +1946,15 @@ class DbRuntime:
 
 
 def simhash_hex(text: str) -> str:
-    """Return a deterministic 64-bit SimHash as fixed-width hex."""
+    """Return a deterministic 64-bit SimHash as fixed-width hex.
+
+    Examples
+    --------
+    >>> simhash_hex("Run ruff check.")
+    'a33bc7c107168285'
+    >>> simhash_hex("")
+    '0000000000000000'
+    """
     return _simhash_hex_from_tokens(token_set(text))
 
 
@@ -1965,7 +1973,15 @@ def _simhash_hex_from_tokens(tokens: cabc.Iterable[str]) -> str:
 
 
 def minhash_signature(text: str, *, size: int = 16) -> list[str]:
-    """Return a small deterministic MinHash-style signature."""
+    """Return a small deterministic MinHash-style signature.
+
+    Examples
+    --------
+    >>> minhash_signature("ruff check", size=4)[0]
+    '7cd7bdec93a8d7d1'
+    >>> minhash_signature("", size=4)
+    []
+    """
     return _minhash_signature_from_tokens(token_set(text), size=size)
 
 
