@@ -5,11 +5,40 @@ from __future__ import annotations
 import collections.abc as cabc
 import dataclasses
 import json
+import os
+import threading
 import time
 
 import agentgrep
 from agentgrep._engine.matching import compile_record_matcher
 from agentgrep._engine.planning import SourceTask
+
+_SOURCE_SCAN_CACHE_ENV = "AGENTGREP_EXPERIMENTAL_SOURCE_SCAN_CACHE"
+_SOURCE_SCAN_CACHE_MAX_ENTRIES = 512
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _SourceScanCacheKey:
+    """Hashable identity for one reusable source scan."""
+
+    source_identity: tuple[str, str, str, str, str]
+    source_fingerprint: tuple[int, int]
+    query_shape: tuple[object, ...]
+    task_shape: tuple[object, ...]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _SourceScanCacheEntry:
+    """Reusable scan payload without run-specific coordinates."""
+
+    records: tuple[agentgrep.SearchRecord, ...]
+    records_seen: int
+    matches_seen: int
+    batch_count: int
+
+
+_SOURCE_SCAN_CACHE_LOCK = threading.Lock()
+_SOURCE_SCAN_CACHE: dict[_SourceScanCacheKey, _SourceScanCacheEntry] = {}
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -25,6 +54,7 @@ class SourceScanResult:
     matches_seen: int
     duration_seconds: float
     batch_count: int = 1
+    cache_hit: bool = False
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -52,6 +82,30 @@ def scan_source_task(
     progress: agentgrep.SearchProgress | None = None,
 ) -> SourceScanResult:
     """Scan one source task and return source-local matching candidates."""
+    cache_started_at = time.perf_counter()
+    cache_key = _source_scan_cache_key(query, task)
+    if cache_key is not None and not control.answer_now_requested():
+        with _SOURCE_SCAN_CACHE_LOCK:
+            cached = _SOURCE_SCAN_CACHE.get(cache_key)
+        _record_source_scan_cache_sample(
+            task,
+            hit=cached is not None,
+            duration_seconds=time.perf_counter() - cache_started_at,
+        )
+        if cached is not None:
+            return SourceScanResult(
+                index=index,
+                total=total,
+                source=task.source,
+                task=task,
+                records=cached.records,
+                records_seen=cached.records_seen,
+                matches_seen=cached.matches_seen,
+                duration_seconds=time.perf_counter() - cache_started_at,
+                batch_count=cached.batch_count,
+                cache_hit=True,
+            )
+
     source_started_at = time.perf_counter()
     matching_records: list[agentgrep.SearchRecord] = []
     records_seen = 0
@@ -72,7 +126,7 @@ def scan_source_task(
 
     if task.limit_behavior == "drain_source":
         matching_records.sort(key=agentgrep.search_record_sort_key, reverse=True)
-    return SourceScanResult(
+    result = SourceScanResult(
         index=index,
         total=total,
         source=task.source,
@@ -82,6 +136,99 @@ def scan_source_task(
         matches_seen=matches_seen,
         duration_seconds=time.perf_counter() - source_started_at,
         batch_count=batch_count,
+    )
+    if cache_key is not None and not control.answer_now_requested():
+        _remember_source_scan_result(cache_key, result)
+    return result
+
+
+def clear_source_scan_cache() -> None:
+    """Clear the experimental in-process source scan cache."""
+    with _SOURCE_SCAN_CACHE_LOCK:
+        _SOURCE_SCAN_CACHE.clear()
+
+
+def _source_scan_cache_key(
+    query: agentgrep.SearchQuery,
+    task: SourceTask,
+) -> _SourceScanCacheKey | None:
+    """Return a cache key for opt-in reusable source scans."""
+    if not _source_scan_cache_enabled():
+        return None
+    if query.compiled is not None:
+        return None
+    try:
+        stat_result = task.source.path.stat()
+    except OSError:
+        return None
+    return _SourceScanCacheKey(
+        source_identity=(
+            task.source.agent,
+            task.source.store,
+            task.source.adapter_id,
+            task.source.source_kind,
+            str(task.source.path),
+        ),
+        source_fingerprint=(stat_result.st_size, stat_result.st_mtime_ns),
+        query_shape=(
+            query.terms,
+            query.scope,
+            query.any_term,
+            query.regex,
+            query.case_sensitive,
+            query.agents,
+            query.limit,
+            query.dedupe,
+            query.match_surface,
+        ),
+        task_shape=(
+            task.strategy,
+            task.record_order,
+            task.limit_behavior,
+            task.limit_policy.mode,
+        ),
+    )
+
+
+def _source_scan_cache_enabled() -> bool:
+    """Return whether the experimental source scan cache is enabled."""
+    return os.environ.get(_SOURCE_SCAN_CACHE_ENV) == "1"
+
+
+def _remember_source_scan_result(
+    key: _SourceScanCacheKey,
+    result: SourceScanResult,
+) -> None:
+    """Store a completed source scan in the bounded in-process cache."""
+    entry = _SourceScanCacheEntry(
+        records=result.records,
+        records_seen=result.records_seen,
+        matches_seen=result.matches_seen,
+        batch_count=result.batch_count,
+    )
+    with _SOURCE_SCAN_CACHE_LOCK:
+        if len(_SOURCE_SCAN_CACHE) >= _SOURCE_SCAN_CACHE_MAX_ENTRIES:
+            oldest_key = next(iter(_SOURCE_SCAN_CACHE), None)
+            if oldest_key is not None:
+                del _SOURCE_SCAN_CACHE[oldest_key]
+        _SOURCE_SCAN_CACHE[key] = entry
+
+
+def _record_source_scan_cache_sample(
+    task: SourceTask,
+    *,
+    hit: bool,
+    duration_seconds: float,
+) -> None:
+    """Record a privacy-safe cache lookup timing sample."""
+    agentgrep._record_engine_profile_sample(
+        "search.collect.source_scan_cache",
+        duration_seconds,
+        **agentgrep._source_profile_attributes(task.source),
+        agentgrep_cache_hit=hit,
+        agentgrep_source_strategy=task.strategy,
+        agentgrep_source_group=task.source_group,
+        agentgrep_source_cost_hint=task.cost_hint,
     )
 
 
@@ -180,6 +327,7 @@ def record_source_profile_sample(result: SourceScanResult) -> None:
         agentgrep_records_seen=result.records_seen,
         agentgrep_matches_seen=result.matches_seen,
         agentgrep_batch_count=result.batch_count,
+        agentgrep_source_scan_cache_hit=result.cache_hit,
     )
 
 

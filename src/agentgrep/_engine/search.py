@@ -33,8 +33,13 @@ flipping the control flag.
 
 from __future__ import annotations
 
+import asyncio
 import collections.abc as cabc
+import concurrent.futures
+import contextlib
+import dataclasses
 import pathlib
+import threading
 import time
 import typing as t
 
@@ -47,6 +52,18 @@ if t.TYPE_CHECKING:
         SearchQuery,
         events as _events,
     )
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _AsyncSearchError:
+    """Worker-thread error sent through the async event queue."""
+
+    error: BaseException
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _AsyncSearchDone:
+    """Worker-thread completion sentinel sent through the async event queue."""
 
 
 def iter_search_events(
@@ -145,3 +162,89 @@ def iter_search_events(
         match_count=match_count,
         elapsed_seconds=time.monotonic() - start_time,
     )
+
+
+async def aiter_search_events(
+    home: pathlib.Path,
+    query: SearchQuery,
+    *,
+    backends: BackendSelection | None = None,
+    control: SearchControl | None = None,
+    max_queue_size: int = 32,
+) -> cabc.AsyncIterator[_events.SearchEvent]:
+    """Yield search events from a worker thread through an async queue.
+
+    Parameters
+    ----------
+    home : pathlib.Path
+        User home directory passed through to :func:`iter_search_events`.
+    query : agentgrep.SearchQuery
+        Compiled query — terms, agents, dedupe choice, limit.
+    backends : agentgrep.BackendSelection or None
+        Optional backend override, mostly used by tests.
+    control : agentgrep.SearchControl or None
+        Optional cooperative cancellation handle.
+    max_queue_size : int
+        Bounded async queue size used to apply consumer backpressure.
+
+    Yields
+    ------
+    agentgrep.events.SearchEvent
+        The same event sequence produced by :func:`iter_search_events`.
+    """
+    active_control = agentgrep.SearchControl() if control is None else control
+    queue_size = max(1, max_queue_size)
+    loop = asyncio.get_running_loop()
+    delivery_closed = threading.Event()
+    event_queue: asyncio.Queue[_events.SearchEvent | _AsyncSearchDone | _AsyncSearchError] = (
+        asyncio.Queue(maxsize=queue_size)
+    )
+
+    def put_from_worker(
+        item: _events.SearchEvent | _AsyncSearchDone | _AsyncSearchError,
+        *,
+        force: bool = False,
+    ) -> None:
+        while not delivery_closed.is_set():
+            if not force and active_control.answer_now_requested():
+                return
+            future = asyncio.run_coroutine_threadsafe(event_queue.put(item), loop)
+            try:
+                future.result(timeout=0.05)
+            except concurrent.futures.TimeoutError:
+                future.cancel()
+                continue
+            return
+
+    def run_worker() -> None:
+        try:
+            for event in iter_search_events(
+                home,
+                query,
+                backends=backends,
+                control=active_control,
+            ):
+                put_from_worker(event)
+                if active_control.answer_now_requested():
+                    break
+        except BaseException as error:
+            put_from_worker(_AsyncSearchError(error=error), force=True)
+        finally:
+            put_from_worker(_AsyncSearchDone(), force=True)
+
+    worker_task = asyncio.create_task(asyncio.to_thread(run_worker))
+    try:
+        while True:
+            item = await event_queue.get()
+            if isinstance(item, _AsyncSearchDone):
+                break
+            if isinstance(item, _AsyncSearchError):
+                raise item.error
+            yield item
+        await worker_task
+    finally:
+        if not worker_task.done():
+            delivery_closed.set()
+            active_control.request_answer_now()
+            with contextlib.suppress(Exception):
+                await worker_task
