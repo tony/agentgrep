@@ -219,7 +219,31 @@ def build_physical_search_plan(
     progress: agentgrep.SearchProgress | None = None,
     control: agentgrep.SearchControl | None = None,
 ) -> PhysicalSearchPlan:
-    """Build the executable source-task plan for a search query."""
+    """Build the executable source-task plan for a search query.
+
+    Parameters
+    ----------
+    query : agentgrep.SearchQuery
+        Compiled query — terms, agents, dedup choice, limit.
+    sources : Iterable[agentgrep.SourceHandle]
+        Discovered candidate sources, before scope pruning and
+        prefilter admission.
+    backends : agentgrep.BackendSelection
+        Detected external tools; the grep tool gates root
+        prefiltering.
+    progress : agentgrep.SearchProgress or None
+        Progress sink for prefilter phases. ``None`` uses the no-op
+        sink.
+    control : agentgrep.SearchControl or None
+        Optional control handle polled during prefiltering so
+        planning can stop early.
+
+    Returns
+    -------
+    PhysicalSearchPlan
+        Ordered source tasks with per-source strategies plus the
+        planner decisions that produced them.
+    """
     import agentgrep
 
     logical = build_logical_search_plan(query)

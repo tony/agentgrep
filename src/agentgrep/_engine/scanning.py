@@ -175,7 +175,34 @@ def scan_source_task(
     progress: agentgrep.SearchProgress | None = None,
     runtime: SearchRuntime | None = None,
 ) -> SourceScanResult:
-    """Scan one source task and return source-local matching candidates."""
+    """Scan one source task and return source-local matching candidates.
+
+    Parameters
+    ----------
+    query : agentgrep.SearchQuery
+        Compiled query — terms, agents, dedup choice, limit.
+    task : SourceTask
+        Planned source task naming the execution strategy.
+    index : int
+        One-based position of this source in the plan.
+    total : int
+        Number of planned sources, used for progress reporting.
+    control : agentgrep.SearchControl
+        Control handle polled between records so the scan can stop
+        early.
+    progress : agentgrep.SearchProgress or None
+        Progress sink for match counts. ``None`` skips per-record
+        progress.
+    runtime : SearchRuntime or None
+        Optional reusable runtime state; supplies the source-scan
+        cache when one is configured.
+
+    Returns
+    -------
+    SourceScanResult
+        Source-local matching records plus scan counters; served from
+        the runtime cache when a fresh entry exists.
+    """
     cache = runtime.source_scan_cache if runtime is not None else None
     cache_started_at = time.perf_counter()
     cache_key, cached = cached_source_scan_lookup(
@@ -348,7 +375,33 @@ def iter_source_task_batches(
     progress: agentgrep.SearchProgress | None = None,
     batch_size: int = 32,
 ) -> cabc.Iterator[SourceScanBatch]:
-    """Yield source-local candidate batches for one planned source task."""
+    """Yield source-local candidate batches for one planned source task.
+
+    Parameters
+    ----------
+    query : agentgrep.SearchQuery
+        Compiled query — terms, agents, dedup choice, limit.
+    task : SourceTask
+        Planned source task naming the execution strategy.
+    index : int
+        One-based position of this source in the plan.
+    total : int
+        Number of planned sources, used for progress reporting.
+    control : agentgrep.SearchControl
+        Control handle polled between records so the scan can stop
+        early.
+    progress : agentgrep.SearchProgress or None
+        Progress sink for match counts. ``None`` skips per-record
+        progress.
+    batch_size : int
+        Maximum records per emitted batch.
+
+    Yields
+    ------
+    SourceScanBatch
+        Incremental matching candidates; the final batch is marked
+        ``is_final`` and carries the closing counters.
+    """
     active_progress = agentgrep.noop_search_progress() if progress is None else progress
     source_started_at = time.perf_counter()
     records_seen = 0
@@ -471,7 +524,20 @@ def iter_source_task_records(
 def raw_text_skip_line_for_query(
     query: agentgrep.SearchQuery,
 ) -> cabc.Callable[[str], bool]:
-    """Return a raw JSONL line skip predicate for a text-surface query."""
+    """Return a raw JSONL line skip predicate for a text-surface query.
+
+    Parameters
+    ----------
+    query : agentgrep.SearchQuery
+        Compiled query whose literal terms gate the raw-line check.
+
+    Returns
+    -------
+    Callable[[str], bool]
+        Predicate returning ``True`` for raw lines that provably
+        cannot satisfy the query and are safe to skip before JSON
+        decode.
+    """
     return _raw_text_skip_line_for_terms(query, query.terms)
 
 
@@ -479,7 +545,24 @@ def raw_text_skip_line_for_haystack_query(
     query: agentgrep.SearchQuery,
     source: agentgrep.SourceHandle,
 ) -> cabc.Callable[[str], bool]:
-    """Return a source-aware raw skip predicate for a haystack-surface query."""
+    """Return a source-aware raw skip predicate for a haystack-surface query.
+
+    Parameters
+    ----------
+    query : agentgrep.SearchQuery
+        Compiled query whose literal terms gate the raw-line check.
+    source : agentgrep.SourceHandle
+        Source whose path metadata may already satisfy part of the
+        haystack query; path-matched terms are not required on the
+        raw line.
+
+    Returns
+    -------
+    Callable[[str], bool]
+        Predicate returning ``True`` for raw lines that provably
+        cannot satisfy the query and are safe to skip before JSON
+        decode.
+    """
     if not query.terms:
         return lambda _raw_line: False
     if query.regex:

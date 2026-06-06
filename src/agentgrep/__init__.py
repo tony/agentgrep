@@ -3887,7 +3887,31 @@ def collect_search_records_from_plan(
     control: SearchControl | None = None,
     runtime: SearchRuntime | None = None,
 ) -> list[SearchRecord]:
-    """Execute a physical search plan and collect matching records."""
+    """Execute a physical search plan and collect matching records.
+
+    Parameters
+    ----------
+    query : SearchQuery
+        Compiled query — terms, agents, dedup choice, limit.
+    plan : PhysicalSearchPlan
+        Planned source tasks from :func:`build_physical_search_plan`.
+    progress : SearchProgress or None
+        Progress sink for source and record events. ``None`` uses the
+        no-op sink.
+    control : SearchControl or None
+        Optional control handle polled between records so consumers
+        can stop the scan early.
+    runtime : SearchRuntime or None
+        Optional reusable runtime state; supplies the source-scan
+        cache when one is configured.
+
+    Returns
+    -------
+    list of SearchRecord
+        Matching records sorted newest-first by
+        :func:`search_record_sort_key`, truncated to ``query.limit``
+        when set.
+    """
     from agentgrep._engine.execution import ExecutionRecordEmitted, select_execution_driver
 
     results = [
