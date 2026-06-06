@@ -23,4 +23,5 @@ multiple adapters or public payloads.
 0013-pluggable-tui-layouts-and-workflows
 0014-result-order-limit-and-streaming-merge
 0005-persistent-agentic-db-index
+0008-cache-schema-versioning-and-rebuilds
 ```
