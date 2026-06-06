@@ -21,5 +21,7 @@ multiple adapters or public payloads.
 0011-non-blocking-tui-invariants
 0012-reusable-tui-widget-architecture
 0005-persistent-agentic-db-index
+0006-agentic-insights-engine
+0007-suggestion-skills-and-agent-instruction-changes
 0008-cache-schema-versioning-and-rebuilds
 ```
