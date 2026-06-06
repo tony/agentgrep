@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import pathlib
 
+import pytest
+
 SAMPLES_ROOT = pathlib.Path(__file__).parent / "samples"
 
 
@@ -39,3 +41,18 @@ def fixture_path(store_id: str, name: str) -> pathlib.Path:
     if not path.is_file():
         raise FileNotFoundError(path)
     return path
+
+
+@pytest.fixture(autouse=True)
+def _isolated_agentgrep_db(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Point the DB cache at a per-test path.
+
+    The cache-aware search path consults ``default_db_path()`` when no
+    explicit db path is given, so without this guard the suite would
+    read — and schema rebuilds would erase — the developer's real cache
+    under ``$XDG_CACHE_HOME``.
+    """
+    monkeypatch.setenv("AGENTGREP_DB", str(tmp_path / "agentgrep-test.sqlite"))
