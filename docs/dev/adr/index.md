@@ -9,4 +9,5 @@ multiple adapters or public payloads.
 :maxdepth: 1
 
 0001-storage-version-detection
+0002-pure-python-rust-accelerator-module-compatibility-requirements
 ```
