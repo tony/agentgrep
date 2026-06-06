@@ -180,6 +180,7 @@ class DbArgs:
     color_mode: ColorMode
     progress_mode: ProgressMode
     limit_sources: int | None = None
+    force: bool = False
 
 
 @dataclasses.dataclass(slots=True)
@@ -616,6 +617,11 @@ def create_parser(
         help="Limit the number of sources synced",
     )
     _ = db_sync_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Resync unchanged sources instead of using source_state freshness checks",
+    )
+    _ = db_sync_parser.add_argument(
         "--progress",
         choices=["auto", "always", "never"],
         default="auto",
@@ -960,6 +966,7 @@ def _build_db_args(
         color_mode=color_mode,
         progress_mode=t.cast("ProgressMode", getattr(namespace, "progress", "never")),
         limit_sources=limit_sources,
+        force=t.cast("bool", getattr(namespace, "force", False)),
     )
 
 

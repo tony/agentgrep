@@ -29,6 +29,12 @@ Limit source count while profiling:
 $ agentgrep db sync --limit-sources 50
 ```
 
+Force a full refresh even when sources look unchanged:
+
+```console
+$ agentgrep db sync --force
+```
+
 Show progress even when writing structured output:
 
 ```console
@@ -52,6 +58,13 @@ finishes before the command exits.
 
 Progress output always goes to stderr. JSON and NDJSON stdout stay
 machine-readable even when progress is forced with `--progress always`.
+
+## Freshness
+
+By default, sync uses the persisted source ledger and `source_state`
+fingerprints to skip sources whose size and mtime still match the last
+successful sync. Use `--force` when you need to rebuild records from
+unchanged source files.
 
 ## Command
 

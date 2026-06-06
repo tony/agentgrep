@@ -48,6 +48,14 @@ class DbSyncProgressFlagCase(t.NamedTuple):
     expected_color_mode: agentgrep.ColorMode
 
 
+class DbSyncModeFlagCase(t.NamedTuple):
+    """Named case for DB sync cache-refresh flag parsing."""
+
+    test_id: str
+    argv: tuple[str, ...]
+    expected_force: bool
+
+
 CACHE_FLAG_CASES: tuple[CacheFlagCase, ...] = (
     CacheFlagCase("search-default-auto", ("search", "ruff"), "auto"),
     CacheFlagCase("search-no-cache-off", ("search", "--no-cache", "ruff"), "off"),
@@ -86,6 +94,20 @@ DB_SYNC_PROGRESS_FLAG_CASES: tuple[DbSyncProgressFlagCase, ...] = (
 )
 
 
+DB_SYNC_MODE_FLAG_CASES: tuple[DbSyncModeFlagCase, ...] = (
+    DbSyncModeFlagCase(
+        test_id="default-skip-current",
+        argv=("db", "sync"),
+        expected_force=False,
+    ),
+    DbSyncModeFlagCase(
+        test_id="force-resync",
+        argv=("db", "sync", "--force"),
+        expected_force=True,
+    ),
+)
+
+
 COMMAND_GROUP_HELP_CASES: tuple[CommandGroupHelpCase, ...] = (
     CommandGroupHelpCase(
         test_id="db",
@@ -101,13 +123,27 @@ STRUCTURED_OUTPUT_CASES: tuple[StructuredOutputCase, ...] = (
         test_id="dataclass-json",
         payload=SyncResult(sources_synced=1, records_indexed=2, records_removed=0),
         output_mode="json",
-        expected_documents=({"sources_synced": 1, "records_indexed": 2, "records_removed": 0},),
+        expected_documents=(
+            {
+                "sources_synced": 1,
+                "records_indexed": 2,
+                "records_removed": 0,
+                "sources_skipped": 0,
+            },
+        ),
     ),
     StructuredOutputCase(
         test_id="dataclass-ndjson",
         payload=SyncResult(sources_synced=1, records_indexed=2, records_removed=0),
         output_mode="ndjson",
-        expected_documents=({"sources_synced": 1, "records_indexed": 2, "records_removed": 0},),
+        expected_documents=(
+            {
+                "sources_synced": 1,
+                "records_indexed": 2,
+                "records_removed": 0,
+                "sources_skipped": 0,
+            },
+        ),
     ),
     StructuredOutputCase(
         test_id="list-ndjson",
@@ -117,8 +153,18 @@ STRUCTURED_OUTPUT_CASES: tuple[StructuredOutputCase, ...] = (
         ],
         output_mode="ndjson",
         expected_documents=(
-            {"sources_synced": 1, "records_indexed": 2, "records_removed": 0},
-            {"sources_synced": 3, "records_indexed": 4, "records_removed": 1},
+            {
+                "sources_synced": 1,
+                "records_indexed": 2,
+                "records_removed": 0,
+                "sources_skipped": 0,
+            },
+            {
+                "sources_synced": 3,
+                "records_indexed": 4,
+                "records_removed": 1,
+                "sources_skipped": 0,
+            },
         ),
     ),
     StructuredOutputCase(
@@ -132,7 +178,12 @@ STRUCTURED_OUTPUT_CASES: tuple[StructuredOutputCase, ...] = (
         expected_documents=(
             {
                 "results": [
-                    {"sources_synced": 1, "records_indexed": 2, "records_removed": 0},
+                    {
+                        "sources_synced": 1,
+                        "records_indexed": 2,
+                        "records_removed": 0,
+                        "sources_skipped": 0,
+                    },
                 ],
             },
         ),
@@ -179,6 +230,19 @@ def test_db_sync_parses_progress_and_color_modes(case: DbSyncProgressFlagCase) -
     assert isinstance(parsed, agentgrep.DbArgs)
     assert parsed.progress_mode == case.expected_progress_mode
     assert parsed.color_mode == case.expected_color_mode
+
+
+@pytest.mark.parametrize(
+    "case",
+    DB_SYNC_MODE_FLAG_CASES,
+    ids=[case.test_id for case in DB_SYNC_MODE_FLAG_CASES],
+)
+def test_db_sync_parses_cache_refresh_modes(case: DbSyncModeFlagCase) -> None:
+    """DB sync exposes cache-fast defaults and explicit full-refresh flags."""
+    parsed = agentgrep.parse_args(case.argv)
+
+    assert isinstance(parsed, agentgrep.DbArgs)
+    assert parsed.force is case.expected_force
 
 
 @pytest.mark.parametrize(
@@ -262,13 +326,17 @@ def test_db_sync_forced_progress_keeps_json_stdout_clean(
     class RuntimeStub:
         """Runtime stub that exercises the sync progress protocol."""
 
+        force: bool | None = None
+
         def sync_sources(
             self,
             sources: t.Iterable[agentgrep.SourceHandle],
             *,
             control: agentgrep.SearchControl | None = None,
             progress: DbSyncProgress | None = None,
+            force: bool = False,
         ) -> SyncResult:
+            self.force = force
             source_list = tuple(sources)
             result = SyncResult(sources_synced=0, records_indexed=0, records_removed=0)
             assert control is not None
@@ -298,7 +366,8 @@ def test_db_sync_forced_progress_keeps_json_stdout_clean(
         _ = version_detail
         return [source]
 
-    monkeypatch.setattr(render, "_open_db_runtime", lambda _path: RuntimeStub())
+    runtime_stub = RuntimeStub()
+    monkeypatch.setattr(render, "_open_db_runtime", lambda _path: runtime_stub)
     monkeypatch.setattr(
         agentgrep,
         "select_backends",
@@ -313,6 +382,7 @@ def test_db_sync_forced_progress_keeps_json_stdout_clean(
         output_mode="json",
         color_mode="never",
         progress_mode="always",
+        force=True,
     )
 
     exit_code = render.run_db_command(args)
@@ -323,7 +393,9 @@ def test_db_sync_forced_progress_keeps_json_stdout_clean(
         "sources_synced": 1,
         "records_indexed": 2,
         "records_removed": 0,
+        "sources_skipped": 0,
     }
+    assert runtime_stub.force is True
     assert "DB sync" in captured.err
     assert "Sync complete:" in captured.err
 

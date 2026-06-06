@@ -40,6 +40,7 @@ class SyncResult:
     sources_synced: int
     records_indexed: int
     records_removed: int
+    sources_skipped: int = 0
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -160,7 +161,7 @@ def normalize_record_text(text: str) -> str:
 
 def token_set(text: str) -> frozenset[str]:
     """Return deterministic lowercase tokens for lightweight similarity."""
-    return frozenset(_TOKEN_RE.findall(normalize_record_text(text)))
+    return frozenset(normalize_record_text(text).split())
 
 
 def text_hash(text: str) -> str:
@@ -183,6 +184,20 @@ def source_id_for(source: agentgrep.SourceHandle) -> str:
 
 def record_id_for(source_id: str, record: agentgrep.SearchRecord) -> str:
     """Return a stable record id derived from native identity and text."""
+    return record_id_for_normalized(
+        source_id,
+        record,
+        normalized_hash=text_hash(normalize_record_text(record.text)),
+    )
+
+
+def record_id_for_normalized(
+    source_id: str,
+    record: agentgrep.SearchRecord,
+    *,
+    normalized_hash: str,
+) -> str:
+    """Return a stable record id when the normalized text hash is already known."""
     native = "\0".join(
         (
             record.session_id or "",
@@ -192,7 +207,6 @@ def record_id_for(source_id: str, record: agentgrep.SearchRecord) -> str:
             record.title or "",
         ),
     )
-    normalized_hash = text_hash(normalize_record_text(record.text))
     return text_hash("\0".join((source_id, native, normalized_hash, record.text)))
 
 
@@ -320,6 +334,9 @@ class DbStore:
 
                 CREATE VIRTUAL TABLE IF NOT EXISTS record_text_fts
                 USING fts5(title, text, content='records', content_rowid='rowid');
+
+                CREATE INDEX IF NOT EXISTS idx_records_source_id
+                ON records(source_id);
                 """
             )
             self.connection.execute(
@@ -363,7 +380,14 @@ class DbStore:
             indexed = 0
             seen_record_ids: dict[str, int] = {}
             for record in record_list:
-                base_record_id = record_id_for(source_id, record)
+                raw_hash = text_hash(record.text)
+                normalized_text = normalize_record_text(record.text)
+                normalized_hash = text_hash(normalized_text)
+                base_record_id = record_id_for_normalized(
+                    source_id,
+                    record,
+                    normalized_hash=normalized_hash,
+                )
                 duplicate_index = seen_record_ids.get(base_record_id, 0)
                 seen_record_ids[base_record_id] = duplicate_index + 1
                 record_id = (
@@ -371,7 +395,14 @@ class DbStore:
                     if duplicate_index == 0
                     else text_hash(f"{base_record_id}\0duplicate\0{duplicate_index}")
                 )
-                self._insert_record(source_id, record, record_id=record_id, now=now)
+                self._insert_record(
+                    source_id,
+                    record,
+                    record_id=record_id,
+                    now=now,
+                    raw_hash=raw_hash,
+                    normalized_hash=normalized_hash,
+                )
                 indexed += 1
             self.connection.execute(
                 """
@@ -384,6 +415,26 @@ class DbStore:
                 (source_id, source.mtime_ns, fingerprint, now),
             )
         return indexed, removed
+
+    def source_is_current(self, source: agentgrep.SourceHandle) -> bool:
+        """Return whether ``source`` has an up-to-date successful sync state."""
+        source_id = source_id_for(source)
+        fingerprint = _source_fingerprint(source)
+        row = self.connection.execute(
+            """
+            SELECT sync_status, synced_mtime_ns, synced_fingerprint
+            FROM source_state
+            WHERE source_id = ?
+            """,
+            (source_id,),
+        ).fetchone()
+        if row is None:
+            return False
+        return (
+            str(row["sync_status"]) == "ok"
+            and int(row["synced_mtime_ns"]) == source.mtime_ns
+            and str(row["synced_fingerprint"]) == fingerprint
+        )
 
     def _upsert_source(
         self,
@@ -453,10 +504,10 @@ class DbStore:
         *,
         record_id: str,
         now: str,
+        raw_hash: str,
+        normalized_hash: str,
     ) -> str:
         """Insert one normalized record and its FTS row."""
-        raw_hash = text_hash(record.text)
-        normalized_hash = text_hash(normalize_record_text(record.text))
         cursor = self.connection.execute(
             """
             INSERT INTO records(
@@ -589,6 +640,7 @@ class DbRuntime:
         *,
         control: agentgrep.SearchControl | None = None,
         progress: DbSyncProgress | None = None,
+        force: bool = False,
     ) -> SyncResult:
         """Sync explicit source/record batches into the DB."""
         result = SyncResult(
@@ -600,11 +652,11 @@ class DbRuntime:
             for source, records in batches:
                 if control is not None and control.answer_now_requested():
                     return result
-                indexed, removed = self.store.replace_source_records(source, records)
-                result = SyncResult(
-                    sources_synced=result.sources_synced + 1,
-                    records_indexed=result.records_indexed + indexed,
-                    records_removed=result.records_removed + removed,
+                result, _indexed, _removed = self._sync_one_source(
+                    source,
+                    records,
+                    result=result,
+                    force=force,
                 )
             return result
 
@@ -616,15 +668,47 @@ class DbRuntime:
                 progress.exiting_early(result)
                 return result
             progress.source_started(index, total, source, result)
-            indexed, removed = self.store.replace_source_records(source, records)
-            result = SyncResult(
-                sources_synced=result.sources_synced + 1,
-                records_indexed=result.records_indexed + indexed,
-                records_removed=result.records_removed + removed,
+            result, indexed, removed = self._sync_one_source(
+                source,
+                records,
+                result=result,
+                force=force,
             )
             progress.source_finished(index, total, source, indexed, removed, result)
         progress.finish(result)
         return result
+
+    def _sync_one_source(
+        self,
+        source: agentgrep.SourceHandle,
+        records: cabc.Iterable[agentgrep.SearchRecord],
+        *,
+        result: SyncResult,
+        force: bool,
+    ) -> tuple[SyncResult, int, int]:
+        """Sync one source and return updated counters plus source deltas."""
+        if not force and self.store.source_is_current(source):
+            return (
+                SyncResult(
+                    sources_synced=result.sources_synced,
+                    records_indexed=result.records_indexed,
+                    records_removed=result.records_removed,
+                    sources_skipped=result.sources_skipped + 1,
+                ),
+                0,
+                0,
+            )
+        indexed, removed = self.store.replace_source_records(source, records)
+        return (
+            SyncResult(
+                sources_synced=result.sources_synced + 1,
+                records_indexed=result.records_indexed + indexed,
+                records_removed=result.records_removed + removed,
+                sources_skipped=result.sources_skipped,
+            ),
+            indexed,
+            removed,
+        )
 
     def sync_sources(
         self,
@@ -632,12 +716,14 @@ class DbRuntime:
         *,
         control: agentgrep.SearchControl | None = None,
         progress: DbSyncProgress | None = None,
+        force: bool = False,
     ) -> SyncResult:
         """Read records from existing adapters and sync them into the DB."""
         return self.sync_records(
             ((source, agentgrep.iter_source_records(source)) for source in sources),
             control=control,
             progress=progress,
+            force=force,
         )
 
     def search_records(self, query: agentgrep.SearchQuery) -> list[agentgrep.SearchRecord]:

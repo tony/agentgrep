@@ -199,6 +199,8 @@ OPTIONS_EXPECTING_VALUE: frozenset[str] = frozenset(
         "--limit",
         "--color",
         "--progress",
+        "--db",
+        "--limit-sources",
     },
 )
 OPTIONS_FLAG_ONLY: frozenset[str] = frozenset(

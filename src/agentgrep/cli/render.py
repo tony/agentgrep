@@ -628,6 +628,7 @@ class DbSyncProgressSnapshot:
     sources_synced: int
     records_indexed: int
     records_removed: int
+    sources_skipped: int
     elapsed: float
 
 
@@ -669,6 +670,7 @@ class ConsoleDbSyncProgress:
         self._sources_synced = 0
         self._records_indexed = 0
         self._records_removed = 0
+        self._sources_skipped = 0
         self._finished = False
 
     def start_discovery(self) -> None:
@@ -827,6 +829,7 @@ class ConsoleDbSyncProgress:
             self._sources_synced = result.sources_synced
             self._records_indexed = result.records_indexed
             self._records_removed = result.records_removed
+            self._sources_skipped = result.sources_skipped
 
     def _ensure_tty_thread(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -936,6 +939,7 @@ class ConsoleDbSyncProgress:
                 sources_synced=self._sources_synced,
                 records_indexed=self._records_indexed,
                 records_removed=self._records_removed,
+                sources_skipped=self._sources_skipped,
                 elapsed=elapsed,
             )
 
@@ -952,7 +956,8 @@ class ConsoleDbSyncProgress:
             f"{self._colors.success('Sync complete:')} "
             f"{self._colors.warning(format_db_source_count(result.sources_synced))}, "
             f"{self._colors.warning(format_db_indexed_count(result.records_indexed))}, "
-            f"{self._colors.warning(format_db_removed_count(result.records_removed))} "
+            f"{self._colors.warning(format_db_removed_count(result.records_removed))}"
+            f"{_format_optional_db_sync_counts(result, colors=self._colors)} "
             f"({self._colors.muted(f'{self._elapsed_seconds():.1f}s elapsed')})"
         )
 
@@ -961,7 +966,8 @@ class ConsoleDbSyncProgress:
             f"{self._colors.success('Exiting early:')} "
             f"{self._colors.warning(format_db_source_count(result.sources_synced))}, "
             f"{self._colors.warning(format_db_indexed_count(result.records_indexed))}, "
-            f"{self._colors.warning(format_db_removed_count(result.records_removed))}",
+            f"{self._colors.warning(format_db_removed_count(result.records_removed))}"
+            f"{_format_optional_db_sync_counts(result, colors=self._colors)}",
         ]
         if self._answer_now_hint:
             parts.append(self._colors.white("[Press enter, exit early]"))
@@ -991,6 +997,20 @@ def format_db_removed_count(count: int) -> str:
     """Return a human-readable removed-record count."""
     suffix = "record removed" if count == 1 else "records removed"
     return f"{count} {suffix}"
+
+
+def format_db_skipped_count(count: int) -> str:
+    """Return a human-readable skipped-source count."""
+    suffix = "source skipped" if count == 1 else "sources skipped"
+    return f"{count} {suffix}"
+
+
+def _format_optional_db_sync_counts(result: SyncResult, *, colors: agentgrep.SearchColors) -> str:
+    """Return optional DB sync counters prefixed for inline summaries."""
+    parts: list[str] = []
+    if result.sources_skipped:
+        parts.append(colors.warning(format_db_skipped_count(result.sources_skipped)))
+    return ", " + ", ".join(parts) if parts else ""
 
 
 def format_db_sync_progress_line(
@@ -1049,9 +1069,11 @@ def _format_db_sync_progress_line(
             colors.warning(format_db_source_count(snapshot.sources_synced)),
             colors.warning(format_db_indexed_count(snapshot.records_indexed)),
             colors.warning(format_db_removed_count(snapshot.records_removed)),
-            colors.muted(f"{snapshot.elapsed:.1f}s"),
         ],
     )
+    if snapshot.sources_skipped:
+        parts.append(colors.warning(format_db_skipped_count(snapshot.sources_skipped)))
+    parts.append(colors.muted(f"{snapshot.elapsed:.1f}s"))
     if answer_now_hint:
         parts.append(colors.white("[Press enter, exit early]"))
     return " | ".join(parts)
@@ -1119,6 +1141,7 @@ def run_db_command(args: DbArgs) -> int:
             sources,
             control=control,
             progress=progress,
+            force=args.force,
         )
     except KeyboardInterrupt:
         if progress is not None:
