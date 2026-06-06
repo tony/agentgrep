@@ -324,6 +324,7 @@ from agentgrep.records import (
     USER_ROLES,
     AgentName,
     BackendSelection,
+    CacheMode,
     ColorMode,
     DiscoveryRoot,
     DiscoveryStoreRoles,
@@ -507,6 +508,7 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
             return run_search_command(parsed)
         if isinstance(parsed, UIArgs):
             return run_ui_command(parsed)
+        assert isinstance(parsed, FindArgs)
         return run_find_command(parsed)
     except KeyboardInterrupt:
         _write_interrupt_notice()
@@ -562,6 +564,7 @@ from agentgrep.cli.help_theme import (  # noqa: E402  (re-exports must follow ma
 )
 from agentgrep.cli.parser import (  # noqa: E402  (re-exports must follow main definition)
     CaseMode,
+    DbArgs,
     FindArgs,
     FindPatternMode,
     FindTypeFilter,
@@ -636,10 +639,12 @@ __all__ = (
     "AnsiHelpTheme",
     "AnswerNowInputListener",
     "BackendSelection",
+    "CacheMode",
     "CaseMode",
     "ColorMode",
     "ConsoleSearchProgress",
     "ContentFormat",
+    "DbArgs",
     "DiscoveryRoot",
     "DiscoverySpec",
     "DiscoveryStoreRoles",
