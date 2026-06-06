@@ -1710,7 +1710,15 @@ def format_db_pruned_count(count: int) -> str:
 
 
 def format_db_deferred_count(count: int) -> str:
-    """Return a human-readable deferred-feature count."""
+    """Return a human-readable deferred-feature count.
+
+    Examples
+    --------
+    >>> format_db_deferred_count(1)
+    '1 feature deferred'
+    >>> format_db_deferred_count(3)
+    '3 features deferred'
+    """
     suffix = "feature deferred" if count == 1 else "features deferred"
     return f"{count} {suffix}"
 
