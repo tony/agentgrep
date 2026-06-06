@@ -1,0 +1,96 @@
+"""Compiled record matching helpers."""
+
+from __future__ import annotations
+
+import dataclasses
+import re
+
+import agentgrep
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class CompiledRecordMatcher:
+    """Precomputed record matcher for one search query."""
+
+    query: agentgrep.SearchQuery
+    needles: tuple[str, ...]
+    regexes: tuple[re.Pattern[str], ...]
+    use_joined_surface: bool
+
+    def matches(self, record: agentgrep.SearchRecord) -> bool:
+        """Return whether ``record`` satisfies the compiled query."""
+        if not agentgrep.record_matches_scope(record, self.query.scope):
+            return False
+        if not self._matches_query_terms(record):
+            return False
+        compiled = self.query.compiled
+        if compiled is not None and compiled.record_predicate is not None:
+            return compiled.record_predicate(record)
+        return True
+
+    def _matches_query_terms(self, record: agentgrep.SearchRecord) -> bool:
+        """Return whether unfielded query terms match ``record``."""
+        if not self.query.terms:
+            return True
+        if self.query.regex or self.use_joined_surface:
+            return self._matches_joined_surface(record)
+        fields = _record_literal_fields(record, self.query.match_surface)
+        if self.query.case_sensitive:
+            return self._matches_literal_fields(fields)
+        return self._matches_literal_fields(tuple(field.casefold() for field in fields))
+
+    def _matches_joined_surface(self, record: agentgrep.SearchRecord) -> bool:
+        """Evaluate terms against the legacy joined text surface."""
+        surface = agentgrep.build_record_match_surface(record, self.query.match_surface)
+        if self.query.regex:
+            results = [regex.search(surface) is not None for regex in self.regexes]
+        else:
+            haystack = surface if self.query.case_sensitive else surface.casefold()
+            results = [needle in haystack for needle in self.needles]
+        return any(results) if self.query.any_term else all(results)
+
+    def _matches_literal_fields(self, fields: tuple[str, ...]) -> bool:
+        """Evaluate literal terms against already-normalized fields."""
+        results = [any(needle in field for field in fields) for needle in self.needles]
+        return any(results) if self.query.any_term else all(results)
+
+
+def compile_record_matcher(query: agentgrep.SearchQuery) -> CompiledRecordMatcher:
+    """Compile a reusable matcher for one search query."""
+    flags = 0 if query.case_sensitive else re.IGNORECASE
+    regexes = tuple(re.compile(term, flags) for term in query.terms) if query.regex else ()
+    needles = (
+        query.terms if query.case_sensitive else tuple(term.casefold() for term in query.terms)
+    )
+    return CompiledRecordMatcher(
+        query=query,
+        needles=needles,
+        regexes=regexes,
+        use_joined_surface=_needs_joined_literal_surface(query.terms),
+    )
+
+
+def matches_record(record: agentgrep.SearchRecord, query: agentgrep.SearchQuery) -> bool:
+    """Return whether ``record`` matches ``query``."""
+    return compile_record_matcher(query).matches(record)
+
+
+def _record_literal_fields(
+    record: agentgrep.SearchRecord,
+    surface: agentgrep.SearchMatchSurface,
+) -> tuple[str, ...]:
+    """Return literal-match fields for the selected match surface."""
+    if surface == "text":
+        return (record.text,)
+    return (
+        record.title or "",
+        record.text,
+        record.model or "",
+        record.role or "",
+        str(record.path),
+    )
+
+
+def _needs_joined_literal_surface(terms: tuple[str, ...]) -> bool:
+    """Return whether literal terms may depend on joined-field separators."""
+    return any("\n" in term for term in terms)

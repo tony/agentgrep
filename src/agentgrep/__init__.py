@@ -6891,14 +6891,9 @@ def matches_record(record: SearchRecord, query: SearchQuery) -> bool:
     checks. Pure-text queries skip the predicate evaluation since
     the compiler leaves ``compiled = None`` for them.
     """
-    if not record_matches_scope(record, query.scope):
-        return False
-    if not matches_text(build_record_match_surface(record, query.match_surface), query):
-        return False
-    compiled = query.compiled
-    if compiled is not None and compiled.record_predicate is not None:
-        return compiled.record_predicate(record)
-    return True
+    from agentgrep._engine.matching import matches_record as compiled_matches_record
+
+    return compiled_matches_record(record, query)
 
 
 def build_record_match_surface(record: SearchRecord, surface: SearchMatchSurface) -> str:

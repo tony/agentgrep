@@ -9,6 +9,7 @@ import time
 import typing as t
 
 import agentgrep
+from agentgrep._engine.matching import compile_record_matcher
 from agentgrep._engine.planning import PhysicalSearchPlan, SourceTask
 
 
@@ -413,6 +414,7 @@ def scan_source_task(
     matches_seen = 0
     matching_records: list[agentgrep.SearchRecord] = []
     source_deduped: set[tuple[str, str, str, str, str]] = set()
+    matcher = compile_record_matcher(query)
 
     def source_limit_satisfied() -> bool:
         return (
@@ -425,7 +427,7 @@ def scan_source_task(
         if control.answer_now_requested():
             break
         records_seen += 1
-        if agentgrep.matches_record(record, query):
+        if matcher.matches(record):
             matches_seen += 1
             matching_records.append(record)
             if query.dedupe:
