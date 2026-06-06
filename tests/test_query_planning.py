@@ -53,17 +53,20 @@ def _query(
     *,
     scope: agentgrep.SearchScope = "prompts",
     terms: tuple[str, ...] = ("tmux",),
+    regex: bool = False,
+    match_surface: agentgrep.SearchMatchSurface = "haystack",
 ) -> agentgrep.SearchQuery:
     """Build a search query for planner tests."""
     return agentgrep.SearchQuery(
         terms=terms,
         scope=scope,
         any_term=False,
-        regex=False,
+        regex=regex,
         case_sensitive=False,
         agents=("codex", "claude"),
         limit=10,
         dedupe=True,
+        match_surface=match_surface,
     )
 
 
@@ -74,6 +77,7 @@ def _source(
     store: str = "codex.sessions",
     adapter_id: str = "codex.sessions_jsonl.v1",
     search_root: pathlib.Path | None = None,
+    source_kind: agentgrep.SourceKind = "jsonl",
     mtime_ns: int = 0,
 ) -> agentgrep.SourceHandle:
     """Build a synthetic source handle for planning tests."""
@@ -83,7 +87,7 @@ def _source(
         adapter_id=adapter_id,
         path=pathlib.Path(path),
         path_kind="session_file",
-        source_kind="jsonl",
+        source_kind=source_kind,
         search_root=search_root,
         mtime_ns=mtime_ns,
     )
@@ -122,7 +126,7 @@ def test_build_physical_search_plan_preserves_existing_source_order_for_termless
 
     assert isinstance(plan, PhysicalSearchPlan)
     assert [task.source.path.name for task in plan.tasks] == ["older.jsonl", "newer.jsonl"]
-    assert {task.strategy for task in plan.tasks} == {"metadata"}
+    assert {task.strategy for task in plan.tasks} == {"metadata_only"}
     assert all(isinstance(task, SourceTask) for task in plan.tasks)
 
 
@@ -162,4 +166,80 @@ def test_plan_search_sources_delegates_to_physical_plan(
     legacy_sources = agentgrep.plan_search_sources(query, [matched, missed], backends)
 
     assert [task.source for task in plan.tasks] == legacy_sources == [matched]
-    assert [task.strategy for task in plan.tasks] == ["root_prefilter"]
+    assert [task.strategy for task in plan.tasks] == ["root_full_scan"]
+
+
+class SourceStrategyCase(t.NamedTuple):
+    """One query/source combination and its expected execution strategy."""
+
+    test_id: str
+    query: agentgrep.SearchQuery
+    source: agentgrep.SourceHandle
+    expected_strategy: str
+
+
+STRATEGY_CASES: tuple[SourceStrategyCase, ...] = (
+    SourceStrategyCase(
+        test_id="grep-text-jsonl-uses-raw-prefilter",
+        query=_query(match_surface="text"),
+        source=_source(
+            agent="codex",
+            path="/tmp/codex-session.jsonl",
+            adapter_id="codex.sessions_jsonl.v1",
+        ),
+        expected_strategy="jsonl_raw_text_prefilter",
+    ),
+    SourceStrategyCase(
+        test_id="search-haystack-jsonl-keeps-full-scan",
+        query=_query(match_surface="haystack"),
+        source=_source(
+            agent="codex",
+            path="/tmp/codex-session.jsonl",
+            adapter_id="codex.sessions_jsonl.v1",
+        ),
+        expected_strategy="direct_full_scan",
+    ),
+    SourceStrategyCase(
+        test_id="regex-text-jsonl-keeps-full-scan",
+        query=_query(regex=True, match_surface="text"),
+        source=_source(
+            agent="codex",
+            path="/tmp/codex-session.jsonl",
+            adapter_id="codex.sessions_jsonl.v1",
+        ),
+        expected_strategy="direct_full_scan",
+    ),
+    SourceStrategyCase(
+        test_id="json-source-keeps-full-scan",
+        query=_query(match_surface="text"),
+        source=_source(
+            agent="codex",
+            path="/tmp/history.json",
+            adapter_id="codex.history_json.v1",
+            store="codex.history",
+            source_kind="json",
+        ),
+        expected_strategy="direct_full_scan",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    STRATEGY_CASES,
+    ids=[c.test_id for c in STRATEGY_CASES],
+)
+def test_physical_plan_selects_source_execution_strategy(
+    case: SourceStrategyCase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Physical planning chooses the cheapest safe source execution strategy."""
+    monkeypatch.setattr(agentgrep, "direct_source_matches", lambda *args, **kwargs: True)
+
+    plan = build_physical_search_plan(
+        case.query,
+        (case.source,),
+        agentgrep.BackendSelection(find_tool=None, grep_tool=None, json_tool=None),
+    )
+
+    assert [task.strategy for task in plan.tasks] == [case.expected_strategy]

@@ -16,7 +16,24 @@ import typing as t
 if t.TYPE_CHECKING:
     import agentgrep
 
-type SourceStrategy = t.Literal["metadata", "root_prefilter", "direct_source"]
+type SourceStrategy = t.Literal[
+    "metadata_only",
+    "direct_full_scan",
+    "root_full_scan",
+    "jsonl_raw_text_prefilter",
+]
+
+RAW_TEXT_PREFILTER_ADAPTERS: frozenset[str] = frozenset(
+    {
+        "codex.sessions_jsonl.v1",
+        "codex.history_jsonl.v1",
+        "claude.projects_jsonl.v1",
+        "grok.prompt_history_jsonl.v1",
+        "grok.sessions_jsonl.v1",
+        "pi.sessions_jsonl.v1",
+    },
+)
+"""Adapters whose text-bearing records can be prefiltered from raw JSONL lines."""
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -41,7 +58,7 @@ class AdapterCapability:
     adapter_id: str
     metadata_only_discovery: bool = True
     source_predicate_pushdown: bool = True
-    raw_text_prefilter: bool = False
+    jsonl_raw_text_prefilter: bool = False
     sqlite_predicate_pushdown: bool = False
     streaming_records: bool = True
 
@@ -161,7 +178,7 @@ def build_physical_search_plan(
     if not query.terms:
         return PhysicalSearchPlan(
             logical=logical,
-            tasks=tuple(_source_task(source, "metadata") for source in scoped_sources),
+            tasks=tuple(_source_task(source, "metadata_only") for source in scoped_sources),
             decisions=tuple(decisions),
         )
 
@@ -204,7 +221,11 @@ def build_physical_search_plan(
         tasks=tuple(
             _source_task(
                 source,
-                "root_prefilter" if source.search_root is not None else "direct_source",
+                _source_strategy(
+                    query,
+                    source,
+                    source_route="root" if source.search_root is not None else "direct",
+                ),
             )
             for source in ordered_sources
         ),
@@ -219,6 +240,35 @@ def _source_task(source: agentgrep.SourceHandle, strategy: SourceStrategy) -> So
         strategy=strategy,
         can_stream_records=True,
         restore_order_key=_source_order_key(source),
+    )
+
+
+def _source_strategy(
+    query: agentgrep.SearchQuery,
+    source: agentgrep.SourceHandle,
+    *,
+    source_route: t.Literal["direct", "root"],
+) -> SourceStrategy:
+    """Return the cheapest safe execution strategy for one source."""
+    if _can_use_jsonl_raw_text_prefilter(query, source):
+        return "jsonl_raw_text_prefilter"
+    if source_route == "root":
+        return "root_full_scan"
+    return "direct_full_scan"
+
+
+def _can_use_jsonl_raw_text_prefilter(
+    query: agentgrep.SearchQuery,
+    source: agentgrep.SourceHandle,
+) -> bool:
+    """Return whether raw JSONL filtering preserves query semantics."""
+    return (
+        bool(query.terms)
+        and query.match_surface == "text"
+        and not query.regex
+        and query.compiled is None
+        and source.source_kind == "jsonl"
+        and source.adapter_id in RAW_TEXT_PREFILTER_ADAPTERS
     )
 
 
