@@ -4171,6 +4171,13 @@ def parse_codex_session_file(
         if _file_size(source.path) >= _CODEX_RAW_SKIP_MIN_BYTES
         else None
     )
+    # The session_meta header feeds session_id/model into later records,
+    # so the text prefilter must never drop it.
+    kept_raw_skip = (
+        None
+        if raw_skip_line is None
+        else _keep_jsonl_header_lines(raw_skip_line, _CODEX_SESSION_META_MARKER)
+    )
     if codex_skip_line is not None:
         # Keep the cheap prefix-mode tool-output skip even when a raw text
         # prefilter is active: the prefix predicate discards oversized
@@ -4180,13 +4187,13 @@ def parse_codex_session_file(
             source.path,
             skip_line=codex_skip_line,
             skip_line_mode="prefix",
-            full_line_skip=raw_skip_line,
+            full_line_skip=kept_raw_skip,
             reverse=reverse,
         )
-    elif raw_skip_line is not None:
+    elif kept_raw_skip is not None:
         events = _iter_jsonl(
             source.path,
-            skip_line=raw_skip_line,
+            skip_line=kept_raw_skip,
             skip_line_mode="line",
             reverse=reverse,
         )
@@ -5198,10 +5205,12 @@ def parse_pi_session_file(
     """
     session_id: str | None = source.path.stem
     conversation_id: str | None = None
+    # The session header feeds session_id/cwd into later records, so the
+    # text prefilter must never drop it.
     events = (
         _iter_jsonl(
             source.path,
-            skip_line=raw_skip_line,
+            skip_line=_keep_jsonl_header_lines(raw_skip_line, _PI_SESSION_HEADER_MARKER),
             skip_line_mode="line",
             reverse=reverse,
         )
@@ -6541,6 +6550,38 @@ def _combine_raw_skip_lines(
         return first(raw_line) or second(raw_line)
 
     return skip_line
+
+
+_CODEX_SESSION_META_MARKER = '"type":"session_meta"'
+"""Space-stripped prefix marker for the Codex session header line."""
+
+_PI_SESSION_HEADER_MARKER = '"type":"session"'
+"""Space-stripped prefix marker for the pi session header line."""
+
+
+def _keep_jsonl_header_lines(
+    skip_line: RawJsonlSkipLine,
+    marker: str,
+) -> RawJsonlSkipLine:
+    """Wrap a raw skip predicate so header lines are always decoded.
+
+    Stateful session parsers learn canonical metadata (session id, model,
+    cwd) from a header line that rarely contains the search term, so a raw
+    text prefilter must never drop it.
+
+    >>> keep = _keep_jsonl_header_lines(lambda _line: True, '"type":"session_meta"')
+    >>> keep('{"type": "session_meta", "payload": {}}')
+    False
+    >>> keep('{"type": "response_item"}')
+    True
+    """
+
+    def wrapped(raw_line: str) -> bool:
+        if marker in raw_line[:512].replace(" ", ""):
+            return False
+        return skip_line(raw_line)
+
+    return wrapped
 
 
 def _discard_rest_of_line(handle: t.BinaryIO, prefix: bytes) -> None:
