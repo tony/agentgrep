@@ -205,7 +205,11 @@ Planning must choose the cheapest correct adapter strategy:
 Execution must be cancellable and bounded. Drivers poll cancellation between
 source tasks and record batches. A task that declares bounded source behavior
 can stop before older records are parsed once the source-local candidate limit
-is satisfied. Source scans compile query matchers once per task so record
+is satisfied. The stop condition counts source-locally deduplicated
+candidates; the frontier's global cross-source dedup may later drop some of
+them, so when stores share dedupe keys a bounded search can return fewer than
+``limit`` records even though deeper records exist — an accepted bounded-scan
+approximation. Source scans compile query matchers once per task so record
 loops do not rebuild term, regex, surface, or predicate state for each
 candidate record. The frontier driver can run eligible source tasks
 concurrently, merges candidates on the owner thread, and stops submitting

@@ -414,6 +414,10 @@ def iter_source_task_batches(
     matcher = compile_record_matcher(query)
 
     def source_limit_satisfied() -> bool:
+        # Counts source-local dedupe keys only: the frontier's global
+        # cross-source dedup may drop some of these later, so bounded scans
+        # can return fewer than the limit when stores share dedupe keys.
+        # Accepted approximation per ADR-0004.
         accepted_count = len(source_deduped) if query.dedupe else source_match_count
         return (
             task.limit_behavior == "bounded_source"
