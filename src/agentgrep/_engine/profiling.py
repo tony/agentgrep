@@ -19,6 +19,7 @@ import typing as t
 
 if t.TYPE_CHECKING:
     import agentgrep
+    from agentgrep._engine.planning import SourceTask
     from agentgrep.query.compile import CompiledQuery
 
 type ProfileAttribute = str | int | float | bool | None
@@ -242,6 +243,7 @@ def profile_search_query(
                 active_backends,
                 control=active_control,
             )
+        _record_source_task_groups(profiler, "search.plan.strategy_group", plan.tasks)
         if active_control.answer_now_requested():
             records: list[agentgrep.SearchRecord] = []
         else:
@@ -387,6 +389,44 @@ def _record_source_groups(
             agentgrep_adapter_id=adapter_id,
             agentgrep_path_kind=path_kind,
             agentgrep_source_kind=source_kind,
+            agentgrep_source_count=source_count,
+        )
+
+
+def _record_source_task_groups(
+    profiler: EngineProfiler,
+    name: str,
+    tasks: cabc.Sequence[SourceTask],
+) -> None:
+    """Record aggregate physical source-task groups without source paths."""
+    groups: collections.Counter[tuple[str, str, str, str, str, str]] = collections.Counter(
+        (
+            task.source.agent,
+            task.source.store,
+            task.source.adapter_id,
+            task.source.path_kind,
+            task.source.source_kind,
+            task.strategy,
+        )
+        for task in tasks
+    )
+    for (
+        agent,
+        store,
+        adapter_id,
+        path_kind,
+        source_kind,
+        strategy,
+    ), source_count in sorted(groups.items()):
+        profiler.record(
+            name,
+            0.0,
+            agentgrep_agent=agent,
+            agentgrep_store=store,
+            agentgrep_adapter_id=adapter_id,
+            agentgrep_path_kind=path_kind,
+            agentgrep_source_kind=source_kind,
+            agentgrep_source_strategy=strategy,
             agentgrep_source_count=source_count,
         )
 
