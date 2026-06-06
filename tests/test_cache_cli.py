@@ -73,6 +73,7 @@ class DbSyncModeFlagCase(t.NamedTuple):
 
     test_id: str
     argv: tuple[str, ...]
+    expected_features_mode: t.Literal["defer", "inline"]
     expected_force: bool
 
 
@@ -116,13 +117,21 @@ DB_SYNC_PROGRESS_FLAG_CASES: tuple[DbSyncProgressFlagCase, ...] = (
 
 DB_SYNC_MODE_FLAG_CASES: tuple[DbSyncModeFlagCase, ...] = (
     DbSyncModeFlagCase(
-        test_id="default-skip-current",
+        test_id="default-defer-skip-current",
         argv=("db", "sync"),
+        expected_features_mode="defer",
+        expected_force=False,
+    ),
+    DbSyncModeFlagCase(
+        test_id="inline-features",
+        argv=("db", "sync", "--features", "inline"),
+        expected_features_mode="inline",
         expected_force=False,
     ),
     DbSyncModeFlagCase(
         test_id="force-resync",
         argv=("db", "sync", "--force"),
+        expected_features_mode="defer",
         expected_force=True,
     ),
 )
@@ -150,6 +159,7 @@ STRUCTURED_OUTPUT_CASES: tuple[StructuredOutputCase, ...] = (
                 "records_removed": 0,
                 "sources_skipped": 0,
                 "sources_pruned": 0,
+                "features_deferred": 0,
             },
         ),
     ),
@@ -164,6 +174,7 @@ STRUCTURED_OUTPUT_CASES: tuple[StructuredOutputCase, ...] = (
                 "records_removed": 0,
                 "sources_skipped": 0,
                 "sources_pruned": 0,
+                "features_deferred": 0,
             },
         ),
     ),
@@ -181,6 +192,7 @@ STRUCTURED_OUTPUT_CASES: tuple[StructuredOutputCase, ...] = (
                 "records_removed": 0,
                 "sources_skipped": 0,
                 "sources_pruned": 0,
+                "features_deferred": 0,
             },
             {
                 "sources_synced": 3,
@@ -188,6 +200,7 @@ STRUCTURED_OUTPUT_CASES: tuple[StructuredOutputCase, ...] = (
                 "records_removed": 1,
                 "sources_skipped": 0,
                 "sources_pruned": 0,
+                "features_deferred": 0,
             },
         ),
     ),
@@ -208,6 +221,7 @@ STRUCTURED_OUTPUT_CASES: tuple[StructuredOutputCase, ...] = (
                         "records_removed": 0,
                         "sources_skipped": 0,
                         "sources_pruned": 0,
+                        "features_deferred": 0,
                     },
                 ],
             },
@@ -224,12 +238,17 @@ STRUCTURED_TEXT_OUTPUT_CASES: tuple[StructuredTextOutputCase, ...] = (
             schema_version=1,
             sources=2,
             records=3,
+            features=4,
+            variant_edges=5,
+            omission_findings=6,
+            suggestions=7,
         ),
         expected_contains=(
             "DB status",
             "/tmp/agentgrep.sqlite",
             "2 sources",
             "3 records",
+            "4 features",
         ),
         expected_not_contains=("DbStatus(", "{", "'db_path'"),
     ),
@@ -240,6 +259,7 @@ STRUCTURED_TEXT_OUTPUT_CASES: tuple[StructuredTextOutputCase, ...] = (
             records_indexed=3,
             records_removed=1,
             sources_skipped=4,
+            features_deferred=5,
         ),
         expected_contains=(
             "DB sync",
@@ -247,6 +267,7 @@ STRUCTURED_TEXT_OUTPUT_CASES: tuple[StructuredTextOutputCase, ...] = (
             "3 records indexed",
             "1 record removed",
             "4 sources skipped",
+            "5 features deferred",
         ),
         expected_not_contains=("SyncResult(", "{", "'sources_synced'"),
     ),
@@ -355,6 +376,7 @@ def test_db_sync_parses_cache_refresh_modes(case: DbSyncModeFlagCase) -> None:
     parsed = agentgrep.parse_args(case.argv)
 
     assert isinstance(parsed, agentgrep.DbArgs)
+    assert parsed.features_mode == case.expected_features_mode
     assert parsed.force is case.expected_force
 
 
@@ -476,6 +498,7 @@ def test_db_sync_forced_progress_keeps_json_stdout_clean(
     class RuntimeStub:
         """Runtime stub that exercises the sync progress protocol."""
 
+        features_mode: t.Literal["defer", "inline"] | None = None
         force: bool | None = None
         closed: bool = False
         coverage: SyncCoverage | None = None
@@ -491,10 +514,12 @@ def test_db_sync_forced_progress_keeps_json_stdout_clean(
             *,
             control: agentgrep.SearchControl | None = None,
             progress: DbSyncProgress | None = None,
+            features_mode: t.Literal["defer", "inline"] = "defer",
             force: bool = False,
             coverage: SyncCoverage | None = None,
             prune_missing: bool = False,
         ) -> SyncResult:
+            self.features_mode = features_mode
             self.force = force
             self.coverage = coverage
             self.prune_missing = prune_missing
@@ -543,6 +568,7 @@ def test_db_sync_forced_progress_keeps_json_stdout_clean(
         output_mode="json",
         color_mode="never",
         progress_mode="always",
+        features_mode="inline",
         force=True,
     )
 
@@ -556,7 +582,9 @@ def test_db_sync_forced_progress_keeps_json_stdout_clean(
         "records_removed": 0,
         "sources_skipped": 0,
         "sources_pruned": 0,
+        "features_deferred": 0,
     }
+    assert runtime_stub.features_mode == "inline"
     assert runtime_stub.force is True
     assert runtime_stub.closed is True
     assert "DB sync" in captured.err
@@ -611,6 +639,14 @@ class _StringBuffer:
     def getvalue(self) -> str:
         """Return captured text."""
         return "".join(self._parts)
+
+
+class _TinyTerminalBuffer(_StringBuffer):
+    """TTY stream stub with a file descriptor for terminal-size probing."""
+
+    def fileno(self) -> int:
+        """Return a harmless descriptor number for monkeypatched size probes."""
+        return 1
 
 
 def test_collection_is_not_a_command(
@@ -1214,9 +1250,10 @@ class CoverageRecordingStub:
         force: bool = False,
         coverage: SyncCoverage | None = None,
         prune_missing: bool = False,
+        features_mode: str = "defer",
     ) -> SyncResult:
         """Record coverage and pruning, returning zero counters."""
-        del sources, control, progress, force
+        del sources, control, progress, force, features_mode
         self.coverage = coverage
         self.prune_missing = prune_missing
         return SyncResult(sources_synced=0, records_indexed=0, records_removed=0)

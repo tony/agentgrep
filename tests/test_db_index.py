@@ -29,6 +29,15 @@ class DuplicateRecordCase(t.NamedTuple):
     expected_records: int
 
 
+class SyncFeatureModeCase(t.NamedTuple):
+    """Named case for feature-generation behavior during DB sync."""
+
+    test_id: str
+    features_mode: t.Literal["defer", "inline"]
+    expected_features: int
+    expected_deferred: int
+
+
 class StopAfterFirstSourceProgress:
     """Progress stub that requests early exit after one source transaction."""
 
@@ -77,6 +86,17 @@ class StopAfterFirstSourceProgress:
         self.early_result = result
 
 
+class InsightActivityProgress:
+    """Progress stub that records insight engine activity labels."""
+
+    def __init__(self) -> None:
+        self.activities: list[tuple[str, str | None]] = []
+
+    def set_activity(self, activity: str, *, detail: str | None = None) -> None:
+        """Capture one current-work update."""
+        self.activities.append((activity, detail))
+
+
 CACHED_SEARCH_CASES: tuple[CachedSearchCase, ...] = (
     CachedSearchCase(
         test_id="require-uses-index",
@@ -99,6 +119,22 @@ DUPLICATE_RECORD_CASES: tuple[DuplicateRecordCase, ...] = (
             "Run ruff check before committing.",
         ),
         expected_records=2,
+    ),
+)
+
+
+SYNC_FEATURE_MODE_CASES: tuple[SyncFeatureModeCase, ...] = (
+    SyncFeatureModeCase(
+        test_id="default-defer",
+        features_mode="defer",
+        expected_features=0,
+        expected_deferred=2,
+    ),
+    SyncFeatureModeCase(
+        test_id="inline-features",
+        features_mode="inline",
+        expected_features=2,
+        expected_deferred=0,
     ),
 )
 
@@ -203,6 +239,42 @@ def test_db_runtime_syncs_records_and_serves_fts_results(
     ]
 
 
+@pytest.mark.parametrize(
+    "case",
+    SYNC_FEATURE_MODE_CASES,
+    ids=[case.test_id for case in SYNC_FEATURE_MODE_CASES],
+)
+def test_db_runtime_sync_feature_modes(
+    case: SyncFeatureModeCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """DB sync can defer expensive feature generation without breaking FTS."""
+    source_path = tmp_path / "session.jsonl"
+    source_path.write_text("ruff", encoding="utf-8")
+    source = _source(source_path)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+
+    result = runtime.sync_records(
+        (
+            (
+                source,
+                (
+                    _record(source, "Run ruff check before committing."),
+                    _record(source, "Run pytest for the focused suite."),
+                ),
+            ),
+        ),
+        features_mode=case.features_mode,
+    )
+
+    assert result.records_indexed == 2
+    assert result.features_deferred == case.expected_deferred
+    assert runtime.status().features == case.expected_features
+    assert [record.text for record in runtime.search_records(_query("ruff"))] == [
+        "Run ruff check before committing.",
+    ]
+
+
 def test_db_runtime_sync_skips_unchanged_sources_without_reading_records(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -227,6 +299,7 @@ def test_db_runtime_sync_skips_unchanged_sources_without_reading_records(
         records_indexed=0,
         records_removed=0,
         sources_skipped=1,
+        features_deferred=0,
     )
     assert runtime.status().records == 1
 
@@ -332,6 +405,7 @@ def test_db_runtime_sync_can_exit_early_between_sources(
         sources_synced=1,
         records_indexed=1,
         records_removed=0,
+        features_deferred=1,
     )
     assert progress.started_total == 2
     assert progress.finished_sources == ["first.jsonl"]
@@ -392,6 +466,43 @@ def test_run_search_query_respects_cache_mode(
     records = agentgrep.run_search_query(tmp_path, _query("ruff"), runtime=runtime)
 
     assert [record.text for record in records] == list(case.expected_texts)
+
+
+def test_feature_refresh_reports_incremental_build_and_write_progress(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Feature refresh reports row-level progress inside long phases."""
+    source_path = tmp_path / "source.jsonl"
+    source_path.write_text("{}", encoding="utf-8")
+    source = _source(source_path)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    _ = runtime.sync_records(
+        (
+            (
+                source,
+                (
+                    _record(source, "Run ruff check before committing.", session_id="one"),
+                    _record(source, "Run ty check before committing.", session_id="two"),
+                    _record(source, "Build docs before committing.", session_id="three"),
+                ),
+            ),
+        ),
+    )
+    progress = InsightActivityProgress()
+
+    refreshed = runtime.store.refresh_missing_features(workers=1, progress=progress)
+
+    assert refreshed == 3
+    build_details = [
+        detail
+        for activity, detail in progress.activities
+        if activity == "building feature signatures"
+    ]
+    write_details = [
+        detail for activity, detail in progress.activities if activity == "writing feature cache"
+    ]
+    assert build_details[-1] == "3/3 rows built (100.0%, 1w)"
+    assert write_details[-1] == "3/3 rows written (100.0%)"
 
 
 def test_resync_keeps_fts_index_consistent(tmp_path: pathlib.Path) -> None:

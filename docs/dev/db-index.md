@@ -10,8 +10,13 @@ artifacts, not the original agent history.
 
 ## Roles
 
-The agentgrep db has one job: cache search results that can be served
-without rescanning source stores.
+The agentgrep db supports three jobs:
+
+- cache search results that can be served without rescanning source
+  stores
+- provide stable record ids and normalized text features for insight
+  runs
+- persist insight and suggestion artifacts with provenance
 
 Search commands default to `--cache auto`, which uses the DB index
 only when it can answer the query. Use `--no-cache` to force the live
@@ -30,8 +35,11 @@ records split into a search read-model: a narrow `records_search`
 table (identity, sort, session, and hash columns), a `record_details`
 table with the text/title/role/model/metadata payload, and a
 content-full trigram FTS5 table that owns the casefolded haystack.
+The artifact tables — deterministic features, variant edges,
+omission findings, and suggestions — sit beside the read-model.
 This keeps the default backend local, transactional, and inspectable
-while letting search touch dense pages.
+while letting search touch dense pages and leaving semantic backends
+such as LanceDB optional for later insight work.
 
 Limited searches run a keyset probe: lean columns ordered by
 `(COALESCE(timestamp,''), agent, path, rowid) DESC` in windows of
@@ -44,9 +52,13 @@ Unlimited searches reuse the same lean fetch and deterministic order.
 The probe phases appear in profiles as `records.probe_fts` /
 `records.probe_scan` / `records.hydrate` statement samples.
 
-Repeated syncs consult `source_state` fingerprints before opening
-record iterators, so unchanged source files are skipped unless the
-caller uses `--force`.
+The cache-fast sync path treats deterministic features as derived
+secondary state. `agentgrep db sync` defaults to `--features defer`,
+which writes the source ledger, normalized records, and FTS index while
+leaving feature rows for insight runs to refresh in batches. Repeated
+syncs consult `source_state` fingerprints before opening record
+iterators, so unchanged source files are skipped unless the caller uses
+`--force`.
 
 ## Commands
 
