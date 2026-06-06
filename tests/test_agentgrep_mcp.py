@@ -1443,3 +1443,36 @@ async def test_mcp_capabilities_advertises_new_resources() -> None:
         "agentgrep://store-roles",
         "agentgrep://store-formats",
     } <= advertised
+
+
+def test_db_status_tool_closes_its_connection(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The db_status helper closes the per-call SQLite connection."""
+    import sqlite3
+
+    import pytest as _pytest
+
+    from agentgrep import db as agentgrep_db
+    from agentgrep.mcp.tools import db_tools
+
+    db_path = tmp_path / "agentgrep.sqlite"
+    agentgrep_db.DbRuntime.open(db_path).close()
+    opened: list[agentgrep_db.DbRuntime] = []
+    real_open = agentgrep_db.DbRuntime.open
+
+    def capturing_open(
+        db_path: pathlib.Path | str | None = None,
+    ) -> agentgrep_db.DbRuntime:
+        runtime = real_open(db_path)
+        opened.append(runtime)
+        return runtime
+
+    monkeypatch.setattr(agentgrep_db.DbRuntime, "open", capturing_open)
+    payload = db_tools._db_status_sync(str(db_path))
+
+    assert payload.sources == 0
+    assert len(opened) == 1
+    with _pytest.raises(sqlite3.ProgrammingError):
+        _ = opened[0].store.connection.execute("SELECT 1")
