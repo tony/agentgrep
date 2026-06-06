@@ -512,6 +512,8 @@ def _format_structured_text(payload: object, *, colors: agentgrep.AnsiColors) ->
     """Return a terminal-readable summary for small structured payloads."""
     if _has_attributes(payload, ("sources_synced", "records_indexed", "records_removed")):
         return _format_db_sync_result_text(payload, colors=colors)
+    if _has_attributes(payload, ("synced_ok", "sync_errors", "answerable")):
+        return _format_db_explain_text(payload, colors=colors)
     if _has_attributes(payload, ("db_path", "schema_version", "sources", "records")):
         return _format_db_status_text(payload, colors=colors)
     return _format_generic_structured_text(payload, colors=colors)
@@ -539,6 +541,39 @@ def _format_db_status_text(payload: object, *, colors: agentgrep.AnsiColors) -> 
             ),
         ),
     ]
+    return "\n".join(lines)
+
+
+def _format_db_explain_text(payload: object, *, colors: agentgrep.AnsiColors) -> str:
+    """Return human-readable cache diagnostics."""
+    db_path = _attribute_or_mapping_value(payload, "db_path", "")
+    schema_version = _attribute_or_mapping_value(payload, "schema_version", "")
+    sources = _as_int_value(_attribute_or_mapping_value(payload, "sources", 0))
+    records = _as_int_value(_attribute_or_mapping_value(payload, "records", 0))
+    synced_ok = _as_int_value(_attribute_or_mapping_value(payload, "synced_ok", 0))
+    sync_errors = _as_int_value(_attribute_or_mapping_value(payload, "sync_errors", 0))
+    last_synced = _attribute_or_mapping_value(payload, "last_synced_at", None)
+    answerable = _attribute_or_mapping_value(payload, "answerable", "")
+    lines = [
+        colors.heading("DB explain"),
+        f"{colors.muted('Path')} | {colors.path(str(db_path))}",
+        f"{colors.muted('Schema')} | {colors.warning(str(schema_version))}",
+        " | ".join(
+            (
+                colors.warning(format_db_source_count(sources)),
+                colors.warning(_format_count(records, "record")),
+            ),
+        ),
+        " | ".join(
+            (
+                f"{colors.muted('Sync')} | {colors.success(f'{synced_ok} ok')}",
+                colors.error(f"{sync_errors} errors") if sync_errors else colors.muted("0 errors"),
+            ),
+        ),
+    ]
+    if last_synced is not None:
+        lines.append(f"{colors.muted('Last synced')} | {last_synced}")
+    lines.append(f"{colors.muted('Answerable')} | {answerable}")
     return "\n".join(lines)
 
 
@@ -1220,28 +1255,48 @@ def run_db_command(args: DbArgs) -> int:
 
 
 def _run_db_status_command(args: DbArgs) -> int:
-    """Report db status without writing to or creating the cache."""
+    """Report db status or diagnostics without writing to the cache."""
     import sqlite3
 
-    from agentgrep.db import SCHEMA_VERSION, DbRuntime, DbStatus, default_db_path
+    from agentgrep.db import (
+        ANSWERABLE_QUERY_FORMS,
+        SCHEMA_VERSION,
+        DbExplain,
+        DbRuntime,
+        DbStatus,
+        default_db_path,
+    )
 
     path = default_db_path() if args.db_path is None else pathlib.Path(args.db_path).expanduser()
+    payload: object
     if not path.exists():
-        status = DbStatus(
-            db_path=path,
-            schema_version=SCHEMA_VERSION,
-            sources=0,
-            records=0,
-        )
-        _print_json_or_text(status, output_mode=args.output_mode, color_mode=args.color_mode)
+        if args.action == "explain":
+            payload = DbExplain(
+                db_path=path,
+                schema_version=SCHEMA_VERSION,
+                sources=0,
+                records=0,
+                synced_ok=0,
+                sync_errors=0,
+                last_synced_at=None,
+                answerable=ANSWERABLE_QUERY_FORMS,
+            )
+        else:
+            payload = DbStatus(
+                db_path=path,
+                schema_version=SCHEMA_VERSION,
+                sources=0,
+                records=0,
+            )
+        _print_json_or_text(payload, output_mode=args.output_mode, color_mode=args.color_mode)
         return 0
     try:
         with DbRuntime.open_readonly(path) as runtime:
-            status = runtime.status()
+            payload = runtime.explain() if args.action == "explain" else runtime.status()
     except sqlite3.DatabaseError:
         print(f"agentgrep: not an agentgrep database: {path}", file=sys.stderr)
         return 1
-    _print_json_or_text(status, output_mode=args.output_mode, color_mode=args.color_mode)
+    _print_json_or_text(payload, output_mode=args.output_mode, color_mode=args.color_mode)
     return 0
 
 
