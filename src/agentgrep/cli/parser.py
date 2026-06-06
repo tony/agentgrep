@@ -57,6 +57,7 @@ InsightsKind = t.Literal["similarity", "omissions", "all"]
 SuggestionsAction = t.Literal["list", "show", "render"]
 
 DEFAULT_INSIGHTS_LIST_LIMIT = 50
+DEFAULT_SUGGESTIONS_LIST_LIMIT = 50
 
 __all__ = [
     "CaseMode",
@@ -220,6 +221,7 @@ class SuggestionsArgs:
     target: str | None
     output_mode: OutputMode
     color_mode: ColorMode = "auto"
+    limit: int = DEFAULT_SUGGESTIONS_LIST_LIMIT
 
 
 @dataclasses.dataclass(slots=True)
@@ -811,6 +813,12 @@ def create_parser(
     )
     _ = suggestions_list_parser.add_argument("--db", dest="db_path", help="agentgrep db path")
     _ = suggestions_list_parser.add_argument("--target", help="Create suggestions for a target")
+    _ = suggestions_list_parser.add_argument(
+        "--limit",
+        type=int,
+        default=DEFAULT_SUGGESTIONS_LIST_LIMIT,
+        help=f"Maximum suggestions to return (default: {DEFAULT_SUGGESTIONS_LIST_LIMIT})",
+    )
     add_output_mode_options(suggestions_list_parser, allow_ui=False)
     for action in ("show", "render"):
         suggestion_parser = suggestions_subparsers.add_parser(
@@ -1132,7 +1140,7 @@ def parse_args(
             with configured_color_environment(color_mode):
                 bundle.suggestions_parser.print_help()
             return None
-        return _build_suggestions_args(namespace, color_mode=color_mode)
+        return _build_suggestions_args(namespace, color_mode=color_mode, bundle=bundle)
 
     agents = parse_agents(t.cast("list[str]", namespace.agent))
     output_mode = parse_output_mode(namespace)
@@ -1277,15 +1285,22 @@ def _build_suggestions_args(
     namespace: argparse.Namespace,
     *,
     color_mode: ColorMode,
+    bundle: ParserBundle,
 ) -> SuggestionsArgs:
     """Build :class:`SuggestionsArgs` from a parsed argparse namespace."""
+    action = t.cast("SuggestionsAction", namespace.suggestions_action)
+    limit = t.cast("int", getattr(namespace, "limit", DEFAULT_SUGGESTIONS_LIST_LIMIT))
+    if action == "list" and limit < 1:
+        with configured_color_environment(color_mode):
+            bundle.suggestions_parser.error("--limit must be greater than 0")
     return SuggestionsArgs(
-        action=t.cast("SuggestionsAction", namespace.suggestions_action),
+        action=action,
         db_path=t.cast("str | None", getattr(namespace, "db_path", None)),
         suggestion_id=t.cast("str | None", getattr(namespace, "suggestion_id", None)),
         target=t.cast("str | None", getattr(namespace, "target", None)),
         output_mode=parse_output_mode(namespace),
         color_mode=color_mode,
+        limit=limit,
     )
 
 
