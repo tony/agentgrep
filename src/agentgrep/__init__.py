@@ -3796,6 +3796,10 @@ def direct_source_matches(
         return False
     try:
         if source.adapter_id == "claude.history_jsonl.v1":
+            # Claude history expands sibling paste-cache files into record
+            # text, so a query term can match content that no grep over
+            # history.jsonl itself can see. Admission must stay
+            # unconditional; the record matcher filters after expansion.
             matched = True
             return matched
         if source.source_kind == "sqlite":

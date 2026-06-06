@@ -6690,6 +6690,61 @@ def test_search_claude_history_expands_external_pasted_text(
     assert "[Pasted text" not in record.text
 
 
+def test_paste_cache_only_terms_survive_grep_backends(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Terms living only in paste-cache files still match with a grep backend.
+
+    Pins the unconditional Claude history admission: content grep over
+    history.jsonl cannot see paste-cache expansions, so source admission
+    must never depend on it. The grep helper is stubbed to report a miss
+    so any future conditional admission fails here.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    paste_hash = "0123456789abcdef"
+    paste_path = home / ".claude" / "paste-cache" / f"{paste_hash}.txt"
+    paste_path.parent.mkdir(parents=True, exist_ok=True)
+    _ = paste_path.write_text("hidden serenity needle", encoding="utf-8")
+    history_path = home / ".claude" / "history.jsonl"
+    write_jsonl(
+        history_path,
+        [
+            {
+                "display": "Review [Pasted text #1]",
+                "pastedContents": {
+                    "1": {"id": 1, "type": "text", "contentHash": paste_hash},
+                },
+                "timestamp": 1_700_000_000_000,
+                "project": "/synthetic/project",
+                "sessionId": "session-1",
+            },
+        ],
+    )
+
+    def grep_misses(*_args: t.Any, **_kwargs: t.Any) -> bool:
+        return False
+
+    monkeypatch.setattr(agentgrep, "grep_file_matches", grep_misses)
+
+    query = agentgrep.SearchQuery(
+        terms=("needle",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("claude",),
+        limit=None,
+    )
+    backends = agentgrep.BackendSelection(None, "rg", None)
+    sources = agentgrep.discover_sources(home, ("claude",), backends)
+    records = agentgrep.search_sources(query, sources, backends)
+
+    assert any("hidden serenity needle" in record.text for record in records)
+
+
 def test_prompt_scope_excludes_claude_project_user_turns_when_history_exists(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
