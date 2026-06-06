@@ -29,6 +29,12 @@ Use a non-default agentgrep database:
 $ agentgrep suggestions list --db .tmp/agentgrep.sqlite
 ```
 
+Return only the most confident suggestion:
+
+```console
+$ agentgrep suggestions list --limit 1
+```
+
 ## Command
 
 ```{eval-rst}
