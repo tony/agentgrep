@@ -36,11 +36,21 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a18 (Yet to be released)
+## agentgrep 0.1.0a19 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a18 (2026-06-06)
+
+agentgrep 0.1.0a18 makes searches substantially faster across every
+backend: lines that cannot match are skipped before parsing, limited
+searches read history files newest-first and stop early, and the MCP
+server and TUI reuse earlier scan work between searches. It also fixes
+three search-results bugs — boolean `OR` queries dropping valid
+matches, project folder-name searches coming back empty, and Cursor
+IDE workspace history going missing from broad searches.
 
 ### What's new
 
