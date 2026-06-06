@@ -177,5 +177,23 @@ def iter_source_task_records(
     query: agentgrep.SearchQuery,
 ) -> cabc.Iterator[agentgrep.SearchRecord]:
     """Yield records for one source task."""
-    _ = query
+    if task.strategy == "jsonl_raw_text_prefilter":
+        yield from agentgrep.iter_source_records(
+            task.source,
+            raw_skip_line=raw_text_skip_line_for_query(query),
+        )
+        return
     yield from agentgrep.iter_source_records(task.source)
+
+
+def raw_text_skip_line_for_query(
+    query: agentgrep.SearchQuery,
+) -> cabc.Callable[[str], bool]:
+    """Return a raw JSONL line skip predicate for a text-surface query."""
+
+    def skip_line(raw_line: str) -> bool:
+        if "\\" in raw_line:
+            return False
+        return not agentgrep.matches_text(raw_line, query)
+
+    return skip_line

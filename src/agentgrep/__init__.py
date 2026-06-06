@@ -99,6 +99,7 @@ ColorMode = t.Literal["auto", "always", "never"]
 GrepStyle = t.Literal["default", "pretty"]
 type JSONScalar = str | int | float | bool | None
 type JSONValue = JSONScalar | list[JSONValue] | dict[str, JSONValue]
+type RawJsonlSkipLine = t.Callable[[str], bool]
 type SummaryRow = tuple[object, object, object, object, object, object, object, object]
 type KeyValueRow = tuple[object, object]
 type DiscoveryRoot = pathlib.Path | tuple[pathlib.Path, ...]
@@ -3942,16 +3943,18 @@ def run_find_query(
 
 def iter_source_records(
     source: SourceHandle,
+    *,
+    raw_skip_line: RawJsonlSkipLine | None = None,
 ) -> cabc.Iterator[SearchRecord]:
     """Dispatch to the adapter parser for one source."""
     if source.adapter_id == "codex.sessions_jsonl.v1":
-        yield from parse_codex_session_file(source)
+        yield from parse_codex_session_file(source, raw_skip_line=raw_skip_line)
         return
     if source.adapter_id == "codex.sessions_legacy_json.v1":
         yield from parse_codex_legacy_session_file(source)
         return
     if source.adapter_id in {"codex.history_json.v1", "codex.history_jsonl.v1"}:
-        yield from parse_codex_history_file(source)
+        yield from parse_codex_history_file(source, raw_skip_line=raw_skip_line)
         return
     if source.adapter_id == "codex.session_index_jsonl.v1":
         yield from parse_codex_session_index_file(source)
@@ -3960,7 +3963,7 @@ def iter_source_records(
         yield from parse_claude_history_file(source)
         return
     if source.adapter_id == "claude.projects_jsonl.v1":
-        yield from parse_claude_project_file(source)
+        yield from parse_claude_project_file(source, raw_skip_line=raw_skip_line)
         return
     if source.adapter_id == "claude.store_sqlite.v1":
         yield from parse_claude_store_db(source)
@@ -4075,16 +4078,16 @@ def iter_source_records(
         yield from parse_gemini_logs_file(source)
         return
     if source.adapter_id == "grok.prompt_history_jsonl.v1":
-        yield from parse_grok_prompt_history(source)
+        yield from parse_grok_prompt_history(source, raw_skip_line=raw_skip_line)
         return
     if source.adapter_id == "grok.sessions_jsonl.v1":
-        yield from parse_grok_chat_history(source)
+        yield from parse_grok_chat_history(source, raw_skip_line=raw_skip_line)
         return
     if source.adapter_id == "grok.session_search_sqlite.v1":
         yield from parse_grok_session_search_db(source)
         return
     if source.adapter_id == "pi.sessions_jsonl.v1":
-        yield from parse_pi_session_file(source)
+        yield from parse_pi_session_file(source, raw_skip_line=raw_skip_line)
         return
     if source.adapter_id == "opencode.db_sqlite.v1":
         yield from parse_opencode_db(source)
@@ -4093,13 +4096,25 @@ def iter_source_records(
 
 def parse_codex_session_file(
     source: SourceHandle,
+    *,
+    raw_skip_line: RawJsonlSkipLine | None = None,
 ) -> cabc.Iterator[SearchRecord]:
     """Parse Codex session JSONL files."""
     session_id = source.path.stem
     session_model: str | None = None
-    events = (
-        _iter_jsonl(source.path, skip_line=_is_codex_function_call_output_line)
+    codex_skip_line = (
+        _is_codex_function_call_output_line
         if _file_size(source.path) >= _CODEX_RAW_SKIP_MIN_BYTES
+        else None
+    )
+    skip_line = _combine_raw_skip_lines(raw_skip_line, codex_skip_line)
+    events = (
+        _iter_jsonl(
+            source.path,
+            skip_line=skip_line,
+            skip_line_mode="line" if raw_skip_line is not None else "prefix",
+        )
+        if skip_line is not None
         else iter_jsonl(source.path)
     )
     for event in events:
@@ -4168,6 +4183,8 @@ def parse_codex_legacy_session_file(
 
 def parse_codex_history_file(
     source: SourceHandle,
+    *,
+    raw_skip_line: RawJsonlSkipLine | None = None,
 ) -> cabc.Iterator[SearchRecord]:
     """Parse Codex prompt/command history files."""
     entries: list[JSONValue]
@@ -4175,7 +4192,11 @@ def parse_codex_history_file(
         payload = read_json_file(source.path)
         entries = payload if isinstance(payload, list) else []
     else:
-        entries = list(iter_jsonl(source.path))
+        entries = list(
+            _iter_jsonl(source.path, skip_line=raw_skip_line, skip_line_mode="line")
+            if raw_skip_line is not None
+            else iter_jsonl(source.path),
+        )
 
     for entry in entries:
         if not isinstance(entry, dict):
@@ -4236,11 +4257,18 @@ def parse_codex_session_index_file(
 
 def parse_claude_project_file(
     source: SourceHandle,
+    *,
+    raw_skip_line: RawJsonlSkipLine | None = None,
 ) -> cabc.Iterator[SearchRecord]:
     """Parse Claude Code project JSONL files using lightweight heuristics."""
     conversation_id = source.path.stem
     seen: set[tuple[str | None, str, str | None, str | None]] = set()
-    for event in iter_jsonl(source.path):
+    events = (
+        _iter_jsonl(source.path, skip_line=raw_skip_line, skip_line_mode="line")
+        if raw_skip_line is not None
+        else iter_jsonl(source.path)
+    )
+    for event in events:
         for candidate in iter_message_candidates(
             event,
             fallback_conversation_id=conversation_id,
@@ -4881,6 +4909,8 @@ def parse_gemini_logs_file(
 
 def parse_grok_prompt_history(
     source: SourceHandle,
+    *,
+    raw_skip_line: RawJsonlSkipLine | None = None,
 ) -> cabc.Iterator[SearchRecord]:
     """Parse a Grok CLI ``prompt_history.jsonl`` file.
 
@@ -4888,7 +4918,12 @@ def parse_grok_prompt_history(
     "is_bash": bool}`` — one record per user prompt, append-only across
     all sessions within one project directory.
     """
-    for event in iter_jsonl(source.path):
+    events = (
+        _iter_jsonl(source.path, skip_line=raw_skip_line, skip_line_mode="line")
+        if raw_skip_line is not None
+        else iter_jsonl(source.path)
+    )
+    for event in events:
         if not isinstance(event, dict):
             continue
         mapping = t.cast("dict[str, object]", event)
@@ -4914,6 +4949,8 @@ def parse_grok_prompt_history(
 
 def parse_grok_chat_history(
     source: SourceHandle,
+    *,
+    raw_skip_line: RawJsonlSkipLine | None = None,
 ) -> cabc.Iterator[SearchRecord]:
     """Parse a Grok CLI ``chat_history.jsonl`` session transcript.
 
@@ -4922,7 +4959,12 @@ def parse_grok_chat_history(
     record types are emitted to maximise searchable content.
     """
     conversation_id = source.path.parent.name
-    for event in iter_jsonl(source.path):
+    events = (
+        _iter_jsonl(source.path, skip_line=raw_skip_line, skip_line_mode="line")
+        if raw_skip_line is not None
+        else iter_jsonl(source.path)
+    )
+    for event in events:
         if not isinstance(event, dict):
             continue
         mapping = t.cast("dict[str, object]", event)
@@ -5042,6 +5084,8 @@ def _pi_entry_text(entry_type: str, entry: dict[str, object]) -> str | None:
 
 def parse_pi_session_file(
     source: SourceHandle,
+    *,
+    raw_skip_line: RawJsonlSkipLine | None = None,
 ) -> cabc.Iterator[SearchRecord]:
     """Parse a pi (earendil-works/pi) session JSONL transcript.
 
@@ -5054,7 +5098,12 @@ def parse_pi_session_file(
     """
     session_id: str | None = source.path.stem
     conversation_id: str | None = None
-    for event in iter_jsonl(source.path):
+    events = (
+        _iter_jsonl(source.path, skip_line=raw_skip_line, skip_line_mode="line")
+        if raw_skip_line is not None
+        else iter_jsonl(source.path)
+    )
+    for event in events:
         if not isinstance(event, dict):
             continue
         mapping = t.cast("dict[str, object]", event)
@@ -6170,11 +6219,15 @@ def iter_jsonl(path: pathlib.Path) -> cabc.Iterator[JSONValue]:
 def _iter_jsonl(
     path: pathlib.Path,
     *,
-    skip_line: cabc.Callable[[str], bool] | None = None,
+    skip_line: RawJsonlSkipLine | None = None,
+    skip_line_mode: t.Literal["prefix", "line"] = "prefix",
 ) -> cabc.Iterator[JSONValue]:
     """Yield decoded JSON objects from a JSONL file with an optional raw-line filter."""
     if skip_line is not None:
-        yield from _iter_jsonl_with_raw_skip(path, skip_line)
+        if skip_line_mode == "line":
+            yield from _iter_jsonl_with_raw_line_skip(path, skip_line)
+        else:
+            yield from _iter_jsonl_with_raw_prefix_skip(path, skip_line)
         return
     try:
         with path.open(encoding="utf-8") as handle:
@@ -6196,11 +6249,11 @@ def _iter_jsonl(
         return
 
 
-def _iter_jsonl_with_raw_skip(
+def _iter_jsonl_with_raw_prefix_skip(
     path: pathlib.Path,
-    skip_line: cabc.Callable[[str], bool],
+    skip_line: RawJsonlSkipLine,
 ) -> cabc.Iterator[JSONValue]:
-    """Yield decoded JSON objects while skipping matched raw lines in chunks."""
+    """Yield decoded JSON objects while skipping matched raw prefixes."""
     try:
         with path.open("rb") as handle:
             decoded_lines = 0
@@ -6235,6 +6288,52 @@ def _iter_jsonl_with_raw_skip(
                     yield t.cast("JSONValue", parsed)
     except OSError:
         return
+
+
+def _iter_jsonl_with_raw_line_skip(
+    path: pathlib.Path,
+    skip_line: RawJsonlSkipLine,
+) -> cabc.Iterator[JSONValue]:
+    """Yield decoded JSON objects while skipping matched full raw lines."""
+    try:
+        with path.open("rb") as handle:
+            decoded_lines = 0
+            for raw_line in handle:
+                if not raw_line.strip():
+                    continue
+                decoded_lines += 1
+                if decoded_lines % _JSONL_YIELD_LINE_INTERVAL == 0:
+                    time.sleep(0)
+                line = raw_line.decode("utf-8", errors="replace")
+                if skip_line(line):
+                    continue
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    parsed = t.cast("object", json.loads(stripped))
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(parsed, (dict, list, str, int, float, bool)) or parsed is None:
+                    yield t.cast("JSONValue", parsed)
+    except OSError:
+        return
+
+
+def _combine_raw_skip_lines(
+    first: RawJsonlSkipLine | None,
+    second: RawJsonlSkipLine | None,
+) -> RawJsonlSkipLine | None:
+    """Return a raw-line predicate that skips when either predicate skips."""
+    if first is None:
+        return second
+    if second is None:
+        return first
+
+    def skip_line(raw_line: str) -> bool:
+        return first(raw_line) or second(raw_line)
+
+    return skip_line
 
 
 def _discard_rest_of_line(handle: t.BinaryIO, prefix: bytes) -> None:
