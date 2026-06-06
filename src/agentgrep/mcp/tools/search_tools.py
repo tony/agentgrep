@@ -59,6 +59,10 @@ async def _search_async(
         )
         if isinstance(event, ag_events.RecordEmitted)
     ]
+    # The inline execution driver emits records per source, not in final
+    # result order; restore the newest-first contract the list-returning
+    # search path guarantees before building the response.
+    records.sort(key=agentgrep.search_record_sort_key, reverse=True)
     return SearchToolResponse(
         query=SearchToolQuery(
             terms=request.terms,

@@ -203,6 +203,11 @@ class AgentGrepModule(t.Protocol):
         backends: BackendSelectionLike | None = None,
     ) -> list[FindRecordLike]: ...
 
+    def search_record_sort_key(
+        self,
+        record: SearchRecordLike,
+    ) -> tuple[str, str, str]: ...
+
     def serialize_search_record(
         self,
         record: SearchRecordLike,

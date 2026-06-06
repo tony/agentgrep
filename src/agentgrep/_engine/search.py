@@ -17,8 +17,11 @@ The generator owns these invariants:
   scans can preserve deterministic newest-first output.
 - :class:`agentgrep.events.RecordEmitted` fires only after the
   per-session dedup decision has decided "unique-and-included".
-  Drivers restore final result ordering before emitting records, so
-  the event order matches what the list-return wrapper produces.
+  Bounded (frontier) drivers buffer and restore final result ordering
+  before emitting records; the inline driver emits per source as
+  records arrive. Consumers that need global newest-first order sort
+  the collected records by ``search_record_sort_key``, as the
+  list-return wrappers do.
 - Exactly one :class:`agentgrep.events.SearchFinished` is yielded
   last with the total match count and elapsed time. A stream that
   exits early via :attr:`agentgrep.SearchControl.request_answer_now`
