@@ -43,12 +43,17 @@ def _query(
     )
 
 
-def _source(path: pathlib.Path) -> agentgrep.SourceHandle:
+def _source(
+    path: pathlib.Path,
+    *,
+    store: str = "codex.sessions",
+    adapter_id: str = "codex.sessions_jsonl.v1",
+) -> agentgrep.SourceHandle:
     """Build a synthetic source handle for execution tests."""
     return agentgrep.SourceHandle(
         agent="codex",
-        store="codex.sessions",
-        adapter_id="codex.sessions_jsonl.v1",
+        store=store,
+        adapter_id=adapter_id,
         path=path,
         path_kind="session_file",
         source_kind="jsonl",
@@ -311,3 +316,53 @@ def test_bounded_reverse_raw_prefilter_reads_newest_matching_jsonl_first(
     assert len(finished) == 1
     assert finished[0].records_seen == 1
     assert finished[0].matches_seen == 1
+
+
+def test_bounded_codex_history_jsonl_does_not_prefetch_older_matches(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bounded Codex history scans stream JSONL instead of materializing it."""
+    query = _query(limit=1, match_surface="text")
+    source = _source(
+        tmp_path / "history.jsonl",
+        store="codex.history",
+        adapter_id="codex.history_jsonl.v1",
+    )
+    source.path.write_text(
+        "\n".join(
+            (
+                '{"timestamp":"2026-01-01T00:00:00Z","text":"old bliss"}',
+                '{"timestamp":"2026-01-02T00:00:00Z","text":"newer bliss"}',
+                '{"timestamp":"2026-01-03T00:00:00Z","text":"latest miss"}',
+            ),
+        ),
+        encoding="utf-8",
+    )
+    decoded_inputs: list[str] = []
+    original_loads = agentgrep.json.loads
+
+    def loads_with_capture(payload: str) -> object:
+        decoded_inputs.append(payload)
+        return t.cast("object", original_loads(payload))
+
+    monkeypatch.setattr(agentgrep.json, "loads", loads_with_capture)
+
+    events = list(
+        InlineExecutionDriver().iter_search_plan(
+            query,
+            _plan(
+                query,
+                source,
+                strategy="jsonl_bounded_reverse_raw_text_prefilter",
+            ),
+        ),
+    )
+
+    assert [event.record.text for event in events if isinstance(event, ExecutionRecordEmitted)] == [
+        "newer bliss",
+    ]
+    assert not any("old bliss" in payload for payload in decoded_inputs)
+    finished = [event for event in events if isinstance(event, ExecutionSourceFinished)]
+    assert len(finished) == 1
+    assert finished[0].records_seen == 1

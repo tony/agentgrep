@@ -4220,12 +4220,12 @@ def parse_codex_history_file(
     reverse: bool = False,
 ) -> cabc.Iterator[SearchRecord]:
     """Parse Codex prompt/command history files."""
-    entries: list[JSONValue]
+    entries: cabc.Iterable[JSONValue]
     if source.source_kind == "json":
         payload = read_json_file(source.path)
         entries = payload if isinstance(payload, list) else []
     else:
-        entries = list(
+        entries = (
             _iter_jsonl(
                 source.path,
                 skip_line=raw_skip_line,
@@ -4233,7 +4233,7 @@ def parse_codex_history_file(
                 reverse=reverse,
             )
             if raw_skip_line is not None
-            else _iter_jsonl(source.path, reverse=reverse),
+            else _iter_jsonl(source.path, reverse=reverse)
         )
 
     for entry in entries:
