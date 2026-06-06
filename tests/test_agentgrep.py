@@ -730,6 +730,61 @@ def test_text_search_pi_session_preserves_conversation_id(
     assert records[0].conversation_id == "/home/user/proj"
 
 
+def test_unbounded_haystack_search_finds_path_only_matches(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Project-name searches find conversations whose content lacks the term.
+
+    Regression guard: content-only root prefiltering dropped sources whose
+    haystack match lived in the file path, so unlimited searches for a
+    project directory name returned nothing.
+    """
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+
+    session_path = home / ".claude" / "projects" / "-home-user-tmux-proj" / "session-1.jsonl"
+    write_jsonl(
+        session_path,
+        [
+            {
+                "type": "user",
+                "sessionId": "session-1",
+                "message": {"role": "user", "content": "unrelated words only"},
+            },
+        ],
+    )
+
+    def grep_root_paths(
+        _root: pathlib.Path,
+        _query: t.Any,
+        _grep_program: str,
+        *,
+        control: t.Any = None,
+    ) -> set[pathlib.Path]:
+        _ = control
+        return set()
+
+    monkeypatch.setattr(agentgrep, "grep_root_paths", grep_root_paths)
+
+    query = agentgrep.SearchQuery(
+        terms=("tmux-proj",),
+        scope="conversations",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("claude",),
+        limit=None,
+        match_surface="haystack",
+    )
+    backends = agentgrep.BackendSelection(None, "rg", None)
+    sources = agentgrep.discover_sources(home, ("claude",), backends)
+    records = agentgrep.search_sources(query, sources, backends)
+
+    assert [record.text for record in records] == ["unrelated words only"]
+
+
 def test_search_reports_source_and_match_progress(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

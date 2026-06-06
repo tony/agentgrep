@@ -287,10 +287,13 @@ def build_physical_search_plan(
     if backends.grep_tool is not None:
         eager_sources: list[agentgrep.SourceHandle] = []
         lazy_sources: list[agentgrep.SourceHandle] = []
+        path_match_sources: list[agentgrep.SourceHandle] = []
         sqlite_sources: list[agentgrep.SourceHandle] = []
         for source in scoped_sources:
             if source.source_kind == "sqlite":
                 sqlite_sources.append(source)
+            elif _haystack_path_match_admission(query, source):
+                path_match_sources.append(source)
             elif _can_use_lazy_source_admission(query, source):
                 lazy_sources.append(source)
             else:
@@ -309,6 +312,15 @@ def build_physical_search_plan(
                     name="root_prefilter",
                     source_count=len(planned_sources),
                     detail="grep_tool",
+                ),
+            )
+        if path_match_sources:
+            planned_sources = [*planned_sources, *path_match_sources]
+            decisions.append(
+                PlannerDecision(
+                    name="root_prefilter_skipped",
+                    source_count=len(path_match_sources),
+                    detail="haystack_path_match",
                 ),
             )
         if lazy_sources:
@@ -450,14 +462,27 @@ def _can_use_lazy_source_admission(
     query: agentgrep.SearchQuery,
     source: agentgrep.SourceHandle,
 ) -> bool:
-    """Return whether a root source can skip eager whole-root prefiltering."""
+    """Return whether a bounded root source can skip eager whole-root prefiltering."""
     if source.search_root is None or not _can_use_bounded_reverse_jsonl(query, source):
         return False
-    if _can_use_jsonl_raw_text_prefilter(query, source):
-        return True
-    return query.match_surface == "haystack" and _source_path_matches_any_query_term(
-        query,
-        source,
+    return _can_use_jsonl_raw_text_prefilter(query, source)
+
+
+def _haystack_path_match_admission(
+    query: agentgrep.SearchQuery,
+    source: agentgrep.SourceHandle,
+) -> bool:
+    """Return whether a haystack query may match this source via its path.
+
+    The haystack surface includes the source path, and content-only root
+    prefilters cannot prove path matches impossible, so path-matched
+    sources must be admitted without grep evidence regardless of limit
+    or adapter.
+    """
+    return (
+        source.search_root is not None
+        and query.match_surface == "haystack"
+        and _source_path_matches_any_query_term(query, source)
     )
 
 
