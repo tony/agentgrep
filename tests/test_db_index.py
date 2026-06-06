@@ -901,7 +901,15 @@ def test_schema_version_mismatch_rebuilds_cache(tmp_path: pathlib.Path) -> None:
     runtime = DbRuntime.open(db_path)
     _ = runtime.sync_records(
         ((source, (_record(source, "Run ruff check before committing."),)),),
+        features_mode="inline",
     )
+    _ = InsightEngine(runtime.store).run_similarity()
+    fresh_tables = {
+        str(row["name"])
+        for row in runtime.store.connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'",
+        )
+    }
     with runtime.store.connection:
         _ = runtime.store.connection.execute(
             "UPDATE meta SET value = '999' WHERE key = 'schema_version'",
@@ -910,8 +918,28 @@ def test_schema_version_mismatch_rebuilds_cache(tmp_path: pathlib.Path) -> None:
 
     reopened = DbRuntime.open(db_path)
 
-    assert reopened.status().records == 0
-    assert reopened.status().sources == 0
+    status = reopened.status()
+    assert status.records == 0
+    assert status.sources == 0
+    assert status.features == 0
+    assert status.variant_edges == 0
+    assert status.omission_findings == 0
+    assert status.suggestions == 0
+    rebuilt_tables = {
+        str(row["name"])
+        for row in reopened.store.connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'",
+        )
+    }
+    assert rebuilt_tables == fresh_tables
+    # Tables without a cascade path to records keep rows if the drop
+    # list misses them; count them directly since status() does not.
+    for table in ("insight_runs", "clusters"):
+        row = reopened.store.connection.execute(
+            f"SELECT COUNT(*) AS count FROM {table}",
+        ).fetchone()
+        assert row is not None
+        assert int(row["count"]) == 0, table
 
 
 class CacheDedupeCase(t.NamedTuple):
