@@ -53,13 +53,14 @@ This ADR applies to:
 This ADR also applies to private Rust code when that code affects public
 behavior.
 
-This ADR governs drop-in accelerators as defined by the native boundary
-architecture: native code that transparently replaces public Python behavior,
-so that removing the native build changes nothing a user can observe except
-speed. Native engines and workers are governed by the native boundary
-architecture and are not held to the exact-match requirements below. This ADR
-continues to apply to any native component that presents itself as a drop-in
-replacement for a public Python function, class, method, attribute, or module.
+This ADR governs drop-in accelerators as defined in
+{ref}`adr-native-boundary-execution-architecture`: native code that
+transparently replaces public Python behavior, so that removing the native
+build changes nothing a user can observe except speed. Native engines and
+workers are governed by {ref}`adr-native-boundary-execution-architecture` and
+are not held to the exact-match requirements below. This ADR continues to
+apply to any native component that presents itself as a drop-in replacement
+for a public Python function, class, method, attribute, or module.
 
 ## Requirements
 

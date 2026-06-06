@@ -10,4 +10,5 @@ multiple adapters or public payloads.
 
 0001-storage-version-detection
 0002-pure-python-rust-accelerator-module-compatibility-requirements
+0003-native-boundary-and-execution-architecture
 ```
