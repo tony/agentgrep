@@ -4147,17 +4147,27 @@ def parse_codex_session_file(
         if _file_size(source.path) >= _CODEX_RAW_SKIP_MIN_BYTES
         else None
     )
-    skip_line = _combine_raw_skip_lines(raw_skip_line, codex_skip_line)
-    events = (
-        _iter_jsonl(
+    if codex_skip_line is not None:
+        # Keep the cheap prefix-mode tool-output skip even when a raw text
+        # prefilter is active: the prefix predicate discards oversized
+        # function_call_output lines in chunks while the text prefilter
+        # still sees every surviving line in full before JSON decode.
+        events = _iter_jsonl(
             source.path,
-            skip_line=skip_line,
-            skip_line_mode="line" if raw_skip_line is not None else "prefix",
+            skip_line=codex_skip_line,
+            skip_line_mode="prefix",
+            full_line_skip=raw_skip_line,
             reverse=reverse,
         )
-        if skip_line is not None
-        else _iter_jsonl(source.path, reverse=reverse)
-    )
+    elif raw_skip_line is not None:
+        events = _iter_jsonl(
+            source.path,
+            skip_line=raw_skip_line,
+            skip_line_mode="line",
+            reverse=reverse,
+        )
+    else:
+        events = _iter_jsonl(source.path, reverse=reverse)
     for event in events:
         if not isinstance(event, dict):
             continue
@@ -6292,17 +6302,41 @@ def _iter_jsonl(
     *,
     skip_line: RawJsonlSkipLine | None = None,
     skip_line_mode: t.Literal["prefix", "line"] = "prefix",
+    full_line_skip: RawJsonlSkipLine | None = None,
     reverse: bool = False,
 ) -> cabc.Iterator[JSONValue]:
-    """Yield decoded JSON objects from a JSONL file with an optional raw-line filter."""
+    """Yield decoded JSON objects from a JSONL file with an optional raw-line filter.
+
+    ``skip_line`` runs in ``skip_line_mode``: ``"prefix"`` checks only the
+    first :data:`_JSONL_PREFIX_BYTES` of each line so oversized lines can be
+    discarded in chunks without full allocation, while ``"line"`` checks the
+    whole line. ``full_line_skip`` always sees the complete decoded line
+    before JSON decode, so predicates that may match past the prefix window
+    stay correct alongside a cheap prefix skip. Reverse iteration ignores
+    ``skip_line_mode``: both predicates are combined and run against full
+    decoded lines, because reverse reads already materialize each line from
+    tail chunks.
+    """
     if reverse:
-        yield from _iter_jsonl_reverse(path, skip_line=skip_line)
+        yield from _iter_jsonl_reverse(
+            path,
+            skip_line=_combine_raw_skip_lines(skip_line, full_line_skip),
+        )
         return
     if skip_line is not None:
         if skip_line_mode == "line":
-            yield from _iter_jsonl_with_raw_line_skip(path, skip_line)
+            combined = _combine_raw_skip_lines(skip_line, full_line_skip)
+            assert combined is not None
+            yield from _iter_jsonl_with_raw_line_skip(path, combined)
         else:
-            yield from _iter_jsonl_with_raw_prefix_skip(path, skip_line)
+            yield from _iter_jsonl_with_raw_prefix_skip(
+                path,
+                skip_line,
+                full_line_skip=full_line_skip,
+            )
+        return
+    if full_line_skip is not None:
+        yield from _iter_jsonl_with_raw_line_skip(path, full_line_skip)
         return
     try:
         with path.open(encoding="utf-8") as handle:
@@ -6391,8 +6425,15 @@ def _decode_jsonl_raw_line(
 def _iter_jsonl_with_raw_prefix_skip(
     path: pathlib.Path,
     skip_line: RawJsonlSkipLine,
+    *,
+    full_line_skip: RawJsonlSkipLine | None = None,
 ) -> cabc.Iterator[JSONValue]:
-    """Yield decoded JSON objects while skipping matched raw prefixes."""
+    """Yield decoded JSON objects while skipping matched raw prefixes.
+
+    ``skip_line`` sees only the line prefix and gates the chunked discard
+    path; ``full_line_skip`` sees the fully accumulated line before JSON
+    decode.
+    """
     try:
         with path.open("rb") as handle:
             decoded_lines = 0
@@ -6416,7 +6457,10 @@ def _iter_jsonl_with_raw_prefix_skip(
                         break
                     raw_line.extend(chunk)
                     time.sleep(0)
-                stripped = raw_line.decode("utf-8", errors="replace").strip()
+                full_text = raw_line.decode("utf-8", errors="replace")
+                if full_line_skip is not None and full_line_skip(full_text):
+                    continue
+                stripped = full_text.strip()
                 if not stripped:
                     continue
                 try:

@@ -1035,6 +1035,141 @@ def test_parse_codex_session_skips_function_call_output_before_json_decode(
     assert decoded_payloads == [message_line]
 
 
+def test_iter_jsonl_prefix_skip_with_full_line_predicate(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Prefix skips stay cheap while full-line predicates see whole lines."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    prefix_bytes = int(agentgrep._JSONL_PREFIX_BYTES)
+    skip_target = json.dumps({"type": "skipme", "data": "x" * (prefix_bytes * 2)})
+    keep_target = json.dumps(
+        {"type": "keep", "pad": "y" * (prefix_bytes * 2), "marker": "needle-far"},
+    )
+    drop_target = json.dumps({"type": "keep", "marker": "drop-me"})
+    path = tmp_path / "lines.jsonl"
+    path.write_text(f"{skip_target}\n{keep_target}\n{drop_target}\n", encoding="utf-8")
+
+    prefix_calls: list[str] = []
+    full_calls: list[str] = []
+
+    def prefix_skip(line: str) -> bool:
+        prefix_calls.append(line)
+        return '"skipme"' in line
+
+    def full_skip(line: str) -> bool:
+        full_calls.append(line)
+        return "drop-me" in line
+
+    values = list(
+        agentgrep._iter_jsonl(
+            path,
+            skip_line=prefix_skip,
+            skip_line_mode="prefix",
+            full_line_skip=full_skip,
+        ),
+    )
+
+    assert values == [json.loads(keep_target)]
+    assert all(len(call) <= prefix_bytes for call in prefix_calls)
+    assert all('"skipme"' not in call for call in full_calls)
+    assert any("needle-far" in call for call in full_calls)
+
+
+class TwoStageSkipCase(t.NamedTuple):
+    """One Codex session layout and its expected raw-prefilter skip path."""
+
+    test_id: str
+    oversize_tool_output: bool
+    expected_discard: bool
+
+
+TWO_STAGE_SKIP_CASES: tuple[TwoStageSkipCase, ...] = (
+    TwoStageSkipCase(
+        test_id="oversized-session-keeps-chunked-prefix-discard",
+        oversize_tool_output=True,
+        expected_discard=True,
+    ),
+    TwoStageSkipCase(
+        test_id="small-session-keeps-full-line-mode",
+        oversize_tool_output=False,
+        expected_discard=False,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    TWO_STAGE_SKIP_CASES,
+    ids=[c.test_id for c in TWO_STAGE_SKIP_CASES],
+)
+def test_codex_session_raw_prefilter_keeps_prefix_tool_output_skip(
+    case: TwoStageSkipCase,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Raw text prefilters do not disable the chunked Codex tool-output skip."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    path = tmp_path / "session.jsonl"
+    output_pad = int(agentgrep._CODEX_RAW_SKIP_MIN_BYTES) if case.oversize_tool_output else 64
+    tool_output_line = json.dumps(
+        {
+            "timestamp": "2026-01-01T00:00:00Z",
+            "type": "response_item",
+            "payload": {
+                "type": "function_call_output",
+                "call_id": "call_1",
+                "output": "bliss" + ("x" * output_pad),
+            },
+        },
+    )
+    message_line = json.dumps(
+        {
+            "timestamp": "2026-01-01T00:00:01Z",
+            "type": "response_item",
+            "payload": {"role": "user", "content": "bliss prompt"},
+        },
+    )
+    decoy_line = json.dumps(
+        {
+            "timestamp": "2026-01-01T00:00:02Z",
+            "type": "response_item",
+            "payload": {"role": "user", "content": "other prompt"},
+        },
+    )
+    path.write_text(
+        f"{tool_output_line}\n{message_line}\n{decoy_line}\n",
+        encoding="utf-8",
+    )
+    source = agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=path,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=1,
+    )
+    discard_calls: list[bytes] = []
+    original_discard = agentgrep._discard_rest_of_line
+
+    def tracking_discard(handle: t.BinaryIO, prefix: bytes) -> None:
+        discard_calls.append(prefix)
+        original_discard(handle, prefix)
+
+    monkeypatch.setattr(agentgrep, "_discard_rest_of_line", tracking_discard)
+
+    def raw_skip_line(line: str) -> bool:
+        return "bliss" not in line
+
+    records = list(
+        agentgrep.parse_codex_session_file(source, raw_skip_line=raw_skip_line),
+    )
+
+    assert [record.text for record in records] == ["bliss prompt"]
+    assert bool(discard_calls) is case.expected_discard
+
+
 def test_streaming_search_progress_buffers_and_flushes_records(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
