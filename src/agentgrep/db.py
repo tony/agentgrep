@@ -15,6 +15,7 @@ import typing as t
 import unicodedata
 
 import agentgrep
+from agentgrep._engine.scanning import _CACHE_EXEMPT_ADAPTERS
 
 CacheMode = t.Literal["auto", "require", "off"]
 
@@ -432,7 +433,17 @@ class DbStore:
         return indexed, removed
 
     def source_is_current(self, source: agentgrep.SourceHandle) -> bool:
-        """Return whether ``source`` has an up-to-date successful sync state."""
+        """Return whether ``source`` has an up-to-date successful sync state.
+
+        Adapters whose record text depends on files outside
+        ``source.path`` are never current: the fingerprint stats only
+        the primary file, so a changed sibling file — Claude history
+        resolves ``paste-cache/<contentHash>.txt`` references — would
+        otherwise leave stale expansions in the index. Mirrors the
+        engine's source-scan cache exemption.
+        """
+        if source.adapter_id in _CACHE_EXEMPT_ADAPTERS:
+            return False
         source_id = source_id_for(source)
         fingerprint = _source_fingerprint(source)
         row = self.connection.execute(
