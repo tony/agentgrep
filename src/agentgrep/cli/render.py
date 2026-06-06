@@ -36,7 +36,15 @@ from agentgrep._text import (
     _visible_width,
     format_display_path,
 )
-from agentgrep.cli.parser import DbArgs, FindArgs, GrepArgs, SearchArgs, UIArgs
+from agentgrep.cli.parser import (
+    DbArgs,
+    FindArgs,
+    GrepArgs,
+    InsightsArgs,
+    SearchArgs,
+    SuggestionsArgs,
+    UIArgs,
+)
 from agentgrep.cli.renderers import (
     GrepSummary,
     _compile_search_patterns,
@@ -107,7 +115,9 @@ __all__ = [
     "run_db_command",
     "run_find_command",
     "run_grep_command",
+    "run_insights_command",
     "run_search_command",
+    "run_suggestions_command",
     "run_ui_command",
     "serialize_find_record",
     "serialize_grep_record",
@@ -1880,6 +1890,10 @@ def _run_db_status_command(args: DbArgs) -> int:
                 schema_version=SCHEMA_VERSION,
                 sources=0,
                 records=0,
+                features=0,
+                variant_edges=0,
+                omission_findings=0,
+                suggestions=0,
             )
         _print_json_or_text(payload, output_mode=args.output_mode, color_mode=args.color_mode)
         return 0
@@ -1976,4 +1990,196 @@ def _run_db_command_with_runtime(args: DbArgs, runtime: DbRuntime) -> int:
         if progress is not None:
             progress.close()
     _print_json_or_text(result, output_mode=args.output_mode, color_mode=args.color_mode)
+    return 0
+
+
+@dataclasses.dataclass(frozen=True)
+class InsightsAnalyzeProgressResult:
+    """Aggregate counters for one insights analyze command."""
+
+    runs_analyzed: int
+    features_refreshed: int
+    clusters: int
+    variant_edges: int
+    omission_findings: int
+
+
+@dataclasses.dataclass(frozen=True)
+class InsightsAnalyzeProgressSnapshot:
+    """Immutable view of insights analyze progress state for one render pass."""
+
+    phase: str
+    current: int | None
+    total: int | None
+    detail: str | None
+    activity: str | None
+    activity_detail: str | None
+    result: InsightsAnalyzeProgressResult
+    elapsed: float
+
+
+def format_insights_analyze_progress_lines(
+    snapshot: InsightsAnalyzeProgressSnapshot,
+    *,
+    colors: SearchColors,
+    answer_now_hint: bool = False,
+    max_width: int | None = None,
+) -> tuple[str, ...]:
+    """Format multi-line insights analyze progress."""
+    status = colors.heading(snapshot.phase)
+    if snapshot.current is not None and snapshot.total is not None:
+        status = (
+            f"{status} {colors.warning(f'{snapshot.current}/{snapshot.total}')} "
+            f"{colors.muted('steps')}"
+        )
+    parts = [colors.heading("Insights analyze"), status]
+    if snapshot.detail:
+        parts.append(colors.muted(snapshot.detail))
+    parts.append(colors.muted(f"{snapshot.elapsed:.1f}s"))
+    if answer_now_hint:
+        parts.append(colors.white("[Press enter, exit early]"))
+    lines = [" | ".join(parts)]
+    if snapshot.activity is not None:
+        activity = [colors.heading("Doing"), snapshot.activity]
+        if snapshot.activity_detail:
+            activity.append(colors.muted(snapshot.activity_detail))
+        lines.append(" | ".join(activity))
+    result = snapshot.result
+    if any(
+        (
+            result.runs_analyzed,
+            result.features_refreshed,
+            result.clusters,
+            result.variant_edges,
+            result.omission_findings,
+        ),
+    ):
+        lines.append(
+            " | ".join(
+                (
+                    colors.heading("Results"),
+                    _format_count(result.runs_analyzed, "run analyzed", "runs analyzed"),
+                    _format_count(
+                        result.features_refreshed,
+                        "feature refreshed",
+                        "features refreshed",
+                    ),
+                    _format_count(result.clusters, "cluster"),
+                    _format_count(result.variant_edges, "variant edge"),
+                    _format_count(result.omission_findings, "omission finding"),
+                ),
+            ),
+        )
+    if max_width is not None:
+        return tuple(_hard_truncate_ansi(line, max_width) for line in lines)
+    return tuple(lines)
+
+
+class ConsoleInsightsAnalyzeProgress:
+    """Human progress reporter for insights analysis."""
+
+    def __init__(
+        self,
+        *,
+        enabled: bool,
+        stream: t.TextIO | None = None,
+        tty: bool | None = None,
+        color_mode: ColorMode = "auto",
+        refresh_interval: float = 0.1,
+        heartbeat_interval: float = 10.0,
+        answer_now_hint: bool = False,
+    ) -> None:
+        self._enabled = enabled
+        self._stream = stream if stream is not None else sys.stderr
+        self._tty = tty
+        self._colors = AnsiColors.for_stream(color_mode, self._stream)
+        self._refresh_interval = refresh_interval
+        self._heartbeat_interval = heartbeat_interval
+        self._answer_now_hint = answer_now_hint
+        self._phase = "analyzing"
+        self._current: int | None = None
+        self._total: int | None = None
+        self._detail: str | None = None
+        self._activity: str | None = None
+        self._activity_detail: str | None = None
+        self._result = InsightsAnalyzeProgressResult(0, 0, 0, 0, 0)
+
+    def start(self, total_steps: int) -> None:
+        """Begin insight analysis progress."""
+        self._total = total_steps
+        self._write("Insights analyze")
+
+    def step_started(
+        self,
+        index: int,
+        total: int,
+        step: str,
+        result: InsightsAnalyzeProgressResult,
+    ) -> None:
+        """Report that one insight analysis step is starting."""
+        self._current = index
+        self._total = total
+        self._detail = step
+        self._result = result
+
+    def step_finished(
+        self,
+        index: int,
+        total: int,
+        step: str,
+        result: InsightsAnalyzeProgressResult,
+    ) -> None:
+        """Report that one insight analysis step has finished."""
+        self.step_started(index, total, f"{step} complete", result)
+
+    def set_activity(self, activity: str, *, detail: str | None = None) -> None:
+        """Update the current backend activity."""
+        self._activity = activity
+        self._activity_detail = detail
+
+    def finish(self, result: InsightsAnalyzeProgressResult) -> None:
+        """Report completed insight analysis."""
+        self._result = result
+        self._write("Analyze complete:")
+
+    def exiting_early(self, result: InsightsAnalyzeProgressResult) -> None:
+        """Report cooperatively shortened insight analysis."""
+        self._result = result
+        hint = " | [Press enter, exit early]" if self._answer_now_hint else ""
+        self._write(f"Exiting early:{hint}")
+
+    def interrupt(self) -> None:
+        """Write the latest progress snapshot."""
+        snapshot = InsightsAnalyzeProgressSnapshot(
+            phase=self._phase,
+            current=self._current,
+            total=self._total,
+            detail=self._detail,
+            activity=self._activity,
+            activity_detail=self._activity_detail,
+            result=self._result,
+            elapsed=0.0,
+        )
+        for line in format_insights_analyze_progress_lines(snapshot, colors=self._colors):
+            self._write(line)
+
+    def close(self) -> None:
+        """Close the progress adapter."""
+
+    def _write(self, text: str) -> None:
+        if not self._enabled:
+            return
+        _ = self._stream.write(f"{self._colors.heading(text)}\n")
+        self._stream.flush()
+
+
+def run_insights_command(args: InsightsArgs) -> int:
+    """Execute an insights command."""
+    _ = args
+    return 0
+
+
+def run_suggestions_command(args: SuggestionsArgs) -> int:
+    """Execute a suggestions command."""
+    _ = args
     return 0
