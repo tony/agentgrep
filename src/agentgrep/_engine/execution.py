@@ -29,7 +29,6 @@ from agentgrep._engine.scheduling import (
     FrontierExecutionDriver,
     InlineExecutionDriver,
     SearchExecutionEvent,
-    _FrontierState,
     select_execution_driver,
 )
 
@@ -47,7 +46,6 @@ __all__ = [
     "SourceScanCache",
     "SourceScanCacheStats",
     "SourceScanResult",
-    "_FrontierState",
     "iter_source_task_batches",
     "iter_source_task_records",
     "raw_text_skip_line_for_haystack_query",

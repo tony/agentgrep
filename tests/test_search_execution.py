@@ -1312,7 +1312,7 @@ def test_limit_policy_records_source_order_frontier_satisfaction() -> None:
     """Limit policy makes the current source-order stop rule explicit."""
     query = _query(limit=1)
     source = _source(pathlib.Path("/tmp/session.jsonl"))
-    frontier = execution._FrontierState(query)
+    frontier = scheduling._FrontierState(query)
 
     frontier.add_records((_record(source, "bliss", "2026-01-01T00:00:00Z"),))
 
