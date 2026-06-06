@@ -176,6 +176,14 @@ Planning must choose the cheapest correct adapter strategy:
   cannot be filtered before decoding.
 - Bounded newest-first JSONL scans for limited append-only sources when record
   predicates do not require metadata that only appears earlier in the file.
+- Lazy source admission for bounded text-surface append-only JSONL root
+  sources. These sources can skip eager whole-root text prefiltering because
+  raw JSONL line checks and newest-first execution are cheaper than a separate
+  root scan in the bounded path. Haystack searches keep eager root
+  prefiltering for broad content terms, but must lazily admit sources whose
+  source path satisfies at least one query term because a content-only root
+  prefilter cannot prove those path matches impossible. Unbounded,
+  unknown-order, and non-JSONL root sources keep the eager prefilter path.
 - Full Python parsing when the store format, query semantics, or privacy rules
   require it.
 
@@ -220,7 +228,7 @@ The planner and executor must be easy to profile. Each run can emit:
 - query shape: scope, agent count, terms/predicate count, limit presence;
 - discovery counts by agent, store, adapter, and path kind;
 - planner decisions: predicates pushed down, sources pruned, direct paths
-  chosen, fallback reasons;
+  chosen, root prefilters skipped, fallback reasons;
 - execution counts: sources started, submitted, completed, skipped, records
   seen, matches seen, emitted records, dedupe drops, cancellation point;
 - timing spans: discovery, planning, per-source execution, output sink

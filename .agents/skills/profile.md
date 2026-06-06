@@ -39,7 +39,8 @@ prompt text, raw argv, or local absolute paths.
 5. Summarize the slowest spans and source/result counts; do not paste private
    prompt text or local paths.
 6. For bottleneck diagnosis, inspect source-level spans:
-   `search.discover.group`, `search.plan.prefilter_root`,
+   `search.discover.group`, `search.plan.decision`,
+   `search.plan.prefilter_root`,
    `search.plan.direct_source`, `search.collect.source`,
    optional `search.collect.scheduler`, and
    `find.filter.source`.

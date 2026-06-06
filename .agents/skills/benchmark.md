@@ -209,7 +209,8 @@ Only STEPs are actionable. SPIKEs are noise.
 
 **Nested profile analysis** for `profile-engine-*` rows:
 - Inspect `profile_payload.profile.samples`
-- Start with `search.plan.prefilter_root`, `search.plan.direct_source`,
+- Start with `search.plan.decision`, `search.plan.prefilter_root`,
+  `search.plan.direct_source`,
   `search.collect.source`, optional `search.collect.scheduler`,
   `search.discover.group`, and
   `find.filter.source`

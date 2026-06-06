@@ -298,6 +298,32 @@ def test_profile_search_query_reports_physical_strategy_groups(
     assert "private-token" not in payload
 
 
+def test_profile_search_query_reports_planner_decisions(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Search profiling records privacy-safe planner decision summaries."""
+    _ = _write_codex_session(tmp_path, name="match.jsonl", text="tmux private-token")
+
+    profiled = profile_search_query(
+        tmp_path,
+        _make_query(scope="conversations", match_surface="text"),
+        backends=agentgrep.BackendSelection(find_tool=None, grep_tool="rg", json_tool=None),
+    )
+
+    samples = _samples_named(profiled.profile, "search.plan.decision")
+    decisions = {sample.attributes["agentgrep_planner_decision"]: sample for sample in samples}
+    assert decisions["scope_prune"].attributes["agentgrep_source_count"] == 1
+    assert decisions["root_prefilter_skipped"].attributes["agentgrep_source_count"] == 1
+    assert (
+        decisions["root_prefilter_skipped"].attributes["agentgrep_planner_detail"]
+        == "bounded_append_only_jsonl"
+    )
+
+    payload = json.dumps(profiled.to_payload(), sort_keys=True)
+    assert str(tmp_path) not in payload
+    assert "private-token" not in payload
+
+
 def test_profile_find_query_reports_filter_source_samples(
     tmp_path: pathlib.Path,
 ) -> None:

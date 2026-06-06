@@ -286,7 +286,8 @@ Available components are `search-prompts`, `search-conversations`,
 The JSON payload reports counts, phase timings, and coarse subprocess
 metadata. Profile runs include phase spans such as `search.discover`,
 `search.plan`, and `search.collect`, plus source-level spans such as
-`search.discover.group`, `search.plan.prefilter_root`,
+`search.discover.group`, `search.plan.decision`,
+`search.plan.prefilter_root`,
 `search.plan.direct_source`, `search.collect.source`, and
 `find.filter.source`. Concurrent source execution also reports
 `search.collect.scheduler` with driver, worker, submitted, completed,

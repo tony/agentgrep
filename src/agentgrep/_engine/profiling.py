@@ -19,7 +19,7 @@ import typing as t
 
 if t.TYPE_CHECKING:
     import agentgrep
-    from agentgrep._engine.planning import SourceTask
+    from agentgrep._engine.planning import PlannerDecision, SourceTask
     from agentgrep.query.compile import CompiledQuery
 
 type ProfileAttribute = str | int | float | bool | None
@@ -243,6 +243,7 @@ def profile_search_query(
                 active_backends,
                 control=active_control,
             )
+        _record_planner_decisions(profiler, plan.decisions)
         _record_source_task_groups(profiler, "search.plan.strategy_group", plan.tasks)
         if active_control.answer_now_requested():
             records: list[agentgrep.SearchRecord] = []
@@ -428,6 +429,21 @@ def _record_source_task_groups(
             agentgrep_source_kind=source_kind,
             agentgrep_source_strategy=strategy,
             agentgrep_source_count=source_count,
+        )
+
+
+def _record_planner_decisions(
+    profiler: EngineProfiler,
+    decisions: cabc.Sequence[PlannerDecision],
+) -> None:
+    """Record privacy-safe physical planner decision summaries."""
+    for decision in decisions:
+        profiler.record(
+            "search.plan.decision",
+            0.0,
+            agentgrep_planner_decision=decision.name,
+            agentgrep_source_count=decision.source_count,
+            agentgrep_planner_detail=decision.detail,
         )
 
 

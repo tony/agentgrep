@@ -203,20 +203,38 @@ def build_physical_search_plan(
 
     planned_sources = scoped_sources
     if backends.grep_tool is not None:
-        planned_sources = agentgrep.prefilter_sources_by_root(
-            query,
-            planned_sources,
-            backends.grep_tool,
-            progress=active_progress,
-            control=active_control,
-        )
-        decisions.append(
-            PlannerDecision(
-                name="root_prefilter",
-                source_count=len(planned_sources),
-                detail="grep_tool",
-            ),
-        )
+        eager_sources: list[agentgrep.SourceHandle] = []
+        lazy_sources: list[agentgrep.SourceHandle] = []
+        for source in scoped_sources:
+            if _can_use_lazy_source_admission(query, source):
+                lazy_sources.append(source)
+            else:
+                eager_sources.append(source)
+        planned_sources = eager_sources
+        if planned_sources:
+            planned_sources = agentgrep.prefilter_sources_by_root(
+                query,
+                planned_sources,
+                backends.grep_tool,
+                progress=active_progress,
+                control=active_control,
+            )
+            decisions.append(
+                PlannerDecision(
+                    name="root_prefilter",
+                    source_count=len(planned_sources),
+                    detail="grep_tool",
+                ),
+            )
+        if lazy_sources:
+            planned_sources = [*planned_sources, *lazy_sources]
+            decisions.append(
+                PlannerDecision(
+                    name="root_prefilter_skipped",
+                    source_count=len(lazy_sources),
+                    detail="bounded_append_only_jsonl",
+                ),
+            )
 
     ordered_sources: list[agentgrep.SourceHandle] = []
     for source in planned_sources:
@@ -254,11 +272,12 @@ def build_physical_search_plan(
 
 def _source_task(source: agentgrep.SourceHandle, strategy: SourceStrategy) -> SourceTask:
     """Build one physical source task."""
+    limit_behavior = _source_limit_behavior(strategy)
     return SourceTask(
         source=source,
         strategy=strategy,
         record_order=_source_record_order(strategy),
-        limit_behavior=_source_limit_behavior(strategy),
+        limit_behavior=limit_behavior,
         can_stream_records=True,
         restore_order_key=_source_order_key(source),
     )
@@ -326,6 +345,38 @@ def _can_use_bounded_reverse_jsonl(
         and query.compiled is None
         and source.source_kind == "jsonl"
         and source.adapter_id in APPEND_ONLY_JSONL_ADAPTERS
+    )
+
+
+def _can_use_lazy_source_admission(
+    query: agentgrep.SearchQuery,
+    source: agentgrep.SourceHandle,
+) -> bool:
+    """Return whether a root source can skip eager whole-root prefiltering."""
+    if source.search_root is None or not _can_use_bounded_reverse_jsonl(query, source):
+        return False
+    if _can_use_jsonl_raw_text_prefilter(query, source):
+        return True
+    return query.match_surface == "haystack" and _source_path_matches_any_query_term(
+        query,
+        source,
+    )
+
+
+def _source_path_matches_any_query_term(
+    query: agentgrep.SearchQuery,
+    source: agentgrep.SourceHandle,
+) -> bool:
+    """Return whether source path metadata may satisfy part of a haystack query."""
+    import agentgrep
+
+    source_text = str(pathlib.Path(source.path))
+    return any(
+        agentgrep.matches_text(
+            source_text,
+            dataclasses.replace(query, terms=(term,), any_term=True),
+        )
+        for term in query.terms
     )
 
 

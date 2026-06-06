@@ -183,6 +183,196 @@ def test_plan_search_sources_delegates_to_physical_plan(
     assert [task.strategy for task in plan.tasks] == ["jsonl_bounded_reverse_scan"]
 
 
+def test_bounded_text_append_only_jsonl_root_source_uses_lazy_admission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bounded text-surface JSONL searches avoid eager whole-root text scans."""
+    root = pathlib.Path("/tmp/claude-projects")
+    source = _source(
+        agent="claude",
+        path="/tmp/claude-projects/project.jsonl",
+        store="claude.projects",
+        adapter_id="claude.projects_jsonl.v1",
+        search_root=root,
+        mtime_ns=2,
+    )
+
+    def fail_prefilter_sources_by_root(
+        _query: agentgrep.SearchQuery,
+        _sources: list[agentgrep.SourceHandle],
+        _grep_program: str,
+        *,
+        progress: agentgrep.SearchProgress | None = None,
+        control: agentgrep.SearchControl | None = None,
+    ) -> list[agentgrep.SourceHandle]:
+        _ = progress, control
+        pytest.fail("bounded append-only JSONL sources should be admitted lazily")
+
+    monkeypatch.setattr(agentgrep, "prefilter_sources_by_root", fail_prefilter_sources_by_root)
+
+    plan = build_physical_search_plan(
+        _query(scope="conversations", match_surface="text", limit=1),
+        (source,),
+        agentgrep.BackendSelection(find_tool=None, grep_tool="rg", json_tool=None),
+    )
+
+    assert [task.source for task in plan.tasks] == [source]
+    assert [task.strategy for task in plan.tasks] == [
+        "jsonl_bounded_reverse_raw_text_prefilter",
+    ]
+    assert [decision.name for decision in plan.decisions] == [
+        "scope_prune",
+        "root_prefilter_skipped",
+        "candidate_order",
+    ]
+    assert plan.decisions[1].source_count == 1
+    assert plan.decisions[1].detail == "bounded_append_only_jsonl"
+
+
+def test_bounded_haystack_root_source_without_path_match_keeps_eager_prefilter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Broad haystack JSONL searches keep root prefiltering to avoid over-admission."""
+    root = pathlib.Path("/tmp/claude-projects")
+    source = _source(
+        agent="claude",
+        path="/tmp/claude-projects/project.jsonl",
+        store="claude.projects",
+        adapter_id="claude.projects_jsonl.v1",
+        search_root=root,
+        mtime_ns=2,
+    )
+    prefetched_sources: list[agentgrep.SourceHandle] = []
+
+    def prefilter_sources_by_root(
+        _query: agentgrep.SearchQuery,
+        sources: list[agentgrep.SourceHandle],
+        _grep_program: str,
+        *,
+        progress: agentgrep.SearchProgress | None = None,
+        control: agentgrep.SearchControl | None = None,
+    ) -> list[agentgrep.SourceHandle]:
+        _ = progress, control
+        prefetched_sources.extend(sources)
+        return list(sources)
+
+    monkeypatch.setattr(agentgrep, "prefilter_sources_by_root", prefilter_sources_by_root)
+
+    plan = build_physical_search_plan(
+        _query(scope="conversations", match_surface="haystack", limit=1),
+        (source,),
+        agentgrep.BackendSelection(find_tool=None, grep_tool="rg", json_tool=None),
+    )
+
+    assert prefetched_sources == [source]
+    assert [task.source for task in plan.tasks] == [source]
+    assert [task.strategy for task in plan.tasks] == [
+        "jsonl_bounded_reverse_haystack_raw_text_prefilter",
+    ]
+    assert [decision.name for decision in plan.decisions] == [
+        "scope_prune",
+        "root_prefilter",
+        "candidate_order",
+    ]
+
+
+def test_bounded_haystack_root_source_with_path_match_uses_lazy_admission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Haystack searches avoid content-only root prefiltering for path matches."""
+    root = pathlib.Path("/tmp/claude-projects")
+    source = _source(
+        agent="claude",
+        path="/tmp/claude-projects/tmux-project.jsonl",
+        store="claude.projects",
+        adapter_id="claude.projects_jsonl.v1",
+        search_root=root,
+        mtime_ns=2,
+    )
+
+    def fail_prefilter_sources_by_root(
+        _query: agentgrep.SearchQuery,
+        _sources: list[agentgrep.SourceHandle],
+        _grep_program: str,
+        *,
+        progress: agentgrep.SearchProgress | None = None,
+        control: agentgrep.SearchControl | None = None,
+    ) -> list[agentgrep.SourceHandle]:
+        _ = progress, control
+        pytest.fail("path-matched haystack sources should be admitted lazily")
+
+    monkeypatch.setattr(agentgrep, "prefilter_sources_by_root", fail_prefilter_sources_by_root)
+
+    plan = build_physical_search_plan(
+        _query(scope="conversations", match_surface="haystack", limit=1),
+        (source,),
+        agentgrep.BackendSelection(find_tool=None, grep_tool="rg", json_tool=None),
+    )
+
+    assert [task.source for task in plan.tasks] == [source]
+    assert [task.strategy for task in plan.tasks] == [
+        "jsonl_bounded_reverse_haystack_raw_text_prefilter",
+    ]
+    assert [decision.name for decision in plan.decisions] == [
+        "scope_prune",
+        "root_prefilter_skipped",
+        "candidate_order",
+    ]
+
+
+def test_unbounded_root_source_still_uses_eager_prefilter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unbounded root searches keep the whole-root grep prefilter."""
+    root = pathlib.Path("/tmp/claude-projects")
+    matched = _source(
+        agent="claude",
+        path="/tmp/claude-projects/matched.jsonl",
+        store="claude.projects",
+        adapter_id="claude.projects_jsonl.v1",
+        search_root=root,
+        mtime_ns=2,
+    )
+    missed = _source(
+        agent="claude",
+        path="/tmp/claude-projects/missed.jsonl",
+        store="claude.projects",
+        adapter_id="claude.projects_jsonl.v1",
+        search_root=root,
+        mtime_ns=1,
+    )
+    prefetched_sources: list[agentgrep.SourceHandle] = []
+
+    def prefilter_sources_by_root(
+        _query: agentgrep.SearchQuery,
+        sources: list[agentgrep.SourceHandle],
+        _grep_program: str,
+        *,
+        progress: agentgrep.SearchProgress | None = None,
+        control: agentgrep.SearchControl | None = None,
+    ) -> list[agentgrep.SourceHandle]:
+        _ = progress, control
+        prefetched_sources.extend(sources)
+        return [matched]
+
+    monkeypatch.setattr(agentgrep, "prefilter_sources_by_root", prefilter_sources_by_root)
+
+    plan = build_physical_search_plan(
+        _query(scope="conversations", match_surface="haystack", limit=None),
+        (matched, missed),
+        agentgrep.BackendSelection(find_tool=None, grep_tool="rg", json_tool=None),
+    )
+
+    assert prefetched_sources == [matched, missed]
+    assert [task.source for task in plan.tasks] == [matched]
+    assert [task.strategy for task in plan.tasks] == ["root_full_scan"]
+    assert [decision.name for decision in plan.decisions] == [
+        "scope_prune",
+        "root_prefilter",
+        "candidate_order",
+    ]
+
+
 class SourceStrategyCase(t.NamedTuple):
     """One query/source combination and its expected execution strategy."""
 
