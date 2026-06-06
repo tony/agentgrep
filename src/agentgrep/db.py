@@ -717,6 +717,18 @@ class DbRuntime:
         """Open a DB runtime at ``db_path`` or the default path."""
         return cls(DbStore.open(db_path))
 
+    def close(self) -> None:
+        """Close the underlying store connection."""
+        self.store.close()
+
+    def __enter__(self) -> DbRuntime:
+        """Return the runtime for use as a context manager."""
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        """Close the underlying store connection on context exit."""
+        self.close()
+
     def status(self) -> DbStatus:
         """Return DB status counters."""
         return self.store.status()

@@ -1211,6 +1211,14 @@ def _open_db_runtime(db_path: str | None) -> DbRuntime:
 def run_db_command(args: DbArgs) -> int:
     """Execute ``agentgrep db`` subcommands."""
     runtime = _open_db_runtime(args.db_path)
+    try:
+        return _run_db_command_with_runtime(args, runtime)
+    finally:
+        runtime.close()
+
+
+def _run_db_command_with_runtime(args: DbArgs, runtime: DbRuntime) -> int:
+    """Execute one db action against an already-open runtime."""
     if args.action in {"status", "explain"}:
         _print_json_or_text(
             runtime.status(),
