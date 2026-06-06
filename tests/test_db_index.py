@@ -180,6 +180,76 @@ def test_db_runtime_syncs_records_and_serves_fts_results(
     ]
 
 
+def test_db_runtime_sync_skips_unchanged_sources_without_reading_records(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Fresh source_state lets repeated sync avoid opening the record stream."""
+    source_path = tmp_path / "session.jsonl"
+    source_path.write_text("ruff", encoding="utf-8")
+    source = _source(source_path)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    _ = runtime.sync_records(
+        ((source, (_record(source, "Run ruff check before committing."),)),),
+    )
+
+    def records_that_should_not_be_read() -> t.Iterator[agentgrep.SearchRecord]:
+        msg = "unchanged source records should not be consumed"
+        raise AssertionError(msg)
+        yield _record(source, "unreachable")
+
+    result = runtime.sync_records(((source, records_that_should_not_be_read()),))
+
+    assert result == SyncResult(
+        sources_synced=0,
+        records_indexed=0,
+        records_removed=0,
+        sources_skipped=1,
+    )
+    assert runtime.status().records == 1
+
+
+def test_db_runtime_sync_force_resyncs_unchanged_sources(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Forced sync ignores source_state when the caller wants a full refresh."""
+    source_path = tmp_path / "session.jsonl"
+    source_path.write_text("ruff", encoding="utf-8")
+    source = _source(source_path)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    _ = runtime.sync_records(
+        ((source, (_record(source, "Run ruff check before committing."),)),),
+    )
+
+    result = runtime.sync_records(
+        ((source, (_record(source, "Run pytest before committing."),)),),
+        force=True,
+    )
+
+    assert result.sources_synced == 1
+    assert result.sources_skipped == 0
+    assert result.records_indexed == 1
+    assert result.records_removed == 1
+    assert [record.text for record in runtime.search_records(_query("pytest"))] == [
+        "Run pytest before committing.",
+    ]
+
+
+def test_db_store_source_id_delete_uses_index(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Source replacement must not scan all records for each source delete."""
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+
+    rows = runtime.store.connection.execute(
+        "EXPLAIN QUERY PLAN SELECT rowid FROM records WHERE source_id = ?",
+        ("source-a",),
+    ).fetchall()
+    plan = " ".join(str(row["detail"]) for row in rows)
+
+    assert "idx_records_source_id" in plan
+    assert "SCAN records" not in plan
+
+
 @pytest.mark.parametrize(
     "case",
     DUPLICATE_RECORD_CASES,
@@ -234,7 +304,11 @@ def test_db_runtime_sync_can_exit_early_between_sources(
         progress=progress,
     )
 
-    assert result == SyncResult(sources_synced=1, records_indexed=1, records_removed=0)
+    assert result == SyncResult(
+        sources_synced=1,
+        records_indexed=1,
+        records_removed=0,
+    )
     assert progress.started_total == 2
     assert progress.finished_sources == ["first.jsonl"]
     assert progress.finished_cleanly is False
