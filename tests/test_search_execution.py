@@ -1044,6 +1044,75 @@ def test_frontier_driver_merges_source_batches_before_source_finishes(
     assert scheduler_sample.attributes["agentgrep_queued_batch_count"] == 2
 
 
+def test_frontier_batch_path_raises_deferred_error_without_deadlock(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed source scan surfaces its error instead of hanging the drain loop.
+
+    Regression guard: a failed worker never sends a completion item, so the
+    scheduler must drop the failed task from its running set or the drain
+    loop polls an empty queue forever. The consumer runs on a daemon thread
+    with a join timeout so a regression fails fast instead of hanging the
+    suite.
+    """
+    query = _query(limit=5)
+    failing = _source(tmp_path / "failing.jsonl")
+    healthy = _source(tmp_path / "healthy.jsonl")
+    failing.mtime_ns = 2
+    healthy.mtime_ns = 1
+
+    def iter_batches(
+        _query: agentgrep.SearchQuery,
+        task: SourceTask,
+        *,
+        index: int,
+        total: int,
+        control: agentgrep.SearchControl,
+        progress: agentgrep.SearchProgress | None = None,
+        batch_size: int = 32,
+    ) -> cabc.Iterator[SourceScanBatch]:
+        _ = control, progress, batch_size
+        if task.source == failing:
+            msg = "boom"
+            raise RuntimeError(msg)
+        yield SourceScanBatch(
+            index=index,
+            total=total,
+            source=task.source,
+            task=task,
+            records=(_record(task.source, "healthy bliss", "2026-01-02T00:00:00Z"),),
+            records_seen=1,
+            matches_seen=1,
+            duration_seconds=0.01,
+            is_final=True,
+        )
+
+    monkeypatch.setattr(scanning, "iter_source_task_batches", iter_batches)
+    driver = scheduling.FrontierExecutionDriver(
+        ExecutionDriverConfig(max_workers=2, use_source_batches=True),
+    )
+    errors: list[BaseException] = []
+
+    def consume() -> None:
+        try:
+            list(
+                driver.iter_search_plan(
+                    query,
+                    _multi_plan(query, (failing, healthy)),
+                ),
+            )
+        except RuntimeError as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=consume, daemon=True)
+    thread.start()
+    thread.join(timeout=10.0)
+
+    assert not thread.is_alive(), "frontier batch scheduler deadlocked on a failed source"
+    assert [str(error) for error in errors] == ["boom"]
+
+
 def test_select_execution_driver_uses_frontier_for_bounded_haystack_search(
     tmp_path: pathlib.Path,
 ) -> None:

@@ -323,6 +323,10 @@ class FrontierExecutionDriver:
 
                 if isinstance(item, _SourceTaskFailed):
                     deferred_error = item.error
+                    # The failed worker never sends a matching completion
+                    # item, so drop it from the running set here or the
+                    # drain loop waits on an empty queue forever.
+                    running.pop(item.index, None)
                     for running_task in running.values():
                         running_task.control.request_answer_now()
                     continue
