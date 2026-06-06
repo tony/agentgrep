@@ -40,6 +40,24 @@ Content search with rg/ag-shaped flags, output, and exit codes.
 Enumerate on-disk stores with fd-shaped flag grammar.
 :::
 
+:::{grid-item-card} agentgrep search
+:link: search
+:link-type: doc
+Rank and deduplicate normalized records.
+:::
+
+:::{grid-item-card} agentgrep ui
+:link: ui
+:link-type: doc
+Open the Textual explorer command surface.
+:::
+
+:::{grid-item-card} agentgrep db
+:link: db/index
+:link-type: doc
+Sync and inspect the persistent DB index.
+:::
+
 :::{grid-item-card} API Reference
 :link: reference
 :link-type: doc
@@ -68,8 +86,9 @@ MCP. Two flags govern machine-readable output:
   `jq`, into another CLI, or into an agent that consumes results
   incrementally.
 
-Both flags work on `grep` and `find`. See
-[](#cli-find-json-output) for the record shapes.
+Supported output modes are documented on each command page. See
+[](#cli-find-json-output) and {ref}`cli-search` for the primary
+record shapes.
 
 Agents that already speak MCP should prefer
 [`agentgrep-mcp`](../mcp/index.md) — same discovery and parsing
@@ -122,6 +141,9 @@ $ agentgrep
 :hidden:
 
 grep
+search
 find
+ui
+db/index
 reference
 ```

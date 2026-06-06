@@ -132,6 +132,20 @@ used to identify the app/data version for that concrete file or DB.
 ```{fastmcp-tool-input} inspect_record_sample
 ```
 
+## DB
+
+```{fastmcp-tool} db_status
+```
+
+**Use when** you need row counts for the persistent DB index
+without starting a sync.
+
+**Returns:** database path, DB schema version, and source and
+record counts.
+
+```{fastmcp-tool-input} db_status
+```
+
 ## Diagnostics
 
 ```{fastmcp-tool} validate_query

@@ -160,3 +160,39 @@ def test_backend_index_renders_backend_shortcut_grid(tmp_path: pathlib.Path) -> 
         "opencode",
     ):
         assert f'href="{backend}/"' in backend_index
+
+
+def test_cli_docs_render_one_page_per_command_group(tmp_path: pathlib.Path) -> None:
+    """CLI docs expose separate argparse pages for each command group."""
+    repo = pathlib.Path(__file__).resolve().parents[1]
+    docs = repo / "docs"
+    _ = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "sphinx",
+            "-b",
+            "dirhtml",
+            "-q",
+            str(docs),
+            str(tmp_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    cli_index = (tmp_path / "cli" / "index.html").read_text(encoding="utf-8")
+    for href in (
+        'href="search/"',
+        'href="ui/"',
+        'href="db/"',
+    ):
+        assert href in cli_index
+
+    for page in (
+        tmp_path / "cli" / "db" / "sync" / "index.html",
+        tmp_path / "cli" / "db" / "status" / "index.html",
+        tmp_path / "cli" / "db" / "explain" / "index.html",
+    ):
+        assert page.is_file()
