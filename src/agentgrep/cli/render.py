@@ -2495,6 +2495,14 @@ def _run_db_command_with_runtime(args: DbArgs, runtime: DbRuntime) -> int:
 def run_insights_command(args: InsightsArgs) -> int:
     """Execute ``agentgrep insights`` subcommands."""
     runtime = _open_db_runtime(args.db_path)
+    try:
+        return _run_insights_command_with_runtime(args, runtime)
+    finally:
+        runtime.close()
+
+
+def _run_insights_command_with_runtime(args: InsightsArgs, runtime: DbRuntime) -> int:
+    """Execute one insights action against an already-open runtime."""
     from agentgrep.insights import InsightEngine
 
     engine = InsightEngine(runtime.store)
@@ -2603,6 +2611,14 @@ def run_insights_command(args: InsightsArgs) -> int:
 def run_suggestions_command(args: SuggestionsArgs) -> int:
     """Execute ``agentgrep suggestions`` subcommands."""
     runtime = _open_db_runtime(args.db_path)
+    try:
+        return _run_suggestions_command_with_runtime(args, runtime)
+    finally:
+        runtime.close()
+
+
+def _run_suggestions_command_with_runtime(args: SuggestionsArgs, runtime: DbRuntime) -> int:
+    """Execute one suggestions action against an already-open runtime."""
     from agentgrep.suggestions import SuggestionEngine
 
     engine = SuggestionEngine(runtime.store)
