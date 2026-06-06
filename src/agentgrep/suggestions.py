@@ -102,16 +102,26 @@ class SuggestionEngine:
                 suggestions.append(artifact)
         return suggestions
 
-    def list_suggestions(self) -> list[SuggestionArtifact]:
-        """Return persisted suggestions."""
-        rows = self.store.connection.execute(
-            """
+    def count_suggestions(self) -> int:
+        """Return the persisted suggestion count."""
+        row = self.store.connection.execute(
+            "SELECT COUNT(*) AS count FROM suggestions",
+        ).fetchone()
+        return int(row["count"]) if row is not None else 0
+
+    def list_suggestions(self, *, limit: int | None = None) -> list[SuggestionArtifact]:
+        """Return persisted suggestions, optionally bounded to ``limit`` rows."""
+        sql = """
             SELECT suggestion_id, run_id, target_path, surface_kind, title, body,
                    confidence, status, rationale, reload_note
             FROM suggestions
             ORDER BY confidence DESC, suggestion_id
-            """,
-        ).fetchall()
+        """
+        params: tuple[object, ...] = ()
+        if limit is not None:
+            sql += " LIMIT ?"
+            params = (limit,)
+        rows = self.store.connection.execute(sql, params).fetchall()
         return [self._row_to_artifact(row) for row in rows]
 
     def get_suggestion(self, suggestion_id: str) -> SuggestionArtifact | None:
