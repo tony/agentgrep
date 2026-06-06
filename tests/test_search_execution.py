@@ -360,6 +360,46 @@ RAW_TEXT_SKIP_CASES: tuple[RawTextSkipCase, ...] = (
         raw_line='{"content":"other\\nline"}',
         expected_skip=False,
     ),
+    RawTextSkipCase(
+        test_id="solidus-escaped-path-kept",
+        terms=("/path/to",),
+        any_term=False,
+        case_sensitive=True,
+        raw_line='{"content":"\\/path\\/to"}',
+        expected_skip=False,
+    ),
+    RawTextSkipCase(
+        test_id="solidus-unescaped-path-kept",
+        terms=("/path/to",),
+        any_term=False,
+        case_sensitive=True,
+        raw_line='{"content":"/path/to"}',
+        expected_skip=False,
+    ),
+    RawTextSkipCase(
+        test_id="solidus-term-genuine-miss-skipped",
+        terms=("/abc",),
+        any_term=False,
+        case_sensitive=True,
+        raw_line='{"content":"xyz"}',
+        expected_skip=True,
+    ),
+    RawTextSkipCase(
+        test_id="solidus-casefold-escaped-path-kept",
+        terms=("/Path/Here",),
+        any_term=False,
+        case_sensitive=False,
+        raw_line='{"content":"\\/path\\/here"}',
+        expected_skip=False,
+    ),
+    RawTextSkipCase(
+        test_id="solidus-mixed-escaping-kept-conservatively",
+        terms=("/a/b",),
+        any_term=False,
+        case_sensitive=True,
+        raw_line='{"content":"/a\\/b"}',
+        expected_skip=False,
+    ),
 )
 
 
@@ -453,6 +493,14 @@ HAYSTACK_RAW_TEXT_SKIP_CASES: tuple[HaystackRawTextSkipCase, ...] = (
         any_term=False,
         source_path="/tmp/session.jsonl",
         raw_line='{"content":"\\u0062liss"}',
+        expected_skip=False,
+    ),
+    HaystackRawTextSkipCase(
+        test_id="solidus-escaped-content-term-kept",
+        terms=("/usr/local",),
+        any_term=False,
+        source_path="/tmp/session.jsonl",
+        raw_line='{"content":"\\/usr\\/local"}',
         expected_skip=False,
     ),
 )

@@ -605,6 +605,10 @@ def _raw_text_skip_line_for_terms(
 
     needles = terms if query.case_sensitive else tuple(term.casefold() for term in terms)
     escaped_needles = tuple(json.dumps(needle, ensure_ascii=True)[1:-1] for needle in needles)
+    # JSON encoders may legally escape "/" as "\/" even though json.dumps
+    # never emits it, so terms containing a solidus need a third variant.
+    solidus_needles = tuple(escaped.replace("/", "\\/") for escaped in escaped_needles)
+    any_solidus_term = any("/" in needle for needle in needles)
     any_term = query.any_term
     case_sensitive = query.case_sensitive
 
@@ -613,10 +617,19 @@ def _raw_text_skip_line_for_terms(
         if "\\u" in haystack:
             return False
         needle_results = [
-            needle in haystack or escaped_needle in haystack
-            for needle, escaped_needle in zip(needles, escaped_needles, strict=True)
+            needle in haystack or escaped_needle in haystack or solidus_needle in haystack
+            for needle, escaped_needle, solidus_needle in zip(
+                needles,
+                escaped_needles,
+                solidus_needles,
+                strict=True,
+            )
         ]
         matched = any(needle_results) if any_term else all(needle_results)
+        if not matched and any_solidus_term and "\\/" in haystack:
+            # Mixed or partial solidus escaping is valid JSON the variants
+            # cannot enumerate; keep the line rather than risk a false skip.
+            return False
         return not matched
 
     return skip_line
