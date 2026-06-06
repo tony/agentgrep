@@ -1232,6 +1232,67 @@ def test_frontier_batch_path_releases_cancelled_tasks(
     assert started == finished == {1, 2, 3}
 
 
+def test_whole_sources_cancellation_pairs_source_events(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Early answer-now exits still emit finished events for started sources.
+
+    Regression guard: the whole-source scheduler cancelled remaining futures
+    and broke out of its loop, leaving in-flight sources with a started
+    event but no finished event.
+    """
+    query = _query(limit=5)
+    newest = _source(tmp_path / "newest.jsonl")
+    older = _source(tmp_path / "older.jsonl")
+    newest.mtime_ns = 2
+    older.mtime_ns = 1
+
+    def iter_batches(
+        _query: agentgrep.SearchQuery,
+        task: SourceTask,
+        *,
+        index: int,
+        total: int,
+        control: agentgrep.SearchControl,
+        progress: agentgrep.SearchProgress | None = None,
+        batch_size: int = 32,
+    ) -> cabc.Iterator[SourceScanBatch]:
+        _ = progress, batch_size
+        yield SourceScanBatch(
+            index=index,
+            total=total,
+            source=task.source,
+            task=task,
+            records=(
+                _record(task.source, f"{task.source.path.stem} bliss", "2026-01-02T00:00:00Z"),
+            ),
+            records_seen=1,
+            matches_seen=1,
+            duration_seconds=0.0,
+            is_final=True,
+        )
+        if task.source == newest:
+            control.request_answer_now()
+
+    monkeypatch.setattr(scanning, "iter_source_task_batches", iter_batches)
+    control = agentgrep.SearchControl()
+    driver = scheduling.FrontierExecutionDriver(ExecutionDriverConfig(max_workers=1))
+
+    events = list(
+        driver.iter_search_plan(
+            query,
+            _multi_plan(query, (newest, older)),
+            control=control,
+        ),
+    )
+
+    started = {e.index for e in events if isinstance(e, ExecutionSourceStarted)}
+    finished = {e.index for e in events if isinstance(e, ExecutionSourceFinished)}
+    assert started
+    assert started == finished
+
+
 class BatchCacheCase(t.NamedTuple):
     """One batch-scheduling worker shape exercising the source scan cache."""
 

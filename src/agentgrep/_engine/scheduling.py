@@ -548,9 +548,25 @@ def _iter_search_plan_whole_sources(
         yield from submit_next(executor)
         while futures:
             if control.answer_now_requested():
-                for future in futures:
+                for future, (index, task) in sorted(
+                    futures.items(),
+                    key=lambda item: item[1][0],
+                ):
                     if future.cancel():
                         cancelled_count += 1
+                    # Results from still-running workers are discarded at
+                    # executor shutdown; emit each remaining source's
+                    # finished event so the started/finished pairing holds
+                    # on early exit.
+                    progress.source_finished(index, total, task.source, 0, 0)
+                    yield ExecutionSourceFinished(
+                        index=index,
+                        total=total,
+                        source=task.source,
+                        task=task,
+                        records_seen=0,
+                        matches_seen=0,
+                    )
                 break
             done, _pending = concurrent.futures.wait(
                 futures,
