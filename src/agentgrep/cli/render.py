@@ -2392,6 +2392,22 @@ def _insights_list_payload(
     return payload
 
 
+def _empty_insights_list_payload(*, kind: InsightsKind, limit: int) -> dict[str, object]:
+    """Return the zero-rows listing payload for a missing cache."""
+    payload: dict[str, object] = {"limit": limit}
+    empty: dict[str, object] = {
+        "total": 0,
+        "returned": 0,
+        "truncated": False,
+        "items": [],
+    }
+    if kind in {"similarity", "all"}:
+        payload["variant_edges"] = dict(empty)
+    if kind in {"omissions", "all"}:
+        payload["omission_findings"] = dict(empty)
+    return payload
+
+
 def _insights_explain_payload(engine: object) -> dict[str, int]:
     """Return cheap persisted-insight counters."""
     typed = t.cast("t.Any", engine)
@@ -2550,8 +2566,53 @@ def _run_db_command_with_runtime(args: DbArgs, runtime: DbRuntime) -> int:
     return 0
 
 
+def _run_readonly_db_action(
+    db_path: str | None,
+    action: cabc.Callable[[DbRuntime], int],
+    *,
+    on_missing: cabc.Callable[[], int],
+) -> int:
+    """Run a read action against a read-only DB open, without cache writes.
+
+    Mirrors the db status path: a missing cache reports an empty payload
+    without creating the file, and a foreign file fails cleanly.
+    """
+    import sqlite3
+
+    from agentgrep.db import DbRuntime, default_db_path
+
+    path = default_db_path() if db_path is None else pathlib.Path(db_path).expanduser()
+    if not path.exists():
+        return on_missing()
+    try:
+        with DbRuntime.open_readonly(path) as runtime:
+            return action(runtime)
+    except sqlite3.DatabaseError:
+        print(f"agentgrep: not an agentgrep database: {path}", file=sys.stderr)
+        return 1
+
+
 def run_insights_command(args: InsightsArgs) -> int:
     """Execute ``agentgrep insights`` subcommands."""
+    if args.action in {"list", "explain"}:
+
+        def list_action(runtime: DbRuntime) -> int:
+            return _run_insights_command_with_runtime(args, runtime)
+
+        def empty_listing() -> int:
+            payload: object
+            if args.action == "explain":
+                payload = {"variant_edges": 0, "omission_findings": 0}
+            else:
+                payload = _empty_insights_list_payload(kind=args.kind, limit=args.limit)
+            _print_json_or_text(
+                payload,
+                output_mode=args.output_mode,
+                color_mode=args.color_mode,
+            )
+            return 0
+
+        return _run_readonly_db_action(args.db_path, list_action, on_missing=empty_listing)
     runtime = _open_db_runtime(args.db_path)
     try:
         return _run_insights_command_with_runtime(args, runtime)
@@ -2668,6 +2729,23 @@ def _run_insights_command_with_runtime(args: InsightsArgs, runtime: DbRuntime) -
 
 def run_suggestions_command(args: SuggestionsArgs) -> int:
     """Execute ``agentgrep suggestions`` subcommands."""
+    writes = args.action == "list" and args.target is not None
+    if not writes:
+
+        def read_action(runtime: DbRuntime) -> int:
+            return _run_suggestions_command_with_runtime(args, runtime)
+
+        def empty_result() -> int:
+            if args.action == "list":
+                _print_json_or_text(
+                    [],
+                    output_mode=args.output_mode,
+                    color_mode=args.color_mode,
+                )
+                return 0
+            return 1
+
+        return _run_readonly_db_action(args.db_path, read_action, on_missing=empty_result)
     runtime = _open_db_runtime(args.db_path)
     try:
         return _run_suggestions_command_with_runtime(args, runtime)
