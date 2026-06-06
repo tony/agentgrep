@@ -1233,3 +1233,49 @@ def test_insight_listing_tools_use_readonly_and_close(
     for runtime in opened:
         with pytest.raises(sqlite3.ProgrammingError):
             _ = runtime.store.connection.execute("SELECT 1")
+
+
+def test_mcp_suggestions_list_returns_bounded_page_with_totals(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The suggestions_list helper bounds rows and reports totals."""
+    import agentgrep.db as agentgrep_db
+    from agentgrep.insights import InsightEngine
+    from agentgrep.mcp.tools import insight_tools
+    from agentgrep.suggestions import SuggestionEngine
+
+    db_path = tmp_path / "agentgrep.sqlite"
+    source_path = tmp_path / "session.jsonl"
+    target_path = tmp_path / "AGENTS.md"
+    source_path.write_text("{}", encoding="utf-8")
+    target_path.write_text("Run pytest before committing.\n", encoding="utf-8")
+    runtime = agentgrep_db.DbRuntime.open(db_path)
+    source = source_handle(source_path)
+    records = tuple(
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent=source.agent,
+            store=source.store,
+            adapter_id=source.adapter_id,
+            path=source.path,
+            text=text,
+            timestamp="2026-06-05T12:00:00Z",
+            session_id=f"session-{index}",
+        )
+        for index, text in enumerate(
+            ("Run ruff check before committing.", "Run ty check before committing."),
+        )
+    )
+    _ = runtime.sync_records(((source, records),), features_mode="inline")
+    insights = InsightEngine(runtime.store)
+    _ = insights.run_omissions(target_path=target_path, target_text=target_path.read_text())
+    created = SuggestionEngine(runtime.store).create_from_omissions(target_path=target_path)
+    runtime.close()
+    assert len(created) >= 2
+
+    payload = insight_tools._suggestions_list_sync(str(db_path), limit=1)
+
+    assert payload.limit == 1
+    assert payload.suggestions_total >= 2
+    assert payload.suggestions_truncated is True
+    assert len(payload.suggestions) == 1

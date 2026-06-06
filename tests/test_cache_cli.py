@@ -2239,6 +2239,121 @@ def test_suggestions_list_on_missing_db_reports_empty_without_creating(
     exit_code = agentgrep.run_suggestions_command(args)
 
     captured = capsys.readouterr()
+    payload = json.loads(captured.out)
     assert exit_code == 0
-    assert json.loads(captured.out) == []
+    assert payload["suggestions"]["total"] == 0
+    assert payload["suggestions"]["truncated"] is False
     assert not db_path.exists()
+
+
+class SuggestionsLimitFlagCase(t.NamedTuple):
+    """Named case for suggestions list limit parsing."""
+
+    test_id: str
+    argv: tuple[str, ...]
+    expected_limit: int
+
+
+SUGGESTIONS_LIMIT_FLAG_CASES: tuple[SuggestionsLimitFlagCase, ...] = (
+    SuggestionsLimitFlagCase(
+        test_id="default-limit",
+        argv=("suggestions", "list"),
+        expected_limit=50,
+    ),
+    SuggestionsLimitFlagCase(
+        test_id="explicit-limit",
+        argv=("suggestions", "list", "--limit", "5"),
+        expected_limit=5,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    SUGGESTIONS_LIMIT_FLAG_CASES,
+    ids=[case.test_id for case in SUGGESTIONS_LIMIT_FLAG_CASES],
+)
+def test_suggestions_list_parses_limit(case: SuggestionsLimitFlagCase) -> None:
+    """Suggestions list exposes a bounded page size."""
+    parsed = agentgrep.parse_args(case.argv)
+
+    assert isinstance(parsed, agentgrep.SuggestionsArgs)
+    assert parsed.limit == case.expected_limit
+
+
+def test_suggestions_list_rejects_non_positive_limit(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A non-positive suggestions limit is a parse-time error."""
+    with pytest.raises(SystemExit) as exc_info:
+        _ = agentgrep.parse_args(("suggestions", "list", "--limit", "0"))
+
+    captured = capsys.readouterr()
+    assert exc_info.value.code == 2
+    assert "--limit must be greater than 0" in captured.err
+
+
+def test_suggestions_list_returns_bounded_page_with_totals(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The suggestions list payload carries totals and truncation."""
+    import agentgrep.db as agentgrep_db
+    from agentgrep.insights import InsightEngine
+    from agentgrep.suggestions import SuggestionEngine
+
+    db_path = tmp_path / "agentgrep.sqlite"
+    source_path = tmp_path / "session.jsonl"
+    target_path = tmp_path / "AGENTS.md"
+    source_path.write_text("{}", encoding="utf-8")
+    target_path.write_text("Run pytest before committing.\n", encoding="utf-8")
+    runtime = agentgrep_db.DbRuntime.open(db_path)
+    source = agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=source_path,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=source_path.parent,
+        mtime_ns=source_path.stat().st_mtime_ns,
+    )
+    records = tuple(
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent=source.agent,
+            store=source.store,
+            adapter_id=source.adapter_id,
+            path=source.path,
+            text=text,
+            timestamp="2026-06-05T12:00:00Z",
+            session_id=f"session-{index}",
+        )
+        for index, text in enumerate(
+            ("Run ruff check before committing.", "Run ty check before committing."),
+        )
+    )
+    _ = runtime.sync_records(((source, records),), features_mode="inline")
+    insights = InsightEngine(runtime.store)
+    _ = insights.run_omissions(target_path=target_path, target_text=target_path.read_text())
+    created = SuggestionEngine(runtime.store).create_from_omissions(target_path=target_path)
+    runtime.close()
+    assert len(created) >= 2
+    args = agentgrep.SuggestionsArgs(
+        action="list",
+        db_path=str(db_path),
+        suggestion_id=None,
+        target=None,
+        output_mode="json",
+        limit=1,
+    )
+
+    exit_code = agentgrep.run_suggestions_command(args)
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert exit_code == 0
+    assert payload["limit"] == 1
+    assert payload["suggestions"]["returned"] == 1
+    assert payload["suggestions"]["total"] >= 2
+    assert payload["suggestions"]["truncated"] is True

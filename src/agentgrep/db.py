@@ -858,6 +858,9 @@ class DbStore:
 
                 CREATE INDEX IF NOT EXISTS idx_variant_edges_confidence_edge_id
                 ON variant_edges(confidence DESC, edge_id);
+
+                CREATE INDEX IF NOT EXISTS idx_suggestions_confidence_suggestion_id
+                ON suggestions(confidence DESC, suggestion_id);
                 """,
             )
             _ = self._execute(

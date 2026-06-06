@@ -171,8 +171,9 @@ and omission findings.
 This tool lists existing suggestions and does not edit files or reload
 agent sessions.
 
-**Returns:** suggestion artifacts with target path, body, confidence,
-rationale, status, and reload note.
+**Returns:** a bounded page of suggestion artifacts with target path,
+body, confidence, rationale, status, and reload note, plus the total
+count and a truncation flag.
 
 ```{fastmcp-tool-input} suggestions_list
 ```

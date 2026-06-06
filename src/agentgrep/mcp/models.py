@@ -194,6 +194,9 @@ class SuggestionsListResponse(AgentGrepModel):
     """Structured response for persisted suggestions."""
 
     schema_version: str = agentgrep.SCHEMA_VERSION
+    limit: int
+    suggestions_total: int
+    suggestions_truncated: bool
     suggestions: list[SuggestionArtifactModel]
 
 

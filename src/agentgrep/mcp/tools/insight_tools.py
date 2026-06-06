@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import pathlib
 import typing as t
 
@@ -21,6 +22,7 @@ if t.TYPE_CHECKING:
     from fastmcp import FastMCP
 
 DEFAULT_INSIGHTS_LIST_LIMIT = 50
+DEFAULT_SUGGESTIONS_LIST_LIMIT = 50
 
 
 def _selected_db_path(db_path: str | None) -> pathlib.Path:
@@ -90,17 +92,31 @@ def _insights_list_sync(
     )
 
 
-def _suggestions_list_sync(db_path: str | None) -> SuggestionsListResponse:
-    """Return persisted review-only suggestion artifacts."""
+def _suggestions_list_sync(
+    db_path: str | None,
+    *,
+    limit: int = DEFAULT_SUGGESTIONS_LIST_LIMIT,
+) -> SuggestionsListResponse:
+    """Return a bounded page of persisted review-only suggestions."""
     from agentgrep.db import DbRuntime
     from agentgrep.suggestions import SuggestionEngine
 
     path = _selected_db_path(db_path)
     if not path.exists():
-        return SuggestionsListResponse(suggestions=[])
+        return SuggestionsListResponse(
+            limit=limit,
+            suggestions_total=0,
+            suggestions_truncated=False,
+            suggestions=[],
+        )
     with DbRuntime.open_readonly(path) as runtime:
-        suggestions = list(SuggestionEngine(runtime.store).list_suggestions())
+        engine = SuggestionEngine(runtime.store)
+        suggestions_total = engine.count_suggestions()
+        suggestions = engine.list_suggestions(limit=limit)
     return SuggestionsListResponse(
+        limit=limit,
+        suggestions_total=suggestions_total,
+        suggestions_truncated=suggestions_total > len(suggestions),
         suggestions=[
             SuggestionArtifactModel(
                 suggestion_id=suggestion.suggestion_id,
@@ -155,7 +171,17 @@ def register(mcp: FastMCP) -> None:
             str | None,
             Field(default=None, description="Optional agentgrep db path."),
         ] = None,
+        limit: t.Annotated[
+            int,
+            Field(
+                default=DEFAULT_SUGGESTIONS_LIST_LIMIT,
+                ge=1,
+                description="Maximum suggestions to return.",
+            ),
+        ] = DEFAULT_SUGGESTIONS_LIST_LIMIT,
     ) -> SuggestionsListResponse:
-        return await asyncio.to_thread(_suggestions_list_sync, db_path)
+        return await asyncio.to_thread(
+            functools.partial(_suggestions_list_sync, db_path, limit=limit),
+        )
 
     _ = suggestions_list_tool

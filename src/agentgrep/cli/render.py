@@ -523,6 +523,11 @@ def _format_structured_text(payload: object, *, colors: agentgrep.AnsiColors) ->
         return _format_db_explain_text(payload, colors=colors)
     if _has_attributes(payload, ("db_path", "schema_version", "sources", "records")):
         return _format_db_status_text(payload, colors=colors)
+    if _is_suggestions_list_payload(payload):
+        return _format_suggestions_page_text(
+            t.cast("cabc.Mapping[str, object]", payload),
+            colors=colors,
+        )
     if _is_insights_list_payload(payload):
         return _format_insights_list_text(
             t.cast("cabc.Mapping[str, object]", payload),
@@ -583,6 +588,14 @@ def _is_insight_result_collection(payload: object) -> bool:
         and not isinstance(payload, (str, bytes, bytearray))
         and all(_is_insight_result(item) for item in payload)
     )
+
+
+def _is_suggestions_list_payload(payload: object) -> bool:
+    """Return whether ``payload`` is the bounded suggestions list shape."""
+    if not isinstance(payload, cabc.Mapping):
+        return False
+    mapping = t.cast("cabc.Mapping[str, object]", payload)
+    return isinstance(mapping.get("suggestions"), cabc.Mapping)
 
 
 def _is_insights_list_payload(payload: object) -> bool:
@@ -748,6 +761,37 @@ def _format_insights_explain_text(
             ),
         ),
     )
+
+
+def _format_suggestions_page_text(
+    payload: cabc.Mapping[str, object],
+    *,
+    colors: agentgrep.AnsiColors,
+) -> str:
+    """Return human-readable bounded suggestion list text."""
+    lines = [colors.heading("Suggestions")]
+    limit = _as_int(payload, "limit")
+    lines.append(colors.muted(f"limit {limit}"))
+    family = payload.get("suggestions")
+    if isinstance(family, cabc.Mapping):
+        lines.extend(
+            _format_insight_family_lines(
+                "Suggestions",
+                "suggestion",
+                t.cast("cabc.Mapping[str, object]", family),
+                colors=colors,
+                item_formatter=_format_suggestion_summary_line_for_family,
+            ),
+        )
+    return "\n".join(lines)
+
+
+def _format_suggestion_summary_line_for_family(
+    item: object,
+    colors: agentgrep.AnsiColors,
+) -> str:
+    """Adapt the suggestion row formatter to the family-lines signature."""
+    return _format_suggestion_summary_line(item, colors=colors)
 
 
 def _format_insights_list_text(
@@ -2738,7 +2782,15 @@ def run_suggestions_command(args: SuggestionsArgs) -> int:
         def empty_result() -> int:
             if args.action == "list":
                 _print_json_or_text(
-                    [],
+                    {
+                        "limit": args.limit,
+                        "suggestions": {
+                            "total": 0,
+                            "returned": 0,
+                            "truncated": False,
+                            "items": [],
+                        },
+                    },
                     output_mode=args.output_mode,
                     color_mode=args.color_mode,
                 )
@@ -2761,8 +2813,18 @@ def _run_suggestions_command_with_runtime(args: SuggestionsArgs, runtime: DbRunt
     if args.action == "list":
         if args.target is not None:
             _ = engine.create_from_omissions(target_path=pathlib.Path(args.target))
+        total = engine.count_suggestions()
+        items = engine.list_suggestions(limit=args.limit)
         _print_json_or_text(
-            engine.list_suggestions(),
+            {
+                "limit": args.limit,
+                "suggestions": {
+                    "total": total,
+                    "returned": len(items),
+                    "truncated": total > len(items),
+                    "items": items,
+                },
+            },
             output_mode=args.output_mode,
             color_mode=args.color_mode,
         )
