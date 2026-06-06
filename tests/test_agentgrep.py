@@ -778,6 +778,100 @@ def test_iter_jsonl_cooperatively_yields_during_large_files(
     assert sleep_calls == [0]
 
 
+class ReverseJsonlCase(t.NamedTuple):
+    """One reverse JSONL parsing shape."""
+
+    test_id: str
+    rows: tuple[object, ...]
+    trailing_newline: bool
+    chunk_bytes: int
+    expected_indexes: tuple[int, ...]
+
+
+REVERSE_JSONL_CASES: tuple[ReverseJsonlCase, ...] = (
+    ReverseJsonlCase(
+        test_id="trailing-newline",
+        rows=({"index": 0}, {"index": 1}, {"index": 2}),
+        trailing_newline=True,
+        chunk_bytes=11,
+        expected_indexes=(2, 1, 0),
+    ),
+    ReverseJsonlCase(
+        test_id="no-trailing-newline",
+        rows=({"index": 0}, {"index": 1}, {"index": 2}),
+        trailing_newline=False,
+        chunk_bytes=13,
+        expected_indexes=(2, 1, 0),
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    REVERSE_JSONL_CASES,
+    ids=[c.test_id for c in REVERSE_JSONL_CASES],
+)
+def test_iter_jsonl_reverse_reads_newest_lines_first(
+    case: ReverseJsonlCase,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Private reverse JSONL parsing yields valid rows from file end to start."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    path = tmp_path / "events.jsonl"
+    text = "\n".join(json.dumps(row) for row in case.rows)
+    if case.trailing_newline:
+        text += "\n"
+    path.write_text(text, encoding="utf-8")
+    monkeypatch.setattr(agentgrep, "_JSONL_REVERSE_CHUNK_BYTES", case.chunk_bytes)
+
+    parsed = list(agentgrep._iter_jsonl(path, reverse=True))
+
+    assert [row["index"] for row in parsed if isinstance(row, dict)] == list(
+        case.expected_indexes,
+    )
+
+
+def test_iter_jsonl_reverse_raw_skip_avoids_decoding_skipped_lines(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reverse raw-line filtering skips lines before JSON decode."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    path = tmp_path / "events.jsonl"
+    path.write_text(
+        "\n".join(
+            (
+                '{"index":0,"text":"skip me"}',
+                '{"index":1,"text":"keep me"}',
+                '{"index":2,"text":"skip me too"}',
+            ),
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(agentgrep, "_JSONL_REVERSE_CHUNK_BYTES", 9)
+    decoded_inputs: list[str] = []
+    original_loads = agentgrep.json.loads
+
+    def loads_with_capture(payload: str) -> object:
+        decoded_inputs.append(payload)
+        return t.cast("object", original_loads(payload))
+
+    monkeypatch.setattr(agentgrep.json, "loads", loads_with_capture)
+
+    parsed = list(
+        agentgrep._iter_jsonl(
+            path,
+            skip_line=lambda raw_line: "skip" in raw_line,
+            skip_line_mode="line",
+            reverse=True,
+        ),
+    )
+
+    assert [row["index"] for row in parsed if isinstance(row, dict)] == [1]
+    assert decoded_inputs == ['{"index":1,"text":"keep me"}']
+
+
 def test_parse_codex_session_skips_function_call_output_before_json_decode(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

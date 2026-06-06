@@ -1259,6 +1259,9 @@ _JSONL_PREFIX_BYTES = 4096
 _JSONL_SKIP_CHUNK_BYTES = 1024 * 1024
 """Chunk size for discarding skipped oversized JSONL lines."""
 
+_JSONL_REVERSE_CHUNK_BYTES = 1024 * 1024
+"""Chunk size for reading JSONL files from end to start."""
+
 _CODEX_RAW_SKIP_MIN_BYTES = 1024 * 1024
 """Minimum Codex session size before enabling raw-line output skipping."""
 
@@ -6221,8 +6224,12 @@ def _iter_jsonl(
     *,
     skip_line: RawJsonlSkipLine | None = None,
     skip_line_mode: t.Literal["prefix", "line"] = "prefix",
+    reverse: bool = False,
 ) -> cabc.Iterator[JSONValue]:
     """Yield decoded JSON objects from a JSONL file with an optional raw-line filter."""
+    if reverse:
+        yield from _iter_jsonl_reverse(path, skip_line=skip_line)
+        return
     if skip_line is not None:
         if skip_line_mode == "line":
             yield from _iter_jsonl_with_raw_line_skip(path, skip_line)
@@ -6247,6 +6254,70 @@ def _iter_jsonl(
                     yield t.cast("JSONValue", parsed)
     except OSError:
         return
+
+
+def _iter_jsonl_reverse(
+    path: pathlib.Path,
+    *,
+    skip_line: RawJsonlSkipLine | None = None,
+) -> cabc.Iterator[JSONValue]:
+    """Yield decoded JSONL values from the end of ``path`` toward the start."""
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            position = handle.tell()
+            pending = b""
+            decoded_lines = 0
+            while position > 0:
+                read_size = min(_JSONL_REVERSE_CHUNK_BYTES, position)
+                position -= read_size
+                handle.seek(position)
+                pending = handle.read(read_size) + pending
+                lines = pending.split(b"\n")
+                pending = lines[0]
+                for raw_line in reversed(lines[1:]):
+                    decoded = _decode_jsonl_raw_line(raw_line, skip_line=skip_line)
+                    if decoded is _SKIPPED_JSONL_LINE:
+                        continue
+                    decoded_lines += 1
+                    if decoded_lines % _JSONL_YIELD_LINE_INTERVAL == 0:
+                        time.sleep(0)
+                    yield t.cast("JSONValue", decoded)
+            if pending.strip():
+                decoded = _decode_jsonl_raw_line(pending, skip_line=skip_line)
+                if decoded is not _SKIPPED_JSONL_LINE:
+                    decoded_lines += 1
+                    if decoded_lines % _JSONL_YIELD_LINE_INTERVAL == 0:
+                        time.sleep(0)
+                    yield t.cast("JSONValue", decoded)
+    except OSError:
+        return
+
+
+_SKIPPED_JSONL_LINE = object()
+
+
+def _decode_jsonl_raw_line(
+    raw_line: bytes,
+    *,
+    skip_line: RawJsonlSkipLine | None = None,
+) -> JSONValue | object:
+    """Decode one raw JSONL line, or return a sentinel for skipped/invalid lines."""
+    if not raw_line.strip():
+        return _SKIPPED_JSONL_LINE
+    line = raw_line.decode("utf-8", errors="replace")
+    if skip_line is not None and skip_line(line):
+        return _SKIPPED_JSONL_LINE
+    stripped = line.strip()
+    if not stripped:
+        return _SKIPPED_JSONL_LINE
+    try:
+        parsed = t.cast("object", json.loads(stripped))
+    except json.JSONDecodeError:
+        return _SKIPPED_JSONL_LINE
+    if isinstance(parsed, (dict, list, str, int, float, bool)) or parsed is None:
+        return t.cast("JSONValue", parsed)
+    return _SKIPPED_JSONL_LINE
 
 
 def _iter_jsonl_with_raw_prefix_skip(
