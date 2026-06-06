@@ -127,6 +127,9 @@ def _record(
     *,
     timestamp: str = "2026-06-05T12:00:00Z",
     session_id: str = "session-a",
+    title: str | None = None,
+    model: str | None = None,
+    role: str | None = None,
 ) -> agentgrep.SearchRecord:
     """Build a synthetic normalized search record."""
     return agentgrep.SearchRecord(
@@ -136,6 +139,9 @@ def _record(
         adapter_id=source.adapter_id,
         path=source.path,
         text=text,
+        title=title,
+        model=model,
+        role=role,
         timestamp=timestamp,
         session_id=session_id,
     )
@@ -306,7 +312,7 @@ def test_db_runtime_sync_can_exit_early_between_sources(
     result = runtime.sync_records(
         (
             (first, (_record(first, "Run ruff check before committing."),)),
-            (second, (_record(second, "Run pytest before committing."),)),
+            (second, (_record(second, "Run typecheck before committing."),)),
         ),
         control=control,
         progress=progress,
@@ -322,7 +328,9 @@ def test_db_runtime_sync_can_exit_early_between_sources(
     assert progress.finished_cleanly is False
     assert progress.early_result == result
     assert runtime.status().sources == 1
-    assert [record.text for record in runtime.search_records(_query("pytest"))] == []
+    # The haystack surface includes record paths, and pytest tmp dirs
+    # contain "pytest", so probe with a term absent from every path.
+    assert [record.text for record in runtime.search_records(_query("typecheck"))] == []
 
 
 @pytest.mark.parametrize(
@@ -716,3 +724,89 @@ def test_cached_search_limit_counts_unique_records(
     found = [record.text for record in runtime.search_records(query)]
 
     assert found == list(case.expected_texts)
+
+
+class HaystackParityCase(t.NamedTuple):
+    """Named case for cached haystack-field parity with the live engine."""
+
+    test_id: str
+    term: str
+    match_surface: agentgrep.SearchMatchSurface
+    expected_texts: tuple[str, ...]
+
+
+HAYSTACK_PARITY_CASES: tuple[HaystackParityCase, ...] = (
+    HaystackParityCase(
+        test_id="model-only-term",
+        term="opus",
+        match_surface="haystack",
+        expected_texts=("model record",),
+    ),
+    HaystackParityCase(
+        test_id="role-only-term",
+        term="assistant",
+        match_surface="haystack",
+        expected_texts=("role record",),
+    ),
+    HaystackParityCase(
+        test_id="path-only-term",
+        term="projalpha",
+        match_surface="haystack",
+        expected_texts=("path record",),
+    ),
+    HaystackParityCase(
+        test_id="casefold-expanding-text",
+        term="ass",
+        match_surface="haystack",
+        # "ass" matches the folded "strasse" expansion AND the role
+        # record's "assistant" haystack — both are live-parity hits.
+        expected_texts=("Besuch der Straße notieren", "role record"),
+    ),
+    HaystackParityCase(
+        test_id="text-surface-excludes-title-match",
+        term="release",
+        match_surface="text",
+        expected_texts=("release steps live here",),
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    HAYSTACK_PARITY_CASES,
+    ids=[case.test_id for case in HAYSTACK_PARITY_CASES],
+)
+def test_cached_search_covers_live_haystack_fields(
+    case: HaystackParityCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Cached candidates cover every field the live matcher searches."""
+    plain_path = tmp_path / "plain" / "session.jsonl"
+    proj_path = tmp_path / "projalpha" / "session.jsonl"
+    plain_path.parent.mkdir()
+    proj_path.parent.mkdir()
+    plain_path.write_text("{}", encoding="utf-8")
+    proj_path.write_text("{}", encoding="utf-8")
+    plain = _source(plain_path)
+    proj = _source(proj_path)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    _ = runtime.sync_records(
+        (
+            (
+                plain,
+                (
+                    _record(plain, "model record", model="claude-opus-4", session_id="s1"),
+                    _record(plain, "role record", role="assistant", session_id="s2"),
+                    _record(plain, "Besuch der Straße notieren", session_id="s3"),
+                    _record(plain, "title only", title="release notes", session_id="s4"),
+                    _record(plain, "release steps live here", session_id="s5"),
+                ),
+            ),
+            (proj, (_record(proj, "path record", session_id="s6"),)),
+        ),
+    )
+    query = dataclasses.replace(_query(case.term), match_surface=case.match_surface)
+
+    found = sorted(record.text for record in runtime.search_records(query))
+
+    assert found == sorted(case.expected_texts)
