@@ -167,7 +167,9 @@ Planning must choose the cheapest correct adapter strategy:
 - Direct metadata enumeration for `find`-shaped queries.
 - SQLite predicates for stores whose schema can answer them safely.
 - Path or source prefiltering before JSON/JSONL parsing.
-- Raw text prefiltering only when it preserves parser semantics.
+- Raw text prefiltering only when it preserves parser semantics. Literal
+  JSONL prefilters compare both raw and JSON-escaped query terms, while keeping
+  Unicode-escaped lines conservative so decoded text matches are not lost.
 - Bounded newest-first JSONL scans for limited append-only sources when record
   predicates do not require metadata that only appears earlier in the file.
 - Full Python parsing when the store format, query semantics, or privacy rules
@@ -176,14 +178,17 @@ Planning must choose the cheapest correct adapter strategy:
 Execution must be cancellable and bounded. Drivers poll cancellation between
 source tasks and record batches. A task that declares bounded source behavior
 can stop before older records are parsed once the source-local candidate limit
-is satisfied. The frontier driver can run eligible source tasks concurrently,
-merges candidates on the owner thread, and stops submitting lower-priority
-bounded sources once the global result limit is filled. Profiling controls the
-default worker count because local JSONL parsing is often CPU-bound enough that
-unbounded worker fan-out hurts latency. Interactive CLI runs may map blank
-Enter to an answer-early request. The TUI maps Esc/Ctrl-C and replacement
-searches to the same cancellation contract. MCP maps client cancellation or
-timeout to the same contract when the framework exposes it.
+is satisfied. Source scans compile query matchers once per task so record
+loops do not rebuild term, regex, surface, or predicate state for each
+candidate record. The frontier driver can run eligible source tasks
+concurrently, merges candidates on the owner thread, and stops submitting
+lower-priority bounded sources once the global result limit is filled.
+Profiling controls the default worker count because local JSONL parsing is
+often CPU-bound enough that unbounded worker fan-out hurts latency. Interactive
+CLI runs may map blank Enter to an answer-early request. The TUI maps
+Esc/Ctrl-C and replacement searches to the same cancellation contract. MCP maps
+client cancellation or timeout to the same contract when the framework exposes
+it.
 
 The TUI must remain non-blocking. It may receive events on the event loop, but
 broad discovery, subprocess work, SQLite reads, JSON/JSONL parsing, ranking,
