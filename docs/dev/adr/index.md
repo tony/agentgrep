@@ -24,4 +24,6 @@ multiple adapters or public payloads.
 0014-result-order-limit-and-streaming-merge
 0015-persistent-agentic-db-index
 0016-cache-schema-versioning-and-rebuilds
+0006-agentic-insights-engine
+0007-suggestion-skills-and-agent-instruction-changes
 ```
