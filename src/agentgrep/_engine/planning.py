@@ -75,7 +75,15 @@ HAYSTACK_RAW_TEXT_PREFILTER_ADAPTERS: frozenset[str] = frozenset(
         "pi.sessions_jsonl.v1",
     },
 )
-"""Adapters whose haystack-bearing JSONL records can use raw candidate checks."""
+"""Adapters whose haystack-bearing JSONL records can use raw candidate checks.
+
+Membership requires every haystack-matched field — text, role, model,
+title, and source path — to be self-contained on each record's raw line
+(ADR-0004). Cross-record session-identity fields are exempt because
+``build_search_haystack`` does not include them, which is why
+``pi.sessions_jsonl.v1`` qualifies despite reading ``session_id`` and
+``conversation_id`` from its leading session header.
+"""
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
