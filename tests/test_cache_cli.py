@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import sqlite3
 import typing as t
 
 import pytest
@@ -410,6 +411,11 @@ def test_db_sync_forced_progress_keeps_json_stdout_clean(
         """Runtime stub that exercises the sync progress protocol."""
 
         force: bool | None = None
+        closed: bool = False
+
+        def close(self) -> None:
+            """Record that the command closed its runtime."""
+            self.closed = True
 
         def sync_sources(
             self,
@@ -479,6 +485,7 @@ def test_db_sync_forced_progress_keeps_json_stdout_clean(
         "sources_skipped": 0,
     }
     assert runtime_stub.force is True
+    assert runtime_stub.closed is True
     assert "DB sync" in captured.err
     assert "Sync complete:" in captured.err
 
@@ -605,3 +612,39 @@ def test_grep_cache_require_unsupported_query_exits_without_traceback(
     assert exc_info.value.code == 2
     assert "--cache require" in captured.err
     assert "Traceback" not in captured.err
+
+
+def test_db_command_closes_runtime_on_exit(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Every db action closes its per-call SQLite connection."""
+    from agentgrep.db import DbRuntime
+
+    opened: list[DbRuntime] = []
+    real_open = render._open_db_runtime
+
+    def capturing_open(db_path: str | None) -> DbRuntime:
+        runtime = real_open(db_path)
+        opened.append(runtime)
+        return runtime
+
+    monkeypatch.setattr(render, "_open_db_runtime", capturing_open)
+    args = agentgrep.DbArgs(
+        action="status",
+        db_path=str(tmp_path / "agentgrep.sqlite"),
+        agents=("codex",),
+        scope="all",
+        output_mode="json",
+        color_mode="never",
+        progress_mode="never",
+    )
+
+    exit_code = render.run_db_command(args)
+
+    _ = capsys.readouterr()
+    assert exit_code == 0
+    assert len(opened) == 1
+    with pytest.raises(sqlite3.ProgrammingError):
+        _ = opened[0].store.connection.execute("SELECT 1")
