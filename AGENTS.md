@@ -334,7 +334,8 @@ and source-level spans such as `search.discover.group`,
 agent/store/adapter/count metadata without prompt text or local paths.
 `search.collect.scheduler` is the driver
 summary for source-level scheduling and reports worker, submitted, completed,
-skipped, and emitted counts.
+skipped, cancellation-requested, batch, queued-batch, queue-wait, and emitted
+counts.
 
 Use `scripts/benchmark.py` for timed benchmark sweeps. The profiler-oriented
 benchmark entries are named `profile-engine-*`; each committed benchmark name

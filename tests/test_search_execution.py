@@ -11,6 +11,8 @@ import pytest
 
 import agentgrep
 import agentgrep._engine.execution as execution
+import agentgrep._engine.scanning as scanning
+import agentgrep._engine.scheduling as scheduling
 from agentgrep._engine.execution import (
     ExecutionDriverConfig,
     ExecutionRecordEmitted,
@@ -19,7 +21,6 @@ from agentgrep._engine.execution import (
     FrontierExecutionDriver,
     InlineExecutionDriver,
     SourceScanBatch,
-    SourceScanResult,
 )
 from agentgrep._engine.planning import (
     LimitPolicy,
@@ -29,6 +30,15 @@ from agentgrep._engine.planning import (
     build_logical_search_plan,
 )
 from agentgrep._engine.profiling import EngineProfiler, use_engine_profiler
+
+
+class BatchSchedulerCase(t.NamedTuple):
+    """Named case for incremental scheduler behavior."""
+
+    test_id: str
+    max_workers: int
+    expected_emitted: tuple[str, ...]
+    expected_skipped: int
 
 
 def _query(
@@ -569,7 +579,7 @@ def test_bounded_source_execution_stops_after_unique_limit(
             consumed_texts.append(record.text)
             yield record
 
-    monkeypatch.setattr(execution, "iter_source_task_records", iter_records)
+    monkeypatch.setattr(scanning, "iter_source_task_records", iter_records)
 
     events = list(
         InlineExecutionDriver().iter_search_plan(
@@ -652,10 +662,10 @@ def test_scan_source_task_returns_bounded_candidates_without_global_state(
             consumed_texts.append(record.text)
             yield record
 
-    monkeypatch.setattr(execution, "iter_source_task_records", iter_records)
+    monkeypatch.setattr(scanning, "iter_source_task_records", iter_records)
     task = _plan(query, source, strategy="jsonl_bounded_reverse_scan").tasks[0]
 
-    result = execution.scan_source_task(
+    result = scanning.scan_source_task(
         query,
         task,
         index=1,
@@ -693,11 +703,11 @@ def test_scan_source_task_collects_the_same_records_as_source_batches(
     ) -> cabc.Iterator[agentgrep.SearchRecord]:
         yield from records
 
-    monkeypatch.setattr(execution, "iter_source_task_records", iter_records)
+    monkeypatch.setattr(scanning, "iter_source_task_records", iter_records)
     task = _plan(query, source, strategy="jsonl_bounded_reverse_scan").tasks[0]
 
     batches = tuple(
-        execution.iter_source_task_batches(
+        scanning.iter_source_task_batches(
             query,
             task,
             index=1,
@@ -705,7 +715,7 @@ def test_scan_source_task_collects_the_same_records_as_source_batches(
             control=agentgrep.SearchControl(),
         ),
     )
-    result = execution.scan_source_task(
+    result = scanning.scan_source_task(
         query,
         task,
         index=1,
@@ -741,11 +751,11 @@ def test_source_batches_can_yield_partial_results_before_source_finishes(
     ) -> cabc.Iterator[agentgrep.SearchRecord]:
         yield from records
 
-    monkeypatch.setattr(execution, "iter_source_task_records", iter_records)
+    monkeypatch.setattr(scanning, "iter_source_task_records", iter_records)
     task = _plan(query, source, strategy="jsonl_bounded_reverse_scan").tasks[0]
 
     batches = tuple(
-        execution.iter_source_task_batches(
+        scanning.iter_source_task_batches(
             query,
             task,
             index=1,
@@ -758,6 +768,101 @@ def test_source_batches_can_yield_partial_results_before_source_finishes(
     assert [len(batch.records) for batch in batches] == [1, 1, 1]
     assert [batch.records_seen for batch in batches] == [1, 2, 3]
     assert batches[-1].is_final is True
+
+
+@pytest.mark.parametrize(
+    "case",
+    (
+        BatchSchedulerCase(
+            test_id="single-worker-skips-after-first-batch",
+            max_workers=1,
+            expected_emitted=("newest bliss",),
+            expected_skipped=1,
+        ),
+    ),
+    ids=lambda case: case.test_id,
+)
+def test_frontier_driver_merges_source_batches_before_source_finishes(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: BatchSchedulerCase,
+) -> None:
+    """The scheduler can satisfy the frontier from a partial source batch."""
+    query = _query(limit=1)
+    newest = _source(tmp_path / "newest.jsonl")
+    older = _source(tmp_path / "older.jsonl")
+    newest.mtime_ns = 2
+    older.mtime_ns = 1
+    scanned_paths: list[pathlib.Path] = []
+
+    def iter_batches(
+        _query: agentgrep.SearchQuery,
+        task: SourceTask,
+        *,
+        index: int,
+        total: int,
+        control: agentgrep.SearchControl,
+        progress: agentgrep.SearchProgress | None = None,
+        batch_size: int = 32,
+    ) -> cabc.Iterator[SourceScanBatch]:
+        assert progress is None
+        assert batch_size == 32
+        scanned_paths.append(task.source.path)
+        if task.source == older:
+            pytest.fail("older source should be skipped after newest partial batch")
+        yield SourceScanBatch(
+            index=index,
+            total=total,
+            source=task.source,
+            task=task,
+            records=(_record(task.source, "newest bliss", "2026-01-02T00:00:00Z"),),
+            records_seen=1,
+            matches_seen=1,
+            duration_seconds=0.01,
+            is_final=False,
+        )
+        assert not control.answer_now_requested()
+        yield SourceScanBatch(
+            index=index,
+            total=total,
+            source=task.source,
+            task=task,
+            records=(),
+            records_seen=2,
+            matches_seen=1,
+            duration_seconds=0.02,
+            is_final=True,
+        )
+
+    monkeypatch.setattr(scanning, "iter_source_task_batches", iter_batches)
+    profiler = EngineProfiler()
+
+    with use_engine_profiler(profiler):
+        events = list(
+            scheduling.FrontierExecutionDriver(
+                ExecutionDriverConfig(
+                    max_workers=case.max_workers,
+                    use_source_batches=True,
+                ),
+            ).iter_search_plan(
+                query,
+                _multi_plan(query, (newest, older)),
+            ),
+        )
+
+    assert scanned_paths == [newest.path]
+    assert (
+        tuple(event.record.text for event in events if isinstance(event, ExecutionRecordEmitted))
+        == case.expected_emitted
+    )
+    scheduler_sample = next(
+        sample
+        for sample in profiler.snapshot().samples
+        if sample.name == "search.collect.scheduler"
+    )
+    assert scheduler_sample.attributes["agentgrep_skipped_source_count"] == case.expected_skipped
+    assert scheduler_sample.attributes["agentgrep_batch_count"] == 2
+    assert scheduler_sample.attributes["agentgrep_queued_batch_count"] == 2
 
 
 def test_select_execution_driver_uses_frontier_for_bounded_haystack_search(
@@ -843,7 +948,7 @@ def test_frontier_execution_driver_scans_sources_concurrently(
     active = 0
     max_active = 0
 
-    def scan_source_task(
+    def iter_batches(
         _query: agentgrep.SearchQuery,
         task: SourceTask,
         *,
@@ -851,17 +956,17 @@ def test_frontier_execution_driver_scans_sources_concurrently(
         total: int,
         control: agentgrep.SearchControl,
         progress: agentgrep.SearchProgress | None = None,
-    ) -> SourceScanResult:
+        batch_size: int = 32,
+    ) -> cabc.Iterator[SourceScanBatch]:
         nonlocal active, max_active
         assert progress is None
+        assert batch_size == 32
         assert not control.answer_now_requested()
         with lock:
             active += 1
             max_active = max(max_active, active)
         barrier.wait(timeout=2.0)
-        with lock:
-            active -= 1
-        return SourceScanResult(
+        yield SourceScanBatch(
             index=index,
             total=total,
             source=task.source,
@@ -870,9 +975,12 @@ def test_frontier_execution_driver_scans_sources_concurrently(
             records_seen=1,
             matches_seen=1,
             duration_seconds=0.01,
+            is_final=True,
         )
+        with lock:
+            active -= 1
 
-    monkeypatch.setattr(execution, "scan_source_task", scan_source_task)
+    monkeypatch.setattr(scanning, "iter_source_task_batches", iter_batches)
 
     events = list(
         FrontierExecutionDriver(ExecutionDriverConfig(max_workers=2)).iter_search_plan(
@@ -907,7 +1015,7 @@ def test_frontier_execution_driver_profiles_scheduler_decisions(
         else:
             pytest.fail("frontier should skip the older source after limit is satisfied")
 
-    monkeypatch.setattr(execution, "iter_source_task_records", iter_records)
+    monkeypatch.setattr(scanning, "iter_source_task_records", iter_records)
     profiler = EngineProfiler()
 
     with use_engine_profiler(profiler):

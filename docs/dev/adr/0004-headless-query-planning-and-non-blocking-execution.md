@@ -130,8 +130,9 @@ APIs until implemented and documented.
 `ExecutionDriver`
 : The scheduling boundary. The first required drivers are an inline
   deterministic driver for tests and a non-blocking async/thread-backed driver
-  for CLI/TUI/MCP. Future process or worker drivers must keep the same logical
-  and physical plan contracts.
+  for CLI/TUI/MCP. Source-local scanning and driver scheduling are separate
+  modules so future process or worker drivers can keep the same logical and
+  physical plan contracts.
 
 `SourceScanResult`
 : The source-local execution boundary. A worker scans one `SourceTask` and
@@ -143,7 +144,8 @@ APIs until implemented and documented.
 : The incremental source-local execution boundary. A source scan may yield
   matching candidates and counters in batches before the source is fully
   drained. `SourceScanResult` remains the compatibility wrapper that collects
-  those batches for call sites that still need a whole-source result.
+  those batches for call sites that still need a whole-source result. Batch
+  scheduling is an execution-driver choice, not a parser behavior change.
 
 `LimitPolicy`
 : The scheduler-local rule for deciding whether queued lower-priority sources
@@ -207,10 +209,14 @@ is satisfied. Source scans compile query matchers once per task so record
 loops do not rebuild term, regex, surface, or predicate state for each
 candidate record. The frontier driver can run eligible source tasks
 concurrently, merges candidates on the owner thread, and stops submitting
-lower-priority bounded sources once the global result limit is filled. Bounded
-text-surface JSONL tasks keep the inline driver by default when profiling shows
-the scheduler overhead is larger than the skip opportunity; they may opt into
-frontier execution when a configured worker count makes source-level
+lower-priority bounded sources once the global result limit is filled. The
+default frontier driver consumes whole-source results because profiling showed
+single-worker batch queueing was slower than the skip opportunity on local
+Claude/Codex JSONL stores. Incremental `SourceScanBatch` scheduling remains
+available behind driver configuration for experiments and future worker-count
+tuning. Bounded text-surface JSONL tasks keep the inline driver by default when
+profiling shows scheduler overhead is larger than skip opportunity; they may
+opt into frontier execution when a configured worker count makes source-level
 parallelism worthwhile. Profiling controls the default worker count because
 local JSONL parsing is often CPU-bound enough that unbounded worker fan-out
 hurts latency. Interactive CLI runs may map blank Enter to an answer-early
