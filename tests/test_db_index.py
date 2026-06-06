@@ -360,3 +360,40 @@ def test_run_search_query_respects_cache_mode(
     records = agentgrep.run_search_query(tmp_path, _query("ruff"), runtime=runtime)
 
     assert [record.text for record in records] == list(case.expected_texts)
+
+
+def test_resync_keeps_fts_index_consistent(tmp_path: pathlib.Path) -> None:
+    """Re-syncing a source removes old FTS rows with their stored values.
+
+    External-content FTS5 deletes that pass placeholder values leave the
+    old tokens mapped to a rowid SQLite later reuses, so the raw index
+    keeps answering for text that no longer exists. The result-level
+    post-filter masks that from ``search_records``, so this asserts on
+    the index itself.
+    """
+    source_path = tmp_path / "session.jsonl"
+    source_path.write_text("{}", encoding="utf-8")
+    source = _source(source_path)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    _ = runtime.sync_records(
+        ((source, (_record(source, "Run ruff check before committing."),)),),
+    )
+
+    _ = runtime.sync_records(
+        ((source, (_record(source, "Run pytest for the focused suite."),)),),
+        force=True,
+    )
+
+    stale = runtime.store.connection.execute(
+        "SELECT rowid FROM record_text_fts WHERE record_text_fts MATCH ?",
+        ('"ruff"',),
+    ).fetchall()
+    assert stale == []
+    fresh = runtime.store.connection.execute(
+        "SELECT rowid FROM record_text_fts WHERE record_text_fts MATCH ?",
+        ('"pytest"',),
+    ).fetchall()
+    assert len(fresh) == 1
+    assert [record.text for record in runtime.search_records(_query("pytest"))] == [
+        "Run pytest for the focused suite.",
+    ]
