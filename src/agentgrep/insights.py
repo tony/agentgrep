@@ -5,6 +5,7 @@ from __future__ import annotations
 import collections
 import dataclasses
 import itertools
+import json
 import pathlib
 import typing as t
 
@@ -423,8 +424,6 @@ class InsightEngine:
 
     def _record_run(self, run_id: str, kind: str, now: str, counters: dict[str, object]) -> None:
         """Upsert one insight run row."""
-        import json
-
         self.store.connection.execute(
             """
             INSERT OR REPLACE INTO insight_runs(
