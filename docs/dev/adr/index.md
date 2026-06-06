@@ -24,4 +24,5 @@ multiple adapters or public payloads.
 0014-result-order-limit-and-streaming-merge
 0020-progressive-deep-search
 0021-prompt-guided-conversation-routing
+0005-persistent-agentic-db-index
 ```
