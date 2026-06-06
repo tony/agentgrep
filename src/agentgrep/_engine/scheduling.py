@@ -340,9 +340,33 @@ class FrontierExecutionDriver:
                         if not running_task.control.answer_now_requested():
                             running_task.control.request_answer_now()
                             cancellation_requested_count += 1
-                    for future in futures:
+                    for future, index in tuple(futures.items()):
+                        if future.cancelled():
+                            continue
                         if future.cancel():
                             cancelled_count += 1
+                            # A queued task whose future cancels never runs,
+                            # so it never posts a completion item: release it
+                            # here and emit its finished event to keep the
+                            # started/finished pairing and let the drain loop
+                            # exit.
+                            cancelled_task = running.pop(index, None)
+                            if cancelled_task is not None:
+                                active_progress.source_finished(
+                                    index,
+                                    total,
+                                    cancelled_task.task.source,
+                                    0,
+                                    0,
+                                )
+                                yield ExecutionSourceFinished(
+                                    index=index,
+                                    total=total,
+                                    source=cancelled_task.task.source,
+                                    task=cancelled_task.task,
+                                    records_seen=0,
+                                    matches_seen=0,
+                                )
 
                 queue_wait_started_at = time.perf_counter()
                 try:

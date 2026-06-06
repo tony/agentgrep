@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import collections.abc as cabc
 import pathlib
+import queue
 import threading
+import time
 import typing as t
 
 import pytest
@@ -1111,6 +1113,123 @@ def test_frontier_batch_path_raises_deferred_error_without_deadlock(
 
     assert not thread.is_alive(), "frontier batch scheduler deadlocked on a failed source"
     assert [str(error) for error in errors] == ["boom"]
+
+
+def test_frontier_batch_path_releases_cancelled_tasks(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hard-cancelled queued tasks leave the running set with a finished event.
+
+    Regression guard: a queued future whose ``cancel()`` succeeds never runs
+    its worker, so it never posts a completion item. Without releasing it,
+    the drain loop polls an empty queue forever and the started/finished
+    event pairing breaks. Both worker threads are held on an event so the
+    third task stays queued (cancellable) when cancellation fires.
+    """
+    query = _query(limit=5)
+    newest = _source(tmp_path / "newest.jsonl")
+    middle = _source(tmp_path / "middle.jsonl")
+    oldest = _source(tmp_path / "oldest.jsonl")
+    newest.mtime_ns = 3
+    middle.mtime_ns = 2
+    oldest.mtime_ns = 1
+    scanned_indexes: list[int] = []
+
+    def iter_batches(
+        _query: agentgrep.SearchQuery,
+        task: SourceTask,
+        *,
+        index: int,
+        total: int,
+        control: agentgrep.SearchControl,
+        progress: agentgrep.SearchProgress | None = None,
+        batch_size: int = 32,
+    ) -> cabc.Iterator[SourceScanBatch]:
+        _ = control, progress, batch_size
+        scanned_indexes.append(index)
+        yield SourceScanBatch(
+            index=index,
+            total=total,
+            source=task.source,
+            task=task,
+            records=(
+                _record(task.source, f"{task.source.path.stem} bliss", "2026-01-02T00:00:00Z"),
+            ),
+            records_seen=1,
+            matches_seen=1,
+            duration_seconds=0.0,
+            is_final=True,
+        )
+
+    monkeypatch.setattr(scanning, "iter_source_task_batches", iter_batches)
+
+    hold_workers = threading.Event()
+    original_scan_to_queue = scheduling._scan_source_task_to_queue
+
+    def holding_scan_to_queue(
+        query: agentgrep.SearchQuery,
+        task: SourceTask,
+        *,
+        index: int,
+        total: int,
+        control: agentgrep.SearchControl,
+        batch_queue: queue.Queue[t.Any],
+    ) -> None:
+        original_scan_to_queue(
+            query,
+            task,
+            index=index,
+            total=total,
+            control=control,
+            batch_queue=batch_queue,
+        )
+        if index in (1, 2):
+            hold_workers.wait(timeout=10.0)
+
+    monkeypatch.setattr(scheduling, "_scan_source_task_to_queue", holding_scan_to_queue)
+
+    control = agentgrep.SearchControl()
+    driver = scheduling.FrontierExecutionDriver(
+        ExecutionDriverConfig(max_workers=2, use_source_batches=True),
+    )
+    plan = _multi_plan(query, (newest, middle, oldest))
+    events: list[scheduling.SearchExecutionEvent] = []
+    errors: list[BaseException] = []
+
+    def consume() -> None:
+        try:
+            # extend() appends incrementally as the generator yields, so the
+            # main thread can poll `events` for the third Started event.
+            events.extend(driver.iter_search_plan(query, plan, control=control))
+        except BaseException as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=consume, daemon=True)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            started_indexes = {
+                event.index for event in tuple(events) if isinstance(event, ExecutionSourceStarted)
+            }
+            if 3 in started_indexes:
+                break
+            time.sleep(0.01)
+        else:
+            pytest.fail("third source task was never submitted")
+        control.request_answer_now()
+        time.sleep(0.3)
+    finally:
+        hold_workers.set()
+    thread.join(timeout=10.0)
+
+    assert not thread.is_alive(), "batch scheduler hung on a cancelled queued task"
+    assert errors == []
+    assert 3 not in scanned_indexes, "cancelled task ran; choreography lost the race"
+    started = {e.index for e in events if isinstance(e, ExecutionSourceStarted)}
+    finished = {e.index for e in events if isinstance(e, ExecutionSourceFinished)}
+    assert started == finished == {1, 2, 3}
 
 
 class BatchCacheCase(t.NamedTuple):
