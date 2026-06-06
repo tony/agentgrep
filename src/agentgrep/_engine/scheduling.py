@@ -13,6 +13,9 @@ import agentgrep
 from agentgrep._engine import scanning
 from agentgrep._engine.planning import PhysicalSearchPlan, SourceTask
 
+if t.TYPE_CHECKING:
+    from agentgrep._engine.runtime import SearchRuntime
+
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class ExecutionSourceStarted:
@@ -72,6 +75,7 @@ class ExecutionDriver(t.Protocol):
         *,
         progress: agentgrep.SearchProgress | None = None,
         control: agentgrep.SearchControl | None = None,
+        runtime: SearchRuntime | None = None,
     ) -> cabc.Iterator[SearchExecutionEvent]:
         """Yield internal search execution events."""
         ...
@@ -87,6 +91,7 @@ class InlineExecutionDriver:
         *,
         progress: agentgrep.SearchProgress | None = None,
         control: agentgrep.SearchControl | None = None,
+        runtime: SearchRuntime | None = None,
     ) -> cabc.Iterator[SearchExecutionEvent]:
         """Yield internal search execution events for ``plan``."""
         active_progress = agentgrep.noop_search_progress() if progress is None else progress
@@ -145,6 +150,7 @@ class InlineExecutionDriver:
                 total=total,
                 control=active_control,
                 progress=active_progress,
+                runtime=runtime,
             )
             active_progress.source_finished(
                 index,
@@ -186,6 +192,7 @@ class FrontierExecutionDriver:
         *,
         progress: agentgrep.SearchProgress | None = None,
         control: agentgrep.SearchControl | None = None,
+        runtime: SearchRuntime | None = None,
     ) -> cabc.Iterator[SearchExecutionEvent]:
         """Yield internal search events using a bounded source frontier."""
         active_progress = agentgrep.noop_search_progress() if progress is None else progress
@@ -215,6 +222,7 @@ class FrontierExecutionDriver:
                 control=active_control,
                 scheduler_started_at=scheduler_started_at,
                 max_workers=max_workers,
+                runtime=runtime,
             )
             return
         if max_workers == 1:
@@ -409,6 +417,7 @@ def _iter_search_plan_whole_sources(
     control: agentgrep.SearchControl,
     scheduler_started_at: float,
     max_workers: int,
+    runtime: SearchRuntime | None = None,
 ) -> cabc.Iterator[SearchExecutionEvent]:
     """Yield search events by scheduling whole-source scan results."""
     total = len(tasks)
@@ -449,6 +458,7 @@ def _iter_search_plan_whole_sources(
                 total=total,
                 control=control,
                 progress=None,
+                runtime=runtime,
             )
             futures[future] = (index, task)
 

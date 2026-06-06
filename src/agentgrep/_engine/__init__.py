@@ -14,6 +14,15 @@ underscore-prefixed module path. The underscore is a hint that the
 from __future__ import annotations
 
 from agentgrep._engine.find import iter_find_events
+from agentgrep._engine.runtime import SearchRuntime
+from agentgrep._engine.scanning import SourceScanCache, SourceScanCacheStats
 from agentgrep._engine.search import aiter_search_events, iter_search_events
 
-__all__ = ["aiter_search_events", "iter_find_events", "iter_search_events"]
+__all__ = [
+    "SearchRuntime",
+    "SourceScanCache",
+    "SourceScanCacheStats",
+    "aiter_search_events",
+    "iter_find_events",
+    "iter_search_events",
+]

@@ -42,12 +42,14 @@ class BatchSchedulerCase(t.NamedTuple):
 
 
 class SourceScanCacheCase(t.NamedTuple):
-    """Named case for opt-in source scan caching behavior."""
+    """Named case for runtime-owned source scan caching behavior."""
 
     test_id: str
-    cache_enabled: bool
+    runtime: agentgrep.SearchRuntime | None
     mutate_source_between_scans: bool
     expected_batch_reads: int
+    expected_hits: int
+    expected_misses: int
 
 
 def _query(
@@ -745,42 +747,43 @@ def test_scan_source_task_collects_the_same_records_as_source_batches(
     "case",
     (
         SourceScanCacheCase(
-            test_id="disabled-cache-reads-twice",
-            cache_enabled=False,
+            test_id="no-runtime-cache-reads-twice",
+            runtime=None,
             mutate_source_between_scans=False,
             expected_batch_reads=2,
+            expected_hits=0,
+            expected_misses=0,
         ),
         SourceScanCacheCase(
-            test_id="enabled-cache-reuses-second-scan",
-            cache_enabled=True,
+            test_id="runtime-cache-reuses-second-scan",
+            runtime=agentgrep.SearchRuntime.with_source_scan_cache(),
             mutate_source_between_scans=False,
             expected_batch_reads=1,
+            expected_hits=1,
+            expected_misses=1,
         ),
         SourceScanCacheCase(
-            test_id="enabled-cache-invalidates-on-source-change",
-            cache_enabled=True,
+            test_id="runtime-cache-invalidates-on-source-change",
+            runtime=agentgrep.SearchRuntime.with_source_scan_cache(),
             mutate_source_between_scans=True,
             expected_batch_reads=2,
+            expected_hits=0,
+            expected_misses=2,
         ),
     ),
     ids=lambda case: case.test_id,
 )
-def test_scan_source_task_uses_opt_in_source_scan_cache(
+def test_scan_source_task_uses_runtime_source_scan_cache(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
     case: SourceScanCacheCase,
 ) -> None:
-    """Repeated source scans can reuse an opt-in cache until source metadata changes."""
+    """Repeated source scans can reuse a runtime cache until source metadata changes."""
     query = _query(limit=2)
     source = _source(tmp_path / "session.jsonl")
     source.path.write_text("first\n", encoding="utf-8")
     task = _plan(query, source, strategy="jsonl_bounded_reverse_scan").tasks[0]
     batch_reads = 0
-
-    if case.cache_enabled:
-        monkeypatch.setenv("AGENTGREP_EXPERIMENTAL_SOURCE_SCAN_CACHE", "1")
-    else:
-        monkeypatch.delenv("AGENTGREP_EXPERIMENTAL_SOURCE_SCAN_CACHE", raising=False)
 
     def iter_batches(
         _query: agentgrep.SearchQuery,
@@ -817,6 +820,7 @@ def test_scan_source_task_uses_opt_in_source_scan_cache(
         index=1,
         total=1,
         control=agentgrep.SearchControl(),
+        runtime=case.runtime,
     )
     if case.mutate_source_between_scans:
         source.path.write_text("changed source size\n", encoding="utf-8")
@@ -826,14 +830,85 @@ def test_scan_source_task_uses_opt_in_source_scan_cache(
         index=2,
         total=2,
         control=agentgrep.SearchControl(),
+        runtime=case.runtime,
     )
 
     assert first.records == second.records
     assert first.cache_hit is False
-    assert second.cache_hit is (case.cache_enabled and not case.mutate_source_between_scans)
+    assert second.cache_hit is (case.runtime is not None and not case.mutate_source_between_scans)
     assert second.index == 2
     assert second.total == 2
     assert batch_reads == case.expected_batch_reads
+    if case.runtime is not None and case.runtime.source_scan_cache is not None:
+        stats = case.runtime.source_scan_cache.stats()
+        assert stats.hits == case.expected_hits
+        assert stats.misses == case.expected_misses
+
+
+def test_source_scan_cache_evicts_least_recently_used_entry(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bounded runtime cache evicts the least-recently used source scan."""
+    query = _query(limit=2)
+    cache = agentgrep.SourceScanCache(max_entries=1)
+    runtime = agentgrep.SearchRuntime(source_scan_cache=cache)
+    sources = [
+        _source(tmp_path / "one.jsonl"),
+        _source(tmp_path / "two.jsonl"),
+    ]
+    for source in sources:
+        source.path.write_text("source\n", encoding="utf-8")
+    tasks = [
+        _plan(query, source, strategy="jsonl_bounded_reverse_scan").tasks[0] for source in sources
+    ]
+    batch_reads = 0
+
+    def iter_batches(
+        _query: agentgrep.SearchQuery,
+        task: SourceTask,
+        *,
+        index: int,
+        total: int,
+        control: agentgrep.SearchControl,
+        progress: agentgrep.SearchProgress | None = None,
+        batch_size: int = 32,
+    ) -> cabc.Iterator[SourceScanBatch]:
+        nonlocal batch_reads
+        assert progress is None
+        assert batch_size == 32
+        assert not control.answer_now_requested()
+        batch_reads += 1
+        yield SourceScanBatch(
+            index=index,
+            total=total,
+            source=task.source,
+            task=task,
+            records=(_record(task.source, "newest bliss", "2026-01-02T00:00:00Z"),),
+            records_seen=1,
+            matches_seen=1,
+            duration_seconds=0.0,
+            is_final=True,
+        )
+
+    monkeypatch.setattr(scanning, "iter_source_task_batches", iter_batches)
+
+    for index, task in enumerate((*tasks, tasks[0]), start=1):
+        _ = scanning.scan_source_task(
+            query,
+            task,
+            index=index,
+            total=3,
+            control=agentgrep.SearchControl(),
+            runtime=runtime,
+        )
+
+    stats = cache.stats()
+    assert batch_reads == 3
+    assert stats.entries == 1
+    assert stats.hits == 0
+    assert stats.misses == 3
+    assert stats.evictions == 2
 
 
 def test_source_batches_can_yield_partial_results_before_source_finishes(

@@ -1233,6 +1233,44 @@ async def test_empty_query_focuses_search_input_and_marks_search_done(
         assert app._search_done is True
 
 
+def test_streaming_ui_app_passes_runtime_to_search_worker(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The TUI owns one runtime and passes it to backend searches."""
+    from agentgrep.ui import app as ui_app
+
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    runtimes: list[object] = []
+
+    def record_runtime(*_args: object, **kwargs: object) -> list[object]:
+        runtimes.append(kwargs.get("runtime"))
+        return []
+
+    monkeypatch.setattr(ui_app, "run_search_query", record_runtime)
+    home = tmp_path / "home"
+    home.mkdir(parents=True, exist_ok=True)
+    query = agentgrep.SearchQuery(
+        terms=("bliss",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+    app = agentgrep.build_streaming_ui_app(home, query, control=agentgrep.SearchControl())
+
+    app._reset_search_chrome()
+    app._run_search()
+    app._run_search()
+
+    assert len(runtimes) == 2
+    assert isinstance(runtimes[0], agentgrep.SearchRuntime)
+    assert runtimes[0] is runtimes[1]
+    assert runtimes[0].source_scan_cache is not None
+
+
 async def test_search_input_posts_search_requested_only_on_enter(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

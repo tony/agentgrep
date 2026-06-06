@@ -20,6 +20,7 @@ import typing as t
 if t.TYPE_CHECKING:
     import agentgrep
     from agentgrep._engine.planning import PlannerDecision, SourceTask
+    from agentgrep._engine.runtime import SearchRuntime
     from agentgrep.query.compile import CompiledQuery
 
 type ProfileAttribute = str | int | float | bool | None
@@ -206,6 +207,7 @@ def profile_search_query(
     *,
     backends: agentgrep.BackendSelection | None = None,
     control: agentgrep.SearchControl | None = None,
+    runtime: SearchRuntime | None = None,
 ) -> ProfiledSearchResult:
     """Run a search query and return engine-only phase timings."""
     import agentgrep
@@ -257,6 +259,7 @@ def profile_search_query(
                     query,
                     plan,
                     control=active_control,
+                    runtime=runtime,
                 )
     return ProfiledSearchResult(
         records=tuple(records),

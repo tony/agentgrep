@@ -52,6 +52,7 @@ if t.TYPE_CHECKING:
         SearchQuery,
         events as _events,
     )
+    from agentgrep._engine.runtime import SearchRuntime
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -72,6 +73,7 @@ def iter_search_events(
     *,
     backends: BackendSelection | None = None,
     control: SearchControl | None = None,
+    runtime: SearchRuntime | None = None,
 ) -> cabc.Iterator[_events.SearchEvent]:
     """Yield typed events as the search engine scans sources.
 
@@ -90,6 +92,9 @@ def iter_search_events(
         Optional control handle. The generator polls
         :meth:`agentgrep.SearchControl.answer_now_requested` between
         records so consumers can break the scan early.
+    runtime : agentgrep.SearchRuntime or None
+        Optional reusable runtime state; supplies the source-scan
+        cache when one is configured.
 
     Yields
     ------
@@ -141,6 +146,7 @@ def iter_search_events(
         query,
         plan,
         control=active_control,
+        runtime=runtime,
     ):
         if isinstance(execution_event, ExecutionSourceStarted):
             yield _events.SourceStarted(
@@ -170,6 +176,7 @@ async def aiter_search_events(
     *,
     backends: BackendSelection | None = None,
     control: SearchControl | None = None,
+    runtime: SearchRuntime | None = None,
     max_queue_size: int = 32,
 ) -> cabc.AsyncIterator[_events.SearchEvent]:
     """Yield search events from a worker thread through an async queue.
@@ -184,6 +191,9 @@ async def aiter_search_events(
         Optional backend override, mostly used by tests.
     control : agentgrep.SearchControl or None
         Optional cooperative cancellation handle.
+    runtime : agentgrep.SearchRuntime or None
+        Optional reusable runtime state; supplies the source-scan
+        cache when one is configured.
     max_queue_size : int
         Bounded async queue size used to apply consumer backpressure.
 
@@ -223,6 +233,7 @@ async def aiter_search_events(
                 query,
                 backends=backends,
                 control=active_control,
+                runtime=runtime,
             ):
                 put_from_worker(event)
                 if active_control.answer_now_requested():

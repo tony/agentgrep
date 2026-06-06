@@ -7,8 +7,11 @@ keeps both reachable through one import path.
 
 from __future__ import annotations
 
+from agentgrep._engine.runtime import SearchRuntime
 from agentgrep._engine.scanning import (
     SourceScanBatch,
+    SourceScanCache,
+    SourceScanCacheStats,
     SourceScanResult,
     iter_source_task_batches,
     iter_source_task_records,
@@ -39,7 +42,10 @@ __all__ = [
     "FrontierExecutionDriver",
     "InlineExecutionDriver",
     "SearchExecutionEvent",
+    "SearchRuntime",
     "SourceScanBatch",
+    "SourceScanCache",
+    "SourceScanCacheStats",
     "SourceScanResult",
     "_FrontierState",
     "iter_source_task_batches",

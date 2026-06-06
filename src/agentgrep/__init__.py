@@ -80,6 +80,7 @@ if t.TYPE_CHECKING:
     import collections.abc as cabc
 
     from agentgrep._engine.planning import PhysicalSearchPlan
+    from agentgrep._engine.runtime import SearchRuntime
     from agentgrep.query.compile import CompiledQuery
 
     PrivatePathBase = pathlib.Path
@@ -3563,6 +3564,7 @@ def search_sources(
     *,
     progress: SearchProgress | None = None,
     control: SearchControl | None = None,
+    runtime: SearchRuntime | None = None,
 ) -> list[SearchRecord]:
     """Parse and filter search results across all selected sources."""
     active_progress = noop_search_progress() if progress is None else progress
@@ -3592,6 +3594,7 @@ def search_sources(
         plan,
         progress=active_progress,
         control=active_control,
+        runtime=runtime,
     )
     if active_control.answer_now_requested():
         active_progress.answer_now(len(records))
@@ -3607,6 +3610,7 @@ def run_search_query(
     backends: BackendSelection | None = None,
     progress: SearchProgress | None = None,
     control: SearchControl | None = None,
+    runtime: SearchRuntime | None = None,
 ) -> list[SearchRecord]:
     """Discover sources and run a normalized search query."""
     active_backends = select_backends() if backends is None else backends
@@ -3628,6 +3632,7 @@ def run_search_query(
             active_backends,
             progress=active_progress,
             control=active_control,
+            runtime=runtime,
         )
     except KeyboardInterrupt:
         interrupted = True
@@ -3841,6 +3846,7 @@ def collect_search_records(
     *,
     progress: SearchProgress | None = None,
     control: SearchControl | None = None,
+    runtime: SearchRuntime | None = None,
 ) -> list[SearchRecord]:
     """Parse candidate sources and collect matching records."""
     from agentgrep._engine.planning import (
@@ -3869,6 +3875,7 @@ def collect_search_records(
         plan,
         progress=progress,
         control=control,
+        runtime=runtime,
     )
 
 
@@ -3878,6 +3885,7 @@ def collect_search_records_from_plan(
     *,
     progress: SearchProgress | None = None,
     control: SearchControl | None = None,
+    runtime: SearchRuntime | None = None,
 ) -> list[SearchRecord]:
     """Execute a physical search plan and collect matching records."""
     from agentgrep._engine.execution import ExecutionRecordEmitted, select_execution_driver
@@ -3889,6 +3897,7 @@ def collect_search_records_from_plan(
             plan,
             progress=progress,
             control=control,
+            runtime=runtime,
         )
         if isinstance(event, ExecutionRecordEmitted)
     ]
@@ -7139,6 +7148,9 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
 
 
 from agentgrep._engine import (  # noqa: E402  (re-exports must follow main definition)
+    SearchRuntime,
+    SourceScanCache,
+    SourceScanCacheStats,
     aiter_search_events,
     iter_find_events,
     iter_search_events,

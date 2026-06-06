@@ -2,19 +2,22 @@
 
 from __future__ import annotations
 
+import collections
 import collections.abc as cabc
 import dataclasses
 import json
-import os
 import threading
 import time
+import typing as t
 
 import agentgrep
 from agentgrep._engine.matching import compile_record_matcher
 from agentgrep._engine.planning import SourceTask
 
-_SOURCE_SCAN_CACHE_ENV = "AGENTGREP_EXPERIMENTAL_SOURCE_SCAN_CACHE"
 _SOURCE_SCAN_CACHE_MAX_ENTRIES = 512
+
+if t.TYPE_CHECKING:
+    from agentgrep._engine.runtime import SearchRuntime
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -37,8 +40,98 @@ class _SourceScanCacheEntry:
     batch_count: int
 
 
-_SOURCE_SCAN_CACHE_LOCK = threading.Lock()
-_SOURCE_SCAN_CACHE: dict[_SourceScanCacheKey, _SourceScanCacheEntry] = {}
+@dataclasses.dataclass(frozen=True, slots=True)
+class SourceScanCacheStats:
+    """Privacy-safe counters for one source-scan cache."""
+
+    entries: int
+    hits: int
+    misses: int
+    stores: int
+    evictions: int
+
+    def to_payload(self) -> dict[str, int]:
+        """Return a JSON-ready cache summary."""
+        return {
+            "entries": self.entries,
+            "hits": self.hits,
+            "misses": self.misses,
+            "stores": self.stores,
+            "evictions": self.evictions,
+        }
+
+
+class SourceScanCache:
+    """Bounded, in-process cache for reusable source-scan results."""
+
+    def __init__(self, *, max_entries: int = _SOURCE_SCAN_CACHE_MAX_ENTRIES) -> None:
+        self._max_entries = max(0, max_entries)
+        self._lock = threading.Lock()
+        self._entries: collections.OrderedDict[
+            _SourceScanCacheKey,
+            _SourceScanCacheEntry,
+        ] = collections.OrderedDict()
+        self._hits = 0
+        self._misses = 0
+        self._stores = 0
+        self._evictions = 0
+
+    def clear(self) -> None:
+        """Clear cached scans and reset counters."""
+        with self._lock:
+            self._entries.clear()
+            self._hits = 0
+            self._misses = 0
+            self._stores = 0
+            self._evictions = 0
+
+    def stats(self) -> SourceScanCacheStats:
+        """Return privacy-safe cache counters."""
+        with self._lock:
+            return SourceScanCacheStats(
+                entries=len(self._entries),
+                hits=self._hits,
+                misses=self._misses,
+                stores=self._stores,
+                evictions=self._evictions,
+            )
+
+    def _lookup(self, key: _SourceScanCacheKey) -> _SourceScanCacheEntry | None:
+        """Return a cached source scan entry, recording hit/miss counters."""
+        with self._lock:
+            entry = self._entries.get(key)
+            if entry is None:
+                self._misses += 1
+                return None
+            self._hits += 1
+            self._entries.move_to_end(key)
+            return entry
+
+    def _remember(
+        self,
+        key: _SourceScanCacheKey,
+        result: SourceScanResult,
+    ) -> None:
+        """Store a completed source scan in the bounded cache."""
+        if self._max_entries <= 0:
+            return
+        entry = _SourceScanCacheEntry(
+            records=result.records,
+            records_seen=result.records_seen,
+            matches_seen=result.matches_seen,
+            batch_count=result.batch_count,
+        )
+        with self._lock:
+            if key in self._entries:
+                self._entries[key] = entry
+                self._entries.move_to_end(key)
+                self._stores += 1
+                return
+            while len(self._entries) >= self._max_entries:
+                self._entries.popitem(last=False)
+                self._evictions += 1
+            self._entries[key] = entry
+            self._stores += 1
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -80,13 +173,15 @@ def scan_source_task(
     total: int,
     control: agentgrep.SearchControl,
     progress: agentgrep.SearchProgress | None = None,
+    runtime: SearchRuntime | None = None,
 ) -> SourceScanResult:
     """Scan one source task and return source-local matching candidates."""
+    cache = runtime.source_scan_cache if runtime is not None else None
     cache_started_at = time.perf_counter()
-    cache_key = _source_scan_cache_key(query, task)
+    cache_key = _source_scan_cache_key(query, task, cache)
     if cache_key is not None and not control.answer_now_requested():
-        with _SOURCE_SCAN_CACHE_LOCK:
-            cached = _SOURCE_SCAN_CACHE.get(cache_key)
+        assert cache is not None
+        cached = cache._lookup(cache_key)
         _record_source_scan_cache_sample(
             task,
             hit=cached is not None,
@@ -138,22 +233,22 @@ def scan_source_task(
         batch_count=batch_count,
     )
     if cache_key is not None and not control.answer_now_requested():
-        _remember_source_scan_result(cache_key, result)
+        assert cache is not None
+        cache._remember(cache_key, result)
     return result
 
 
 def clear_source_scan_cache() -> None:
-    """Clear the experimental in-process source scan cache."""
-    with _SOURCE_SCAN_CACHE_LOCK:
-        _SOURCE_SCAN_CACHE.clear()
+    """Compatibility shim for the removed process-global source scan cache."""
 
 
 def _source_scan_cache_key(
     query: agentgrep.SearchQuery,
     task: SourceTask,
+    cache: SourceScanCache | None,
 ) -> _SourceScanCacheKey | None:
-    """Return a cache key for opt-in reusable source scans."""
-    if not _source_scan_cache_enabled():
+    """Return a cache key for runtime-owned reusable source scans."""
+    if cache is None:
         return None
     if query.compiled is not None:
         return None
@@ -188,30 +283,6 @@ def _source_scan_cache_key(
             task.limit_policy.mode,
         ),
     )
-
-
-def _source_scan_cache_enabled() -> bool:
-    """Return whether the experimental source scan cache is enabled."""
-    return os.environ.get(_SOURCE_SCAN_CACHE_ENV) == "1"
-
-
-def _remember_source_scan_result(
-    key: _SourceScanCacheKey,
-    result: SourceScanResult,
-) -> None:
-    """Store a completed source scan in the bounded in-process cache."""
-    entry = _SourceScanCacheEntry(
-        records=result.records,
-        records_seen=result.records_seen,
-        matches_seen=result.matches_seen,
-        batch_count=result.batch_count,
-    )
-    with _SOURCE_SCAN_CACHE_LOCK:
-        if len(_SOURCE_SCAN_CACHE) >= _SOURCE_SCAN_CACHE_MAX_ENTRIES:
-            oldest_key = next(iter(_SOURCE_SCAN_CACHE), None)
-            if oldest_key is not None:
-                del _SOURCE_SCAN_CACHE[oldest_key]
-        _SOURCE_SCAN_CACHE[key] = entry
 
 
 def _record_source_scan_cache_sample(

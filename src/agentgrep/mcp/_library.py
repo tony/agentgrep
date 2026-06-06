@@ -184,6 +184,15 @@ class AgentGrepModule(t.Protocol):
         backends: BackendSelectionLike | None = None,
     ) -> list[SearchRecordLike]: ...
 
+    def aiter_search_events(
+        self,
+        home: pathlib.Path,
+        query: object,
+        *,
+        backends: BackendSelectionLike | None = None,
+        runtime: object | None = None,
+    ) -> t.AsyncIterator[object]: ...
+
     def run_find_query(
         self,
         home: pathlib.Path,
