@@ -140,7 +140,7 @@ def _record(
     )
 
 
-def _query(term: str = "ruff") -> agentgrep.SearchQuery:
+def _query(term: str = "ruff", *, dedupe: bool = True) -> agentgrep.SearchQuery:
     """Build a cache-supported text search query."""
     return agentgrep.SearchQuery(
         terms=(term,),
@@ -150,6 +150,7 @@ def _query(term: str = "ruff") -> agentgrep.SearchQuery:
         case_sensitive=False,
         agents=("codex",),
         limit=None,
+        dedupe=dedupe,
     )
 
 
@@ -590,3 +591,51 @@ def test_schema_version_mismatch_rebuilds_cache(tmp_path: pathlib.Path) -> None:
 
     assert reopened.status().records == 0
     assert reopened.status().sources == 0
+
+
+class CacheDedupeCase(t.NamedTuple):
+    """Named case for per-session dedup on the cached search path."""
+
+    test_id: str
+    dedupe: bool
+    expected_count: int
+
+
+CACHE_DEDUPE_CASES: tuple[CacheDedupeCase, ...] = (
+    CacheDedupeCase(test_id="dedupe-collapses-session", dedupe=True, expected_count=1),
+    CacheDedupeCase(test_id="no-dedupe-keeps-both", dedupe=False, expected_count=2),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    CACHE_DEDUPE_CASES,
+    ids=[case.test_id for case in CACHE_DEDUPE_CASES],
+)
+def test_cached_search_applies_per_session_dedup(
+    case: CacheDedupeCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Cached records honor the per-session dedup decision like live scans."""
+    first_path = tmp_path / "one.jsonl"
+    second_path = tmp_path / "two.jsonl"
+    first_path.write_text("ruff", encoding="utf-8")
+    second_path.write_text("ruff", encoding="utf-8")
+    first = _source(first_path)
+    second = _source(second_path)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    _ = runtime.sync_records(
+        (
+            (first, (_record(first, "Run ruff check before committing."),)),
+            (second, (_record(second, "Run ruff check before committing."),)),
+        ),
+    )
+    search_runtime = agentgrep.SearchRuntime(cache_mode="require", db=runtime)
+
+    handled, records = agentgrep._db_search_result(
+        _query("ruff", dedupe=case.dedupe),
+        search_runtime,
+    )
+
+    assert handled is True
+    assert len(records) == case.expected_count
