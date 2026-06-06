@@ -109,7 +109,12 @@ def _json_ready(value: object) -> object:
     return value
 
 
-def _print_json_or_text(payload: object, *, output_mode: OutputMode) -> None:
+def _print_json_or_text(
+    payload: object,
+    *,
+    output_mode: OutputMode,
+    color_mode: ColorMode = "auto",
+) -> None:
     """Print a small command payload in its requested output mode."""
     if output_mode == "json":
         print(json.dumps(_json_ready(payload), ensure_ascii=False, indent=2))
@@ -119,7 +124,8 @@ def _print_json_or_text(payload: object, *, output_mode: OutputMode) -> None:
         for row in rows:
             print(json.dumps(_json_ready(row), ensure_ascii=False))
         return
-    print(_json_ready(payload))
+    colors = AnsiColors.for_stream(color_mode, sys.stdout)
+    print(colors.heading(str(_json_ready(payload))))
 
 
 class ConsoleDbSyncProgress:
