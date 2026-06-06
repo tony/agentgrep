@@ -29,6 +29,10 @@ The DB stores source ledger rows, source state, normalized records,
 and an FTS5 text index. This keeps the default
 backend local, transactional, and inspectable.
 
+Repeated syncs consult `source_state` fingerprints before opening
+record iterators, so unchanged source files are skipped unless the
+caller uses `--force`.
+
 ## Commands
 
 Use the CLI pages for the exact parser surface:
