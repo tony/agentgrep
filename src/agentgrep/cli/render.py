@@ -486,7 +486,15 @@ def _json_ready(value: object) -> object:
     return value
 
 
-def _print_json_or_text(payload: object, *, output_mode: agentgrep.OutputMode) -> None:
+_HUMAN_SAMPLE_LIMIT = 10
+
+
+def _print_json_or_text(
+    payload: object,
+    *,
+    output_mode: agentgrep.OutputMode,
+    color_mode: agentgrep.ColorMode = "auto",
+) -> None:
     """Print a small command payload as JSON or human-readable text."""
     if output_mode == "json":
         print(json.dumps(_json_ready(payload), ensure_ascii=False, indent=2))
@@ -496,11 +504,125 @@ def _print_json_or_text(payload: object, *, output_mode: agentgrep.OutputMode) -
         for row in rows:
             print(json.dumps(_json_ready(row), ensure_ascii=False))
         return
+    colors = agentgrep.AnsiColors.for_stream(color_mode, sys.stdout)
+    print(_format_structured_text(payload, colors=colors))
+
+
+def _format_structured_text(payload: object, *, colors: agentgrep.AnsiColors) -> str:
+    """Return a terminal-readable summary for small structured payloads."""
+    if _has_attributes(payload, ("sources_synced", "records_indexed", "records_removed")):
+        return _format_db_sync_result_text(payload, colors=colors)
+    if _has_attributes(payload, ("db_path", "schema_version", "sources", "records")):
+        return _format_db_status_text(payload, colors=colors)
+    return _format_generic_structured_text(payload, colors=colors)
+
+
+def _has_attributes(payload: object, names: cabc.Sequence[str]) -> bool:
+    """Return whether ``payload`` has every named attribute."""
+    return all(hasattr(payload, name) for name in names)
+
+
+def _format_db_status_text(payload: object, *, colors: agentgrep.AnsiColors) -> str:
+    """Return human-readable DB status text."""
+    db_path = _attribute_or_mapping_value(payload, "db_path", "")
+    schema_version = _attribute_or_mapping_value(payload, "schema_version", "")
+    sources = _as_int_value(_attribute_or_mapping_value(payload, "sources", 0))
+    records = _as_int_value(_attribute_or_mapping_value(payload, "records", 0))
+    lines = [
+        colors.heading("DB status"),
+        f"{colors.muted('Path')} | {colors.path(str(db_path))}",
+        f"{colors.muted('Schema')} | {colors.warning(str(schema_version))}",
+        " | ".join(
+            (
+                colors.warning(format_db_source_count(sources)),
+                colors.warning(_format_count(records, "record")),
+            ),
+        ),
+    ]
+    return "\n".join(lines)
+
+
+def _format_db_sync_result_text(payload: object, *, colors: agentgrep.AnsiColors) -> str:
+    """Return human-readable DB sync result text."""
+    sources_synced = _as_int_value(_attribute_or_mapping_value(payload, "sources_synced", 0))
+    records_indexed = _as_int_value(_attribute_or_mapping_value(payload, "records_indexed", 0))
+    records_removed = _as_int_value(_attribute_or_mapping_value(payload, "records_removed", 0))
+    lines = [
+        colors.heading("DB sync"),
+        " | ".join(
+            (
+                colors.warning(format_db_source_count(sources_synced)),
+                colors.warning(format_db_indexed_count(records_indexed)),
+                colors.warning(format_db_removed_count(records_removed)),
+            ),
+        ),
+    ]
+    skipped = _as_int_value(_attribute_or_mapping_value(payload, "sources_skipped", 0))
+    if skipped:
+        lines.append(colors.warning(format_db_skipped_count(skipped)))
+    return "\n".join(lines)
+
+
+def _format_generic_structured_text(payload: object, *, colors: agentgrep.AnsiColors) -> str:
+    """Return a conservative human-readable fallback for structured payloads."""
     if dataclasses.is_dataclass(payload) and not isinstance(payload, type):
-        for key, value in dataclasses.asdict(t.cast("t.Any", payload)).items():
-            print(f"{key}: {value}")
-        return
-    print(payload)
+        payload = dataclasses.asdict(t.cast("t.Any", payload))
+    if isinstance(payload, cabc.Mapping):
+        lines = [colors.heading("Summary")]
+        for key, value in t.cast("cabc.Mapping[object, object]", payload).items():
+            lines.append(f"{colors.muted(str(key))} | {_format_scalar(value)}")
+        return "\n".join(lines)
+    if isinstance(payload, cabc.Sequence) and not isinstance(payload, (str, bytes, bytearray)):
+        lines = [colors.heading("Items")]
+        for item in payload[:_HUMAN_SAMPLE_LIMIT]:
+            lines.append(f"  {_format_scalar(item)}")
+        remaining = len(payload) - _HUMAN_SAMPLE_LIMIT
+        if remaining > 0:
+            lines.append(colors.dim(f"  ... {remaining} more items"))
+        return "\n".join(lines)
+    return str(payload)
+
+
+def _attribute_or_mapping_value(payload: object, name: str, default: object) -> object:
+    """Return an attribute or mapping value from a row-like object."""
+    if isinstance(payload, cabc.Mapping):
+        return t.cast("cabc.Mapping[str, object]", payload).get(name, default)
+    return getattr(payload, name, default)
+
+
+def _as_int_value(value: object) -> int:
+    """Return one object as an integer count when possible."""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return 0
+    return 0
+
+
+def _format_count(count: int, singular: str, plural: str | None = None) -> str:
+    """Return a human-readable count with pluralization."""
+    label = singular if count == 1 else (plural or f"{singular}s")
+    return f"{count} {label}"
+
+
+def _format_scalar(value: object) -> str:
+    """Return one scalar-ish value without Python dataclass reprs."""
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        value = dataclasses.asdict(t.cast("t.Any", value))
+    if isinstance(value, pathlib.Path):
+        return str(value)
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return str(value)
+    if isinstance(value, cabc.Mapping | cabc.Sequence):
+        return json.dumps(_json_ready(value), ensure_ascii=False)
+    return str(value)
 
 
 def _db_runtime_for_cli(
@@ -1090,7 +1212,11 @@ def run_db_command(args: DbArgs) -> int:
     """Execute ``agentgrep db`` subcommands."""
     runtime = _open_db_runtime(args.db_path)
     if args.action in {"status", "explain"}:
-        _print_json_or_text(runtime.status(), output_mode=args.output_mode)
+        _print_json_or_text(
+            runtime.status(),
+            output_mode=args.output_mode,
+            color_mode=args.color_mode,
+        )
         return 0
 
     query = agentgrep.SearchQuery(
@@ -1152,7 +1278,7 @@ def run_db_command(args: DbArgs) -> int:
             listener.stop()
         if progress is not None:
             progress.close()
-    _print_json_or_text(result, output_mode=args.output_mode)
+    _print_json_or_text(result, output_mode=args.output_mode, color_mode=args.color_mode)
     return 0
 
 
