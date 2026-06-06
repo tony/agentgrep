@@ -49,6 +49,8 @@ class SearchRecordLike(t.Protocol):
     text: str
     timestamp: str | None
     session_id: str | None
+    conversation_id: str | None
+    model: str | None
     path: pathlib.Path
 
 
@@ -509,6 +511,116 @@ def test_search_codex_prompt_match_returns_full_prompt(
     assert records[0].kind == "prompt"
     assert records[0].text == "A serenity prompt with bliss and detail."
     assert records[0].session_id == "session-1"
+
+
+def test_limited_codex_session_search_preserves_session_model(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Limited searches keep the session_meta model on Codex records.
+
+    Regression guard: bounded newest-first scans would read the trailing
+    records before the leading ``session_meta`` line, so limited haystack
+    searches for a model name returned no Codex records at all.
+    """
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+
+    session_path = home / ".codex" / "sessions" / "2026" / "01" / "01" / "rollout.jsonl"
+    write_jsonl(
+        session_path,
+        [
+            {
+                "type": "session_meta",
+                "payload": {"id": "session-1", "model": "gpt-test-o5"},
+            },
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "first prompt"}],
+                },
+            },
+            {
+                "timestamp": "2026-01-01T00:01:00Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "second prompt"}],
+                },
+            },
+        ],
+    )
+
+    query = agentgrep.SearchQuery(
+        terms=("gpt-test-o5",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=1,
+    )
+    backends = agentgrep.BackendSelection(None, None, None)
+    sources = agentgrep.discover_sources(home, ("codex",), backends)
+    records = agentgrep.search_sources(query, sources, backends)
+
+    assert len(records) == 1
+    assert records[0].model == "gpt-test-o5"
+
+
+def test_limited_pi_session_search_preserves_conversation_id(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Limited searches keep the session-header cwd on pi records.
+
+    Regression guard: bounded newest-first scans would read message lines
+    before the leading ``session`` header, dropping ``conversation_id``.
+    """
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+    monkeypatch.delenv("PI_CODING_AGENT_SESSION_DIR", raising=False)
+    session_file = home / ".pi" / "agent" / "sessions" / "--home-user-proj--" / "sess.jsonl"
+    write_jsonl(
+        session_file,
+        [
+            _pi_session_header(cwd="/home/user/proj"),
+            {
+                "type": "message",
+                "id": "u1",
+                "parentId": None,
+                "timestamp": "2026-05-30T12:00:02.000Z",
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "explain the streaming design"}],
+                    "timestamp": 1780228802000,
+                },
+            },
+        ],
+    )
+
+    query = agentgrep.SearchQuery(
+        terms=("streaming",),
+        scope="all",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("pi",),
+        limit=1,
+    )
+    backends = agentgrep.BackendSelection(None, None, None)
+    sources = agentgrep.discover_sources(home, ("pi",), backends)
+    records = agentgrep.search_sources(query, sources, backends)
+
+    assert len(records) == 1
+    assert records[0].conversation_id == "/home/user/proj"
 
 
 def test_search_reports_source_and_match_progress(

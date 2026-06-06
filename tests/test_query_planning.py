@@ -58,6 +58,7 @@ def _query(
     match_surface: agentgrep.SearchMatchSurface = "haystack",
     limit: int | None = 10,
     compiled: CompiledQuery | None = None,
+    agents: tuple[agentgrep.AgentName, ...] = ("codex", "claude"),
 ) -> agentgrep.SearchQuery:
     """Build a search query for planner tests."""
     return agentgrep.SearchQuery(
@@ -66,7 +67,7 @@ def _query(
         any_term=False,
         regex=regex,
         case_sensitive=False,
-        agents=("codex", "claude"),
+        agents=agents,
         limit=limit,
         dedupe=True,
         compiled=compiled,
@@ -181,7 +182,7 @@ def test_plan_search_sources_delegates_to_physical_plan(
     legacy_sources = agentgrep.plan_search_sources(query, [matched, missed], backends)
 
     assert [task.source for task in plan.tasks] == legacy_sources == [matched]
-    assert [task.strategy for task in plan.tasks] == ["jsonl_bounded_reverse_scan"]
+    assert [task.strategy for task in plan.tasks] == ["root_full_scan"]
 
 
 def test_bounded_text_append_only_jsonl_root_source_uses_lazy_admission(
@@ -433,16 +434,16 @@ class SourceStrategyCase(t.NamedTuple):
 
 STRATEGY_CASES: tuple[SourceStrategyCase, ...] = (
     SourceStrategyCase(
-        test_id="grep-text-jsonl-limited-uses-bounded-raw-prefilter",
+        test_id="grep-text-codex-sessions-limited-uses-forward-raw-prefilter",
         query=_query(match_surface="text"),
         source=_source(
             agent="codex",
             path="/tmp/codex-session.jsonl",
             adapter_id="codex.sessions_jsonl.v1",
         ),
-        expected_strategy="jsonl_bounded_reverse_raw_text_prefilter",
-        expected_record_order="newest_first",
-        expected_limit_behavior="bounded_source",
+        expected_strategy="jsonl_raw_text_prefilter",
+        expected_record_order="unknown",
+        expected_limit_behavior="drain_source",
     ),
     SourceStrategyCase(
         test_id="grep-text-jsonl-unlimited-uses-raw-prefilter",
@@ -457,16 +458,16 @@ STRATEGY_CASES: tuple[SourceStrategyCase, ...] = (
         expected_limit_behavior="drain_source",
     ),
     SourceStrategyCase(
-        test_id="search-haystack-jsonl-limited-uses-bounded-reverse",
+        test_id="search-haystack-codex-sessions-limited-keeps-full-scan",
         query=_query(match_surface="haystack"),
         source=_source(
             agent="codex",
             path="/tmp/codex-session.jsonl",
             adapter_id="codex.sessions_jsonl.v1",
         ),
-        expected_strategy="jsonl_bounded_reverse_scan",
-        expected_record_order="newest_first",
-        expected_limit_behavior="bounded_source",
+        expected_strategy="direct_full_scan",
+        expected_record_order="unknown",
+        expected_limit_behavior="drain_source",
     ),
     SourceStrategyCase(
         test_id="search-haystack-safe-jsonl-limited-uses-bounded-raw-prefilter",
@@ -482,16 +483,91 @@ STRATEGY_CASES: tuple[SourceStrategyCase, ...] = (
         expected_limit_behavior="bounded_source",
     ),
     SourceStrategyCase(
-        test_id="regex-text-jsonl-limited-uses-bounded-reverse",
+        test_id="regex-text-codex-sessions-limited-keeps-full-scan",
         query=_query(regex=True, match_surface="text"),
         source=_source(
             agent="codex",
             path="/tmp/codex-session.jsonl",
             adapter_id="codex.sessions_jsonl.v1",
         ),
+        expected_strategy="direct_full_scan",
+        expected_record_order="unknown",
+        expected_limit_behavior="drain_source",
+    ),
+    SourceStrategyCase(
+        test_id="regex-text-claude-projects-limited-still-bounded-reverse",
+        query=_query(scope="conversations", regex=True, match_surface="text"),
+        source=_source(
+            agent="claude",
+            path="/tmp/claude-project.jsonl",
+            store="claude.projects",
+            adapter_id="claude.projects_jsonl.v1",
+        ),
         expected_strategy="jsonl_bounded_reverse_scan",
         expected_record_order="newest_first",
         expected_limit_behavior="bounded_source",
+    ),
+    SourceStrategyCase(
+        test_id="grep-text-codex-history-limited-still-bounded-raw-prefilter",
+        query=_query(match_surface="text"),
+        source=_source(
+            agent="codex",
+            path="/tmp/history.jsonl",
+            store="codex.history",
+            adapter_id="codex.history_jsonl.v1",
+            path_kind="history_file",
+        ),
+        expected_strategy="jsonl_bounded_reverse_raw_text_prefilter",
+        expected_record_order="newest_first",
+        expected_limit_behavior="bounded_source",
+    ),
+    SourceStrategyCase(
+        test_id="grep-text-grok-prompt-history-limited-still-bounded-raw-prefilter",
+        query=_query(match_surface="text", agents=("grok",)),
+        source=_source(
+            agent="grok",
+            path="/tmp/grok-prompt-history.jsonl",
+            store="grok.prompt_history",
+            adapter_id="grok.prompt_history_jsonl.v1",
+            path_kind="history_file",
+        ),
+        expected_strategy="jsonl_bounded_reverse_raw_text_prefilter",
+        expected_record_order="newest_first",
+        expected_limit_behavior="bounded_source",
+    ),
+    SourceStrategyCase(
+        test_id="search-haystack-pi-sessions-limited-keeps-full-scan",
+        query=_query(
+            scope="conversations",
+            match_surface="haystack",
+            agents=("pi",),
+        ),
+        source=_source(
+            agent="pi",
+            path="/tmp/pi-session.jsonl",
+            store="pi.sessions",
+            adapter_id="pi.sessions_jsonl.v1",
+        ),
+        expected_strategy="direct_full_scan",
+        expected_record_order="unknown",
+        expected_limit_behavior="drain_source",
+    ),
+    SourceStrategyCase(
+        test_id="grep-text-pi-sessions-limited-uses-forward-raw-prefilter",
+        query=_query(
+            scope="conversations",
+            match_surface="text",
+            agents=("pi",),
+        ),
+        source=_source(
+            agent="pi",
+            path="/tmp/pi-session.jsonl",
+            store="pi.sessions",
+            adapter_id="pi.sessions_jsonl.v1",
+        ),
+        expected_strategy="jsonl_raw_text_prefilter",
+        expected_record_order="unknown",
+        expected_limit_behavior="drain_source",
     ),
     SourceStrategyCase(
         test_id="compiled-jsonl-keeps-full-scan",

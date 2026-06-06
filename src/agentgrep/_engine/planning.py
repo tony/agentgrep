@@ -51,8 +51,22 @@ RAW_TEXT_PREFILTER_ADAPTERS: frozenset[str] = frozenset(
 )
 """Adapters whose text-bearing records can be prefiltered from raw JSONL lines."""
 
-APPEND_ONLY_JSONL_ADAPTERS: frozenset[str] = RAW_TEXT_PREFILTER_ADAPTERS
-"""Adapters whose JSONL files are append-only enough for newest-first bounded scans."""
+APPEND_ONLY_JSONL_ADAPTERS: frozenset[str] = frozenset(
+    {
+        "codex.history_jsonl.v1",
+        "claude.projects_jsonl.v1",
+        "grok.prompt_history_jsonl.v1",
+        "grok.sessions_jsonl.v1",
+    },
+)
+"""Adapters safe for newest-first bounded scans.
+
+Members must be append-only and order-independent per record: no leading
+header line may carry state (model, session id, cwd) forward into later
+records. ``codex.sessions_jsonl.v1`` and ``pi.sessions_jsonl.v1`` read a
+``session_meta`` / ``session`` header that earlier records depend on, so a
+reverse scan would emit records before that state is known.
+"""
 
 HAYSTACK_RAW_TEXT_PREFILTER_ADAPTERS: frozenset[str] = frozenset(
     {

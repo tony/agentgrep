@@ -35,11 +35,30 @@ def _write_codex_session(
     return path
 
 
+def _write_claude_project_session(
+    home: pathlib.Path,
+    *,
+    name: str,
+    text: str,
+) -> pathlib.Path:
+    """Write a synthetic Claude project session the engine can parse."""
+    path = home / ".claude" / "projects" / "-synthetic-project" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "type": "user",
+        "sessionId": "session-1",
+        "message": {"role": "user", "content": text},
+    }
+    path.write_text(json.dumps(payload) + "\n")
+    return path
+
+
 def _make_query(
     *,
     limit: int | None = 10,
     scope: agentgrep.SearchScope = "prompts",
     match_surface: agentgrep.SearchMatchSurface = "haystack",
+    agents: tuple[agentgrep.AgentName, ...] = ("codex",),
 ) -> agentgrep.SearchQuery:
     """Build a narrow search query for profiling fixtures."""
     return agentgrep.SearchQuery(
@@ -48,7 +67,7 @@ def _make_query(
         any_term=False,
         regex=False,
         case_sensitive=False,
-        agents=("codex",),
+        agents=agents,
         limit=limit,
         dedupe=True,
         match_surface=match_surface,
@@ -175,9 +194,9 @@ PROFILE_STRATEGY_GROUP_CASES: tuple[ProfileStrategyGroupCase, ...] = (
         expected_strategy="jsonl_bounded_reverse_raw_text_prefilter",
     ),
     ProfileStrategyGroupCase(
-        test_id="search-jsonl-bounded-reverse",
+        test_id="search-jsonl-bounded-haystack-prefilter",
         match_surface="haystack",
-        expected_strategy="jsonl_bounded_reverse_scan",
+        expected_strategy="jsonl_bounded_reverse_haystack_raw_text_prefilter",
     ),
 )
 
@@ -255,8 +274,12 @@ def test_profile_search_query_preserves_physical_source_strategy(
     tmp_path: pathlib.Path,
 ) -> None:
     """Search profiling measures physical-plan execution strategies."""
-    _ = _write_codex_session(tmp_path, name="match.jsonl", text="tmux prompt")
-    query = _make_query(scope=case.scope, match_surface=case.match_surface)
+    _ = _write_claude_project_session(tmp_path, name="match.jsonl", text="tmux prompt")
+    query = _make_query(
+        scope=case.scope,
+        match_surface=case.match_surface,
+        agents=("claude",),
+    )
 
     profiled = profile_search_query(tmp_path, query)
 
@@ -275,8 +298,12 @@ def test_profile_search_query_reports_physical_strategy_groups(
     tmp_path: pathlib.Path,
 ) -> None:
     """Search profiling summarizes physical strategies without source paths."""
-    _ = _write_codex_session(tmp_path, name="match.jsonl", text="tmux private-token")
-    query = _make_query(scope="conversations", match_surface=case.match_surface)
+    _ = _write_claude_project_session(tmp_path, name="match.jsonl", text="tmux private-token")
+    query = _make_query(
+        scope="conversations",
+        match_surface=case.match_surface,
+        agents=("claude",),
+    )
 
     profiled = profile_search_query(
         tmp_path,
@@ -287,8 +314,8 @@ def test_profile_search_query_reports_physical_strategy_groups(
     samples = _samples_named(profiled.profile, "search.plan.strategy_group")
     assert len(samples) == 1
     sample = samples[0]
-    assert sample.attributes["agentgrep_agent"] == "codex"
-    assert sample.attributes["agentgrep_adapter_id"] == "codex.sessions_jsonl.v1"
+    assert sample.attributes["agentgrep_agent"] == "claude"
+    assert sample.attributes["agentgrep_adapter_id"] == "claude.projects_jsonl.v1"
     assert sample.attributes["agentgrep_source_kind"] == "jsonl"
     assert sample.attributes["agentgrep_source_strategy"] == case.expected_strategy
     assert sample.attributes["agentgrep_source_count"] == 1
@@ -302,11 +329,11 @@ def test_profile_search_query_reports_planner_decisions(
     tmp_path: pathlib.Path,
 ) -> None:
     """Search profiling records privacy-safe planner decision summaries."""
-    _ = _write_codex_session(tmp_path, name="match.jsonl", text="tmux private-token")
+    _ = _write_claude_project_session(tmp_path, name="match.jsonl", text="tmux private-token")
 
     profiled = profile_search_query(
         tmp_path,
-        _make_query(scope="conversations", match_surface="text"),
+        _make_query(scope="conversations", match_surface="text", agents=("claude",)),
         backends=agentgrep.BackendSelection(find_tool=None, grep_tool="rg", json_tool=None),
     )
 
