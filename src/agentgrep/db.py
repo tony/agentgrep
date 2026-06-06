@@ -35,6 +35,23 @@ class DbStatus:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class DbExplain:
+    """Cache diagnostics for ``agentgrep db explain``."""
+
+    db_path: pathlib.Path
+    schema_version: int
+    sources: int
+    records: int
+    synced_ok: int
+    sync_errors: int
+    last_synced_at: str | None
+    answerable: str
+
+
+ANSWERABLE_QUERY_FORMS = "term AND queries (no regex, no OR)"
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class SyncResult:
     """Counters returned by a DB sync operation."""
 
@@ -430,6 +447,32 @@ class DbStore:
             records=self._count("records"),
         )
 
+    def explain(self) -> DbExplain:
+        """Return cache diagnostics: counts, sync state, answerable forms."""
+        ok_row = self.connection.execute(
+            "SELECT COUNT(*) AS count FROM source_state WHERE sync_status = 'ok'",
+        ).fetchone()
+        error_row = self.connection.execute(
+            """
+            SELECT COUNT(*) AS count FROM source_state
+            WHERE sync_status != 'ok' OR last_error IS NOT NULL
+            """,
+        ).fetchone()
+        last_row = self.connection.execute(
+            "SELECT MAX(updated_at) AS last FROM source_state",
+        ).fetchone()
+        last_synced = last_row["last"] if last_row is not None else None
+        return DbExplain(
+            db_path=self.db_path,
+            schema_version=SCHEMA_VERSION,
+            sources=self._count("sources"),
+            records=self._count("records"),
+            synced_ok=int(ok_row["count"]) if ok_row is not None else 0,
+            sync_errors=int(error_row["count"]) if error_row is not None else 0,
+            last_synced_at=str(last_synced) if last_synced is not None else None,
+            answerable=ANSWERABLE_QUERY_FORMS,
+        )
+
     def _count(self, table: str) -> int:
         """Return row count for a known table."""
         row = self.connection.execute(f"SELECT COUNT(*) AS count FROM {table}").fetchone()
@@ -753,6 +796,10 @@ class DbRuntime:
     def status(self) -> DbStatus:
         """Return DB status counters."""
         return self.store.status()
+
+    def explain(self) -> DbExplain:
+        """Return cache diagnostics."""
+        return self.store.explain()
 
     def sync_records(
         self,
