@@ -35,17 +35,23 @@ def _write_codex_session(
     return path
 
 
-def _make_query(*, limit: int | None = 10) -> agentgrep.SearchQuery:
+def _make_query(
+    *,
+    limit: int | None = 10,
+    scope: agentgrep.SearchScope = "prompts",
+    match_surface: agentgrep.SearchMatchSurface = "haystack",
+) -> agentgrep.SearchQuery:
     """Build a narrow search query for profiling fixtures."""
     return agentgrep.SearchQuery(
         terms=("tmux",),
-        scope="prompts",
+        scope=scope,
         any_term=False,
         regex=False,
         case_sensitive=False,
         agents=("codex",),
         limit=limit,
         dedupe=True,
+        match_surface=match_surface,
     )
 
 
@@ -135,6 +141,25 @@ SEARCH_PLAN_SAMPLE_CASES: tuple[SearchPlanSampleCase, ...] = (
 )
 
 
+class ProfilePhysicalPlanCase(t.NamedTuple):
+    """Expected physical strategy observed by one profiled search query."""
+
+    test_id: str
+    scope: agentgrep.SearchScope
+    match_surface: agentgrep.SearchMatchSurface
+    expected_strategy: str
+
+
+PROFILE_PHYSICAL_PLAN_CASES: tuple[ProfilePhysicalPlanCase, ...] = (
+    ProfilePhysicalPlanCase(
+        test_id="grep-conversations-jsonl-raw-prefilter",
+        scope="conversations",
+        match_surface="text",
+        expected_strategy="jsonl_raw_text_prefilter",
+    ),
+)
+
+
 def _samples_named(profile: EngineProfile, name: str) -> tuple[EnginePhaseSample, ...]:
     """Return profile samples matching ``name``."""
     return tuple(sample for sample in profile.samples if sample.name == name)
@@ -196,6 +221,26 @@ def test_profile_search_query_reports_source_level_samples(
     payload = json.dumps(profiled.to_payload(), sort_keys=True)
     assert str(tmp_path) not in payload
     assert "private-token" not in payload
+
+
+@pytest.mark.parametrize(
+    "case",
+    PROFILE_PHYSICAL_PLAN_CASES,
+    ids=[c.test_id for c in PROFILE_PHYSICAL_PLAN_CASES],
+)
+def test_profile_search_query_preserves_physical_source_strategy(
+    case: ProfilePhysicalPlanCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Search profiling measures physical-plan execution strategies."""
+    _ = _write_codex_session(tmp_path, name="match.jsonl", text="tmux prompt")
+    query = _make_query(scope=case.scope, match_surface=case.match_surface)
+
+    profiled = profile_search_query(tmp_path, query)
+
+    samples = _samples_named(profiled.profile, "search.collect.source")
+    assert len(samples) == 1
+    assert samples[0].attributes["agentgrep_source_strategy"] == case.expected_strategy
 
 
 def test_profile_find_query_reports_filter_source_samples(

@@ -208,6 +208,7 @@ def profile_search_query(
 ) -> ProfiledSearchResult:
     """Run a search query and return engine-only phase timings."""
     import agentgrep
+    from agentgrep._engine.planning import build_physical_search_plan
 
     profiler = EngineProfiler()
     active_backends = agentgrep.select_backends() if backends is None else backends
@@ -235,7 +236,7 @@ def profile_search_query(
             agentgrep_scope=query.scope,
             agentgrep_source_count=len(sources_for_plan),
         ):
-            planned_sources = agentgrep.plan_search_sources(
+            plan = build_physical_search_plan(
                 query,
                 sources_for_plan,
                 active_backends,
@@ -247,18 +248,18 @@ def profile_search_query(
             with profiler.span(
                 "search.collect",
                 agentgrep_scope=query.scope,
-                agentgrep_source_count=len(planned_sources),
+                agentgrep_source_count=len(plan.tasks),
             ):
-                records = agentgrep.collect_search_records(
+                records = agentgrep.collect_search_records_from_plan(
                     query,
-                    planned_sources,
+                    plan,
                     control=active_control,
                 )
     return ProfiledSearchResult(
         records=tuple(records),
         profile=profiler.snapshot(),
         discovered_source_count=len(sources),
-        planned_source_count=len(planned_sources),
+        planned_source_count=len(plan.tasks),
     )
 
 
