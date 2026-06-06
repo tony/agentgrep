@@ -37,6 +37,12 @@ Search and find from the terminal. Pipe `--json` / `--ndjson` for scripts and ag
 Interactive Textual explorer for browsing prompt and conversation records.
 :::
 
+:::{grid-item-card} Insights
+:link: insights/index
+:link-type: doc
+Compare indexed records, detect omissions, and review suggestions.
+:::
+
 :::{grid-item-card} MCP
 :link: mcp/index
 :link-type: doc
@@ -83,6 +89,13 @@ List the stores, session files, and SQLite databases that agentgrep can read.
 
 <a class="reference internal" href="mcp/tools/#fastmcp-tool-find"><code>find</code></a>
 
+### Insights
+
+Compare indexed records, list persisted omissions, and review suggested
+instruction changes.
+
+{ref}`insights`
+
 ### MCP guidance
 
 Use prompts for common agent workflows:
@@ -96,6 +109,7 @@ getting-started/index
 cli/index
 tui/index
 library/index
+insights/index
 mcp/index
 backends/index
 dev/index
