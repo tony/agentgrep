@@ -733,3 +733,81 @@ def test_db_status_on_foreign_file_fails_cleanly(
     assert exit_code == 1
     assert "not an agentgrep database" in captured.err
     assert "Traceback" not in captured.err
+
+
+def test_db_explain_reports_sync_diagnostics(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Explain returns a diagnostic payload distinct from status."""
+    import agentgrep.db as agentgrep_db
+
+    db_path = tmp_path / "agentgrep.sqlite"
+    source_path = tmp_path / "session.jsonl"
+    source_path.write_text("ruff", encoding="utf-8")
+    runtime = agentgrep_db.DbRuntime.open(db_path)
+    source = agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=source_path,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=source_path.parent,
+        mtime_ns=source_path.stat().st_mtime_ns,
+    )
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent=source.agent,
+        store=source.store,
+        adapter_id=source.adapter_id,
+        path=source.path,
+        text="Run ruff check before committing.",
+        timestamp="2026-06-05T12:00:00Z",
+        session_id="session-a",
+    )
+    _ = runtime.sync_records(((source, (record,)),))
+    runtime.close()
+    args = agentgrep.DbArgs(
+        action="explain",
+        db_path=str(db_path),
+        agents=("codex",),
+        scope="all",
+        output_mode="json",
+        color_mode="never",
+        progress_mode="never",
+    )
+
+    exit_code = render.run_db_command(args)
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert exit_code == 0
+    assert payload["synced_ok"] == 1
+    assert payload["sync_errors"] == 0
+    assert payload["last_synced_at"] is not None
+    assert "term AND queries" in payload["answerable"]
+
+
+def test_db_explain_text_output_shows_sync_summary(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Explain text mode renders the diagnostic summary."""
+    args = agentgrep.DbArgs(
+        action="explain",
+        db_path=str(tmp_path / "missing.sqlite"),
+        agents=("codex",),
+        scope="all",
+        output_mode="text",
+        color_mode="never",
+        progress_mode="never",
+    )
+
+    exit_code = render.run_db_command(args)
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "DB explain" in captured.out
+    assert "0 ok" in captured.out
+    assert "Answerable" in captured.out

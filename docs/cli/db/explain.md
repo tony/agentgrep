@@ -2,9 +2,10 @@
 
 # agentgrep db explain
 
-Print db planner and status details for the selected
-database. Use this when debugging why a search did or did not use the
-DB cache.
+Print cache diagnostics for the selected database: row counts, the
+sync-state breakdown (ok and error sources, most recent sync time),
+and which query forms the cache can answer. Use this when debugging
+why a search did or did not use the DB cache.
 
 ## Examples
 
