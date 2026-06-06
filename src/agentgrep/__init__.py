@@ -241,7 +241,8 @@ CLI_DESCRIPTION = build_description(
     and OpenCode local stores. Pick a subcommand from the list below:
     ``search`` for ranked results with dedup and session grouping,
     ``grep`` for rg-shaped content search, ``find`` for store
-    enumeration, ``ui`` for the interactive Textual explorer.
+    enumeration, ``ui`` for the interactive Textual explorer,
+    and ``db`` for the persistent index.
     """,
     (
         (
@@ -266,6 +267,14 @@ CLI_DESCRIPTION = build_description(
             (
                 "agentgrep ui",
                 "agentgrep ui bliss",
+            ),
+        ),
+        (
+            "db",
+            (
+                "agentgrep db",
+                "agentgrep db sync",
+                "agentgrep db status --json",
             ),
         ),
     ),
@@ -335,6 +344,25 @@ GREP_DESCRIPTION = build_description(
                 "agentgrep grep -F --scope conversations TODO",
                 "agentgrep grep --json design",
                 "agentgrep grep --vimgrep --no-dedupe foo",
+            ),
+        ),
+    ),
+)
+DB_DESCRIPTION = build_description(
+    """
+    Manage the persistent DB index used as a local cache and
+    normalized source ledger. The DB index is derived state: source
+    stores remain the truth.
+    """,
+    (
+        (
+            "db",
+            (
+                "agentgrep db",
+                "agentgrep db sync",
+                "agentgrep db sync --agent codex --scope prompts",
+                "agentgrep db status --json",
+                "agentgrep db explain --ndjson",
             ),
         ),
     ),
@@ -3603,6 +3631,31 @@ def search_sources(
     return records
 
 
+def _db_search_result(
+    query: SearchQuery,
+    runtime: SearchRuntime | None,
+) -> tuple[bool, list[SearchRecord]]:
+    """Return ``(handled, records)`` for cache-backed search attempts."""
+    if runtime is None or runtime.cache_mode == "off":
+        return False, []
+    if runtime.db is None:
+        if runtime.cache_mode == "require":
+            msg = "DB cache required but no db runtime is configured"
+            raise RuntimeError(msg)
+        return False, []
+    from agentgrep.db import DbQueryUnsupported
+
+    try:
+        records = runtime.db.search_records(query)
+    except DbQueryUnsupported:
+        if runtime.cache_mode == "require":
+            raise
+        return False, []
+    if runtime.cache_mode == "auto" and not records:
+        return False, []
+    return True, records
+
+
 def run_search_query(
     home: pathlib.Path,
     query: SearchQuery,
@@ -3619,6 +3672,12 @@ def run_search_query(
     active_progress.start(query)
     interrupted = False
     try:
+        cache_handled, cache_records = _db_search_result(query, runtime)
+        if cache_handled:
+            active_progress.sources_discovered(0)
+            active_progress.sources_planned(0, 0)
+            active_progress.finish(len(cache_records))
+            return cache_records
         sources = discover_sources_for_search(
             home,
             query,
@@ -7321,6 +7380,8 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
             return run_grep_command(parsed)
         if isinstance(parsed, SearchArgs):
             return run_search_command(parsed)
+        if isinstance(parsed, DbArgs):
+            return run_db_command(parsed)
         if isinstance(parsed, UIArgs):
             return run_ui_command(parsed)
         return run_find_command(parsed)
@@ -7330,6 +7391,7 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
 
 
 from agentgrep._engine import (  # noqa: E402  (re-exports must follow main definition)
+    CacheMode,
     SearchRuntime,
     SourceScanCache,
     SourceScanCacheStats,
@@ -7339,6 +7401,7 @@ from agentgrep._engine import (  # noqa: E402  (re-exports must follow main defi
 )
 from agentgrep.cli.parser import (  # noqa: E402  (re-exports must follow main definition)
     CaseMode,
+    DbArgs,
     FindArgs,
     FindPatternMode,
     FindTypeFilter,
@@ -7347,6 +7410,7 @@ from agentgrep.cli.parser import (  # noqa: E402  (re-exports must follow main d
     PatternMode,
     SearchArgs,
     UIArgs,
+    add_cache_options,
     add_common_agent_options,
     add_output_mode_options,
     build_docs_parser,
@@ -7365,6 +7429,7 @@ from agentgrep.cli.render import (  # noqa: E402  (re-exports must follow main d
     maybe_build_pydantic,
     print_find_results,
     print_grep_results,
+    run_db_command,
     run_find_command,
     run_grep_command,
     run_search_command,

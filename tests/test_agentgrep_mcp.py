@@ -148,6 +148,7 @@ async def test_mcp_lists_tools_resources_prompts_and_templates() -> None:
         "inspect_record_sample",
         "validate_query",
         "recent_sessions",
+        "db_status",
     }
     assert any(str(resource.uri) == "agentgrep://capabilities" for resource in resources)
     assert any(str(resource.uri) == "agentgrep://sources" for resource in resources)

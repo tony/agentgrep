@@ -125,6 +125,16 @@ class SearchToolResponse(AgentGrepModel):
     results: list[SearchRecordModel]
 
 
+class DbStatusModel(AgentGrepModel):
+    """DB index status payload."""
+
+    schema_version: str = agentgrep.SCHEMA_VERSION
+    db_path: str
+    db_schema_version: int
+    sources: int
+    records: int
+
+
 class FindToolQuery(AgentGrepModel):
     """Echo of normalized find tool inputs."""
 

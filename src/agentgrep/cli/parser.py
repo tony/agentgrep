@@ -24,11 +24,13 @@ import typing as t
 from agentgrep import (
     AGENT_CHOICES,
     CLI_DESCRIPTION,
+    DB_DESCRIPTION,
     FIND_DESCRIPTION,
     GREP_DESCRIPTION,
     SEARCH_DESCRIPTION,
     UI_DESCRIPTION,
     AgentName,
+    CacheMode,
     ColorMode,
     GrepStyle,
     OutputMode,
@@ -44,9 +46,11 @@ CaseMode = t.Literal["smart", "ignore", "respect"]
 PatternMode = t.Literal["regex", "fixed", "word"]
 FindPatternMode = t.Literal["regex", "glob", "fixed", "exact"]
 FindTypeFilter = t.Literal["prompts", "history", "sessions", "all"]
+DbAction = t.Literal["sync", "status", "explain"]
 
 __all__ = [
     "CaseMode",
+    "DbArgs",
     "FindArgs",
     "FindPatternMode",
     "FindTypeFilter",
@@ -55,6 +59,7 @@ __all__ = [
     "PatternMode",
     "SearchArgs",
     "UIArgs",
+    "add_cache_options",
     "add_common_agent_options",
     "add_output_mode_options",
     "build_docs_parser",
@@ -132,6 +137,7 @@ class GrepArgs:
     output_mode: OutputMode
     color_mode: ColorMode
     progress_mode: ProgressMode
+    cache_mode: CacheMode = "auto"
     style: GrepStyle = "default"
     compiled: CompiledQuery | None = None
     raw_query: str = ""
@@ -154,11 +160,24 @@ class SearchArgs:
     output_mode: OutputMode
     color_mode: ColorMode
     progress_mode: ProgressMode
+    cache_mode: CacheMode = "auto"
     threshold: int = 0
     no_group: bool = False
     no_rank: bool = False
     compiled: CompiledQuery | None = None
     raw_query: str = ""
+
+
+@dataclasses.dataclass(slots=True)
+class DbArgs:
+    """Typed arguments for ``agentgrep db`` subcommands."""
+
+    action: DbAction
+    db_path: str | None
+    agents: tuple[AgentName, ...]
+    scope: SearchScope
+    output_mode: OutputMode
+    limit_sources: int | None = None
 
 
 @dataclasses.dataclass(slots=True)
@@ -169,6 +188,7 @@ class ParserBundle:
     find_parser: argparse.ArgumentParser
     grep_parser: argparse.ArgumentParser
     search_parser: argparse.ArgumentParser
+    db_parser: argparse.ArgumentParser
 
 
 def normalize_color_mode(argv: cabc.Sequence[str] | None) -> ColorMode:
@@ -372,6 +392,7 @@ def create_parser(
         default="default",
         help="Output style: default (rg-faithful) or pretty (snippet-first, amber highlights)",
     )
+    add_cache_options(grep_parser)
     add_output_mode_options(grep_parser, allow_ui=True)
 
     find_parser = subparsers.add_parser(
@@ -559,13 +580,65 @@ def create_parser(
         const="never",
         help="Silence the stderr progress spinner (alias for --progress=never)",
     )
+    add_cache_options(search_parser)
     add_output_mode_options(search_parser, allow_ui=True)
+
+    db_parser = subparsers.add_parser(
+        "db",
+        help="Sync and inspect the persistent DB index",
+        description=DB_DESCRIPTION,
+        formatter_class=formatter_class,
+        color=color_mode != "never",
+    )
+    db_subparsers = db_parser.add_subparsers(
+        dest="db_action",
+    )
+    db_sync_parser = db_subparsers.add_parser(
+        "sync",
+        help="Sync discovered sources into the DB index",
+        formatter_class=formatter_class,
+        color=color_mode != "never",
+    )
+    add_common_agent_options(db_sync_parser)
+    _ = db_sync_parser.add_argument(
+        "--scope",
+        choices=["prompts", "conversations", "all"],
+        default="all",
+        help="Sources to sync into the DB index",
+    )
+    _ = db_sync_parser.add_argument("--db", dest="db_path", help="agentgrep db path")
+    _ = db_sync_parser.add_argument(
+        "--limit-sources",
+        type=int,
+        metavar="N",
+        help="Limit the number of sources synced",
+    )
+    add_output_mode_options(db_sync_parser, allow_ui=False)
+
+    db_status_parser = db_subparsers.add_parser(
+        "status",
+        help="Show DB index status",
+        formatter_class=formatter_class,
+        color=color_mode != "never",
+    )
+    _ = db_status_parser.add_argument("--db", dest="db_path", help="agentgrep db path")
+    add_output_mode_options(db_status_parser, allow_ui=False)
+
+    db_explain_parser = db_subparsers.add_parser(
+        "explain",
+        help="Show DB planner/status details",
+        formatter_class=formatter_class,
+        color=color_mode != "never",
+    )
+    _ = db_explain_parser.add_argument("--db", dest="db_path", help="agentgrep db path")
+    add_output_mode_options(db_explain_parser, allow_ui=False)
 
     return ParserBundle(
         parser=parser,
         find_parser=find_parser,
         grep_parser=grep_parser,
         search_parser=search_parser,
+        db_parser=db_parser,
     )
 
 
@@ -741,7 +814,7 @@ def _check_for_mangled_field_predicate(
 
 def parse_args(
     argv: cabc.Sequence[str] | None = None,
-) -> FindArgs | UIArgs | GrepArgs | SearchArgs | None:
+) -> DbArgs | FindArgs | GrepArgs | SearchArgs | UIArgs | None:
     """Parse CLI arguments into typed dataclasses."""
     color_mode = normalize_color_mode(argv)
     effective_argv = list(argv) if argv is not None else list(sys.argv[1:])
@@ -764,6 +837,13 @@ def parse_args(
             initial_query=t.cast("str", namespace.initial_query),
             color_mode=color_mode,
         )
+
+    if command == "db":
+        if getattr(namespace, "db_action", None) is None:
+            with configured_color_environment(color_mode):
+                bundle.db_parser.print_help()
+            return None
+        return _build_db_args(namespace, color_mode=color_mode, bundle=bundle)
 
     agents = parse_agents(t.cast("list[str]", namespace.agent))
     output_mode = parse_output_mode(namespace)
@@ -842,6 +922,27 @@ def parse_args(
         progress_mode=t.cast("ProgressMode", namespace.progress),
         compiled=find_compiled,
         raw_query=raw_pattern or "",
+    )
+
+
+def _build_db_args(
+    namespace: argparse.Namespace,
+    *,
+    color_mode: ColorMode,
+    bundle: ParserBundle,
+) -> DbArgs:
+    """Build :class:`DbArgs` from a parsed argparse namespace."""
+    limit_sources = t.cast("int | None", getattr(namespace, "limit_sources", None))
+    if limit_sources is not None and limit_sources < 1:
+        with configured_color_environment(color_mode):
+            bundle.db_parser.error("--limit-sources must be greater than 0")
+    return DbArgs(
+        action=t.cast("DbAction", namespace.db_action),
+        db_path=t.cast("str | None", getattr(namespace, "db_path", None)),
+        agents=parse_agents(t.cast("list[str]", getattr(namespace, "agent", []))),
+        scope=t.cast("SearchScope", getattr(namespace, "scope", "all")),
+        output_mode=parse_output_mode(namespace),
+        limit_sources=limit_sources,
     )
 
 
@@ -955,6 +1056,7 @@ def _build_grep_args(
         output_mode=output_mode,
         color_mode=color_mode,
         progress_mode=t.cast("ProgressMode", namespace.progress),
+        cache_mode=t.cast("CacheMode", namespace.cache_mode),
         style=t.cast("GrepStyle", namespace.style),
     )
 
@@ -1008,6 +1110,7 @@ def _build_search_args(
         output_mode=output_mode,
         color_mode=color_mode,
         progress_mode=t.cast("ProgressMode", namespace.progress),
+        cache_mode=t.cast("CacheMode", namespace.cache_mode),
         threshold=threshold,
         no_group=t.cast("bool", namespace.no_group),
         no_rank=t.cast("bool", namespace.no_rank),
@@ -1024,6 +1127,25 @@ def add_common_agent_options(parser: argparse.ArgumentParser) -> None:
         choices=[*AGENT_CHOICES, "all"],
         default=[],
         help="Limit results to a specific agent; repeatable",
+    )
+
+
+def add_cache_options(parser: argparse.ArgumentParser) -> None:
+    """Attach cache-mode flags shared by search-shaped commands."""
+    group = parser.add_mutually_exclusive_group()
+    _ = group.add_argument(
+        "--cache",
+        choices=["auto", "require", "off"],
+        default="auto",
+        dest="cache_mode",
+        help="Use DB cache: auto (default), require, or off",
+    )
+    _ = group.add_argument(
+        "--no-cache",
+        action="store_const",
+        const="off",
+        dest="cache_mode",
+        help="Bypass the DB cache for a fresh live scan",
     )
 
 

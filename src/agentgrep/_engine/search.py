@@ -126,6 +126,21 @@ def iter_search_events(
     active_control = agentgrep.SearchControl() if control is None else control
     start_time = time.monotonic()
 
+    cache_handled, cache_records = agentgrep._db_search_result(query, runtime)
+    if cache_handled:
+        yield _events.SearchStarted(source_count=0)
+        match_count = 0
+        for record in cache_records:
+            if active_control.answer_now_requested():
+                break
+            match_count += 1
+            yield _events.RecordEmitted(record=record)
+        yield _events.SearchFinished(
+            match_count=match_count,
+            elapsed_seconds=time.monotonic() - start_time,
+        )
+        return
+
     sources = agentgrep.discover_sources_for_search(
         home,
         query,

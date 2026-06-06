@@ -19,6 +19,7 @@ import collections.abc as cabc
 import dataclasses
 import datetime
 import fnmatch
+import inspect
 import json
 import pathlib
 import re
@@ -38,7 +39,16 @@ from agentgrep import (
     SourceVersionDetection,
     SourceVersionDetectionPayload,
 )
-from agentgrep.cli.parser import FindArgs, GrepArgs, SearchArgs, UIArgs
+from agentgrep.cli.parser import (
+    DbArgs,
+    FindArgs,
+    GrepArgs,
+    SearchArgs,
+    UIArgs,
+)
+
+if t.TYPE_CHECKING:
+    from agentgrep.db import DbRuntime
 
 __all__ = [
     "GrepSummary",
@@ -56,6 +66,7 @@ __all__ = [
     "maybe_build_pydantic",
     "print_find_results",
     "print_grep_results",
+    "run_db_command",
     "run_find_command",
     "run_grep_command",
     "run_search_command",
@@ -457,6 +468,187 @@ def run_ui_command(args: UIArgs) -> int:
     return 0
 
 
+def _json_ready(value: object) -> object:
+    """Convert dataclasses and paths into JSON-serializable values."""
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return _json_ready(dataclasses.asdict(t.cast("t.Any", value)))
+    if isinstance(value, pathlib.Path):
+        return str(value)
+    if isinstance(value, dict):
+        return {str(key): _json_ready(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_ready(item) for item in value]
+    return value
+
+
+def _print_json_or_text(payload: object, *, output_mode: agentgrep.OutputMode) -> None:
+    """Print a small command payload as JSON or human-readable text."""
+    if output_mode == "json":
+        print(json.dumps(_json_ready(payload), ensure_ascii=False, indent=2))
+        return
+    if output_mode == "ndjson":
+        rows = payload if isinstance(payload, (list, tuple)) else (payload,)
+        for row in rows:
+            print(json.dumps(_json_ready(row), ensure_ascii=False))
+        return
+    if dataclasses.is_dataclass(payload) and not isinstance(payload, type):
+        for key, value in dataclasses.asdict(t.cast("t.Any", payload)).items():
+            print(f"{key}: {value}")
+        return
+    print(payload)
+
+
+def _db_runtime_for_cli(
+    cache_mode: agentgrep.CacheMode,
+) -> agentgrep.SearchRuntime | None:
+    """Return a search runtime with optional DB access."""
+    if cache_mode == "off":
+        return None
+    from agentgrep.db import DbRuntime, default_db_path
+
+    db_path = default_db_path()
+    if cache_mode == "auto" and not db_path.exists():
+        return None
+    return agentgrep.SearchRuntime(
+        db=DbRuntime.open(db_path),
+        cache_mode=cache_mode,
+    )
+
+
+def _exit_for_required_cache_miss(error: BaseException) -> t.NoReturn:
+    """Raise a clean CLI error for cache-required unsupported queries."""
+    print(
+        f"agentgrep: --cache require cannot satisfy this query from the DB: {error}",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
+
+
+def _accepts_runtime_parameter(function: cabc.Callable[..., object]) -> bool:
+    """Return whether a possibly monkeypatched runner accepts ``runtime``."""
+    try:
+        signature = inspect.signature(function)
+    except TypeError, ValueError:
+        return True
+    return "runtime" in signature.parameters or any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    )
+
+
+def _run_search_query_for_cli(
+    home: pathlib.Path,
+    query: agentgrep.SearchQuery,
+    *,
+    progress: agentgrep.SearchProgress,
+    control: agentgrep.SearchControl,
+    cache_mode: agentgrep.CacheMode,
+) -> list[agentgrep.SearchRecord]:
+    """Call ``run_search_query`` without changing monkeypatch-compatible arity."""
+    runtime = _db_runtime_for_cli(cache_mode)
+    if runtime is None:
+        return agentgrep.run_search_query(
+            home,
+            query,
+            progress=progress,
+            control=control,
+        )
+    from agentgrep.db import DbQueryUnsupported
+
+    runner = agentgrep.run_search_query
+    try:
+        if not _accepts_runtime_parameter(runner):
+            return runner(
+                home,
+                query,
+                progress=progress,
+                control=control,
+            )
+        return runner(
+            home,
+            query,
+            progress=progress,
+            control=control,
+            runtime=runtime,
+        )
+    except DbQueryUnsupported as exc:
+        _exit_for_required_cache_miss(exc)
+
+
+def _iter_search_events_for_cli(
+    home: pathlib.Path,
+    query: agentgrep.SearchQuery,
+    *,
+    control: agentgrep.SearchControl,
+    cache_mode: agentgrep.CacheMode,
+) -> cabc.Iterator[object]:
+    """Call ``iter_search_events`` without changing monkeypatch-compatible arity."""
+    runtime = _db_runtime_for_cli(cache_mode)
+    if runtime is None:
+        yield from agentgrep.iter_search_events(
+            home,
+            query,
+            control=control,
+        )
+        return
+    from agentgrep.db import DbQueryUnsupported
+
+    runner = agentgrep.iter_search_events
+    try:
+        if not _accepts_runtime_parameter(runner):
+            yield from runner(
+                home,
+                query,
+                control=control,
+            )
+            return
+        yield from runner(
+            home,
+            query,
+            control=control,
+            runtime=runtime,
+        )
+    except DbQueryUnsupported as exc:
+        _exit_for_required_cache_miss(exc)
+
+
+def _open_db_runtime(db_path: str | None) -> DbRuntime:
+    """Open the DB runtime lazily."""
+    from agentgrep.db import DbRuntime
+
+    return DbRuntime.open(pathlib.Path(db_path) if db_path is not None else None)
+
+
+def run_db_command(args: DbArgs) -> int:
+    """Execute ``agentgrep db`` subcommands."""
+    runtime = _open_db_runtime(args.db_path)
+    if args.action in {"status", "explain"}:
+        _print_json_or_text(runtime.status(), output_mode=args.output_mode)
+        return 0
+
+    query = agentgrep.SearchQuery(
+        terms=(),
+        scope=args.scope,
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=args.agents,
+        limit=None,
+    )
+    backends = agentgrep.select_backends()
+    sources = agentgrep.discover_sources_for_search(
+        pathlib.Path.home(),
+        query,
+        backends,
+        version_detail="none",
+    )
+    if args.limit_sources is not None:
+        sources = sources[: args.limit_sources]
+    result = runtime.sync_sources(sources)
+    _print_json_or_text(result, output_mode=args.output_mode)
+    return 0
+
+
 def run_search_command(args: SearchArgs) -> int:
     """Execute ``agentgrep search`` with ranked, pretty output.
 
@@ -513,11 +705,12 @@ def run_search_command(args: SearchArgs) -> int:
     if listener is not None:
         listener.start()
     try:
-        records = agentgrep.run_search_query(
+        records = _run_search_query_for_cli(
             pathlib.Path.home(),
             query,
             progress=progress,
             control=control,
+            cache_mode=args.cache_mode,
         )
     finally:
         if listener is not None:
@@ -590,11 +783,12 @@ def _print_search_text(
 def _run_search_eager(args: SearchArgs, query: agentgrep.SearchQuery) -> int:
     """Eager search for JSON/NDJSON output with ranking but no pairwise dedup."""
     control = agentgrep.SearchControl()
-    records = agentgrep.run_search_query(
+    records = _run_search_query_for_cli(
         pathlib.Path.home(),
         query,
         progress=agentgrep.noop_search_progress(),
         control=control,
+        cache_mode=args.cache_mode,
     )
     query_text = " ".join(args.terms)
     if args.no_rank or not query_text:
@@ -1314,10 +1508,11 @@ def stream_grep_results(args: GrepArgs) -> int:
     match_count = 0
     pretty = args.style == "pretty"
     summary = GrepSummary() if pretty else None
-    for event in agentgrep.iter_search_events(
+    for event in _iter_search_events_for_cli(
         pathlib.Path.home(),
         query,
         control=control,
+        cache_mode=args.cache_mode,
     ):
         if isinstance(event, events.RecordEmitted):
             if args.output_mode == "ndjson":
@@ -1384,10 +1579,11 @@ def run_grep_command(args: GrepArgs) -> int:
             color_mode=args.color_mode,
             answer_now_hint=False,
         )
-    records = agentgrep.run_search_query(
+    records = _run_search_query_for_cli(
         pathlib.Path.home(),
         query,
         progress=progress,
         control=control,
+        cache_mode=args.cache_mode,
     )
     return print_grep_results(records, args)
