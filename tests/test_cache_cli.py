@@ -10,7 +10,7 @@ import pytest
 
 import agentgrep
 import agentgrep.cli.render as render
-from agentgrep.db import DbSyncProgress, SyncResult
+from agentgrep.db import DbStatus, DbSyncProgress, SyncResult
 
 
 class CacheFlagCase(t.NamedTuple):
@@ -28,6 +28,15 @@ class StructuredOutputCase(t.NamedTuple):
     payload: object
     output_mode: t.Literal["json", "ndjson"]
     expected_documents: tuple[object, ...]
+
+
+class StructuredTextOutputCase(t.NamedTuple):
+    """Named case for small structured CLI text rendering."""
+
+    test_id: str
+    payload: object
+    expected_contains: tuple[str, ...]
+    expected_not_contains: tuple[str, ...]
 
 
 class CommandGroupHelpCase(t.NamedTuple):
@@ -191,6 +200,43 @@ STRUCTURED_OUTPUT_CASES: tuple[StructuredOutputCase, ...] = (
 )
 
 
+STRUCTURED_TEXT_OUTPUT_CASES: tuple[StructuredTextOutputCase, ...] = (
+    StructuredTextOutputCase(
+        test_id="db-status",
+        payload=DbStatus(
+            db_path=pathlib.Path("/tmp/agentgrep.sqlite"),
+            schema_version=1,
+            sources=2,
+            records=3,
+        ),
+        expected_contains=(
+            "DB status",
+            "/tmp/agentgrep.sqlite",
+            "2 sources",
+            "3 records",
+        ),
+        expected_not_contains=("DbStatus(", "{", "'db_path'"),
+    ),
+    StructuredTextOutputCase(
+        test_id="db-sync",
+        payload=SyncResult(
+            sources_synced=2,
+            records_indexed=3,
+            records_removed=1,
+            sources_skipped=4,
+        ),
+        expected_contains=(
+            "DB sync",
+            "2 sources",
+            "3 records indexed",
+            "1 record removed",
+            "4 sources skipped",
+        ),
+        expected_not_contains=("SyncResult(", "{", "'sources_synced'"),
+    ),
+)
+
+
 def _source(path: pathlib.Path) -> agentgrep.SourceHandle:
     """Build a synthetic source handle for CLI tests."""
     return agentgrep.SourceHandle(
@@ -301,6 +347,43 @@ def test_small_structured_commands_emit_machine_readable_output(
 
     documents = tuple(json.loads(line) for line in captured.out.splitlines() if line.strip())
     assert documents == case.expected_documents
+
+
+@pytest.mark.parametrize(
+    "case",
+    STRUCTURED_TEXT_OUTPUT_CASES,
+    ids=[case.test_id for case in STRUCTURED_TEXT_OUTPUT_CASES],
+)
+def test_small_structured_commands_emit_human_text_output(
+    case: StructuredTextOutputCase,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Small structured commands render terminal summaries by default."""
+    render._print_json_or_text(case.payload, output_mode="text", color_mode="never")
+
+    captured = capsys.readouterr()
+    assert not captured.out.lstrip().startswith(("{", "["))
+    for expected in case.expected_contains:
+        assert expected in captured.out
+    for rejected in case.expected_not_contains:
+        assert rejected not in captured.out
+
+
+def test_small_structured_text_output_supports_semantic_color(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Small structured command text output uses the shared ANSI palette."""
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    render._print_json_or_text(
+        SyncResult(sources_synced=1, records_indexed=2, records_removed=0),
+        output_mode="text",
+        color_mode="always",
+    )
+
+    captured = capsys.readouterr()
+    assert "\x1b[" in captured.out
+    assert "DB sync" in captured.out
 
 
 def test_db_status_command_parses_db_path() -> None:
