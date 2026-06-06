@@ -36,7 +36,8 @@ def _db_status_sync(db_path: str | None) -> DbStatusModel:
             sources=0,
             records=0,
         )
-    status = DbRuntime.open(path).status()
+    with DbRuntime.open(path) as runtime:
+        status = runtime.status()
     return DbStatusModel(
         db_path=str(status.db_path),
         db_schema_version=status.schema_version,
