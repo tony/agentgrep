@@ -96,9 +96,18 @@ def _suggestions_list_sync(db_path: str | None) -> SuggestionsListResponse:
 
     path = _selected_db_path(db_path)
     if not path.exists():
-        return SuggestionsListResponse(suggestions=[])
+        return SuggestionsListResponse(
+            limit=DEFAULT_INSIGHTS_LIST_LIMIT,
+            suggestions_total=0,
+            suggestions_truncated=False,
+            suggestions=[],
+        )
     engine = SuggestionEngine(DbRuntime.open(path).store)
+    suggestions = engine.list_suggestions()
     return SuggestionsListResponse(
+        limit=DEFAULT_INSIGHTS_LIST_LIMIT,
+        suggestions_total=len(suggestions),
+        suggestions_truncated=False,
         suggestions=[
             SuggestionArtifactModel(
                 suggestion_id=suggestion.suggestion_id,
@@ -112,7 +121,7 @@ def _suggestions_list_sync(db_path: str | None) -> SuggestionsListResponse:
                 rationale=suggestion.rationale,
                 reload_note=suggestion.reload_note,
             )
-            for suggestion in engine.list_suggestions()
+            for suggestion in suggestions
         ],
     )
 

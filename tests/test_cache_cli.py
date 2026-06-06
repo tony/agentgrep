@@ -1317,8 +1317,10 @@ def test_insights_analyze_progress_lines_show_nonzero_results() -> None:
     assert lines == (
         "Insights analyze | analyzing 2/2 steps | omissions | 5.5s",
         "Doing | comparing omission candidates | 100 indexed records",
-        "Results | 1 run analyzed | 3 features refreshed | 2 clusters | "
-        "4 variant edges | 0 omission findings",
+        (
+            "Results | 1 run analyzed | 3 features refreshed | 2 clusters | "
+            "4 variant edges | 0 omission findings"
+        ),
     )
 
 

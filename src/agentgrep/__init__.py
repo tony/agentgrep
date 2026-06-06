@@ -86,6 +86,7 @@ from agentgrep._text import (
     FIND_DESCRIPTION,
     GREP_DESCRIPTION,
     INLINE_CODE_RE,
+    INSIGHTS_DESCRIPTION,
     MARKUP_HIGHLIGHT_ROLES,
     MARKUP_TOKEN_RE,
     QUERY_BOOLEAN_KEYWORDS,
@@ -94,6 +95,7 @@ from agentgrep._text import (
     QUERY_TOKEN_RE,
     SEARCH_DESCRIPTION,
     SHELL_TOKEN_RE,
+    SUGGESTIONS_DESCRIPTION,
     UI_DESCRIPTION,
     AnsiColors,
     ContentFormat,
@@ -511,6 +513,10 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
             return run_ui_command(parsed)
         if isinstance(parsed, DbArgs):
             return run_db_command(parsed)
+        if isinstance(parsed, InsightsArgs):
+            return run_insights_command(parsed)
+        if isinstance(parsed, SuggestionsArgs):
+            return run_suggestions_command(parsed)
         assert isinstance(parsed, FindArgs)
         return run_find_command(parsed)
     except KeyboardInterrupt:
@@ -573,9 +579,11 @@ from agentgrep.cli.parser import (  # noqa: E402  (re-exports must follow main d
     FindPatternMode,
     FindTypeFilter,
     GrepArgs,
+    InsightsArgs,
     ParserBundle,
     PatternMode,
     SearchArgs,
+    SuggestionsArgs,
     UIArgs,
     add_common_agent_options,
     add_output_mode_options,
@@ -597,7 +605,9 @@ from agentgrep.cli.render import (  # noqa: E402  (re-exports must follow main d
     run_db_command,
     run_find_command,
     run_grep_command,
+    run_insights_command,
     run_search_command,
+    run_suggestions_command,
     run_ui_command,
     serialize_find_record,
     serialize_grep_record,
@@ -621,6 +631,7 @@ __all__ = (
     "FIND_DESCRIPTION",
     "GREP_DESCRIPTION",
     "INLINE_CODE_RE",
+    "INSIGHTS_DESCRIPTION",
     "ITER_SOURCE_RECORD_ADAPTERS",
     "JSON_FILE_SUFFIXES",
     "MARKUP_HIGHLIGHT_ROLES",
@@ -636,6 +647,7 @@ __all__ = (
     "SCHEMA_VERSION",
     "SEARCH_DESCRIPTION",
     "SHELL_TOKEN_RE",
+    "SUGGESTIONS_DESCRIPTION",
     "UI_DESCRIPTION",
     "USER_ROLES",
     "AgentGrepHelpFormatter",
@@ -668,6 +680,7 @@ __all__ = (
     "GrepArgs",
     "GrepStyle",
     "HelpTheme",
+    "InsightsArgs",
     "JSONScalar",
     "JSONValue",
     "KeyValueRow",
@@ -730,6 +743,7 @@ __all__ = (
     "StreamingRecordsBatch",
     "StreamingSearchFinished",
     "StreamingSearchProgress",
+    "SuggestionsArgs",
     "SummaryRow",
     "TextualAppModule",
     "TextualBindingModule",
@@ -893,10 +907,12 @@ __all__ = (
     "run_find_command",
     "run_find_query",
     "run_grep_command",
+    "run_insights_command",
     "run_readonly_command",
     "run_search_command",
     "run_search_query",
     "run_search_result",
+    "run_suggestions_command",
     "run_ui",
     "run_ui_command",
     "search_record_sort_key",
