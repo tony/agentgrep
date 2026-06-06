@@ -3638,41 +3638,16 @@ def plan_search_sources(
     control: SearchControl | None = None,
 ) -> list[SourceHandle]:
     """Return the candidate sources to parse for a search query."""
-    active_progress = noop_search_progress() if progress is None else progress
-    active_control = SearchControl() if control is None else control
-    prompt_history_agents = prompt_history_agents_for_sources(sources)
-    scoped_sources = [
-        source
-        for source in sources
-        if source_matches_scope(
-            source,
-            query.scope,
-            prompt_history_agents=prompt_history_agents,
-        )
-    ]
-    if not query.terms:
-        return scoped_sources
+    from agentgrep._engine.planning import build_physical_search_plan
 
-    planned_sources = scoped_sources
-    if backends.grep_tool is not None:
-        planned_sources = prefilter_sources_by_root(
-            query,
-            planned_sources,
-            backends.grep_tool,
-            progress=active_progress,
-            control=active_control,
-        )
-    ordered_sources = [
-        source
-        for source in planned_sources
-        if not active_control.answer_now_requested()
-        and (
-            source.search_root is not None
-            or direct_source_matches(source, query, backends, active_control)
-        )
-    ]
-    ordered_sources.sort(key=source_order_key)
-    return ordered_sources
+    plan = build_physical_search_plan(
+        query,
+        sources,
+        backends,
+        progress=progress,
+        control=control,
+    )
+    return [task.source for task in plan.tasks]
 
 
 def source_order_key(source: SourceHandle) -> tuple[int, str]:
@@ -6628,6 +6603,9 @@ def discover_sources_for_search(
     version_detail: DiscoveryVersionDetail = "none",
 ) -> list[SourceHandle]:
     """Discover only the source roles needed for a search query scope."""
+    from agentgrep._engine.planning import build_logical_search_plan
+
+    logical_plan = build_logical_search_plan(query)
     if query.scope == "all":
         return discover_sources(
             home,
@@ -6641,7 +6619,7 @@ def discover_sources_for_search(
             query.agents,
             backends,
             version_detail=version_detail,
-            store_roles=CONVERSATION_STORE_ROLES,
+            store_roles=logical_plan.initial_store_roles,
         )
 
     prompt_sources = discover_sources(
@@ -6649,7 +6627,7 @@ def discover_sources_for_search(
         query.agents,
         backends,
         version_detail=version_detail,
-        store_roles=PROMPT_HISTORY_STORE_ROLES,
+        store_roles=logical_plan.initial_store_roles,
     )
     agents_with_prompt_history = frozenset(
         source.agent
