@@ -139,6 +139,64 @@ class DbStatusModel(AgentGrepModel):
     suggestions: int
 
 
+class VariantEdgeModel(AgentGrepModel):
+    """Persisted variant edge payload."""
+
+    edge_id: str
+    run_id: str
+    left_record_id: str
+    right_record_id: str
+    variant_type: str
+    confidence: float
+    explanation: str
+
+
+class OmissionFindingModel(AgentGrepModel):
+    """Persisted omission finding payload."""
+
+    finding_id: str
+    run_id: str
+    target_path: str
+    representative_record_id: str
+    confidence: float
+    rationale: str
+
+
+class SuggestionArtifactModel(AgentGrepModel):
+    """Persisted review-only suggestion payload."""
+
+    suggestion_id: str
+    run_id: str
+    target_path: str
+    surface_kind: str
+    title: str
+    body: str
+    confidence: float
+    status: str
+    rationale: str
+    reload_note: str
+
+
+class InsightsListResponse(AgentGrepModel):
+    """Structured response for persisted insights."""
+
+    schema_version: str = agentgrep.SCHEMA_VERSION
+    limit: int
+    variant_edges_total: int
+    variant_edges_truncated: bool
+    variant_edges: list[VariantEdgeModel]
+    omission_findings_total: int
+    omission_findings_truncated: bool
+    omission_findings: list[OmissionFindingModel]
+
+
+class SuggestionsListResponse(AgentGrepModel):
+    """Structured response for persisted suggestions."""
+
+    schema_version: str = agentgrep.SCHEMA_VERSION
+    suggestions: list[SuggestionArtifactModel]
+
+
 class FindToolQuery(AgentGrepModel):
     """Echo of normalized find tool inputs."""
 

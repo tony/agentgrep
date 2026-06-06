@@ -12,7 +12,10 @@ import typing as t
 import pytest
 from fastmcp import Client
 
+import agentgrep
 from agentgrep import mcp as _agentgrep_mcp_module
+from agentgrep.db import DbRuntime
+from agentgrep.mcp.tools.insight_tools import _insights_list_sync
 
 if t.TYPE_CHECKING:
     import collections.abc as cabc
@@ -103,6 +106,39 @@ def write_jsonl(path: pathlib.Path, rows: cabc.Sequence[object]) -> None:
     _ = path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
 
 
+def source_handle(path: pathlib.Path) -> agentgrep.SourceHandle:
+    """Build a synthetic source handle."""
+    return agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=path,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=path.parent,
+        mtime_ns=path.stat().st_mtime_ns if path.exists() else 0,
+    )
+
+
+def search_record(
+    source: agentgrep.SourceHandle,
+    text: str,
+    *,
+    session_id: str,
+) -> agentgrep.SearchRecord:
+    """Build a synthetic search record."""
+    return agentgrep.SearchRecord(
+        kind="prompt",
+        agent=source.agent,
+        store=source.store,
+        adapter_id=source.adapter_id,
+        path=source.path,
+        text=text,
+        timestamp="2026-06-05T12:00:00Z",
+        session_id=session_id,
+    )
+
+
 def extract_resource_text(contents: object) -> str:
     """Extract text from a FastMCP resource read response."""
     items = t.cast("cabc.Sequence[ResourceTextLike]", contents)
@@ -149,11 +185,48 @@ async def test_mcp_lists_tools_resources_prompts_and_templates() -> None:
         "validate_query",
         "recent_sessions",
         "db_status",
+        "insights_list",
+        "suggestions_list",
     }
     assert any(str(resource.uri) == "agentgrep://capabilities" for resource in resources)
     assert any(str(resource.uri) == "agentgrep://sources" for resource in resources)
     assert any(prompt.name == "search_prompts" for prompt in prompts)
     assert any(template.uriTemplate == "agentgrep://sources/{agent}" for template in templates)
+
+
+def test_mcp_insights_list_returns_bounded_page_with_totals(
+    tmp_path: pathlib.Path,
+) -> None:
+    """MCP insights listing is bounded by default shape, not a full row dump."""
+    source_path = tmp_path / "source.jsonl"
+    source_path.write_text("{}", encoding="utf-8")
+    source = source_handle(source_path)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    _ = runtime.sync_records(
+        (
+            (
+                source,
+                tuple(
+                    search_record(
+                        source,
+                        "Run ruff check before committing.",
+                        session_id=f"duplicate-{index}",
+                    )
+                    for index in range(4)
+                ),
+            ),
+        ),
+    )
+    from agentgrep.insights import InsightEngine
+
+    _ = InsightEngine(runtime.store).run_similarity()
+
+    response = _insights_list_sync(str(tmp_path / "agentgrep.sqlite"), limit=2)
+
+    assert response.limit == 2
+    assert response.variant_edges_total == 6
+    assert response.variant_edges_truncated is True
+    assert len(response.variant_edges) == 2
 
 
 async def test_mcp_search_tool_returns_full_prompt(

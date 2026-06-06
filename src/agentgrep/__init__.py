@@ -200,8 +200,11 @@ OPTIONS_EXPECTING_VALUE: frozenset[str] = frozenset(
         "--limit",
         "--color",
         "--progress",
+        "--features",
         "--db",
         "--limit-sources",
+        "--kind",
+        "--target",
     },
 )
 OPTIONS_FLAG_ONLY: frozenset[str] = frozenset(
@@ -245,7 +248,9 @@ CLI_DESCRIPTION = build_description(
     ``search`` for ranked results with dedup and session grouping,
     ``grep`` for rg-shaped content search, ``find`` for store
     enumeration, ``ui`` for the interactive Textual explorer,
-    and ``db`` for the persistent index.
+    ``db`` for the persistent index, ``insights`` for
+    deterministic comparisons, and ``suggestions`` for review-only
+    instruction proposals.
     """,
     (
         (
@@ -278,6 +283,22 @@ CLI_DESCRIPTION = build_description(
                 "agentgrep db",
                 "agentgrep db sync",
                 "agentgrep db status --json",
+            ),
+        ),
+        (
+            "insights",
+            (
+                "agentgrep insights",
+                "agentgrep insights analyze --kind similarity",
+                "agentgrep insights list --limit 10 --json",
+            ),
+        ),
+        (
+            "suggestions",
+            (
+                "agentgrep suggestions",
+                "agentgrep suggestions list --target AGENTS.md",
+                "agentgrep suggestions render <suggestion-id>",
             ),
         ),
     ),
@@ -353,9 +374,9 @@ GREP_DESCRIPTION = build_description(
 )
 DB_DESCRIPTION = build_description(
     """
-    Manage the persistent DB index used as a local cache and
-    normalized source ledger. The DB index is derived state: source
-    stores remain the truth.
+    Manage the persistent DB index used as a local cache,
+    normalized source ledger, and evidence store for later insight runs.
+    The DB index is derived state: source stores remain the truth.
     """,
     (
         (
@@ -366,6 +387,44 @@ DB_DESCRIPTION = build_description(
                 "agentgrep db sync --agent codex --scope prompts",
                 "agentgrep db status --json",
                 "agentgrep db explain --ndjson",
+            ),
+        ),
+    ),
+)
+INSIGHTS_DESCRIPTION = build_description(
+    """
+    Run and inspect deterministic similarity, variant, and omission
+    analysis over the DB index. Insights generate persisted
+    evidence artifacts and do not call an LLM by default.
+    """,
+    (
+        (
+            "insights",
+            (
+                "agentgrep insights",
+                "agentgrep insights analyze --kind similarity",
+                "agentgrep insights analyze --kind omissions --target AGENTS.md",
+                "agentgrep insights list --limit 10 --json",
+                "agentgrep insights explain",
+            ),
+        ),
+    ),
+)
+SUGGESTIONS_DESCRIPTION = build_description(
+    """
+    List, inspect, and render review-only instruction suggestions derived
+    from omission findings. Suggestions never edit AGENTS.md or skills
+    automatically; they take effect only after a human accepts a patch
+    and the relevant agent reloads context.
+    """,
+    (
+        (
+            "suggestions",
+            (
+                "agentgrep suggestions",
+                "agentgrep suggestions list --target AGENTS.md --json",
+                "agentgrep suggestions show <suggestion-id> --json",
+                "agentgrep suggestions render <suggestion-id>",
             ),
         ),
     ),
@@ -7444,6 +7503,10 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
             return run_search_command(parsed)
         if isinstance(parsed, DbArgs):
             return run_db_command(parsed)
+        if isinstance(parsed, InsightsArgs):
+            return run_insights_command(parsed)
+        if isinstance(parsed, SuggestionsArgs):
+            return run_suggestions_command(parsed)
         if isinstance(parsed, UIArgs):
             return run_ui_command(parsed)
         return run_find_command(parsed)
@@ -7468,9 +7531,11 @@ from agentgrep.cli.parser import (  # noqa: E402  (re-exports must follow main d
     FindPatternMode,
     FindTypeFilter,
     GrepArgs,
+    InsightsArgs,
     ParserBundle,
     PatternMode,
     SearchArgs,
+    SuggestionsArgs,
     UIArgs,
     add_cache_options,
     add_common_agent_options,
@@ -7494,7 +7559,9 @@ from agentgrep.cli.render import (  # noqa: E402  (re-exports must follow main d
     run_db_command,
     run_find_command,
     run_grep_command,
+    run_insights_command,
     run_search_command,
+    run_suggestions_command,
     run_ui_command,
     serialize_find_record,
     serialize_grep_record,
