@@ -277,10 +277,6 @@ def remember_source_scan(
     cache._remember(cache_key, result)
 
 
-def clear_source_scan_cache() -> None:
-    """Compatibility shim for the removed process-global source scan cache."""
-
-
 def _source_scan_cache_key(
     query: agentgrep.SearchQuery,
     task: SourceTask,
