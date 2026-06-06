@@ -36,6 +36,10 @@ def _db_status_sync(db_path: str | None) -> DbStatusModel:
             db_schema_version=0,
             sources=0,
             records=0,
+            features=0,
+            variant_edges=0,
+            omission_findings=0,
+            suggestions=0,
         )
     try:
         with DbRuntime.open_readonly(path) as runtime:
@@ -46,12 +50,20 @@ def _db_status_sync(db_path: str | None) -> DbStatusModel:
             db_schema_version=0,
             sources=0,
             records=0,
+            features=0,
+            variant_edges=0,
+            omission_findings=0,
+            suggestions=0,
         )
     return DbStatusModel(
         db_path=str(status.db_path),
         db_schema_version=status.schema_version,
         sources=status.sources,
         records=status.records,
+        features=status.features,
+        variant_edges=status.variant_edges,
+        omission_findings=status.omission_findings,
+        suggestions=status.suggestions,
     )
 
 
