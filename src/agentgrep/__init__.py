@@ -4166,6 +4166,24 @@ def parse_codex_session_file(
     """Parse Codex session JSONL files."""
     session_id = source.path.stem
     session_model: str | None = None
+    if reverse:
+        # Reverse iteration reads the leading session_meta header last,
+        # so seed its state up front to keep emitted records canonical.
+        header = _read_first_jsonl_header(source.path, _CODEX_SESSION_META_MARKER)
+        header_payload = header.get("payload") if header is not None else None
+        if (
+            header is not None
+            and str(header.get("type", "")) == "session_meta"
+            and isinstance(header_payload, dict)
+        ):
+            payload = t.cast("dict[str, object]", header_payload)
+            session_id = as_optional_str(payload.get("id")) or session_id
+            session_model = (
+                as_optional_str(payload.get("model"))
+                or as_optional_str(payload.get("model_name"))
+                or as_optional_str(payload.get("model_provider"))
+                or session_model
+            )
     codex_skip_line = (
         _is_codex_function_call_output_line
         if _file_size(source.path) >= _CODEX_RAW_SKIP_MIN_BYTES
@@ -5205,6 +5223,13 @@ def parse_pi_session_file(
     """
     session_id: str | None = source.path.stem
     conversation_id: str | None = None
+    if reverse:
+        # Reverse iteration reads the leading session header last, so
+        # seed its state up front to keep emitted records canonical.
+        header = _read_first_jsonl_header(source.path, _PI_SESSION_HEADER_MARKER)
+        if header is not None and as_optional_str(header.get("type")) == "session":
+            session_id = as_optional_str(header.get("id")) or session_id
+            conversation_id = as_optional_str(header.get("cwd"))
     # The session header feeds session_id/cwd into later records, so the
     # text prefilter must never drop it.
     events = (
@@ -6557,6 +6582,50 @@ _CODEX_SESSION_META_MARKER = '"type":"session_meta"'
 
 _PI_SESSION_HEADER_MARKER = '"type":"session"'
 """Space-stripped prefix marker for the pi session header line."""
+
+
+def _read_first_jsonl_header(
+    path: pathlib.Path,
+    marker: str,
+) -> dict[str, object] | None:
+    """Decode the first JSONL line bearing a header marker.
+
+    Scans forward with the bounded prefix check used by the raw skip
+    predicates, decoding only the matching line, so reverse scans can
+    seed header state without paying a full forward parse. Assumes the
+    canonical single leading header; later header updates are not
+    positionally attributed.
+    """
+    try:
+        with path.open("rb") as handle:
+            while True:
+                prefix = handle.readline(_JSONL_PREFIX_BYTES)
+                if not prefix:
+                    return None
+                if not prefix.strip():
+                    continue
+                prefix_text = prefix.decode("utf-8", errors="replace")
+                if marker not in prefix_text[:512].replace(" ", ""):
+                    _discard_rest_of_line(handle, prefix)
+                    continue
+                raw_line = bytearray(prefix)
+                while raw_line and not raw_line.endswith(b"\n"):
+                    chunk = handle.readline(_JSONL_SKIP_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    raw_line.extend(chunk)
+                try:
+                    parsed = t.cast(
+                        "object",
+                        json.loads(raw_line.decode("utf-8", errors="replace")),
+                    )
+                except json.JSONDecodeError:
+                    return None
+                if isinstance(parsed, dict):
+                    return t.cast("dict[str, object]", parsed)
+                return None
+    except OSError:
+        return None
 
 
 def _keep_jsonl_header_lines(

@@ -1517,6 +1517,101 @@ def test_parse_pi_session_raw_prefilter_preserves_header(
     assert decoded_payloads == [header_line, match_line]
 
 
+def test_parse_codex_session_reverse_preserves_header(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Manual reverse parses still carry canonical session metadata.
+
+    Regression guard: reverse iteration reads the leading session_meta
+    header last, so direct ``reverse=True`` callers received records with
+    model=None and the file stem as session_id.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    path = tmp_path / "rollout-abc.jsonl"
+    write_jsonl(
+        path,
+        [
+            {
+                "type": "session_meta",
+                "payload": {"id": "canonical-session-id", "model": "gpt-test-o5"},
+            },
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "type": "response_item",
+                "payload": {"role": "user", "content": "first prompt"},
+            },
+            {
+                "timestamp": "2026-01-01T00:01:00Z",
+                "type": "response_item",
+                "payload": {"role": "user", "content": "second prompt"},
+            },
+        ],
+    )
+    source = agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=path,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=1,
+    )
+
+    records = list(agentgrep.parse_codex_session_file(source, reverse=True))
+
+    assert [record.text for record in records] == ["second prompt", "first prompt"]
+    assert {record.model for record in records} == {"gpt-test-o5"}
+    assert {record.session_id for record in records} == {"canonical-session-id"}
+
+
+def test_parse_pi_session_reverse_preserves_header(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Manual reverse parses still carry the pi session header state."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    path = tmp_path / "sess.jsonl"
+    write_jsonl(
+        path,
+        [
+            {
+                "type": "session",
+                "id": "pi-sess-1",
+                "timestamp": "2026-05-30T12:00:00.000Z",
+                "cwd": "/home/user/proj",
+                "version": 3,
+            },
+            {
+                "type": "message",
+                "id": "u1",
+                "parentId": None,
+                "timestamp": "2026-05-30T12:00:02.000Z",
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "needle prompt"}],
+                    "timestamp": 1780228802000,
+                },
+            },
+        ],
+    )
+    source = agentgrep.SourceHandle(
+        agent="pi",
+        store="pi.sessions",
+        adapter_id="pi.sessions_jsonl.v1",
+        path=path,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=1,
+    )
+
+    records = list(agentgrep.parse_pi_session_file(source, reverse=True))
+
+    assert [record.text for record in records] == ["needle prompt"]
+    assert records[0].session_id == "pi-sess-1"
+    assert records[0].conversation_id == "/home/user/proj"
+
+
 def test_streaming_search_progress_buffers_and_flushes_records(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
