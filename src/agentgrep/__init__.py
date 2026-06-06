@@ -101,6 +101,7 @@ type JSONValue = JSONScalar | list[JSONValue] | dict[str, JSONValue]
 type SummaryRow = tuple[object, object, object, object, object, object, object, object]
 type KeyValueRow = tuple[object, object]
 type DiscoveryRoot = pathlib.Path | tuple[pathlib.Path, ...]
+type FindSourceTypeFilter = t.Literal["prompts", "history", "sessions", "all"]
 
 AGENT_CHOICES: tuple[AgentName, ...] = (
     "codex",
@@ -6567,6 +6568,17 @@ PROMPT_HISTORY_STORE_ROLES: frozenset[StoreRole] = frozenset({StoreRole.PROMPT_H
 CONVERSATION_STORE_ROLES: frozenset[StoreRole] = frozenset(
     {StoreRole.PRIMARY_CHAT, StoreRole.SUPPLEMENTARY_CHAT},
 )
+
+
+def find_store_roles_for_type_filter(
+    type_filter: FindSourceTypeFilter,
+) -> DiscoveryStoreRoles:
+    """Return catalogue roles that can satisfy a ``find --type`` filter."""
+    if type_filter in {"prompts", "history"}:
+        return PROMPT_HISTORY_STORE_ROLES
+    if type_filter == "sessions":
+        return CONVERSATION_STORE_ROLES
+    return None
 
 
 @functools.cache

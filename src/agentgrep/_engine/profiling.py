@@ -288,6 +288,7 @@ def profile_find_query(
                 agents,
                 active_backends,
                 version_detail="none",
+                store_roles=agentgrep.find_store_roles_for_type_filter(type_filter),
             )
         _record_source_groups(profiler, "find.discover.group", sources)
         with profiler.span(

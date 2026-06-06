@@ -27,7 +27,7 @@ import typing as t
 import agentgrep
 
 if t.TYPE_CHECKING:
-    from agentgrep import AgentName, BackendSelection, events as _events
+    from agentgrep import AgentName, BackendSelection, FindSourceTypeFilter, events as _events
     from agentgrep.query.compile import CompiledQuery
 
 
@@ -39,6 +39,7 @@ def iter_find_events(
     limit: int | None,
     backends: BackendSelection | None = None,
     compiled: CompiledQuery | None = None,
+    type_filter: FindSourceTypeFilter = "all",
 ) -> cabc.Iterator[_events.FindEvent]:
     """Yield typed events as the find engine enumerates sources.
 
@@ -65,6 +66,10 @@ def iter_find_events(
         — find emits one record per source by construction, and the
         per-record query semantics only make sense for the search
         pipeline.
+    type_filter : {"prompts", "history", "sessions", "all"}, default "all"
+        Coarse source type filter used to prune catalogue roles before
+        discovery. CLI renderers still apply their exact fd-shaped
+        path-kind filter after records are emitted.
 
     Yields
     ------
@@ -90,6 +95,7 @@ def iter_find_events(
         agents,
         active_backends,
         version_detail="none",
+        store_roles=agentgrep.find_store_roles_for_type_filter(type_filter),
     )
     yield _events.FindStarted(source_count=len(sources))
 

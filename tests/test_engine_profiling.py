@@ -222,6 +222,73 @@ def test_profile_find_query_reports_filter_source_samples(
     assert str(tmp_path) not in payload
 
 
+class ProfileFindTypeDiscoveryCase(t.NamedTuple):
+    """Expected discovery role narrowing for one profiled find type filter."""
+
+    test_id: str
+    type_filter: str
+    expected_store_roles: frozenset[agentgrep.StoreRole] | None
+
+
+PROFILE_FIND_TYPE_DISCOVERY_CASES: tuple[ProfileFindTypeDiscoveryCase, ...] = (
+    ProfileFindTypeDiscoveryCase(
+        test_id="all-keeps-default-discovery",
+        type_filter="all",
+        expected_store_roles=None,
+    ),
+    ProfileFindTypeDiscoveryCase(
+        test_id="prompts-discovers-prompt-history",
+        type_filter="prompts",
+        expected_store_roles=agentgrep.PROMPT_HISTORY_STORE_ROLES,
+    ),
+    ProfileFindTypeDiscoveryCase(
+        test_id="history-discovers-prompt-history",
+        type_filter="history",
+        expected_store_roles=agentgrep.PROMPT_HISTORY_STORE_ROLES,
+    ),
+    ProfileFindTypeDiscoveryCase(
+        test_id="sessions-discovers-conversations",
+        type_filter="sessions",
+        expected_store_roles=agentgrep.CONVERSATION_STORE_ROLES,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    PROFILE_FIND_TYPE_DISCOVERY_CASES,
+    ids=[c.test_id for c in PROFILE_FIND_TYPE_DISCOVERY_CASES],
+)
+def test_profile_find_query_pushes_type_filter_into_discovery(
+    case: ProfileFindTypeDiscoveryCase,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Find profiling measures the same narrowed discovery path as runtime find."""
+    observed_store_roles: list[frozenset[agentgrep.StoreRole] | None] = []
+
+    def discover_sources(
+        *_args: object,
+        **kwargs: object,
+    ) -> list[agentgrep.SourceHandle]:
+        observed_store_roles.append(
+            t.cast("frozenset[agentgrep.StoreRole] | None", kwargs.get("store_roles")),
+        )
+        return []
+
+    monkeypatch.setattr(agentgrep, "discover_sources", discover_sources)
+
+    _ = profile_find_query(
+        tmp_path,
+        ("codex",),
+        pattern=None,
+        limit=None,
+        type_filter=t.cast("agentgrep.FindSourceTypeFilter", case.type_filter),
+    )
+
+    assert observed_store_roles == [case.expected_store_roles]
+
+
 @pytest.mark.parametrize(
     "case",
     SEARCH_PLAN_SAMPLE_CASES,
