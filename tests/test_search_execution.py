@@ -18,9 +18,11 @@ from agentgrep._engine.execution import (
     ExecutionSourceStarted,
     FrontierExecutionDriver,
     InlineExecutionDriver,
+    SourceScanBatch,
     SourceScanResult,
 )
 from agentgrep._engine.planning import (
+    LimitPolicy,
     PhysicalSearchPlan,
     SourceStrategy,
     SourceTask,
@@ -671,6 +673,93 @@ def test_scan_source_task_returns_bounded_candidates_without_global_state(
     assert result.matches_seen == 3
 
 
+def test_scan_source_task_collects_the_same_records_as_source_batches(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The compatibility scan result is just a collector over source batches."""
+    query = _query(limit=2)
+    source = _source(tmp_path / "session.jsonl")
+    records = (
+        _record(source, "newest bliss", "2026-01-04T00:00:00Z"),
+        _record(source, "newest bliss", "2026-01-03T00:00:00Z"),
+        _record(source, "second bliss", "2026-01-02T00:00:00Z"),
+        _record(source, "extra bliss", "2026-01-01T00:00:00Z"),
+    )
+
+    def iter_records(
+        _task: SourceTask,
+        _query: agentgrep.SearchQuery,
+    ) -> cabc.Iterator[agentgrep.SearchRecord]:
+        yield from records
+
+    monkeypatch.setattr(execution, "iter_source_task_records", iter_records)
+    task = _plan(query, source, strategy="jsonl_bounded_reverse_scan").tasks[0]
+
+    batches = tuple(
+        execution.iter_source_task_batches(
+            query,
+            task,
+            index=1,
+            total=1,
+            control=agentgrep.SearchControl(),
+        ),
+    )
+    result = execution.scan_source_task(
+        query,
+        task,
+        index=1,
+        total=1,
+        control=agentgrep.SearchControl(),
+    )
+
+    assert all(isinstance(batch, SourceScanBatch) for batch in batches)
+    assert [record.text for batch in batches for record in batch.records] == [
+        record.text for record in result.records
+    ]
+    assert batches[-1].is_final is True
+    assert batches[-1].records_seen == result.records_seen
+    assert batches[-1].matches_seen == result.matches_seen
+
+
+def test_source_batches_can_yield_partial_results_before_source_finishes(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Batch scans expose records to the scheduler before the source is drained."""
+    query = _query(limit=3)
+    source = _source(tmp_path / "session.jsonl")
+    records = (
+        _record(source, "first bliss", "2026-01-03T00:00:00Z"),
+        _record(source, "second bliss", "2026-01-02T00:00:00Z"),
+        _record(source, "third bliss", "2026-01-01T00:00:00Z"),
+    )
+
+    def iter_records(
+        _task: SourceTask,
+        _query: agentgrep.SearchQuery,
+    ) -> cabc.Iterator[agentgrep.SearchRecord]:
+        yield from records
+
+    monkeypatch.setattr(execution, "iter_source_task_records", iter_records)
+    task = _plan(query, source, strategy="jsonl_bounded_reverse_scan").tasks[0]
+
+    batches = tuple(
+        execution.iter_source_task_batches(
+            query,
+            task,
+            index=1,
+            total=1,
+            control=agentgrep.SearchControl(),
+            batch_size=1,
+        ),
+    )
+
+    assert [len(batch.records) for batch in batches] == [1, 1, 1]
+    assert [batch.records_seen for batch in batches] == [1, 2, 3]
+    assert batches[-1].is_final is True
+
+
 def test_select_execution_driver_uses_frontier_for_bounded_haystack_search(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -689,10 +778,10 @@ def test_select_execution_driver_uses_frontier_for_bounded_haystack_search(
     assert isinstance(driver, FrontierExecutionDriver)
 
 
-def test_select_execution_driver_keeps_text_prefilter_inline(
+def test_select_execution_driver_keeps_bounded_text_search_inline_by_default(
     tmp_path: pathlib.Path,
 ) -> None:
-    """Raw-text prefiltered grep searches avoid scheduler overhead by default."""
+    """Bounded text searches avoid scheduler overhead without configured concurrency."""
     query = _query(limit=2, match_surface="text")
     plan = _multi_plan(
         query,
@@ -705,6 +794,39 @@ def test_select_execution_driver_keeps_text_prefilter_inline(
     driver = execution.select_execution_driver(query, plan)
 
     assert isinstance(driver, InlineExecutionDriver)
+
+
+def test_select_execution_driver_can_schedule_bounded_text_search_with_workers(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Bounded raw-text JSONL searches can opt into source-level scheduling."""
+    query = _query(limit=2, match_surface="text")
+    plan = _multi_plan(
+        query,
+        (
+            _source(tmp_path / "a.jsonl"),
+            _source(tmp_path / "b.jsonl"),
+        ),
+    )
+
+    driver = execution.select_execution_driver(
+        query,
+        plan,
+        config=ExecutionDriverConfig(max_workers=2),
+    )
+
+    assert isinstance(driver, FrontierExecutionDriver)
+
+
+def test_limit_policy_records_source_order_frontier_satisfaction() -> None:
+    """Limit policy makes the current source-order stop rule explicit."""
+    query = _query(limit=1)
+    source = _source(pathlib.Path("/tmp/session.jsonl"))
+    frontier = execution._FrontierState(query)
+
+    frontier.add_records((_record(source, "bliss", "2026-01-01T00:00:00Z"),))
+
+    assert LimitPolicy().can_skip_remaining(query=query, frontier=frontier) is True
 
 
 def test_frontier_execution_driver_scans_sources_concurrently(
@@ -808,6 +930,8 @@ def test_frontier_execution_driver_profiles_scheduler_decisions(
     assert len(scheduler_samples) == 1
     assert scheduler_samples[0].attributes["agentgrep_submitted_source_count"] == 1
     assert scheduler_samples[0].attributes["agentgrep_skipped_source_count"] == 1
+    assert scheduler_samples[0].attributes["agentgrep_batch_count"] == 1
+    assert scheduler_samples[0].attributes["agentgrep_cancelled_source_count"] == 0
 
 
 def test_bounded_codex_history_jsonl_does_not_prefetch_older_matches(

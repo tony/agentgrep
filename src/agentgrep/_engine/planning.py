@@ -27,6 +27,17 @@ type SourceStrategy = t.Literal[
 ]
 type SourceRecordOrder = t.Literal["unknown", "newest_first"]
 type SourceLimitBehavior = t.Literal["drain_source", "bounded_source"]
+type LimitPolicyMode = t.Literal["source_order_frontier"]
+
+
+class LimitFrontier(t.Protocol):
+    """Owner-thread frontier state consulted by scheduler limit policies."""
+
+    @property
+    def is_satisfied(self) -> bool:
+        """Return whether the frontier has enough accepted candidates."""
+        ...
+
 
 RAW_TEXT_PREFILTER_ADAPTERS: frozenset[str] = frozenset(
     {
@@ -101,6 +112,26 @@ class PlannerDecision:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class LimitPolicy:
+    """Scheduler policy for deciding whether remaining source tasks can be skipped."""
+
+    mode: LimitPolicyMode = "source_order_frontier"
+
+    def can_skip_remaining(
+        self,
+        *,
+        query: agentgrep.SearchQuery,
+        frontier: LimitFrontier,
+    ) -> bool:
+        """Return whether queued lower-priority source tasks can be skipped."""
+        return (
+            self.mode == "source_order_frontier"
+            and query.limit is not None
+            and frontier.is_satisfied
+        )
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class SourceTask:
     """One executable source scan in a physical search plan."""
 
@@ -110,6 +141,11 @@ class SourceTask:
     limit_behavior: SourceLimitBehavior
     can_stream_records: bool
     restore_order_key: tuple[int, str]
+    cost_hint: int = 100
+    source_group: str = "default"
+    can_yield_batches: bool = True
+    supports_cancellation: bool = True
+    limit_policy: LimitPolicy = dataclasses.field(default_factory=LimitPolicy)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -280,6 +316,10 @@ def _source_task(source: agentgrep.SourceHandle, strategy: SourceStrategy) -> So
         limit_behavior=limit_behavior,
         can_stream_records=True,
         restore_order_key=_source_order_key(source),
+        cost_hint=_source_cost_hint(strategy),
+        source_group=_source_group(source),
+        can_yield_batches=limit_behavior == "bounded_source",
+        supports_cancellation=True,
     )
 
 
@@ -400,6 +440,27 @@ def _source_limit_behavior(strategy: SourceStrategy) -> SourceLimitBehavior:
     }:
         return "bounded_source"
     return "drain_source"
+
+
+def _source_cost_hint(strategy: SourceStrategy) -> int:
+    """Return a rough relative cost hint for source scheduling."""
+    if strategy == "metadata_only":
+        return 1
+    if strategy in {
+        "jsonl_bounded_reverse_raw_text_prefilter",
+        "jsonl_bounded_reverse_haystack_raw_text_prefilter",
+    }:
+        return 20
+    if strategy == "jsonl_bounded_reverse_scan":
+        return 40
+    if strategy == "jsonl_raw_text_prefilter":
+        return 60
+    return 100
+
+
+def _source_group(source: agentgrep.SourceHandle) -> str:
+    """Return a stable source group label for scheduler/profiler aggregation."""
+    return f"{source.agent}:{source.store}:{source.adapter_id}"
 
 
 def _source_order_key(source: agentgrep.SourceHandle) -> tuple[int, str]:

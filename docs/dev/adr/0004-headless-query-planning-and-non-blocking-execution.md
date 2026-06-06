@@ -124,8 +124,8 @@ APIs until implemented and documented.
 : Executable plan made of `SourceTask` items. Each task chooses one adapter
   strategy, declares whether it can stream records, records whether it emits
   newest-first records, records whether it may stop after satisfying the query
-  limit, and records how output order will be restored when work runs
-  concurrently.
+  limit, records scheduler-facing cost and source-group hints, and records how
+  output order will be restored when work runs concurrently.
 
 `ExecutionDriver`
 : The scheduling boundary. The first required drivers are an inline
@@ -138,6 +138,19 @@ APIs until implemented and documented.
   returns candidates, counters, and timing. Global dedupe, top-K ordering,
   frontier pruning, and record emission stay with the driver so worker
   completion order cannot change search semantics.
+
+`SourceScanBatch`
+: The incremental source-local execution boundary. A source scan may yield
+  matching candidates and counters in batches before the source is fully
+  drained. `SourceScanResult` remains the compatibility wrapper that collects
+  those batches for call sites that still need a whole-source result.
+
+`LimitPolicy`
+: The scheduler-local rule for deciding whether queued lower-priority sources
+  can be skipped once enough candidates have reached the owner-thread
+  frontier. The default policy preserves the current source-order frontier
+  behavior; stricter global-newest policies can be added behind the same typed
+  seam when source metadata can prove them.
 
 `SearchEvent` / `FindEvent`
 : The stream contract. Existing events remain the baseline. Future events may
@@ -194,13 +207,16 @@ is satisfied. Source scans compile query matchers once per task so record
 loops do not rebuild term, regex, surface, or predicate state for each
 candidate record. The frontier driver can run eligible source tasks
 concurrently, merges candidates on the owner thread, and stops submitting
-lower-priority bounded sources once the global result limit is filled.
-Profiling controls the default worker count because local JSONL parsing is
-often CPU-bound enough that unbounded worker fan-out hurts latency. Interactive
-CLI runs may map blank Enter to an answer-early request. The TUI maps
-Esc/Ctrl-C and replacement searches to the same cancellation contract. MCP maps
-client cancellation or timeout to the same contract when the framework exposes
-it.
+lower-priority bounded sources once the global result limit is filled. Bounded
+text-surface JSONL tasks keep the inline driver by default when profiling shows
+the scheduler overhead is larger than the skip opportunity; they may opt into
+frontier execution when a configured worker count makes source-level
+parallelism worthwhile. Profiling controls the default worker count because
+local JSONL parsing is often CPU-bound enough that unbounded worker fan-out
+hurts latency. Interactive CLI runs may map blank Enter to an answer-early
+request. The TUI maps Esc/Ctrl-C and replacement searches to the same
+cancellation contract. MCP maps client cancellation or timeout to the same
+contract when the framework exposes it.
 
 The TUI must remain non-blocking. It may receive events on the event loop, but
 broad discovery, subprocess work, SQLite reads, JSON/JSONL parsing, ranking,
@@ -229,8 +245,9 @@ The planner and executor must be easy to profile. Each run can emit:
 - discovery counts by agent, store, adapter, and path kind;
 - planner decisions: predicates pushed down, sources pruned, direct paths
   chosen, root prefilters skipped, fallback reasons;
-- execution counts: sources started, submitted, completed, skipped, records
-  seen, matches seen, emitted records, dedupe drops, cancellation point;
+- execution counts: sources started, submitted, completed, skipped, cancelled,
+  batches yielded, records seen, matches seen, emitted records, dedupe drops,
+  cancellation point;
 - timing spans: discovery, planning, per-source execution, output sink
   backpressure, subprocess families;
 - warning summaries: unsupported pushdown, malformed sources, unavailable

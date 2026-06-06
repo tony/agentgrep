@@ -400,16 +400,20 @@ def _record_source_task_groups(
     tasks: cabc.Sequence[SourceTask],
 ) -> None:
     """Record aggregate physical source-task groups without source paths."""
-    groups: collections.Counter[tuple[str, str, str, str, str, str]] = collections.Counter(
-        (
-            task.source.agent,
-            task.source.store,
-            task.source.adapter_id,
-            task.source.path_kind,
-            task.source.source_kind,
-            task.strategy,
+    group_counts: collections.Counter[tuple[str, str, str, str, str, str, str, int]] = (
+        collections.Counter(
+            (
+                task.source.agent,
+                task.source.store,
+                task.source.adapter_id,
+                task.source.path_kind,
+                task.source.source_kind,
+                task.strategy,
+                task.source_group,
+                task.cost_hint,
+            )
+            for task in tasks
         )
-        for task in tasks
     )
     for (
         agent,
@@ -418,7 +422,9 @@ def _record_source_task_groups(
         path_kind,
         source_kind,
         strategy,
-    ), source_count in sorted(groups.items()):
+        source_group,
+        cost_hint,
+    ), source_count in sorted(group_counts.items()):
         profiler.record(
             name,
             0.0,
@@ -428,6 +434,8 @@ def _record_source_task_groups(
             agentgrep_path_kind=path_kind,
             agentgrep_source_kind=source_kind,
             agentgrep_source_strategy=strategy,
+            agentgrep_source_group=source_group,
+            agentgrep_source_cost_hint=cost_hint,
             agentgrep_source_count=source_count,
         )
 

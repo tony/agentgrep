@@ -56,6 +56,22 @@ class SourceScanResult:
     records_seen: int
     matches_seen: int
     duration_seconds: float
+    batch_count: int = 1
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class SourceScanBatch:
+    """One source-local batch of matching candidate records."""
+
+    index: int
+    total: int
+    source: agentgrep.SourceHandle
+    task: SourceTask
+    records: tuple[agentgrep.SearchRecord, ...]
+    records_seen: int
+    matches_seen: int
+    duration_seconds: float
+    is_final: bool
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -212,6 +228,8 @@ class FrontierExecutionDriver:
         submitted_count = 0
         completed_count = 0
         skipped_count = 0
+        cancelled_count = 0
+        batch_count = 0
         scheduler_started_at = time.perf_counter()
         max_workers = min(self._config.worker_count, total)
         next_task_index = 0
@@ -253,7 +271,8 @@ class FrontierExecutionDriver:
             while futures:
                 if active_control.answer_now_requested():
                     for future in futures:
-                        future.cancel()
+                        if future.cancel():
+                            cancelled_count += 1
                     break
                 done, _pending = concurrent.futures.wait(
                     futures,
@@ -266,6 +285,7 @@ class FrontierExecutionDriver:
                     _index, task = futures.pop(future)
                     result = future.result()
                     completed_count += 1
+                    batch_count += result.batch_count
                     active_progress.source_finished(
                         result.index,
                         result.total,
@@ -301,6 +321,8 @@ class FrontierExecutionDriver:
             agentgrep_submitted_source_count=submitted_count,
             agentgrep_completed_source_count=completed_count,
             agentgrep_skipped_source_count=skipped_count,
+            agentgrep_cancelled_source_count=cancelled_count,
+            agentgrep_batch_count=batch_count,
             agentgrep_emitted_record_count=emitted_count,
         )
 
@@ -368,10 +390,10 @@ def _eligible_tasks(
 def _frontier_can_skip_remaining(
     query: agentgrep.SearchQuery,
     frontier: _FrontierState,
-    _task: SourceTask,
+    task: SourceTask,
 ) -> bool:
     """Return whether the source-order frontier already satisfies the limit."""
-    return query.limit is not None and frontier.is_satisfied
+    return task.limit_policy.can_skip_remaining(query=query, frontier=frontier)
 
 
 def select_execution_driver(
@@ -381,22 +403,28 @@ def select_execution_driver(
     config: ExecutionDriverConfig | None = None,
 ) -> ExecutionDriver:
     """Choose the cheapest safe execution driver for one physical plan."""
-    if _should_use_frontier_driver(query, plan):
-        return FrontierExecutionDriver(config)
+    active_config = ExecutionDriverConfig() if config is None else config
+    if _should_use_frontier_driver(query, plan, config=active_config):
+        return FrontierExecutionDriver(active_config)
     return InlineExecutionDriver()
 
 
 def _should_use_frontier_driver(
     query: agentgrep.SearchQuery,
     plan: PhysicalSearchPlan,
+    *,
+    config: ExecutionDriverConfig,
 ) -> bool:
     """Return whether the plan benefits from source-level scheduling."""
-    return (
-        query.limit is not None
-        and query.match_surface == "haystack"
-        and len(plan.tasks) > 1
-        and any(task.limit_behavior == "bounded_source" for task in plan.tasks)
-    )
+    if (
+        query.limit is None
+        or len(plan.tasks) <= 1
+        or not any(task.limit_behavior == "bounded_source" for task in plan.tasks)
+    ):
+        return False
+    if query.match_surface == "haystack":
+        return True
+    return query.match_surface == "text" and config.worker_count > 1
 
 
 def scan_source_task(
@@ -409,42 +437,23 @@ def scan_source_task(
     progress: agentgrep.SearchProgress | None = None,
 ) -> SourceScanResult:
     """Scan one source task and return source-local matching candidates."""
-    active_progress = agentgrep.noop_search_progress() if progress is None else progress
     source_started_at = time.perf_counter()
+    matching_records: list[agentgrep.SearchRecord] = []
     records_seen = 0
     matches_seen = 0
-    matching_records: list[agentgrep.SearchRecord] = []
-    source_deduped: set[tuple[str, str, str, str, str]] = set()
-    matcher = compile_record_matcher(query)
-
-    def source_limit_satisfied() -> bool:
-        return (
-            task.limit_behavior == "bounded_source"
-            and query.limit is not None
-            and len(source_deduped if query.dedupe else matching_records) >= query.limit
-        )
-
-    for record in iter_source_task_records(task, query):
-        if control.answer_now_requested():
-            break
-        records_seen += 1
-        if matcher.matches(record):
-            matches_seen += 1
-            matching_records.append(record)
-            if query.dedupe:
-                source_deduped.add(agentgrep.record_dedupe_key(record))
-            if source_limit_satisfied():
-                break
-        if records_seen % agentgrep._SOURCE_PROGRESS_RECORD_INTERVAL == 0:
-            agentgrep._report_source_progress(
-                active_progress,
-                index,
-                total,
-                task.source,
-                records_seen,
-                matches_seen,
-            )
-            time.sleep(0)
+    batch_count = 0
+    for batch in iter_source_task_batches(
+        query,
+        task,
+        index=index,
+        total=total,
+        control=control,
+        progress=progress,
+    ):
+        batch_count += 1
+        matching_records.extend(batch.records)
+        records_seen = batch.records_seen
+        matches_seen = batch.matches_seen
 
     if task.limit_behavior == "drain_source":
         matching_records.sort(key=agentgrep.search_record_sort_key, reverse=True)
@@ -457,7 +466,91 @@ def scan_source_task(
         records_seen=records_seen,
         matches_seen=matches_seen,
         duration_seconds=time.perf_counter() - source_started_at,
+        batch_count=batch_count,
     )
+
+
+def iter_source_task_batches(
+    query: agentgrep.SearchQuery,
+    task: SourceTask,
+    *,
+    index: int,
+    total: int,
+    control: agentgrep.SearchControl,
+    progress: agentgrep.SearchProgress | None = None,
+    batch_size: int = 32,
+) -> cabc.Iterator[SourceScanBatch]:
+    """Yield source-local candidate batches for one planned source task."""
+    active_progress = agentgrep.noop_search_progress() if progress is None else progress
+    source_started_at = time.perf_counter()
+    records_seen = 0
+    matches_seen = 0
+    source_match_count = 0
+    yielded_final = False
+    yielded_batch = False
+    matching_records: list[agentgrep.SearchRecord] = []
+    source_deduped: set[tuple[str, str, str, str, str]] = set()
+    matcher = compile_record_matcher(query)
+
+    def source_limit_satisfied() -> bool:
+        accepted_count = len(source_deduped) if query.dedupe else source_match_count
+        return (
+            task.limit_behavior == "bounded_source"
+            and query.limit is not None
+            and accepted_count >= query.limit
+        )
+
+    def emit_batch(*, is_final: bool) -> SourceScanBatch:
+        nonlocal yielded_batch, yielded_final
+        batch = SourceScanBatch(
+            index=index,
+            total=total,
+            source=task.source,
+            task=task,
+            records=tuple(matching_records),
+            records_seen=records_seen,
+            matches_seen=matches_seen,
+            duration_seconds=time.perf_counter() - source_started_at,
+            is_final=is_final,
+        )
+        matching_records.clear()
+        yielded_batch = True
+        yielded_final = is_final
+        return batch
+
+    normalized_batch_size = max(1, batch_size)
+    for record in iter_source_task_records(task, query):
+        if control.answer_now_requested():
+            break
+        records_seen += 1
+        if matcher.matches(record):
+            matches_seen += 1
+            source_match_count += 1
+            matching_records.append(record)
+            if query.dedupe:
+                source_deduped.add(agentgrep.record_dedupe_key(record))
+            if source_limit_satisfied():
+                if matching_records:
+                    yield emit_batch(is_final=True)
+                break
+            if (
+                task.limit_behavior == "bounded_source"
+                and len(matching_records) >= normalized_batch_size
+            ):
+                yield emit_batch(is_final=False)
+        if records_seen % agentgrep._SOURCE_PROGRESS_RECORD_INTERVAL == 0:
+            agentgrep._report_source_progress(
+                active_progress,
+                index,
+                total,
+                task.source,
+                records_seen,
+                matches_seen,
+            )
+            time.sleep(0)
+
+    if matching_records or (not yielded_final and (yielded_batch or records_seen > 0)):
+        yield emit_batch(is_final=True)
 
 
 def record_source_profile_sample(result: SourceScanResult) -> None:
@@ -467,8 +560,11 @@ def record_source_profile_sample(result: SourceScanResult) -> None:
         result.duration_seconds,
         **agentgrep._source_profile_attributes(result.source),
         agentgrep_source_strategy=result.task.strategy,
+        agentgrep_source_group=result.task.source_group,
+        agentgrep_source_cost_hint=result.task.cost_hint,
         agentgrep_records_seen=result.records_seen,
         agentgrep_matches_seen=result.matches_seen,
+        agentgrep_batch_count=result.batch_count,
     )
 
 

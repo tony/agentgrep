@@ -496,3 +496,28 @@ def test_physical_plan_selects_source_execution_strategy(
     assert [task.strategy for task in plan.tasks] == [case.expected_strategy]
     assert [task.record_order for task in plan.tasks] == [case.expected_record_order]
     assert [task.limit_behavior for task in plan.tasks] == [case.expected_limit_behavior]
+
+
+def test_physical_plan_records_scheduler_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Physical source tasks expose scheduler-facing cost and grouping metadata."""
+    source = _source(
+        agent="claude",
+        path="/tmp/claude-project.jsonl",
+        store="claude.projects",
+        adapter_id="claude.projects_jsonl.v1",
+    )
+    monkeypatch.setattr(agentgrep, "direct_source_matches", lambda *args, **kwargs: True)
+
+    plan = build_physical_search_plan(
+        _query(scope="conversations", match_surface="haystack", limit=10),
+        (source,),
+        agentgrep.BackendSelection(find_tool=None, grep_tool=None, json_tool=None),
+    )
+
+    task = plan.tasks[0]
+    assert task.source_group == "claude:claude.projects:claude.projects_jsonl.v1"
+    assert task.cost_hint == 20
+    assert task.can_yield_batches is True
+    assert task.supports_cancellation is True
