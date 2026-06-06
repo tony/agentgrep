@@ -21,12 +21,13 @@ class CompiledRecordMatcher:
         """Return whether ``record`` satisfies the compiled query."""
         if not agentgrep.record_matches_scope(record, self.query.scope):
             return False
-        if not self._matches_query_terms(record):
-            return False
         compiled = self.query.compiled
         if compiled is not None and compiled.record_predicate is not None:
+            # The record predicate evaluates text terms itself with the
+            # query's AND/OR/NOT structure; pre-gating on the flat term
+            # list would wrongly require every OR branch at once.
             return compiled.record_predicate(record)
-        return True
+        return self._matches_query_terms(record)
 
     def _matches_query_terms(self, record: agentgrep.SearchRecord) -> bool:
         """Return whether unfielded query terms match ``record``."""
