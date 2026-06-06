@@ -465,3 +465,21 @@ def test_sync_freshness_tracks_wal_sidecars(
 
     assert result.sources_synced == case.expected_synced
     assert result.sources_skipped == case.expected_skipped
+
+
+def test_cross_file_adapters_always_resync(tmp_path: pathlib.Path) -> None:
+    """Adapters that expand sibling files never satisfy the freshness skip."""
+    source_path = tmp_path / "history.jsonl"
+    source_path.write_text("ruff", encoding="utf-8")
+    source = _source(source_path, adapter_id="claude.history_jsonl.v1")
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    _ = runtime.sync_records(
+        ((source, (_record(source, "Run ruff check before committing."),)),),
+    )
+
+    result = runtime.sync_records(
+        ((source, (_record(source, "Run ruff check before committing."),)),),
+    )
+
+    assert result.sources_synced == 1
+    assert result.sources_skipped == 0
