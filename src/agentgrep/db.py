@@ -318,11 +318,11 @@ def _fts_indexable(term: str) -> bool:
     """Return whether the trigram index can serve ``term`` losslessly.
 
     The trigram tokenizer indexes nothing shorter than three
-    characters, and its case folding can disagree with Python's
-    ``str.casefold`` outside ASCII, so those terms take the exact
-    table scan instead.
+    characters; shorter terms take the exact table scan instead. Case
+    folding happens in Python on both the indexed haystack and the
+    query term, so the index never re-folds disagreeably.
     """
-    return len(term) >= 3 and term.isascii()
+    return len(term) >= 3
 
 
 class DbStore:
@@ -450,6 +450,7 @@ class DbStore:
                     session_id TEXT,
                     conversation_id TEXT,
                     text TEXT NOT NULL,
+                    haystack TEXT NOT NULL,
                     metadata_json TEXT NOT NULL,
                     text_hash TEXT NOT NULL,
                     normalized_text_hash TEXT NOT NULL,
@@ -458,7 +459,7 @@ class DbStore:
 
                 CREATE VIRTUAL TABLE IF NOT EXISTS record_text_fts
                 USING fts5(
-                    title, text,
+                    haystack,
                     content='records', content_rowid='rowid',
                     tokenize='trigram'
                 );
@@ -655,14 +656,14 @@ class DbStore:
         ``MATCH`` queries against reused rowids.
         """
         rows = self.connection.execute(
-            "SELECT rowid, title, text FROM records WHERE source_id = ?",
+            "SELECT rowid, haystack FROM records WHERE source_id = ?",
             (source_id,),
         ).fetchall()
         for row in rows:
             self.connection.execute(
-                "INSERT INTO record_text_fts(record_text_fts, rowid, title, text) "
-                "VALUES('delete', ?, ?, ?)",
-                (int(row["rowid"]), row["title"] or "", row["text"]),
+                "INSERT INTO record_text_fts(record_text_fts, rowid, haystack) "
+                "VALUES('delete', ?, ?)",
+                (int(row["rowid"]), row["haystack"]),
             )
         self.connection.execute("DELETE FROM records WHERE source_id = ?", (source_id,))
         return len(rows)
@@ -678,14 +679,16 @@ class DbStore:
         normalized_hash: str,
     ) -> str:
         """Insert one normalized record and its FTS row."""
+        haystack = agentgrep.build_record_match_surface(record, "haystack").casefold()
         cursor = self.connection.execute(
             """
             INSERT INTO records(
                 record_id, source_id, kind, agent, store, adapter_id, path,
                 title, role, timestamp, model, session_id, conversation_id,
-                text, metadata_json, text_hash, normalized_text_hash, updated_at
+                text, haystack, metadata_json, text_hash, normalized_text_hash,
+                updated_at
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record_id,
@@ -702,6 +705,7 @@ class DbStore:
                 record.session_id,
                 record.conversation_id,
                 record.text,
+                haystack,
                 _json_dumps(record.metadata),
                 raw_hash,
                 normalized_hash,
@@ -714,8 +718,8 @@ class DbStore:
             raise RuntimeError(msg)
         rowid = int(lastrowid)
         self.connection.execute(
-            "INSERT INTO record_text_fts(rowid, title, text) VALUES(?, ?, ?)",
-            (rowid, record.title or "", record.text),
+            "INSERT INTO record_text_fts(rowid, haystack) VALUES(?, ?)",
+            (rowid, haystack),
         )
         return record_id
 
@@ -732,9 +736,11 @@ class DbStore:
         elif query.scope == "conversations":
             where.append("r.kind = 'history'")
         if query.terms and all(_fts_indexable(term) for term in query.terms):
-            # Trigram candidates are a superset of substring matches:
-            # any row containing the term contains all of its trigrams.
-            match_expr = " AND ".join(_quote_fts_term(term) for term in query.terms)
+            # The indexed haystack and the query term are both Python-
+            # casefolded, so trigram candidates are a superset of the
+            # post-filter's substring matches: any haystack containing
+            # the folded term contains all of its trigrams.
+            match_expr = " AND ".join(_quote_fts_term(term.casefold()) for term in query.terms)
             sql = (
                 "SELECT r.* FROM record_text_fts f "
                 "JOIN records r ON r.rowid = f.rowid "
@@ -745,11 +751,8 @@ class DbStore:
             scan_where = list(where)
             scan_params = list(params)
             for term in query.terms:
-                if term.isascii():
-                    scan_where.append(
-                        "instr(lower(r.text || ' ' || coalesce(r.title, '')), ?) > 0",
-                    )
-                    scan_params.append(term.lower())
+                scan_where.append("instr(r.haystack, ?) > 0")
+                scan_params.append(term.casefold())
             rows = self.connection.execute(
                 f"SELECT r.* FROM records r WHERE {' AND '.join(scan_where)}",
                 scan_params,
