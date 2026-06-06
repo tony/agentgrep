@@ -1679,3 +1679,38 @@ async def test_mcp_search_tool_serves_cached_records_under_require(
     data = t.cast("SearchToolDataLike", result.data)
     assert len(data.results) == 1
     assert data.results[0].text == "serve this straight from the cache"
+
+
+def test_insight_listing_tools_use_readonly_and_close(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both listing helpers open read-only and close their connections."""
+    import sqlite3
+
+    from agentgrep import db as agentgrep_db
+    from agentgrep.mcp.tools import insight_tools
+
+    db_path = tmp_path / "agentgrep.sqlite"
+    agentgrep_db.DbRuntime.open(db_path).close()
+    opened: list[agentgrep_db.DbRuntime] = []
+    real_open_readonly = agentgrep_db.DbRuntime.open_readonly
+
+    def capturing_open_readonly(
+        db_path: pathlib.Path | str | None = None,
+    ) -> agentgrep_db.DbRuntime:
+        runtime = real_open_readonly(db_path)
+        opened.append(runtime)
+        return runtime
+
+    monkeypatch.setattr(agentgrep_db.DbRuntime, "open_readonly", capturing_open_readonly)
+
+    insights = insight_tools._insights_list_sync(str(db_path))
+    suggestions = insight_tools._suggestions_list_sync(str(db_path))
+
+    assert insights.variant_edges_total == 0
+    assert suggestions.suggestions == []
+    assert len(opened) == 2
+    for runtime in opened:
+        with pytest.raises(sqlite3.ProgrammingError):
+            _ = runtime.store.connection.execute("SELECT 1")

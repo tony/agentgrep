@@ -923,6 +923,9 @@ def test_insights_analyze_forced_progress_keeps_json_stdout_clean(
 
         store = object()
 
+        def close(self) -> None:
+            """Accept the command's close call."""
+
     class EngineStub:
         """Insight engine stub that exercises analyze progress."""
 
@@ -971,6 +974,9 @@ def test_insights_list_uses_limited_pages_and_count_metadata(
         """Runtime stub with a store attribute for the insight engine."""
 
         store = object()
+
+        def close(self) -> None:
+            """Accept the command's close call."""
 
     class EngineStub:
         """Insight engine stub that records list limits."""
@@ -1040,6 +1046,9 @@ def test_insights_list_default_output_is_human_summary(
         """Runtime stub with a store attribute for the insight engine."""
 
         store = object()
+
+        def close(self) -> None:
+            """Accept the command's close call."""
 
     class EngineStub:
         """Insight engine stub with one persisted edge sample."""
@@ -1117,6 +1126,9 @@ def test_insights_explain_uses_counts_without_listing_rows(
 
         store = object()
 
+        def close(self) -> None:
+            """Accept the command's close call."""
+
     class EngineStub:
         """Insight engine stub that rejects unbounded list calls."""
 
@@ -1179,6 +1191,9 @@ def test_insights_analyze_can_exit_early_between_steps(
         """Runtime stub with a store attribute for the insight engine."""
 
         store = object()
+
+        def close(self) -> None:
+            """Accept the command's close call."""
 
     class EngineStub:
         """Insight engine stub that requests early exit after similarity."""
@@ -2098,3 +2113,39 @@ def test_db_sync_prunes_only_on_full_syncs(
 
     assert exit_code == 0
     assert stub.prune_missing is case.expected_prune
+
+
+def test_insights_command_closes_runtime_on_exit(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Insights actions close their per-call SQLite connection."""
+    import agentgrep.db as agentgrep_db
+
+    opened: list[agentgrep_db.DbRuntime] = []
+    real_open = agentgrep_db.DbRuntime.open
+
+    def capturing_open(
+        db_path: pathlib.Path | str | None = None,
+    ) -> agentgrep_db.DbRuntime:
+        runtime = real_open(db_path)
+        opened.append(runtime)
+        return runtime
+
+    monkeypatch.setattr(agentgrep_db.DbRuntime, "open", capturing_open)
+    args = agentgrep.InsightsArgs(
+        action="explain",
+        db_path=str(tmp_path / "agentgrep.sqlite"),
+        kind="all",
+        target=None,
+        output_mode="json",
+    )
+
+    exit_code = agentgrep.run_insights_command(args)
+
+    _ = capsys.readouterr()
+    assert exit_code == 0
+    assert len(opened) == 1
+    with pytest.raises(sqlite3.ProgrammingError):
+        _ = opened[0].store.connection.execute("SELECT 1")
