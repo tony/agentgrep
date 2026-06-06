@@ -314,6 +314,22 @@ RAW_TEXT_SKIP_CASES: tuple[RawTextSkipCase, ...] = (
         raw_line='{"content":"\\u0062liss"}',
         expected_skip=False,
     ),
+    RawTextSkipCase(
+        test_id="escaped-newline-miss",
+        terms=("bliss",),
+        any_term=False,
+        case_sensitive=False,
+        raw_line='{"content":"other\\nline"}',
+        expected_skip=True,
+    ),
+    RawTextSkipCase(
+        test_id="escaped-newline-match",
+        terms=("\n",),
+        any_term=False,
+        case_sensitive=True,
+        raw_line='{"content":"other\\nline"}',
+        expected_skip=False,
+    ),
 )
 
 

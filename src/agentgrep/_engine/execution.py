@@ -5,6 +5,7 @@ from __future__ import annotations
 import collections.abc as cabc
 import concurrent.futures
 import dataclasses
+import json
 import time
 import typing as t
 
@@ -513,18 +514,19 @@ def raw_text_skip_line_for_query(
     needles = (
         query.terms if query.case_sensitive else tuple(term.casefold() for term in query.terms)
     )
+    escaped_needles = tuple(json.dumps(needle, ensure_ascii=True)[1:-1] for needle in needles)
     any_term = query.any_term
     case_sensitive = query.case_sensitive
 
     def skip_line(raw_line: str) -> bool:
-        if "\\" in raw_line:
-            return False
         haystack = raw_line if case_sensitive else raw_line.casefold()
-        matched = (
-            any(needle in haystack for needle in needles)
-            if any_term
-            else all(needle in haystack for needle in needles)
-        )
+        if "\\u" in haystack:
+            return False
+        needle_results = [
+            needle in haystack or escaped_needle in haystack
+            for needle, escaped_needle in zip(needles, escaped_needles, strict=True)
+        ]
+        matched = any(needle_results) if any_term else all(needle_results)
         return not matched
 
     return skip_line
