@@ -79,6 +79,7 @@ logger.addHandler(logging.NullHandler())
 if t.TYPE_CHECKING:
     import collections.abc as cabc
 
+    from agentgrep._engine.planning import PhysicalSearchPlan
     from agentgrep.query.compile import CompiledQuery
 
     PrivatePathBase = pathlib.Path
@@ -3569,7 +3570,9 @@ def search_sources(
     # when ``agent:codex`` could rule most out from metadata alone.
     if query.compiled is not None and query.compiled.source_predicate is not None:
         sources = [s for s in sources if query.compiled.source_predicate(s)]
-    planned_sources = plan_search_sources(
+    from agentgrep._engine.planning import build_physical_search_plan
+
+    plan = build_physical_search_plan(
         query,
         sources,
         backends,
@@ -3579,10 +3582,10 @@ def search_sources(
     if active_control.answer_now_requested():
         active_progress.answer_now(0)
         return []
-    active_progress.sources_planned(len(planned_sources), len(sources))
-    records = collect_search_records(
+    active_progress.sources_planned(len(plan.tasks), len(sources))
+    records = collect_search_records_from_plan(
         query,
-        planned_sources,
+        plan,
         progress=active_progress,
         control=active_control,
     )
@@ -3836,84 +3839,53 @@ def collect_search_records(
     control: SearchControl | None = None,
 ) -> list[SearchRecord]:
     """Parse candidate sources and collect matching records."""
-    active_progress = noop_search_progress() if progress is None else progress
-    active_control = SearchControl() if control is None else control
-    deduped: dict[tuple[str, str, str, str, str], SearchRecord] = {}
-    raw: list[SearchRecord] = []
-    total = len(sources)
+    from agentgrep._engine.planning import (
+        PhysicalSearchPlan,
+        SourceTask,
+        build_logical_search_plan,
+    )
 
-    def current_count() -> int:
-        return len(deduped) if query.dedupe else len(raw)
+    plan = PhysicalSearchPlan(
+        logical=build_logical_search_plan(query),
+        tasks=tuple(
+            SourceTask(
+                source=source,
+                strategy="direct_full_scan",
+                can_stream_records=True,
+                restore_order_key=source_order_key(source),
+            )
+            for source in sources
+        ),
+        decisions=(),
+    )
+    return collect_search_records_from_plan(
+        query,
+        plan,
+        progress=progress,
+        control=control,
+    )
 
-    source_predicate = query.compiled.source_predicate if query.compiled is not None else None
-    prompt_history_agents = prompt_history_agents_for_sources(sources)
-    for index, source in enumerate(sources, start=1):
-        if active_control.answer_now_requested() or (
-            query.limit is not None and current_count() >= query.limit
-        ):
-            break
-        if not source_matches_scope(
-            source,
-            query.scope,
-            prompt_history_agents=prompt_history_agents,
-        ):
-            continue
-        # Compiled-query source pruning: when a field predicate like
-        # ``agent:codex`` can be decided from the SourceHandle alone,
-        # skip the source without opening it. Mirrors the same guard
-        # in ``iter_search_events``; without it the eager search path
-        # was paradoxically slower than its unfiltered counterpart
-        # because every source got read just to be rejected at the
-        # record-level predicate.
-        if source_predicate is not None and not source_predicate(source):
-            continue
-        active_progress.source_started(index, total, source)
-        source_started_at = time.perf_counter()
-        records_seen = 0
-        matches_seen = 0
-        matching_records: list[SearchRecord] = []
-        for record in iter_source_records(source):
-            if active_control.answer_now_requested():
-                break
-            records_seen += 1
-            if matches_record(record, query):
-                matches_seen += 1
-                matching_records.append(record)
-            if records_seen % _SOURCE_PROGRESS_RECORD_INTERVAL == 0:
-                _report_source_progress(
-                    active_progress,
-                    index,
-                    total,
-                    source,
-                    records_seen,
-                    matches_seen,
-                )
-                time.sleep(0)
-        active_progress.source_finished(index, total, source, records_seen, matches_seen)
-        _record_engine_profile_sample(
-            "search.collect.source",
-            time.perf_counter() - source_started_at,
-            **_source_profile_attributes(source),
-            agentgrep_records_seen=records_seen,
-            agentgrep_matches_seen=matches_seen,
+
+def collect_search_records_from_plan(
+    query: SearchQuery,
+    plan: PhysicalSearchPlan,
+    *,
+    progress: SearchProgress | None = None,
+    control: SearchControl | None = None,
+) -> list[SearchRecord]:
+    """Execute a physical search plan and collect matching records."""
+    from agentgrep._engine.execution import ExecutionRecordEmitted, InlineExecutionDriver
+
+    results = [
+        event.record
+        for event in InlineExecutionDriver().iter_search_plan(
+            query,
+            plan,
+            progress=progress,
+            control=control,
         )
-        matching_records.sort(key=search_record_sort_key, reverse=True)
-        for record in matching_records:
-            if query.dedupe:
-                dedupe_key = record_dedupe_key(record)
-                if dedupe_key not in deduped:
-                    deduped[dedupe_key] = record
-                    active_progress.record_added(record)
-                    active_progress.result_added(len(deduped))
-            else:
-                raw.append(record)
-                active_progress.record_added(record)
-                active_progress.result_added(len(raw))
-            if active_control.answer_now_requested() or (
-                query.limit is not None and current_count() >= query.limit
-            ):
-                break
-    results = list(deduped.values()) if query.dedupe else list(raw)
+        if isinstance(event, ExecutionRecordEmitted)
+    ]
     results.sort(key=search_record_sort_key, reverse=True)
     return results
 

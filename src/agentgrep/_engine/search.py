@@ -46,7 +46,6 @@ if t.TYPE_CHECKING:
         BackendSelection,
         SearchControl,
         SearchQuery,
-        SearchRecord,
         events as _events,
     )
 
@@ -91,6 +90,13 @@ def iter_search_events(
                 print(event.record.text)
     """
     from agentgrep import events as _events
+    from agentgrep._engine.execution import (
+        ExecutionRecordEmitted,
+        ExecutionSourceFinished,
+        ExecutionSourceStarted,
+        InlineExecutionDriver,
+    )
+    from agentgrep._engine.planning import build_physical_search_plan
 
     active_backends = agentgrep.select_backends() if backends is None else backends
     active_control = agentgrep.SearchControl() if control is None else control
@@ -105,68 +111,38 @@ def iter_search_events(
     source_predicate = query.compiled.source_predicate if query.compiled is not None else None
     if source_predicate is not None:
         sources = [s for s in sources if source_predicate(s)]
-    planned_sources = agentgrep.plan_search_sources(
+    plan = build_physical_search_plan(
         query,
         sources,
         active_backends,
         control=active_control,
     )
 
-    yield _events.SearchStarted(source_count=len(planned_sources))
+    yield _events.SearchStarted(source_count=len(plan.tasks))
 
-    deduped_keys: set[tuple[str, str, str, str, str]] = set()
-    raw_count = 0
-    total = len(planned_sources)
-
-    def current_count() -> int:
-        return len(deduped_keys) if query.dedupe else raw_count
-
-    for index, source in enumerate(planned_sources, start=1):
-        if active_control.answer_now_requested() or (
-            query.limit is not None and current_count() >= query.limit
-        ):
-            break
-
-        yield _events.SourceStarted(
-            adapter_id=source.adapter_id,
-            index=index,
-            total=total,
-        )
-
-        records_seen = 0
-        matches_seen = 0
-        matching_records: list[SearchRecord] = []
-        for record in agentgrep.iter_source_records(source):
-            if active_control.answer_now_requested():
-                break
-            records_seen += 1
-            if agentgrep.matches_record(record, query):
-                matches_seen += 1
-                matching_records.append(record)
-
-        matching_records.sort(key=agentgrep.search_record_sort_key, reverse=True)
-
-        for record in matching_records:
-            if query.dedupe:
-                dedupe_key = agentgrep.record_dedupe_key(record)
-                if dedupe_key in deduped_keys:
-                    continue
-                deduped_keys.add(dedupe_key)
-            else:
-                raw_count += 1
-            yield _events.RecordEmitted(record=record)
-            if active_control.answer_now_requested() or (
-                query.limit is not None and current_count() >= query.limit
-            ):
-                break
-
-        yield _events.SourceFinished(
-            adapter_id=source.adapter_id,
-            records_seen=records_seen,
-            matches_seen=matches_seen,
-        )
+    match_count = 0
+    for execution_event in InlineExecutionDriver().iter_search_plan(
+        query,
+        plan,
+        control=active_control,
+    ):
+        if isinstance(execution_event, ExecutionSourceStarted):
+            yield _events.SourceStarted(
+                adapter_id=execution_event.source.adapter_id,
+                index=execution_event.index,
+                total=execution_event.total,
+            )
+        elif isinstance(execution_event, ExecutionRecordEmitted):
+            match_count = execution_event.result_count
+            yield _events.RecordEmitted(record=execution_event.record)
+        elif isinstance(execution_event, ExecutionSourceFinished):
+            yield _events.SourceFinished(
+                adapter_id=execution_event.source.adapter_id,
+                records_seen=execution_event.records_seen,
+                matches_seen=execution_event.matches_seen,
+            )
 
     yield _events.SearchFinished(
-        match_count=current_count(),
+        match_count=match_count,
         elapsed_seconds=time.monotonic() - start_time,
     )
