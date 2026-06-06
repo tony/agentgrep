@@ -13,11 +13,12 @@ import dataclasses
 import json
 import pathlib
 import sys
+import typing as t
 
 from agentgrep import run_ui
 from agentgrep._engine import iter_find_events, iter_search_events, run_search_result
 from agentgrep._text import AnsiColors, format_display_path
-from agentgrep.cli.parser import FindArgs, GrepArgs, SearchArgs, UIArgs
+from agentgrep.cli.parser import DbArgs, FindArgs, GrepArgs, SearchArgs, UIArgs
 from agentgrep.cli.renderers import (
     GrepSummary,
     _compile_search_patterns,
@@ -62,6 +63,10 @@ from agentgrep.records import (
     SearchScopeProvenance,
 )
 from agentgrep.results import RunSummary
+
+if t.TYPE_CHECKING:
+    from agentgrep.db import DbRuntime, SyncResult
+    from agentgrep.records import SourceHandle
 
 __all__ = [
     "GrepSummary",
@@ -115,6 +120,86 @@ def _print_json_or_text(payload: object, *, output_mode: OutputMode) -> None:
             print(json.dumps(_json_ready(row), ensure_ascii=False))
         return
     print(_json_ready(payload))
+
+
+class ConsoleDbSyncProgress:
+    """Small DB sync progress adapter retained until the full renderer lands."""
+
+    def __init__(
+        self,
+        *,
+        enabled: bool,
+        stream: t.TextIO | None = None,
+        tty: bool | None = None,
+        color_mode: ColorMode = "auto",
+        refresh_interval: float = 0.1,
+        heartbeat_interval: float = 10.0,
+        answer_now_hint: bool = False,
+    ) -> None:
+        self._enabled = enabled
+        self._stream = stream if stream is not None else sys.stderr
+        self._tty = tty
+        self._color_mode = color_mode
+        self._refresh_interval = refresh_interval
+        self._heartbeat_interval = heartbeat_interval
+        self._answer_now_hint = answer_now_hint
+
+    def start(self, total_sources: int) -> None:
+        """Report the start of a DB sync."""
+        self._write(f"DB sync: {total_sources} sources")
+
+    def source_started(
+        self,
+        index: int,
+        total: int,
+        source: SourceHandle,
+        result: SyncResult,
+    ) -> None:
+        """Accept a source-start notification."""
+        _ = (index, total, source, result)
+
+    def source_finished(
+        self,
+        index: int,
+        total: int,
+        source: SourceHandle,
+        records_indexed: int,
+        records_removed: int,
+        result: SyncResult,
+    ) -> None:
+        """Accept a source-finish notification."""
+        _ = (index, total, source, records_indexed, records_removed, result)
+
+    def finish(self, result: SyncResult) -> None:
+        """Report a completed DB sync."""
+        self._write(f"Sync complete: {result.records_indexed} indexed")
+
+    def exiting_early(self, result: SyncResult) -> None:
+        """Report a cooperatively shortened DB sync."""
+        hint = " [Press enter, exit early]" if self._answer_now_hint else ""
+        self._write(f"Exiting early: {result.records_indexed} indexed{hint}")
+
+    def _write(self, text: str) -> None:
+        """Write one progress line when reporting is enabled."""
+        if not self._enabled:
+            return
+        if self._color_mode == "always":
+            text = f"\x1b[33m{text}\x1b[0m"
+        _ = self._stream.write(f"{text}\n")
+        self._stream.flush()
+
+
+def _open_db_runtime(db_path: str | None) -> DbRuntime:
+    """Open the DB runtime lazily."""
+    from agentgrep.db import DbRuntime
+
+    return DbRuntime.open(pathlib.Path(db_path) if db_path is not None else None)
+
+
+def run_db_command(args: DbArgs) -> int:
+    """Execute a DB command through the full implementation added later."""
+    _ = args
+    return 0
 
 
 def _launch_ui(
