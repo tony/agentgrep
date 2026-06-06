@@ -620,20 +620,24 @@ def test_db_command_closes_runtime_on_exit(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Every db action closes its per-call SQLite connection."""
-    from agentgrep.db import DbRuntime
+    import agentgrep.db as agentgrep_db
 
-    opened: list[DbRuntime] = []
-    real_open = render._open_db_runtime
+    db_path = tmp_path / "agentgrep.sqlite"
+    agentgrep_db.DbRuntime.open(db_path).close()
+    opened: list[agentgrep_db.DbRuntime] = []
+    real_open_readonly = agentgrep_db.DbRuntime.open_readonly
 
-    def capturing_open(db_path: str | None) -> DbRuntime:
-        runtime = real_open(db_path)
+    def capturing_open_readonly(
+        db_path: pathlib.Path | str | None = None,
+    ) -> agentgrep_db.DbRuntime:
+        runtime = real_open_readonly(db_path)
         opened.append(runtime)
         return runtime
 
-    monkeypatch.setattr(render, "_open_db_runtime", capturing_open)
+    monkeypatch.setattr(agentgrep_db.DbRuntime, "open_readonly", capturing_open_readonly)
     args = agentgrep.DbArgs(
         action="status",
-        db_path=str(tmp_path / "agentgrep.sqlite"),
+        db_path=str(db_path),
         agents=("codex",),
         scope="all",
         output_mode="json",
@@ -648,3 +652,84 @@ def test_db_command_closes_runtime_on_exit(
     assert len(opened) == 1
     with pytest.raises(sqlite3.ProgrammingError):
         _ = opened[0].store.connection.execute("SELECT 1")
+
+
+def test_db_status_never_writes_the_cache(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Status reads are byte-for-byte write-free, even on read-only files."""
+    import hashlib
+
+    import agentgrep.db as agentgrep_db
+
+    db_path = tmp_path / "agentgrep.sqlite"
+    agentgrep_db.DbRuntime.open(db_path).close()
+    before = hashlib.sha256(db_path.read_bytes()).hexdigest()
+    db_path.chmod(0o444)
+    args = agentgrep.DbArgs(
+        action="status",
+        db_path=str(db_path),
+        agents=("codex",),
+        scope="all",
+        output_mode="json",
+        color_mode="never",
+        progress_mode="never",
+    )
+
+    exit_code = render.run_db_command(args)
+
+    db_path.chmod(0o644)
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert json.loads(captured.out)["records"] == 0
+    assert hashlib.sha256(db_path.read_bytes()).hexdigest() == before
+
+
+def test_db_status_on_missing_db_reports_zeros_without_creating(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Status on a missing cache reports zero counts and creates nothing."""
+    db_path = tmp_path / "missing.sqlite"
+    args = agentgrep.DbArgs(
+        action="status",
+        db_path=str(db_path),
+        agents=("codex",),
+        scope="all",
+        output_mode="json",
+        color_mode="never",
+        progress_mode="never",
+    )
+
+    exit_code = render.run_db_command(args)
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert json.loads(captured.out)["sources"] == 0
+    assert not db_path.exists()
+
+
+def test_db_status_on_foreign_file_fails_cleanly(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Status on a non-database file errors without a traceback."""
+    db_path = tmp_path / "not-a-db.sqlite"
+    db_path.write_text("plain text", encoding="utf-8")
+    args = agentgrep.DbArgs(
+        action="status",
+        db_path=str(db_path),
+        agents=("codex",),
+        scope="all",
+        output_mode="json",
+        color_mode="never",
+        progress_mode="never",
+    )
+
+    exit_code = render.run_db_command(args)
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "not an agentgrep database" in captured.err
+    assert "Traceback" not in captured.err

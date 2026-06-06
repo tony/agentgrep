@@ -1210,6 +1210,8 @@ def _open_db_runtime(db_path: str | None) -> DbRuntime:
 
 def run_db_command(args: DbArgs) -> int:
     """Execute ``agentgrep db`` subcommands."""
+    if args.action in {"status", "explain"}:
+        return _run_db_status_command(args)
     runtime = _open_db_runtime(args.db_path)
     try:
         return _run_db_command_with_runtime(args, runtime)
@@ -1217,16 +1219,34 @@ def run_db_command(args: DbArgs) -> int:
         runtime.close()
 
 
-def _run_db_command_with_runtime(args: DbArgs, runtime: DbRuntime) -> int:
-    """Execute one db action against an already-open runtime."""
-    if args.action in {"status", "explain"}:
-        _print_json_or_text(
-            runtime.status(),
-            output_mode=args.output_mode,
-            color_mode=args.color_mode,
-        )
-        return 0
+def _run_db_status_command(args: DbArgs) -> int:
+    """Report db status without writing to or creating the cache."""
+    import sqlite3
 
+    from agentgrep.db import SCHEMA_VERSION, DbRuntime, DbStatus, default_db_path
+
+    path = default_db_path() if args.db_path is None else pathlib.Path(args.db_path).expanduser()
+    if not path.exists():
+        status = DbStatus(
+            db_path=path,
+            schema_version=SCHEMA_VERSION,
+            sources=0,
+            records=0,
+        )
+        _print_json_or_text(status, output_mode=args.output_mode, color_mode=args.color_mode)
+        return 0
+    try:
+        with DbRuntime.open_readonly(path) as runtime:
+            status = runtime.status()
+    except sqlite3.DatabaseError:
+        print(f"agentgrep: not an agentgrep database: {path}", file=sys.stderr)
+        return 1
+    _print_json_or_text(status, output_mode=args.output_mode, color_mode=args.color_mode)
+    return 0
+
+
+def _run_db_command_with_runtime(args: DbArgs, runtime: DbRuntime) -> int:
+    """Execute one db sync action against an already-open runtime."""
     query = agentgrep.SearchQuery(
         terms=(),
         scope=args.scope,
