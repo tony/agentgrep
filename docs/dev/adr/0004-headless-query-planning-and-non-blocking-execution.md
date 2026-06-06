@@ -195,12 +195,27 @@ Planning must choose the cheapest correct adapter strategy:
   sources. These sources can skip eager whole-root text prefiltering because
   raw JSONL line checks and newest-first execution are cheaper than a separate
   root scan in the bounded path. Haystack searches keep eager root
-  prefiltering for broad content terms, but must lazily admit sources whose
-  source path satisfies at least one query term because a content-only root
-  prefilter cannot prove those path matches impossible. Unbounded,
-  unknown-order, and non-JSONL root sources keep the eager prefilter path.
+  prefiltering for broad content terms, but must admit sources whose source
+  path satisfies at least one query term — regardless of limit or adapter —
+  because a content-only root prefilter cannot prove those path matches
+  impossible. Other unbounded, unknown-order, and non-JSONL root sources keep
+  the eager prefilter path.
 - Full Python parsing when the store format, query semantics, or privacy rules
   require it.
+
+Optimizations interact with parser state along four axes: record order
+(reverse scans), line visibility (raw skip predicates), file admission
+(root and direct prefilters), and result reuse (the source scan cache
+fingerprint). An adapter may join an optimization set only when every
+emitted field is derivable from the record line plus the source path, or
+when the optimization carries an explicit exemption — header markers
+that bypass skip predicates and seed reverse scans, cache exemption for
+adapters that expand sibling files, and unconditional admission for
+stores whose searchable text is not greppable in place. The
+`STATEFUL_HEADER_JSONL_ADAPTERS` set names the parsers that carry
+leading-header state. Source ordering also assumes file mtime tracks
+record recency; restored backups or clock skew can violate that, which
+is accepted alongside the bounded-scan approximations below.
 
 Execution must be cancellable and bounded. Drivers poll cancellation between
 source tasks and record batches. A task that declares bounded source behavior
