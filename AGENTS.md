@@ -328,14 +328,17 @@ Profiler artifacts include `schema_version` and `artifact_kind`. Use those
 fields when a local profile file needs to be distinguished from benchmark rows
 or future fixture-only CI artifacts. Engine profiles include coarse phase spans
 and source-level spans such as `search.discover.group`,
-`search.plan.decision`, `search.plan.prefilter_root`,
+`search.plan.decision`, `search.plan.strategy_group`,
+`search.plan.prefilter_root`,
 `search.plan.direct_source`, `search.collect.source`, optional
-`search.collect.scheduler`, and `find.filter.source`; those spans carry
+`search.collect.scheduler`, optional `search.collect.source_scan_cache`,
+and `find.filter.source`; those spans carry
 agent/store/adapter/count metadata without prompt text or local paths.
 `search.collect.scheduler` is the driver
 summary for source-level scheduling and reports worker, submitted, completed,
 skipped, cancellation-requested, batch, queued-batch, queue-wait, and emitted
-counts.
+counts. `search.collect.source_scan_cache` reports cache-hit lookups when a
+runtime source-scan cache is active.
 
 Use `scripts/benchmark.py` for timed benchmark sweeps. The profiler-oriented
 benchmark entries are named `profile-engine-*`; each committed benchmark name
