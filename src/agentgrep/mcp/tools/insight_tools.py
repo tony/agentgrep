@@ -52,11 +52,12 @@ def _insights_list_sync(
             omission_findings_truncated=False,
             omission_findings=[],
         )
-    engine = InsightEngine(DbRuntime.open(path).store)
-    variant_edges_total = engine.count_variant_edges()
-    omission_findings_total = engine.count_omission_findings()
-    variant_edges = engine.list_variant_edges(limit=limit)
-    omission_findings = engine.list_omission_findings(limit=limit)
+    with DbRuntime.open_readonly(path) as runtime:
+        engine = InsightEngine(runtime.store)
+        variant_edges_total = engine.count_variant_edges()
+        omission_findings_total = engine.count_omission_findings()
+        variant_edges = engine.list_variant_edges(limit=limit)
+        omission_findings = engine.list_omission_findings(limit=limit)
     return InsightsListResponse(
         limit=limit,
         variant_edges_total=variant_edges_total,
@@ -102,8 +103,8 @@ def _suggestions_list_sync(db_path: str | None) -> SuggestionsListResponse:
             suggestions_truncated=False,
             suggestions=[],
         )
-    engine = SuggestionEngine(DbRuntime.open(path).store)
-    suggestions = engine.list_suggestions()
+    with DbRuntime.open_readonly(path) as runtime:
+        suggestions = list(SuggestionEngine(runtime.store).list_suggestions())
     return SuggestionsListResponse(
         limit=DEFAULT_INSIGHTS_LIST_LIMIT,
         suggestions_total=len(suggestions),
