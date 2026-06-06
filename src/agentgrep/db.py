@@ -277,8 +277,12 @@ def _fts_indexable(term: str) -> bool:
 class DbStore:
     """SQLite-backed store for the persistent DB index."""
 
-    def __init__(self, db_path: pathlib.Path) -> None:
+    def __init__(self, db_path: pathlib.Path, *, readonly: bool = False) -> None:
         self.db_path = db_path
+        if readonly:
+            self.connection = agentgrep.open_readonly_sqlite(self.db_path)
+            self.connection.row_factory = sqlite3.Row
+            return
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.connection = sqlite3.connect(str(self.db_path))
         self.connection.row_factory = sqlite3.Row
@@ -290,6 +294,18 @@ class DbStore:
         """Open a DB store at ``db_path`` or the default cache path."""
         resolved = default_db_path() if db_path is None else pathlib.Path(db_path)
         return cls(resolved.expanduser())
+
+    @classmethod
+    def open_readonly(cls, db_path: pathlib.Path | str | None = None) -> DbStore:
+        """Open the store read-only, without schema writes or WAL pragmas.
+
+        Status surfaces must not mutate the cache: the regular open
+        path runs schema migration and records the schema version,
+        which writes on every call. The read-only URI mode also works
+        on read-only filesystems and never creates the file.
+        """
+        resolved = default_db_path() if db_path is None else pathlib.Path(db_path)
+        return cls(resolved.expanduser(), readonly=True)
 
     def close(self) -> None:
         """Close the SQLite connection."""
@@ -716,6 +732,11 @@ class DbRuntime:
     def open(cls, db_path: pathlib.Path | str | None = None) -> DbRuntime:
         """Open a DB runtime at ``db_path`` or the default path."""
         return cls(DbStore.open(db_path))
+
+    @classmethod
+    def open_readonly(cls, db_path: pathlib.Path | str | None = None) -> DbRuntime:
+        """Open a read-only DB runtime for status surfaces."""
+        return cls(DbStore.open_readonly(db_path))
 
     def close(self) -> None:
         """Close the underlying store connection."""

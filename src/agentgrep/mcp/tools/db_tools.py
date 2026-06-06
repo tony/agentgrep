@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import pathlib
+import sqlite3
 import typing as t
 
 from pydantic import Field
@@ -36,8 +37,16 @@ def _db_status_sync(db_path: str | None) -> DbStatusModel:
             sources=0,
             records=0,
         )
-    with DbRuntime.open(path) as runtime:
-        status = runtime.status()
+    try:
+        with DbRuntime.open_readonly(path) as runtime:
+            status = runtime.status()
+    except sqlite3.DatabaseError:
+        return DbStatusModel(
+            db_path=str(path),
+            db_schema_version=0,
+            sources=0,
+            records=0,
+        )
     return DbStatusModel(
         db_path=str(status.db_path),
         db_schema_version=status.schema_version,
