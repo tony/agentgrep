@@ -54,6 +54,7 @@ from agentgrep.records import (
     AGENT_CHOICES,
     ColorMode,
     FindRecord,
+    OutputMode,
     SearchEffort,
     SearchQuery,
     SearchRecord,
@@ -88,6 +89,32 @@ __all__ = [
     "stream_find_results",
     "stream_grep_results",
 ]
+
+
+def _json_ready(value: object) -> object:
+    """Convert dataclasses and paths into JSON-serializable values."""
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return _json_ready(dataclasses.asdict(value))
+    if isinstance(value, pathlib.Path):
+        return str(value)
+    if isinstance(value, dict):
+        return {str(key): _json_ready(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_ready(item) for item in value]
+    return value
+
+
+def _print_json_or_text(payload: object, *, output_mode: OutputMode) -> None:
+    """Print a small command payload in its requested output mode."""
+    if output_mode == "json":
+        print(json.dumps(_json_ready(payload), ensure_ascii=False, indent=2))
+        return
+    if output_mode == "ndjson":
+        rows = payload if isinstance(payload, (list, tuple)) else (payload,)
+        for row in rows:
+            print(json.dumps(_json_ready(row), ensure_ascii=False))
+        return
+    print(_json_ready(payload))
 
 
 def _launch_ui(

@@ -51,6 +51,24 @@ present. `--deep` infers `all` when scope is omitted. `--exhaustive` keeps
 an omitted CLI scope at `prompts`; add `--scope all` when you want prompt and
 conversation records together.
 
+## DB cache
+
+Search-shaped commands default to `--cache auto`. When an agentgrep
+database already exists and can answer the query, agentgrep can use the
+SQLite index; otherwise it falls back to the live scanner.
+
+Force a fresh live scan for cold-path checks and benchmarks:
+
+```console
+$ uv run agentgrep grep "release" --no-cache
+```
+
+Require the DB path:
+
+```console
+$ uv run agentgrep search "release" --cache require
+```
+
 ## Output
 
 Text output is optimized for terminal reading:
