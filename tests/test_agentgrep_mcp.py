@@ -1460,19 +1460,35 @@ def test_db_status_tool_closes_its_connection(
     db_path = tmp_path / "agentgrep.sqlite"
     agentgrep_db.DbRuntime.open(db_path).close()
     opened: list[agentgrep_db.DbRuntime] = []
-    real_open = agentgrep_db.DbRuntime.open
+    real_open_readonly = agentgrep_db.DbRuntime.open_readonly
 
-    def capturing_open(
+    def capturing_open_readonly(
         db_path: pathlib.Path | str | None = None,
     ) -> agentgrep_db.DbRuntime:
-        runtime = real_open(db_path)
+        runtime = real_open_readonly(db_path)
         opened.append(runtime)
         return runtime
 
-    monkeypatch.setattr(agentgrep_db.DbRuntime, "open", capturing_open)
+    monkeypatch.setattr(agentgrep_db.DbRuntime, "open_readonly", capturing_open_readonly)
     payload = db_tools._db_status_sync(str(db_path))
 
     assert payload.sources == 0
     assert len(opened) == 1
     with _pytest.raises(sqlite3.ProgrammingError):
         _ = opened[0].store.connection.execute("SELECT 1")
+
+
+def test_db_status_tool_reports_zeros_for_foreign_file(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A non-database file at the db path yields a zero-count payload."""
+    from agentgrep.mcp.tools import db_tools
+
+    db_path = tmp_path / "not-a-db.sqlite"
+    db_path.write_text("plain text", encoding="utf-8")
+
+    payload = db_tools._db_status_sync(str(db_path))
+
+    assert payload.sources == 0
+    assert payload.records == 0
+    assert payload.db_schema_version == 0
