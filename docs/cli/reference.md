@@ -23,6 +23,11 @@ CLI argument types, serialization helpers, and command entry points.
 .. autoclass:: agentgrep.DbArgs
    :members:
 
+.. autoclass:: agentgrep.InsightsArgs
+   :members:
+
+.. autoclass:: agentgrep.SuggestionsArgs
+   :members:
 ```
 
 ## Serialization
@@ -42,5 +47,7 @@ CLI argument types, serialization helpers, and command entry points.
 .. autofunction:: agentgrep.run_find_command
 .. autofunction:: agentgrep.run_ui_command
 .. autofunction:: agentgrep.run_db_command
+.. autofunction:: agentgrep.run_insights_command
+.. autofunction:: agentgrep.run_suggestions_command
 .. autofunction:: agentgrep.main
 ```
