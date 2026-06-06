@@ -994,7 +994,17 @@ def _format_count(count: int, singular: str, plural: str | None = None) -> str:
 
 
 def _format_confidence(value: object) -> str:
-    """Return a compact confidence value."""
+    """Return a compact confidence value.
+
+    Examples
+    --------
+    >>> _format_confidence(0.825)
+    '0.82'
+    >>> _format_confidence("1")
+    '1.00'
+    >>> _format_confidence("high")
+    'high'
+    """
     if isinstance(value, str | int | float):
         try:
             return f"{float(value):.2f}"
@@ -1004,7 +1014,15 @@ def _format_confidence(value: object) -> str:
 
 
 def _short_identifier(value: str, *, width: int = 16) -> str:
-    """Return a compact identifier for terminal summaries."""
+    """Return a compact identifier for terminal summaries.
+
+    Examples
+    --------
+    >>> _short_identifier("edge-1")
+    'edge-1'
+    >>> _short_identifier("0123456789abcdef0123", width=8)
+    '01234567...'
+    """
     return value if len(value) <= width else f"{value[:width]}..."
 
 
@@ -2111,31 +2129,71 @@ class ConsoleInsightsAnalyzeProgress:
 
 
 def format_insights_run_count(count: int) -> str:
-    """Return a human-readable insight-run count."""
+    """Return a human-readable insight-run count.
+
+    Examples
+    --------
+    >>> format_insights_run_count(1)
+    '1 run analyzed'
+    >>> format_insights_run_count(3)
+    '3 runs analyzed'
+    """
     suffix = "run analyzed" if count == 1 else "runs analyzed"
     return f"{count} {suffix}"
 
 
 def format_insights_feature_count(count: int) -> str:
-    """Return a human-readable refreshed-feature count."""
+    """Return a human-readable refreshed-feature count.
+
+    Examples
+    --------
+    >>> format_insights_feature_count(1)
+    '1 feature refreshed'
+    >>> format_insights_feature_count(3)
+    '3 features refreshed'
+    """
     suffix = "feature refreshed" if count == 1 else "features refreshed"
     return f"{count} {suffix}"
 
 
 def format_insights_cluster_count(count: int) -> str:
-    """Return a human-readable cluster count."""
+    """Return a human-readable cluster count.
+
+    Examples
+    --------
+    >>> format_insights_cluster_count(1)
+    '1 cluster'
+    >>> format_insights_cluster_count(3)
+    '3 clusters'
+    """
     suffix = "cluster" if count == 1 else "clusters"
     return f"{count} {suffix}"
 
 
 def format_insights_variant_count(count: int) -> str:
-    """Return a human-readable variant-edge count."""
+    """Return a human-readable variant-edge count.
+
+    Examples
+    --------
+    >>> format_insights_variant_count(1)
+    '1 variant edge'
+    >>> format_insights_variant_count(3)
+    '3 variant edges'
+    """
     suffix = "variant edge" if count == 1 else "variant edges"
     return f"{count} {suffix}"
 
 
 def format_insights_omission_count(count: int) -> str:
-    """Return a human-readable omission-finding count."""
+    """Return a human-readable omission-finding count.
+
+    Examples
+    --------
+    >>> format_insights_omission_count(1)
+    '1 omission finding'
+    >>> format_insights_omission_count(3)
+    '3 omission findings'
+    """
     suffix = "omission finding" if count == 1 else "omission findings"
     return f"{count} {suffix}"
 
