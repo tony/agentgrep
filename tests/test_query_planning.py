@@ -9,6 +9,9 @@ import pytest
 
 import agentgrep
 from agentgrep._engine.planning import (
+    APPEND_ONLY_JSONL_ADAPTERS,
+    RAW_TEXT_PREFILTER_ADAPTERS,
+    STATEFUL_HEADER_JSONL_ADAPTERS,
     LogicalSearchPlan,
     PhysicalSearchPlan,
     QueryRequest,
@@ -125,6 +128,19 @@ def test_build_logical_search_plan_normalizes_scope_to_store_roles(
     assert plan.initial_store_roles == case.expected_roles
     assert plan.expects_prompt_fallback is case.expects_prompt_fallback
     assert plan.request.scope == case.scope
+
+
+def test_stateful_header_adapters_stay_off_unguarded_optimizations() -> None:
+    """Header-stateful adapters never join order-sensitive optimization sets.
+
+    The raw-prefilter overlap is allowed only for adapters whose parsers
+    carry header exemptions; Gemini has none and must stay out entirely.
+    """
+    assert APPEND_ONLY_JSONL_ADAPTERS.isdisjoint(STATEFUL_HEADER_JSONL_ADAPTERS)
+    assert {
+        "codex.sessions_jsonl.v1",
+        "pi.sessions_jsonl.v1",
+    } == RAW_TEXT_PREFILTER_ADAPTERS & STATEFUL_HEADER_JSONL_ADAPTERS
 
 
 def test_build_physical_search_plan_preserves_existing_source_order_for_termless_query() -> None:

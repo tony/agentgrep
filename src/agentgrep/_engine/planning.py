@@ -85,6 +85,22 @@ title, and source path — to be self-contained on each record's raw line
 ``conversation_id`` from its leading session header.
 """
 
+STATEFUL_HEADER_JSONL_ADAPTERS: frozenset[str] = frozenset(
+    {
+        "codex.sessions_jsonl.v1",
+        "pi.sessions_jsonl.v1",
+        "gemini.tmp_chats_jsonl.v1",
+    },
+)
+"""Adapters whose parsers carry state from a leading header line.
+
+Members must never join :data:`APPEND_ONLY_JSONL_ADAPTERS`, and may join
+:data:`RAW_TEXT_PREFILTER_ADAPTERS` only with parser-level header
+handling (the Codex and pi parsers exempt their headers from raw skip
+predicates and pre-read them for reverse scans; the Gemini parser has
+neither and therefore joins no optimization set).
+"""
+
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class QueryRequest:
