@@ -530,6 +530,7 @@ def _format_db_status_text(payload: object, *, colors: agentgrep.AnsiColors) -> 
     schema_version = _attribute_or_mapping_value(payload, "schema_version", "")
     sources = _as_int_value(_attribute_or_mapping_value(payload, "sources", 0))
     records = _as_int_value(_attribute_or_mapping_value(payload, "records", 0))
+    features = _as_int_value(_attribute_or_mapping_value(payload, "features", 0))
     lines = [
         colors.heading("DB status"),
         f"{colors.muted('Path')} | {colors.path(str(db_path))}",
@@ -538,6 +539,7 @@ def _format_db_status_text(payload: object, *, colors: agentgrep.AnsiColors) -> 
             (
                 colors.warning(format_db_source_count(sources)),
                 colors.warning(_format_count(records, "record")),
+                colors.warning(_format_count(features, "feature")),
             ),
         ),
     ]
@@ -618,12 +620,18 @@ def _format_db_sync_result_text(payload: object, *, colors: agentgrep.AnsiColors
             ),
         ),
     ]
+    optional = []
     skipped = _as_int_value(_attribute_or_mapping_value(payload, "sources_skipped", 0))
+    deferred = _as_int_value(_attribute_or_mapping_value(payload, "features_deferred", 0))
     if skipped:
-        lines.append(colors.warning(format_db_skipped_count(skipped)))
+        optional.append(colors.warning(format_db_skipped_count(skipped)))
     pruned = _as_int_value(_attribute_or_mapping_value(payload, "sources_pruned", 0))
     if pruned:
-        lines.append(colors.warning(format_db_pruned_count(pruned)))
+        optional.append(colors.warning(format_db_pruned_count(pruned)))
+    if deferred:
+        optional.append(colors.warning(format_db_deferred_count(deferred)))
+    if optional:
+        lines.append(" | ".join(optional))
     return "\n".join(lines)
 
 
@@ -853,6 +861,7 @@ class DbSyncProgressSnapshot:
     records_indexed: int
     records_removed: int
     sources_skipped: int
+    features_deferred: int
     elapsed: float
 
 
@@ -895,6 +904,7 @@ class ConsoleDbSyncProgress:
         self._records_indexed = 0
         self._records_removed = 0
         self._sources_skipped = 0
+        self._features_deferred = 0
         self._finished = False
 
     def start_discovery(self) -> None:
@@ -1054,6 +1064,7 @@ class ConsoleDbSyncProgress:
             self._records_indexed = result.records_indexed
             self._records_removed = result.records_removed
             self._sources_skipped = result.sources_skipped
+            self._features_deferred = result.features_deferred
 
     def _ensure_tty_thread(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -1164,6 +1175,7 @@ class ConsoleDbSyncProgress:
                 records_indexed=self._records_indexed,
                 records_removed=self._records_removed,
                 sources_skipped=self._sources_skipped,
+                features_deferred=self._features_deferred,
                 elapsed=elapsed,
             )
 
@@ -1275,11 +1287,19 @@ def format_db_pruned_count(count: int) -> str:
     return f"{count} {suffix}"
 
 
+def format_db_deferred_count(count: int) -> str:
+    """Return a human-readable deferred-feature count."""
+    suffix = "feature deferred" if count == 1 else "features deferred"
+    return f"{count} {suffix}"
+
+
 def _format_optional_db_sync_counts(result: SyncResult, *, colors: agentgrep.SearchColors) -> str:
     """Return optional DB sync counters prefixed for inline summaries."""
     parts: list[str] = []
     if result.sources_skipped:
         parts.append(colors.warning(format_db_skipped_count(result.sources_skipped)))
+    if result.features_deferred:
+        parts.append(colors.warning(format_db_deferred_count(result.features_deferred)))
     return ", " + ", ".join(parts) if parts else ""
 
 
@@ -1343,6 +1363,8 @@ def _format_db_sync_progress_line(
     )
     if snapshot.sources_skipped:
         parts.append(colors.warning(format_db_skipped_count(snapshot.sources_skipped)))
+    if snapshot.features_deferred:
+        parts.append(colors.warning(format_db_deferred_count(snapshot.features_deferred)))
     parts.append(colors.muted(f"{snapshot.elapsed:.1f}s"))
     if answer_now_hint:
         parts.append(colors.white("[Press enter, exit early]"))
@@ -1401,6 +1423,10 @@ def _run_db_status_command(args: DbArgs) -> int:
                 schema_version=SCHEMA_VERSION,
                 sources=0,
                 records=0,
+                features=0,
+                variant_edges=0,
+                omission_findings=0,
+                suggestions=0,
             )
         _print_json_or_text(payload, output_mode=args.output_mode, color_mode=args.color_mode)
         return 0
@@ -1483,6 +1509,7 @@ def _run_db_command_with_runtime(args: DbArgs, runtime: DbRuntime) -> int:
             sources,
             control=control,
             progress=progress,
+            features_mode=args.features_mode,
             force=args.force,
             coverage=coverage,
             prune_missing=prune_missing,

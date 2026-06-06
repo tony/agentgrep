@@ -133,6 +133,10 @@ class DbStatusModel(AgentGrepModel):
     db_schema_version: int
     sources: int
     records: int
+    features: int
+    variant_edges: int
+    omission_findings: int
+    suggestions: int
 
 
 class FindToolQuery(AgentGrepModel):

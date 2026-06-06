@@ -43,6 +43,7 @@ if t.TYPE_CHECKING:
     from agentgrep.query import CompiledQuery
 
 CaseMode = t.Literal["smart", "ignore", "respect"]
+DbFeatureMode = t.Literal["defer", "inline"]
 PatternMode = t.Literal["regex", "fixed", "word"]
 FindPatternMode = t.Literal["regex", "glob", "fixed", "exact"]
 FindTypeFilter = t.Literal["prompts", "history", "sessions", "all"]
@@ -181,6 +182,7 @@ class DbArgs:
     color_mode: ColorMode
     progress_mode: ProgressMode
     limit_sources: int | None = None
+    features_mode: DbFeatureMode = "defer"
     force: bool = False
 
 
@@ -618,6 +620,12 @@ def create_parser(
         help="Limit the number of sources synced",
     )
     _ = db_sync_parser.add_argument(
+        "--features",
+        choices=["defer", "inline"],
+        default="defer",
+        help="Feature generation mode: defer expensive features or build inline",
+    )
+    _ = db_sync_parser.add_argument(
         "--force",
         action="store_true",
         help="Resync unchanged sources instead of using source_state freshness checks",
@@ -967,6 +975,7 @@ def _build_db_args(
         color_mode=color_mode,
         progress_mode=t.cast("ProgressMode", getattr(namespace, "progress", "never")),
         limit_sources=limit_sources,
+        features_mode=t.cast("DbFeatureMode", getattr(namespace, "features", "defer")),
         force=t.cast("bool", getattr(namespace, "force", False)),
     )
 
