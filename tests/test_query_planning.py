@@ -428,6 +428,48 @@ def test_unbounded_haystack_path_match_uses_lazy_admission(
     assert [d.detail for d in skipped] == ["haystack_path_match"]
 
 
+def test_regex_haystack_path_match_uses_lazy_admission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regex haystack terms admit path-matched sources without grep."""
+    root = pathlib.Path("/tmp/claude-projects")
+    source = _source(
+        agent="claude",
+        path="/tmp/claude-projects/tmux-project.jsonl",
+        store="claude.projects",
+        adapter_id="claude.projects_jsonl.v1",
+        search_root=root,
+        mtime_ns=2,
+    )
+
+    def fail_prefilter_sources_by_root(
+        _query: agentgrep.SearchQuery,
+        _sources: list[agentgrep.SourceHandle],
+        _grep_program: str,
+        *,
+        progress: agentgrep.SearchProgress | None = None,
+        control: agentgrep.SearchControl | None = None,
+    ) -> list[agentgrep.SourceHandle]:
+        _ = progress, control
+        pytest.fail("path-matched haystack sources should skip content prefiltering")
+
+    monkeypatch.setattr(agentgrep, "prefilter_sources_by_root", fail_prefilter_sources_by_root)
+
+    plan = build_physical_search_plan(
+        _query(
+            scope="conversations",
+            match_surface="haystack",
+            regex=True,
+            terms=(r"TMUX-\w+",),
+            limit=None,
+        ),
+        (source,),
+        agentgrep.BackendSelection(find_tool=None, grep_tool="rg", json_tool=None),
+    )
+
+    assert [task.source for task in plan.tasks] == [source]
+
+
 def test_bounded_haystack_path_match_admits_stateful_adapter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

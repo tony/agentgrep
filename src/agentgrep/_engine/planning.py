@@ -9,8 +9,10 @@ execution simpler.
 
 from __future__ import annotations
 
+import collections.abc as cabc
 import dataclasses
 import pathlib
+import re
 import typing as t
 
 if t.TYPE_CHECKING:
@@ -305,10 +307,15 @@ def build_physical_search_plan(
         lazy_sources: list[agentgrep.SourceHandle] = []
         path_match_sources: list[agentgrep.SourceHandle] = []
         sqlite_sources: list[agentgrep.SourceHandle] = []
+        path_term_matcher = _compile_path_term_matcher(query)
         for source in scoped_sources:
             if source.source_kind == "sqlite":
                 sqlite_sources.append(source)
-            elif _haystack_path_match_admission(query, source):
+            elif (
+                path_term_matcher is not None
+                and source.search_root is not None
+                and path_term_matcher(str(source.path))
+            ):
                 path_match_sources.append(source)
             elif _can_use_lazy_source_admission(query, source):
                 lazy_sources.append(source)
@@ -484,39 +491,37 @@ def _can_use_lazy_source_admission(
     return _can_use_jsonl_raw_text_prefilter(query, source)
 
 
-def _haystack_path_match_admission(
+def _compile_path_term_matcher(
     query: agentgrep.SearchQuery,
-    source: agentgrep.SourceHandle,
-) -> bool:
-    """Return whether a haystack query may match this source via its path.
+) -> cabc.Callable[[str], bool] | None:
+    """Compile a per-query predicate for source-path term matches.
 
     The haystack surface includes the source path, and content-only root
     prefilters cannot prove path matches impossible, so path-matched
     sources must be admitted without grep evidence regardless of limit
-    or adapter.
+    or adapter. The planner evaluates this predicate once per candidate
+    source, so term state is precomputed here instead of rebuilding a
+    query per term per source.
     """
-    return (
-        source.search_root is not None
-        and query.match_surface == "haystack"
-        and _source_path_matches_any_query_term(query, source)
+    if query.match_surface != "haystack" or not query.terms:
+        return None
+    if query.regex:
+        flags = 0 if query.case_sensitive else re.IGNORECASE
+        patterns = tuple(re.compile(term, flags) for term in query.terms)
+
+        def regex_matches(path_text: str) -> bool:
+            return any(pattern.search(path_text) is not None for pattern in patterns)
+
+        return regex_matches
+    needles = (
+        query.terms if query.case_sensitive else tuple(term.casefold() for term in query.terms)
     )
 
+    def literal_matches(path_text: str) -> bool:
+        haystack = path_text if query.case_sensitive else path_text.casefold()
+        return any(needle in haystack for needle in needles)
 
-def _source_path_matches_any_query_term(
-    query: agentgrep.SearchQuery,
-    source: agentgrep.SourceHandle,
-) -> bool:
-    """Return whether source path metadata may satisfy part of a haystack query."""
-    import agentgrep
-
-    source_text = str(pathlib.Path(source.path))
-    return any(
-        agentgrep.matches_text(
-            source_text,
-            dataclasses.replace(query, terms=(term,), any_term=True),
-        )
-        for term in query.terms
-    )
+    return literal_matches
 
 
 def _source_record_order(strategy: SourceStrategy) -> SourceRecordOrder:
