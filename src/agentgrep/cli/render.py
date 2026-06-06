@@ -20,10 +20,15 @@ import dataclasses
 import datetime
 import fnmatch
 import inspect
+import itertools
 import json
+import os
 import pathlib
 import re
+import shutil
 import sys
+import threading
+import time
 import typing as t
 
 import agentgrep
@@ -48,7 +53,7 @@ from agentgrep.cli.parser import (
 )
 
 if t.TYPE_CHECKING:
-    from agentgrep.db import DbRuntime
+    from agentgrep.db import DbRuntime, SyncResult
 
 __all__ = [
     "GrepSummary",
@@ -612,6 +617,446 @@ def _iter_search_events_for_cli(
         _exit_for_required_cache_miss(exc)
 
 
+@dataclasses.dataclass(frozen=True)
+class DbSyncProgressSnapshot:
+    """Immutable view of DB sync progress state for one render pass."""
+
+    phase: str
+    current: int | None
+    total: int | None
+    detail: str | None
+    sources_synced: int
+    records_indexed: int
+    records_removed: int
+    elapsed: float
+
+
+class ConsoleDbSyncProgress:
+    """Human progress reporter for DB sync operations."""
+
+    _SPINNER_FRAMES: t.ClassVar[str] = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+    def __init__(
+        self,
+        *,
+        enabled: bool,
+        stream: t.TextIO | None = None,
+        tty: bool | None = None,
+        color_mode: agentgrep.ColorMode = "auto",
+        refresh_interval: float = 0.1,
+        heartbeat_interval: float = 10.0,
+        answer_now_hint: bool = False,
+    ) -> None:
+        self._enabled = enabled
+        self._stream = stream if stream is not None else sys.stderr
+        self._tty = (
+            tty if tty is not None else bool(getattr(self._stream, "isatty", lambda: False)())
+        )
+        self._colors = agentgrep.AnsiColors.for_stream(color_mode, self._stream)
+        self._refresh_interval = refresh_interval
+        self._heartbeat_interval = heartbeat_interval
+        self._answer_now_hint = answer_now_hint
+        self._lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._started_at: float | None = None
+        self._last_heartbeat_at: float | None = None
+        self._last_line_len = 0
+        self._phase = "discovering"
+        self._detail: str | None = None
+        self._current: int | None = None
+        self._total: int | None = None
+        self._sources_synced = 0
+        self._records_indexed = 0
+        self._records_removed = 0
+        self._finished = False
+
+    def start_discovery(self) -> None:
+        """Begin progress reporting before source discovery."""
+        if not self._enabled:
+            return
+        started_now = self._ensure_started("discovering", detail="sources")
+        if started_now and not self._tty:
+            self._emit_line(self._start_line())
+
+    def start(self, total_sources: int) -> None:
+        """Begin source sync progress after discovery."""
+        if not self._enabled:
+            return
+        started_now = self._ensure_started(
+            "syncing",
+            current=0,
+            total=total_sources,
+            detail=f"{total_sources} sources",
+        )
+        if started_now:
+            if self._tty:
+                self._ensure_tty_thread()
+            else:
+                self._emit_line(self._start_line())
+
+    def source_started(
+        self,
+        index: int,
+        total: int,
+        source: SourceHandle,
+        result: SyncResult,
+    ) -> None:
+        """Report source transaction start."""
+        if not self._enabled:
+            return
+        self._update_result(result)
+        self.set_status(
+            "syncing",
+            current=index,
+            total=total,
+            detail=source.path.name,
+        )
+
+    def source_finished(
+        self,
+        index: int,
+        total: int,
+        source: SourceHandle,
+        records_indexed: int,
+        records_removed: int,
+        result: SyncResult,
+    ) -> None:
+        """Report source transaction completion."""
+        if not self._enabled:
+            return
+        self._update_result(result)
+        self.set_status(
+            "syncing",
+            current=index,
+            total=total,
+            detail=(f"{records_indexed} indexed, {records_removed} removed in {source.path.name}"),
+        )
+
+    def set_status(
+        self,
+        phase: str,
+        *,
+        current: int | None = None,
+        total: int | None = None,
+        detail: str | None = None,
+    ) -> None:
+        """Update the current progress status."""
+        if not self._enabled:
+            return
+        with self._lock:
+            self._phase = phase
+            self._current = current
+            self._total = total
+            self._detail = detail
+        self._emit_heartbeat_if_due()
+
+    def finish(self, result: SyncResult) -> None:
+        """Finish progress reporting after a complete sync."""
+        if not self._enabled:
+            return
+        self._update_result(result)
+        with self._lock:
+            self._phase = "complete"
+            self._finished = True
+        if self._tty:
+            self._stop_tty_thread()
+            self._clear_tty_line()
+            return
+        self._emit_line(self._finish_line(result))
+
+    def exiting_early(self, result: SyncResult) -> None:
+        """Finish progress reporting after cooperative early exit."""
+        if not self._enabled:
+            return
+        self._update_result(result)
+        with self._lock:
+            self._phase = "exiting early"
+            self._finished = True
+        line = self._exiting_early_line(result)
+        if self._tty:
+            self._stop_tty_thread()
+            self._write_tty_line(line)
+            return
+        self._emit_line(line)
+
+    def interrupt(self) -> None:
+        """Stop progress rendering while preserving the current status."""
+        if not self._enabled:
+            return
+        if self._tty:
+            self._stop_tty_thread()
+            self._write_tty_summary_line()
+            return
+        self._emit_line(self._summary())
+
+    def close(self) -> None:
+        """Stop any active progress renderer."""
+        if not self._enabled:
+            return
+        if self._tty:
+            self._stop_tty_thread()
+            if not self._finished:
+                self._clear_tty_line()
+
+    def _ensure_started(
+        self,
+        phase: str,
+        *,
+        current: int | None = None,
+        total: int | None = None,
+        detail: str | None = None,
+    ) -> bool:
+        now = time.monotonic()
+        with self._lock:
+            already_started = self._started_at is not None
+            if not already_started:
+                self._started_at = now
+                self._last_heartbeat_at = now
+                self._finished = False
+            self._phase = phase
+            self._current = current
+            self._total = total
+            self._detail = detail
+        if not already_started and self._tty:
+            self._ensure_tty_thread()
+        return not already_started
+
+    def _update_result(self, result: SyncResult) -> None:
+        with self._lock:
+            self._sources_synced = result.sources_synced
+            self._records_indexed = result.records_indexed
+            self._records_removed = result.records_removed
+
+    def _ensure_tty_thread(self) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._stop_event.clear()
+        self._thread = threading.Thread(
+            target=self._tty_loop,
+            daemon=True,
+            name="agentgrep-db-sync-progress",
+        )
+        self._thread.start()
+
+    def _stop_tty_thread(self) -> None:
+        self._stop_event.set()
+        thread = self._thread
+        self._thread = None
+        if thread is not None:
+            thread.join(timeout=1.0)
+
+    def _tty_loop(self) -> None:
+        frames = itertools.cycle(self._SPINNER_FRAMES)
+        while not self._stop_event.is_set():
+            self._render_tty(next(frames))
+            self._stop_event.wait(self._refresh_interval)
+
+    def _render_tty(self, frame: str) -> None:
+        frame_text = self._colors.info(frame)
+        summary_width = max(1, self._terminal_width() - agentgrep._visible_width(frame_text) - 1)
+        summary = self._summary(max_width=summary_width)
+        line = f"{frame_text} {summary}"
+        with self._lock:
+            try:
+                self._stream.write("\r\033[2K" + line)
+                self._stream.flush()
+                self._last_line_len = len(line)
+            except OSError, ValueError:
+                pass
+
+    def _clear_tty_line(self) -> None:
+        with self._lock:
+            if self._last_line_len == 0:
+                return
+            try:
+                self._stream.write("\r\033[2K")
+                self._stream.flush()
+            except OSError, ValueError:
+                pass
+            self._last_line_len = 0
+
+    def _write_tty_summary_line(self) -> None:
+        line = self._summary(max_width=self._terminal_width())
+        self._write_tty_line(line)
+
+    def _write_tty_line(self, line: str) -> None:
+        with self._lock:
+            try:
+                self._stream.write("\r\033[2K" + line + "\n")
+                self._stream.flush()
+            except OSError, ValueError:
+                pass
+            self._last_line_len = 0
+
+    def _emit_heartbeat_if_due(self) -> None:
+        if not self._enabled or self._tty:
+            return
+        with self._lock:
+            last = self._last_heartbeat_at
+        if last is None:
+            return
+        now = time.monotonic()
+        if now - last < self._heartbeat_interval:
+            return
+        elapsed = self._elapsed_seconds()
+        self._emit_line(self._heartbeat_line(elapsed))
+        with self._lock:
+            self._last_heartbeat_at = now
+
+    def _emit_line(self, line: str) -> None:
+        try:
+            self._stream.write(line + "\n")
+            self._stream.flush()
+        except OSError, ValueError:
+            pass
+
+    def _summary(self, *, max_width: int | None = None) -> str:
+        return format_db_sync_progress_line(
+            self._snapshot(),
+            colors=self._colors,
+            answer_now_hint=self._answer_now_hint,
+            max_width=max_width,
+        )
+
+    def _terminal_width(self) -> int:
+        try:
+            return max(1, os.get_terminal_size(self._stream.fileno()).columns)
+        except AttributeError, OSError, TypeError, ValueError:
+            return max(1, shutil.get_terminal_size(fallback=(80, 24)).columns)
+
+    def _snapshot(self) -> DbSyncProgressSnapshot:
+        elapsed = self._elapsed_seconds()
+        with self._lock:
+            return DbSyncProgressSnapshot(
+                phase=self._phase,
+                current=self._current,
+                total=self._total,
+                detail=self._detail,
+                sources_synced=self._sources_synced,
+                records_indexed=self._records_indexed,
+                records_removed=self._records_removed,
+                elapsed=elapsed,
+            )
+
+    def _start_line(self) -> str:
+        return f"{self._colors.heading('DB sync')} {self._colors.muted('discovering sources')}"
+
+    def _heartbeat_line(self, elapsed: float) -> str:
+        prefix = f"{self._colors.muted('...')} {self._colors.heading('still syncing')}"
+        elapsed_text = self._colors.muted(f"{elapsed:.0f}s elapsed")
+        return f"{prefix}: {self._summary()} ({elapsed_text})"
+
+    def _finish_line(self, result: SyncResult) -> str:
+        return (
+            f"{self._colors.success('Sync complete:')} "
+            f"{self._colors.warning(format_db_source_count(result.sources_synced))}, "
+            f"{self._colors.warning(format_db_indexed_count(result.records_indexed))}, "
+            f"{self._colors.warning(format_db_removed_count(result.records_removed))} "
+            f"({self._colors.muted(f'{self._elapsed_seconds():.1f}s elapsed')})"
+        )
+
+    def _exiting_early_line(self, result: SyncResult) -> str:
+        parts = [
+            f"{self._colors.success('Exiting early:')} "
+            f"{self._colors.warning(format_db_source_count(result.sources_synced))}, "
+            f"{self._colors.warning(format_db_indexed_count(result.records_indexed))}, "
+            f"{self._colors.warning(format_db_removed_count(result.records_removed))}",
+        ]
+        if self._answer_now_hint:
+            parts.append(self._colors.white("[Press enter, exit early]"))
+        return " | ".join(parts)
+
+    def _elapsed_seconds(self) -> float:
+        with self._lock:
+            started = self._started_at
+        if started is None:
+            return 0.0
+        return time.monotonic() - started
+
+
+def format_db_source_count(count: int) -> str:
+    """Return a human-readable DB source count."""
+    suffix = "source" if count == 1 else "sources"
+    return f"{count} {suffix}"
+
+
+def format_db_indexed_count(count: int) -> str:
+    """Return a human-readable indexed-record count."""
+    suffix = "record indexed" if count == 1 else "records indexed"
+    return f"{count} {suffix}"
+
+
+def format_db_removed_count(count: int) -> str:
+    """Return a human-readable removed-record count."""
+    suffix = "record removed" if count == 1 else "records removed"
+    return f"{count} {suffix}"
+
+
+def format_db_sync_progress_line(
+    snapshot: DbSyncProgressSnapshot,
+    *,
+    colors: agentgrep.SearchColors,
+    answer_now_hint: bool = False,
+    max_width: int | None = None,
+) -> str:
+    """Format the single-line DB sync progress summary."""
+    variants = (
+        (True, answer_now_hint),
+        (False, answer_now_hint),
+        (False, False),
+    )
+    for include_detail, include_hint in variants:
+        line = _format_db_sync_progress_line(
+            snapshot,
+            colors=colors,
+            answer_now_hint=include_hint,
+            include_detail=include_detail,
+        )
+        if max_width is None or agentgrep._visible_width(line) <= max_width:
+            return line
+    if max_width is None:
+        return line
+    return agentgrep._hard_truncate_ansi(line, max_width)
+
+
+def _format_db_sync_progress_line(
+    snapshot: DbSyncProgressSnapshot,
+    *,
+    colors: agentgrep.SearchColors,
+    answer_now_hint: bool,
+    include_detail: bool,
+) -> str:
+    """Build one DB sync progress-line variant."""
+    label_part = colors.heading("DB sync")
+    detail_part = colors.muted(snapshot.detail) if include_detail and snapshot.detail else None
+    if snapshot.current is not None and snapshot.total is not None:
+        count = colors.warning(f"{snapshot.current}/{snapshot.total}")
+        status_part = f"{colors.heading(snapshot.phase)} {count} {colors.muted('sources')}"
+    elif include_detail and snapshot.detail:
+        status_part = f"{colors.heading(snapshot.phase)} {colors.muted(snapshot.detail)}"
+        detail_part = None
+    else:
+        status_part = colors.heading(snapshot.phase)
+    parts = [
+        label_part,
+        status_part,
+    ]
+    if detail_part:
+        parts.append(detail_part)
+    parts.extend(
+        [
+            colors.warning(format_db_source_count(snapshot.sources_synced)),
+            colors.warning(format_db_indexed_count(snapshot.records_indexed)),
+            colors.warning(format_db_removed_count(snapshot.records_removed)),
+            colors.muted(f"{snapshot.elapsed:.1f}s"),
+        ],
+    )
+    if answer_now_hint:
+        parts.append(colors.white("[Press enter, exit early]"))
+    return " | ".join(parts)
+
+
 def _open_db_runtime(db_path: str | None) -> DbRuntime:
     """Open the DB runtime lazily."""
     from agentgrep.db import DbRuntime
@@ -635,16 +1080,55 @@ def run_db_command(args: DbArgs) -> int:
         agents=args.agents,
         limit=None,
     )
-    backends = agentgrep.select_backends()
-    sources = agentgrep.discover_sources_for_search(
-        pathlib.Path.home(),
-        query,
-        backends,
-        version_detail="none",
+    control = agentgrep.SearchControl()
+    human_output = args.output_mode == "text"
+    progress_enabled = args.progress_mode == "always" or (
+        args.progress_mode == "auto" and human_output
     )
-    if args.limit_sources is not None:
-        sources = sources[: args.limit_sources]
-    result = runtime.sync_sources(sources)
+    answer_now_enabled = (
+        progress_enabled
+        and human_output
+        and bool(getattr(sys.stdin, "isatty", lambda: False)())
+        and bool(getattr(sys.stderr, "isatty", lambda: False)())
+    )
+    progress = (
+        ConsoleDbSyncProgress(
+            enabled=True,
+            color_mode=args.color_mode,
+            answer_now_hint=answer_now_enabled,
+        )
+        if progress_enabled
+        else None
+    )
+    listener = agentgrep.AnswerNowInputListener(control) if answer_now_enabled else None
+    if listener is not None:
+        listener.start()
+    if progress is not None:
+        progress.start_discovery()
+    try:
+        backends = agentgrep.select_backends()
+        sources = agentgrep.discover_sources_for_search(
+            pathlib.Path.home(),
+            query,
+            backends,
+            version_detail="none",
+        )
+        if args.limit_sources is not None:
+            sources = sources[: args.limit_sources]
+        result = runtime.sync_sources(
+            sources,
+            control=control,
+            progress=progress,
+        )
+    except KeyboardInterrupt:
+        if progress is not None:
+            progress.interrupt()
+        raise
+    finally:
+        if listener is not None:
+            listener.stop()
+        if progress is not None:
+            progress.close()
     _print_json_or_text(result, output_mode=args.output_mode)
     return 0
 

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+import pathlib
 import typing as t
 
 import pytest
 
 import agentgrep
 import agentgrep.cli.render as render
-from agentgrep.db import SyncResult
+from agentgrep.db import DbSyncProgress, SyncResult
 
 
 class CacheFlagCase(t.NamedTuple):
@@ -38,6 +39,15 @@ class CommandGroupHelpCase(t.NamedTuple):
     expected_examples_heading: str
 
 
+class DbSyncProgressFlagCase(t.NamedTuple):
+    """Named case for DB sync progress and color flag parsing."""
+
+    test_id: str
+    argv: tuple[str, ...]
+    expected_progress_mode: agentgrep.ProgressMode
+    expected_color_mode: agentgrep.ColorMode
+
+
 CACHE_FLAG_CASES: tuple[CacheFlagCase, ...] = (
     CacheFlagCase("search-default-auto", ("search", "ruff"), "auto"),
     CacheFlagCase("search-no-cache-off", ("search", "--no-cache", "ruff"), "off"),
@@ -45,6 +55,34 @@ CACHE_FLAG_CASES: tuple[CacheFlagCase, ...] = (
     CacheFlagCase("grep-default-auto", ("grep", "ruff"), "auto"),
     CacheFlagCase("grep-no-cache-off", ("grep", "--no-cache", "ruff"), "off"),
     CacheFlagCase("grep-cache-off", ("grep", "--cache", "off", "ruff"), "off"),
+)
+
+
+DB_SYNC_PROGRESS_FLAG_CASES: tuple[DbSyncProgressFlagCase, ...] = (
+    DbSyncProgressFlagCase(
+        test_id="default-auto",
+        argv=("db", "sync"),
+        expected_progress_mode="auto",
+        expected_color_mode="auto",
+    ),
+    DbSyncProgressFlagCase(
+        test_id="explicit-never",
+        argv=("db", "sync", "--progress", "never"),
+        expected_progress_mode="never",
+        expected_color_mode="auto",
+    ),
+    DbSyncProgressFlagCase(
+        test_id="no-progress-alias",
+        argv=("db", "sync", "--no-progress"),
+        expected_progress_mode="never",
+        expected_color_mode="auto",
+    ),
+    DbSyncProgressFlagCase(
+        test_id="forced-color",
+        argv=("--color", "always", "db", "sync", "--progress", "always"),
+        expected_progress_mode="always",
+        expected_color_mode="always",
+    ),
 )
 
 
@@ -102,6 +140,20 @@ STRUCTURED_OUTPUT_CASES: tuple[StructuredOutputCase, ...] = (
 )
 
 
+def _source(path: pathlib.Path) -> agentgrep.SourceHandle:
+    """Build a synthetic source handle for CLI tests."""
+    return agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=path,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=path.parent,
+        mtime_ns=0,
+    )
+
+
 @pytest.mark.parametrize(
     "case",
     CACHE_FLAG_CASES,
@@ -113,6 +165,20 @@ def test_search_shaped_commands_parse_cache_mode(case: CacheFlagCase) -> None:
 
     assert isinstance(parsed, (agentgrep.SearchArgs, agentgrep.GrepArgs))
     assert parsed.cache_mode == case.expected_cache_mode
+
+
+@pytest.mark.parametrize(
+    "case",
+    DB_SYNC_PROGRESS_FLAG_CASES,
+    ids=[case.test_id for case in DB_SYNC_PROGRESS_FLAG_CASES],
+)
+def test_db_sync_parses_progress_and_color_modes(case: DbSyncProgressFlagCase) -> None:
+    """DB sync exposes the same status controls as grep/search."""
+    parsed = agentgrep.parse_args(case.argv)
+
+    assert isinstance(parsed, agentgrep.DbArgs)
+    assert parsed.progress_mode == case.expected_progress_mode
+    assert parsed.color_mode == case.expected_color_mode
 
 
 @pytest.mark.parametrize(
@@ -183,6 +249,133 @@ def test_db_status_command_parses_db_path() -> None:
     assert parsed.action == "status"
     assert parsed.db_path == "/tmp/agentgrep.sqlite"
     assert parsed.output_mode == "json"
+
+
+def test_db_sync_forced_progress_keeps_json_stdout_clean(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Forced DB sync progress writes status to stderr, never JSON stdout."""
+    source = _source(tmp_path / "session.jsonl")
+
+    class RuntimeStub:
+        """Runtime stub that exercises the sync progress protocol."""
+
+        def sync_sources(
+            self,
+            sources: t.Iterable[agentgrep.SourceHandle],
+            *,
+            control: agentgrep.SearchControl | None = None,
+            progress: DbSyncProgress | None = None,
+        ) -> SyncResult:
+            source_list = tuple(sources)
+            result = SyncResult(sources_synced=0, records_indexed=0, records_removed=0)
+            assert control is not None
+            if progress is not None:
+                progress.start(len(source_list))
+            for index, item in enumerate(source_list, start=1):
+                if progress is not None:
+                    progress.source_started(index, len(source_list), item, result)
+                result = SyncResult(
+                    sources_synced=index,
+                    records_indexed=index * 2,
+                    records_removed=0,
+                )
+                if progress is not None:
+                    progress.source_finished(index, len(source_list), item, 2, 0, result)
+            if progress is not None:
+                progress.finish(result)
+            return result
+
+    def discover_sources_for_search(
+        _home: pathlib.Path,
+        _query: agentgrep.SearchQuery,
+        _backends: agentgrep.BackendSelection,
+        *,
+        version_detail: agentgrep.DiscoveryVersionDetail,
+    ) -> list[agentgrep.SourceHandle]:
+        _ = version_detail
+        return [source]
+
+    monkeypatch.setattr(render, "_open_db_runtime", lambda _path: RuntimeStub())
+    monkeypatch.setattr(
+        agentgrep,
+        "select_backends",
+        lambda: agentgrep.BackendSelection(None, None, None),
+    )
+    monkeypatch.setattr(agentgrep, "discover_sources_for_search", discover_sources_for_search)
+    args = agentgrep.DbArgs(
+        action="sync",
+        db_path=None,
+        agents=("codex",),
+        scope="all",
+        output_mode="json",
+        color_mode="never",
+        progress_mode="always",
+    )
+
+    exit_code = render.run_db_command(args)
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert json.loads(captured.out) == {
+        "sources_synced": 1,
+        "records_indexed": 2,
+        "records_removed": 0,
+    }
+    assert "DB sync" in captured.err
+    assert "Sync complete:" in captured.err
+
+
+def test_db_sync_tty_progress_renders_exit_hint() -> None:
+    """TTY DB sync progress mirrors search hint and color semantics."""
+    buffer = _StringBuffer()
+    progress = render.ConsoleDbSyncProgress(
+        enabled=True,
+        stream=t.cast("t.TextIO", buffer),
+        tty=True,
+        color_mode="always",
+        refresh_interval=60.0,
+        answer_now_hint=True,
+    )
+
+    progress.start(1)
+    progress.source_started(
+        1,
+        1,
+        _source(pathlib.Path("session.jsonl")),
+        SyncResult(sources_synced=0, records_indexed=0, records_removed=0),
+    )
+    progress.exiting_early(SyncResult(sources_synced=0, records_indexed=0, records_removed=0))
+
+    output = buffer.getvalue()
+    assert "\x1b[" in output
+    assert "[Press enter, exit early]" in output
+    assert "Exiting early:" in output
+
+
+class _StringBuffer:
+    """Small text stream stub for tty progress tests."""
+
+    def __init__(self) -> None:
+        self._parts: list[str] = []
+
+    def write(self, text: str) -> int:
+        """Capture written text."""
+        self._parts.append(text)
+        return len(text)
+
+    def flush(self) -> None:
+        """Skip flushing for the in-memory buffer."""
+
+    def isatty(self) -> bool:
+        """Pretend to be an interactive terminal."""
+        return True
+
+    def getvalue(self) -> str:
+        """Return captured text."""
+        return "".join(self._parts)
 
 
 def test_collection_is_not_a_command(
