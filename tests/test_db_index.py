@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import pathlib
 import typing as t
 
@@ -284,7 +285,8 @@ def test_db_runtime_preserves_duplicate_source_records(
     assert result.records_indexed == case.expected_records
     assert runtime.status().records == case.expected_records
     assert len({row.record_id for row in rows}) == case.expected_records
-    assert [record.text for record in runtime.search_records(_query("ruff"))] == list(case.texts)
+    found = runtime.search_records(_query("ruff", dedupe=False))
+    assert [record.text for record in found] == list(case.texts)
 
 
 def test_db_runtime_sync_can_exit_early_between_sources(
@@ -639,3 +641,78 @@ def test_cached_search_applies_per_session_dedup(
 
     assert handled is True
     assert len(records) == case.expected_count
+
+
+class CacheLimitDedupeCase(t.NamedTuple):
+    """Named case for limit interaction with per-session dedup."""
+
+    test_id: str
+    dedupe: bool
+    limit: int
+    expected_texts: tuple[str, ...]
+
+
+CACHE_LIMIT_DEDUPE_CASES: tuple[CacheLimitDedupeCase, ...] = (
+    CacheLimitDedupeCase(
+        test_id="limit-counts-unique-records",
+        dedupe=True,
+        limit=2,
+        expected_texts=(
+            "Run ruff check before committing.",
+            "Run pytest before committing.",
+        ),
+    ),
+    CacheLimitDedupeCase(
+        test_id="no-dedupe-limit-keeps-duplicates",
+        dedupe=False,
+        limit=2,
+        expected_texts=(
+            "Run ruff check before committing.",
+            "Run ruff check before committing.",
+        ),
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    CACHE_LIMIT_DEDUPE_CASES,
+    ids=[case.test_id for case in CACHE_LIMIT_DEDUPE_CASES],
+)
+def test_cached_search_limit_counts_unique_records(
+    case: CacheLimitDedupeCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """A result cap counts unique records, like the live driver."""
+    first_path = tmp_path / "one.jsonl"
+    second_path = tmp_path / "two.jsonl"
+    first_path.write_text("ruff", encoding="utf-8")
+    second_path.write_text("ruff", encoding="utf-8")
+    first = _source(first_path)
+    second = _source(second_path)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    _ = runtime.sync_records(
+        (
+            (
+                first,
+                (
+                    _record(first, "Run ruff check before committing."),
+                    _record(
+                        first,
+                        "Run pytest before committing.",
+                        timestamp="2026-06-04T12:00:00Z",
+                        session_id="session-b",
+                    ),
+                ),
+            ),
+            (second, (_record(second, "Run ruff check before committing."),)),
+        ),
+    )
+    query = dataclasses.replace(
+        _query("committing", dedupe=case.dedupe),
+        limit=case.limit,
+    )
+
+    found = [record.text for record in runtime.search_records(query)]
+
+    assert found == list(case.expected_texts)
