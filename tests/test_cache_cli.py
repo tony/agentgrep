@@ -13,6 +13,9 @@ import agentgrep
 import agentgrep.cli.render as render
 from agentgrep.db import DbStatus, DbSyncProgress, SyncResult
 
+if t.TYPE_CHECKING:
+    import collections.abc as cabc
+
 
 class CacheFlagCase(t.NamedTuple):
     """Named case for search-shaped cache flag parsing."""
@@ -578,6 +581,9 @@ def test_grep_cache_require_unsupported_query_exits_without_traceback(
             msg = "query requires live scanner"
             raise DbQueryUnsupported(msg)
 
+        def close(self) -> None:
+            """Accept the search path's runtime close."""
+
     runtime = agentgrep.SearchRuntime(
         db=t.cast("t.Any", UnsupportedDb()),
         cache_mode="require",
@@ -982,3 +988,137 @@ def test_cache_auto_with_missing_db_falls_back_live(
 
     assert render._db_runtime_for_cli("auto") is None
     assert not db_path.exists()
+
+
+def test_cache_require_with_foreign_file_exits_cleanly(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--cache require on a non-database file is a clean error.
+
+    Read-only SQLite connects are lazy, so without an open-time probe
+    the corruption would surface as a traceback inside the search.
+    """
+    db_path = tmp_path / "not-a-db.sqlite"
+    db_path.write_text("plain text", encoding="utf-8")
+    monkeypatch.setenv("AGENTGREP_DB", str(db_path))
+
+    with pytest.raises(SystemExit) as exc_info:
+        _ = render._db_runtime_for_cli("require")
+
+    captured = capsys.readouterr()
+    assert exc_info.value.code == 2
+    assert "not an agentgrep database" in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_cache_auto_with_foreign_file_falls_back_live(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Auto mode degrades to a live scan when the cache file is foreign."""
+    db_path = tmp_path / "not-a-db.sqlite"
+    db_path.write_text("plain text", encoding="utf-8")
+    monkeypatch.setenv("AGENTGREP_DB", str(db_path))
+
+    assert render._db_runtime_for_cli("auto") is None
+
+
+class ClosableDbStub:
+    """DB stub recording whether the search path closed it."""
+
+    def __init__(self) -> None:
+        """Start in the not-closed state."""
+        self.closed = False
+
+    def close(self) -> None:
+        """Record that the search path closed this runtime."""
+        self.closed = True
+
+
+class SearchPathCloseCase(t.NamedTuple):
+    """Named case for search-path runtime close behavior."""
+
+    test_id: str
+    path: t.Literal["eager", "iter-exhausted", "iter-early-break"]
+
+
+SEARCH_PATH_CLOSE_CASES: tuple[SearchPathCloseCase, ...] = (
+    SearchPathCloseCase(test_id="eager-path-closes", path="eager"),
+    SearchPathCloseCase(test_id="iter-path-closes-on-exhaustion", path="iter-exhausted"),
+    SearchPathCloseCase(test_id="iter-path-closes-on-early-break", path="iter-early-break"),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    SEARCH_PATH_CLOSE_CASES,
+    ids=[case.test_id for case in SEARCH_PATH_CLOSE_CASES],
+)
+def test_search_paths_close_their_db_runtime(
+    case: SearchPathCloseCase,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both CLI search paths close the cache runtime they open."""
+    db_stub = ClosableDbStub()
+    runtime = agentgrep.SearchRuntime(db=t.cast("t.Any", db_stub), cache_mode="auto")
+    monkeypatch.setattr(render, "_db_runtime_for_cli", lambda _mode: runtime)
+
+    def fake_run_search_query(
+        _home: pathlib.Path,
+        _query: agentgrep.SearchQuery,
+        *,
+        progress: object | None = None,
+        control: object | None = None,
+        runtime: object | None = None,
+    ) -> list[agentgrep.SearchRecord]:
+        del progress, control, runtime
+        return []
+
+    def fake_iter_search_events(
+        _home: pathlib.Path,
+        _query: agentgrep.SearchQuery,
+        *,
+        control: object | None = None,
+        runtime: object | None = None,
+    ) -> cabc.Iterator[object]:
+        del control, runtime
+        yield "event-a"
+        yield "event-b"
+
+    monkeypatch.setattr(agentgrep, "run_search_query", fake_run_search_query)
+    monkeypatch.setattr(agentgrep, "iter_search_events", fake_iter_search_events)
+    query = agentgrep.SearchQuery(
+        terms=("ruff",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+
+    if case.path == "eager":
+        _ = render._run_search_query_for_cli(
+            tmp_path,
+            query,
+            progress=t.cast("agentgrep.SearchProgress", None),
+            control=agentgrep.SearchControl(),
+            cache_mode="auto",
+        )
+    else:
+        events = render._iter_search_events_for_cli(
+            tmp_path,
+            query,
+            control=agentgrep.SearchControl(),
+            cache_mode="auto",
+        )
+        if case.path == "iter-exhausted":
+            _ = list(events)
+        else:
+            _ = next(events)
+            t.cast("cabc.Generator[object]", events).close()
+
+    assert db_stub.closed is True
