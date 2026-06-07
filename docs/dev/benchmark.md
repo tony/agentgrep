@@ -294,6 +294,7 @@ metadata. Profile runs include phase spans such as `search.discover`,
 skipped, cancellation-requested, batch, queued-batch, queue-wait, and emitted
 counts when the frontier driver is selected, and runs with an active
 source-scan cache report `search.collect.source_scan_cache` lookup samples.
+
 Benchmark the cold path with the cache bypassed:
 
 ```console
@@ -319,6 +320,7 @@ row records its `cache_mode`.
 DB-cache consultations report one `search.cache.decision` sample per query
 with the cache mode, whether the cache served the query, the served record
 count, and the fallback reason when it did not.
+
 Those spans report agent, store,
 adapter, path kind, source kind, counts, and match decisions without including
 prompt text, raw argv, or local absolute paths.
