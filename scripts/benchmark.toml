@@ -133,3 +133,28 @@ default_query = ""
 description = "Cold-start CLI import + arg parse only"
 command = "{venv}/bin/agentgrep --help"
 default_query = ""
+
+[bench.grep-all-prompts-cache-cold-max-count-50]
+description = "All-agent prompt grep with the DB cache off (cold), max-count 50"
+command = "env AGENTGREP_CACHE=off {venv}/bin/agentgrep grep --no-progress --agent all --scope prompts --max-count 50 --json {query}"
+default_query = "tmux"
+skip_if_missing = "grep"
+
+[bench.grep-all-prompts-cache-warm-max-count-50]
+description = "All-agent prompt grep served from a pre-synced DB cache (warm, require), max-count 50"
+command = "env AGENTGREP_DB={repo}/.tmp/bench-cache.sqlite AGENTGREP_CACHE=require {venv}/bin/agentgrep grep --no-progress --agent all --scope prompts --max-count 50 --json {query}"
+setup_command = "env AGENTGREP_DB={repo}/.tmp/bench-cache.sqlite {venv}/bin/agentgrep db sync --no-progress"
+default_query = "tmux"
+skip_if_missing = "db"
+
+[bench.search-all-prompts-cache-cold-limit-50]
+description = "All-agent prompt search with the DB cache off (cold), limit 50"
+command = "env AGENTGREP_CACHE=off {venv}/bin/agentgrep search --no-progress --agent all --scope prompts --limit 50 --json {query}"
+default_query = "tmux"
+
+[bench.search-all-prompts-cache-warm-limit-50]
+description = "All-agent prompt search served from a pre-synced DB cache (warm, require), limit 50"
+command = "env AGENTGREP_DB={repo}/.tmp/bench-cache.sqlite AGENTGREP_CACHE=require {venv}/bin/agentgrep search --no-progress --agent all --scope prompts --limit 50 --json {query}"
+setup_command = "env AGENTGREP_DB={repo}/.tmp/bench-cache.sqlite {venv}/bin/agentgrep db sync --no-progress"
+default_query = "tmux"
+skip_if_missing = "db"

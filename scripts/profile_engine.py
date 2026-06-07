@@ -14,6 +14,7 @@ import argparse
 import dataclasses
 import io
 import json
+import os
 import pathlib
 import sys
 import typing as t
@@ -294,6 +295,7 @@ def _run_spec(
     payload["profile_component"] = spec.component
     payload["schema_version"] = SCHEMA_VERSION
     payload["artifact_kind"] = PROFILE_RUN_ARTIFACT_KIND
+    payload["cache_mode"] = os.environ.get("AGENTGREP_CACHE", "auto")
     payload["agent_count"] = len(agents)
     payload["term_count"] = len(terms)
     payload["limit"] = limit

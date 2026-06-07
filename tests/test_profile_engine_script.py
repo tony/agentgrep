@@ -680,3 +680,19 @@ def test_profile_rejects_conflicting_limit_aliases() -> None:
 
     with pytest.raises(ValueError, match="--limit and --max-count disagree"):
         _ = profile_engine._resolve_result_limit(args)
+
+
+def test_profile_payload_records_cache_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Profile artifacts disclose the active cache mode."""
+    parser = profile_engine._build_parser()
+    args = parser.parse_args(["grep-prompts", "tmux", "--agent", "codex", "--max-count", "1"])
+
+    monkeypatch.setenv("AGENTGREP_CACHE", "off")
+    cold = profile_engine._run(args)
+    monkeypatch.delenv("AGENTGREP_CACHE", raising=False)
+    default = profile_engine._run(args)
+
+    assert cold["cache_mode"] == "off"
+    assert default["cache_mode"] == "auto"
