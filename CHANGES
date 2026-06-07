@@ -36,11 +36,21 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a19 (Yet to be released)
+## agentgrep 0.1.0a20 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a19 (2026-06-07)
+
+agentgrep 0.1.0a19 reworks the TUI's live search progress into a calm,
+single-line statusline — a star spinner, an elapsed clock, a progress
+bar over the sources scanned, and the running match count — in place of
+the per-source scanning text that used to redraw on every file. When a
+search ends the bar becomes the outcome, full and green when complete
+or frozen in gray where a cancelled search stopped, and the verbose
+per-source counts move one keystroke away behind `ctrl+\`.
 
 ### What's new
 
