@@ -1825,3 +1825,23 @@ def test_keyset_probe_matches_unlimited_reference(
         assert pages > 1
     else:
         assert pages == 1
+
+
+def test_connections_memory_map_the_cache(tmp_path: pathlib.Path) -> None:
+    """Both open paths memory-map the database file.
+
+    Measured lever: mmap shares the OS page cache across the
+    per-consult connections the MCP server opens, unlike a
+    per-connection cache_size that re-warms on every consult.
+    """
+    db_path = tmp_path / "agentgrep.sqlite"
+    runtime = DbRuntime.open(db_path)
+    rw_mmap = runtime.store.connection.execute("PRAGMA mmap_size").fetchone()[0]
+    runtime.close()
+
+    readonly = DbRuntime.open_readonly(db_path)
+    ro_mmap = readonly.store.connection.execute("PRAGMA mmap_size").fetchone()[0]
+    readonly.close()
+
+    assert rw_mmap > 0
+    assert ro_mmap > 0
