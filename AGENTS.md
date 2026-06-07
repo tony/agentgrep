@@ -268,7 +268,9 @@ whether the cache served the query, the served record count, and the
 fallback reason when it did not. `db.sql.statement` reports one
 aggregate sample per executed SQL statement shape — statement name,
 execution count (a high `agentgrep_sql_count` is the n+1 signal), rows
-touched, and summed duration; statement text is placeholder-only and
+touched, and summed duration; cached-search phases appear as
+`records.probe_fts` / `records.probe_scan` (probe pages; the count is
+the page count) and `records.hydrate`; statement text is placeholder-only and
 bound parameters are never captured. Set `AGENTGREP_SQL_EXPLAIN` to
 attach the SQLite query plan (`agentgrep_sql_plan`, table/index names
 only) to each statement shape once per connection.

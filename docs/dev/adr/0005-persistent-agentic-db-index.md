@@ -98,6 +98,35 @@ index is missing, stale, incomplete, or unable to prove a query predicate, the
 planner falls back to raw source scanning through the execution system from
 ADR 0004.
 
+### Read-model layout and the keyset probe
+
+A 65-run strategy study against a real 439k-record corpus
+(median-of-7, end-to-end, correctness-checked against the eager
+reference) fixed the storage layout and the query strategy:
+
+- Records split into a narrow `records_search` probe table (identity,
+  sort, session, and hash columns), a `record_details` table holding
+  text/title/role/model/metadata behind a cascading foreign key, and a
+  content-full trigram FTS5 table that owns the casefolded haystack.
+  The narrow probe table roughly doubles probe speed over the same
+  query on a wide row (page density) and stores the haystack once.
+- Limited searches run a keyset probe: lean columns ordered by the
+  live sort tuple plus `rowid DESC` (the unique total order) in
+  windows of `max(4*limit, 200)`, hydrating survivors per page and
+  sealing only when `limit` records pass scope, dedup, and the
+  `matches_record` oracle; under-filled windows continue from a
+  row-value cursor. Measured: hot-term warm consults dropped 6-8x and
+  beat the live scanner at every term frequency.
+- Measured rejects, recorded so they stay rejected: `instr()`
+  exactness pushdown (trigram `MATCH` counts equal `instr` counts on
+  the haystack surface — phrase queries over trigrams are exact — so
+  the pushdown only drags the wide column into the probe);
+  `GROUP BY` + `MAX(rowid)` single-trip dedup (insert order is not
+  newest-first; returned wrong top-50s); window-function dedup
+  (materializes full partitions); and a stored sort column with a
+  DESC index (FTS emits unordered rowids, so the sort over the
+  matched subset happens regardless and the index never engages).
+
 ## Interfaces
 
 Names below describe intended internal contracts. They are not public APIs
