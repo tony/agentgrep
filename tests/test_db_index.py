@@ -1331,12 +1331,12 @@ SQL_TELEMETRY_SEARCH_CASES: tuple[SqlTelemetrySearchCase, ...] = (
     SqlTelemetrySearchCase(
         test_id="fts-path-statement",
         term="alpaca",
-        expected_statement="records.search_fts",
+        expected_statement="records.probe_fts",
     ),
     SqlTelemetrySearchCase(
         test_id="scan-path-statement",
         term="zq",
-        expected_statement="records.search_scan",
+        expected_statement="records.probe_scan",
     ),
 )
 
@@ -1495,7 +1495,7 @@ SQL_PLAN_CAPTURE_CASES: tuple[SqlPlanCaptureCase, ...] = (
         test_id="fts-plan-captured",
         explain_env="1",
         term="alpaca",
-        expected_statement="records.search_fts",
+        expected_statement="records.probe_fts",
         expects_plan=True,
         plan_mentions="VIRTUAL TABLE",
     ),
@@ -1503,7 +1503,7 @@ SQL_PLAN_CAPTURE_CASES: tuple[SqlPlanCaptureCase, ...] = (
         test_id="scan-plan-captured",
         explain_env="1",
         term="zq",
-        expected_statement="records.search_scan",
+        expected_statement="records.probe_scan",
         expects_plan=True,
         plan_mentions="SCAN",
     ),
@@ -1511,7 +1511,7 @@ SQL_PLAN_CAPTURE_CASES: tuple[SqlPlanCaptureCase, ...] = (
         test_id="off-by-default",
         explain_env=None,
         term="alpaca",
-        expected_statement="records.search_fts",
+        expected_statement="records.probe_fts",
         expects_plan=False,
         plan_mentions=None,
     ),
@@ -1623,3 +1623,205 @@ def test_split_read_model_round_trips_every_field(tmp_path: pathlib.Path) -> Non
         record.conversation_id,
     )
     assert got.metadata == {"k": "v"}
+
+
+def _adversarial_corpus(
+    source: agentgrep.SourceHandle,
+) -> tuple[agentgrep.SearchRecord, ...]:
+    """Build a corpus exercising probe edges.
+
+    Shape: 24 NULL-timestamp records on one shared path (equal sort
+    tuples, rowid tiebreak) in dedup groups of 3; 24 timestamped records
+    with duplicate texts straddling group boundaries; 12 newest records
+    where the term appears ONLY in the title (haystack hit, text-surface
+    oracle reject); 6 case-variant records.
+    """
+    null_ts = [
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent=source.agent,
+            store=source.store,
+            adapter_id=source.adapter_id,
+            path=source.path,
+            text=f"alpaca null-ts group-{index // 3}",
+            timestamp=None,
+            session_id="session-null",
+        )
+        for index in range(24)
+    ]
+    timed = [
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent=source.agent,
+            store=source.store,
+            adapter_id=source.adapter_id,
+            path=source.path,
+            text=f"alpaca timed group-{index // 4}",
+            timestamp=f"2026-06-0{1 + index % 5}T0{index % 10}:00:00Z",
+            session_id="session-timed",
+        )
+        for index in range(24)
+    ]
+    title_only = [
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent=source.agent,
+            store=source.store,
+            adapter_id=source.adapter_id,
+            path=source.path,
+            text=f"plain body {index}",
+            title=f"alpaca only in title {index}",
+            timestamp=f"2026-06-07T1{index % 10}:00:00Z",
+            session_id=f"session-title-{index}",
+        )
+        for index in range(12)
+    ]
+    case_variants = [
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent=source.agent,
+            store=source.store,
+            adapter_id=source.adapter_id,
+            path=source.path,
+            text=f"ALPACA upper case {index}" if index % 2 else f"alpaca lower {index}",
+            timestamp=f"2026-06-06T0{index}:00:00Z",
+            session_id=f"session-case-{index}",
+        )
+        for index in range(6)
+    ]
+    return (*null_ts, *timed, *title_only, *case_variants)
+
+
+class ProbeParityCase(t.NamedTuple):
+    """Named case for keyset-probe parity against the unlimited reference."""
+
+    test_id: str
+    term: str
+    limit: int
+    window_floor: int
+    dedupe: bool = True
+    case_sensitive: bool = False
+    match_surface: agentgrep.SearchMatchSurface = "haystack"
+    expect_multiple_pages: bool = False
+
+
+PROBE_PARITY_CASES: tuple[ProbeParityCase, ...] = (
+    ProbeParityCase(
+        test_id="nulls-and-ties-paginate",
+        term="null-ts",
+        limit=5,
+        window_floor=4,
+        expect_multiple_pages=True,
+    ),
+    ProbeParityCase(
+        test_id="dedup-groups-straddle-pages",
+        term="timed",
+        limit=5,
+        window_floor=4,
+        expect_multiple_pages=True,
+    ),
+    ProbeParityCase(
+        test_id="dedupe-false-counts-duplicates",
+        term="timed",
+        limit=10,
+        window_floor=4,
+        dedupe=False,
+        expect_multiple_pages=True,
+    ),
+    ProbeParityCase(
+        test_id="case-sensitive-wades-past-rejections",
+        term="ALPACA",
+        limit=2,
+        window_floor=4,
+        case_sensitive=True,
+        expect_multiple_pages=True,
+    ),
+    ProbeParityCase(
+        test_id="text-surface-oracle-refills",
+        term="alpaca",
+        limit=6,
+        window_floor=4,
+        match_surface="text",
+        expect_multiple_pages=True,
+    ),
+    ProbeParityCase(
+        test_id="default-window-seals-one-page",
+        term="alpaca",
+        limit=5,
+        window_floor=200,
+    ),
+    ProbeParityCase(
+        test_id="limit-beyond-corpus-exhausts",
+        term="alpaca",
+        limit=500,
+        window_floor=8,
+        expect_multiple_pages=True,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    PROBE_PARITY_CASES,
+    ids=[case.test_id for case in PROBE_PARITY_CASES],
+)
+def test_keyset_probe_matches_unlimited_reference(
+    case: ProbeParityCase,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Probe results equal the unlimited reference sliced to the limit.
+
+    The reference path (limit=None) is itself pinned by the existing
+    substring/scope/dedup parity suites; the probe must reproduce its
+    prefix under pagination, dedup-group splits, NULL-timestamp tie
+    runs, oracle rejections, and exhaustion.
+    """
+    import agentgrep.db as agentgrep_db
+    from agentgrep._engine.profiling import EngineProfiler, use_engine_profiler
+
+    source_path = tmp_path / "session.jsonl"
+    source_path.write_text("ruff", encoding="utf-8")
+    source = _source(source_path)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    _ = runtime.sync_records(((source, _adversarial_corpus(source)),))
+
+    def build_query(limit: int | None) -> agentgrep.SearchQuery:
+        return agentgrep.SearchQuery(
+            terms=(case.term,),
+            scope="prompts",
+            any_term=False,
+            regex=False,
+            case_sensitive=case.case_sensitive,
+            agents=("codex",),
+            limit=limit,
+            dedupe=case.dedupe,
+            match_surface=case.match_surface,
+        )
+
+    reference = runtime.search_records(build_query(None))
+    if case.window_floor < agentgrep_db._PROBE_WINDOW_FLOOR:
+        monkeypatch.setattr(
+            agentgrep_db.DbStore,
+            "_initial_probe_window",
+            staticmethod(lambda limit: case.window_floor),
+        )
+    profiler = EngineProfiler()
+    with use_engine_profiler(profiler):
+        probed = runtime.search_records(build_query(case.limit))
+    runtime.close()
+
+    expected = reference[: case.limit]
+    assert [record.text for record in probed] == [record.text for record in expected]
+    probe_samples = [
+        sample
+        for sample in profiler.snapshot().samples
+        if sample.name == "db.sql.statement"
+        and str(sample.attributes["agentgrep_sql_statement"]).startswith("records.probe")
+    ]
+    assert len(probe_samples) == 1
+    pages = int(t.cast("int", probe_samples[0].attributes["agentgrep_sql_count"]))
+    if case.expect_multiple_pages:
+        assert pages > 1
+    else:
+        assert pages == 1
