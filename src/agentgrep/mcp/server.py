@@ -21,6 +21,31 @@ from agentgrep.mcp.tools import register_tools
 DEFAULT_RESPONSE_LIMIT_BYTES = 512 * 1024
 
 
+def _build_search_runtime() -> SearchRuntime:
+    """Build the server's search runtime, honoring AGENTGREP_CACHE.
+
+    MCP servers are configured through environment blocks, so the env
+    var is the only cache lever that reaches a running server. The
+    cache attaches read-only: the server never migrates or writes the
+    cache file.
+    """
+    import os
+
+    from agentgrep.cli.parser import resolve_cache_mode
+    from agentgrep.db import DbRuntime, default_db_path
+
+    cache_mode = resolve_cache_mode(None, os.environ.get("AGENTGREP_CACHE"))
+    runtime = SearchRuntime.with_source_scan_cache()
+    runtime.cache_mode = cache_mode
+    if cache_mode == "off":
+        return runtime
+    db_path = default_db_path()
+    if not db_path.exists():
+        return runtime
+    runtime.db = DbRuntime.open_readonly(db_path)
+    return runtime
+
+
 def build_mcp_server() -> FastMCP:
     """Build and return the FastMCP server instance."""
     mcp = FastMCP(
@@ -46,7 +71,7 @@ def build_mcp_server() -> FastMCP:
         ],
         on_duplicate="error",
     )
-    runtime = SearchRuntime.with_source_scan_cache()
+    runtime = _build_search_runtime()
     register_tools(mcp, runtime=runtime)
     register_resources(mcp)
     register_prompts(mcp)

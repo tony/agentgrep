@@ -938,3 +938,35 @@ def test_db_status_tool_reports_zeros_for_foreign_file(
     assert payload.sources == 0
     assert payload.records == 0
     assert payload.db_schema_version == 0
+
+
+def test_mcp_runtime_honors_cache_env(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The server runtime takes its cache mode from AGENTGREP_CACHE."""
+    import sqlite3
+
+    import pytest
+
+    from agentgrep import db as agentgrep_db
+    from agentgrep.mcp import server as mcp_server
+
+    db_path = tmp_path / "agentgrep.sqlite"
+    agentgrep_db.DbRuntime.open(db_path).close()
+    monkeypatch.setenv("AGENTGREP_DB", str(db_path))
+
+    monkeypatch.setenv("AGENTGREP_CACHE", "off")
+    off_runtime = mcp_server._build_search_runtime()
+    assert off_runtime.cache_mode == "off"
+    assert off_runtime.db is None
+
+    monkeypatch.setenv("AGENTGREP_CACHE", "require")
+    require_runtime = mcp_server._build_search_runtime()
+    assert require_runtime.cache_mode == "require"
+    assert require_runtime.db is not None
+    with pytest.raises(sqlite3.OperationalError):
+        _ = require_runtime.db.store.connection.execute(
+            "INSERT INTO meta(key, value) VALUES('probe', '1')",
+        )
+    require_runtime.db.close()
