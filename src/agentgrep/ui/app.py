@@ -788,9 +788,14 @@ def build_streaming_ui_app(
                 super().action_cursor_up()
 
         def action_focus_detail(self) -> None:
-            """Move focus rightward to the detail-scroll pane (vim-style ``l``)."""
-            detail = self.app.query_one("#detail-scroll")
-            t.cast("t.Any", detail).focus()
+            """Focus the detail pane (vim-style ``l``), opening it if stacked.
+
+            Routes through the app's ``_focus_detail`` so a collapsed
+            stacked pane is revealed before focus lands — focusing it
+            directly would move focus into a ``display: none`` pane that
+            never appears.
+            """
+            t.cast("t.Any", self.app)._focus_detail()
 
         def action_cursor_top(self) -> None:
             """Jump the highlight to the first row (vim-style ``g``)."""
@@ -971,11 +976,13 @@ def build_streaming_ui_app(
             if key == "right" and not value:
                 # Empty filter → release focus rightward to the detail pane.
                 # When the filter has text, fall through so the cursor can
-                # walk through it character-by-character.
+                # walk through it character-by-character. Route through the
+                # app's ``_focus_detail`` so a collapsed stacked pane is
+                # revealed before focus lands.
                 if callable(stop):
                     stop()
                 with contextlib.suppress(Exception):
-                    self.app.query_one("#detail-scroll").focus()
+                    t.cast("t.Any", self.app)._focus_detail()
                 return
             await super()._on_key(event)
 
@@ -1705,10 +1712,13 @@ def build_streaming_ui_app(
             self._stacked = stacked
             body = t.cast("t.Any", self._body)
             body.set_class(stacked, "-stacked")
-            # Detail is collapsed only when stacked AND the user hasn't
-            # opened it yet (or there's nothing to show). Wide always
-            # shows it; the auto row-0 highlight never counts as "opened".
-            collapsed = stacked and not (self._detail_opened and bool(self.filtered_records))
+            # ``_detail_opened`` is the single source of truth for "the user
+            # wants the detail visible": stacked collapses it until the user
+            # selects a row or focuses the pane (the auto row-0 highlight
+            # never counts). Wide always shows it. Coupling this to
+            # ``filtered_records`` left an explicit focus on an empty result
+            # set stranded in a hidden pane.
+            collapsed = stacked and not self._detail_opened
             t.cast("t.Any", self._detail_column).set_class(collapsed, "-collapsed")
 
         def _tick_elapsed(self) -> None:

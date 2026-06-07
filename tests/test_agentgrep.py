@@ -2635,21 +2635,72 @@ async def test_up_on_filter_with_cursor_at_start_releases_focus_to_search(
         assert app.focused.id == "search"
 
 
-async def test_right_on_empty_filter_releases_focus_to_detail(
+class FocusDetailRevealCase(t.NamedTuple):
+    """One width scenario for ``right``/``l`` focusing the detail pane."""
+
+    test_id: str
+    size: tuple[int, int]
+    expect_revealed: bool
+
+
+FOCUS_DETAIL_REVEAL_CASES: tuple[FocusDetailRevealCase, ...] = (
+    FocusDetailRevealCase(test_id="wide-already-visible", size=(120, 24), expect_revealed=False),
+    FocusDetailRevealCase(test_id="narrow-opens-on-focus", size=(80, 24), expect_revealed=True),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    FOCUS_DETAIL_REVEAL_CASES,
+    ids=[case.test_id for case in FOCUS_DETAIL_REVEAL_CASES],
+)
+async def test_right_on_empty_filter_focuses_and_opens_detail(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
+    case: FocusDetailRevealCase,
 ) -> None:
-    """``right`` on an empty filter hands focus across to the detail pane."""
+    """``right`` on an empty filter focuses the detail — opening it when stacked.
+
+    On a narrow terminal the detail starts collapsed (``display: none``);
+    focusing it must reveal it first, not move focus into a hidden pane.
+    """
     app = _build_empty_ui_app(tmp_path, monkeypatch)
-    async with app.run_test() as pilot:
+    async with app.run_test(size=case.size) as pilot:
         await pilot.pause()
         app._filter_input.focus()
         await pilot.pause()
         assert app._filter_input.value == ""
         await pilot.press("right")
         await pilot.pause()
-        assert app.focused is not None
-        assert app.focused.id == "detail-scroll"
+        assert app.focused is not None and app.focused.id == "detail-scroll"
+        assert not app._detail_column.has_class("-collapsed")
+        # On narrow the pane was revealed by the focus; wide was never closed.
+        assert app._detail_opened is case.expect_revealed
+
+
+async def test_l_from_results_opens_stacked_detail(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pressing ``l`` in the results list opens + focuses the stacked detail."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 5)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.all_records.extend(records)
+        app.filtered_records = list(records)
+        app._results.set_records(records)
+        app._apply_responsive_layout()
+        await pilot.pause()
+        assert app._detail_column.has_class("-collapsed")
+        app._results.focus()
+        await pilot.pause()
+        await pilot.press("l")
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "detail-scroll"
+        assert not app._detail_column.has_class("-collapsed")
+        assert app._detail_opened is True
 
 
 async def test_right_on_non_empty_filter_moves_cursor(
