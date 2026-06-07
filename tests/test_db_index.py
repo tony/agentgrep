@@ -9,7 +9,7 @@ import typing as t
 import pytest
 
 import agentgrep
-from agentgrep.db import DbRuntime, DbStatus, SyncResult
+from agentgrep.db import DbRuntime, DbStatus, DbSyncProgress, SyncCoverage, SyncResult
 
 
 class CachedSearchCase(t.NamedTuple):
@@ -831,6 +831,7 @@ class CacheDecisionSpanCase(t.NamedTuple):
     expected_spans: int
     expected_handled: bool | None
     expected_reason: str | None
+    with_coverage: bool = True
 
 
 CACHE_DECISION_SPAN_CASES: tuple[CacheDecisionSpanCase, ...] = (
@@ -862,6 +863,16 @@ CACHE_DECISION_SPAN_CASES: tuple[CacheDecisionSpanCase, ...] = (
         expected_reason="unsupported",
     ),
     CacheDecisionSpanCase(
+        test_id="auto-partial-coverage-falls-back",
+        cache_mode="auto",
+        term="ruff",
+        regex=False,
+        expected_spans=1,
+        expected_handled=False,
+        expected_reason="partial-coverage",
+        with_coverage=False,
+    ),
+    CacheDecisionSpanCase(
         test_id="off-emits-nothing",
         cache_mode="off",
         term="ruff",
@@ -891,6 +902,11 @@ def test_cache_decision_span_reports_aggregate_outcome(
     runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
     _ = runtime.sync_records(
         ((source, (_record(source, "Run ruff check before committing."),)),),
+        coverage=(
+            SyncCoverage(agents=("codex",), scope="all", complete=True)
+            if case.with_coverage
+            else None
+        ),
     )
     search_runtime = agentgrep.SearchRuntime(
         db=None if case.cache_mode == "off" else runtime,
@@ -1028,3 +1044,146 @@ def test_cached_scope_filters_mirror_live_semantics(
     runtime.close()
 
     assert sorted(record.text for record in found) == sorted(case.expected_texts)
+
+
+class CoverageGateCase(t.NamedTuple):
+    """Named case for the auto-mode coverage gate."""
+
+    test_id: str
+    sync_coverage: SyncCoverage | None
+    cache_mode: agentgrep.CacheMode
+    query_agents: tuple[agentgrep.AgentName, ...]
+    query_scope: agentgrep.SearchScope
+    expected_handled: bool
+
+
+COVERAGE_GATE_CASES: tuple[CoverageGateCase, ...] = (
+    CoverageGateCase(
+        test_id="full-sync-serves-auto",
+        sync_coverage=SyncCoverage(agents=("codex",), scope="all", complete=True),
+        cache_mode="auto",
+        query_agents=("codex",),
+        query_scope="prompts",
+        expected_handled=True,
+    ),
+    CoverageGateCase(
+        test_id="agent-subset-falls-back",
+        sync_coverage=SyncCoverage(agents=("codex",), scope="all", complete=True),
+        cache_mode="auto",
+        query_agents=("codex", "claude"),
+        query_scope="prompts",
+        expected_handled=False,
+    ),
+    CoverageGateCase(
+        test_id="scoped-sync-covers-only-its-scope",
+        sync_coverage=SyncCoverage(agents=("codex",), scope="prompts", complete=True),
+        cache_mode="auto",
+        query_agents=("codex",),
+        query_scope="conversations",
+        expected_handled=False,
+    ),
+    CoverageGateCase(
+        test_id="capped-sync-claims-nothing",
+        sync_coverage=SyncCoverage(agents=("codex",), scope="all", complete=False),
+        cache_mode="auto",
+        query_agents=("codex",),
+        query_scope="prompts",
+        expected_handled=False,
+    ),
+    CoverageGateCase(
+        test_id="no-coverage-falls-back",
+        sync_coverage=None,
+        cache_mode="auto",
+        query_agents=("codex",),
+        query_scope="prompts",
+        expected_handled=False,
+    ),
+    CoverageGateCase(
+        test_id="require-serves-without-coverage",
+        sync_coverage=None,
+        cache_mode="require",
+        query_agents=("codex",),
+        query_scope="prompts",
+        expected_handled=True,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    COVERAGE_GATE_CASES,
+    ids=[case.test_id for case in COVERAGE_GATE_CASES],
+)
+def test_auto_cache_hits_require_sync_coverage(
+    case: CoverageGateCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Auto mode serves cache hits only when coverage spans the query.
+
+    Coverage means the agent/scope combination completed a sync;
+    require mode keeps serving regardless because the caller demanded
+    the cache.
+    """
+    source_path = tmp_path / "session.jsonl"
+    source_path.write_text("ruff", encoding="utf-8")
+    source = _source(source_path)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    _ = runtime.sync_records(
+        ((source, (_record(source, "Run ruff check before committing."),)),),
+        coverage=case.sync_coverage,
+    )
+    search_runtime = agentgrep.SearchRuntime(db=runtime, cache_mode=case.cache_mode)
+
+    handled, records = agentgrep._db_search_result(
+        _query("ruff", scope=case.query_scope, agents=case.query_agents),
+        search_runtime,
+    )
+    runtime.close()
+
+    assert handled is case.expected_handled
+    assert bool(records) is case.expected_handled
+
+
+def test_interrupted_sync_records_no_coverage(tmp_path: pathlib.Path) -> None:
+    """An early-exited sync loop never claims coverage."""
+    first_path = tmp_path / "first.jsonl"
+    first_path.write_text("ruff", encoding="utf-8")
+    second_path = tmp_path / "second.jsonl"
+    second_path.write_text("ruff", encoding="utf-8")
+    first = _source(first_path)
+    second = _source(second_path)
+    control = agentgrep.SearchControl()
+    progress = StopAfterFirstSourceProgress(control)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+
+    _ = runtime.sync_records(
+        (
+            (first, (_record(first, "Run ruff check before committing."),)),
+            (second, (_record(second, "Run ruff again."),)),
+        ),
+        control=control,
+        progress=t.cast("DbSyncProgress", progress),
+        coverage=SyncCoverage(agents=("codex",), scope="all", complete=True),
+    )
+
+    assert runtime.store.coverage() is None
+    runtime.close()
+
+
+def test_merge_coverage_keeps_other_agents(tmp_path: pathlib.Path) -> None:
+    """A narrowed re-sync merges into coverage instead of replacing it."""
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    runtime.store.merge_coverage(
+        SyncCoverage(agents=("codex", "claude"), scope="all", complete=True),
+    )
+    runtime.store.merge_coverage(
+        SyncCoverage(agents=("codex",), scope="prompts", complete=True),
+    )
+
+    coverage = runtime.store.coverage()
+    runtime.close()
+
+    assert coverage == {
+        "claude": ("all",),
+        "codex": ("all", "prompts"),
+    }
