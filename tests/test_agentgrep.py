@@ -3652,7 +3652,13 @@ async def test_wide_detail_always_visible(
         app._apply_responsive_layout()
         await pilot.pause()
         assert app._stacked is False
+        # Visible before any selection.
         assert app._detail_opened is False
+        assert not app._detail_column.has_class("-collapsed")
+        # ...and still visible after a genuine selection (the "regardless
+        # of selection" property the docstring promises).
+        app.on_option_list_option_highlighted(_FakeHighlight(0))
+        await pilot.pause()
         assert not app._detail_column.has_class("-collapsed")
 
 
