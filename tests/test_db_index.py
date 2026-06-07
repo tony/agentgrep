@@ -1845,3 +1845,17 @@ def test_connections_memory_map_the_cache(tmp_path: pathlib.Path) -> None:
 
     assert rw_mmap > 0
     assert ro_mmap > 0
+
+
+def test_new_caches_use_8k_pages(tmp_path: pathlib.Path) -> None:
+    """Caches created by agentgrep use 8 KiB pages.
+
+    Measured lever: 8 KiB pages shorten overflow chains for the ~3 KiB
+    detail rows, halving hydration time. Existing caches keep their
+    page size until the next rebuild.
+    """
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    page_size = runtime.store.connection.execute("PRAGMA page_size").fetchone()[0]
+    runtime.close()
+
+    assert page_size == 8192
