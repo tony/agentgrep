@@ -1086,24 +1086,31 @@ class DbStore:
         )
         return record_id
 
-    def _prompt_history_agents(self) -> frozenset[str]:
-        """Return agents with a synced prompt-history-role source.
+    def _scope_catalog(self) -> tuple[frozenset[str], frozenset[tuple[str, str]]]:
+        """Classify the synced source ledger for scope predicates.
 
-        Mirrors :func:`agentgrep.prompt_history_agents_for_sources`
-        against the synced source ledger so cached prompts-scope
-        results gate conversation stores per agent exactly like the
-        live planner does.
+        Returns the agents holding a prompt-history-role source and the
+        conversation-role ``(store, adapter_id)`` pairs present in the
+        ledger — both small, bounded sets. Mirrors
+        :func:`agentgrep.prompt_history_agents_for_sources` and the
+        planner's :func:`agentgrep.source_matches_scope` store
+        selection so the gates can run inside SQL.
         """
         rows = self._query(
             "sources.distinct_adapters",
             "SELECT DISTINCT agent, store, adapter_id FROM sources",
         )
-        return frozenset(
-            str(row["agent"])
-            for row in rows
-            if agentgrep.store_role_for_record(str(row["store"]), str(row["adapter_id"]))
-            in agentgrep.PROMPT_HISTORY_STORE_ROLES
-        )
+        prompt_history_agents: set[str] = set()
+        conversation_pairs: set[tuple[str, str]] = set()
+        for row in rows:
+            store = str(row["store"])
+            adapter_id = str(row["adapter_id"])
+            role = agentgrep.store_role_for_record(store, adapter_id)
+            if role in agentgrep.PROMPT_HISTORY_STORE_ROLES:
+                prompt_history_agents.add(str(row["agent"]))
+            if role in agentgrep.CONVERSATION_STORE_ROLES:
+                conversation_pairs.add((store, adapter_id))
+        return frozenset(prompt_history_agents), frozenset(conversation_pairs)
 
     def search_records(self, query: agentgrep.SearchQuery) -> list[agentgrep.SearchRecord]:
         """Return SearchRecord objects matching ``query`` from SQLite/FTS."""
@@ -1125,14 +1132,36 @@ class DbStore:
         params: list[object] = []
         where = ["r.agent IN ({})".format(",".join("?" for _ in query.agents))]
         params.extend(query.agents)
-        if query.scope == "prompts":
-            # Correct superset prefilter: live prompts-scope results
-            # are always kind='prompt'. The per-agent store gate runs
-            # in the scope post-filter below. Conversations scope has
-            # no kind prefilter at all — chat stores emit user turns
-            # as kind='prompt', so a kind predicate would drop records
-            # the live store-role scope admits.
-            where.append("r.kind = 'prompt'")
+        prompt_history_agents: frozenset[str] = frozenset()
+        if query.scope != "all":
+            # Push the planner's store-role gates into SQL. Without
+            # them the probe pages wade through scope-rejected rows -
+            # profiled at 130 of the 200 newest hot-term rows - and pay
+            # continuation pages for nothing. The Python scope filter
+            # below stays as the authoritative re-check.
+            prompt_history_agents, conversation_pairs = self._scope_catalog()
+            pair_sql = ",".join("(?, ?)" for _ in conversation_pairs)
+            pair_params = [part for pair in sorted(conversation_pairs) for part in pair]
+            if query.scope == "prompts":
+                # Live prompts-scope results are always kind='prompt',
+                # and an agent with a dedicated prompt-history store
+                # never serves user turns from its chat stores.
+                where.append("r.kind = 'prompt'")
+                if conversation_pairs and prompt_history_agents:
+                    agent_sql = ",".join("?" for _ in prompt_history_agents)
+                    where.append(
+                        f"NOT ((r.store, r.adapter_id) IN (VALUES {pair_sql})"
+                        f" AND r.agent IN ({agent_sql}))"
+                    )
+                    params.extend(pair_params)
+                    params.extend(sorted(prompt_history_agents))
+            elif conversation_pairs:
+                where.append(f"(r.store, r.adapter_id) IN (VALUES {pair_sql})")
+                params.extend(pair_params)
+            else:
+                # No conversation-role sources synced: nothing can be
+                # in conversations scope.
+                where.append("0")
         # The indexed haystack and the query terms are both Python-
         # casefolded, and trigram MATCH is exact for substrings (the
         # study probe showed MATCH == instr on every term), so the FTS
@@ -1160,9 +1189,6 @@ class DbStore:
                 f"WHERE {' AND '.join(scan_where)}"
             )
             base_params = tuple(scan_params)
-        prompt_history_agents = (
-            self._prompt_history_agents() if query.scope == "prompts" else frozenset()
-        )
         if query.limit is None:
             return self._search_all(
                 query, stmt_name, from_where, base_params, prompt_history_agents
