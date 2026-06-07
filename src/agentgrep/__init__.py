@@ -3637,28 +3637,54 @@ def _db_search_result(
     query: SearchQuery,
     runtime: SearchRuntime | None,
 ) -> tuple[bool, list[SearchRecord]]:
-    """Return ``(handled, records)`` for cache-backed search attempts."""
+    """Return ``(handled, records)`` for cache-backed search attempts.
+
+    Emits one ``search.cache.decision`` profile sample per consulted
+    query — aggregate counters only, never per-record spans.
+    """
     if runtime is None or runtime.cache_mode == "off":
         return False, []
-    if runtime.db is None:
-        if runtime.cache_mode == "require":
-            msg = "DB cache required but no db runtime is configured"
-            raise RuntimeError(msg)
-        return False, []
-    from agentgrep.db import DbQueryUnsupported
-
+    start = time.perf_counter()
+    handled = False
+    records: list[SearchRecord] = []
+    reason: str | None = None
     try:
-        records = runtime.db.search_records(query)
-    except DbQueryUnsupported:
-        if runtime.cache_mode == "require":
-            raise
-        return False, []
-    if runtime.cache_mode == "auto" and not records:
-        return False, []
-    # Per-session dedup happens inside DbStore.search_records, before
-    # the limit slice, so cached results keep the event-stream invariant
-    # and result caps count unique records like the live driver.
-    return True, records
+        if runtime.db is None:
+            reason = "no-db"
+            if runtime.cache_mode == "require":
+                msg = "DB cache required but no db runtime is configured"
+                raise RuntimeError(msg)
+            return False, []
+        from agentgrep.db import DbQueryUnsupported
+
+        try:
+            records = runtime.db.search_records(query)
+        except DbQueryUnsupported:
+            reason = "unsupported"
+            if runtime.cache_mode == "require":
+                raise
+            return False, []
+        if runtime.cache_mode == "auto" and not records:
+            reason = "empty"
+            return False, []
+        # Per-session dedup happens inside DbStore.search_records, before
+        # the limit slice, so cached results keep the event-stream invariant
+        # and result caps count unique records like the live driver.
+        handled = True
+        return True, records
+    finally:
+        attributes: dict[str, JSONScalar] = {
+            "agentgrep_cache_mode": runtime.cache_mode,
+            "agentgrep_cache_handled": handled,
+            "agentgrep_cache_records": len(records) if handled else 0,
+        }
+        if reason is not None:
+            attributes["agentgrep_cache_fallback_reason"] = reason
+        _record_engine_profile_sample(
+            "search.cache.decision",
+            time.perf_counter() - start,
+            **attributes,
+        )
 
 
 def run_search_query(
