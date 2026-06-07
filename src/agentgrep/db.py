@@ -590,9 +590,17 @@ class DbStore:
             )
 
     def _configure(self) -> None:
-        """Configure connection-local SQLite settings."""
+        """Configure connection-local SQLite settings.
+
+        The mmap budget rationale lives on
+        :data:`agentgrep.SQLITE_MMAP_BYTES`.
+        """
         _ = self._execute("pragma.journal_mode", "PRAGMA journal_mode=WAL")
         _ = self._execute("pragma.foreign_keys", "PRAGMA foreign_keys=ON")
+        _ = self._execute(
+            "pragma.mmap_size",
+            f"PRAGMA mmap_size={agentgrep.SQLITE_MMAP_BYTES}",
+        )
 
     def _stored_schema_version(self) -> int | None:
         """Return the schema version recorded in ``meta``, if any."""
