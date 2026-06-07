@@ -44,7 +44,7 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 ### What's new
 
-#### Responsive detail pane in the TUI
+#### Responsive detail pane in the TUI (#51)
 
 The record-detail pane now adapts to the terminal width. Wide terminals
 keep it on the right beside the results; narrow terminals (under ~100
