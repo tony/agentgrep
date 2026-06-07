@@ -1476,3 +1476,103 @@ def test_sql_telemetry_never_captures_bound_parameters(
     for sample in profiler.snapshot().samples:
         for value in sample.attributes.values():
             assert sentinel not in str(value)
+
+
+class SqlPlanCaptureCase(t.NamedTuple):
+    """Named case for opt-in EXPLAIN QUERY PLAN capture."""
+
+    test_id: str
+    explain_env: str | None
+    term: str
+    expected_statement: str
+    expects_plan: bool
+    plan_mentions: str | None
+
+
+SQL_PLAN_CAPTURE_CASES: tuple[SqlPlanCaptureCase, ...] = (
+    SqlPlanCaptureCase(
+        test_id="fts-plan-captured",
+        explain_env="1",
+        term="alpaca",
+        expected_statement="records.search_fts",
+        expects_plan=True,
+        plan_mentions="VIRTUAL TABLE",
+    ),
+    SqlPlanCaptureCase(
+        test_id="scan-plan-captured",
+        explain_env="1",
+        term="zq",
+        expected_statement="records.search_scan",
+        expects_plan=True,
+        plan_mentions="SCAN",
+    ),
+    SqlPlanCaptureCase(
+        test_id="off-by-default",
+        explain_env=None,
+        term="alpaca",
+        expected_statement="records.search_fts",
+        expects_plan=False,
+        plan_mentions=None,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    SQL_PLAN_CAPTURE_CASES,
+    ids=[case.test_id for case in SQL_PLAN_CAPTURE_CASES],
+)
+def test_sql_plan_capture_honors_explain_lever(
+    case: SqlPlanCaptureCase,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AGENTGREP_SQL_EXPLAIN attaches query plans to statement samples."""
+    from agentgrep._engine.profiling import EngineProfiler, use_engine_profiler
+
+    if case.explain_env is None:
+        monkeypatch.delenv("AGENTGREP_SQL_EXPLAIN", raising=False)
+    else:
+        monkeypatch.setenv("AGENTGREP_SQL_EXPLAIN", case.explain_env)
+    source_path = tmp_path / "session.jsonl"
+    source_path.write_text("ruff", encoding="utf-8")
+    source = _source(source_path)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    _ = runtime.sync_records(
+        ((source, (_record(source, "alpaca zq plan capture text"),)),),
+    )
+    profiler = EngineProfiler()
+
+    with use_engine_profiler(profiler):
+        _ = runtime.search_records(_query(case.term))
+    runtime.close()
+
+    samples = _sql_samples(profiler.snapshot().samples)
+    statement = samples[case.expected_statement]
+    if case.expects_plan:
+        plan = str(statement.attributes["agentgrep_sql_plan"])
+        assert case.plan_mentions is not None
+        assert case.plan_mentions in plan
+    else:
+        assert "agentgrep_sql_plan" not in statement.attributes
+
+
+def test_sql_plan_captured_once_per_statement_shape(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Repeated executions of one shape run EXPLAIN only once."""
+    monkeypatch.setenv("AGENTGREP_SQL_EXPLAIN", "1")
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    store = runtime.store
+
+    first = store._query("meta.get", "SELECT value FROM meta WHERE key = ?", ("a",))
+    stats = store._sql_stats["meta.get"]
+    plan_after_first = stats.plan
+    second = store._query("meta.get", "SELECT value FROM meta WHERE key = ?", ("b",))
+    runtime.close()
+
+    assert first == [] and second == []
+    assert plan_after_first is not None
+    assert stats.plan is plan_after_first
+    assert stats.count == 2
