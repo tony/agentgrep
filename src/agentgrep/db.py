@@ -396,6 +396,16 @@ class _SqlStatementStats:
     count: int = 0
     seconds: float = 0.0
     rows: int = 0
+    plan: str | None = None
+
+
+def _sql_explain_enabled() -> bool:
+    """Return whether EXPLAIN QUERY PLAN capture is requested.
+
+    Controlled by the ``AGENTGREP_SQL_EXPLAIN`` environment variable;
+    any non-empty value enables capture.
+    """
+    return bool(os.environ.get("AGENTGREP_SQL_EXPLAIN"))
 
 
 class DbStore:
@@ -467,6 +477,32 @@ class DbStore:
             )
         return stats
 
+    def _capture_plan(
+        self,
+        stmt_name: str,
+        stats: _SqlStatementStats,
+        sql: str,
+        params: tuple[object, ...],
+    ) -> None:
+        """Capture EXPLAIN QUERY PLAN once per statement shape, if enabled.
+
+        Plan rows carry table, index, and strategy names only — no
+        bound parameters — so the joined detail text is privacy-safe.
+        """
+        if stats.plan is not None or not _sql_explain_enabled():
+            return
+        plan_rows = self.connection.execute(
+            f"EXPLAIN QUERY PLAN {sql}",
+            params,
+        ).fetchall()
+        stats.plan = "; ".join(str(row["detail"]) for row in plan_rows)
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "sql plan captured: %s",
+                stats.plan,
+                extra={"agentgrep_sql_statement": stmt_name},
+            )
+
     def _query(
         self,
         stmt_name: str,
@@ -477,7 +513,8 @@ class DbStore:
         bound = tuple(params)
         start = time.perf_counter()
         rows = self.connection.execute(sql, bound).fetchall()
-        _ = self._track(stmt_name, sql, time.perf_counter() - start, len(rows))
+        stats = self._track(stmt_name, sql, time.perf_counter() - start, len(rows))
+        self._capture_plan(stmt_name, stats, sql, bound)
         return rows
 
     def _execute(
@@ -512,6 +549,16 @@ class DbStore:
         stats_by_name = self._sql_stats
         self._sql_stats = {}
         for stmt_name, stats in sorted(stats_by_name.items()):
+            if stats.plan is not None:
+                agentgrep._record_engine_profile_sample(
+                    "db.sql.statement",
+                    stats.seconds,
+                    agentgrep_sql_statement=stmt_name,
+                    agentgrep_sql_count=stats.count,
+                    agentgrep_sql_rows=stats.rows,
+                    agentgrep_sql_plan=stats.plan,
+                )
+                continue
             agentgrep._record_engine_profile_sample(
                 "db.sql.statement",
                 stats.seconds,
