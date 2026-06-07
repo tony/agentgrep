@@ -1760,3 +1760,46 @@ def test_mcp_suggestions_list_returns_bounded_page_with_totals(
     assert payload.suggestions_total >= 2
     assert payload.suggestions_truncated is True
     assert len(payload.suggestions) == 1
+
+
+class InsightForeignFileCase(t.NamedTuple):
+    """Named case for insight listing tools on non-database files."""
+
+    test_id: str
+    tool: t.Literal["insights", "suggestions"]
+
+
+INSIGHT_FOREIGN_FILE_CASES: tuple[InsightForeignFileCase, ...] = (
+    InsightForeignFileCase(test_id="insights-list-degrades", tool="insights"),
+    InsightForeignFileCase(test_id="suggestions-list-degrades", tool="suggestions"),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    INSIGHT_FOREIGN_FILE_CASES,
+    ids=[case.test_id for case in INSIGHT_FOREIGN_FILE_CASES],
+)
+def test_insight_listing_tools_report_empty_for_foreign_file(
+    case: InsightForeignFileCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """A non-database file yields the same empty payload as a missing one.
+
+    Mirrors db_status and the CLI read surfaces: read-only SQLite
+    connects are lazy, so the error must be handled at the listing
+    call, not surfaced as a raw tool error.
+    """
+    from agentgrep.mcp.tools import insight_tools
+
+    db_path = tmp_path / "not-a-db.sqlite"
+    db_path.write_text("plain text", encoding="utf-8")
+
+    if case.tool == "insights":
+        insights = insight_tools._insights_list_sync(str(db_path))
+        assert insights.variant_edges_total == 0
+        assert insights.omission_findings == []
+    else:
+        suggestions = insight_tools._suggestions_list_sync(str(db_path))
+        assert suggestions.suggestions_total == 0
+        assert suggestions.suggestions == []
