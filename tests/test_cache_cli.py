@@ -891,3 +891,94 @@ def test_invalid_cache_env_value_fails_at_parse_time(
     assert exc_info.value.code == 2
     assert "AGENTGREP_CACHE must be one of auto, require, off" in captured.err
     assert "Traceback" not in captured.err
+
+
+def test_cached_search_never_writes_the_cache(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Cache-served searches leave the db file byte-for-byte unchanged."""
+    import hashlib
+
+    import agentgrep.db as agentgrep_db
+
+    db_path = tmp_path / "agentgrep.sqlite"
+    monkeypatch.setenv("AGENTGREP_DB", str(db_path))
+    source_path = tmp_path / "session.jsonl"
+    source_path.write_text("ruff", encoding="utf-8")
+    runtime = agentgrep_db.DbRuntime.open(db_path)
+    source = agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=source_path,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=source_path.parent,
+        mtime_ns=source_path.stat().st_mtime_ns,
+    )
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent=source.agent,
+        store=source.store,
+        adapter_id=source.adapter_id,
+        path=source.path,
+        text="Run ruff check before committing.",
+        timestamp="2026-06-05T12:00:00Z",
+        session_id="session-a",
+    )
+    _ = runtime.sync_records(((source, (record,)),))
+    runtime.close()
+    before = hashlib.sha256(db_path.read_bytes()).hexdigest()
+
+    cli_runtime = render._db_runtime_for_cli("require")
+
+    assert cli_runtime is not None
+    assert cli_runtime.db is not None
+    found = cli_runtime.db.search_records(
+        agentgrep.SearchQuery(
+            terms=("ruff",),
+            scope="prompts",
+            any_term=False,
+            regex=False,
+            case_sensitive=False,
+            agents=("codex",),
+            limit=None,
+        ),
+    )
+    cli_runtime.db.close()
+    _ = capsys.readouterr()
+    assert [item.text for item in found] == ["Run ruff check before committing."]
+    assert hashlib.sha256(db_path.read_bytes()).hexdigest() == before
+
+
+def test_cache_require_with_missing_db_exits_cleanly(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--cache require without a synced cache is a clean error, no create."""
+    db_path = tmp_path / "missing.sqlite"
+    monkeypatch.setenv("AGENTGREP_DB", str(db_path))
+
+    with pytest.raises(SystemExit) as exc_info:
+        _ = render._db_runtime_for_cli("require")
+
+    captured = capsys.readouterr()
+    assert exc_info.value.code == 2
+    assert "needs a synced DB" in captured.err
+    assert "Traceback" not in captured.err
+    assert not db_path.exists()
+
+
+def test_cache_auto_with_missing_db_falls_back_live(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Auto mode without a cache returns no runtime and creates nothing."""
+    db_path = tmp_path / "missing.sqlite"
+    monkeypatch.setenv("AGENTGREP_DB", str(db_path))
+
+    assert render._db_runtime_for_cli("auto") is None
+    assert not db_path.exists()
