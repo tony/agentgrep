@@ -140,10 +140,42 @@ used to identify the app/data version for that concrete file or DB.
 **Use when** you need row counts for the persistent DB index
 without starting a sync.
 
-**Returns:** database path, DB schema version, and source and
-record counts.
+**Returns:** database path, DB schema version, source and
+record counts, feature counts, persisted variant edges, omission
+findings, and suggestion counts.
 
 ```{fastmcp-tool-input} db_status
+```
+
+## Insights
+
+```{fastmcp-tool} insights_list
+```
+
+**Use when** you need persisted deterministic insight artifacts from
+the DB index. This tool lists a bounded page of existing artifacts and
+does not run a new insight job.
+
+**Returns:** total counts, truncation flags, and sampled variant edges
+and omission findings.
+
+```{fastmcp-tool-input} insights_list
+```
+
+## Suggestions
+
+```{fastmcp-tool} suggestions_list
+```
+
+**Use when** you need persisted review-only instruction suggestions.
+This tool lists existing suggestions and does not edit files or reload
+agent sessions.
+
+**Returns:** a bounded page of suggestion artifacts with target path,
+body, confidence, rationale, status, and reload note, plus the total
+count and a truncation flag.
+
+```{fastmcp-tool-input} suggestions_list
 ```
 
 ## Diagnostics

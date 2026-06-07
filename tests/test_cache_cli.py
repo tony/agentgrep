@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import sqlite3
 import typing as t
@@ -19,6 +20,8 @@ from agentgrep.db import (
     SyncCoverage,
     SyncResult,
 )
+from agentgrep.insights import OmissionFinding, VariantEdge
+from agentgrep.suggestions import SuggestionArtifact
 
 if t.TYPE_CHECKING:
     import collections.abc as cabc
@@ -73,7 +76,16 @@ class DbSyncModeFlagCase(t.NamedTuple):
 
     test_id: str
     argv: tuple[str, ...]
+    expected_features_mode: t.Literal["defer", "inline"]
     expected_force: bool
+
+
+class InsightsAnalyzeFlagCase(t.NamedTuple):
+    """Named case for insights analyze progress flag parsing."""
+
+    test_id: str
+    argv: tuple[str, ...]
+    expected_progress_mode: agentgrep.ProgressMode
 
 
 CACHE_FLAG_CASES: tuple[CacheFlagCase, ...] = (
@@ -116,14 +128,41 @@ DB_SYNC_PROGRESS_FLAG_CASES: tuple[DbSyncProgressFlagCase, ...] = (
 
 DB_SYNC_MODE_FLAG_CASES: tuple[DbSyncModeFlagCase, ...] = (
     DbSyncModeFlagCase(
-        test_id="default-skip-current",
+        test_id="default-defer-skip-current",
         argv=("db", "sync"),
+        expected_features_mode="defer",
+        expected_force=False,
+    ),
+    DbSyncModeFlagCase(
+        test_id="inline-features",
+        argv=("db", "sync", "--features", "inline"),
+        expected_features_mode="inline",
         expected_force=False,
     ),
     DbSyncModeFlagCase(
         test_id="force-resync",
         argv=("db", "sync", "--force"),
+        expected_features_mode="defer",
         expected_force=True,
+    ),
+)
+
+
+INSIGHTS_ANALYZE_FLAG_CASES: tuple[InsightsAnalyzeFlagCase, ...] = (
+    InsightsAnalyzeFlagCase(
+        test_id="default-auto",
+        argv=("insights", "analyze"),
+        expected_progress_mode="auto",
+    ),
+    InsightsAnalyzeFlagCase(
+        test_id="explicit-never",
+        argv=("insights", "analyze", "--progress", "never"),
+        expected_progress_mode="never",
+    ),
+    InsightsAnalyzeFlagCase(
+        test_id="no-progress-alias",
+        argv=("insights", "analyze", "--no-progress"),
+        expected_progress_mode="never",
     ),
 )
 
@@ -134,6 +173,18 @@ COMMAND_GROUP_HELP_CASES: tuple[CommandGroupHelpCase, ...] = (
         argv=("db",),
         expected_usage="usage: agentgrep db",
         expected_examples_heading="db examples:",
+    ),
+    CommandGroupHelpCase(
+        test_id="insights",
+        argv=("insights",),
+        expected_usage="usage: agentgrep insights",
+        expected_examples_heading="insights examples:",
+    ),
+    CommandGroupHelpCase(
+        test_id="suggestions",
+        argv=("suggestions",),
+        expected_usage="usage: agentgrep suggestions",
+        expected_examples_heading="suggestions examples:",
     ),
 )
 
@@ -150,6 +201,7 @@ STRUCTURED_OUTPUT_CASES: tuple[StructuredOutputCase, ...] = (
                 "records_removed": 0,
                 "sources_skipped": 0,
                 "sources_pruned": 0,
+                "features_deferred": 0,
             },
         ),
     ),
@@ -164,6 +216,7 @@ STRUCTURED_OUTPUT_CASES: tuple[StructuredOutputCase, ...] = (
                 "records_removed": 0,
                 "sources_skipped": 0,
                 "sources_pruned": 0,
+                "features_deferred": 0,
             },
         ),
     ),
@@ -181,6 +234,7 @@ STRUCTURED_OUTPUT_CASES: tuple[StructuredOutputCase, ...] = (
                 "records_removed": 0,
                 "sources_skipped": 0,
                 "sources_pruned": 0,
+                "features_deferred": 0,
             },
             {
                 "sources_synced": 3,
@@ -188,6 +242,7 @@ STRUCTURED_OUTPUT_CASES: tuple[StructuredOutputCase, ...] = (
                 "records_removed": 1,
                 "sources_skipped": 0,
                 "sources_pruned": 0,
+                "features_deferred": 0,
             },
         ),
     ),
@@ -208,6 +263,7 @@ STRUCTURED_OUTPUT_CASES: tuple[StructuredOutputCase, ...] = (
                         "records_removed": 0,
                         "sources_skipped": 0,
                         "sources_pruned": 0,
+                        "features_deferred": 0,
                     },
                 ],
             },
@@ -224,12 +280,17 @@ STRUCTURED_TEXT_OUTPUT_CASES: tuple[StructuredTextOutputCase, ...] = (
             schema_version=1,
             sources=2,
             records=3,
+            features=4,
+            variant_edges=5,
+            omission_findings=6,
+            suggestions=7,
         ),
         expected_contains=(
             "DB status",
             "/tmp/agentgrep.sqlite",
             "2 sources",
             "3 records",
+            "5 variant edges",
         ),
         expected_not_contains=("DbStatus(", "{", "'db_path'"),
     ),
@@ -240,6 +301,7 @@ STRUCTURED_TEXT_OUTPUT_CASES: tuple[StructuredTextOutputCase, ...] = (
             records_indexed=3,
             records_removed=1,
             sources_skipped=4,
+            features_deferred=5,
         ),
         expected_contains=(
             "DB sync",
@@ -247,6 +309,7 @@ STRUCTURED_TEXT_OUTPUT_CASES: tuple[StructuredTextOutputCase, ...] = (
             "3 records indexed",
             "1 record removed",
             "4 sources skipped",
+            "5 features deferred",
         ),
         expected_not_contains=("SyncResult(", "{", "'sources_synced'"),
     ),
@@ -300,6 +363,79 @@ STRUCTURED_TEXT_OUTPUT_CASES: tuple[StructuredTextOutputCase, ...] = (
         ),
         expected_contains=("DB explain", "Coverage", "not recorded"),
         expected_not_contains=("DbExplain(",),
+    ),
+    StructuredTextOutputCase(
+        test_id="insights-list",
+        payload={
+            "limit": 10,
+            "variant_edges": {
+                "total": 100,
+                "returned": 1,
+                "truncated": True,
+                "items": [
+                    VariantEdge(
+                        edge_id="edge-1",
+                        run_id="run-1",
+                        left_record_id="left-record",
+                        right_record_id="right-record",
+                        variant_type="exact_duplicate",
+                        confidence=1.0,
+                        explanation="normalized prompt text is identical",
+                    ),
+                ],
+            },
+            "omission_findings": {
+                "total": 2,
+                "returned": 1,
+                "truncated": True,
+                "items": [
+                    OmissionFinding(
+                        finding_id="finding-1",
+                        run_id="run-1",
+                        target_path=pathlib.Path("AGENTS.md"),
+                        representative_record_id="record-1",
+                        confidence=0.82,
+                        rationale="neighboring projects repeat this instruction",
+                    ),
+                ],
+            },
+        },
+        expected_contains=(
+            "Insights",
+            "limit 10",
+            "1/100 variant edges",
+            "edge-1",
+            "exact_duplicate",
+            "1/2 omission findings",
+            "finding-1",
+        ),
+        expected_not_contains=("VariantEdge(", "OmissionFinding(", "{", "'variant_edges'"),
+    ),
+    StructuredTextOutputCase(
+        test_id="suggestions-list",
+        payload=[
+            SuggestionArtifact(
+                suggestion_id="suggestion-1",
+                run_id="run-1",
+                target_path=pathlib.Path("AGENTS.md"),
+                surface_kind="agents_md",
+                title="Add missing agent instruction",
+                body="Run ruff check before committing.",
+                confidence=0.92,
+                status="proposed",
+                rationale="repeated nearby instruction",
+                reload_note="Reload the agent session.",
+            ),
+        ],
+        expected_contains=(
+            "Suggestions",
+            "suggestion-1",
+            "AGENTS.md",
+            "0.92",
+            "proposed",
+            "Add missing agent instruction",
+        ),
+        expected_not_contains=("SuggestionArtifact(", "{", "'suggestion_id'"),
     ),
 )
 
@@ -355,7 +491,22 @@ def test_db_sync_parses_cache_refresh_modes(case: DbSyncModeFlagCase) -> None:
     parsed = agentgrep.parse_args(case.argv)
 
     assert isinstance(parsed, agentgrep.DbArgs)
+    assert parsed.features_mode == case.expected_features_mode
     assert parsed.force is case.expected_force
+
+
+@pytest.mark.parametrize(
+    "case",
+    INSIGHTS_ANALYZE_FLAG_CASES,
+    ids=[case.test_id for case in INSIGHTS_ANALYZE_FLAG_CASES],
+)
+def test_insights_analyze_parses_progress_modes(case: InsightsAnalyzeFlagCase) -> None:
+    """Insights analyze exposes the same progress controls as DB sync."""
+    parsed = agentgrep.parse_args(case.argv)
+
+    assert isinstance(parsed, agentgrep.InsightsArgs)
+    assert parsed.action == "analyze"
+    assert parsed.progress_mode == case.expected_progress_mode
 
 
 @pytest.mark.parametrize(
@@ -367,7 +518,7 @@ def test_command_groups_without_actions_print_help_directory(
     case: CommandGroupHelpCase,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """DB command groups act as help directories."""
+    """DB/insight command groups act as help directories."""
     parsed = agentgrep.parse_args(case.argv)
 
     captured = capsys.readouterr()
@@ -404,7 +555,7 @@ def test_small_structured_commands_emit_machine_readable_output(
     case: StructuredOutputCase,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """DB helpers honor JSON and NDJSON."""
+    """DB, insight, and suggestion helpers honor JSON and NDJSON."""
     render._print_json_or_text(case.payload, output_mode=case.output_mode)
 
     captured = capsys.readouterr()
@@ -476,6 +627,7 @@ def test_db_sync_forced_progress_keeps_json_stdout_clean(
     class RuntimeStub:
         """Runtime stub that exercises the sync progress protocol."""
 
+        features_mode: t.Literal["defer", "inline"] | None = None
         force: bool | None = None
         closed: bool = False
         coverage: SyncCoverage | None = None
@@ -491,10 +643,12 @@ def test_db_sync_forced_progress_keeps_json_stdout_clean(
             *,
             control: agentgrep.SearchControl | None = None,
             progress: DbSyncProgress | None = None,
+            features_mode: t.Literal["defer", "inline"] = "defer",
             force: bool = False,
             coverage: SyncCoverage | None = None,
             prune_missing: bool = False,
         ) -> SyncResult:
+            self.features_mode = features_mode
             self.force = force
             self.coverage = coverage
             self.prune_missing = prune_missing
@@ -543,6 +697,7 @@ def test_db_sync_forced_progress_keeps_json_stdout_clean(
         output_mode="json",
         color_mode="never",
         progress_mode="always",
+        features_mode="inline",
         force=True,
     )
 
@@ -556,7 +711,9 @@ def test_db_sync_forced_progress_keeps_json_stdout_clean(
         "records_removed": 0,
         "sources_skipped": 0,
         "sources_pruned": 0,
+        "features_deferred": 0,
     }
+    assert runtime_stub.features_mode == "inline"
     assert runtime_stub.force is True
     assert runtime_stub.closed is True
     assert "DB sync" in captured.err
@@ -613,6 +770,50 @@ class _StringBuffer:
         return "".join(self._parts)
 
 
+class _TinyTerminalBuffer(_StringBuffer):
+    """TTY stream stub with a file descriptor for terminal-size probing."""
+
+    def fileno(self) -> int:
+        """Return a harmless descriptor number for monkeypatched size probes."""
+        return 1
+
+
+def test_insights_progress_tiny_tty_width_uses_readable_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Insights progress remains readable when a PTY reports zero columns."""
+    monkeypatch.setattr(render.os, "get_terminal_size", lambda _fd: os.terminal_size((0, 24)))
+    monkeypatch.setattr(
+        render.shutil,
+        "get_terminal_size",
+        lambda *, fallback: os.terminal_size((88, 24)),
+    )
+    buffer = _TinyTerminalBuffer()
+    progress = render.ConsoleInsightsAnalyzeProgress(
+        enabled=True,
+        stream=t.cast("t.TextIO", buffer),
+        tty=True,
+        color_mode="never",
+        refresh_interval=60.0,
+    )
+    result = render.InsightsAnalyzeProgressResult(
+        runs_analyzed=0,
+        features_refreshed=0,
+        clusters=0,
+        variant_edges=0,
+        omission_findings=0,
+    )
+
+    progress.start(1)
+    progress.step_started(1, 1, "similarity", result)
+    progress.set_activity("refreshing feature cache", detail="15,084 missing feature rows")
+    progress.interrupt()
+
+    output = buffer.getvalue()
+    assert "Insights analyze" in output
+    assert "refreshing feature cache" in output
+
+
 def test_collection_is_not_a_command(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -626,12 +827,590 @@ def test_collection_is_not_a_command(
     assert "db" in captured.err
 
 
+def test_insights_analyze_command_parses_target_path() -> None:
+    """Insights commands expose deterministic analysis configuration."""
+    parsed = agentgrep.parse_args(
+        ("insights", "analyze", "--target", "AGENTS.md", "--kind", "omissions"),
+    )
+
+    assert isinstance(parsed, agentgrep.InsightsArgs)
+    assert parsed.action == "analyze"
+    assert parsed.kind == "omissions"
+    assert parsed.target == "AGENTS.md"
+
+
+def test_insights_list_parses_default_and_explicit_limit() -> None:
+    """Insights list defaults to a bounded CLI page."""
+    default = agentgrep.parse_args(("insights", "list"))
+    explicit = agentgrep.parse_args(("insights", "list", "--limit", "12"))
+
+    assert isinstance(default, agentgrep.InsightsArgs)
+    assert default.action == "list"
+    assert default.limit == 50
+    assert isinstance(explicit, agentgrep.InsightsArgs)
+    assert explicit.limit == 12
+
+
+def test_insights_list_rejects_non_positive_limit(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Insights list limit must stay positive."""
+    with pytest.raises(SystemExit) as exc_info:
+        _ = agentgrep.parse_args(("insights", "list", "--limit", "0"))
+
+    captured = capsys.readouterr()
+    assert exc_info.value.code == 2
+    assert "--limit" in captured.err
+
+
 def test_command_group_actions_keep_default_behavior() -> None:
     """No-arg directory help does not remove existing action defaults."""
     db = agentgrep.parse_args(("db", "sync"))
+    insights = agentgrep.parse_args(("insights", "analyze"))
+    suggestions = agentgrep.parse_args(("suggestions", "list"))
 
     assert isinstance(db, agentgrep.DbArgs)
     assert db.action == "sync"
+    assert isinstance(insights, agentgrep.InsightsArgs)
+    assert insights.action == "analyze"
+    assert insights.kind == "all"
+    assert isinstance(suggestions, agentgrep.SuggestionsArgs)
+    assert suggestions.action == "list"
+
+
+def test_suggestions_show_without_identifier_still_errors() -> None:
+    """Only command groups become directories; required action operands remain strict."""
+    with pytest.raises(SystemExit) as exc_info:
+        _ = agentgrep.parse_args(("suggestions", "show"))
+
+    assert exc_info.value.code == 2
+
+
+def test_insights_analyze_omissions_requires_target(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Omission analysis needs an explicit target instruction surface."""
+    with pytest.raises(SystemExit) as exc_info:
+        _ = agentgrep.parse_args(("insights", "analyze", "--kind", "omissions"))
+
+    captured = capsys.readouterr()
+    assert exc_info.value.code == 2
+    assert "--target" in captured.err
+
+
+def test_insights_run_is_not_an_action(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``run`` is rejected as an unknown insights action."""
+    with pytest.raises(SystemExit) as exc_info:
+        _ = agentgrep.parse_args(("insights", "run"))
+
+    captured = capsys.readouterr()
+    assert exc_info.value.code == 2
+    assert "invalid choice: 'run'" in captured.err
+    assert "analyze" in captured.err
+
+
+def test_insights_analyze_forced_progress_keeps_json_stdout_clean(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Forced insights progress writes status to stderr, never JSON stdout."""
+
+    class RuntimeStub:
+        """Runtime stub with a store attribute for the insight engine."""
+
+        store = object()
+
+        def close(self) -> None:
+            """Accept the command's close call."""
+
+    class EngineStub:
+        """Insight engine stub that exercises analyze progress."""
+
+        def __init__(self, _store: object) -> None:
+            self._store = _store
+
+        def run_similarity(
+            self,
+            *,
+            control: agentgrep.SearchControl | None = None,
+            progress: object | None = None,
+        ) -> object:
+            _ = (control, progress)
+            return {"kind": "similarity", "variant_edges": 2}
+
+    import agentgrep.insights as insights_module
+
+    monkeypatch.setattr(render, "_open_db_runtime", lambda _path: RuntimeStub())
+    monkeypatch.setattr(insights_module, "InsightEngine", EngineStub)
+    args = agentgrep.InsightsArgs(
+        action="analyze",
+        db_path=None,
+        kind="similarity",
+        target=None,
+        output_mode="json",
+        color_mode="never",
+        progress_mode="always",
+    )
+
+    exit_code = render.run_insights_command(args)
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert json.loads(captured.out) == {"kind": "similarity", "variant_edges": 2}
+    assert "Insights analyze" in captured.err
+    assert "Analyze complete:" in captured.err
+
+
+def test_insights_list_uses_limited_pages_and_count_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Insights list fetches a bounded page plus SQL-backed totals."""
+
+    class RuntimeStub:
+        """Runtime stub with a store attribute for the insight engine."""
+
+        store = object()
+
+        def close(self) -> None:
+            """Accept the command's close call."""
+
+        def __enter__(self) -> RuntimeStub:
+            """Return the stub for context-managed reads."""
+            return self
+
+        def __exit__(self, *exc_info: object) -> None:
+            """Close on context exit."""
+            self.close()
+
+    class EngineStub:
+        """Insight engine stub that records list limits."""
+
+        variant_limit: int | None = None
+        omission_limit: int | None = None
+
+        def __init__(self, _store: object) -> None:
+            self._store = _store
+
+        def count_variant_edges(self) -> int:
+            """Return the full persisted edge count."""
+            return 100
+
+        def count_omission_findings(self) -> int:
+            """Return the full persisted omission count."""
+            return 2
+
+        def list_variant_edges(self, *, limit: int | None = None) -> list[dict[str, object]]:
+            """Return one bounded edge sample."""
+            type(self).variant_limit = limit
+            return [{"edge_id": "edge-1"}]
+
+        def list_omission_findings(
+            self,
+            *,
+            limit: int | None = None,
+        ) -> list[dict[str, object]]:
+            """Return one bounded omission sample."""
+            type(self).omission_limit = limit
+            return [{"finding_id": "finding-1"}]
+
+    import agentgrep.db as agentgrep_db
+    import agentgrep.insights as insights_module
+
+    db_file = pathlib.Path(os.environ["AGENTGREP_DB"])
+    db_file.touch()
+    monkeypatch.setattr(
+        agentgrep_db.DbRuntime,
+        "open_readonly",
+        classmethod(lambda _cls, _path=None: RuntimeStub()),
+    )
+    monkeypatch.setattr(insights_module, "InsightEngine", EngineStub)
+    args = agentgrep.InsightsArgs(
+        action="list",
+        db_path=None,
+        kind="all",
+        target=None,
+        output_mode="json",
+        color_mode="never",
+        limit=7,
+    )
+
+    exit_code = render.run_insights_command(args)
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert exit_code == 0
+    assert EngineStub.variant_limit == 7
+    assert EngineStub.omission_limit == 7
+    assert payload["variant_edges"]["total"] == 100
+    assert payload["variant_edges"]["returned"] == 1
+    assert payload["variant_edges"]["truncated"] is True
+    assert payload["omission_findings"]["total"] == 2
+
+
+def test_insights_list_default_output_is_human_summary(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Insights list defaults to terminal text, not Python repr or JSON."""
+
+    class RuntimeStub:
+        """Runtime stub with a store attribute for the insight engine."""
+
+        store = object()
+
+        def close(self) -> None:
+            """Accept the command's close call."""
+
+        def __enter__(self) -> RuntimeStub:
+            """Return the stub for context-managed reads."""
+            return self
+
+        def __exit__(self, *exc_info: object) -> None:
+            """Close on context exit."""
+            self.close()
+
+    class EngineStub:
+        """Insight engine stub with one persisted edge sample."""
+
+        def __init__(self, _store: object) -> None:
+            self._store = _store
+
+        def count_variant_edges(self) -> int:
+            """Return the full persisted edge count."""
+            return 100
+
+        def count_omission_findings(self) -> int:
+            """Return the full persisted omission count."""
+            return 0
+
+        def list_variant_edges(self, *, limit: int | None = None) -> list[VariantEdge]:
+            """Return one bounded edge sample."""
+            assert limit == 7
+            return [
+                VariantEdge(
+                    edge_id="edge-1",
+                    run_id="run-1",
+                    left_record_id="left-record",
+                    right_record_id="right-record",
+                    variant_type="exact_duplicate",
+                    confidence=1.0,
+                    explanation="normalized prompt text is identical",
+                ),
+            ]
+
+        def list_omission_findings(
+            self,
+            *,
+            limit: int | None = None,
+        ) -> list[OmissionFinding]:
+            """Return no omission samples."""
+            assert limit == 7
+            return []
+
+    import agentgrep.db as agentgrep_db
+    import agentgrep.insights as insights_module
+
+    db_file = pathlib.Path(os.environ["AGENTGREP_DB"])
+    db_file.touch()
+    monkeypatch.setattr(
+        agentgrep_db.DbRuntime,
+        "open_readonly",
+        classmethod(lambda _cls, _path=None: RuntimeStub()),
+    )
+    monkeypatch.setattr(insights_module, "InsightEngine", EngineStub)
+    args = agentgrep.InsightsArgs(
+        action="list",
+        db_path=None,
+        kind="all",
+        target=None,
+        output_mode="text",
+        color_mode="never",
+        limit=7,
+    )
+
+    exit_code = render.run_insights_command(args)
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert captured.err == ""
+    assert "Insights" in captured.out
+    assert "limit 7" in captured.out
+    assert "1/100 variant edges" in captured.out
+    assert "edge-1" in captured.out
+    assert not captured.out.lstrip().startswith(("{", "["))
+    assert "VariantEdge(" not in captured.out
+
+
+def test_insights_explain_uses_counts_without_listing_rows(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Insights explain is a cheap summary, not a row dump."""
+
+    class RuntimeStub:
+        """Runtime stub with a store attribute for the insight engine."""
+
+        store = object()
+
+        def close(self) -> None:
+            """Accept the command's close call."""
+
+        def __enter__(self) -> RuntimeStub:
+            """Return the stub for context-managed reads."""
+            return self
+
+        def __exit__(self, *exc_info: object) -> None:
+            """Close on context exit."""
+            self.close()
+
+    class EngineStub:
+        """Insight engine stub that rejects unbounded list calls."""
+
+        def __init__(self, _store: object) -> None:
+            self._store = _store
+
+        def count_variant_edges(self) -> int:
+            """Return the full persisted edge count."""
+            return 100
+
+        def count_omission_findings(self) -> int:
+            """Return the full persisted omission count."""
+            return 2
+
+        def list_variant_edges(self, *, limit: int | None = None) -> list[object]:
+            """Reject accidental row listing."""
+            _ = limit
+            msg = "explain should not list variant edges"
+            raise AssertionError(msg)
+
+        def list_omission_findings(self, *, limit: int | None = None) -> list[object]:
+            """Reject accidental row listing."""
+            _ = limit
+            msg = "explain should not list omission findings"
+            raise AssertionError(msg)
+
+    import agentgrep.db as agentgrep_db
+    import agentgrep.insights as insights_module
+
+    db_file = pathlib.Path(os.environ["AGENTGREP_DB"])
+    db_file.touch()
+    monkeypatch.setattr(
+        agentgrep_db.DbRuntime,
+        "open_readonly",
+        classmethod(lambda _cls, _path=None: RuntimeStub()),
+    )
+    monkeypatch.setattr(insights_module, "InsightEngine", EngineStub)
+    args = agentgrep.InsightsArgs(
+        action="explain",
+        db_path=None,
+        kind="all",
+        target=None,
+        output_mode="json",
+        color_mode="never",
+    )
+
+    exit_code = render.run_insights_command(args)
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert json.loads(captured.out) == {
+        "variant_edges": 100,
+        "omission_findings": 2,
+    }
+
+
+def test_insights_analyze_can_exit_early_between_steps(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Insights analyze honors answer-now control before the next insight step."""
+    target = tmp_path / "AGENTS.md"
+    target.write_text("Run pytest before committing.\n", encoding="utf-8")
+
+    class RuntimeStub:
+        """Runtime stub with a store attribute for the insight engine."""
+
+        store = object()
+
+        def close(self) -> None:
+            """Accept the command's close call."""
+
+    class EngineStub:
+        """Insight engine stub that requests early exit after similarity."""
+
+        def __init__(self, _store: object) -> None:
+            self._store = _store
+
+        def run_similarity(
+            self,
+            *,
+            control: agentgrep.SearchControl | None = None,
+            progress: object | None = None,
+        ) -> object:
+            _ = progress
+            assert control is not None
+            control.request_answer_now()
+            return {"kind": "similarity", "variant_edges": 1}
+
+        def run_omissions(
+            self,
+            *,
+            target_path: pathlib.Path,
+            target_text: str,
+            control: agentgrep.SearchControl | None = None,
+            progress: object | None = None,
+        ) -> object:
+            _ = (target_path, target_text, control, progress)
+            msg = "omissions should not run after early exit"
+            raise AssertionError(msg)
+
+    import agentgrep.insights as insights_module
+
+    monkeypatch.setattr(render, "_open_db_runtime", lambda _path: RuntimeStub())
+    monkeypatch.setattr(insights_module, "InsightEngine", EngineStub)
+    args = agentgrep.InsightsArgs(
+        action="analyze",
+        db_path=None,
+        kind="all",
+        target=str(target),
+        output_mode="json",
+        color_mode="never",
+        progress_mode="always",
+    )
+
+    exit_code = render.run_insights_command(args)
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert json.loads(captured.out) == {"kind": "similarity", "variant_edges": 1}
+    assert "Exiting early:" in captured.err
+
+
+def test_insights_analyze_tty_progress_renders_exit_hint() -> None:
+    """TTY insights progress mirrors DB sync hint and color semantics."""
+    buffer = _StringBuffer()
+    progress = render.ConsoleInsightsAnalyzeProgress(
+        enabled=True,
+        stream=t.cast("t.TextIO", buffer),
+        tty=True,
+        color_mode="always",
+        refresh_interval=60.0,
+        answer_now_hint=True,
+    )
+    result = render.InsightsAnalyzeProgressResult(
+        runs_analyzed=0,
+        features_refreshed=0,
+        clusters=0,
+        variant_edges=0,
+        omission_findings=0,
+    )
+
+    progress.start(1)
+    progress.step_started(1, 1, "similarity", result)
+    progress.exiting_early(result)
+
+    output = buffer.getvalue()
+    assert "\x1b[" in output
+    assert "[Press enter, exit early]" in output
+    assert "Exiting early:" in output
+
+
+def test_insights_analyze_progress_lines_show_activity_without_empty_results() -> None:
+    """Insights progress does not show zero aggregate counters as live results."""
+    colors = agentgrep.AnsiColors(enabled=False)
+    snapshot = render.InsightsAnalyzeProgressSnapshot(
+        phase="analyzing",
+        current=1,
+        total=1,
+        detail="similarity",
+        activity="refreshing feature cache",
+        activity_detail="15,084 missing feature rows",
+        result=render.InsightsAnalyzeProgressResult(
+            runs_analyzed=0,
+            features_refreshed=0,
+            clusters=0,
+            variant_edges=0,
+            omission_findings=0,
+        ),
+        elapsed=16.6,
+    )
+
+    lines = render.format_insights_analyze_progress_lines(
+        snapshot,
+        colors=colors,
+        answer_now_hint=True,
+    )
+
+    assert lines == (
+        "Insights analyze | analyzing 1/1 steps | similarity | 16.6s | [Press enter, exit early]",
+        "Doing | refreshing feature cache | 15,084 missing feature rows",
+    )
+
+
+def test_insights_analyze_progress_lines_show_nonzero_results() -> None:
+    """Insights progress keeps aggregate counters once a step has produced output."""
+    colors = agentgrep.AnsiColors(enabled=False)
+    snapshot = render.InsightsAnalyzeProgressSnapshot(
+        phase="analyzing",
+        current=2,
+        total=2,
+        detail="omissions",
+        activity="comparing omission candidates",
+        activity_detail="100 indexed records",
+        result=render.InsightsAnalyzeProgressResult(
+            runs_analyzed=1,
+            features_refreshed=3,
+            clusters=2,
+            variant_edges=4,
+            omission_findings=0,
+        ),
+        elapsed=5.5,
+    )
+
+    lines = render.format_insights_analyze_progress_lines(snapshot, colors=colors)
+
+    assert lines == (
+        "Insights analyze | analyzing 2/2 steps | omissions | 5.5s",
+        "Doing | comparing omission candidates | 100 indexed records",
+        "Results | 1 run analyzed | 3 features refreshed | 2 clusters | "
+        "4 variant edges | 0 omission findings",
+    )
+
+
+def test_insights_analyze_progress_lines_preserve_step_detail_when_results_truncate() -> None:
+    """Wide result counters do not hide the current insight step."""
+    colors = agentgrep.AnsiColors(enabled=False)
+    snapshot = render.InsightsAnalyzeProgressSnapshot(
+        phase="analyzing",
+        current=1,
+        total=1,
+        detail="similarity",
+        activity="writing similarity artifacts",
+        activity_detail="658 duplicate prompt families",
+        result=render.InsightsAnalyzeProgressResult(
+            runs_analyzed=0,
+            features_refreshed=0,
+            clusters=658,
+            variant_edges=5584,
+            omission_findings=0,
+        ),
+        elapsed=16.6,
+    )
+
+    lines = render.format_insights_analyze_progress_lines(
+        snapshot,
+        colors=colors,
+        max_width=72,
+    )
+
+    assert "similarity" in lines[0]
+    assert "writing similarity artifacts" in lines[1]
+    assert lines[2].endswith("…")
 
 
 def test_grep_cache_require_unsupported_query_exits_without_traceback(
@@ -688,6 +1467,16 @@ def test_grep_cache_require_unsupported_query_exits_without_traceback(
     assert exc_info.value.code == 2
     assert "--cache require" in captured.err
     assert "Traceback" not in captured.err
+
+
+def test_suggestions_render_command_parses_identifier() -> None:
+    """Suggestions commands retrieve stored review artifacts by id."""
+    parsed = agentgrep.parse_args(("suggestions", "render", "suggestion-1", "--json"))
+
+    assert isinstance(parsed, agentgrep.SuggestionsArgs)
+    assert parsed.action == "render"
+    assert parsed.suggestion_id == "suggestion-1"
+    assert parsed.output_mode == "json"
 
 
 def test_db_command_closes_runtime_on_exit(
@@ -1214,9 +2003,10 @@ class CoverageRecordingStub:
         force: bool = False,
         coverage: SyncCoverage | None = None,
         prune_missing: bool = False,
+        features_mode: str = "defer",
     ) -> SyncResult:
         """Record coverage and pruning, returning zero counters."""
-        del sources, control, progress, force
+        del sources, control, progress, force, features_mode
         self.coverage = coverage
         self.prune_missing = prune_missing
         return SyncResult(sources_synced=0, records_indexed=0, records_removed=0)
@@ -1368,3 +2158,202 @@ def test_db_sync_prunes_only_on_full_syncs(
 
     assert exit_code == 0
     assert stub.prune_missing is case.expected_prune
+
+
+def test_insights_command_closes_runtime_on_exit(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Insights read actions open read-only and close their connection."""
+    import agentgrep.db as agentgrep_db
+
+    db_path = tmp_path / "agentgrep.sqlite"
+    agentgrep_db.DbRuntime.open(db_path).close()
+    opened: list[agentgrep_db.DbRuntime] = []
+    real_open_readonly = agentgrep_db.DbRuntime.open_readonly
+
+    def capturing_open_readonly(
+        db_path: pathlib.Path | str | None = None,
+    ) -> agentgrep_db.DbRuntime:
+        runtime = real_open_readonly(db_path)
+        opened.append(runtime)
+        return runtime
+
+    monkeypatch.setattr(agentgrep_db.DbRuntime, "open_readonly", capturing_open_readonly)
+    args = agentgrep.InsightsArgs(
+        action="explain",
+        db_path=str(db_path),
+        kind="all",
+        target=None,
+        output_mode="json",
+    )
+
+    exit_code = agentgrep.run_insights_command(args)
+
+    _ = capsys.readouterr()
+    assert exit_code == 0
+    assert len(opened) == 1
+    with pytest.raises(sqlite3.ProgrammingError):
+        _ = opened[0].store.connection.execute("SELECT 1")
+
+
+def test_insights_list_on_missing_db_reports_empty_without_creating(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Insights list on a missing cache reports zeros and creates nothing."""
+    db_path = tmp_path / "missing.sqlite"
+    args = agentgrep.InsightsArgs(
+        action="list",
+        db_path=str(db_path),
+        kind="all",
+        target=None,
+        output_mode="json",
+    )
+
+    exit_code = agentgrep.run_insights_command(args)
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert exit_code == 0
+    assert payload["variant_edges"]["total"] == 0
+    assert payload["omission_findings"]["truncated"] is False
+    assert not db_path.exists()
+
+
+def test_suggestions_list_on_missing_db_reports_empty_without_creating(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Suggestions list on a missing cache reports zero rows, creates nothing."""
+    db_path = tmp_path / "missing.sqlite"
+    args = agentgrep.SuggestionsArgs(
+        action="list",
+        db_path=str(db_path),
+        suggestion_id=None,
+        target=None,
+        output_mode="json",
+    )
+
+    exit_code = agentgrep.run_suggestions_command(args)
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert exit_code == 0
+    assert payload["suggestions"]["total"] == 0
+    assert payload["suggestions"]["truncated"] is False
+    assert not db_path.exists()
+
+
+class SuggestionsLimitFlagCase(t.NamedTuple):
+    """Named case for suggestions list limit parsing."""
+
+    test_id: str
+    argv: tuple[str, ...]
+    expected_limit: int
+
+
+SUGGESTIONS_LIMIT_FLAG_CASES: tuple[SuggestionsLimitFlagCase, ...] = (
+    SuggestionsLimitFlagCase(
+        test_id="default-limit",
+        argv=("suggestions", "list"),
+        expected_limit=50,
+    ),
+    SuggestionsLimitFlagCase(
+        test_id="explicit-limit",
+        argv=("suggestions", "list", "--limit", "5"),
+        expected_limit=5,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    SUGGESTIONS_LIMIT_FLAG_CASES,
+    ids=[case.test_id for case in SUGGESTIONS_LIMIT_FLAG_CASES],
+)
+def test_suggestions_list_parses_limit(case: SuggestionsLimitFlagCase) -> None:
+    """Suggestions list exposes a bounded page size."""
+    parsed = agentgrep.parse_args(case.argv)
+
+    assert isinstance(parsed, agentgrep.SuggestionsArgs)
+    assert parsed.limit == case.expected_limit
+
+
+def test_suggestions_list_rejects_non_positive_limit(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A non-positive suggestions limit is a parse-time error."""
+    with pytest.raises(SystemExit) as exc_info:
+        _ = agentgrep.parse_args(("suggestions", "list", "--limit", "0"))
+
+    captured = capsys.readouterr()
+    assert exc_info.value.code == 2
+    assert "--limit must be greater than 0" in captured.err
+
+
+def test_suggestions_list_returns_bounded_page_with_totals(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The suggestions list payload carries totals and truncation."""
+    import agentgrep.db as agentgrep_db
+    from agentgrep.insights import InsightEngine
+    from agentgrep.suggestions import SuggestionEngine
+
+    db_path = tmp_path / "agentgrep.sqlite"
+    source_path = tmp_path / "session.jsonl"
+    target_path = tmp_path / "AGENTS.md"
+    source_path.write_text("{}", encoding="utf-8")
+    target_path.write_text("Run pytest before committing.\n", encoding="utf-8")
+    runtime = agentgrep_db.DbRuntime.open(db_path)
+    source = agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=source_path,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=source_path.parent,
+        mtime_ns=source_path.stat().st_mtime_ns,
+    )
+    records = tuple(
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent=source.agent,
+            store=source.store,
+            adapter_id=source.adapter_id,
+            path=source.path,
+            text=text,
+            timestamp="2026-06-05T12:00:00Z",
+            session_id=f"session-{index}",
+        )
+        for index, text in enumerate(
+            ("Run ruff check before committing.", "Run ty check before committing."),
+        )
+    )
+    _ = runtime.sync_records(((source, records),), features_mode="inline")
+    insights = InsightEngine(runtime.store)
+    _ = insights.run_omissions(target_path=target_path, target_text=target_path.read_text())
+    created = SuggestionEngine(runtime.store).create_from_omissions(target_path=target_path)
+    runtime.close()
+    assert len(created) >= 2
+    args = agentgrep.SuggestionsArgs(
+        action="list",
+        db_path=str(db_path),
+        suggestion_id=None,
+        target=None,
+        output_mode="json",
+        limit=1,
+    )
+
+    exit_code = agentgrep.run_suggestions_command(args)
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert exit_code == 0
+    assert payload["limit"] == 1
+    assert payload["suggestions"]["returned"] == 1
+    assert payload["suggestions"]["total"] >= 2
+    assert payload["suggestions"]["truncated"] is True

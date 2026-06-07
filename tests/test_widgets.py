@@ -183,10 +183,13 @@ def test_cli_docs_render_one_page_per_command_group(tmp_path: pathlib.Path) -> N
     )
 
     cli_index = (tmp_path / "cli" / "index.html").read_text(encoding="utf-8")
+    assert "db-insights" not in cli_index
     for href in (
         'href="search/"',
         'href="ui/"',
         'href="db/"',
+        'href="insights/"',
+        'href="suggestions/"',
     ):
         assert href in cli_index
 
@@ -194,5 +197,11 @@ def test_cli_docs_render_one_page_per_command_group(tmp_path: pathlib.Path) -> N
         tmp_path / "cli" / "db" / "sync" / "index.html",
         tmp_path / "cli" / "db" / "status" / "index.html",
         tmp_path / "cli" / "db" / "explain" / "index.html",
+        tmp_path / "cli" / "insights" / "analyze" / "index.html",
+        tmp_path / "cli" / "insights" / "list" / "index.html",
+        tmp_path / "cli" / "insights" / "explain" / "index.html",
+        tmp_path / "cli" / "suggestions" / "list" / "index.html",
+        tmp_path / "cli" / "suggestions" / "show" / "index.html",
+        tmp_path / "cli" / "suggestions" / "render" / "index.html",
     ):
         assert page.is_file()
