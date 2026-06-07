@@ -789,3 +789,19 @@ def test_profile_run_honors_cache_mode(
         decision = next(sample for sample in samples if sample["name"] == "search.cache.decision")
         attributes = t.cast("dict[str, object]", decision["attributes"])
         assert attributes["agentgrep_cache_handled"] is True
+
+
+def test_profile_payload_records_sql_explain_lever(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Profile artifacts disclose whether plan capture was active."""
+    parser = profile_engine._build_parser()
+    args = parser.parse_args(["grep-prompts", "tmux", "--agent", "codex", "--max-count", "1"])
+
+    monkeypatch.setenv("AGENTGREP_SQL_EXPLAIN", "1")
+    captured = profile_engine._run(args)
+    monkeypatch.delenv("AGENTGREP_SQL_EXPLAIN", raising=False)
+    default = profile_engine._run(args)
+
+    assert captured["sql_explain"] is True
+    assert default["sql_explain"] is False

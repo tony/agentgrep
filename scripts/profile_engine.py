@@ -261,6 +261,11 @@ def _resolved_cache_mode() -> str:
     return resolve_cache_mode(None, os.environ.get("AGENTGREP_CACHE"))
 
 
+def _sql_explain_echo() -> bool:
+    """Return whether AGENTGREP_SQL_EXPLAIN plan capture was active."""
+    return bool(os.environ.get("AGENTGREP_SQL_EXPLAIN"))
+
+
 def _cache_search_runtime() -> SearchRuntime | None:
     """Build the search runtime the resolved cache mode calls for.
 
@@ -333,6 +338,7 @@ def _run_spec(
     payload["schema_version"] = SCHEMA_VERSION
     payload["artifact_kind"] = PROFILE_RUN_ARTIFACT_KIND
     payload["cache_mode"] = _resolved_cache_mode()
+    payload["sql_explain"] = _sql_explain_echo()
     payload["agent_count"] = len(agents)
     payload["term_count"] = len(terms)
     payload["limit"] = limit
