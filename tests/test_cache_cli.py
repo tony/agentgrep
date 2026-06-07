@@ -11,7 +11,14 @@ import pytest
 
 import agentgrep
 import agentgrep.cli.render as render
-from agentgrep.db import DbStatus, DbSyncProgress, SyncResult
+from agentgrep.db import (
+    ANSWERABLE_QUERY_FORMS,
+    DbExplain,
+    DbStatus,
+    DbSyncProgress,
+    SyncCoverage,
+    SyncResult,
+)
 
 if t.TYPE_CHECKING:
     import collections.abc as cabc
@@ -238,6 +245,43 @@ STRUCTURED_TEXT_OUTPUT_CASES: tuple[StructuredTextOutputCase, ...] = (
         ),
         expected_not_contains=("SyncResult(", "{", "'sources_synced'"),
     ),
+    StructuredTextOutputCase(
+        test_id="db-explain-with-coverage",
+        payload=DbExplain(
+            db_path=pathlib.Path("/tmp/agentgrep.sqlite"),
+            schema_version=1,
+            sources=2,
+            records=3,
+            synced_ok=2,
+            sync_errors=0,
+            last_synced_at="2026-06-07T00:00:00Z",
+            answerable=ANSWERABLE_QUERY_FORMS,
+            coverage={"codex": ("all",), "claude": ("prompts",)},
+        ),
+        expected_contains=(
+            "DB explain",
+            "Coverage",
+            "claude=prompts",
+            "codex=all",
+        ),
+        expected_not_contains=("DbExplain(", "not recorded"),
+    ),
+    StructuredTextOutputCase(
+        test_id="db-explain-coverage-not-recorded",
+        payload=DbExplain(
+            db_path=pathlib.Path("/tmp/agentgrep.sqlite"),
+            schema_version=1,
+            sources=0,
+            records=0,
+            synced_ok=0,
+            sync_errors=0,
+            last_synced_at=None,
+            answerable=ANSWERABLE_QUERY_FORMS,
+            coverage=None,
+        ),
+        expected_contains=("DB explain", "Coverage", "not recorded"),
+        expected_not_contains=("DbExplain(",),
+    ),
 )
 
 
@@ -415,6 +459,7 @@ def test_db_sync_forced_progress_keeps_json_stdout_clean(
 
         force: bool | None = None
         closed: bool = False
+        coverage: SyncCoverage | None = None
 
         def close(self) -> None:
             """Record that the command closed its runtime."""
@@ -427,8 +472,10 @@ def test_db_sync_forced_progress_keeps_json_stdout_clean(
             control: agentgrep.SearchControl | None = None,
             progress: DbSyncProgress | None = None,
             force: bool = False,
+            coverage: SyncCoverage | None = None,
         ) -> SyncResult:
             self.force = force
+            self.coverage = coverage
             source_list = tuple(sources)
             result = SyncResult(sources_synced=0, records_indexed=0, records_removed=0)
             assert control is not None
@@ -1122,3 +1169,98 @@ def test_search_paths_close_their_db_runtime(
             t.cast("cabc.Generator[object]", events).close()
 
     assert db_stub.closed is True
+
+
+class CoverageRecordingStub:
+    """Runtime stub capturing the coverage the sync command passes."""
+
+    def __init__(self) -> None:
+        """Start with no recorded coverage."""
+        self.coverage: SyncCoverage | None = None
+
+    def close(self) -> None:
+        """Accept the command's runtime close."""
+
+    def sync_sources(
+        self,
+        sources: t.Iterable[agentgrep.SourceHandle],
+        *,
+        control: agentgrep.SearchControl | None = None,
+        progress: DbSyncProgress | None = None,
+        force: bool = False,
+        coverage: SyncCoverage | None = None,
+    ) -> SyncResult:
+        """Record coverage and return zero counters."""
+        del sources, control, progress, force
+        self.coverage = coverage
+        return SyncResult(sources_synced=0, records_indexed=0, records_removed=0)
+
+
+class SyncCoverageArgsCase(t.NamedTuple):
+    """Named case for the coverage the db sync command computes."""
+
+    test_id: str
+    limit_sources: int | None
+    scope: agentgrep.SearchScope
+    expected_complete: bool
+
+
+SYNC_COVERAGE_ARGS_CASES: tuple[SyncCoverageArgsCase, ...] = (
+    SyncCoverageArgsCase(
+        test_id="full-sync-is-complete",
+        limit_sources=None,
+        scope="all",
+        expected_complete=True,
+    ),
+    SyncCoverageArgsCase(
+        test_id="capped-sync-is-incomplete",
+        limit_sources=1,
+        scope="all",
+        expected_complete=False,
+    ),
+    SyncCoverageArgsCase(
+        test_id="scoped-sync-keeps-its-scope",
+        limit_sources=None,
+        scope="prompts",
+        expected_complete=True,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    SYNC_COVERAGE_ARGS_CASES,
+    ids=[case.test_id for case in SYNC_COVERAGE_ARGS_CASES],
+)
+def test_db_sync_passes_coverage_from_args(
+    case: SyncCoverageArgsCase,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The sync command derives coverage from its agent/scope/cap arguments."""
+    stub = CoverageRecordingStub()
+    monkeypatch.setattr(render, "_open_db_runtime", lambda _path: stub)
+    monkeypatch.setattr(
+        agentgrep,
+        "discover_sources_for_search",
+        lambda _home, _query, _backends, version_detail: [],
+    )
+    args = agentgrep.DbArgs(
+        action="sync",
+        db_path=None,
+        agents=("codex",),
+        scope=case.scope,
+        limit_sources=case.limit_sources,
+        output_mode="json",
+        color_mode="never",
+        progress_mode="never",
+    )
+
+    exit_code = render.run_db_command(args)
+    _ = capsys.readouterr()
+
+    assert exit_code == 0
+    assert stub.coverage is not None
+    assert stub.coverage.agents == ("codex",)
+    assert stub.coverage.scope == case.scope
+    assert stub.coverage.complete is case.expected_complete
