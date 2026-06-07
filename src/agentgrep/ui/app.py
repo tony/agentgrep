@@ -1069,6 +1069,23 @@ def build_streaming_ui_app(
             width: 1fr;
             layout: vertical;
         }
+        /* Narrow terminals stack the panes: results on top, detail below
+           (tig moves its diff view to the bottom on narrow screens). The
+           ``1fr``/``2fr`` units are per-axis, so the side-by-side width
+           rules above still hold; only the body's layout axis flips. */
+        #body.-stacked {
+            layout: vertical;
+        }
+        #body.-stacked > #results-column {
+            height: 2fr;
+        }
+        #body.-stacked > #detail-column {
+            height: 1fr;
+        }
+        /* Stacked detail stays closed until the user selects a row. */
+        #detail-column.-collapsed {
+            display: none;
+        }
         #filter {
             height: 3;
         }
@@ -1192,6 +1209,12 @@ def build_streaming_ui_app(
         # keep their cells on small terminals.
         _NARROW_BREAKPOINT: t.ClassVar[int] = 50
 
+        # Body width (cells) below which the detail pane moves from the
+        # right (side-by-side) to the bottom (stacked) — each side wants
+        # ~50 cells to stay readable. Distinct from the statusline
+        # breakpoint above, which measures the results column alone.
+        _SPLIT_BREAKPOINT: t.ClassVar[int] = 100
+
         def __init__(
             self,
             *,
@@ -1234,6 +1257,16 @@ def build_streaming_ui_app(
             self._resize_debounce_timer: object | None = None
             self._current_detail_record: SearchRecord | None = None
             self._detail_scroll: t.Any = None
+            self._body: t.Any = None
+            self._detail_column: t.Any = None
+            # Responsive split: True when the detail pane is stacked
+            # below the results rather than beside them. ``_detail_opened``
+            # is the tig-style "user selected a row" gate that reveals the
+            # stacked detail; the auto row-0 highlight after each filter
+            # pass (``_pending_autohighlight``) must not trip it.
+            self._stacked: bool = False
+            self._detail_opened: bool = False
+            self._pending_autohighlight: bool = False
             # LRU caches for detail-pane work. Keyed by
             # ``(id(record), query.terms, case_sensitive, regex)`` — the
             # tuple of attributes that determines the rendered body and
@@ -1272,7 +1305,14 @@ def build_streaming_ui_app(
                 placeholder="Search prompts",
                 id="search",
             )
-            with horizontal(id="body"):
+            # Decide the responsive split up-front (terminal width is known
+            # at compose time) so narrow terminals are born stacked with the
+            # detail collapsed — applying the class in on_mount instead would
+            # paint the detail once and then hide it, a visible flicker.
+            stacked = 0 < self.size.width < self._SPLIT_BREAKPOINT
+            body_classes = "-stacked" if stacked else ""
+            detail_classes = "-collapsed" if stacked else ""
+            with horizontal(id="body", classes=body_classes):
                 with vertical(id="results-column"):
                     with horizontal(id="results-statusline"):
                         yield SpinnerWidget(id="status-spinner")
@@ -1282,7 +1322,7 @@ def build_streaming_ui_app(
                     yield static_type("", id="status-detail")
                     yield FilterInput(placeholder="Filter loaded results", id="filter")
                     yield SearchResultsList(id="results")
-                with vertical(id="detail-column"):
+                with vertical(id="detail-column", classes=detail_classes):
                     with DetailScroll(id="detail-scroll"):
                         yield static_type("", id="detail")
                     yield static_type("", id="detail-statusline")
@@ -1300,6 +1340,8 @@ def build_streaming_ui_app(
                 streaming.query_one("#detail", static_type),
             )
             self._detail_scroll = streaming.query_one("#detail-scroll")
+            self._body = streaming.query_one("#body")
+            self._detail_column = streaming.query_one("#detail-column")
             self._status_widget = t.cast(
                 "StaticLike",
                 streaming.query_one("#status-text", static_type),
@@ -1333,7 +1375,14 @@ def build_streaming_ui_app(
                 "SearchInput",
                 streaming.query_one("#search"),
             )
+            # Steady (non-blinking) input cursors. A blinking cursor keeps
+            # toggling its inverted-block glyph even when the terminal loses
+            # focus — Textual can't tell the tmux pane went inactive without
+            # focus-events — so the cursor flickers in the background pane.
+            for _input in (self._filter_input, self._search_input):
+                t.cast("t.Any", _input).cursor_blink = False
             self._progress = self._make_gated_progress()
+            self._apply_responsive_layout()
             if self.query.terms:
                 self._start_search_worker(self.query)
                 self._filter_input.focus()
@@ -1386,8 +1435,13 @@ def build_streaming_ui_app(
             self._started_at = None
             self._last_snapshot = None
             self._current_detail_record = None
+            # A fresh search re-collapses the stacked detail pane until
+            # the user selects a row again.
+            self._detail_opened = False
+            self._pending_autohighlight = False
             if self._results is not None:
                 self._results.set_records([])
+            self._apply_responsive_layout()
             if self._detail is not None:
                 self._detail.update("")
             if self._matches_widget is not None:
@@ -1629,6 +1683,34 @@ def build_streaming_ui_app(
             width = int(getattr(container.size, "width", 0) or 0)
             return 0 < width < self._NARROW_BREAKPOINT
 
+        def _apply_responsive_layout(self) -> None:
+            """Flip the detail pane between right (wide) and bottom (narrow).
+
+            Below :data:`_SPLIT_BREAKPOINT` cells the body stacks the panes
+            (results on top, detail below) and the detail stays collapsed
+            until the user selects a row — matching tig, which moves its
+            diff view to the bottom on narrow screens and opens it on
+            selection. Wide statuslines keep the detail on the right and
+            always visible. Idempotent and cheap: only touches a class
+            when the target state changes.
+            """
+            if self._body is None or self._detail_column is None:
+                return
+            # Use the app (terminal) width, not ``_body.size`` — the body
+            # hasn't been laid out yet at on_mount, so its width reads 0
+            # and the detail would flash visible before the first resize
+            # collapsed it. ``self.size`` is known from the driver at mount.
+            width = int(getattr(self.size, "width", 0) or 0)
+            stacked = 0 < width < self._SPLIT_BREAKPOINT
+            self._stacked = stacked
+            body = t.cast("t.Any", self._body)
+            body.set_class(stacked, "-stacked")
+            # Detail is collapsed only when stacked AND the user hasn't
+            # opened it yet (or there's nothing to show). Wide always
+            # shows it; the auto row-0 highlight never counts as "opened".
+            collapsed = stacked and not (self._detail_opened and bool(self.filtered_records))
+            t.cast("t.Any", self._detail_column).set_class(collapsed, "-collapsed")
+
         def _tick_elapsed(self) -> None:
             """Repaint the left status text from wall-clock elapsed (1 Hz).
 
@@ -1805,6 +1887,10 @@ def build_streaming_ui_app(
                 return
             self.filtered_records = list(payload.matching)
             if self._results is not None:
+                # ``set_records`` re-highlights row 0; flag that the next
+                # OptionHighlighted is programmatic so it doesn't count as
+                # the user opening the stacked detail pane.
+                self._pending_autohighlight = True
                 self._results.set_records(payload.matching)
             if self._detail is not None:
                 if self.filtered_records:
@@ -1815,6 +1901,9 @@ def build_streaming_ui_app(
                     self._detail.update(
                         "No results." if self._search_done else "No matches yet.",
                     )
+            # Empty results collapse the stacked detail; a populated list
+            # keeps whatever open state the user already chose.
+            self._apply_responsive_layout()
 
         def on_option_list_option_highlighted(self, event: object) -> None:
             """Update the detail pane and footer on OptionList cursor move.
@@ -1828,6 +1917,16 @@ def build_streaming_ui_app(
                 self._refresh_results_status_right()
                 return
             row_index = int(option_index)
+            if self._pending_autohighlight:
+                # The programmatic row-0 highlight after a filter pass —
+                # update content (so the wide pane stays populated) but
+                # don't treat it as the user opening the stacked detail.
+                self._pending_autohighlight = False
+            else:
+                # A genuine cursor move: open the stacked detail pane and
+                # keep it open for the rest of this result set (tig-style).
+                self._detail_opened = True
+                self._apply_responsive_layout()
             if 0 <= row_index < len(self.filtered_records):
                 record = self.filtered_records[row_index]
                 if record is not self._current_detail_record:
@@ -2153,6 +2252,9 @@ def build_streaming_ui_app(
             # ... and swaps the post-search summary between its wide and
             # minimized forms.
             self._render_finished_status()
+            # Crossing the split breakpoint moves the detail pane between
+            # the right side and the bottom.
+            self._apply_responsive_layout()
 
         def action_stop_search(self) -> None:
             """``Esc``: cooperative early-exit of the worker (no-op when finished)."""
@@ -2165,11 +2267,12 @@ def build_streaming_ui_app(
             else:
                 self.exit()
 
-        # Directional pane focus (tmux-style ``ctrl+hjkl``). Edge moves (e.g.
-        # ``ctrl+j`` from the detail pane — nothing below it) are no-ops.
-        # The focusable regions, top-to-bottom: #search (top), then in the
-        # body: #filter and #results (left column, sticky filter above the
-        # list) and #detail-scroll (right column).
+        # Directional pane focus (tmux-style ``ctrl+hjkl``). Routing is
+        # layout-aware: side-by-side the detail pane sits to the right of
+        # the results, stacked it sits below them, so ``up``/``down`` reach
+        # the detail in the stacked layout while ``left``/``right`` reach
+        # it side-by-side. Focusable regions: #search (top), then in the
+        # body #filter and #results, and #detail-scroll (right or bottom).
 
         def _focus_widget_by_id(self, widget_id: str) -> None:
             try:
@@ -2178,40 +2281,61 @@ def build_streaming_ui_app(
                 return
             t.cast("t.Any", target).focus()
 
+        def _focus_detail(self) -> None:
+            """Focus the detail pane, opening it first when stacked-collapsed.
+
+            A ``display: none`` pane cannot take focus, so on a narrow
+            statusline the detail is revealed (and marked opened) before
+            the focus call.
+            """
+            if self._stacked and not self._detail_opened:
+                self._detail_opened = True
+                self._apply_responsive_layout()
+            self._focus_widget_by_id("detail-scroll")
+
         def action_focus_pane_left(self) -> None:
-            """``Ctrl-H``: focus the pane to the left of the current one."""
+            """``Ctrl-H``: leave the detail pane back to the results."""
             if self.focused is not None and self.focused.id == "detail-scroll":
                 self._focus_widget_by_id("results")
 
         def action_focus_pane_right(self) -> None:
-            """``Ctrl-L``: focus the pane to the right of the current one."""
+            """``Ctrl-L``: focus the detail pane (to the right / opened below)."""
             if self.focused is not None and self.focused.id in (
                 "results",
                 "filter",
                 "search",
             ):
-                self._focus_widget_by_id("detail-scroll")
+                self._focus_detail()
 
         def action_focus_pane_up(self) -> None:
             """``Ctrl-K``: focus the pane above the current one.
 
             Inside the body, ``up`` lands on the body's top row (``#filter``).
             From the body's top row, ``up`` leaves the body and lands on the
-            top-level search bar.
+            top-level search bar. When stacked, the detail sits below the
+            results, so ``up`` from the detail lands on the results.
             """
             focused_id = self.focused.id if self.focused is not None else None
-            if focused_id in ("results", "detail-scroll"):
+            if focused_id == "detail-scroll":
+                self._focus_widget_by_id("results" if self._stacked else "filter")
+            elif focused_id == "results":
                 self._focus_widget_by_id("filter")
             elif focused_id == "filter":
                 self._focus_widget_by_id("search")
 
         def action_focus_pane_down(self) -> None:
-            """``Ctrl-J``: focus the pane below the current one."""
+            """``Ctrl-J``: focus the pane below the current one.
+
+            When stacked, ``down`` from the results reaches the detail pane
+            below them (opening it if needed).
+            """
             focused_id = self.focused.id if self.focused is not None else None
             if focused_id == "search":
                 self._focus_widget_by_id("filter")
             elif focused_id == "filter":
                 self._focus_widget_by_id("results")
+            elif focused_id == "results" and self._stacked:
+                self._focus_detail()
 
         def _has_active_actions(self) -> bool:
             """Return True if any cancellable in-flight action exists.
