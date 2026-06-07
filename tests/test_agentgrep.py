@@ -2978,19 +2978,28 @@ class RightSlotWidthCase(t.NamedTuple):
 
     test_id: str
     size: tuple[int, int]
-    expect_cursor_segment: bool
+    searching: bool
+    expected: str
 
 
 RIGHT_SLOT_WIDTH_CASES: tuple[RightSlotWidthCase, ...] = (
     RightSlotWidthCase(
-        test_id="wide-keeps-cursor-segment",
+        test_id="wide-keeps-cursor-and-scroll",
         size=(160, 24),
-        expect_cursor_segment=True,
+        searching=False,
+        expected="5 matches  1/5  0%",
     ),
     RightSlotWidthCase(
-        test_id="narrow-drops-cursor-segment",
+        test_id="narrow-searching-shows-search-percent",
         size=(40, 24),
-        expect_cursor_segment=False,
+        searching=True,
+        expected="5 matches  84%",
+    ),
+    RightSlotWidthCase(
+        test_id="narrow-done-shows-count-only",
+        size=(40, 24),
+        searching=False,
+        expected="5 matches",
     ),
 )
 
@@ -3005,17 +3014,20 @@ async def test_results_status_right_adapts_to_width(
     monkeypatch: pytest.MonkeyPatch,
     case: RightSlotWidthCase,
 ) -> None:
-    """Narrow statuslines keep count + percent and drop the cursor segment."""
+    """Narrow right slots show search progress while running, count when done."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     records = _seed_records(agentgrep, tmp_path, 5)
     async with app.run_test(size=case.size) as pilot:
         await pilot.pause()
         app.all_records.extend(records)
-        rendered = app._format_results_right(0, 5, 0)
-        assert ("1/5" in rendered) is case.expect_cursor_segment
-        assert "5 matches" in rendered
-        assert rendered.endswith("0%")
+        if case.searching:
+            app._search_done = False
+            _set_query_terms(app, "tmux")
+            # 5662/6748 sources scanned rounds to 84%.
+            app._apply_progress(_make_progress_snapshot(agentgrep))
+            await pilot.pause()
+        assert app._format_results_right(0, 5, 0) == case.expected
 
 
 def _make_progress_snapshot(agentgrep: t.Any, **overrides: t.Any) -> t.Any:
@@ -3177,7 +3189,32 @@ async def test_elapsed_ticker_starts_on_progress_and_stops_on_finish(
         await pilot.pause()
         assert app._elapsed_timer is None
         assert app._meter_widget._compose_text() == ""
-        assert any(u.startswith("Search complete") for u in updates)
+        # Exact text — the right slot owns the match count, the summary
+        # must not repeat it.
+        assert "Search complete in 12.3s" in updates
+
+
+async def test_search_complete_minimizes_on_narrow_statusline(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A narrow completed search shows just the check glyph and match count."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(40, 24)) as pilot:
+        await pilot.pause()
+        updates: list[str] = []
+        real_update = app._status_widget.update
+
+        def spy(content: t.Any = "", *args: t.Any, **kwargs: t.Any) -> None:
+            updates.append(str(content))
+            real_update(content, *args, **kwargs)
+
+        monkeypatch.setattr(app._status_widget, "update", spy)
+        app._apply_finished("complete", 100, 12.3, None)
+        await pilot.pause()
+        # The left text is blanked — the frozen ✓ and the right slot's
+        # match count carry the completed state.
+        assert updates[-1] == ""
 
 
 async def test_meter_change_gates_identical_progress(

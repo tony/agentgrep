@@ -513,8 +513,9 @@ def build_streaming_ui_app(
         of per-source progress callbacks collapse to ~120 repaints.
 
         Width adaptation happens at render time: with enough room the
-        meter shows ``▰▰▰▱▱ 52%``, below ``_MIN_BAR_CELLS`` of bar room
-        it degrades to the bare percent, and below that to nothing.
+        meter shows ``▰▰▰▱▱ 52%``; below ``_MIN_BAR_CELLS`` of bar room
+        it renders nothing — on narrow statuslines the search percent
+        moves to the right slot instead, next to the match count.
         While the source total is unknown (discovery / planning phases)
         it shows the phase word instead of a bar — the spinner next
         door already supplies motion, so no second animation timer.
@@ -568,12 +569,10 @@ def build_streaming_ui_app(
                 return ""
             if self._fraction is None:
                 return self._indeterminate_phase[:width]
-            percent = format_progress_percent(self._fraction)
             bar_width = width - self._PERCENT_RESERVE
             if bar_width >= self._MIN_BAR_CELLS:
-                return f"{render_progress_meter(self._fraction, bar_width)} {percent}"
-            if width >= len(percent):
-                return percent
+                bar = render_progress_meter(self._fraction, bar_width)
+                return f"{bar} {format_progress_percent(self._fraction)}"
             return ""
 
         def _maybe_refresh(self) -> None:
@@ -1206,6 +1205,8 @@ def build_streaming_ui_app(
             self._elapsed_timer: object | None = None
             self._last_left_text: str = ""
             self._last_detail_text: str = ""
+            self._last_right_text: str = ""
+            self._finished_status: tuple[str, str] | None = None
             self._detail_visible: bool = False
             self._detail_statusline: StaticLike | None = None
             self._filter_input: FilterInput | None = None
@@ -1376,6 +1377,8 @@ def build_streaming_ui_app(
             self._stop_elapsed_timer()
             self._last_left_text = ""
             self._last_detail_text = ""
+            self._last_right_text = ""
+            self._finished_status = None
             if self._status_widget is not None:
                 self._status_widget.update(
                     searching_left_text(
@@ -1540,6 +1543,11 @@ def build_streaming_ui_app(
                 if detail != self._last_detail_text:
                     self._last_detail_text = detail
                     self._detail_row.update(detail)
+            if self._statusline_narrow():
+                # Narrow right slots carry the search percent; record
+                # batches alone would let it go stale on sparse matches.
+                # The refresh is change-gated, so this stays cheap.
+                self._refresh_results_status_right()
 
         def _current_query_label(self) -> str:
             """Return the label for the currently submitted query.
@@ -1628,18 +1636,37 @@ def build_streaming_ui_app(
                 self._spinner_widget.freeze(glyphs.get(outcome, "·"))
             if self._meter_widget is not None:
                 self._meter_widget.freeze()
-            if self._status_widget is not None:
-                if outcome == "error":
-                    self._status_widget.update(f"Search failed: {error_message}")
-                elif outcome == "interrupted":
-                    self._status_widget.update(
-                        f"Stopped at {format_match_count(total)} "
-                        f"across {self._sources_label()} sources in {elapsed:.1f}s",
-                    )
-                else:
-                    self._status_widget.update(
-                        f"Search complete: {format_match_count(total)} in {elapsed:.1f}s",
-                    )
+            if outcome == "error":
+                text = f"Search failed: {error_message}"
+            elif outcome == "interrupted":
+                text = (
+                    f"Stopped at {format_match_count(total)} "
+                    f"across {self._sources_label()} sources in {elapsed:.1f}s"
+                )
+            else:
+                # The right slot already carries the match count — don't
+                # repeat it in the summary.
+                text = f"Search complete in {elapsed:.1f}s"
+            self._finished_status = (outcome, text)
+            self._render_finished_status()
+            # Recompute the right slot: narrow mode swaps the in-flight
+            # search percent for the plain match count once the search ends.
+            self._refresh_results_status_right()
+
+        def _render_finished_status(self) -> None:
+            """Paint the post-search summary, minimized on narrow statuslines.
+
+            A narrow completed search shows just the frozen ``✓`` plus the
+            right slot's match count; the wide summary keeps the elapsed
+            time. Interrupted and failed searches keep their text at every
+            width — that information has no other home.
+            """
+            if self._status_widget is None or self._finished_status is None:
+                return
+            outcome, text = self._finished_status
+            if outcome == "complete" and self._statusline_narrow():
+                text = ""
+            self._status_widget.update(text)
 
         def _sources_label(self) -> str:
             snap = self._last_snapshot
@@ -1756,9 +1783,10 @@ def build_streaming_ui_app(
                 cursor = t.cast("int | None", getattr(self._results, "highlighted", None))
                 visible = len(self._results._records)
                 percent = self._results._scroll_percent()
-            self._matches_widget.update(
-                self._format_results_right(cursor, visible, percent),
-            )
+            text = self._format_results_right(cursor, visible, percent)
+            if text != self._last_right_text:
+                self._last_right_text = text
+                self._matches_widget.update(text)
 
         def _format_results_right(
             self,
@@ -1768,19 +1796,33 @@ def build_streaming_ui_app(
         ) -> str:
             """Render the right slot: ``{N} matches  {cursor+1}/{visible}  {pct}%`` (tig style).
 
-            Narrow statuslines drop the ``cursor/visible`` segment — the
-            match count and scroll percent keep their cells so the slot
-            never clips mid-number at the column edge.
+            Narrow statuslines drop the ``cursor/visible`` and scroll
+            segments so the slot never clips mid-number at the column
+            edge: while a search runs they show the match count plus the
+            search-completion percent (the meter bar doesn't fit, so the
+            slot carries it), and once the search ends just the count.
             """
             total_matches = len(self.all_records)
             parts: list[str] = []
             if total_matches > 0:
                 parts.append(format_match_count(total_matches))
-            if visible and visible > 0 and cursor is not None and not self._statusline_narrow():
-                parts.append(f"{cursor + 1}/{visible}")
-            if percent is not None and total_matches > 0:
-                parts.append(f"{percent}%")
+            if not self._statusline_narrow():
+                if visible and visible > 0 and cursor is not None:
+                    parts.append(f"{cursor + 1}/{visible}")
+                if percent is not None and total_matches > 0:
+                    parts.append(f"{percent}%")
+            elif not self._search_done:
+                search_percent = self._search_progress_percent()
+                if search_percent is not None:
+                    parts.append(search_percent)
             return "  ".join(parts)
+
+        def _search_progress_percent(self) -> str | None:
+            """Return the search-completion percent from the latest snapshot."""
+            snap = self._last_snapshot
+            if snap is None or snap.current is None or snap.total is None or snap.total <= 0:
+                return None
+            return format_progress_percent(snap.current / snap.total)
 
         def _refresh_detail_statusline(self, percent: int | None = None) -> None:
             """Update the detail status line with the current record path and scroll %."""
@@ -2010,6 +2052,9 @@ def build_streaming_ui_app(
                 self._meter_widget.invalidate()
             # Crossing the narrow breakpoint adds/removes the elapsed suffix.
             self._tick_elapsed()
+            # ... and swaps the post-search summary between its wide and
+            # minimized forms.
+            self._render_finished_status()
 
         def action_stop_search(self) -> None:
             """``Esc``: cooperative early-exit of the worker (no-op when finished)."""
