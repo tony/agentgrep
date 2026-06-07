@@ -62,6 +62,15 @@ Fail loudly if the cache cannot serve a query:
 $ AGENTGREP_CACHE=require uv run agentgrep grep "release"
 ```
 
+Set `AGENTGREP_SQL_EXPLAIN` to capture the SQLite query plan for each
+statement shape in profiles and DEBUG logs. Statements are recorded
+with placeholders only — search terms and other bound parameters are
+never captured:
+
+```console
+$ AGENTGREP_SQL_EXPLAIN=1 uv run agentgrep grep --cache require "release"
+```
+
 ## Output
 
 Text output is optimized for terminal reading:

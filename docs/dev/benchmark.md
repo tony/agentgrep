@@ -319,7 +319,16 @@ row records its `cache_mode`.
 
 DB-cache consultations report one `search.cache.decision` sample per query
 with the cache mode, whether the cache served the query, the served record
-count, and the fallback reason when it did not.
+count, and the fallback reason when it did not. `db.sql.statement` samples
+report one aggregate per executed SQL statement shape — name, execution
+count (the n+1 signal), rows, and summed duration — with placeholder-only
+statement text and no bound parameters.
+
+Capture SQLite query plans alongside the statement samples:
+
+```console
+$ env AGENTGREP_SQL_EXPLAIN=1 AGENTGREP_CACHE=require uv run python scripts/profile_engine.py grep-prompts tmux --agent all --max-count 50 --json
+```
 
 Those spans report agent, store,
 adapter, path kind, source kind, counts, and match decisions without including
