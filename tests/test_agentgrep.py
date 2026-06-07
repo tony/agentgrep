@@ -2881,23 +2881,28 @@ def test_scroll_percent_clamps_to_bounds() -> None:
     assert scroll_percent(-10.0, 100.0) == 0
 
 
-async def test_results_status_right_shows_match_count_cursor_and_percent(
+async def test_results_status_right_shows_position_or_count(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``_format_results_right`` renders ``{N} matches  {cursor+1}/{visible}  {pct}%``."""
+    """Wide right slots show ``{cursor+1}/{visible}`` once a cursor exists.
+
+    Before a cursor exists the bare match count renders; the denominator
+    carries the count afterwards, so the two never appear together.
+    """
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
-    async with app.run_test() as pilot:
+    # Wide terminal — the narrow breakpoint has its own slot behavior.
+    async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
         # No streaming results yet — empty right slot regardless of args.
-        assert app._format_results_right(cursor=None, visible=None, percent=None) == ""
+        assert app._format_results_right(cursor=None, visible=None) == ""
         # Seed streaming totals so the match count segment renders.
         app.all_records.extend(_seed_records(agentgrep, tmp_path, 10))
-        # No cursor yet — match count + percent.
-        assert app._format_results_right(cursor=None, visible=10, percent=50) == "10 matches  50%"
-        # Cursor at row 0 of all 10 — full triple.
-        assert app._format_results_right(cursor=0, visible=10, percent=0) == "10 matches  1/10  0%"
+        # No cursor yet — bare match count.
+        assert app._format_results_right(cursor=None, visible=10) == "10 matches"
+        # Cursor at row 0 of all 10 — position only, no restated count.
+        assert app._format_results_right(cursor=0, visible=10) == "1/10"
 
 
 async def test_detail_statusline_shows_path_and_scroll_percent(
@@ -2941,7 +2946,9 @@ async def test_results_scroll_changed_updates_status_right(
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     records = _seed_records(agentgrep, tmp_path, 5)
-    async with app.run_test() as pilot:
+    # Wide terminal — the narrow breakpoint drops the cursor/visible
+    # segment this test asserts on.
+    async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
         updates: list[str] = []
         real_update = app._matches_widget.update
@@ -2962,10 +2969,484 @@ async def test_results_scroll_changed_updates_status_right(
         app._results.highlighted = 0
         await pilot.pause()
         # The ``highlighted`` watcher posts ``ResultsScrollChanged`` which
-        # the app handler renders as ``5 matches  1/5  N%``.
-        assert any("1/5" in u and "matches" in u for u in updates), (
-            f"expected '5 matches  1/5  N%' in {updates!r}"
+        # the app handler renders as the cursor position ``1/5``.
+        assert any(u == "1/5" for u in updates), f"expected '1/5' in {updates!r}"
+
+
+class RightSlotWidthCase(t.NamedTuple):
+    """One terminal-width scenario for the results-status right slot."""
+
+    test_id: str
+    size: tuple[int, int]
+    searching: bool
+    cursor: int | None
+    expected: str
+
+
+RIGHT_SLOT_WIDTH_CASES: tuple[RightSlotWidthCase, ...] = (
+    RightSlotWidthCase(
+        test_id="wide-cursor-shows-position-only",
+        size=(160, 24),
+        searching=False,
+        cursor=0,
+        expected="1/5",
+    ),
+    RightSlotWidthCase(
+        test_id="wide-no-cursor-shows-count",
+        size=(160, 24),
+        searching=False,
+        cursor=None,
+        expected="5 matches",
+    ),
+    RightSlotWidthCase(
+        test_id="narrow-searching-shows-search-percent",
+        size=(40, 24),
+        searching=True,
+        cursor=0,
+        expected="5 matches  84%",
+    ),
+    RightSlotWidthCase(
+        test_id="narrow-done-shows-count-only",
+        size=(40, 24),
+        searching=False,
+        cursor=0,
+        expected="5 matches",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    RIGHT_SLOT_WIDTH_CASES,
+    ids=[case.test_id for case in RIGHT_SLOT_WIDTH_CASES],
+)
+async def test_results_status_right_adapts_to_width(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: RightSlotWidthCase,
+) -> None:
+    """Narrow right slots show search progress while running, count when done."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 5)
+    async with app.run_test(size=case.size) as pilot:
+        await pilot.pause()
+        app.all_records.extend(records)
+        if case.searching:
+            app._search_done = False
+            # 5662/6748 sources scanned rounds to 84%.
+            app._apply_progress(_make_progress_snapshot(agentgrep))
+            await pilot.pause()
+        assert app._format_results_right(case.cursor, 5) == case.expected
+
+
+def _make_progress_snapshot(agentgrep: t.Any, **overrides: t.Any) -> t.Any:
+    """Build a scanning-phase ``ProgressSnapshot`` with overridable fields."""
+    fields: dict[str, t.Any] = {
+        "query_label": "tmux",
+        "phase": "scanning",
+        "current": 5662,
+        "total": 6748,
+        "detail": "2176 records, 354 source matches",
+        "matches": 2176,
+        "elapsed": 32.0,
+    }
+    fields.update(overrides)
+    return agentgrep.ProgressSnapshot(**fields)
+
+
+async def test_apply_progress_drives_meter_and_left_text(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A scanning snapshot fills the ▰▱ meter and paints the elapsed left text."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    # Wide terminal: the results column must clear the narrow breakpoint
+    # so the bar and the "(0s)" elapsed suffix both render.
+    async with app.run_test(size=(160, 24)) as pilot:
+        await pilot.pause()
+        app._search_done = False
+        app._apply_progress(_make_progress_snapshot(agentgrep))
+        await pilot.pause()
+        assert app._meter_widget._fraction == pytest.approx(5662 / 6748)
+        rendered = app._meter_widget._compose_text()
+        assert "▰" in rendered
+        assert rendered.endswith("%")
+        # The query itself is not repeated — the search box shows it.
+        assert app._last_left_text.startswith("Searching… (")
+
+
+async def test_meter_indeterminate_before_total_shows_phase_word(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without a source total the meter shows the phase word, not a bar."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(160, 24)) as pilot:
+        await pilot.pause()
+        app._search_done = False
+        app._apply_progress(
+            _make_progress_snapshot(
+                agentgrep,
+                phase="discovering",
+                current=None,
+                total=None,
+                detail=None,
+            ),
         )
+        await pilot.pause()
+        assert app._meter_widget._fraction is None
+        rendered = app._meter_widget._compose_text()
+        assert rendered == "discovering"
+        assert "▰" not in rendered
+
+
+async def test_ctrl_backslash_toggles_scanning_detail_row(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    r"""``Ctrl-\`` shows the verbose scanning row, a second press hides it."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(160, 24)) as pilot:
+        await pilot.pause()
+        app._search_done = False
+        app._apply_progress(_make_progress_snapshot(agentgrep))
+        await pilot.pause()
+        detail_row = app.screen.query_one("#status-detail")
+        assert not detail_row.has_class("visible")
+        await pilot.press("ctrl+backslash")
+        await pilot.pause()
+        assert app._detail_visible is True
+        assert detail_row.has_class("visible")
+        assert (
+            app._last_detail_text == "Scanning 5662/6748 sources | 2176 records, 354 source matches"
+        )
+        await pilot.press("ctrl+backslash")
+        await pilot.pause()
+        assert app._detail_visible is False
+        assert not detail_row.has_class("visible")
+
+
+async def test_detail_row_visibility_sticky_across_search_reset(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A new search keeps the detail row visible but wipes its stale content."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(160, 24)) as pilot:
+        await pilot.pause()
+        app._search_done = False
+        app._apply_progress(_make_progress_snapshot(agentgrep))
+        await pilot.pause()
+        await pilot.press("ctrl+backslash")
+        await pilot.pause()
+        assert app._detail_visible is True
+        updates: list[str] = []
+        real_update = app._detail_row.update
+
+        def spy(content: t.Any = "", *args: t.Any, **kwargs: t.Any) -> None:
+            updates.append(str(content))
+            real_update(content, *args, **kwargs)
+
+        monkeypatch.setattr(app._detail_row, "update", spy)
+        app._reset_search_chrome()
+        await pilot.pause()
+        assert app._detail_visible is True
+        assert updates[-1] == ""
+
+
+async def test_elapsed_ticker_starts_on_progress_and_stops_on_finish(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The 1 Hz ticker arms on the first snapshot and disarms on finish."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(160, 24)) as pilot:
+        await pilot.pause()
+        app._search_done = False
+        assert app._elapsed_timer is None
+        app._apply_progress(_make_progress_snapshot(agentgrep))
+        await pilot.pause()
+        assert app._elapsed_timer is not None
+        updates: list[str] = []
+        real_update = app._status_widget.update
+
+        def spy(content: t.Any = "", *args: t.Any, **kwargs: t.Any) -> None:
+            updates.append(str(content))
+            real_update(content, *args, **kwargs)
+
+        monkeypatch.setattr(app._status_widget, "update", spy)
+        app._apply_finished("complete", 100, 12.3, None)
+        await pilot.pause()
+        assert app._elapsed_timer is None
+        # The frozen bar IS the wide summary: full, green, no left text.
+        assert app._meter_widget._compose_text().endswith("100%")
+        assert app._meter_widget.has_class("-done")
+        assert updates[-1] == ""
+        # The data summary lands in the toggleable detail row instead.
+        assert app._last_detail_text == "Search complete: 100 matches in 12.3s"
+
+
+async def test_search_complete_minimizes_on_narrow_statusline(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A narrow completed search shows just the check glyph and match count."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(40, 24)) as pilot:
+        await pilot.pause()
+        updates: list[str] = []
+        real_update = app._status_widget.update
+
+        def spy(content: t.Any = "", *args: t.Any, **kwargs: t.Any) -> None:
+            updates.append(str(content))
+            real_update(content, *args, **kwargs)
+
+        monkeypatch.setattr(app._status_widget, "update", spy)
+        app._apply_finished("complete", 100, 12.3, None)
+        await pilot.pause()
+        # Narrow has no room for the bar — the green check says it.
+        assert updates[-1] == "Done"
+        assert app._status_widget.has_class("-done")
+
+
+class FinishOutcomeCase(t.NamedTuple):
+    """One post-search outcome-by-width scenario for the statusline."""
+
+    test_id: str
+    size: tuple[int, int]
+    outcome: str
+    expected_left: str
+    expected_class: str
+    meter_shows_bar: bool
+
+
+FINISH_OUTCOME_CASES: tuple[FinishOutcomeCase, ...] = (
+    FinishOutcomeCase(
+        test_id="complete-wide-green-full-bar",
+        size=(160, 24),
+        outcome="complete",
+        expected_left="",
+        expected_class="-done",
+        meter_shows_bar=True,
+    ),
+    FinishOutcomeCase(
+        test_id="complete-narrow-says-done",
+        size=(40, 24),
+        outcome="complete",
+        expected_left="Done",
+        expected_class="-done",
+        meter_shows_bar=False,
+    ),
+    FinishOutcomeCase(
+        test_id="interrupted-wide-gray-partial-bar",
+        size=(160, 24),
+        outcome="interrupted",
+        expected_left="",
+        expected_class="-stopped",
+        meter_shows_bar=True,
+    ),
+    FinishOutcomeCase(
+        test_id="interrupted-narrow-says-stopped",
+        size=(40, 24),
+        outcome="interrupted",
+        expected_left="Stopped",
+        expected_class="-stopped",
+        meter_shows_bar=False,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    FINISH_OUTCOME_CASES,
+    ids=[case.test_id for case in FINISH_OUTCOME_CASES],
+)
+async def test_finish_outcome_freezes_colored_bar(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: FinishOutcomeCase,
+) -> None:
+    """The frozen bar (or its narrow word) carries the search outcome."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=case.size) as pilot:
+        await pilot.pause()
+        app._search_done = False
+        # Seed matches so the right slot occupies its real-world cells —
+        # narrow meters only lose the bar when the count is present.
+        app.all_records.extend(_seed_records(agentgrep, tmp_path, 5))
+        app._apply_progress(_make_progress_snapshot(agentgrep))
+        await pilot.pause()
+        updates: list[str] = []
+        real_update = app._status_widget.update
+
+        def spy(content: t.Any = "", *args: t.Any, **kwargs: t.Any) -> None:
+            updates.append(str(content))
+            real_update(content, *args, **kwargs)
+
+        monkeypatch.setattr(app._status_widget, "update", spy)
+        app._apply_finished(case.outcome, 100, 12.3, None)
+        await pilot.pause()
+        assert updates[-1] == case.expected_left
+        for widget in (app._meter_widget, app._status_widget, app._spinner_widget):
+            assert widget.has_class(case.expected_class)
+        rendered = app._meter_widget._compose_text()
+        assert ("▰" in rendered) is case.meter_shows_bar
+        if case.meter_shows_bar and case.outcome == "complete":
+            # Complete fills the bar.
+            assert "▱" not in rendered
+            assert rendered.endswith("100%")
+        if case.meter_shows_bar and case.outcome == "interrupted":
+            # Interrupted freezes at the last fill (5662/6748 → 84%).
+            assert "▱" in rendered
+            assert rendered.endswith("84%")
+
+
+async def test_detail_row_shows_summary_after_finish(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Toggling the detail row after a finished search shows the data summary."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(160, 24)) as pilot:
+        await pilot.pause()
+        app._search_done = False
+        app._apply_progress(_make_progress_snapshot(agentgrep))
+        await pilot.pause()
+        app._apply_finished("interrupted", 2976, 2.1, None)
+        await pilot.pause()
+        await pilot.press("ctrl+backslash")
+        await pilot.pause()
+        assert app._detail_visible is True
+        assert app._last_detail_text == "Stopped at 2976 matches across 5662/6748 sources in 2.1s"
+
+
+async def test_meter_change_gates_identical_progress(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The first fraction repaints exactly once; an identical repeat adds none."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(160, 24)) as pilot:
+        await pilot.pause()
+        meter = app._meter_widget
+        refreshes: list[None] = []
+        real_refresh = meter.refresh
+
+        def spy(*args: t.Any, **kwargs: t.Any) -> t.Any:
+            refreshes.append(None)
+            return real_refresh(*args, **kwargs)
+
+        monkeypatch.setattr(meter, "refresh", spy)
+        # Mount rendered the idle meter as "" — the first real fraction
+        # must compose a non-empty bar and trigger exactly one repaint.
+        meter.set_progress(0.5, "")
+        assert len(refreshes) == 1
+        meter.set_progress(0.5, "")
+        assert len(refreshes) == 1
+
+
+class StaleGenerationCase(t.NamedTuple):
+    """One generation-gate scenario for ``_apply_streaming_event``."""
+
+    test_id: str
+    use_current_generation: bool
+    expect_applied: bool
+
+
+STALE_GENERATION_CASES: tuple[StaleGenerationCase, ...] = (
+    StaleGenerationCase(
+        test_id="current-generation-applies",
+        use_current_generation=True,
+        expect_applied=True,
+    ),
+    StaleGenerationCase(
+        test_id="stale-generation-dropped",
+        use_current_generation=False,
+        expect_applied=False,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    STALE_GENERATION_CASES,
+    ids=[case.test_id for case in STALE_GENERATION_CASES],
+)
+async def test_streaming_events_gated_by_generation(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: StaleGenerationCase,
+) -> None:
+    """Events from a cancelled worker's generation never touch the chrome.
+
+    A cancelled worker keeps draining its queued events after the user
+    starts a new search; the un-gated form repainted the new search's
+    chrome with stale "Stopped" states and old bar fills.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(160, 24)) as pilot:
+        await pilot.pause()
+        app._search_done = False
+        stale_generation = app._chrome_generation
+        # A new search bumps the generation; the old reporter's events
+        # still carry the previous one.
+        app._reset_search_chrome()
+        await pilot.pause()
+        generation = app._chrome_generation if case.use_current_generation else stale_generation
+        await app._apply_streaming_event(generation, _make_progress_snapshot(agentgrep))
+        await pilot.pause()
+        assert (app._last_snapshot is not None) is case.expect_applied
+        assert (app._elapsed_timer is not None) is case.expect_applied
+        assert (app._meter_widget._fraction is not None) is case.expect_applied
+
+
+async def test_streaming_records_batch_lands_in_results(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A records batch routed through the generation gate populates the list.
+
+    Regression guard: the records handler is a coroutine — the gate must
+    await it, not drop the un-awaited coroutine on the floor (which left
+    the results list silently empty).
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 3)
+    async with app.run_test(size=(160, 24)) as pilot:
+        await pilot.pause()
+        app._search_done = False
+        batch = agentgrep.StreamingRecordsBatch(records=tuple(records), total=3)
+        await app._apply_streaming_event(app._chrome_generation, batch)
+        await pilot.pause()
+        assert len(app.all_records) == 3
+        assert len(app._results._records) == 3
+
+
+async def test_narrow_statusline_drops_bar_and_elapsed(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Below the breakpoint the elapsed suffix and the ▰▱ bar are dropped."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(40, 24)) as pilot:
+        await pilot.pause()
+        app._search_done = False
+        app._apply_progress(_make_progress_snapshot(agentgrep))
+        await pilot.pause()
+        assert app._statusline_narrow() is True
+        assert app._last_left_text == "Searching"
+        assert "▰" not in app._meter_widget._compose_text()
 
 
 def test_format_compact_path_passes_short_paths_through(

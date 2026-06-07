@@ -42,6 +42,25 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### What's new
+
+#### Calm search progress in the TUI (#50)
+
+While a search runs, the results statusline now shows a star spinner,
+a live elapsed clock, a progress bar over the sources scanned, and the
+running match count — replacing the stream of per-source scanning text
+that previously redrew on every file. When the search ends, the bar
+stays on as the outcome: full and green when complete, frozen in gray
+where a cancelled search stopped.
+
+The verbose counts are one keystroke away: `ctrl+\` toggles a detail
+row beneath the statusline carrying the scanning detail while the
+search runs and the full summary — matches, sources, elapsed — once it
+ends, and the toggle stays on for the rest of the session. On narrow
+terminals the statusline keeps the essentials: the progress percent,
+the match count, and a green "Done" or gray "Stopped" after the
+search finishes.
+
 ## agentgrep 0.1.0a18 (2026-06-06)
 
 agentgrep 0.1.0a18 makes searches substantially faster across every

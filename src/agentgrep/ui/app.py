@@ -76,6 +76,188 @@ def scroll_percent(scroll_y: float, max_scroll_y: float) -> int:
     return min(100, max(0, round((scroll_y / max_scroll_y) * 100)))
 
 
+def format_elapsed_compact(seconds: float) -> str:
+    """Format elapsed seconds as a compact ticker label.
+
+    Every unit is truncated (floored) rather than rounded so a live
+    1 Hz ticker never displays a second that has not fully elapsed.
+
+    Parameters
+    ----------
+    seconds : float
+        Elapsed wall-clock seconds. Negative values clamp to ``0``.
+
+    Returns
+    -------
+    str
+        ``"32s"`` under a minute, ``"7m 32s"`` under an hour, and
+        ``"1h 02m"`` from an hour up (seconds dropped to bound width).
+
+    Examples
+    --------
+    >>> format_elapsed_compact(0)
+    '0s'
+    >>> format_elapsed_compact(32.9)
+    '32s'
+    >>> format_elapsed_compact(60)
+    '1m 0s'
+    >>> format_elapsed_compact(452)
+    '7m 32s'
+    >>> format_elapsed_compact(3725)
+    '1h 02m'
+    """
+    total = max(0, int(seconds))
+    if total < 60:
+        return f"{total}s"
+    if total < 3600:
+        return f"{total // 60}m {total % 60}s"
+    return f"{total // 3600}h {(total % 3600) // 60:02d}m"
+
+
+def render_progress_meter(fraction: float, width: int) -> str:
+    """Render a ``▰▱`` progress bar of ``width`` cells.
+
+    Parameters
+    ----------
+    fraction : float
+        Completion in ``[0.0, 1.0]``; values outside the range clamp.
+    width : int
+        Bar width in cells. Non-positive widths render nothing.
+
+    Returns
+    -------
+    str
+        ``round(fraction * width)`` filled cells (``▰``) followed by
+        empty cells (``▱``).
+
+    Examples
+    --------
+    >>> render_progress_meter(0.52, 17)
+    '▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱'
+    >>> render_progress_meter(0.0, 5)
+    '▱▱▱▱▱'
+    >>> render_progress_meter(1.5, 5)
+    '▰▰▰▰▰'
+    >>> render_progress_meter(0.5, 0)
+    ''
+    """
+    if width <= 0:
+        return ""
+    clamped = max(0.0, min(1.0, fraction))
+    filled = min(width, round(clamped * width))
+    return "▰" * filled + "▱" * (width - filled)
+
+
+def format_progress_percent(fraction: float) -> str:
+    """Format a completion fraction as an integer percent.
+
+    Parameters
+    ----------
+    fraction : float
+        Completion in ``[0.0, 1.0]``; values outside the range clamp.
+
+    Returns
+    -------
+    str
+        The rounded integer percent with a ``%`` suffix.
+
+    Examples
+    --------
+    >>> format_progress_percent(0.524)
+    '52%'
+    >>> format_progress_percent(1.0)
+    '100%'
+    >>> format_progress_percent(-0.5)
+    '0%'
+    """
+    clamped = max(0.0, min(1.0, fraction))
+    return f"{round(clamped * 100)}%"
+
+
+def format_scanning_detail(
+    phase: str,
+    current: int | None,
+    total: int | None,
+    detail: str | None,
+) -> str:
+    r"""Compose the verbose scanning line for the toggleable detail row.
+
+    The ``Ctrl-\`` row carries the per-source counts the compact
+    statusline omits — phase, scanned/total sources, and in-source
+    record/match counts — with the phase word capitalized to open the
+    row as a sentence.
+
+    Parameters
+    ----------
+    phase : str
+        Engine phase word (e.g. ``"scanning"``, ``"discovering"``).
+    current : int or None
+        Index of the source being scanned, when known.
+    total : int or None
+        Total number of sources, when known.
+    detail : str or None
+        In-source detail such as ``"2176 records, 354 source matches"``.
+
+    Returns
+    -------
+    str
+        The composed detail line; segments with unknown inputs are
+        omitted.
+
+    Examples
+    --------
+    >>> format_scanning_detail(
+    ...     "scanning", 5662, 6748, "2176 records, 354 source matches",
+    ... )
+    'Scanning 5662/6748 sources | 2176 records, 354 source matches'
+    >>> format_scanning_detail("prefiltering", None, None, "~/.codex/sessions/")
+    'Prefiltering ~/.codex/sessions/'
+    >>> format_scanning_detail("discovering", None, None, None)
+    'Discovering'
+    """
+    heading = phase[:1].upper() + phase[1:]
+    if current is not None and total is not None:
+        line = f"{heading} {current}/{total} sources"
+        if detail:
+            line = f"{line} | {detail}"
+        return line
+    if detail:
+        return f"{heading} {detail}"
+    return heading
+
+
+def searching_left_text(elapsed: float, *, narrow: bool) -> str:
+    """Compose the left status text shown next to the spinner.
+
+    The query itself is not repeated — the search input directly above
+    the statusline already shows it. Narrow mode also drops the elapsed
+    ticker (and its ellipsis) so the percent and match count keep their
+    cells on small terminals.
+
+    Parameters
+    ----------
+    elapsed : float
+        Wall-clock seconds since the search started.
+    narrow : bool
+        When ``True``, omit the elapsed suffix for small terminals.
+
+    Returns
+    -------
+    str
+        The left status segment, e.g. ``"Searching… (32s)"``.
+
+    Examples
+    --------
+    >>> searching_left_text(32.4, narrow=False)
+    'Searching… (32s)'
+    >>> searching_left_text(32.4, narrow=True)
+    'Searching'
+    """
+    if narrow:
+        return "Searching"
+    return f"Searching… ({format_elapsed_compact(elapsed)})"
+
+
 def run_ui(
     home: pathlib.Path,
     query: SearchQuery,
@@ -190,7 +372,8 @@ def build_streaming_ui_app(
     # FilterRequested / FilterCompleted stay on the Textual message bus — they
     # fire at typing speed, not streaming speed, so the FIFO queue is fine for
     # them. Records / progress / search-finished events bypass the message bus
-    # entirely (see ``make_emit`` below) so they never queue behind keystrokes.
+    # entirely (see ``_make_gated_progress`` below) so they never queue behind
+    # keystrokes.
 
     class FilterRequested(message_type):  # ty: ignore[unsupported-base]
         """Debounced filter-text-changed event from :class:`FilterInput`."""
@@ -235,51 +418,29 @@ def build_streaming_ui_app(
             super().__init__()
             self.percent = percent
 
-    def make_emit(app: StreamingAppLike) -> cabc.Callable[[object], None]:
-        """Build an ``emit`` callback that dispatches streaming events via ``call_from_thread``.
-
-        ``call_from_thread`` schedules the callback directly on the event loop
-        rather than enqueuing a ``Message`` — so high-frequency record batches
-        don't compete with keystroke / timer events for FIFO message dispatch.
-        Vibe-tmux uses the same pattern (``call_from_thread(_rebuild_tree, snap)``)
-        and Textual's own ``Log`` widget mutates state directly without a per-
-        write message. This is the canonical Textual pattern for "many small
-        updates from a worker thread."
-        """
-        typed_app = t.cast("t.Any", app)
-
-        def emit(event: object) -> None:
-            if isinstance(event, StreamingRecordsBatch):
-                typed_app.call_from_thread(
-                    typed_app._apply_records_batch,
-                    event.records,
-                    event.total,
-                )
-            elif isinstance(event, ProgressSnapshot):
-                typed_app.call_from_thread(typed_app._apply_progress, event)
-            elif isinstance(event, StreamingSearchFinished):
-                typed_app.call_from_thread(
-                    typed_app._apply_finished,
-                    event.outcome,
-                    event.total,
-                    event.elapsed,
-                    str(event.error) if event.error else None,
-                )
-
-        return emit
-
     class SpinnerWidget(static_type):  # ty: ignore[unsupported-base]
-        """Self-driving Braille spinner that animates regardless of event-loop load.
+        """Self-driving star spinner that animates regardless of event-loop load.
 
         The widget pulls its frame index from ``time.monotonic()`` on every
         ``render`` and lets Textual's per-widget ``auto_refresh`` reactor drive
         the redraw. This decouples the spinner from any main-thread timer or
         message handler — even if record-batch dispatch backs up, the spinner
         keeps ticking.
+
+        Frames ping-pong through the star glyphs — inspired by Claude
+        Code's compaction-spinner aesthetic. The endpoints are doubled
+        (forward then full reverse) so the breathe holds briefly at the
+        dot and at full bloom instead of bouncing straight back.
+
+        Every frame must stay off the Unicode emoji table — glyphs like
+        ``✳`` (U+2733 EIGHT SPOKED ASTERISK) carry an emoji presentation
+        that terminal fonts substitute with a colored bitmap. The
+        teardrop-spoked asterisks below have text presentation only.
         """
 
-        _FRAMES: t.ClassVar[str] = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
-        _FPS: t.ClassVar[float] = 10.0
+        _FRAMES: t.ClassVar[str] = "·✢✽✻"
+        _SEQUENCE: t.ClassVar[str] = _FRAMES + _FRAMES[::-1]
+        _FPS: t.ClassVar[float] = 2.0
 
         def __init__(self, *, id: str | None = None) -> None:  # noqa: A002 -- forwarded to Textual's ``id`` kwarg
             super().__init__("", id=id)
@@ -291,12 +452,12 @@ def build_streaming_ui_app(
             self.auto_refresh = 1.0 / self._FPS
 
         def render(self) -> str:
-            """Return the current Braille frame from elapsed wall-clock time."""
+            """Return the current star frame from elapsed wall-clock time."""
             if self._final_glyph is not None:
                 return self._final_glyph
             elapsed = time.monotonic() - self._started_at
-            frame_index = int(elapsed * self._FPS) % len(self._FRAMES)
-            return self._FRAMES[frame_index]
+            frame_index = int(elapsed * self._FPS) % len(self._SEQUENCE)
+            return self._SEQUENCE[frame_index]
 
         def freeze(self, glyph: str) -> None:
             """Stop animating and lock the displayed glyph (called on terminal events)."""
@@ -310,6 +471,123 @@ def build_streaming_ui_app(
             self._started_at = time.monotonic()
             self.auto_refresh = 1.0 / self._FPS
             self.refresh()
+
+    class MeterWidget(static_type):  # ty: ignore[unsupported-base]
+        """Inline ``▰▱`` progress meter with change-gated repaints.
+
+        ``set_progress`` recomputes the rendered string and only calls
+        ``refresh()`` when the visible cells actually change — a 17-cell
+        bar has 18 fill states plus ~100 integer percents, so thousands
+        of per-source progress callbacks collapse to ~120 repaints.
+
+        Width adaptation happens at render time: with enough room the
+        meter shows ``▰▰▰▱▱ 52%``; below ``_MIN_BAR_CELLS`` of bar room
+        it renders nothing — on narrow statuslines the search percent
+        moves to the right slot instead, next to the match count.
+        While the source total is unknown (discovery / planning phases)
+        it shows the phase word instead of a bar — the spinner next
+        door already supplies motion, so no second animation timer.
+        No ``auto_refresh`` is armed; the widget costs nothing when idle.
+        """
+
+        _MIN_BAR_CELLS: t.ClassVar[int] = 4
+
+        def __init__(self, *, id: str | None = None) -> None:  # noqa: A002 -- forwarded to Textual's ``id`` kwarg
+            super().__init__("", id=id)
+            self._fraction: float | None = None
+            self._indeterminate_phase: str = ""
+            self._frozen: bool = False
+            self._frozen_blank: bool = False
+            self._narrow: bool = False
+            self._last_render: str | None = None
+
+        def set_narrow(self, narrow: bool) -> None:
+            """Suppress the meter on narrow statuslines.
+
+            The right slot carries the search percent there; squeezing a
+            bar in as well made it pop in and out whenever the growing
+            match count nudged the meter across its fits-a-bar threshold.
+            """
+            self._narrow = narrow
+            self._maybe_refresh()
+
+        def set_progress(
+            self,
+            fraction: float | None,
+            indeterminate_phase: str = "",
+        ) -> None:
+            """Store new progress state; repaint only when the output changes."""
+            self._fraction = fraction
+            self._indeterminate_phase = indeterminate_phase
+            self._maybe_refresh()
+
+        def freeze(self, outcome: str) -> None:
+            """Lock the meter into its post-search look — the bar IS the summary.
+
+            ``"complete"`` fills the bar and recolors it green;
+            ``"interrupted"`` keeps the bar at its last fill in gray.
+            Errors blank the meter — the status text carries the
+            failure message.
+            """
+            self._frozen = True
+            self._frozen_blank = outcome == "error"
+            if outcome == "complete":
+                self._fraction = 1.0
+                self.add_class("-done")
+            elif outcome == "interrupted":
+                self.add_class("-stopped")
+            self._maybe_refresh()
+
+        def reset(self) -> None:
+            """Clear all state for a fresh search."""
+            self._frozen = False
+            self._frozen_blank = False
+            self._fraction = None
+            self._indeterminate_phase = ""
+            self.remove_class("-done", "-stopped")
+            self._maybe_refresh()
+
+        def invalidate(self) -> None:
+            """Drop the change-gate cache and repaint (e.g. after a resize)."""
+            self._last_render = None
+            self.refresh()
+
+        def _compose_text(self) -> str:
+            """Build the meter text for the current state and available width."""
+            if self._frozen_blank or self._narrow:
+                return ""
+            width = int(getattr(self.size, "width", 0) or 0)
+            if width <= 0:
+                return ""
+            if self._fraction is None:
+                # A search frozen before any source total (e.g. cancelled
+                # during discovery) has no bar to show.
+                if self._frozen:
+                    return ""
+                return self._indeterminate_phase[:width]
+            percent = format_progress_percent(self._fraction)
+            # Exact fit: one space between bar and percent, one trailing
+            # cell — the percent hugs the bar and the gap to the right
+            # slot stays constant while the percent grows in digits.
+            bar_width = width - len(percent) - 2
+            if bar_width >= self._MIN_BAR_CELLS:
+                bar = render_progress_meter(self._fraction, bar_width)
+                return f"{bar} {percent}"
+            return ""
+
+        def _maybe_refresh(self) -> None:
+            """Repaint only when the composed text differs from the last paint."""
+            text = self._compose_text()
+            if text == self._last_render:
+                return
+            self._last_render = text
+            self.refresh()
+
+        def render(self) -> str:
+            """Return the meter text; keeps the change-gate cache in sync."""
+            text = self._compose_text()
+            self._last_render = text
+            return text
 
     class SearchResultsList(
         option_list_type,  # ty: ignore[unsupported-base]
@@ -806,7 +1084,10 @@ def build_streaming_ui_app(
         }
         #results-statusline {
             height: 1;
-            padding: 0;
+            /* One cell from each edge: the spinner aligns with the
+               input border, and the right slot never touches the
+               detail column. */
+            padding: 0 1;
             layout: horizontal;
         }
         #status-spinner {
@@ -814,14 +1095,39 @@ def build_streaming_ui_app(
             color: $accent;
         }
         #status-text {
-            width: 1fr;
+            width: auto;
             color: ansi_bright_cyan;
             text-style: bold;
+        }
+        #status-meter {
+            width: 1fr;
+            color: mediumpurple;
+            margin: 0 1;
+        }
+        /* Post-search outcome colors: green mirrors the results list's
+           "prompt" kind; gray mirrors the detail header's Path value
+           (grey50). */
+        #status-spinner.-done, #status-text.-done, #status-meter.-done {
+            color: ansi_green;
+        }
+        #status-spinner.-stopped, #status-text.-stopped, #status-meter.-stopped {
+            color: #808080;
         }
         #status-right {
             width: auto;
             color: $warning;
             text-style: bold;
+        }
+        #status-detail {
+            height: 1;
+            /* Statusline left padding (1) + spinner cell (2) so the
+               detail text sits under "Searching". */
+            padding: 0 1 0 3;
+            color: #808080;
+            display: none;
+        }
+        #status-detail.visible {
+            display: block;
         }
         #detail-statusline {
             height: 1;
@@ -852,6 +1158,7 @@ def build_streaming_ui_app(
             ("tab", "focus_next", "Switch focus"),
             ("q", "quit", "Quit"),
             ("escape", "stop_search", "Stop search"),
+            ("ctrl+backslash", "toggle_detail_progress", "Detail"),
             ("ctrl+c", "smart_quit", "Stop / Quit"),
             binding_type("ctrl+h", "focus_pane_left", "← Pane", priority=True),
             binding_type("ctrl+j", "focus_pane_down", "↓ Pane", priority=True),
@@ -869,6 +1176,11 @@ def build_streaming_ui_app(
         filtered_records: list[SearchRecord]
 
         _DETAIL_CACHE_MAX: t.ClassVar[int] = 1024
+
+        # Statusline width (cells) below which the meter bar and the
+        # elapsed "(32s)" suffix are dropped — percent and match count
+        # keep their cells on small terminals.
+        _NARROW_BREAKPOINT: t.ClassVar[int] = 50
 
         def __init__(
             self,
@@ -896,6 +1208,16 @@ def build_streaming_ui_app(
             self._status_widget: StaticLike | None = None
             self._matches_widget: StaticLike | None = None
             self._spinner_widget: SpinnerWidget | None = None
+            self._meter_widget: MeterWidget | None = None
+            self._detail_row: StaticLike | None = None
+            self._statusline_container: t.Any = None
+            self._elapsed_timer: object | None = None
+            self._chrome_generation: int = 0
+            self._last_left_text: str = ""
+            self._last_detail_text: str = ""
+            self._last_right_text: str = ""
+            self._finished_status: tuple[str, str] | None = None
+            self._detail_visible: bool = False
             self._detail_statusline: StaticLike | None = None
             self._filter_input: FilterInput | None = None
             self._search_input: SearchInput | None = None
@@ -945,7 +1267,9 @@ def build_streaming_ui_app(
                     with horizontal(id="results-statusline"):
                         yield SpinnerWidget(id="status-spinner")
                         yield static_type("", id="status-text")
+                        yield MeterWidget(id="status-meter")
                         yield static_type("", id="status-right")
+                    yield static_type("", id="status-detail")
                     yield FilterInput(placeholder="Filter loaded results", id="filter")
                     yield SearchResultsList(id="results")
                 with vertical(id="detail-column"):
@@ -978,6 +1302,15 @@ def build_streaming_ui_app(
                 "SpinnerWidget",
                 streaming.query_one("#status-spinner"),
             )
+            self._meter_widget = t.cast(
+                "MeterWidget",
+                streaming.query_one("#status-meter"),
+            )
+            self._detail_row = t.cast(
+                "StaticLike",
+                streaming.query_one("#status-detail", static_type),
+            )
+            self._statusline_container = streaming.query_one("#results-statusline")
             self._detail_statusline = t.cast(
                 "StaticLike",
                 streaming.query_one("#detail-statusline", static_type),
@@ -990,7 +1323,7 @@ def build_streaming_ui_app(
                 "SearchInput",
                 streaming.query_one("#search"),
             )
-            self._progress = StreamingSearchProgress(emit=make_emit(streaming))
+            self._progress = self._make_gated_progress()
             if self.query.terms:
                 self._start_search_worker(self.query)
                 self._filter_input.focus()
@@ -1051,16 +1384,79 @@ def build_streaming_ui_app(
                 self._matches_widget.update("")
             if self._detail_statusline is not None:
                 self._detail_statusline.update("")
+            self._stop_elapsed_timer()
+            self._last_left_text = ""
+            self._last_detail_text = ""
+            self._last_right_text = ""
+            self._finished_status = None
             if self._status_widget is not None:
-                terms = " ".join(self.query.terms) if self.query.terms else "all records"
-                self._status_widget.update(f"Searching {terms}")
+                self._status_widget.update(
+                    searching_left_text(0.0, narrow=self._statusline_narrow()),
+                )
             if self._spinner_widget is not None:
                 self._spinner_widget.unfreeze()
-            self._progress = StreamingSearchProgress(
-                emit=make_emit(
-                    t.cast("StreamingAppLike", t.cast("object", self)),
-                ),
-            )
+                self._set_outcome_classes(self._spinner_widget, "")
+            if self._status_widget is not None:
+                self._set_outcome_classes(self._status_widget, "")
+            if self._meter_widget is not None:
+                self._meter_widget.reset()
+            # ``_detail_visible`` is deliberately NOT reset — the Ctrl-\
+            # toggle is sticky for the session; only the row's stale
+            # content is wiped.
+            if self._detail_row is not None:
+                self._detail_row.update("")
+            self._progress = self._make_gated_progress()
+
+        def _make_gated_progress(self) -> StreamingSearchProgress:
+            """Build a progress reporter whose events die with its generation.
+
+            ``call_from_thread`` schedules the callback directly on the
+            event loop rather than enqueuing a ``Message`` — so
+            high-frequency record batches don't compete with keystroke /
+            timer events for FIFO message dispatch. This is the canonical
+            Textual pattern for "many small updates from a worker thread."
+
+            Each reporter captures the chrome generation current at its
+            creation. A cancelled worker keeps emitting through its old
+            reporter while it drains; :meth:`_apply_streaming_event`
+            re-checks the generation on the main thread, so those events
+            can never repaint the new search's chrome (stale "Stopped"
+            states, old bar fills) no matter when they were queued.
+            """
+            self._chrome_generation += 1
+            generation = self._chrome_generation
+            streaming = t.cast("t.Any", self)
+
+            def emit(event: object) -> None:
+                # Runs on the worker thread; the generation check happens
+                # on the main thread inside _apply_streaming_event.
+                streaming.call_from_thread(
+                    self._apply_streaming_event,
+                    generation,
+                    event,
+                )
+
+            return StreamingSearchProgress(emit=emit)
+
+        async def _apply_streaming_event(self, generation: int, event: object) -> None:
+            """Route one worker event to the chrome, dropping stale generations.
+
+            Async because the records handler chunk-yields to the event
+            loop; ``call_from_thread`` awaits coroutine results.
+            """
+            if generation != self._chrome_generation:
+                return
+            if isinstance(event, StreamingRecordsBatch):
+                await self._apply_records_batch(event.records, event.total)
+            elif isinstance(event, ProgressSnapshot):
+                self._apply_progress(event)
+            elif isinstance(event, StreamingSearchFinished):
+                self._apply_finished(
+                    event.outcome,
+                    event.total,
+                    event.elapsed,
+                    str(event.error) if event.error else None,
+                )
 
         def _run_search(self) -> None:
             progress = self._progress
@@ -1167,24 +1563,110 @@ def build_streaming_ui_app(
             self._refresh_results_status_right()
 
         def _apply_progress(self, snapshot: ProgressSnapshot) -> None:
-            """Update the status widget — invoked via ``call_from_thread``."""
+            """Feed the meter and detail row — invoked via ``call_from_thread``.
+
+            The left status text is owned by the 1 Hz elapsed ticker, not
+            this handler: per-source progress events arrive thousands of
+            times per search and would otherwise repaint identical text.
+            Both the meter (internally) and the detail row (here) gate on
+            content change for the same reason. Stale-generation events
+            never reach this handler — :meth:`_apply_streaming_event`
+            drops them.
+            """
             self._last_snapshot = snapshot
             if self._started_at is None:
                 self._started_at = time.monotonic()
-            label = snapshot.query_label
-            if snapshot.current is not None and snapshot.total is not None:
-                status = (
-                    f"Searching {label} | "
-                    f"{snapshot.phase} {snapshot.current}/{snapshot.total} sources"
-                )
-                if snapshot.detail:
-                    status = f"{status} | {snapshot.detail}"
-            elif snapshot.detail:
-                status = f"Searching {label} | {snapshot.phase} {snapshot.detail}"
+            if self._elapsed_timer is None:
+                self._elapsed_timer = self.set_interval(1.0, self._tick_elapsed)
+                # Paint "(0s)" immediately rather than after the first tick.
+                self._tick_elapsed()
+            if (
+                snapshot.phase == "scanning"
+                and snapshot.current is not None
+                and snapshot.total is not None
+                and snapshot.total > 0
+            ):
+                # Only the scanning phase counts sources; planning emits
+                # plan-group counts whose fraction would make the bar
+                # jump to a small value and snap back to zero.
+                fraction: float | None = snapshot.current / snapshot.total
             else:
-                status = f"Searching {label} | {snapshot.phase}"
-            if self._status_widget is not None:
-                self._status_widget.update(status)
+                fraction = None
+            if self._meter_widget is not None:
+                self._meter_widget.set_narrow(self._statusline_narrow())
+                self._meter_widget.set_progress(fraction, snapshot.phase)
+            if self._detail_visible and self._detail_row is not None:
+                detail = format_scanning_detail(
+                    snapshot.phase,
+                    snapshot.current,
+                    snapshot.total,
+                    snapshot.detail,
+                )
+                if detail != self._last_detail_text:
+                    self._last_detail_text = detail
+                    self._detail_row.update(detail)
+            if self._statusline_narrow():
+                # Narrow right slots carry the search percent; record
+                # batches alone would let it go stale on sparse matches.
+                # The refresh is change-gated, so this stays cheap.
+                self._refresh_results_status_right()
+
+        def _statusline_narrow(self) -> bool:
+            """Report whether the statusline is too narrow for bar + elapsed."""
+            container = self._statusline_container
+            if container is None:
+                return False
+            width = int(getattr(container.size, "width", 0) or 0)
+            return 0 < width < self._NARROW_BREAKPOINT
+
+        def _tick_elapsed(self) -> None:
+            """Repaint the left status text from wall-clock elapsed (1 Hz).
+
+            Uses ``time.monotonic() - self._started_at`` rather than
+            ``ProgressSnapshot.elapsed`` — the snapshot field only advances
+            when the engine emits an event, so one slow source would
+            freeze the displayed time.
+            """
+            if self._search_done or self._status_widget is None or self._started_at is None:
+                return
+            elapsed = time.monotonic() - self._started_at
+            left = searching_left_text(elapsed, narrow=self._statusline_narrow())
+            if left != self._last_left_text:
+                self._last_left_text = left
+                self._status_widget.update(left)
+
+        def _stop_elapsed_timer(self) -> None:
+            """Stop and drop the elapsed ticker (idempotent)."""
+            if self._elapsed_timer is not None:
+                t.cast("t.Any", self._elapsed_timer).stop()
+                self._elapsed_timer = None
+
+        def action_toggle_detail_progress(self) -> None:
+            r"""``Ctrl-\``: show/hide the verbose scanning detail row (sticky)."""
+            self._detail_visible = not self._detail_visible
+            if self._detail_row is None:
+                return
+            row = t.cast("t.Any", self._detail_row)
+            if self._detail_visible:
+                row.add_class("visible")
+                # Populate immediately: a finished search shows its data
+                # summary, a running one the latest scanning snapshot.
+                detail: str | None = None
+                if self._finished_status is not None:
+                    detail = self._finished_status[1]
+                elif self._last_snapshot is not None:
+                    snap = self._last_snapshot
+                    detail = format_scanning_detail(
+                        snap.phase,
+                        snap.current,
+                        snap.total,
+                        snap.detail,
+                    )
+                if detail is not None:
+                    self._last_detail_text = detail
+                    self._detail_row.update(detail)
+            else:
+                row.remove_class("visible")
 
         def _apply_finished(
             self,
@@ -1200,21 +1682,63 @@ def build_streaming_ui_app(
             longer claims animation budget once a search is done.
             """
             self._search_done = True
+            self._stop_elapsed_timer()
             glyphs = {"complete": "✓", "interrupted": "■", "error": "✗"}
             if self._spinner_widget is not None:
                 self._spinner_widget.freeze(glyphs.get(outcome, "·"))
+                self._set_outcome_classes(self._spinner_widget, outcome)
+            if self._meter_widget is not None:
+                self._meter_widget.freeze(outcome)
             if self._status_widget is not None:
-                if outcome == "error":
-                    self._status_widget.update(f"Search failed: {error_message}")
-                elif outcome == "interrupted":
-                    self._status_widget.update(
-                        f"Stopped at {format_match_count(total)} "
-                        f"across {self._sources_label()} sources in {elapsed:.1f}s",
-                    )
-                else:
-                    self._status_widget.update(
-                        f"Search complete: {format_match_count(total)} in {elapsed:.1f}s",
-                    )
+                self._set_outcome_classes(self._status_widget, outcome)
+            if outcome == "error":
+                summary = f"Search failed: {error_message}"
+            elif outcome == "interrupted":
+                summary = (
+                    f"Stopped at {format_match_count(total)} "
+                    f"across {self._sources_label()} sources in {elapsed:.1f}s"
+                )
+            else:
+                summary = f"Search complete: {format_match_count(total)} in {elapsed:.1f}s"
+            self._finished_status = (outcome, summary)
+            # The data summary lives in the ctrl+\ row, not the statusline.
+            self._last_detail_text = summary
+            if self._detail_visible and self._detail_row is not None:
+                self._detail_row.update(summary)
+            self._render_finished_status()
+            # Recompute the right slot: narrow mode swaps the in-flight
+            # search percent for the plain match count once the search ends.
+            self._refresh_results_status_right()
+
+        @staticmethod
+        def _set_outcome_classes(widget: object, outcome: str) -> None:
+            """Apply the post-search ``-done`` / ``-stopped`` color class."""
+            classes = {"complete": "-done", "interrupted": "-stopped"}
+            target = t.cast("t.Any", widget)
+            target.remove_class("-done", "-stopped")
+            outcome_class = classes.get(outcome)
+            if outcome_class is not None:
+                target.add_class(outcome_class)
+
+        def _render_finished_status(self) -> None:
+            """Paint the post-search left text — the frozen bar is the summary.
+
+            Wide statuslines show no text at all (the colored bar and the
+            right slot carry the outcome); narrow ones, with no room for
+            a bar, say ``Done`` or ``Stopped``. Failures keep their
+            message at every width — that information has no other home.
+            The full data summary renders in the toggleable detail row.
+            """
+            if self._status_widget is None or self._finished_status is None:
+                return
+            outcome, summary = self._finished_status
+            if outcome == "error":
+                text = summary
+            elif self._statusline_narrow():
+                text = "Done" if outcome == "complete" else "Stopped"
+            else:
+                text = ""
+            self._status_widget.update(text)
 
         def _sources_label(self) -> str:
             snap = self._last_snapshot
@@ -1296,15 +1820,18 @@ def build_streaming_ui_app(
             self._refresh_results_status_right(
                 cursor=row_index,
                 visible=len(self.filtered_records),
-                percent=self._results._scroll_percent() if self._results is not None else None,
             )
 
         def on_results_scroll_changed(self, message: ResultsScrollChanged) -> None:
-            """Re-render the right side of the results status line."""
+            """Re-render the right side of the results status line.
+
+            ``message.percent`` is deliberately unused — the results
+            list's scrollbar already shows the scroll position, so the
+            right slot doesn't restate it.
+            """
             self._refresh_results_status_right(
                 cursor=message.cursor,
                 visible=message.total,
-                percent=message.percent,
             )
 
         def on_detail_scroll_changed(self, message: DetailScrollChanged) -> None:
@@ -1316,41 +1843,68 @@ def build_streaming_ui_app(
             *,
             cursor: int | None = None,
             visible: int | None = None,
-            percent: int | None = None,
         ) -> None:
             """Compose the results-status right slot from the most recent state.
 
-            Combines the streaming match count (from ``self.all_records``)
-            with the current cursor / scroll percent so the right slot is
-            always shaped ``{N} matches  [{cursor+1}/{visible}]  {pct}%``.
-            Each segment is omitted when its inputs are unknown.
+            Pulls the cursor position from the results list when no
+            explicit values arrive; the change gate keeps repeated
+            identical renders from repainting.
             """
             if self._matches_widget is None:
                 return
-            if cursor is None and visible is None and percent is None and self._results is not None:
+            if cursor is None and visible is None and self._results is not None:
                 cursor = t.cast("int | None", getattr(self._results, "highlighted", None))
                 visible = len(self._results._records)
-                percent = self._results._scroll_percent()
-            self._matches_widget.update(
-                self._format_results_right(cursor, visible, percent),
-            )
+            text = self._format_results_right(cursor, visible)
+            if text != self._last_right_text:
+                self._last_right_text = text
+                self._matches_widget.update(text)
 
         def _format_results_right(
             self,
             cursor: int | None,
             visible: int | None,
-            percent: int | None,
         ) -> str:
-            """Render the right slot: ``{N} matches  {cursor+1}/{visible}  {pct}%`` (tig style)."""
+            """Render the right slot, one count at a time (tig style, thrifty).
+
+            Wide statuslines show ``{cursor+1}/{visible}`` once a cursor
+            exists — the denominator already carries the count — and the
+            bare match count before that. Narrow statuslines show the
+            match count plus the search-completion percent while a search
+            runs (the meter bar doesn't fit there), then just the count.
+            """
             total_matches = len(self.all_records)
             parts: list[str] = []
-            if total_matches > 0:
-                parts.append(format_match_count(total_matches))
-            if visible and visible > 0 and cursor is not None:
-                parts.append(f"{cursor + 1}/{visible}")
-            if percent is not None and total_matches > 0:
-                parts.append(f"{percent}%")
+            if not self._statusline_narrow():
+                if visible and visible > 0 and cursor is not None:
+                    parts.append(f"{cursor + 1}/{visible}")
+                elif total_matches > 0:
+                    parts.append(format_match_count(total_matches))
+            else:
+                if total_matches > 0:
+                    parts.append(format_match_count(total_matches))
+                if not self._search_done:
+                    search_percent = self._search_progress_percent()
+                    if search_percent is not None:
+                        parts.append(search_percent)
             return "  ".join(parts)
+
+        def _search_progress_percent(self) -> str | None:
+            """Return the search-completion percent from the latest snapshot.
+
+            Scanning-phase only — planning emits plan-group counts whose
+            fraction doesn't describe source progress.
+            """
+            snap = self._last_snapshot
+            if (
+                snap is None
+                or snap.phase != "scanning"
+                or snap.current is None
+                or snap.total is None
+                or snap.total <= 0
+            ):
+                return None
+            return format_progress_percent(snap.current / snap.total)
 
         def _refresh_detail_statusline(self, percent: int | None = None) -> None:
             """Update the detail status line with the current record path and scroll %."""
@@ -1571,8 +2125,19 @@ def build_streaming_ui_app(
 
         def _after_resize(self) -> None:
             """Refresh chrome; the detail pane scroll wrapper handles its own reflow."""
-            if self._matches_widget is not None:
-                self._matches_widget.refresh()
+            # Recompute (not just repaint) the right slot — crossing the
+            # narrow breakpoint adds/removes the cursor/visible segment.
+            self._refresh_results_status_right()
+            if self._meter_widget is not None:
+                self._meter_widget.set_narrow(self._statusline_narrow())
+                # The change-gate caches the last composed string; a width
+                # change with constant fraction must still repaint the bar.
+                self._meter_widget.invalidate()
+            # Crossing the narrow breakpoint adds/removes the elapsed suffix.
+            self._tick_elapsed()
+            # ... and swaps the post-search summary between its wide and
+            # minimized forms.
+            self._render_finished_status()
 
         def action_stop_search(self) -> None:
             """``Esc``: cooperative early-exit of the worker (no-op when finished)."""
