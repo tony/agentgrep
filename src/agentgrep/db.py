@@ -592,9 +592,13 @@ class DbStore:
     def _configure(self) -> None:
         """Configure connection-local SQLite settings.
 
-        The mmap budget rationale lives on
+        ``page_size`` only takes effect on databases created by this
+        connection — existing caches keep their page size until the
+        next rebuild. 8 KiB pages measurably shorten overflow chains
+        for the ~3 KiB detail rows; the mmap budget rationale lives on
         :data:`agentgrep.SQLITE_MMAP_BYTES`.
         """
+        _ = self._execute("pragma.page_size", "PRAGMA page_size=8192")
         _ = self._execute("pragma.journal_mode", "PRAGMA journal_mode=WAL")
         _ = self._execute("pragma.foreign_keys", "PRAGMA foreign_keys=ON")
         _ = self._execute(
