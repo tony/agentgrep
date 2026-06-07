@@ -2703,6 +2703,89 @@ async def test_l_from_results_opens_stacked_detail(
         assert app._detail_opened is True
 
 
+class FocusDetailRenderCase(t.NamedTuple):
+    """One explicit-detail focus scenario and the record it should render."""
+
+    test_id: str
+    highlighted: int | None
+    expected_index: int
+
+
+FOCUS_DETAIL_RENDER_CASES: tuple[FocusDetailRenderCase, ...] = (
+    FocusDetailRenderCase(
+        test_id="no-highlight-falls-back-to-first-record",
+        highlighted=None,
+        expected_index=0,
+    ),
+    FocusDetailRenderCase(
+        test_id="highlighted-record-wins",
+        highlighted=2,
+        expected_index=2,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    FOCUS_DETAIL_RENDER_CASES,
+    ids=[case.test_id for case in FOCUS_DETAIL_RENDER_CASES],
+)
+async def test_focus_detail_renders_record_when_opening_stacked_streaming_results(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: FocusDetailRenderCase,
+) -> None:
+    """Opening a stacked streaming result renders a readable detail body."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    app.query = agentgrep.SearchQuery(
+        terms=("VISIBLEPROBE",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+    records = [
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="codex.sessions",
+            adapter_id="codex.sessions_jsonl.v1",
+            path=tmp_path / f"r{idx}.jsonl",
+            text=f"prefix\nVISIBLEPROBE record {idx}\nsuffix",
+        )
+        for idx in range(3)
+    ]
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.all_records.extend(records)
+        app.filtered_records = list(records)
+        app._results.append_records(records)
+        if case.highlighted is not None:
+            # Seed Textual's reactive storage directly so this case can
+            # model a highlighted row without dispatching the same genuine
+            # cursor-move event that normally opens the stacked detail.
+            app._results._reactive_highlighted = case.highlighted
+            app._current_detail_record = records[0]
+            app._detail_opened = False
+        app._apply_responsive_layout()
+        await pilot.pause()
+        assert app._detail_column.has_class("-collapsed")
+        app._results.focus()
+        await pilot.pause()
+        await pilot.press("l")
+        await pilot.pause()
+        expected = records[case.expected_index]
+        assert app.focused is not None and app.focused.id == "detail-scroll"
+        assert app._current_detail_record is expected
+        assert not app._detail_column.has_class("-collapsed")
+        screenshot = app.export_screenshot(simplify=True)
+        assert "VISIBLEPROBE" in screenshot
+        assert f"record&#160;{case.expected_index}" in screenshot
+
+
 class _FakeFilterCompleted(t.NamedTuple):
     """Minimal ``FilterCompleted`` stand-in carrying just the payload."""
 

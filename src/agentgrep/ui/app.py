@@ -2294,16 +2294,33 @@ def build_streaming_ui_app(
                 return
             t.cast("t.Any", target).focus()
 
+        def _record_for_detail_focus(self) -> SearchRecord | None:
+            """Return the record explicit detail focus should render."""
+            highlighted = None
+            if self._results is not None:
+                highlighted = t.cast("int | None", getattr(self._results, "highlighted", None))
+            if highlighted is not None and 0 <= highlighted < len(self.filtered_records):
+                return self.filtered_records[highlighted]
+            current = self._current_detail_record
+            if current is not None and any(record is current for record in self.filtered_records):
+                return current
+            return self.filtered_records[0] if self.filtered_records else None
+
         def _focus_detail(self) -> None:
             """Focus the detail pane, opening it first when stacked-collapsed.
 
             A ``display: none`` pane cannot take focus, so on a narrow
             statusline the detail is revealed (and marked opened) before
-            the focus call.
+            the focus call. Explicit focus also renders the best available
+            record so streaming results opened before a cursor move don't
+            reveal a blank reader.
             """
             if self._stacked and not self._detail_opened:
                 self._detail_opened = True
                 self._apply_responsive_layout()
+            record = self._record_for_detail_focus()
+            if record is not None:
+                self.show_detail(record)
             self._focus_widget_by_id("detail-scroll")
 
         def action_focus_pane_left(self) -> None:
