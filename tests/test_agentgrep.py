@@ -2889,7 +2889,9 @@ async def test_results_status_right_shows_match_count_cursor_and_percent(
     """``_format_results_right`` renders ``{N} matches  {cursor+1}/{visible}  {pct}%``."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
-    async with app.run_test() as pilot:
+    # Wide terminal — the narrow breakpoint drops the cursor/visible
+    # segment this test asserts on.
+    async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
         # No streaming results yet — empty right slot regardless of args.
         assert app._format_results_right(cursor=None, visible=None, percent=None) == ""
@@ -2942,7 +2944,9 @@ async def test_results_scroll_changed_updates_status_right(
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     records = _seed_records(agentgrep, tmp_path, 5)
-    async with app.run_test() as pilot:
+    # Wide terminal — the narrow breakpoint drops the cursor/visible
+    # segment this test asserts on.
+    async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
         updates: list[str] = []
         real_update = app._matches_widget.update
@@ -2967,6 +2971,51 @@ async def test_results_scroll_changed_updates_status_right(
         assert any("1/5" in u and "matches" in u for u in updates), (
             f"expected '5 matches  1/5  N%' in {updates!r}"
         )
+
+
+class RightSlotWidthCase(t.NamedTuple):
+    """One terminal-width scenario for the results-status right slot."""
+
+    test_id: str
+    size: tuple[int, int]
+    expect_cursor_segment: bool
+
+
+RIGHT_SLOT_WIDTH_CASES: tuple[RightSlotWidthCase, ...] = (
+    RightSlotWidthCase(
+        test_id="wide-keeps-cursor-segment",
+        size=(160, 24),
+        expect_cursor_segment=True,
+    ),
+    RightSlotWidthCase(
+        test_id="narrow-drops-cursor-segment",
+        size=(40, 24),
+        expect_cursor_segment=False,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    RIGHT_SLOT_WIDTH_CASES,
+    ids=[case.test_id for case in RIGHT_SLOT_WIDTH_CASES],
+)
+async def test_results_status_right_adapts_to_width(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: RightSlotWidthCase,
+) -> None:
+    """Narrow statuslines keep count + percent and drop the cursor segment."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 5)
+    async with app.run_test(size=case.size) as pilot:
+        await pilot.pause()
+        app.all_records.extend(records)
+        rendered = app._format_results_right(0, 5, 0)
+        assert ("1/5" in rendered) is case.expect_cursor_segment
+        assert "5 matches" in rendered
+        assert rendered.endswith("0%")
 
 
 def _make_progress_snapshot(agentgrep: t.Any, **overrides: t.Any) -> t.Any:

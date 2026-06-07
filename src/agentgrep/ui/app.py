@@ -1085,9 +1085,10 @@ def build_streaming_ui_app(
         }
         #results-statusline {
             height: 1;
-            /* Left-align the spinner glyph with the input text above it:
-               Input is ``border: tall`` (1 cell) + ``padding: 0 2``. */
-            padding: 0 0 0 3;
+            /* One cell from each edge: the spinner aligns with the
+               input border, and the right slot never touches the
+               detail column. */
+            padding: 0 1;
             layout: horizontal;
         }
         #status-spinner {
@@ -1111,9 +1112,9 @@ def build_streaming_ui_app(
         }
         #status-detail {
             height: 1;
-            /* Statusline left padding (3) + spinner cell (2) so the
+            /* Statusline left padding (1) + spinner cell (2) so the
                detail text sits under "Searching". */
-            padding: 0 0 0 5;
+            padding: 0 1 0 3;
             color: #808080;
             display: none;
         }
@@ -1765,12 +1766,17 @@ def build_streaming_ui_app(
             visible: int | None,
             percent: int | None,
         ) -> str:
-            """Render the right slot: ``{N} matches  {cursor+1}/{visible}  {pct}%`` (tig style)."""
+            """Render the right slot: ``{N} matches  {cursor+1}/{visible}  {pct}%`` (tig style).
+
+            Narrow statuslines drop the ``cursor/visible`` segment — the
+            match count and scroll percent keep their cells so the slot
+            never clips mid-number at the column edge.
+            """
             total_matches = len(self.all_records)
             parts: list[str] = []
             if total_matches > 0:
                 parts.append(format_match_count(total_matches))
-            if visible and visible > 0 and cursor is not None:
+            if visible and visible > 0 and cursor is not None and not self._statusline_narrow():
                 parts.append(f"{cursor + 1}/{visible}")
             if percent is not None and total_matches > 0:
                 parts.append(f"{percent}%")
@@ -1995,8 +2001,9 @@ def build_streaming_ui_app(
 
         def _after_resize(self) -> None:
             """Refresh chrome; the detail pane scroll wrapper handles its own reflow."""
-            if self._matches_widget is not None:
-                self._matches_widget.refresh()
+            # Recompute (not just repaint) the right slot — crossing the
+            # narrow breakpoint adds/removes the cursor/visible segment.
+            self._refresh_results_status_right()
             if self._meter_widget is not None:
                 # The change-gate caches the last composed string; a width
                 # change with constant fraction must still repaint the bar.
