@@ -810,3 +810,98 @@ def test_cached_search_covers_live_haystack_fields(
     found = sorted(record.text for record in runtime.search_records(query))
 
     assert found == sorted(case.expected_texts)
+
+
+class CacheDecisionSpanCase(t.NamedTuple):
+    """Named case for the search.cache.decision telemetry span."""
+
+    test_id: str
+    cache_mode: agentgrep.CacheMode
+    term: str
+    regex: bool
+    expected_spans: int
+    expected_handled: bool | None
+    expected_reason: str | None
+
+
+CACHE_DECISION_SPAN_CASES: tuple[CacheDecisionSpanCase, ...] = (
+    CacheDecisionSpanCase(
+        test_id="served-from-cache",
+        cache_mode="require",
+        term="ruff",
+        regex=False,
+        expected_spans=1,
+        expected_handled=True,
+        expected_reason=None,
+    ),
+    CacheDecisionSpanCase(
+        test_id="auto-empty-falls-back",
+        cache_mode="auto",
+        term="zsh-plugin-nowhere",
+        regex=False,
+        expected_spans=1,
+        expected_handled=False,
+        expected_reason="empty",
+    ),
+    CacheDecisionSpanCase(
+        test_id="auto-unsupported-falls-back",
+        cache_mode="auto",
+        term="ruff.*check",
+        regex=True,
+        expected_spans=1,
+        expected_handled=False,
+        expected_reason="unsupported",
+    ),
+    CacheDecisionSpanCase(
+        test_id="off-emits-nothing",
+        cache_mode="off",
+        term="ruff",
+        regex=False,
+        expected_spans=0,
+        expected_handled=None,
+        expected_reason=None,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    CACHE_DECISION_SPAN_CASES,
+    ids=[case.test_id for case in CACHE_DECISION_SPAN_CASES],
+)
+def test_cache_decision_span_reports_aggregate_outcome(
+    case: CacheDecisionSpanCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """One privacy-safe span per consulted query, never per record."""
+    from agentgrep._engine.profiling import EngineProfiler, use_engine_profiler
+
+    source_path = tmp_path / "session.jsonl"
+    source_path.write_text("ruff", encoding="utf-8")
+    source = _source(source_path)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    _ = runtime.sync_records(
+        ((source, (_record(source, "Run ruff check before committing."),)),),
+    )
+    search_runtime = agentgrep.SearchRuntime(
+        db=None if case.cache_mode == "off" else runtime,
+        cache_mode=case.cache_mode,
+    )
+    query = dataclasses.replace(_query(case.term), regex=case.regex)
+    profiler = EngineProfiler()
+
+    with use_engine_profiler(profiler):
+        _ = agentgrep._db_search_result(query, search_runtime)
+
+    samples = [
+        sample for sample in profiler.snapshot().samples if sample.name == "search.cache.decision"
+    ]
+    assert len(samples) == case.expected_spans
+    if case.expected_spans:
+        attributes = samples[0].attributes
+        assert attributes["agentgrep_cache_mode"] == case.cache_mode
+        assert attributes["agentgrep_cache_handled"] == case.expected_handled
+        if case.expected_reason is None:
+            assert "agentgrep_cache_fallback_reason" not in attributes
+        else:
+            assert attributes["agentgrep_cache_fallback_reason"] == case.expected_reason

@@ -295,14 +295,17 @@ and source-level spans such as `search.discover.group`,
 `search.plan.decision`, `search.plan.strategy_group`,
 `search.plan.prefilter_root`,
 `search.plan.direct_source`, `search.collect.source`, optional
-`search.collect.scheduler`, optional `search.collect.source_scan_cache`,
+`search.collect.scheduler`, optional `search.collect.source_scan_cache`, optional `search.cache.decision`,
 and `find.filter.source`; those spans carry
 agent/store/adapter/count metadata without prompt text or local paths.
 `search.collect.scheduler` is the driver
 summary for source-level scheduling and reports worker, submitted, completed,
 skipped, cancellation-requested, batch, queued-batch, queue-wait, and emitted
 counts. `search.collect.source_scan_cache` reports cache-hit lookups when a
-runtime source-scan cache is active.
+runtime source-scan cache is active. `search.cache.decision` reports one
+aggregate sample per DB-cache consultation: the active cache mode,
+whether the cache served the query, the served record count, and the
+fallback reason when it did not.
 
 Use `scripts/benchmark.py` for timed benchmark sweeps. The profiler-oriented
 benchmark entries are named `profile-engine-*`; each committed benchmark name
