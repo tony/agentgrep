@@ -683,9 +683,17 @@ def _db_runtime_for_cli(
             )
             raise SystemExit(2)
         return None
+    db: DbRuntime | None = None
     try:
         db = DbRuntime.open_readonly(db_path)
+        # Read-only connects are lazy: probe so a foreign or corrupt
+        # file surfaces here instead of mid-search inside the engine.
+        _ = db.store.connection.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version'",
+        ).fetchone()
     except sqlite3.DatabaseError:
+        if db is not None:
+            db.close()
         if cache_mode == "require":
             print(
                 f"agentgrep: not an agentgrep database: {db_path}",
@@ -757,6 +765,9 @@ def _run_search_query_for_cli(
         )
     except DbQueryUnsupported as exc:
         _exit_for_required_cache_miss(exc)
+    finally:
+        if runtime.db is not None:
+            runtime.db.close()
 
 
 def _iter_search_events_for_cli(
@@ -794,6 +805,11 @@ def _iter_search_events_for_cli(
         )
     except DbQueryUnsupported as exc:
         _exit_for_required_cache_miss(exc)
+    finally:
+        # Generator finally: runs on exhaustion, close(), or GC, so an
+        # early-breaking consumer still releases the connection.
+        if runtime.db is not None:
+            runtime.db.close()
 
 
 @dataclasses.dataclass(frozen=True)
