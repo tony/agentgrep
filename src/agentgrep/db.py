@@ -63,6 +63,7 @@ class SyncResult:
     records_indexed: int
     records_removed: int
     sources_skipped: int = 0
+    sources_pruned: int = 0
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -787,6 +788,26 @@ class DbStore:
         self.connection.execute("DELETE FROM records WHERE source_id = ?", (source_id,))
         return len(rows)
 
+    def source_ids(self) -> frozenset[str]:
+        """Return every source id in the ledger."""
+        rows = self.connection.execute("SELECT source_id FROM sources").fetchall()
+        return frozenset(str(row["source_id"]) for row in rows)
+
+    def remove_source(self, source_id: str) -> int:
+        """Delete one source's ledger row and records; return removed count.
+
+        Records and their FTS rows go through the external-content
+        delete path first - cascade-deleting records rows would leave
+        stale FTS token mappings behind.
+        """
+        with self.connection:
+            removed = self._remove_source_records(source_id)
+            _ = self.connection.execute(
+                "DELETE FROM sources WHERE source_id = ?",
+                (source_id,),
+            )
+        return removed
+
     def _insert_record(
         self,
         source_id: str,
@@ -1008,30 +1029,42 @@ class DbRuntime:
         progress: DbSyncProgress | None = None,
         force: bool = False,
         coverage: SyncCoverage | None = None,
+        prune_missing: bool = False,
     ) -> SyncResult:
         """Sync explicit source/record batches into the DB.
 
         ``coverage`` is merged into the coverage map only when it is
         marked complete AND the loop visits every batch — early exits
         and interruptions record nothing, so coverage always reflects
-        the last sync that actually finished.
+        the last sync that actually finished. ``prune_missing``
+        deletes ledger rows (and their records) for sources absent
+        from the batch set, and likewise applies only to loops that
+        run to the end; callers must pass it only for uncapped,
+        full-scope syncs so a narrowed run cannot prune other agents.
         """
         result = SyncResult(
             sources_synced=0,
             records_indexed=0,
             records_removed=0,
         )
+        seen_source_ids: set[str] = set()
         if progress is None:
             for source, records in batches:
                 if control is not None and control.answer_now_requested():
                     return result
+                seen_source_ids.add(source_id_for(source))
                 result, _indexed, _removed = self._sync_one_source(
                     source,
                     records,
                     result=result,
                     force=force,
                 )
-            self._record_coverage(coverage)
+            result = self._finish_complete_sync(
+                result,
+                coverage=coverage,
+                prune_missing=prune_missing,
+                seen_source_ids=seen_source_ids,
+            )
             return result
 
         batch_list = tuple(batches)
@@ -1041,6 +1074,7 @@ class DbRuntime:
             if control is not None and control.answer_now_requested():
                 progress.exiting_early(result)
                 return result
+            seen_source_ids.add(source_id_for(source))
             progress.source_started(index, total, source, result)
             result, indexed, removed = self._sync_one_source(
                 source,
@@ -1049,14 +1083,39 @@ class DbRuntime:
                 force=force,
             )
             progress.source_finished(index, total, source, indexed, removed, result)
-        self._record_coverage(coverage)
+        result = self._finish_complete_sync(
+            result,
+            coverage=coverage,
+            prune_missing=prune_missing,
+            seen_source_ids=seen_source_ids,
+        )
         progress.finish(result)
         return result
 
-    def _record_coverage(self, coverage: SyncCoverage | None) -> None:
-        """Merge completed-sync coverage after an uninterrupted loop."""
+    def _finish_complete_sync(
+        self,
+        result: SyncResult,
+        *,
+        coverage: SyncCoverage | None,
+        prune_missing: bool,
+        seen_source_ids: set[str],
+    ) -> SyncResult:
+        """Apply end-of-loop effects for a sync that visited every batch."""
+        if prune_missing:
+            pruned = 0
+            removed = 0
+            for source_id in sorted(self.store.source_ids() - seen_source_ids):
+                removed += self.store.remove_source(source_id)
+                pruned += 1
+            if pruned:
+                result = dataclasses.replace(
+                    result,
+                    records_removed=result.records_removed + removed,
+                    sources_pruned=result.sources_pruned + pruned,
+                )
         if coverage is not None and coverage.complete:
             self.store.merge_coverage(coverage)
+        return result
 
     def covers_query(self, query: agentgrep.SearchQuery) -> bool:
         """Return whether coverage spans the query's agents and scope."""
@@ -1102,6 +1161,7 @@ class DbRuntime:
         progress: DbSyncProgress | None = None,
         force: bool = False,
         coverage: SyncCoverage | None = None,
+        prune_missing: bool = False,
     ) -> SyncResult:
         """Read records from existing adapters and sync them into the DB."""
         return self.sync_records(
@@ -1110,6 +1170,7 @@ class DbRuntime:
             progress=progress,
             force=force,
             coverage=coverage,
+            prune_missing=prune_missing,
         )
 
     def search_records(self, query: agentgrep.SearchQuery) -> list[agentgrep.SearchRecord]:
