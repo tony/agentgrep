@@ -1202,7 +1202,10 @@ class DbStore:
         seen: set[tuple[str, str, str, str, str]] = set()
         window = self._initial_probe_window(limit)
         cursor: tuple[str, str, str, int] | None = None
+        page_index = 0
         while len(results) < limit:
+            page_index += 1
+            page_started = time.perf_counter()
             cursor_sql = ""
             page_params: tuple[object, ...] = base_params
             if cursor is not None:
@@ -1244,6 +1247,19 @@ class DbStore:
                 results.append(record)
                 if len(results) >= limit:
                     break
+            # One aggregate sample per probe page: the funnel from
+            # fetched rows to oracle-surviving results explains page
+            # continuations (e.g. text-surface queries rejecting
+            # haystack-only hits) without per-record samples.
+            agentgrep._record_engine_profile_sample(
+                "db.probe.page",
+                time.perf_counter() - page_started,
+                agentgrep_probe_page=page_index,
+                agentgrep_probe_window=window,
+                agentgrep_probe_rows=len(page),
+                agentgrep_probe_admitted=len(admitted),
+                agentgrep_probe_kept=len(results),
+            )
             if len(page) < window:
                 break
             last = page[-1]
