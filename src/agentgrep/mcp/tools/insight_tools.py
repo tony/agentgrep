@@ -34,32 +34,54 @@ def _selected_db_path(db_path: str | None) -> pathlib.Path:
     return default_db_path()
 
 
+def _empty_insights_response(limit: int) -> InsightsListResponse:
+    """Return the empty insights payload for missing or unreadable caches."""
+    return InsightsListResponse(
+        limit=limit,
+        variant_edges_total=0,
+        variant_edges_truncated=False,
+        variant_edges=[],
+        omission_findings_total=0,
+        omission_findings_truncated=False,
+        omission_findings=[],
+    )
+
+
+def _empty_suggestions_response(limit: int) -> SuggestionsListResponse:
+    """Return the empty suggestions payload for missing or unreadable caches."""
+    return SuggestionsListResponse(
+        limit=limit,
+        suggestions_total=0,
+        suggestions_truncated=False,
+        suggestions=[],
+    )
+
+
 def _insights_list_sync(
     db_path: str | None,
     *,
     limit: int = DEFAULT_INSIGHTS_LIST_LIMIT,
 ) -> InsightsListResponse:
     """Return persisted insight artifacts without running new insights."""
+    import sqlite3
+
     from agentgrep.db import DbRuntime
     from agentgrep.insights import InsightEngine
 
     path = _selected_db_path(db_path)
     if not path.exists():
-        return InsightsListResponse(
-            limit=limit,
-            variant_edges_total=0,
-            variant_edges_truncated=False,
-            variant_edges=[],
-            omission_findings_total=0,
-            omission_findings_truncated=False,
-            omission_findings=[],
-        )
-    with DbRuntime.open_readonly(path) as runtime:
-        engine = InsightEngine(runtime.store)
-        variant_edges_total = engine.count_variant_edges()
-        omission_findings_total = engine.count_omission_findings()
-        variant_edges = engine.list_variant_edges(limit=limit)
-        omission_findings = engine.list_omission_findings(limit=limit)
+        return _empty_insights_response(limit)
+    try:
+        with DbRuntime.open_readonly(path) as runtime:
+            engine = InsightEngine(runtime.store)
+            variant_edges_total = engine.count_variant_edges()
+            omission_findings_total = engine.count_omission_findings()
+            variant_edges = engine.list_variant_edges(limit=limit)
+            omission_findings = engine.list_omission_findings(limit=limit)
+    except sqlite3.DatabaseError:
+        # A foreign or corrupt file gets the same empty payload as a
+        # missing one — matching db_status and the CLI read surfaces.
+        return _empty_insights_response(limit)
     return InsightsListResponse(
         limit=limit,
         variant_edges_total=variant_edges_total,
@@ -98,21 +120,22 @@ def _suggestions_list_sync(
     limit: int = DEFAULT_SUGGESTIONS_LIST_LIMIT,
 ) -> SuggestionsListResponse:
     """Return a bounded page of persisted review-only suggestions."""
+    import sqlite3
+
     from agentgrep.db import DbRuntime
     from agentgrep.suggestions import SuggestionEngine
 
     path = _selected_db_path(db_path)
     if not path.exists():
-        return SuggestionsListResponse(
-            limit=limit,
-            suggestions_total=0,
-            suggestions_truncated=False,
-            suggestions=[],
-        )
-    with DbRuntime.open_readonly(path) as runtime:
-        engine = SuggestionEngine(runtime.store)
-        suggestions_total = engine.count_suggestions()
-        suggestions = engine.list_suggestions(limit=limit)
+        return _empty_suggestions_response(limit)
+    try:
+        with DbRuntime.open_readonly(path) as runtime:
+            engine = SuggestionEngine(runtime.store)
+            suggestions_total = engine.count_suggestions()
+            suggestions = engine.list_suggestions(limit=limit)
+    except sqlite3.DatabaseError:
+        # Same empty payload as a missing file; see _insights_list_sync.
+        return _empty_suggestions_response(limit)
     return SuggestionsListResponse(
         limit=limit,
         suggestions_total=suggestions_total,
