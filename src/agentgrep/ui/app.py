@@ -172,9 +172,10 @@ def format_scanning_detail(
 ) -> str:
     r"""Compose the verbose scanning line for the toggleable detail row.
 
-    Preserves the wording of the pre-meter statusline so the ``Ctrl-\``
-    detail row reads like the old inline progress text, with the phase
-    word capitalized to open the row as a sentence.
+    The ``Ctrl-\`` row carries the per-source counts the compact
+    statusline omits — phase, scanned/total sources, and in-source
+    record/match counts — with the phase word capitalized to open the
+    row as a sentence.
 
     Examples
     --------
