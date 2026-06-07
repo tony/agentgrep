@@ -1187,3 +1187,109 @@ def test_merge_coverage_keeps_other_agents(tmp_path: pathlib.Path) -> None:
         "claude": ("all",),
         "codex": ("all", "prompts"),
     }
+
+
+class PruneCase(t.NamedTuple):
+    """Named case for vanished-source pruning during sync."""
+
+    test_id: str
+    prune_missing: bool
+    expected_pruned: int
+    expected_texts: tuple[str, ...]
+
+
+PRUNE_CASES: tuple[PruneCase, ...] = (
+    PruneCase(
+        test_id="full-sync-prunes-vanished-source",
+        prune_missing=True,
+        expected_pruned=1,
+        expected_texts=("Run ruff check before committing.",),
+    ),
+    PruneCase(
+        test_id="narrowed-sync-keeps-vanished-source",
+        prune_missing=False,
+        expected_pruned=0,
+        expected_texts=(
+            "Run ruff check before committing.",
+            "Run ruff from the vanished file.",
+        ),
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    PRUNE_CASES,
+    ids=[case.test_id for case in PRUNE_CASES],
+)
+def test_resync_prunes_sources_missing_from_discovery(
+    case: PruneCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """A pruning resync drops ledger rows for vanished sources.
+
+    A previously indexed file that is deleted or rotated never appears
+    in discovery again, so without pruning its records answer cached
+    searches forever. Freshness-skipped sources stay: they are part of
+    the resync's batch set.
+    """
+    kept_path = tmp_path / "kept.jsonl"
+    kept_path.write_text("ruff", encoding="utf-8")
+    vanished_path = tmp_path / "vanished.jsonl"
+    vanished_path.write_text("ruff", encoding="utf-8")
+    kept = _source(kept_path)
+    vanished = _source(vanished_path)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    _ = runtime.sync_records(
+        (
+            (kept, (_record(kept, "Run ruff check before committing."),)),
+            (vanished, (_record(vanished, "Run ruff from the vanished file."),)),
+        ),
+    )
+    vanished_path.unlink()
+
+    result = runtime.sync_records(
+        ((kept, (_record(kept, "unread"),)),),
+        prune_missing=case.prune_missing,
+    )
+
+    assert result.sources_pruned == case.expected_pruned
+    assert result.sources_skipped == 1
+    found = runtime.search_records(_query("ruff"))
+    assert sorted(record.text for record in found) == sorted(case.expected_texts)
+    assert runtime.status().sources == 2 - case.expected_pruned
+    runtime.close()
+
+
+def test_early_exited_sync_never_prunes(tmp_path: pathlib.Path) -> None:
+    """An early-exited loop must not prune sources it never visited."""
+    first_path = tmp_path / "first.jsonl"
+    first_path.write_text("ruff", encoding="utf-8")
+    vanished_path = tmp_path / "vanished.jsonl"
+    vanished_path.write_text("ruff", encoding="utf-8")
+    first = _source(first_path)
+    vanished = _source(vanished_path)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    _ = runtime.sync_records(
+        ((vanished, (_record(vanished, "Run ruff from the vanished file."),)),),
+    )
+    vanished_path.unlink()
+    control = agentgrep.SearchControl()
+    progress = StopAfterFirstSourceProgress(control)
+
+    second_path = tmp_path / "second.jsonl"
+    second_path.write_text("ruff", encoding="utf-8")
+    second = _source(second_path)
+    result = runtime.sync_records(
+        (
+            (first, (_record(first, "Run ruff check before committing."),)),
+            (second, (_record(second, "Run ruff again."),)),
+        ),
+        control=control,
+        progress=t.cast("DbSyncProgress", progress),
+        prune_missing=True,
+    )
+
+    assert result.sources_pruned == 0
+    assert runtime.status().sources == 2
+    runtime.close()
