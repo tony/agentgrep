@@ -151,6 +151,16 @@ def render_progress_meter(fraction: float, width: int) -> str:
 def format_progress_percent(fraction: float) -> str:
     """Format a completion fraction as an integer percent.
 
+    Parameters
+    ----------
+    fraction : float
+        Completion in ``[0.0, 1.0]``; values outside the range clamp.
+
+    Returns
+    -------
+    str
+        The rounded integer percent with a ``%`` suffix.
+
     Examples
     --------
     >>> format_progress_percent(0.524)
@@ -176,6 +186,23 @@ def format_scanning_detail(
     statusline omits — phase, scanned/total sources, and in-source
     record/match counts — with the phase word capitalized to open the
     row as a sentence.
+
+    Parameters
+    ----------
+    phase : str
+        Engine phase word (e.g. ``"scanning"``, ``"discovering"``).
+    current : int or None
+        Index of the source being scanned, when known.
+    total : int or None
+        Total number of sources, when known.
+    detail : str or None
+        In-source detail such as ``"2176 records, 354 source matches"``.
+
+    Returns
+    -------
+    str
+        The composed detail line; segments with unknown inputs are
+        omitted.
 
     Examples
     --------
@@ -204,6 +231,20 @@ def searching_left_text(label: str, elapsed: float, *, narrow: bool) -> str:
 
     Narrow mode drops the elapsed ticker (and its ellipsis) so the
     percent and match count keep their cells on small terminals.
+
+    Parameters
+    ----------
+    label : str
+        Query label (joined search terms or ``"all records"``).
+    elapsed : float
+        Wall-clock seconds since the search started.
+    narrow : bool
+        When ``True``, omit the elapsed suffix for small terminals.
+
+    Returns
+    -------
+    str
+        The left status segment, e.g. ``"Searching tmux… (32s)"``.
 
     Examples
     --------
