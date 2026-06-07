@@ -25,9 +25,24 @@ Sync is intentionally planner-shaped:
 discover sources -> sync plan -> physical tasks -> bounded execution -> SQLite writers -> explain output
 ```
 
-The DB stores source ledger rows, source state, normalized records,
-and an FTS5 text index. This keeps the default
-backend local, transactional, and inspectable.
+The DB stores source ledger rows, source state, and normalized
+records split into a search read-model: a narrow `records_search`
+table (identity, sort, session, and hash columns), a `record_details`
+table with the text/title/role/model/metadata payload, and a
+content-full trigram FTS5 table that owns the casefolded haystack.
+This keeps the default backend local, transactional, and inspectable
+while letting search touch dense pages.
+
+Limited searches run a keyset probe: lean columns ordered by
+`(COALESCE(timestamp,''), agent, path, rowid) DESC` in windows of
+`max(4*limit, 200)`, hydrating each page's admitted rows from
+`record_details` and sealing the window only when `limit` records
+survive the scope filter, per-session dedup, and the `matches_record`
+oracle. Under-filled windows continue from a row-value keyset cursor,
+so dedup collapse and oracle rejections can never starve the result.
+Unlimited searches reuse the same lean fetch and deterministic order.
+The probe phases appear in profiles as `records.probe_fts` /
+`records.probe_scan` / `records.hydrate` statement samples.
 
 Repeated syncs consult `source_state` fingerprints before opening
 record iterators, so unchanged source files are skipped unless the
