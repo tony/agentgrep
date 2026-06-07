@@ -97,6 +97,26 @@ def search_sources(
     return records
 
 
+def _db_search_result(
+    query: SearchQuery,
+    runtime: SearchRuntime | None,
+) -> tuple[bool, list[SearchRecord]]:
+    """Return a cache-backed result when the configured runtime can answer."""
+    if runtime is None or runtime.cache_mode == "off" or runtime.db is None:
+        return False, []
+    from agentgrep.db import DbQueryUnsupportedError
+
+    try:
+        records = runtime.db.search_records(query)
+    except DbQueryUnsupportedError:
+        if runtime.cache_mode == "require":
+            raise
+        return False, []
+    if runtime.cache_mode == "auto" and not records:
+        return False, []
+    return True, records
+
+
 def run_search_query(
     home: pathlib.Path,
     query: SearchQuery,
