@@ -3120,8 +3120,6 @@ async def test_meter_change_gates_identical_progress(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Repeated identical fractions repaint the meter at most once."""
-    agentgrep = t.cast("t.Any", load_agentgrep_module())
-    del agentgrep
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
