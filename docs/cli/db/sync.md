@@ -66,6 +66,12 @@ fingerprints to skip sources whose size and mtime still match the last
 successful sync. Use `--force` when you need to rebuild records from
 unchanged source files.
 
+An uncapped, full-scope, all-agents sync also prunes ledger rows for
+sources that no longer appear in discovery — deleted or rotated
+history files stop answering cached searches. Narrowed syncs
+(`--agent`, `--scope`, `--limit-sources`) never prune, because they do
+not observe the full catalog.
+
 ## Command
 
 ```{eval-rst}

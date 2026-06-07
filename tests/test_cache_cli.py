@@ -149,6 +149,7 @@ STRUCTURED_OUTPUT_CASES: tuple[StructuredOutputCase, ...] = (
                 "records_indexed": 2,
                 "records_removed": 0,
                 "sources_skipped": 0,
+                "sources_pruned": 0,
             },
         ),
     ),
@@ -162,6 +163,7 @@ STRUCTURED_OUTPUT_CASES: tuple[StructuredOutputCase, ...] = (
                 "records_indexed": 2,
                 "records_removed": 0,
                 "sources_skipped": 0,
+                "sources_pruned": 0,
             },
         ),
     ),
@@ -178,12 +180,14 @@ STRUCTURED_OUTPUT_CASES: tuple[StructuredOutputCase, ...] = (
                 "records_indexed": 2,
                 "records_removed": 0,
                 "sources_skipped": 0,
+                "sources_pruned": 0,
             },
             {
                 "sources_synced": 3,
                 "records_indexed": 4,
                 "records_removed": 1,
                 "sources_skipped": 0,
+                "sources_pruned": 0,
             },
         ),
     ),
@@ -203,6 +207,7 @@ STRUCTURED_OUTPUT_CASES: tuple[StructuredOutputCase, ...] = (
                         "records_indexed": 2,
                         "records_removed": 0,
                         "sources_skipped": 0,
+                        "sources_pruned": 0,
                     },
                 ],
             },
@@ -244,6 +249,20 @@ STRUCTURED_TEXT_OUTPUT_CASES: tuple[StructuredTextOutputCase, ...] = (
             "4 sources skipped",
         ),
         expected_not_contains=("SyncResult(", "{", "'sources_synced'"),
+    ),
+    StructuredTextOutputCase(
+        test_id="db-sync-with-pruned",
+        payload=SyncResult(
+            sources_synced=2,
+            records_indexed=3,
+            records_removed=4,
+            sources_pruned=1,
+        ),
+        expected_contains=(
+            "DB sync",
+            "1 vanished source pruned",
+        ),
+        expected_not_contains=("SyncResult(",),
     ),
     StructuredTextOutputCase(
         test_id="db-explain-with-coverage",
@@ -460,6 +479,7 @@ def test_db_sync_forced_progress_keeps_json_stdout_clean(
         force: bool | None = None
         closed: bool = False
         coverage: SyncCoverage | None = None
+        prune_missing: bool | None = None
 
         def close(self) -> None:
             """Record that the command closed its runtime."""
@@ -473,9 +493,11 @@ def test_db_sync_forced_progress_keeps_json_stdout_clean(
             progress: DbSyncProgress | None = None,
             force: bool = False,
             coverage: SyncCoverage | None = None,
+            prune_missing: bool = False,
         ) -> SyncResult:
             self.force = force
             self.coverage = coverage
+            self.prune_missing = prune_missing
             source_list = tuple(sources)
             result = SyncResult(sources_synced=0, records_indexed=0, records_removed=0)
             assert control is not None
@@ -533,6 +555,7 @@ def test_db_sync_forced_progress_keeps_json_stdout_clean(
         "records_indexed": 2,
         "records_removed": 0,
         "sources_skipped": 0,
+        "sources_pruned": 0,
     }
     assert runtime_stub.force is True
     assert runtime_stub.closed is True
@@ -1177,6 +1200,7 @@ class CoverageRecordingStub:
     def __init__(self) -> None:
         """Start with no recorded coverage."""
         self.coverage: SyncCoverage | None = None
+        self.prune_missing: bool | None = None
 
     def close(self) -> None:
         """Accept the command's runtime close."""
@@ -1189,10 +1213,12 @@ class CoverageRecordingStub:
         progress: DbSyncProgress | None = None,
         force: bool = False,
         coverage: SyncCoverage | None = None,
+        prune_missing: bool = False,
     ) -> SyncResult:
-        """Record coverage and return zero counters."""
+        """Record coverage and pruning, returning zero counters."""
         del sources, control, progress, force
         self.coverage = coverage
+        self.prune_missing = prune_missing
         return SyncResult(sources_synced=0, records_indexed=0, records_removed=0)
 
 
@@ -1264,3 +1290,81 @@ def test_db_sync_passes_coverage_from_args(
     assert stub.coverage.agents == ("codex",)
     assert stub.coverage.scope == case.scope
     assert stub.coverage.complete is case.expected_complete
+
+
+class PruneArgsCase(t.NamedTuple):
+    """Named case for the prune flag the db sync command derives."""
+
+    test_id: str
+    agents: tuple[agentgrep.AgentName, ...]
+    scope: agentgrep.SearchScope
+    limit_sources: int | None
+    expected_prune: bool
+
+
+PRUNE_ARGS_CASES: tuple[PruneArgsCase, ...] = (
+    PruneArgsCase(
+        test_id="full-sync-prunes",
+        agents=agentgrep.AGENT_CHOICES,
+        scope="all",
+        limit_sources=None,
+        expected_prune=True,
+    ),
+    PruneArgsCase(
+        test_id="agent-subset-never-prunes",
+        agents=("codex",),
+        scope="all",
+        limit_sources=None,
+        expected_prune=False,
+    ),
+    PruneArgsCase(
+        test_id="scoped-sync-never-prunes",
+        agents=agentgrep.AGENT_CHOICES,
+        scope="prompts",
+        limit_sources=None,
+        expected_prune=False,
+    ),
+    PruneArgsCase(
+        test_id="capped-sync-never-prunes",
+        agents=agentgrep.AGENT_CHOICES,
+        scope="all",
+        limit_sources=1,
+        expected_prune=False,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    PRUNE_ARGS_CASES,
+    ids=[case.test_id for case in PRUNE_ARGS_CASES],
+)
+def test_db_sync_prunes_only_on_full_syncs(
+    case: PruneArgsCase,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Only an uncapped, full-scope, all-agents sync may prune."""
+    stub = CoverageRecordingStub()
+    monkeypatch.setattr(render, "_open_db_runtime", lambda _path: stub)
+    monkeypatch.setattr(
+        agentgrep,
+        "discover_sources_for_search",
+        lambda _home, _query, _backends, version_detail: [],
+    )
+    args = agentgrep.DbArgs(
+        action="sync",
+        db_path=None,
+        agents=case.agents,
+        scope=case.scope,
+        limit_sources=case.limit_sources,
+        output_mode="json",
+        color_mode="never",
+        progress_mode="never",
+    )
+
+    exit_code = render.run_db_command(args)
+    _ = capsys.readouterr()
+
+    assert exit_code == 0
+    assert stub.prune_missing is case.expected_prune
