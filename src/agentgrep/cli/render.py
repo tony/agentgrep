@@ -621,6 +621,9 @@ def _format_db_sync_result_text(payload: object, *, colors: agentgrep.AnsiColors
     skipped = _as_int_value(_attribute_or_mapping_value(payload, "sources_skipped", 0))
     if skipped:
         lines.append(colors.warning(format_db_skipped_count(skipped)))
+    pruned = _as_int_value(_attribute_or_mapping_value(payload, "sources_pruned", 0))
+    if pruned:
+        lines.append(colors.warning(format_db_pruned_count(pruned)))
     return "\n".join(lines)
 
 
@@ -1258,6 +1261,20 @@ def format_db_skipped_count(count: int) -> str:
     return f"{count} {suffix}"
 
 
+def format_db_pruned_count(count: int) -> str:
+    """Return a human-readable pruned-source count.
+
+    Examples
+    --------
+    >>> format_db_pruned_count(1)
+    '1 vanished source pruned'
+    >>> format_db_pruned_count(3)
+    '3 vanished sources pruned'
+    """
+    suffix = "vanished source pruned" if count == 1 else "vanished sources pruned"
+    return f"{count} {suffix}"
+
+
 def _format_optional_db_sync_counts(result: SyncResult, *, colors: agentgrep.SearchColors) -> str:
     """Return optional DB sync counters prefixed for inline summaries."""
     parts: list[str] = []
@@ -1453,12 +1470,22 @@ def _run_db_command_with_runtime(args: DbArgs, runtime: DbRuntime) -> int:
             scope=args.scope,
             complete=args.limit_sources is None,
         )
+        # Only an uncapped, full-scope, all-agents sync may prune
+        # ledger rows for vanished sources - a narrowed run does not
+        # observe the full catalog and must not delete what it
+        # skipped.
+        prune_missing = (
+            args.scope == "all"
+            and args.limit_sources is None
+            and set(args.agents) == set(agentgrep.AGENT_CHOICES)
+        )
         result = runtime.sync_sources(
             sources,
             control=control,
             progress=progress,
             force=args.force,
             coverage=coverage,
+            prune_missing=prune_missing,
         )
     except KeyboardInterrupt:
         if progress is not None:
