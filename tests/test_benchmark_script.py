@@ -735,6 +735,7 @@ def test_measurement_json_shape_preserves_documented_keys() -> None:
         "command_string",
         "samples",
         "status",
+        "cache_mode",
         "error",
         "dry_run",
         "profile_payload",
@@ -1985,3 +1986,58 @@ def test_main_exits_2_when_output_is_directory(tmp_path: pathlib.Path) -> None:
         ["run", "--output", str(tmp_path), "--no-progress"],
     )
     assert rc == 2
+
+
+class CacheModeExtractionCase(t.NamedTuple):
+    """Named case for cache-mode extraction from bench commands."""
+
+    test_id: str
+    command_string: str
+    expected_cache_mode: str | None
+
+
+CACHE_MODE_EXTRACTION_CASES: tuple[CacheModeExtractionCase, ...] = (
+    CacheModeExtractionCase(
+        test_id="cold-off-prefix",
+        command_string="env AGENTGREP_CACHE=off .venv/bin/agentgrep grep tmux",
+        expected_cache_mode="off",
+    ),
+    CacheModeExtractionCase(
+        test_id="warm-require-with-db",
+        command_string=(
+            "env AGENTGREP_DB=.tmp/bench-cache.sqlite AGENTGREP_CACHE=require "
+            ".venv/bin/agentgrep search tmux"
+        ),
+        expected_cache_mode="require",
+    ),
+    CacheModeExtractionCase(
+        test_id="no-env-prefix",
+        command_string=".venv/bin/agentgrep grep tmux",
+        expected_cache_mode=None,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    CACHE_MODE_EXTRACTION_CASES,
+    ids=[case.test_id for case in CACHE_MODE_EXTRACTION_CASES],
+)
+def test_cache_mode_extracted_from_command(case: CacheModeExtractionCase) -> None:
+    """Measurement rows learn their cache mode from the env prefix."""
+    assert benchmark.cache_mode_from_command(case.command_string) == case.expected_cache_mode
+
+
+def test_committed_cache_benchmarks_pair_cold_and_warm() -> None:
+    """Cold/warm cache benches exist, disclose mode, and warm ones sync first."""
+    config = benchmark.load_config()
+    cold = config.bench["grep-all-prompts-cache-cold-max-count-50"]
+    warm = config.bench["grep-all-prompts-cache-warm-max-count-50"]
+
+    assert "AGENTGREP_CACHE=off" in cold.command
+    assert cold.setup_command == ""
+    assert "AGENTGREP_CACHE=require" in warm.command
+    assert "db sync" in warm.setup_command
+    assert "AGENTGREP_DB=" in warm.setup_command
+    assert "cold" in cold.description.lower()
+    assert "warm" in warm.description.lower()
