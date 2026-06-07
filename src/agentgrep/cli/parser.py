@@ -1194,7 +1194,7 @@ def _build_grep_args(
         output_mode=output_mode,
         color_mode=color_mode,
         progress_mode=t.cast("ProgressMode", namespace.progress),
-        cache_mode=t.cast("CacheMode", namespace.cache_mode),
+        cache_mode=_resolved_cache_mode(namespace, bundle=bundle),
         style=t.cast("GrepStyle", namespace.style),
     )
 
@@ -1246,7 +1246,7 @@ def _build_search_args(
         output_mode=output_mode,
         color_mode=color_mode,
         progress_mode=t.cast("ProgressMode", namespace.progress),
-        cache_mode=t.cast("CacheMode", namespace.cache_mode),
+        cache_mode=_resolved_cache_mode(namespace, bundle=bundle),
         threshold=threshold,
         no_group=t.cast("bool", namespace.no_group),
         no_rank=t.cast("bool", namespace.no_rank),
@@ -1266,13 +1266,66 @@ def add_common_agent_options(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _coerce_cache_mode(value: str) -> CacheMode:
+    """Validate one cache-mode string.
+
+    Examples
+    --------
+    >>> _coerce_cache_mode("off")
+    'off'
+    >>> _coerce_cache_mode("never")
+    Traceback (most recent call last):
+        ...
+    ValueError: cache mode must be one of auto, require, off
+    """
+    if value in ("auto", "require", "off"):
+        return t.cast("CacheMode", value)
+    msg = "cache mode must be one of auto, require, off"
+    raise ValueError(msg)
+
+
+def resolve_cache_mode(
+    explicit: CacheMode | None,
+    env_value: str | None,
+) -> CacheMode:
+    """Resolve the effective cache mode: flag > AGENTGREP_CACHE > auto.
+
+    Examples
+    --------
+    >>> resolve_cache_mode("require", "off")
+    'require'
+    >>> resolve_cache_mode(None, "off")
+    'off'
+    >>> resolve_cache_mode(None, None)
+    'auto'
+    """
+    if explicit is not None:
+        return explicit
+    if env_value is not None:
+        return _coerce_cache_mode(env_value)
+    return "auto"
+
+
+def _resolved_cache_mode(
+    namespace: argparse.Namespace,
+    *,
+    bundle: ParserBundle,
+) -> CacheMode:
+    """Resolve cache mode from the parsed flag and AGENTGREP_CACHE."""
+    explicit = t.cast("CacheMode | None", getattr(namespace, "cache_mode", None))
+    try:
+        return resolve_cache_mode(explicit, os.environ.get("AGENTGREP_CACHE"))
+    except ValueError:
+        bundle.parser.error("AGENTGREP_CACHE must be one of auto, require, off")
+
+
 def add_cache_options(parser: argparse.ArgumentParser) -> None:
     """Attach cache-mode flags shared by search-shaped commands."""
     group = parser.add_mutually_exclusive_group()
     _ = group.add_argument(
         "--cache",
         choices=["auto", "require", "off"],
-        default="auto",
+        default=None,
         dest="cache_mode",
         help="Use DB cache: auto (default), require, or off",
     )

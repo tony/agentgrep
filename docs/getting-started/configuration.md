@@ -54,6 +54,24 @@ Require the DB path:
 $ uv run agentgrep search "release" --cache require
 ```
 
+Set the mode for a whole environment with `AGENTGREP_CACHE` — useful
+for benchmark harnesses, CI jobs, and MCP server configuration blocks,
+where flags do not reach the process. An explicit `--cache` or
+`--no-cache` flag overrides the variable. Valid values are `auto`,
+`require`, and `off`.
+
+Run a whole shell session uncached:
+
+```console
+$ export AGENTGREP_CACHE=off
+```
+
+Fail loudly if the cache cannot serve a query:
+
+```console
+$ AGENTGREP_CACHE=require uv run agentgrep grep "release"
+```
+
 ## Output
 
 Text output is optimized for terminal reading:
