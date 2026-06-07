@@ -107,11 +107,13 @@ def _source(
     *,
     source_kind: agentgrep.SourceKind = "jsonl",
     adapter_id: str = "codex.sessions_jsonl.v1",
+    agent: agentgrep.AgentName = "codex",
+    store: str = "codex.sessions",
 ) -> agentgrep.SourceHandle:
     """Build a synthetic source handle for db tests."""
     return agentgrep.SourceHandle(
-        agent="codex",
-        store="codex.sessions",
+        agent=agent,
+        store=store,
         adapter_id=adapter_id,
         path=path,
         path_kind="session_file",
@@ -125,6 +127,7 @@ def _record(
     source: agentgrep.SourceHandle,
     text: str,
     *,
+    kind: t.Literal["prompt", "history"] = "prompt",
     timestamp: str = "2026-06-05T12:00:00Z",
     session_id: str = "session-a",
     title: str | None = None,
@@ -133,7 +136,7 @@ def _record(
 ) -> agentgrep.SearchRecord:
     """Build a synthetic normalized search record."""
     return agentgrep.SearchRecord(
-        kind="prompt",
+        kind=kind,
         agent=source.agent,
         store=source.store,
         adapter_id=source.adapter_id,
@@ -147,15 +150,21 @@ def _record(
     )
 
 
-def _query(term: str = "ruff", *, dedupe: bool = True) -> agentgrep.SearchQuery:
+def _query(
+    term: str = "ruff",
+    *,
+    dedupe: bool = True,
+    scope: agentgrep.SearchScope = "prompts",
+    agents: tuple[agentgrep.AgentName, ...] = ("codex",),
+) -> agentgrep.SearchQuery:
     """Build a cache-supported text search query."""
     return agentgrep.SearchQuery(
         terms=(term,),
-        scope="prompts",
+        scope=scope,
         any_term=False,
         regex=False,
         case_sensitive=False,
-        agents=("codex",),
+        agents=agents,
         limit=None,
         dedupe=dedupe,
     )
@@ -905,3 +914,117 @@ def test_cache_decision_span_reports_aggregate_outcome(
             assert "agentgrep_cache_fallback_reason" not in attributes
         else:
             assert attributes["agentgrep_cache_fallback_reason"] == case.expected_reason
+
+
+class ScopeParityCase(t.NamedTuple):
+    """Named case for cached scope filters mirroring live semantics."""
+
+    test_id: str
+    scope: agentgrep.SearchScope
+    agents: tuple[agentgrep.AgentName, ...]
+    expected_texts: tuple[str, ...]
+
+
+SCOPE_PARITY_CASES: tuple[ScopeParityCase, ...] = (
+    ScopeParityCase(
+        test_id="conversations-include-user-turns",
+        scope="conversations",
+        agents=("codex",),
+        expected_texts=(
+            "alpaca assistant turn",
+            "alpaca chat user turn",
+        ),
+    ),
+    ScopeParityCase(
+        test_id="prompts-use-prompt-store-for-covered-agent",
+        scope="prompts",
+        agents=("codex",),
+        expected_texts=("alpaca prompt store entry",),
+    ),
+    ScopeParityCase(
+        test_id="prompts-fall-back-to-chat-without-prompt-store",
+        scope="prompts",
+        agents=("pi",),
+        expected_texts=("alpaca pi user turn",),
+    ),
+    ScopeParityCase(
+        test_id="all-scope-returns-everything",
+        scope="all",
+        agents=("codex", "pi"),
+        expected_texts=(
+            "alpaca assistant turn",
+            "alpaca chat user turn",
+            "alpaca pi user turn",
+            "alpaca prompt store entry",
+        ),
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    SCOPE_PARITY_CASES,
+    ids=[case.test_id for case in SCOPE_PARITY_CASES],
+)
+def test_cached_scope_filters_mirror_live_semantics(
+    case: ScopeParityCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Cached scope filtering matches the live planner and record filters.
+
+    Live conversations scope admits records by store role — chat
+    adapters emit user turns as kind='prompt' — and live prompts scope
+    serves an agent from its dedicated prompt-history store when one
+    exists, falling back to chat-store user turns only when it does
+    not.
+    """
+    chat_path = tmp_path / "codex-session.jsonl"
+    chat_path.write_text("chat", encoding="utf-8")
+    chat_source = _source(chat_path)
+    prompt_path = tmp_path / "codex-history.jsonl"
+    prompt_path.write_text("history", encoding="utf-8")
+    prompt_source = _source(
+        prompt_path,
+        adapter_id="codex.history_jsonl.v1",
+        store="codex.history",
+    )
+    pi_path = tmp_path / "pi-session.jsonl"
+    pi_path.write_text("pi", encoding="utf-8")
+    pi_source = _source(
+        pi_path,
+        adapter_id="pi.sessions_jsonl.v1",
+        agent="pi",
+        store="pi.sessions",
+    )
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    _ = runtime.sync_records(
+        (
+            (
+                chat_source,
+                (
+                    _record(chat_source, "alpaca chat user turn", session_id="chat-a"),
+                    _record(
+                        chat_source,
+                        "alpaca assistant turn",
+                        kind="history",
+                        session_id="chat-a",
+                    ),
+                ),
+            ),
+            (
+                prompt_source,
+                (_record(prompt_source, "alpaca prompt store entry", session_id="hist-a"),),
+            ),
+            (
+                pi_source,
+                (_record(pi_source, "alpaca pi user turn", session_id="pi-a"),),
+            ),
+        ),
+    )
+
+    found = runtime.search_records(
+        _query("alpaca", scope=case.scope, agents=case.agents),
+    )
+    runtime.close()
+
+    assert sorted(record.text for record in found) == sorted(case.expected_texts)
