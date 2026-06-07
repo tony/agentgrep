@@ -3119,7 +3119,7 @@ async def test_meter_change_gates_identical_progress(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Repeated identical fractions repaint the meter at most once."""
+    """The first fraction repaints exactly once; an identical repeat adds none."""
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
@@ -3132,11 +3132,12 @@ async def test_meter_change_gates_identical_progress(
             return real_refresh(*args, **kwargs)
 
         monkeypatch.setattr(meter, "refresh", spy)
+        # Mount rendered the idle meter as "" — the first real fraction
+        # must compose a non-empty bar and trigger exactly one repaint.
         meter.set_progress(0.5, "")
-        first = len(refreshes)
-        assert first <= 1
+        assert len(refreshes) == 1
         meter.set_progress(0.5, "")
-        assert len(refreshes) == first
+        assert len(refreshes) == 1
 
 
 async def test_narrow_statusline_drops_bar_and_elapsed(
