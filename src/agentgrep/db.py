@@ -7,15 +7,19 @@ import dataclasses
 import datetime
 import hashlib
 import json
+import logging
 import os
 import pathlib
 import re
 import sqlite3
+import time
 import typing as t
 import unicodedata
 
 import agentgrep
 from agentgrep._engine.scanning import _CACHE_EXEMPT_ADAPTERS
+
+logger = logging.getLogger(__name__)
 
 CacheMode = t.Literal["auto", "require", "off"]
 
@@ -385,11 +389,21 @@ def _record_in_cached_scope(
     return True
 
 
+@dataclasses.dataclass(slots=True)
+class _SqlStatementStats:
+    """Aggregated telemetry for one named SQL statement shape."""
+
+    count: int = 0
+    seconds: float = 0.0
+    rows: int = 0
+
+
 class DbStore:
     """SQLite-backed store for the persistent DB index."""
 
     def __init__(self, db_path: pathlib.Path, *, readonly: bool = False) -> None:
         self.db_path = db_path
+        self._sql_stats: dict[str, _SqlStatementStats] = {}
         if readonly:
             self.connection = agentgrep.open_readonly_sqlite(self.db_path)
             self.connection.row_factory = sqlite3.Row
@@ -422,17 +436,103 @@ class DbStore:
         """Close the SQLite connection."""
         self.connection.close()
 
+    def _track(
+        self,
+        stmt_name: str,
+        sql: str,
+        elapsed: float,
+        rows: int,
+    ) -> _SqlStatementStats:
+        """Accumulate one statement execution into the telemetry stats.
+
+        The statement text carries placeholders only; bound parameters
+        are never logged or recorded (they can hold search terms).
+        """
+        stats = self._sql_stats.get(stmt_name)
+        if stats is None:
+            stats = _SqlStatementStats()
+            self._sql_stats[stmt_name] = stats
+        stats.count += 1
+        stats.seconds += elapsed
+        stats.rows += rows
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "sql statement executed: %s",
+                " ".join(sql.split()),
+                extra={
+                    "agentgrep_sql_statement": stmt_name,
+                    "agentgrep_sql_seconds": elapsed,
+                    "agentgrep_sql_rows": rows,
+                },
+            )
+        return stats
+
+    def _query(
+        self,
+        stmt_name: str,
+        sql: str,
+        params: cabc.Sequence[object] = (),
+    ) -> list[sqlite3.Row]:
+        """Run one SELECT through the telemetry choke point."""
+        bound = tuple(params)
+        start = time.perf_counter()
+        rows = self.connection.execute(sql, bound).fetchall()
+        _ = self._track(stmt_name, sql, time.perf_counter() - start, len(rows))
+        return rows
+
+    def _execute(
+        self,
+        stmt_name: str,
+        sql: str,
+        params: cabc.Sequence[object] = (),
+    ) -> sqlite3.Cursor:
+        """Run one write statement through the telemetry choke point."""
+        start = time.perf_counter()
+        cursor = self.connection.execute(sql, tuple(params))
+        rows = cursor.rowcount if cursor.rowcount > 0 else 0
+        _ = self._track(stmt_name, sql, time.perf_counter() - start, rows)
+        return cursor
+
+    def _executescript(self, stmt_name: str, script: str) -> None:
+        """Run one SQL script through the telemetry choke point."""
+        start = time.perf_counter()
+        _ = self.connection.executescript(script)
+        _ = self._track(stmt_name, script, time.perf_counter() - start, 0)
+
+    def _flush_sql_samples(self) -> None:
+        """Emit one aggregate profile sample per executed statement shape.
+
+        One sample per statement name, never per execution: sync loops
+        run two statements per record, and per-execution samples would
+        swamp the profile. A high ``agentgrep_sql_count`` on a single
+        sample is the n+1 signal.
+        """
+        if not self._sql_stats:
+            return
+        stats_by_name = self._sql_stats
+        self._sql_stats = {}
+        for stmt_name, stats in sorted(stats_by_name.items()):
+            agentgrep._record_engine_profile_sample(
+                "db.sql.statement",
+                stats.seconds,
+                agentgrep_sql_statement=stmt_name,
+                agentgrep_sql_count=stats.count,
+                agentgrep_sql_rows=stats.rows,
+            )
+
     def _configure(self) -> None:
         """Configure connection-local SQLite settings."""
-        _ = self.connection.execute("PRAGMA journal_mode=WAL")
-        _ = self.connection.execute("PRAGMA foreign_keys=ON")
+        _ = self._execute("pragma.journal_mode", "PRAGMA journal_mode=WAL")
+        _ = self._execute("pragma.foreign_keys", "PRAGMA foreign_keys=ON")
 
     def _stored_schema_version(self) -> int | None:
         """Return the schema version recorded in ``meta``, if any."""
         try:
-            row = self.connection.execute(
+            rows = self._query(
+                "meta.schema_version.get",
                 "SELECT value FROM meta WHERE key = 'schema_version'",
-            ).fetchone()
+            )
+            row = rows[0] if rows else None
         except sqlite3.OperationalError:
             return None
         if row is None:
@@ -451,16 +551,18 @@ class DbStore:
         with self.connection:
             stored = self._stored_schema_version()
             if stored is not None and stored != SCHEMA_VERSION:
-                self.connection.executescript(
+                self._executescript(
+                    "schema.drop",
                     """
                     DROP TABLE IF EXISTS record_text_fts;
                     DROP TABLE IF EXISTS source_state;
                     DROP TABLE IF EXISTS records;
                     DROP TABLE IF EXISTS sources;
                     DROP TABLE IF EXISTS meta;
-                    """
+                    """,
                 )
-            self.connection.executescript(
+            self._executescript(
+                "schema.create",
                 """
                 CREATE TABLE IF NOT EXISTS meta (
                     key TEXT PRIMARY KEY,
@@ -526,36 +628,53 @@ class DbStore:
 
                 CREATE INDEX IF NOT EXISTS idx_records_source_id
                 ON records(source_id);
-                """
+                """,
             )
-            self.connection.execute(
+            _ = self._execute(
+                "meta.schema_version.set",
                 "INSERT OR REPLACE INTO meta(key, value) VALUES('schema_version', ?)",
                 (str(SCHEMA_VERSION),),
             )
 
     def status(self) -> DbStatus:
         """Return db row counts."""
-        return DbStatus(
-            db_path=self.db_path,
-            schema_version=SCHEMA_VERSION,
-            sources=self._count("sources"),
-            records=self._count("records"),
-        )
+        try:
+            return DbStatus(
+                db_path=self.db_path,
+                schema_version=SCHEMA_VERSION,
+                sources=self._count("sources"),
+                records=self._count("records"),
+            )
+        finally:
+            self._flush_sql_samples()
 
     def explain(self) -> DbExplain:
         """Return cache diagnostics: counts, sync state, answerable forms."""
-        ok_row = self.connection.execute(
+        try:
+            return self._explain()
+        finally:
+            self._flush_sql_samples()
+
+    def _explain(self) -> DbExplain:
+        """Compute ``explain`` ahead of the telemetry flush."""
+        ok_rows = self._query(
+            "source_state.count_ok",
             "SELECT COUNT(*) AS count FROM source_state WHERE sync_status = 'ok'",
-        ).fetchone()
-        error_row = self.connection.execute(
+        )
+        ok_row = ok_rows[0] if ok_rows else None
+        error_rows = self._query(
+            "source_state.count_errors",
             """
             SELECT COUNT(*) AS count FROM source_state
             WHERE sync_status != 'ok' OR last_error IS NOT NULL
             """,
-        ).fetchone()
-        last_row = self.connection.execute(
+        )
+        error_row = error_rows[0] if error_rows else None
+        last_rows = self._query(
+            "source_state.last_synced",
             "SELECT MAX(updated_at) AS last FROM source_state",
-        ).fetchone()
+        )
+        last_row = last_rows[0] if last_rows else None
         last_synced = last_row["last"] if last_row is not None else None
         return DbExplain(
             db_path=self.db_path,
@@ -571,16 +690,18 @@ class DbStore:
 
     def get_meta(self, key: str) -> str | None:
         """Return one meta value or ``None`` when the key is absent."""
-        row = self.connection.execute(
+        rows = self._query(
+            "meta.get",
             "SELECT value FROM meta WHERE key = ?",
             (key,),
-        ).fetchone()
-        return str(row["value"]) if row is not None else None
+        )
+        return str(rows[0]["value"]) if rows else None
 
     def set_meta(self, key: str, value: str) -> None:
         """Insert or replace one meta value."""
         with self.connection:
-            self.connection.execute(
+            _ = self._execute(
+                "meta.set",
                 "INSERT OR REPLACE INTO meta(key, value) VALUES(?, ?)",
                 (key, value),
             )
@@ -630,8 +751,8 @@ class DbStore:
 
     def _count(self, table: str) -> int:
         """Return row count for a known table."""
-        row = self.connection.execute(f"SELECT COUNT(*) AS count FROM {table}").fetchone()
-        return int(row["count"]) if row is not None else 0
+        rows = self._query(f"count.{table}", f"SELECT COUNT(*) AS count FROM {table}")
+        return int(rows[0]["count"]) if rows else 0
 
     def replace_source_records(
         self,
@@ -679,7 +800,8 @@ class DbStore:
                     normalized_hash=normalized_hash,
                 )
                 indexed += 1
-            self.connection.execute(
+            _ = self._execute(
+                "source_state.upsert",
                 """
                 INSERT OR REPLACE INTO source_state(
                     source_id, sync_status, synced_mtime_ns,
@@ -705,16 +827,18 @@ class DbStore:
             return False
         source_id = source_id_for(source)
         fingerprint = _source_fingerprint(source)
-        row = self.connection.execute(
+        state_rows = self._query(
+            "source_state.get",
             """
             SELECT sync_status, synced_mtime_ns, synced_fingerprint
             FROM source_state
             WHERE source_id = ?
             """,
             (source_id,),
-        ).fetchone()
-        if row is None:
+        )
+        if not state_rows:
             return False
+        row = state_rows[0]
         return (
             str(row["sync_status"]) == "ok"
             and int(row["synced_mtime_ns"]) == source.mtime_ns
@@ -735,7 +859,8 @@ class DbStore:
             if source.version_detection is not None
             else None
         )
-        self.connection.execute(
+        _ = self._execute(
+            "sources.upsert",
             """
             INSERT INTO sources(
                 source_id, agent, store, adapter_id, path, path_kind, source_kind,
@@ -775,22 +900,28 @@ class DbStore:
         values leaves stale token mappings behind and corrupts later
         ``MATCH`` queries against reused rowids.
         """
-        rows = self.connection.execute(
+        rows = self._query(
+            "records.select_for_delete",
             "SELECT rowid, haystack FROM records WHERE source_id = ?",
             (source_id,),
-        ).fetchall()
+        )
         for row in rows:
-            self.connection.execute(
+            _ = self._execute(
+                "fts.delete",
                 "INSERT INTO record_text_fts(record_text_fts, rowid, haystack) "
                 "VALUES('delete', ?, ?)",
                 (int(row["rowid"]), row["haystack"]),
             )
-        self.connection.execute("DELETE FROM records WHERE source_id = ?", (source_id,))
+        _ = self._execute(
+            "records.delete_by_source",
+            "DELETE FROM records WHERE source_id = ?",
+            (source_id,),
+        )
         return len(rows)
 
     def source_ids(self) -> frozenset[str]:
         """Return every source id in the ledger."""
-        rows = self.connection.execute("SELECT source_id FROM sources").fetchall()
+        rows = self._query("sources.ids", "SELECT source_id FROM sources")
         return frozenset(str(row["source_id"]) for row in rows)
 
     def remove_source(self, source_id: str) -> int:
@@ -802,7 +933,8 @@ class DbStore:
         """
         with self.connection:
             removed = self._remove_source_records(source_id)
-            _ = self.connection.execute(
+            _ = self._execute(
+                "sources.delete",
                 "DELETE FROM sources WHERE source_id = ?",
                 (source_id,),
             )
@@ -820,7 +952,8 @@ class DbStore:
     ) -> str:
         """Insert one normalized record and its FTS row."""
         haystack = agentgrep.build_record_match_surface(record, "haystack").casefold()
-        cursor = self.connection.execute(
+        cursor = self._execute(
+            "records.insert",
             """
             INSERT INTO records(
                 record_id, source_id, kind, agent, store, adapter_id, path,
@@ -857,7 +990,8 @@ class DbStore:
             msg = "SQLite did not return a record rowid"
             raise RuntimeError(msg)
         rowid = int(lastrowid)
-        self.connection.execute(
+        _ = self._execute(
+            "fts.insert",
             "INSERT INTO record_text_fts(rowid, haystack) VALUES(?, ?)",
             (rowid, haystack),
         )
@@ -871,9 +1005,10 @@ class DbStore:
         results gate conversation stores per agent exactly like the
         live planner does.
         """
-        rows = self.connection.execute(
+        rows = self._query(
+            "sources.distinct_adapters",
             "SELECT DISTINCT agent, store, adapter_id FROM sources",
-        ).fetchall()
+        )
         return frozenset(
             str(row["agent"])
             for row in rows
@@ -883,6 +1018,13 @@ class DbStore:
 
     def search_records(self, query: agentgrep.SearchQuery) -> list[agentgrep.SearchRecord]:
         """Return SearchRecord objects matching ``query`` from SQLite/FTS."""
+        try:
+            return self._search_records(query)
+        finally:
+            self._flush_sql_samples()
+
+    def _search_records(self, query: agentgrep.SearchQuery) -> list[agentgrep.SearchRecord]:
+        """Serve ``search_records`` ahead of the telemetry flush."""
         if query.regex or query.any_term or query.compiled is not None:
             msg = "query requires live scanner"
             raise DbQueryUnsupported(msg)
@@ -913,17 +1055,18 @@ class DbStore:
                 "JOIN records r ON r.rowid = f.rowid "
                 f"WHERE f.record_text_fts MATCH ? AND {' AND '.join(where)}"
             )
-            rows = self.connection.execute(sql, (match_expr, *params)).fetchall()
+            rows = self._query("records.search_fts", sql, (match_expr, *params))
         else:
             scan_where = list(where)
             scan_params = list(params)
             for term in query.terms:
                 scan_where.append("instr(r.haystack, ?) > 0")
                 scan_params.append(term.casefold())
-            rows = self.connection.execute(
+            rows = self._query(
+                "records.search_scan",
                 f"SELECT r.* FROM records r WHERE {' AND '.join(scan_where)}",
                 scan_params,
-            ).fetchall()
+            )
         records = [self._row_to_record(row) for row in rows]
         if query.scope != "all":
             prompt_history_agents = (
@@ -952,7 +1095,7 @@ class DbStore:
 
     def iter_record_rows(self) -> tuple[DbRecordRow, ...]:
         """Return every indexed record with its db id."""
-        rows = self.connection.execute("SELECT * FROM records ORDER BY rowid").fetchall()
+        rows = self._query("records.all", "SELECT * FROM records ORDER BY rowid")
         return tuple(
             DbRecordRow(
                 record_id=str(row["record_id"]),
@@ -963,13 +1106,14 @@ class DbStore:
 
     def get_record_row(self, record_id: str) -> DbRecordRow | None:
         """Return one indexed record row by id."""
-        row = self.connection.execute(
+        rows = self._query(
+            "records.get",
             "SELECT * FROM records WHERE record_id = ?",
             (record_id,),
-        ).fetchone()
-        if row is None:
+        )
+        if not rows:
             return None
-        return DbRecordRow(record_id=record_id, record=self._row_to_record(row))
+        return DbRecordRow(record_id=record_id, record=self._row_to_record(rows[0]))
 
     def _row_to_record(self, row: sqlite3.Row) -> agentgrep.SearchRecord:
         """Convert one SQLite row into the public SearchRecord dataclass."""
@@ -1047,6 +1191,29 @@ class DbRuntime:
         run to the end; callers must pass it only for uncapped,
         full-scope syncs so a narrowed run cannot prune other agents.
         """
+        try:
+            return self._sync_records(
+                batches,
+                control=control,
+                progress=progress,
+                force=force,
+                coverage=coverage,
+                prune_missing=prune_missing,
+            )
+        finally:
+            self.store._flush_sql_samples()
+
+    def _sync_records(
+        self,
+        batches: cabc.Iterable[SourceRecordBatch],
+        *,
+        control: agentgrep.SearchControl | None = None,
+        progress: DbSyncProgress | None = None,
+        force: bool = False,
+        coverage: SyncCoverage | None = None,
+        prune_missing: bool = False,
+    ) -> SyncResult:
+        """Run the sync loop ahead of the telemetry flush."""
         result = SyncResult(
             sources_synced=0,
             records_indexed=0,
