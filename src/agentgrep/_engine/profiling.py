@@ -234,6 +234,18 @@ def profile_search_query(
     active_backends = select_backends() if backends is None else backends
     active_control = SearchControl() if control is None else control
     with use_engine_profiler(profiler):
+        # Mirror run_search_query: consult the DB cache before any
+        # engine phase so warm-cache profiles measure the cache path
+        # and carry its search.cache.decision span instead of timing a
+        # live scan mislabeled with the requested cache mode.
+        cache_handled, cache_records = agentgrep._db_search_result(query, runtime)
+        if cache_handled:
+            return ProfiledSearchResult(
+                records=tuple(cache_records),
+                profile=profiler.snapshot(),
+                discovered_source_count=0,
+                planned_source_count=0,
+            )
         with profiler.span(
             "search.discover",
             agentgrep_scope=query.scope,
