@@ -141,8 +141,8 @@ default_query = "tmux"
 skip_if_missing = "grep"
 
 [bench.grep-all-prompts-cache-warm-max-count-50]
-description = "All-agent prompt grep served from a pre-synced DB cache (warm, require), max-count 50"
-command = "env AGENTGREP_DB={repo}/.tmp/bench-cache.sqlite AGENTGREP_CACHE=require {venv}/bin/agentgrep grep --no-progress --agent all --scope prompts --max-count 50 --json {query}"
+description = "All-agent literal prompt grep (-F) served from a pre-synced DB cache (warm, require), max-count 50"
+command = "env AGENTGREP_DB={repo}/.tmp/bench-cache.sqlite AGENTGREP_CACHE=require {venv}/bin/agentgrep grep --no-progress --fixed-strings --agent all --scope prompts --max-count 50 --json {query}"
 setup_command = "env AGENTGREP_DB={repo}/.tmp/bench-cache.sqlite {venv}/bin/agentgrep db sync --no-progress"
 default_query = "tmux"
 skip_if_missing = "db"
