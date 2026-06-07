@@ -324,7 +324,9 @@ sanitized payload, `--ndjson` for one child profile run per line, and
 `--format json`, `--format ndjson`, and `--format rich` forms remain available
 for templated invocations.
 
-Profiler artifacts include `schema_version` and `artifact_kind`. Use those
+Profiler artifacts include `schema_version`, `artifact_kind`, and
+`cache_mode` (the resolved `AGENTGREP_CACHE` mode the profiled run
+honored). Use the first two
 fields when a local profile file needs to be distinguished from benchmark rows
 or future fixture-only CI artifacts. Engine profiles include coarse phase spans
 and source-level spans such as `search.discover.group`,
@@ -389,8 +391,9 @@ $ uv run scripts/benchmark.py run \
 ```
 
 Benchmark `json` and `ndjson` artifacts include `dry_run`,
-`profile_payload`, `profile_capture_error`, `schema_version`, and
-`artifact_kind`. `command_string` is sanitized with `{repo}`, `{venv}`,
+`profile_payload`, `profile_capture_error`, `schema_version`,
+`artifact_kind`, and `cache_mode` (extracted from the command's env
+prefix; null when the command sets no cache mode). `command_string` is sanitized with `{repo}`, `{venv}`,
 `{home}`, and `{query}` placeholders. For `profile-engine-*` rows,
 `profile_payload` is a separate post-timing profile capture; timing
 conclusions must come from `samples`. Use `--format rich --top-spans N` to
