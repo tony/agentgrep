@@ -173,27 +173,29 @@ def format_scanning_detail(
     r"""Compose the verbose scanning line for the toggleable detail row.
 
     Preserves the wording of the pre-meter statusline so the ``Ctrl-\``
-    detail row reads exactly like the old inline progress text.
+    detail row reads like the old inline progress text, with the phase
+    word capitalized to open the row as a sentence.
 
     Examples
     --------
     >>> format_scanning_detail(
     ...     "scanning", 5662, 6748, "2176 records, 354 source matches",
     ... )
-    'scanning 5662/6748 sources | 2176 records, 354 source matches'
+    'Scanning 5662/6748 sources | 2176 records, 354 source matches'
     >>> format_scanning_detail("prefiltering", None, None, "~/.codex/sessions/")
-    'prefiltering ~/.codex/sessions/'
+    'Prefiltering ~/.codex/sessions/'
     >>> format_scanning_detail("discovering", None, None, None)
-    'discovering'
+    'Discovering'
     """
+    heading = phase[:1].upper() + phase[1:]
     if current is not None and total is not None:
-        line = f"{phase} {current}/{total} sources"
+        line = f"{heading} {current}/{total} sources"
         if detail:
             line = f"{line} | {detail}"
         return line
     if detail:
-        return f"{phase} {detail}"
-    return phase
+        return f"{heading} {detail}"
+    return heading
 
 
 def searching_left_text(label: str, elapsed: float, *, narrow: bool) -> str:

@@ -3049,7 +3049,7 @@ async def test_ctrl_backslash_toggles_scanning_detail_row(
         assert app._detail_visible is True
         assert detail_row.has_class("visible")
         assert (
-            app._last_detail_text == "scanning 5662/6748 sources | 2176 records, 354 source matches"
+            app._last_detail_text == "Scanning 5662/6748 sources | 2176 records, 354 source matches"
         )
         await pilot.press("ctrl+backslash")
         await pilot.pause()
