@@ -9,6 +9,7 @@ import os
 import pathlib
 import typing as t
 
+import pytest
 from fastmcp import Client
 
 from agentgrep import mcp as _agentgrep_mcp_module
@@ -16,7 +17,6 @@ from agentgrep import mcp as _agentgrep_mcp_module
 if t.TYPE_CHECKING:
     import collections.abc as cabc
 
-    import pytest
     from fastmcp import FastMCP
 
 
@@ -940,33 +940,188 @@ def test_db_status_tool_reports_zeros_for_foreign_file(
     assert payload.db_schema_version == 0
 
 
+class McpCacheRuntimeCase(t.NamedTuple):
+    """Named case for the MCP runtime's AGENTGREP_CACHE handling."""
+
+    test_id: str
+    env_cache: str | None
+    expected_cache_mode: str
+    expects_opener: bool
+
+
+MCP_CACHE_RUNTIME_CASES: tuple[McpCacheRuntimeCase, ...] = (
+    McpCacheRuntimeCase(
+        test_id="off-attaches-nothing",
+        env_cache="off",
+        expected_cache_mode="off",
+        expects_opener=False,
+    ),
+    McpCacheRuntimeCase(
+        test_id="auto-sets-opener",
+        env_cache="auto",
+        expected_cache_mode="auto",
+        expects_opener=True,
+    ),
+    McpCacheRuntimeCase(
+        test_id="require-sets-opener",
+        env_cache="require",
+        expected_cache_mode="require",
+        expects_opener=True,
+    ),
+    McpCacheRuntimeCase(
+        test_id="unset-defaults-auto",
+        env_cache=None,
+        expected_cache_mode="auto",
+        expects_opener=True,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    MCP_CACHE_RUNTIME_CASES,
+    ids=[case.test_id for case in MCP_CACHE_RUNTIME_CASES],
+)
 def test_mcp_runtime_honors_cache_env(
+    case: McpCacheRuntimeCase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The server runtime maps AGENTGREP_CACHE to a per-consult opener.
+
+    The server never holds a SQLite connection: tool work runs in a
+    worker thread, so the runtime carries an opener the consulting
+    thread calls instead of an open ``db`` handle.
+    """
+    from agentgrep.mcp import server as mcp_server
+
+    if case.env_cache is None:
+        monkeypatch.delenv("AGENTGREP_CACHE", raising=False)
+    else:
+        monkeypatch.setenv("AGENTGREP_CACHE", case.env_cache)
+
+    runtime = mcp_server._build_search_runtime()
+
+    assert runtime.cache_mode == case.expected_cache_mode
+    assert runtime.db is None
+    assert (runtime.db_opener is not None) is case.expects_opener
+
+
+class CacheOpenerCase(t.NamedTuple):
+    """Named case for the MCP cache opener's filesystem handling."""
+
+    test_id: str
+    create: t.Literal["db", "foreign", "missing"]
+    expects_runtime: bool
+
+
+CACHE_OPENER_CASES: tuple[CacheOpenerCase, ...] = (
+    CacheOpenerCase(test_id="synced-db-opens", create="db", expects_runtime=True),
+    CacheOpenerCase(test_id="foreign-file-degrades", create="foreign", expects_runtime=False),
+    CacheOpenerCase(test_id="missing-file-degrades", create="missing", expects_runtime=False),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    CACHE_OPENER_CASES,
+    ids=[case.test_id for case in CACHE_OPENER_CASES],
+)
+def test_mcp_cache_opener_opens_in_calling_thread(
+    case: CacheOpenerCase,
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The server runtime takes its cache mode from AGENTGREP_CACHE."""
-    import sqlite3
-
-    import pytest
+    """The opener yields a connection usable by the thread that called it."""
+    import threading
 
     from agentgrep import db as agentgrep_db
     from agentgrep.mcp import server as mcp_server
 
-    db_path = tmp_path / "agentgrep.sqlite"
-    agentgrep_db.DbRuntime.open(db_path).close()
+    db_path = tmp_path / "cache" / "agentgrep.sqlite"
     monkeypatch.setenv("AGENTGREP_DB", str(db_path))
+    if case.create == "db":
+        agentgrep_db.DbRuntime.open(db_path).close()
+    elif case.create == "foreign":
+        db_path.parent.mkdir(parents=True)
+        db_path.write_text("plain text", encoding="utf-8")
 
-    monkeypatch.setenv("AGENTGREP_CACHE", "off")
-    off_runtime = mcp_server._build_search_runtime()
-    assert off_runtime.cache_mode == "off"
-    assert off_runtime.db is None
+    outcomes: list[bool | BaseException] = []
 
+    def consult() -> None:
+        try:
+            runtime = mcp_server._open_cache_runtime()
+            if runtime is None:
+                outcomes.append(False)
+                return
+            _ = runtime.status()
+            runtime.close()
+            outcomes.append(True)
+        except BaseException as error:
+            outcomes.append(error)
+
+    worker = threading.Thread(target=consult)
+    worker.start()
+    worker.join()
+
+    assert outcomes == [case.expects_runtime]
+
+
+async def test_mcp_search_tool_serves_cached_records_under_require(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A require-mode MCP search serves cached records through the worker thread.
+
+    Regression test for cross-thread SQLite use: the search tool runs
+    ``iter_search_events`` via ``asyncio.to_thread``, so the cache must
+    be opened by that worker thread rather than the server thread.
+    """
+    import agentgrep
+    from agentgrep import db as agentgrep_db
+
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("AGENTGREP_CACHE", "require")
-    require_runtime = mcp_server._build_search_runtime()
-    assert require_runtime.cache_mode == "require"
-    assert require_runtime.db is not None
-    with pytest.raises(sqlite3.OperationalError):
-        _ = require_runtime.db.store.connection.execute(
-            "INSERT INTO meta(key, value) VALUES('probe', '1')",
+
+    source_path = tmp_path / "session.jsonl"
+    source_path.write_text("cached", encoding="utf-8")
+    source = agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=source_path,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=source_path.parent,
+        mtime_ns=source_path.stat().st_mtime_ns,
+    )
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store=source.store,
+        adapter_id=source.adapter_id,
+        path=source.path,
+        text="serve this straight from the cache",
+        timestamp="2026-06-05T12:00:00Z",
+        session_id="session-cache",
+    )
+    db_runtime = agentgrep_db.DbRuntime.open(agentgrep_db.default_db_path())
+    _ = db_runtime.sync_records(((source, (record,)),))
+    db_runtime.close()
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        result = await client.call_tool(
+            "search",
+            {
+                "terms": ["straight"],
+                "agent": "codex",
+                "scope": "prompts",
+                "limit": 5,
+            },
         )
-    require_runtime.db.close()
+
+    data = t.cast("SearchToolDataLike", result.data)
+    assert len(data.results) == 1
+    assert data.results[0].text == "serve this straight from the cache"

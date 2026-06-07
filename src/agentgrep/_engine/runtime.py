@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import collections.abc as cabc
 import dataclasses
 import typing as t
 
@@ -19,6 +20,13 @@ class SearchRuntime:
 
     source_scan_cache: SourceScanCache | None = None
     db: DbRuntime | None = None
+    #: Per-consult DB factory for callers whose search work runs on a
+    #: different thread than the one that built the runtime. SQLite
+    #: connections are bound to their creating thread, so long-lived
+    #: frontends (the MCP server) must open the cache in the consulting
+    #: thread instead of holding ``db`` open. The opener returns ``None``
+    #: when no usable cache exists; the consult closes what it opens.
+    db_opener: cabc.Callable[[], DbRuntime | None] | None = None
     cache_mode: CacheMode = "auto"
 
     @classmethod

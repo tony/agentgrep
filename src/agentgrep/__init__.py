@@ -81,6 +81,7 @@ if t.TYPE_CHECKING:
 
     from agentgrep._engine.planning import PhysicalSearchPlan
     from agentgrep._engine.runtime import SearchRuntime
+    from agentgrep.db import DbRuntime
     from agentgrep.query.compile import CompiledQuery
 
     PrivatePathBase = pathlib.Path
@@ -3648,8 +3649,17 @@ def _db_search_result(
     handled = False
     records: list[SearchRecord] = []
     reason: str | None = None
+    # An opener-provided runtime is opened by this thread for this one
+    # consult and closed before returning: SQLite connections are bound
+    # to their creating thread, so callers that consult from worker
+    # threads (the MCP server) supply an opener instead of a handle.
+    opened_db: DbRuntime | None = None
     try:
-        if runtime.db is None:
+        db = runtime.db
+        if db is None and runtime.db_opener is not None:
+            opened_db = runtime.db_opener()
+            db = opened_db
+        if db is None:
             reason = "no-db"
             if runtime.cache_mode == "require":
                 msg = "DB cache required but no db runtime is configured"
@@ -3658,7 +3668,7 @@ def _db_search_result(
         from agentgrep.db import DbQueryUnsupported
 
         try:
-            records = runtime.db.search_records(query)
+            records = db.search_records(query)
         except DbQueryUnsupported:
             reason = "unsupported"
             if runtime.cache_mode == "require":
@@ -3673,6 +3683,8 @@ def _db_search_result(
         handled = True
         return True, records
     finally:
+        if opened_db is not None:
+            opened_db.close()
         attributes: dict[str, JSONScalar] = {
             "agentgrep_cache_mode": runtime.cache_mode,
             "agentgrep_cache_handled": handled,
