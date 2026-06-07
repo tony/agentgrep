@@ -1293,3 +1293,26 @@ def test_early_exited_sync_never_prunes(tmp_path: pathlib.Path) -> None:
     assert result.sources_pruned == 0
     assert runtime.status().sources == 2
     runtime.close()
+
+
+def test_cached_search_with_empty_agent_selection_returns_nothing(
+    tmp_path: pathlib.Path,
+) -> None:
+    """An empty agent selection matches live discovery: zero records.
+
+    Guards the public library surface — CLI and MCP always normalize
+    to a non-empty selection, but ``SearchQuery(agents=())`` is a
+    structurally valid input and ``IN ()`` is nonstandard SQL.
+    """
+    source_path = tmp_path / "session.jsonl"
+    source_path.write_text("ruff", encoding="utf-8")
+    source = _source(source_path)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    _ = runtime.sync_records(
+        ((source, (_record(source, "Run ruff check before committing."),)),),
+    )
+
+    found = runtime.search_records(_query("ruff", agents=()))
+    runtime.close()
+
+    assert found == []
