@@ -1897,10 +1897,13 @@ def build_streaming_ui_app(
                 return
             self.filtered_records = list(payload.matching)
             if self._results is not None:
-                # ``set_records`` re-highlights row 0; flag that the next
-                # OptionHighlighted is programmatic so it doesn't count as
-                # the user opening the stacked detail pane.
-                self._pending_autohighlight = True
+                # ``set_records`` on a non-empty list re-highlights row 0;
+                # flag that the next OptionHighlighted is programmatic so it
+                # doesn't count as the user opening the stacked detail. An
+                # empty list emits no OptionHighlighted, so leave the flag
+                # disarmed — otherwise it would swallow the user's next
+                # genuine cursor move once results return.
+                self._pending_autohighlight = bool(payload.matching)
                 self._results.set_records(payload.matching)
             if self._detail is not None:
                 if self.filtered_records:

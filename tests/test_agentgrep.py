@@ -2703,6 +2703,54 @@ async def test_l_from_results_opens_stacked_detail(
         assert app._detail_opened is True
 
 
+class _FakeFilterCompleted(t.NamedTuple):
+    """Minimal ``FilterCompleted`` stand-in carrying just the payload."""
+
+    payload: t.Any
+
+
+class AutohighlightArmCase(t.NamedTuple):
+    """One filter-result scenario for the autohighlight-suppression flag."""
+
+    test_id: str
+    record_count: int
+    expect_armed: bool
+
+
+AUTOHIGHLIGHT_ARM_CASES: tuple[AutohighlightArmCase, ...] = (
+    AutohighlightArmCase(test_id="results-arm-the-flag", record_count=3, expect_armed=True),
+    AutohighlightArmCase(test_id="empty-leaves-it-disarmed", record_count=0, expect_armed=False),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    AUTOHIGHLIGHT_ARM_CASES,
+    ids=[case.test_id for case in AUTOHIGHLIGHT_ARM_CASES],
+)
+async def test_filter_completion_arms_autohighlight_only_with_results(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: AutohighlightArmCase,
+) -> None:
+    """An empty filter leaves the autohighlight flag disarmed.
+
+    ``set_records([])`` emits no ``OptionHighlighted`` to consume the flag,
+    so arming it on an empty result set would swallow the user's next real
+    cursor move once results return. The flag is asserted immediately,
+    before the queued highlight (for the non-empty case) consumes it.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, case.record_count)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app._pending_autohighlight = False
+        payload = agentgrep.FilterCompletedPayload(text="", matching=tuple(records))
+        app.on_filter_completed(_FakeFilterCompleted(payload=payload))
+        assert app._pending_autohighlight is case.expect_armed
+
+
 async def test_right_on_non_empty_filter_moves_cursor(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
