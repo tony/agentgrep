@@ -1376,9 +1376,12 @@ def build_streaming_ui_app(
             self._last_left_text = ""
             self._last_detail_text = ""
             if self._status_widget is not None:
-                terms = " ".join(self.query.terms) if self.query.terms else "all records"
                 self._status_widget.update(
-                    searching_left_text(terms, 0.0, narrow=self._statusline_narrow()),
+                    searching_left_text(
+                        self._current_query_label(),
+                        0.0,
+                        narrow=self._statusline_narrow(),
+                    ),
                 )
             if self._spinner_widget is not None:
                 self._spinner_widget.unfreeze()
@@ -1508,6 +1511,11 @@ def build_streaming_ui_app(
             Both the meter (internally) and the detail row (here) gate on
             content change for the same reason.
             """
+            if snapshot.query_label != self._current_query_label():
+                # Stale event from a cancelled worker still draining its
+                # call_from_thread queue — drop it so the new search's
+                # chrome never shows the old query's label or counts.
+                return
             self._last_snapshot = snapshot
             if self._started_at is None:
                 self._started_at = time.monotonic()
@@ -1532,10 +1540,14 @@ def build_streaming_ui_app(
                     self._last_detail_text = detail
                     self._detail_row.update(detail)
 
-        def _query_label(self) -> str:
-            """Return the human label for the running query."""
-            if self._last_snapshot is not None:
-                return self._last_snapshot.query_label
+        def _current_query_label(self) -> str:
+            """Return the label for the currently submitted query.
+
+            Mirrors :meth:`StreamingSearchProgress.start`, which derives
+            ``ProgressSnapshot.query_label`` from the same query terms —
+            the two must stay in sync for the stale-snapshot guard in
+            :meth:`_apply_progress` to match.
+            """
             return " ".join(self.query.terms) if self.query.terms else "all records"
 
         def _statusline_narrow(self) -> bool:
@@ -1558,7 +1570,7 @@ def build_streaming_ui_app(
                 return
             elapsed = time.monotonic() - self._started_at
             left = searching_left_text(
-                self._query_label(),
+                self._current_query_label(),
                 elapsed,
                 narrow=self._statusline_narrow(),
             )
