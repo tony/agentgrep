@@ -886,6 +886,11 @@ class DbStore:
         if query.regex or query.any_term or query.compiled is not None:
             msg = "query requires live scanner"
             raise DbQueryUnsupportedError(msg)
+        if not query.agents:
+            # Live parity: an empty agent selection discovers zero
+            # sources. Returning early also avoids generating the
+            # nonstandard ``IN ()`` form some SQLite builds reject.
+            return []
         params: list[object] = []
         where = ["r.agent IN ({})".format(",".join("?" for _ in query.agents))]
         params.extend(query.agents)
@@ -1059,13 +1064,12 @@ class DbRuntime:
                     result=result,
                     force=force,
                 )
-            result = self._finish_complete_sync(
+            return self._finish_complete_sync(
                 result,
                 coverage=coverage,
                 prune_missing=prune_missing,
                 seen_source_ids=seen_source_ids,
             )
-            return result
 
         batch_list = tuple(batches)
         total = len(batch_list)
