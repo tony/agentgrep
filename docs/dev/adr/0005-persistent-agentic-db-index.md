@@ -151,7 +151,10 @@ The levers, in precedence order where they overlap:
   sample per consulted query — mode, whether the cache served it, the
   served record count, and the fallback reason — and
   `search.collect.source_scan_cache` reports per-source scan-cache
-  lookups. Together they make every cache's contribution visible in
+  lookups. `db.sql.statement` samples expose the SQLite layer itself:
+  per-statement-shape counts, timings, rows, and (behind
+  `AGENTGREP_SQL_EXPLAIN`) the query plan, with bound parameters never
+  captured. Together they make every cache's contribution visible in
   profiles and benchmark artifacts.
 
 ## Sync rules

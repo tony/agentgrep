@@ -265,7 +265,13 @@ counts. `search.collect.source_scan_cache` reports cache-hit lookups when a
 runtime source-scan cache is active. `search.cache.decision` reports one
 aggregate sample per DB-cache consultation: the active cache mode,
 whether the cache served the query, the served record count, and the
-fallback reason when it did not.
+fallback reason when it did not. `db.sql.statement` reports one
+aggregate sample per executed SQL statement shape — statement name,
+execution count (a high `agentgrep_sql_count` is the n+1 signal), rows
+touched, and summed duration; statement text is placeholder-only and
+bound parameters are never captured. Set `AGENTGREP_SQL_EXPLAIN` to
+attach the SQLite query plan (`agentgrep_sql_plan`, table/index names
+only) to each statement shape once per connection.
 
 Use `scripts/benchmark.py` for timed benchmark sweeps. The profiler-oriented
 benchmark entries are named `profile-engine-*`; each committed benchmark name
