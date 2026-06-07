@@ -264,13 +264,13 @@ def test_db_store_source_id_delete_uses_index(
     runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
 
     rows = runtime.store.connection.execute(
-        "EXPLAIN QUERY PLAN SELECT rowid FROM records WHERE source_id = ?",
+        "EXPLAIN QUERY PLAN SELECT rowid FROM records_search WHERE source_id = ?",
         ("source-a",),
     ).fetchall()
     plan = " ".join(str(row["detail"]) for row in rows)
 
-    assert "idx_records_source_id" in plan
-    assert "SCAN records" not in plan
+    assert "idx_records_search_source_id" in plan
+    assert "SCAN records_search" not in plan
 
 
 @pytest.mark.parametrize(
@@ -1411,7 +1411,8 @@ def test_sync_aggregates_sql_statement_samples(tmp_path: pathlib.Path) -> None:
         sample for sample in profiler.snapshot().samples if sample.name == "db.sql.statement"
     ]
     samples = _sql_samples(all_sql)
-    assert samples["records.insert"].attributes["agentgrep_sql_count"] == 3
+    assert samples["records_search.insert"].attributes["agentgrep_sql_count"] == 3
+    assert samples["record_details.insert"].attributes["agentgrep_sql_count"] == 3
     assert samples["fts.insert"].attributes["agentgrep_sql_count"] == 3
     statement_names = [str(sample.attributes["agentgrep_sql_statement"]) for sample in all_sql]
     assert len(statement_names) == len(set(statement_names))
@@ -1576,3 +1577,49 @@ def test_sql_plan_captured_once_per_statement_shape(
     assert plan_after_first is not None
     assert stats.plan is plan_after_first
     assert stats.count == 2
+
+
+def test_split_read_model_round_trips_every_field(tmp_path: pathlib.Path) -> None:
+    """Hydrated records are field-identical to what was synced.
+
+    The search/details split must not lose title, role, model, or
+    metadata on the way through the two tables.
+    """
+    source_path = tmp_path / "session.jsonl"
+    source_path.write_text("ruff", encoding="utf-8")
+    source = _source(source_path)
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store=source.store,
+        adapter_id=source.adapter_id,
+        path=source.path,
+        text="alpaca full fidelity",
+        title="a title",
+        role="user",
+        timestamp="2026-06-07T01:00:00Z",
+        model="gpt-test",
+        session_id="session-a",
+        conversation_id="conv-a",
+        metadata={"k": "v"},
+    )
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    _ = runtime.sync_records(((source, (record,)),))
+
+    found = runtime.search_records(_query("alpaca"))
+    runtime.close()
+
+    assert len(found) == 1
+    got = found[0]
+    assert (got.text, got.title, got.role, got.model) == (
+        record.text,
+        record.title,
+        record.role,
+        record.model,
+    )
+    assert (got.timestamp, got.session_id, got.conversation_id) == (
+        record.timestamp,
+        record.session_id,
+        record.conversation_id,
+    )
+    assert got.metadata == {"k": "v"}
