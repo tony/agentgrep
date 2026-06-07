@@ -2968,6 +2968,196 @@ async def test_results_scroll_changed_updates_status_right(
         )
 
 
+def _make_progress_snapshot(agentgrep: t.Any, **overrides: t.Any) -> t.Any:
+    """Build a scanning-phase ``ProgressSnapshot`` with overridable fields."""
+    fields: dict[str, t.Any] = {
+        "query_label": "tmux",
+        "phase": "scanning",
+        "current": 5662,
+        "total": 6748,
+        "detail": "2176 records, 354 source matches",
+        "matches": 2176,
+        "elapsed": 32.0,
+    }
+    fields.update(overrides)
+    return agentgrep.ProgressSnapshot(**fields)
+
+
+async def test_apply_progress_drives_meter_and_left_text(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A scanning snapshot fills the ▰▱ meter and paints the elapsed left text."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    # Wide terminal: the results column must clear the narrow breakpoint
+    # so the bar and the "(0s)" elapsed suffix both render.
+    async with app.run_test(size=(160, 24)) as pilot:
+        await pilot.pause()
+        app._search_done = False
+        app._apply_progress(_make_progress_snapshot(agentgrep))
+        await pilot.pause()
+        assert app._meter_widget._fraction == pytest.approx(5662 / 6748)
+        rendered = app._meter_widget._compose_text()
+        assert "▰" in rendered
+        assert rendered.endswith("%")
+        assert app._last_left_text.startswith("Searching tmux… (")
+
+
+async def test_meter_indeterminate_before_total_shows_phase_word(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without a source total the meter shows the phase word, not a bar."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(160, 24)) as pilot:
+        await pilot.pause()
+        app._search_done = False
+        app._apply_progress(
+            _make_progress_snapshot(
+                agentgrep,
+                phase="discovering",
+                current=None,
+                total=None,
+                detail=None,
+            ),
+        )
+        await pilot.pause()
+        assert app._meter_widget._fraction is None
+        rendered = app._meter_widget._compose_text()
+        assert rendered == "discovering"
+        assert "▰" not in rendered
+
+
+async def test_ctrl_backslash_toggles_scanning_detail_row(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    r"""``Ctrl-\`` shows the verbose scanning row, a second press hides it."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(160, 24)) as pilot:
+        await pilot.pause()
+        app._search_done = False
+        app._apply_progress(_make_progress_snapshot(agentgrep))
+        await pilot.pause()
+        detail_row = app.screen.query_one("#status-detail")
+        assert not detail_row.has_class("visible")
+        await pilot.press("ctrl+backslash")
+        await pilot.pause()
+        assert app._detail_visible is True
+        assert detail_row.has_class("visible")
+        assert (
+            app._last_detail_text == "scanning 5662/6748 sources | 2176 records, 354 source matches"
+        )
+        await pilot.press("ctrl+backslash")
+        await pilot.pause()
+        assert app._detail_visible is False
+        assert not detail_row.has_class("visible")
+
+
+async def test_detail_row_visibility_sticky_across_search_reset(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A new search keeps the detail row visible but wipes its stale content."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(160, 24)) as pilot:
+        await pilot.pause()
+        app._search_done = False
+        app._apply_progress(_make_progress_snapshot(agentgrep))
+        await pilot.pause()
+        await pilot.press("ctrl+backslash")
+        await pilot.pause()
+        assert app._detail_visible is True
+        updates: list[str] = []
+        real_update = app._detail_row.update
+
+        def spy(content: t.Any = "", *args: t.Any, **kwargs: t.Any) -> None:
+            updates.append(str(content))
+            real_update(content, *args, **kwargs)
+
+        monkeypatch.setattr(app._detail_row, "update", spy)
+        app._reset_search_chrome()
+        await pilot.pause()
+        assert app._detail_visible is True
+        assert updates[-1] == ""
+
+
+async def test_elapsed_ticker_starts_on_progress_and_stops_on_finish(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The 1 Hz ticker arms on the first snapshot and disarms on finish."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(160, 24)) as pilot:
+        await pilot.pause()
+        app._search_done = False
+        assert app._elapsed_timer is None
+        app._apply_progress(_make_progress_snapshot(agentgrep))
+        await pilot.pause()
+        assert app._elapsed_timer is not None
+        updates: list[str] = []
+        real_update = app._status_widget.update
+
+        def spy(content: t.Any = "", *args: t.Any, **kwargs: t.Any) -> None:
+            updates.append(str(content))
+            real_update(content, *args, **kwargs)
+
+        monkeypatch.setattr(app._status_widget, "update", spy)
+        app._apply_finished("complete", 100, 12.3, None)
+        await pilot.pause()
+        assert app._elapsed_timer is None
+        assert app._meter_widget._compose_text() == ""
+        assert any(u.startswith("Search complete") for u in updates)
+
+
+async def test_meter_change_gates_identical_progress(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Repeated identical fractions repaint the meter at most once."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    del agentgrep
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(160, 24)) as pilot:
+        await pilot.pause()
+        meter = app._meter_widget
+        refreshes: list[None] = []
+        real_refresh = meter.refresh
+
+        def spy(*args: t.Any, **kwargs: t.Any) -> t.Any:
+            refreshes.append(None)
+            return real_refresh(*args, **kwargs)
+
+        monkeypatch.setattr(meter, "refresh", spy)
+        meter.set_progress(0.5, "")
+        first = len(refreshes)
+        assert first <= 1
+        meter.set_progress(0.5, "")
+        assert len(refreshes) == first
+
+
+async def test_narrow_statusline_drops_bar_and_elapsed(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Below the breakpoint the elapsed suffix and the ▰▱ bar are dropped."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(40, 24)) as pilot:
+        await pilot.pause()
+        app._search_done = False
+        app._apply_progress(_make_progress_snapshot(agentgrep))
+        await pilot.pause()
+        assert app._statusline_narrow() is True
+        assert app._last_left_text == "Searching tmux"
+        assert "▰" not in app._meter_widget._compose_text()
+
+
 def test_format_compact_path_passes_short_paths_through(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: pathlib.Path,
