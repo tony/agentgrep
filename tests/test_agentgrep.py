@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
-import dataclasses
 import importlib
 import io
 import json
@@ -3035,7 +3034,6 @@ async def test_results_status_right_adapts_to_width(
         app.all_records.extend(records)
         if case.searching:
             app._search_done = False
-            _set_query_terms(app, "tmux")
             # 5662/6748 sources scanned rounds to 84%.
             app._apply_progress(_make_progress_snapshot(agentgrep))
             await pilot.pause()
@@ -3057,16 +3055,6 @@ def _make_progress_snapshot(agentgrep: t.Any, **overrides: t.Any) -> t.Any:
     return agentgrep.ProgressSnapshot(**fields)
 
 
-def _set_query_terms(app: t.Any, *terms: str) -> None:
-    """Point the app's current query at ``terms`` so progress snapshots apply.
-
-    ``_apply_progress`` drops snapshots whose ``query_label`` doesn't match
-    the app's current query (the stale-worker guard), so tests that drive
-    progress directly must align the two first.
-    """
-    app.query = dataclasses.replace(app.query, terms=terms)
-
-
 async def test_apply_progress_drives_meter_and_left_text(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -3079,7 +3067,6 @@ async def test_apply_progress_drives_meter_and_left_text(
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
         app._search_done = False
-        _set_query_terms(app, "tmux")
         app._apply_progress(_make_progress_snapshot(agentgrep))
         await pilot.pause()
         assert app._meter_widget._fraction == pytest.approx(5662 / 6748)
@@ -3100,7 +3087,6 @@ async def test_meter_indeterminate_before_total_shows_phase_word(
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
         app._search_done = False
-        _set_query_terms(app, "tmux")
         app._apply_progress(
             _make_progress_snapshot(
                 agentgrep,
@@ -3127,7 +3113,6 @@ async def test_ctrl_backslash_toggles_scanning_detail_row(
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
         app._search_done = False
-        _set_query_terms(app, "tmux")
         app._apply_progress(_make_progress_snapshot(agentgrep))
         await pilot.pause()
         detail_row = app.screen.query_one("#status-detail")
@@ -3155,7 +3140,6 @@ async def test_detail_row_visibility_sticky_across_search_reset(
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
         app._search_done = False
-        _set_query_terms(app, "tmux")
         app._apply_progress(_make_progress_snapshot(agentgrep))
         await pilot.pause()
         await pilot.press("ctrl+backslash")
@@ -3185,7 +3169,6 @@ async def test_elapsed_ticker_starts_on_progress_and_stops_on_finish(
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
         app._search_done = False
-        _set_query_terms(app, "tmux")
         assert app._elapsed_timer is None
         app._apply_progress(_make_progress_snapshot(agentgrep))
         await pilot.pause()
@@ -3295,7 +3278,6 @@ async def test_finish_outcome_freezes_colored_bar(
     async with app.run_test(size=case.size) as pilot:
         await pilot.pause()
         app._search_done = False
-        _set_query_terms(app, "tmux")
         # Seed matches so the right slot occupies its real-world cells —
         # narrow meters only lose the bar when the count is present.
         app.all_records.extend(_seed_records(agentgrep, tmp_path, 5))
@@ -3336,7 +3318,6 @@ async def test_detail_row_shows_summary_after_finish(
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
         app._search_done = False
-        _set_query_terms(app, "tmux")
         app._apply_progress(_make_progress_snapshot(agentgrep))
         await pilot.pause()
         app._apply_finished("interrupted", 2976, 2.1, None)
@@ -3372,23 +3353,23 @@ async def test_meter_change_gates_identical_progress(
         assert len(refreshes) == 1
 
 
-class StaleProgressCase(t.NamedTuple):
-    """One stale-worker guard scenario for ``_apply_progress``."""
+class StaleGenerationCase(t.NamedTuple):
+    """One generation-gate scenario for ``_apply_streaming_event``."""
 
     test_id: str
-    snapshot_label: str
+    use_current_generation: bool
     expect_applied: bool
 
 
-STALE_PROGRESS_CASES: tuple[StaleProgressCase, ...] = (
-    StaleProgressCase(
-        test_id="matching-label-applies",
-        snapshot_label="tmux",
+STALE_GENERATION_CASES: tuple[StaleGenerationCase, ...] = (
+    StaleGenerationCase(
+        test_id="current-generation-applies",
+        use_current_generation=True,
         expect_applied=True,
     ),
-    StaleProgressCase(
-        test_id="stale-label-dropped",
-        snapshot_label="old query",
+    StaleGenerationCase(
+        test_id="stale-generation-dropped",
+        use_current_generation=False,
         expect_applied=False,
     ),
 )
@@ -3396,28 +3377,59 @@ STALE_PROGRESS_CASES: tuple[StaleProgressCase, ...] = (
 
 @pytest.mark.parametrize(
     "case",
-    STALE_PROGRESS_CASES,
-    ids=[case.test_id for case in STALE_PROGRESS_CASES],
+    STALE_GENERATION_CASES,
+    ids=[case.test_id for case in STALE_GENERATION_CASES],
 )
-async def test_apply_progress_drops_stale_worker_snapshots(
+async def test_streaming_events_gated_by_generation(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
-    case: StaleProgressCase,
+    case: StaleGenerationCase,
 ) -> None:
-    """Snapshots from a cancelled worker's old query never touch the chrome."""
+    """Events from a cancelled worker's generation never touch the chrome.
+
+    A cancelled worker keeps draining its queued events after the user
+    starts a new search; the un-gated form repainted the new search's
+    chrome with stale "Stopped" states and old bar fills.
+    """
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
         app._search_done = False
-        _set_query_terms(app, "tmux")
-        app._apply_progress(
-            _make_progress_snapshot(agentgrep, query_label=case.snapshot_label),
-        )
+        stale_generation = app._chrome_generation
+        # A new search bumps the generation; the old reporter's events
+        # still carry the previous one.
+        app._reset_search_chrome()
+        await pilot.pause()
+        generation = app._chrome_generation if case.use_current_generation else stale_generation
+        await app._apply_streaming_event(generation, _make_progress_snapshot(agentgrep))
         await pilot.pause()
         assert (app._last_snapshot is not None) is case.expect_applied
         assert (app._elapsed_timer is not None) is case.expect_applied
         assert (app._meter_widget._fraction is not None) is case.expect_applied
+
+
+async def test_streaming_records_batch_lands_in_results(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A records batch routed through the generation gate populates the list.
+
+    Regression guard: the records handler is a coroutine — the gate must
+    await it, not drop the un-awaited coroutine on the floor (which left
+    the results list silently empty).
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 3)
+    async with app.run_test(size=(160, 24)) as pilot:
+        await pilot.pause()
+        app._search_done = False
+        batch = agentgrep.StreamingRecordsBatch(records=tuple(records), total=3)
+        await app._apply_streaming_event(app._chrome_generation, batch)
+        await pilot.pause()
+        assert len(app.all_records) == 3
+        assert len(app._results._records) == 3
 
 
 async def test_narrow_statusline_drops_bar_and_elapsed(
@@ -3430,7 +3442,6 @@ async def test_narrow_statusline_drops_bar_and_elapsed(
     async with app.run_test(size=(40, 24)) as pilot:
         await pilot.pause()
         app._search_done = False
-        _set_query_terms(app, "tmux")
         app._apply_progress(_make_progress_snapshot(agentgrep))
         await pilot.pause()
         assert app._statusline_narrow() is True

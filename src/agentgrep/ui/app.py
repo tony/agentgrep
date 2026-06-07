@@ -372,7 +372,8 @@ def build_streaming_ui_app(
     # FilterRequested / FilterCompleted stay on the Textual message bus — they
     # fire at typing speed, not streaming speed, so the FIFO queue is fine for
     # them. Records / progress / search-finished events bypass the message bus
-    # entirely (see ``make_emit`` below) so they never queue behind keystrokes.
+    # entirely (see ``_make_gated_progress`` below) so they never queue behind
+    # keystrokes.
 
     class FilterRequested(message_type):  # ty: ignore[unsupported-base]
         """Debounced filter-text-changed event from :class:`FilterInput`."""
@@ -416,39 +417,6 @@ def build_streaming_ui_app(
         def __init__(self, percent: int) -> None:
             super().__init__()
             self.percent = percent
-
-    def make_emit(app: StreamingAppLike) -> cabc.Callable[[object], None]:
-        """Build an ``emit`` callback that dispatches streaming events via ``call_from_thread``.
-
-        ``call_from_thread`` schedules the callback directly on the event loop
-        rather than enqueuing a ``Message`` — so high-frequency record batches
-        don't compete with keystroke / timer events for FIFO message dispatch.
-        Vibe-tmux uses the same pattern (``call_from_thread(_rebuild_tree, snap)``)
-        and Textual's own ``Log`` widget mutates state directly without a per-
-        write message. This is the canonical Textual pattern for "many small
-        updates from a worker thread."
-        """
-        typed_app = t.cast("t.Any", app)
-
-        def emit(event: object) -> None:
-            if isinstance(event, StreamingRecordsBatch):
-                typed_app.call_from_thread(
-                    typed_app._apply_records_batch,
-                    event.records,
-                    event.total,
-                )
-            elif isinstance(event, ProgressSnapshot):
-                typed_app.call_from_thread(typed_app._apply_progress, event)
-            elif isinstance(event, StreamingSearchFinished):
-                typed_app.call_from_thread(
-                    typed_app._apply_finished,
-                    event.outcome,
-                    event.total,
-                    event.elapsed,
-                    str(event.error) if event.error else None,
-                )
-
-        return emit
 
     class SpinnerWidget(static_type):  # ty: ignore[unsupported-base]
         """Self-driving star spinner that animates regardless of event-loop load.
@@ -523,8 +491,6 @@ def build_streaming_ui_app(
         """
 
         _MIN_BAR_CELLS: t.ClassVar[int] = 4
-        # " 100%" plus the gap between bar and percent.
-        _PERCENT_RESERVE: t.ClassVar[int] = 6
 
         def __init__(self, *, id: str | None = None) -> None:  # noqa: A002 -- forwarded to Textual's ``id`` kwarg
             super().__init__("", id=id)
@@ -532,7 +498,18 @@ def build_streaming_ui_app(
             self._indeterminate_phase: str = ""
             self._frozen: bool = False
             self._frozen_blank: bool = False
+            self._narrow: bool = False
             self._last_render: str | None = None
+
+        def set_narrow(self, narrow: bool) -> None:
+            """Suppress the meter on narrow statuslines.
+
+            The right slot carries the search percent there; squeezing a
+            bar in as well made it pop in and out whenever the growing
+            match count nudged the meter across its fits-a-bar threshold.
+            """
+            self._narrow = narrow
+            self._maybe_refresh()
 
         def set_progress(
             self,
@@ -577,7 +554,7 @@ def build_streaming_ui_app(
 
         def _compose_text(self) -> str:
             """Build the meter text for the current state and available width."""
-            if self._frozen_blank:
+            if self._frozen_blank or self._narrow:
                 return ""
             width = int(getattr(self.size, "width", 0) or 0)
             if width <= 0:
@@ -588,10 +565,14 @@ def build_streaming_ui_app(
                 if self._frozen:
                     return ""
                 return self._indeterminate_phase[:width]
-            bar_width = width - self._PERCENT_RESERVE
+            percent = format_progress_percent(self._fraction)
+            # Exact fit: one space between bar and percent, one trailing
+            # cell — the percent hugs the bar and the gap to the right
+            # slot stays constant while the percent grows in digits.
+            bar_width = width - len(percent) - 2
             if bar_width >= self._MIN_BAR_CELLS:
                 bar = render_progress_meter(self._fraction, bar_width)
-                return f"{bar} {format_progress_percent(self._fraction)}"
+                return f"{bar} {percent}"
             return ""
 
         def _maybe_refresh(self) -> None:
@@ -1231,6 +1212,7 @@ def build_streaming_ui_app(
             self._detail_row: StaticLike | None = None
             self._statusline_container: t.Any = None
             self._elapsed_timer: object | None = None
+            self._chrome_generation: int = 0
             self._last_left_text: str = ""
             self._last_detail_text: str = ""
             self._last_right_text: str = ""
@@ -1341,7 +1323,7 @@ def build_streaming_ui_app(
                 "SearchInput",
                 streaming.query_one("#search"),
             )
-            self._progress = StreamingSearchProgress(emit=make_emit(streaming))
+            self._progress = self._make_gated_progress()
             if self.query.terms:
                 self._start_search_worker(self.query)
                 self._filter_input.focus()
@@ -1423,11 +1405,58 @@ def build_streaming_ui_app(
             # content is wiped.
             if self._detail_row is not None:
                 self._detail_row.update("")
-            self._progress = StreamingSearchProgress(
-                emit=make_emit(
-                    t.cast("StreamingAppLike", t.cast("object", self)),
-                ),
-            )
+            self._progress = self._make_gated_progress()
+
+        def _make_gated_progress(self) -> StreamingSearchProgress:
+            """Build a progress reporter whose events die with its generation.
+
+            ``call_from_thread`` schedules the callback directly on the
+            event loop rather than enqueuing a ``Message`` — so
+            high-frequency record batches don't compete with keystroke /
+            timer events for FIFO message dispatch. This is the canonical
+            Textual pattern for "many small updates from a worker thread."
+
+            Each reporter captures the chrome generation current at its
+            creation. A cancelled worker keeps emitting through its old
+            reporter while it drains; :meth:`_apply_streaming_event`
+            re-checks the generation on the main thread, so those events
+            can never repaint the new search's chrome (stale "Stopped"
+            states, old bar fills) no matter when they were queued.
+            """
+            self._chrome_generation += 1
+            generation = self._chrome_generation
+            streaming = t.cast("t.Any", self)
+
+            def emit(event: object) -> None:
+                # Runs on the worker thread; the generation check happens
+                # on the main thread inside _apply_streaming_event.
+                streaming.call_from_thread(
+                    self._apply_streaming_event,
+                    generation,
+                    event,
+                )
+
+            return StreamingSearchProgress(emit=emit)
+
+        async def _apply_streaming_event(self, generation: int, event: object) -> None:
+            """Route one worker event to the chrome, dropping stale generations.
+
+            Async because the records handler chunk-yields to the event
+            loop; ``call_from_thread`` awaits coroutine results.
+            """
+            if generation != self._chrome_generation:
+                return
+            if isinstance(event, StreamingRecordsBatch):
+                await self._apply_records_batch(event.records, event.total)
+            elif isinstance(event, ProgressSnapshot):
+                self._apply_progress(event)
+            elif isinstance(event, StreamingSearchFinished):
+                self._apply_finished(
+                    event.outcome,
+                    event.total,
+                    event.elapsed,
+                    str(event.error) if event.error else None,
+                )
 
         def _run_search(self) -> None:
             progress = self._progress
@@ -1540,13 +1569,10 @@ def build_streaming_ui_app(
             this handler: per-source progress events arrive thousands of
             times per search and would otherwise repaint identical text.
             Both the meter (internally) and the detail row (here) gate on
-            content change for the same reason.
+            content change for the same reason. Stale-generation events
+            never reach this handler — :meth:`_apply_streaming_event`
+            drops them.
             """
-            if snapshot.query_label != self._current_query_label():
-                # Stale event from a cancelled worker still draining its
-                # call_from_thread queue — drop it so the new search's
-                # chrome never shows the old query's label or counts.
-                return
             self._last_snapshot = snapshot
             if self._started_at is None:
                 self._started_at = time.monotonic()
@@ -1554,11 +1580,20 @@ def build_streaming_ui_app(
                 self._elapsed_timer = self.set_interval(1.0, self._tick_elapsed)
                 # Paint "(0s)" immediately rather than after the first tick.
                 self._tick_elapsed()
-            if snapshot.current is not None and snapshot.total is not None and snapshot.total > 0:
+            if (
+                snapshot.phase == "scanning"
+                and snapshot.current is not None
+                and snapshot.total is not None
+                and snapshot.total > 0
+            ):
+                # Only the scanning phase counts sources; planning emits
+                # plan-group counts whose fraction would make the bar
+                # jump to a small value and snap back to zero.
                 fraction: float | None = snapshot.current / snapshot.total
             else:
                 fraction = None
             if self._meter_widget is not None:
+                self._meter_widget.set_narrow(self._statusline_narrow())
                 self._meter_widget.set_progress(fraction, snapshot.phase)
             if self._detail_visible and self._detail_row is not None:
                 detail = format_scanning_detail(
@@ -1575,16 +1610,6 @@ def build_streaming_ui_app(
                 # batches alone would let it go stale on sparse matches.
                 # The refresh is change-gated, so this stays cheap.
                 self._refresh_results_status_right()
-
-        def _current_query_label(self) -> str:
-            """Return the label for the currently submitted query.
-
-            Mirrors :meth:`StreamingSearchProgress.start`, which derives
-            ``ProgressSnapshot.query_label`` from the same query terms —
-            the two must stay in sync for the stale-snapshot guard in
-            :meth:`_apply_progress` to match.
-            """
-            return " ".join(self.query.terms) if self.query.terms else "all records"
 
         def _statusline_narrow(self) -> bool:
             """Report whether the statusline is too narrow for bar + elapsed."""
@@ -1865,9 +1890,19 @@ def build_streaming_ui_app(
             return "  ".join(parts)
 
         def _search_progress_percent(self) -> str | None:
-            """Return the search-completion percent from the latest snapshot."""
+            """Return the search-completion percent from the latest snapshot.
+
+            Scanning-phase only — planning emits plan-group counts whose
+            fraction doesn't describe source progress.
+            """
             snap = self._last_snapshot
-            if snap is None or snap.current is None or snap.total is None or snap.total <= 0:
+            if (
+                snap is None
+                or snap.phase != "scanning"
+                or snap.current is None
+                or snap.total is None
+                or snap.total <= 0
+            ):
                 return None
             return format_progress_percent(snap.current / snap.total)
 
@@ -2094,6 +2129,7 @@ def build_streaming_ui_app(
             # narrow breakpoint adds/removes the cursor/visible segment.
             self._refresh_results_status_right()
             if self._meter_widget is not None:
+                self._meter_widget.set_narrow(self._statusline_narrow())
                 # The change-gate caches the last composed string; a width
                 # change with constant fraction must still repaint the bar.
                 self._meter_widget.invalidate()
