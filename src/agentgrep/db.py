@@ -25,6 +25,9 @@ CacheMode = t.Literal["auto", "require", "off"]
 
 SCHEMA_VERSION = 1
 DEFAULT_DB_FILENAME = "agentgrep.sqlite"
+#: First keyset-probe window; the study's sweet spot — one page seals
+#: limit-50 searches at every measured term frequency.
+_PROBE_WINDOW_FLOOR = 200
 _TOKEN_RE = re.compile(r"[a-z0-9_./:-]+")
 
 
@@ -379,13 +382,32 @@ def _record_in_cached_scope(
     bool
         Whether the record is in scope.
     """
-    role = agentgrep.store_role_for_record(record.store, record.adapter_id)
+    return _cached_scope_admits(
+        record.kind,
+        record.store,
+        record.adapter_id,
+        record.agent,
+        scope,
+        prompt_history_agents,
+    )
+
+
+def _cached_scope_admits(
+    kind: str,
+    store: str,
+    adapter_id: str,
+    agent: str,
+    scope: agentgrep.SearchScope,
+    prompt_history_agents: frozenset[str],
+) -> bool:
+    """Scalar form of the cached scope filter for lean probe rows."""
+    role = agentgrep.store_role_for_record(store, adapter_id)
     if scope == "conversations":
         return role in agentgrep.CONVERSATION_STORE_ROLES
-    if record.kind != "prompt":
+    if kind != "prompt":
         return False
     if role in agentgrep.CONVERSATION_STORE_ROLES:
-        return record.agent not in prompt_history_agents
+        return agent not in prompt_history_agents
     return True
 
 
@@ -1099,60 +1121,202 @@ class DbStore:
             # as kind='prompt', so a kind predicate would drop records
             # the live store-role scope admits.
             where.append("r.kind = 'prompt'")
+        # The indexed haystack and the query terms are both Python-
+        # casefolded, and trigram MATCH is exact for substrings (the
+        # study probe showed MATCH == instr on every term), so the FTS
+        # candidates equal the haystack-surface matches; matches_record
+        # stays the authoritative oracle for surface/case semantics.
         if query.terms and all(_fts_indexable(term) for term in query.terms):
-            # The indexed haystack and the query term are both Python-
-            # casefolded, so trigram candidates are a superset of the
-            # post-filter's substring matches: any haystack containing
-            # the folded term contains all of its trigrams.
             match_expr = " AND ".join(_quote_fts_term(term.casefold()) for term in query.terms)
-            sql = (
-                "SELECT r.*, d.text, d.title, d.role, d.model, d.metadata_json "
+            stmt_name = "records.probe_fts"
+            from_where = (
                 "FROM record_text_fts f "
                 "JOIN records_search r ON r.rowid = f.rowid "
-                "JOIN record_details d ON d.rowid = r.rowid "
                 f"WHERE f.record_text_fts MATCH ? AND {' AND '.join(where)}"
             )
-            rows = self._query("records.search_fts", sql, (match_expr, *params))
+            base_params: tuple[object, ...] = (match_expr, *params)
         else:
             scan_where = list(where)
-            scan_params = list(params)
+            scan_params: list[object] = list(params)
             for term in query.terms:
                 scan_where.append("instr(f.haystack, ?) > 0")
                 scan_params.append(term.casefold())
-            rows = self._query(
-                "records.search_scan",
-                "SELECT r.*, d.text, d.title, d.role, d.model, d.metadata_json "
+            stmt_name = "records.probe_scan"
+            from_where = (
                 "FROM record_text_fts f "
                 "JOIN records_search r ON r.rowid = f.rowid "
-                "JOIN record_details d ON d.rowid = r.rowid "
-                f"WHERE {' AND '.join(scan_where)}",
-                scan_params,
+                f"WHERE {' AND '.join(scan_where)}"
             )
-        records = [self._row_to_record(row) for row in rows]
-        if query.scope != "all":
-            prompt_history_agents = (
-                self._prompt_history_agents() if query.scope == "prompts" else frozenset()
+            base_params = tuple(scan_params)
+        prompt_history_agents = (
+            self._prompt_history_agents() if query.scope == "prompts" else frozenset()
+        )
+        if query.limit is None:
+            return self._search_all(
+                query, stmt_name, from_where, base_params, prompt_history_agents
             )
-            records = [
-                record
-                for record in records
-                if _record_in_cached_scope(record, query.scope, prompt_history_agents)
+        return self._search_limited(
+            query, stmt_name, from_where, base_params, prompt_history_agents
+        )
+
+    _PROBE_COLUMNS = (
+        "r.rowid, r.kind, r.agent, r.store, r.adapter_id, "
+        "COALESCE(r.timestamp,'') AS sort_ts, r.agent AS sort_agent, "
+        "r.path AS sort_path"
+    )
+    _PROBE_ORDER = "ORDER BY sort_ts DESC, r.agent DESC, r.path DESC, r.rowid DESC"
+
+    def _search_limited(
+        self,
+        query: agentgrep.SearchQuery,
+        stmt_name: str,
+        from_where: str,
+        base_params: tuple[object, ...],
+        prompt_history_agents: frozenset[str],
+    ) -> list[agentgrep.SearchRecord]:
+        """Serve a limited search through the keyset probe.
+
+        Probe pages arrive in the deterministic total order
+        ``(COALESCE(timestamp,''), agent, path, rowid) DESC`` — the live
+        sort key plus rowid as the unique tiebreaker — so once the
+        cursor passes a row, nothing below it can outrank an accepted
+        survivor. The window is sealed only when ``limit`` records
+        survive scope, dedup, AND the ``matches_record`` oracle; an
+        under-filled window continues from the row-value cursor.
+        """
+        limit = query.limit
+        assert limit is not None
+        results: list[agentgrep.SearchRecord] = []
+        seen: set[tuple[str, str, str, str, str]] = set()
+        window = self._initial_probe_window(limit)
+        cursor: tuple[str, str, str, int] | None = None
+        while len(results) < limit:
+            cursor_sql = ""
+            page_params: tuple[object, ...] = base_params
+            if cursor is not None:
+                cursor_sql = (
+                    " AND (COALESCE(r.timestamp,''), r.agent, r.path, r.rowid) < (?, ?, ?, ?)"
+                )
+                page_params = (*base_params, *cursor)
+            page = self._query(
+                stmt_name,
+                f"SELECT {self._PROBE_COLUMNS} {from_where}{cursor_sql} "
+                f"{self._PROBE_ORDER} LIMIT ?",
+                (*page_params, window),
+            )
+            if not page:
+                break
+            admitted = [
+                row
+                for row in page
+                if query.scope == "all"
+                or _cached_scope_admits(
+                    str(row["kind"]),
+                    str(row["store"]),
+                    str(row["adapter_id"]),
+                    str(row["agent"]),
+                    query.scope,
+                    prompt_history_agents,
+                )
             ]
-        filtered = [record for record in records if agentgrep.matches_record(record, query)]
-        filtered.sort(key=agentgrep.search_record_sort_key, reverse=True)
-        if query.dedupe:
-            # Dedup before the limit slice so a result cap counts unique
-            # records, matching the live driver's dedup-during-collection.
-            seen: set[tuple[str, str, str, str, str]] = set()
-            unique: list[agentgrep.SearchRecord] = []
-            for record in filtered:
+            by_rowid = self._hydrate([int(row["rowid"]) for row in admitted])
+            for row in admitted:
+                record = by_rowid.get(int(row["rowid"]))
+                if record is None or not agentgrep.matches_record(record, query):
+                    continue
+                if query.dedupe:
+                    key = agentgrep.record_dedupe_key(record)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                results.append(record)
+                if len(results) >= limit:
+                    break
+            if len(page) < window:
+                break
+            last = page[-1]
+            cursor = (
+                str(last["sort_ts"]),
+                str(last["sort_agent"]),
+                str(last["sort_path"]),
+                int(last["rowid"]),
+            )
+            window *= 4
+        return results
+
+    @staticmethod
+    def _initial_probe_window(limit: int) -> int:
+        """Return the first probe window for a limited search."""
+        return max(4 * limit, _PROBE_WINDOW_FLOOR)
+
+    def _search_all(
+        self,
+        query: agentgrep.SearchQuery,
+        stmt_name: str,
+        from_where: str,
+        base_params: tuple[object, ...],
+        prompt_history_agents: frozenset[str],
+    ) -> list[agentgrep.SearchRecord]:
+        """Serve an unlimited search: lean fetch, hydrate survivors, finish."""
+        rows = self._query(
+            stmt_name,
+            f"SELECT {self._PROBE_COLUMNS} {from_where}",
+            base_params,
+        )
+        admitted = [
+            row
+            for row in rows
+            if query.scope == "all"
+            or _cached_scope_admits(
+                str(row["kind"]),
+                str(row["store"]),
+                str(row["adapter_id"]),
+                str(row["agent"]),
+                query.scope,
+                prompt_history_agents,
+            )
+        ]
+        # Same deterministic total order as the probe path: the live
+        # sort tuple plus rowid DESC as the unique tiebreaker.
+        admitted.sort(
+            key=lambda row: (
+                str(row["sort_ts"]),
+                str(row["sort_agent"]),
+                str(row["sort_path"]),
+                int(row["rowid"]),
+            ),
+            reverse=True,
+        )
+        by_rowid = self._hydrate([int(row["rowid"]) for row in admitted])
+        seen: set[tuple[str, str, str, str, str]] = set()
+        results: list[agentgrep.SearchRecord] = []
+        for row in admitted:
+            record = by_rowid.get(int(row["rowid"]))
+            if record is None or not agentgrep.matches_record(record, query):
+                continue
+            if query.dedupe:
                 key = agentgrep.record_dedupe_key(record)
                 if key in seen:
                     continue
                 seen.add(key)
-                unique.append(record)
-            filtered = unique
-        return filtered[: query.limit] if query.limit is not None else filtered
+            results.append(record)
+        return results
+
+    def _hydrate(self, rowids: list[int]) -> dict[int, agentgrep.SearchRecord]:
+        """Fetch full records for ``rowids``, keyed by rowid."""
+        out: dict[int, agentgrep.SearchRecord] = {}
+        for start in range(0, len(rowids), 500):
+            chunk = rowids[start : start + 500]
+            id_list = ",".join(str(rowid) for rowid in chunk)
+            rows = self._query(
+                "records.hydrate",
+                "SELECT r.*, d.text, d.title, d.role, d.model, d.metadata_json "
+                "FROM records_search r JOIN record_details d ON d.rowid = r.rowid "
+                f"WHERE r.rowid IN ({id_list})",
+            )
+            for row in rows:
+                out[int(row["rowid"])] = self._row_to_record(row)
+        return out
 
     def iter_record_rows(self) -> tuple[DbRecordRow, ...]:
         """Return every indexed record with its db id."""
