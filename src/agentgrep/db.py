@@ -603,6 +603,8 @@ class DbStore:
                     """
                     DROP TABLE IF EXISTS record_text_fts;
                     DROP TABLE IF EXISTS source_state;
+                    DROP TABLE IF EXISTS record_details;
+                    DROP TABLE IF EXISTS records_search;
                     DROP TABLE IF EXISTS records;
                     DROP TABLE IF EXISTS sources;
                     DROP TABLE IF EXISTS meta;
@@ -643,7 +645,7 @@ class DbStore:
                     updated_at TEXT NOT NULL
                 );
 
-                CREATE TABLE IF NOT EXISTS records (
+                CREATE TABLE IF NOT EXISTS records_search (
                     rowid INTEGER PRIMARY KEY,
                     record_id TEXT NOT NULL UNIQUE,
                     source_id TEXT NOT NULL REFERENCES sources(source_id) ON DELETE CASCADE,
@@ -652,29 +654,29 @@ class DbStore:
                     store TEXT NOT NULL,
                     adapter_id TEXT NOT NULL,
                     path TEXT NOT NULL,
-                    title TEXT,
-                    role TEXT,
                     timestamp TEXT,
-                    model TEXT,
                     session_id TEXT,
                     conversation_id TEXT,
-                    text TEXT NOT NULL,
-                    haystack TEXT NOT NULL,
-                    metadata_json TEXT NOT NULL,
                     text_hash TEXT NOT NULL,
                     normalized_text_hash TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
 
-                CREATE VIRTUAL TABLE IF NOT EXISTS record_text_fts
-                USING fts5(
-                    haystack,
-                    content='records', content_rowid='rowid',
-                    tokenize='trigram'
+                CREATE TABLE IF NOT EXISTS record_details (
+                    rowid INTEGER PRIMARY KEY
+                        REFERENCES records_search(rowid) ON DELETE CASCADE,
+                    text TEXT NOT NULL,
+                    title TEXT,
+                    role TEXT,
+                    model TEXT,
+                    metadata_json TEXT NOT NULL
                 );
 
-                CREATE INDEX IF NOT EXISTS idx_records_source_id
-                ON records(source_id);
+                CREATE VIRTUAL TABLE IF NOT EXISTS record_text_fts
+                USING fts5(haystack, tokenize='trigram');
+
+                CREATE INDEX IF NOT EXISTS idx_records_search_source_id
+                ON records_search(source_id);
                 """,
             )
             _ = self._execute(
@@ -690,7 +692,7 @@ class DbStore:
                 db_path=self.db_path,
                 schema_version=SCHEMA_VERSION,
                 sources=self._count("sources"),
-                records=self._count("records"),
+                records=self._count("records_search"),
             )
         finally:
             self._flush_sql_samples()
@@ -727,7 +729,7 @@ class DbStore:
             db_path=self.db_path,
             schema_version=SCHEMA_VERSION,
             sources=self._count("sources"),
-            records=self._count("records"),
+            records=self._count("records_search"),
             synced_ok=int(ok_row["count"]) if ok_row is not None else 0,
             sync_errors=int(error_row["count"]) if error_row is not None else 0,
             last_synced_at=str(last_synced) if last_synced is not None else None,
@@ -942,26 +944,24 @@ class DbStore:
     def _remove_source_records(self, source_id: str) -> int:
         """Delete indexed records for one source and return the removed count.
 
-        External-content FTS5 ``'delete'`` commands must receive the
-        originally indexed column values; deleting with placeholder
-        values leaves stale token mappings behind and corrupts later
-        ``MATCH`` queries against reused rowids.
+        The FTS table stores its own haystack (content-full), so its
+        rows go with a plain DELETE; the details rows cascade from
+        records_search via the foreign key.
         """
         rows = self._query(
-            "records.select_for_delete",
-            "SELECT rowid, haystack FROM records WHERE source_id = ?",
+            "records_search.select_for_delete",
+            "SELECT rowid FROM records_search WHERE source_id = ?",
             (source_id,),
         )
-        for row in rows:
+        if rows:
+            rowids = ",".join(str(int(row["rowid"])) for row in rows)
             _ = self._execute(
-                "fts.delete",
-                "INSERT INTO record_text_fts(record_text_fts, rowid, haystack) "
-                "VALUES('delete', ?, ?)",
-                (int(row["rowid"]), row["haystack"]),
+                "fts.delete_by_rowid",
+                f"DELETE FROM record_text_fts WHERE rowid IN ({rowids})",
             )
         _ = self._execute(
-            "records.delete_by_source",
-            "DELETE FROM records WHERE source_id = ?",
+            "records_search.delete_by_source",
+            "DELETE FROM records_search WHERE source_id = ?",
             (source_id,),
         )
         return len(rows)
@@ -997,18 +997,17 @@ class DbStore:
         raw_hash: str,
         normalized_hash: str,
     ) -> str:
-        """Insert one normalized record and its FTS row."""
+        """Insert one normalized record across the search/details/FTS surfaces."""
         haystack = agentgrep.build_record_match_surface(record, "haystack").casefold()
         cursor = self._execute(
-            "records.insert",
+            "records_search.insert",
             """
-            INSERT INTO records(
+            INSERT INTO records_search(
                 record_id, source_id, kind, agent, store, adapter_id, path,
-                title, role, timestamp, model, session_id, conversation_id,
-                text, haystack, metadata_json, text_hash, normalized_text_hash,
-                updated_at
+                timestamp, session_id, conversation_id,
+                text_hash, normalized_text_hash, updated_at
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record_id,
@@ -1018,15 +1017,9 @@ class DbStore:
                 record.store,
                 record.adapter_id,
                 str(record.path),
-                record.title,
-                record.role,
                 record.timestamp,
-                record.model,
                 record.session_id,
                 record.conversation_id,
-                record.text,
-                haystack,
-                _json_dumps(record.metadata),
                 raw_hash,
                 normalized_hash,
                 now,
@@ -1037,6 +1030,21 @@ class DbStore:
             msg = "SQLite did not return a record rowid"
             raise RuntimeError(msg)
         rowid = int(lastrowid)
+        _ = self._execute(
+            "record_details.insert",
+            """
+            INSERT INTO record_details(rowid, text, title, role, model, metadata_json)
+            VALUES(?, ?, ?, ?, ?, ?)
+            """,
+            (
+                rowid,
+                record.text,
+                record.title,
+                record.role,
+                record.model,
+                _json_dumps(record.metadata),
+            ),
+        )
         _ = self._execute(
             "fts.insert",
             "INSERT INTO record_text_fts(rowid, haystack) VALUES(?, ?)",
@@ -1098,8 +1106,10 @@ class DbStore:
             # the folded term contains all of its trigrams.
             match_expr = " AND ".join(_quote_fts_term(term.casefold()) for term in query.terms)
             sql = (
-                "SELECT r.* FROM record_text_fts f "
-                "JOIN records r ON r.rowid = f.rowid "
+                "SELECT r.*, d.text, d.title, d.role, d.model, d.metadata_json "
+                "FROM record_text_fts f "
+                "JOIN records_search r ON r.rowid = f.rowid "
+                "JOIN record_details d ON d.rowid = r.rowid "
                 f"WHERE f.record_text_fts MATCH ? AND {' AND '.join(where)}"
             )
             rows = self._query("records.search_fts", sql, (match_expr, *params))
@@ -1107,11 +1117,15 @@ class DbStore:
             scan_where = list(where)
             scan_params = list(params)
             for term in query.terms:
-                scan_where.append("instr(r.haystack, ?) > 0")
+                scan_where.append("instr(f.haystack, ?) > 0")
                 scan_params.append(term.casefold())
             rows = self._query(
                 "records.search_scan",
-                f"SELECT r.* FROM records r WHERE {' AND '.join(scan_where)}",
+                "SELECT r.*, d.text, d.title, d.role, d.model, d.metadata_json "
+                "FROM record_text_fts f "
+                "JOIN records_search r ON r.rowid = f.rowid "
+                "JOIN record_details d ON d.rowid = r.rowid "
+                f"WHERE {' AND '.join(scan_where)}",
                 scan_params,
             )
         records = [self._row_to_record(row) for row in rows]
@@ -1142,7 +1156,12 @@ class DbStore:
 
     def iter_record_rows(self) -> tuple[DbRecordRow, ...]:
         """Return every indexed record with its db id."""
-        rows = self._query("records.all", "SELECT * FROM records ORDER BY rowid")
+        rows = self._query(
+            "records.all",
+            "SELECT r.*, d.text, d.title, d.role, d.model, d.metadata_json "
+            "FROM records_search r JOIN record_details d ON d.rowid = r.rowid "
+            "ORDER BY r.rowid",
+        )
         return tuple(
             DbRecordRow(
                 record_id=str(row["record_id"]),
@@ -1155,7 +1174,9 @@ class DbStore:
         """Return one indexed record row by id."""
         rows = self._query(
             "records.get",
-            "SELECT * FROM records WHERE record_id = ?",
+            "SELECT r.*, d.text, d.title, d.role, d.model, d.metadata_json "
+            "FROM records_search r JOIN record_details d ON d.rowid = r.rowid "
+            "WHERE r.record_id = ?",
             (record_id,),
         )
         if not rows:
