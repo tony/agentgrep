@@ -552,6 +552,16 @@ def build_streaming_ui_app(
             self._last_render = None
             self.refresh()
 
+        def shows_bar(self) -> bool:
+            """Whether the meter will render a bar (vs. nothing).
+
+            False when there is no fraction yet (e.g. a search frozen
+            before the first scanning snapshot), on narrow statuslines,
+            or for the blanked error state — cases where the post-search
+            left text must carry the outcome word instead.
+            """
+            return self._fraction is not None and not self._narrow and not self._frozen_blank
+
         def _compose_text(self) -> str:
             """Build the meter text for the current state and available width."""
             if self._frozen_blank or self._narrow:
@@ -1725,16 +1735,21 @@ def build_streaming_ui_app(
 
             Wide statuslines show no text at all (the colored bar and the
             right slot carry the outcome); narrow ones, with no room for
-            a bar, say ``Done`` or ``Stopped``. Failures keep their
-            message at every width — that information has no other home.
-            The full data summary renders in the toggleable detail row.
+            a bar, say ``Done`` or ``Stopped``. The word also stands in
+            when the meter has no bar to carry the outcome — an interrupt
+            before the first scanning snapshot freezes with no fraction —
+            so a stopped search never collapses to a bare glyph.
+            Failures keep their message at every width — that information
+            has no other home. The full data summary renders in the
+            toggleable detail row.
             """
             if self._status_widget is None or self._finished_status is None:
                 return
             outcome, summary = self._finished_status
+            meter_has_bar = self._meter_widget is not None and self._meter_widget.shows_bar()
             if outcome == "error":
                 text = summary
-            elif self._statusline_narrow():
+            elif self._statusline_narrow() or not meter_has_bar:
                 text = "Done" if outcome == "complete" else "Stopped"
             else:
                 text = ""

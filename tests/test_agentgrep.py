@@ -3224,6 +3224,7 @@ class FinishOutcomeCase(t.NamedTuple):
     expected_left: str
     expected_class: str
     meter_shows_bar: bool
+    seed_scanning: bool
 
 
 FINISH_OUTCOME_CASES: tuple[FinishOutcomeCase, ...] = (
@@ -3234,6 +3235,7 @@ FINISH_OUTCOME_CASES: tuple[FinishOutcomeCase, ...] = (
         expected_left="",
         expected_class="-done",
         meter_shows_bar=True,
+        seed_scanning=True,
     ),
     FinishOutcomeCase(
         test_id="complete-narrow-says-done",
@@ -3242,6 +3244,7 @@ FINISH_OUTCOME_CASES: tuple[FinishOutcomeCase, ...] = (
         expected_left="Done",
         expected_class="-done",
         meter_shows_bar=False,
+        seed_scanning=True,
     ),
     FinishOutcomeCase(
         test_id="interrupted-wide-gray-partial-bar",
@@ -3250,6 +3253,7 @@ FINISH_OUTCOME_CASES: tuple[FinishOutcomeCase, ...] = (
         expected_left="",
         expected_class="-stopped",
         meter_shows_bar=True,
+        seed_scanning=True,
     ),
     FinishOutcomeCase(
         test_id="interrupted-narrow-says-stopped",
@@ -3258,6 +3262,19 @@ FINISH_OUTCOME_CASES: tuple[FinishOutcomeCase, ...] = (
         expected_left="Stopped",
         expected_class="-stopped",
         meter_shows_bar=False,
+        seed_scanning=True,
+    ),
+    FinishOutcomeCase(
+        # Interrupted before the first scanning snapshot: no fraction, so
+        # no bar — the wide statusline must still say "Stopped" rather
+        # than collapse to a bare gray glyph.
+        test_id="interrupted-wide-no-bar-says-stopped",
+        size=(160, 24),
+        outcome="interrupted",
+        expected_left="Stopped",
+        expected_class="-stopped",
+        meter_shows_bar=False,
+        seed_scanning=False,
     ),
 )
 
@@ -3281,8 +3298,9 @@ async def test_finish_outcome_freezes_colored_bar(
         # Seed matches so the right slot occupies its real-world cells —
         # narrow meters only lose the bar when the count is present.
         app.all_records.extend(_seed_records(agentgrep, tmp_path, 5))
-        app._apply_progress(_make_progress_snapshot(agentgrep))
-        await pilot.pause()
+        if case.seed_scanning:
+            app._apply_progress(_make_progress_snapshot(agentgrep))
+            await pilot.pause()
         updates: list[str] = []
         real_update = app._status_widget.update
 
