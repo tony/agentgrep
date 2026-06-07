@@ -663,16 +663,38 @@ def _format_scalar(value: object) -> str:
 def _db_runtime_for_cli(
     cache_mode: agentgrep.CacheMode,
 ) -> agentgrep.SearchRuntime | None:
-    """Return a search runtime with optional DB access."""
+    """Return a search runtime with read-only DB access.
+
+    Searches only read the cache, so the open must not run schema
+    migration or create a missing cache file as a side effect.
+    """
     if cache_mode == "off":
         return None
+    import sqlite3
+
     from agentgrep.db import DbRuntime, default_db_path
 
     db_path = default_db_path()
-    if cache_mode == "auto" and not db_path.exists():
+    if not db_path.exists():
+        if cache_mode == "require":
+            print(
+                f"agentgrep: --cache require needs a synced DB; none found at {db_path}",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+        return None
+    try:
+        db = DbRuntime.open_readonly(db_path)
+    except sqlite3.DatabaseError:
+        if cache_mode == "require":
+            print(
+                f"agentgrep: not an agentgrep database: {db_path}",
+                file=sys.stderr,
+            )
+            raise SystemExit(2) from None
         return None
     return agentgrep.SearchRuntime(
-        db=DbRuntime.open(db_path),
+        db=db,
         cache_mode=cache_mode,
     )
 
