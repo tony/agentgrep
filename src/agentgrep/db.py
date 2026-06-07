@@ -46,9 +46,13 @@ class DbExplain:
     sync_errors: int
     last_synced_at: str | None
     answerable: str
+    coverage: dict[str, tuple[str, ...]] | None = None
 
 
 ANSWERABLE_QUERY_FORMS = "term AND queries (no regex, no OR)"
+
+#: Meta key recording which agent/scope combinations completed a sync.
+COVERAGE_META_KEY = "coverage_json"
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -59,6 +63,22 @@ class SyncResult:
     records_indexed: int
     records_removed: int
     sources_skipped: int = 0
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class SyncCoverage:
+    """What one sync invocation set out to cover.
+
+    Coverage means "this agent/scope combination completed a sync",
+    not "currently has records" — the auto-mode empty-result fallback
+    already protects the no-records case. ``complete`` is false when
+    the caller capped the source list, so capped syncs never claim
+    coverage.
+    """
+
+    agents: tuple[str, ...]
+    scope: str
+    complete: bool
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -545,7 +565,67 @@ class DbStore:
             sync_errors=int(error_row["count"]) if error_row is not None else 0,
             last_synced_at=str(last_synced) if last_synced is not None else None,
             answerable=ANSWERABLE_QUERY_FORMS,
+            coverage=self.coverage(),
         )
+
+    def get_meta(self, key: str) -> str | None:
+        """Return one meta value or ``None`` when the key is absent."""
+        row = self.connection.execute(
+            "SELECT value FROM meta WHERE key = ?",
+            (key,),
+        ).fetchone()
+        return str(row["value"]) if row is not None else None
+
+    def set_meta(self, key: str, value: str) -> None:
+        """Insert or replace one meta value."""
+        with self.connection:
+            self.connection.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES(?, ?)",
+                (key, value),
+            )
+
+    def coverage(self) -> dict[str, tuple[str, ...]] | None:
+        """Return the synced agent/scope coverage map.
+
+        ``None`` means no completed sync has recorded coverage yet —
+        distinct from an empty map — so callers can tell an old cache
+        apart from one that covered nothing.
+        """
+        raw = self.get_meta(COVERAGE_META_KEY)
+        if raw is None:
+            return None
+        payload = t.cast("dict[str, list[str]]", json.loads(raw))
+        return {agent: tuple(scopes) for agent, scopes in sorted(payload.items())}
+
+    def merge_coverage(self, coverage: SyncCoverage) -> None:
+        """Merge one completed sync's agent/scope coverage into meta.
+
+        Merging (rather than replacing) keeps a narrowed re-sync from
+        erasing the coverage earlier full syncs established for other
+        agents.
+        """
+        existing = self.coverage() or {}
+        merged: dict[str, list[str]] = {agent: list(scopes) for agent, scopes in existing.items()}
+        for agent in coverage.agents:
+            scopes = set(merged.get(agent, []))
+            scopes.add(coverage.scope)
+            merged[agent] = sorted(scopes)
+        self.set_meta(COVERAGE_META_KEY, _json_dumps(merged))
+
+    def covers(self, agents: cabc.Iterable[str], scope: str) -> bool:
+        """Return whether every agent has completed a sync for ``scope``.
+
+        A sync with scope ``"all"`` covers every query scope; a scoped
+        sync covers only itself.
+        """
+        coverage = self.coverage()
+        if coverage is None:
+            return False
+        for agent in agents:
+            scopes = coverage.get(agent)
+            if scopes is None or (scope not in scopes and "all" not in scopes):
+                return False
+        return True
 
     def _count(self, table: str) -> int:
         """Return row count for a known table."""
@@ -927,8 +1007,15 @@ class DbRuntime:
         control: agentgrep.SearchControl | None = None,
         progress: DbSyncProgress | None = None,
         force: bool = False,
+        coverage: SyncCoverage | None = None,
     ) -> SyncResult:
-        """Sync explicit source/record batches into the DB."""
+        """Sync explicit source/record batches into the DB.
+
+        ``coverage`` is merged into the coverage map only when it is
+        marked complete AND the loop visits every batch — early exits
+        and interruptions record nothing, so coverage always reflects
+        the last sync that actually finished.
+        """
         result = SyncResult(
             sources_synced=0,
             records_indexed=0,
@@ -944,6 +1031,7 @@ class DbRuntime:
                     result=result,
                     force=force,
                 )
+            self._record_coverage(coverage)
             return result
 
         batch_list = tuple(batches)
@@ -961,8 +1049,18 @@ class DbRuntime:
                 force=force,
             )
             progress.source_finished(index, total, source, indexed, removed, result)
+        self._record_coverage(coverage)
         progress.finish(result)
         return result
+
+    def _record_coverage(self, coverage: SyncCoverage | None) -> None:
+        """Merge completed-sync coverage after an uninterrupted loop."""
+        if coverage is not None and coverage.complete:
+            self.store.merge_coverage(coverage)
+
+    def covers_query(self, query: agentgrep.SearchQuery) -> bool:
+        """Return whether coverage spans the query's agents and scope."""
+        return self.store.covers(query.agents, query.scope)
 
     def _sync_one_source(
         self,
@@ -1003,6 +1101,7 @@ class DbRuntime:
         control: agentgrep.SearchControl | None = None,
         progress: DbSyncProgress | None = None,
         force: bool = False,
+        coverage: SyncCoverage | None = None,
     ) -> SyncResult:
         """Read records from existing adapters and sync them into the DB."""
         return self.sync_records(
@@ -1010,6 +1109,7 @@ class DbRuntime:
             control=control,
             progress=progress,
             force=force,
+            coverage=coverage,
         )
 
     def search_records(self, query: agentgrep.SearchQuery) -> list[agentgrep.SearchRecord]:

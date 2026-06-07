@@ -10,13 +10,14 @@ in :mod:`agentgrep.cli.renderers`.
 from __future__ import annotations
 
 import dataclasses
+import importlib
 import json
 import pathlib
 import sys
 import typing as t
 
 from agentgrep import run_ui
-from agentgrep._engine import iter_find_events, iter_search_events, run_search_result
+from agentgrep._engine import SearchRuntime, iter_find_events, iter_search_events, run_search_result
 from agentgrep._text import AnsiColors, format_display_path
 from agentgrep.cli.parser import DbArgs, FindArgs, GrepArgs, SearchArgs, UIArgs
 from agentgrep.cli.renderers import (
@@ -53,6 +54,7 @@ from agentgrep.progress import (
 )
 from agentgrep.records import (
     AGENT_CHOICES,
+    CacheMode,
     ColorMode,
     FindRecord,
     OutputMode,
@@ -200,6 +202,84 @@ def _open_db_runtime(db_path: str | None) -> DbRuntime:
     from agentgrep.db import DbRuntime
 
     return DbRuntime.open(pathlib.Path(db_path) if db_path is not None else None)
+
+
+def _db_runtime_for_cli(cache_mode: CacheMode) -> SearchRuntime | None:
+    """Return a read-only search runtime when a usable cache exists."""
+    if cache_mode == "off":
+        return None
+    import sqlite3
+
+    from agentgrep.db import DbRuntime, default_db_path
+
+    db_path = default_db_path()
+    if not db_path.exists():
+        if cache_mode == "require":
+            print(
+                f"agentgrep: --cache require needs a synced DB; none found at {db_path}",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+        return None
+    db: DbRuntime | None = None
+    try:
+        db = DbRuntime.open_readonly(db_path)
+        _ = db.store.connection.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version'",
+        ).fetchone()
+    except sqlite3.DatabaseError:
+        if db is not None:
+            db.close()
+        if cache_mode == "require":
+            print(f"agentgrep: not an agentgrep database: {db_path}", file=sys.stderr)
+            raise SystemExit(2) from None
+        return None
+    return SearchRuntime(db=db, cache_mode=cache_mode)
+
+
+def _facade() -> t.Any:
+    """Return the package object for late-bound, monkeypatchable runners."""
+    return importlib.import_module("agentgrep")
+
+
+def _run_search_query_for_cli(
+    home: pathlib.Path,
+    query: SearchQuery,
+    *,
+    progress: SearchProgress,
+    control: SearchControl,
+    cache_mode: CacheMode,
+) -> list[SearchRecord]:
+    """Run an eager CLI search and close its optional DB runtime."""
+    runtime = _db_runtime_for_cli(cache_mode)
+    runner = _facade().run_search_query
+    try:
+        if runtime is None:
+            return runner(home, query, progress=progress, control=control)
+        return runner(home, query, progress=progress, control=control, runtime=runtime)
+    finally:
+        if runtime is not None and runtime.db is not None:
+            runtime.db.close()
+
+
+def _iter_search_events_for_cli(
+    home: pathlib.Path,
+    query: SearchQuery,
+    *,
+    control: SearchControl,
+    cache_mode: CacheMode,
+) -> t.Iterator[object]:
+    """Yield CLI search events and close the optional DB runtime."""
+    runtime = _db_runtime_for_cli(cache_mode)
+    runner = _facade().iter_search_events
+    try:
+        if runtime is None:
+            yield from runner(home, query, control=control)
+        else:
+            yield from runner(home, query, control=control, runtime=runtime)
+    finally:
+        if runtime is not None and runtime.db is not None:
+            runtime.db.close()
 
 
 def run_db_command(args: DbArgs) -> int:
