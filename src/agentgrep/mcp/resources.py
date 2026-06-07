@@ -85,6 +85,7 @@ def build_capabilities() -> CapabilitiesModel:
             "get_store_descriptor",
             "inspect_record_sample",
             "validate_query",
+            "db_status",
         ],
         resources=[
             "agentgrep://capabilities",

@@ -31,17 +31,6 @@ a backend search immediately:
 $ agentgrep ui bliss
 ```
 
-## Command
-
-```{eval-rst}
-.. argparse::
-    :module: agentgrep
-    :func: build_docs_parser
-    :prog: agentgrep
-    :path: ui
-    :nodescription:
-```
-
 ## Key interactions
 
 The top input is the **search bar**. Pressing `Enter` dispatches a
@@ -80,6 +69,7 @@ UIArgs, entry points, filter and display helpers.
 
 ## See also
 
+- {ref}`cli-ui` — command flags for `agentgrep ui`.
 - {ref}`cli` — the `--ui` flag on any search-shaped subcommand opens
   the same explorer pre-seeded with that subcommand's query (e.g.
   `agentgrep grep bliss --agent codex --ui`).

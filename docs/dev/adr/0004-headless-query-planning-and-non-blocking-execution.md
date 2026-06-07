@@ -16,7 +16,7 @@ Recent profiling showed two different bottleneck shapes:
 - Prompt and find paths are often discovery-bound. Repeated store discovery,
   path enumeration, subprocess startup, and source-handle construction can
   dominate a query before record parsing begins.
-- Conversation paths are often collection-bound. Large JSONL transcripts,
+- Conversation paths are often record-processing-bound. Large JSONL transcripts,
   recursive message extraction, SQLite reads, and record-level filtering can
   dominate the run after sources have been selected.
 
@@ -258,7 +258,7 @@ CLI output modes are sinks:
 - Optional answer-early behavior in interactive terminals.
 
 MCP tools are sinks over the same event stream. A tool may collect events into
-the existing response models, but the collection must happen through a
+the existing response models, but response aggregation must happen through a
 non-blocking wrapper so the MCP server event loop is not blocked by local
 store scans.
 
@@ -308,7 +308,7 @@ worker must follow {ref}`adr-native-boundary-execution-architecture`.
 - Frontends can improve independently without changing search semantics.
 - The TUI can stay responsive during broad scans.
 - Profiling identifies whether time is spent in discovery, planning,
-  collection, output backpressure, or a specific adapter strategy.
+  record processing, output backpressure, or a specific adapter strategy.
 - Planner tests can prove useless work is avoided without requiring large
   local history stores.
 - Future source-level parallelism or worker execution has a typed place to
@@ -349,5 +349,5 @@ mitigation is ADR 0002, ADR 0003, and this ADR's plan/batch/protocol boundary.
 agentgrep's scalable shape is a typed, headless query system: discover, plan,
 execute, observe, and render are separate contracts. The first implementation
 target is still Python, but the structure must be ready for non-blocking TUI
-execution, fast CLI streaming, MCP collection, richer profiling, and future
+execution, fast CLI streaming, MCP response aggregation, richer profiling, and future
 parallel or worker drivers without changing user-visible search semantics.

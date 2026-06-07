@@ -81,6 +81,7 @@ if t.TYPE_CHECKING:
 
     from agentgrep._engine.planning import PhysicalSearchPlan
     from agentgrep._engine.runtime import SearchRuntime
+    from agentgrep.db import DbRuntime
     from agentgrep.query.compile import CompiledQuery
 
     PrivatePathBase = pathlib.Path
@@ -199,6 +200,8 @@ OPTIONS_EXPECTING_VALUE: frozenset[str] = frozenset(
         "--limit",
         "--color",
         "--progress",
+        "--db",
+        "--limit-sources",
     },
 )
 OPTIONS_FLAG_ONLY: frozenset[str] = frozenset(
@@ -241,7 +244,8 @@ CLI_DESCRIPTION = build_description(
     and OpenCode local stores. Pick a subcommand from the list below:
     ``search`` for ranked results with dedup and session grouping,
     ``grep`` for rg-shaped content search, ``find`` for store
-    enumeration, ``ui`` for the interactive Textual explorer.
+    enumeration, ``ui`` for the interactive Textual explorer,
+    and ``db`` for the persistent index.
     """,
     (
         (
@@ -266,6 +270,14 @@ CLI_DESCRIPTION = build_description(
             (
                 "agentgrep ui",
                 "agentgrep ui bliss",
+            ),
+        ),
+        (
+            "db",
+            (
+                "agentgrep db",
+                "agentgrep db sync",
+                "agentgrep db status --json",
             ),
         ),
     ),
@@ -335,6 +347,25 @@ GREP_DESCRIPTION = build_description(
                 "agentgrep grep -F --scope conversations TODO",
                 "agentgrep grep --json design",
                 "agentgrep grep --vimgrep --no-dedupe foo",
+            ),
+        ),
+    ),
+)
+DB_DESCRIPTION = build_description(
+    """
+    Manage the persistent DB index used as a local cache and
+    normalized source ledger. The DB index is derived state: source
+    stores remain the truth.
+    """,
+    (
+        (
+            "db",
+            (
+                "agentgrep db",
+                "agentgrep db sync",
+                "agentgrep db sync --agent codex --scope prompts",
+                "agentgrep db status --json",
+                "agentgrep db explain --ndjson",
             ),
         ),
     ),
@@ -3603,6 +3634,78 @@ def search_sources(
     return records
 
 
+def _db_search_result(
+    query: SearchQuery,
+    runtime: SearchRuntime | None,
+) -> tuple[bool, list[SearchRecord]]:
+    """Return ``(handled, records)`` for cache-backed search attempts.
+
+    Emits one ``search.cache.decision`` profile sample per consulted
+    query — aggregate counters only, never per-record spans.
+    """
+    if runtime is None or runtime.cache_mode == "off":
+        return False, []
+    start = time.perf_counter()
+    handled = False
+    records: list[SearchRecord] = []
+    reason: str | None = None
+    # An opener-provided runtime is opened by this thread for this one
+    # consult and closed before returning: SQLite connections are bound
+    # to their creating thread, so callers that consult from worker
+    # threads (the MCP server) supply an opener instead of a handle.
+    opened_db: DbRuntime | None = None
+    try:
+        db = runtime.db
+        if db is None and runtime.db_opener is not None:
+            opened_db = runtime.db_opener()
+            db = opened_db
+        if db is None:
+            reason = "no-db"
+            if runtime.cache_mode == "require":
+                msg = "DB cache required but no db runtime is configured"
+                raise RuntimeError(msg)
+            return False, []
+        if runtime.cache_mode == "auto" and not db.covers_query(query):
+            # A partial sync (agent subset, narrowed scope, capped or
+            # interrupted run) leaves the index covering less than the
+            # query; auto must not pass off a subset as the answer.
+            # require keeps serving - the caller demanded the cache.
+            reason = "partial-coverage"
+            return False, []
+        from agentgrep.db import DbQueryUnsupported
+
+        try:
+            records = db.search_records(query)
+        except DbQueryUnsupported:
+            reason = "unsupported"
+            if runtime.cache_mode == "require":
+                raise
+            return False, []
+        if runtime.cache_mode == "auto" and not records:
+            reason = "empty"
+            return False, []
+        # Per-session dedup happens inside DbStore.search_records, before
+        # the limit slice, so cached results keep the event-stream invariant
+        # and result caps count unique records like the live driver.
+        handled = True
+        return True, records
+    finally:
+        if opened_db is not None:
+            opened_db.close()
+        attributes: dict[str, JSONScalar] = {
+            "agentgrep_cache_mode": runtime.cache_mode,
+            "agentgrep_cache_handled": handled,
+            "agentgrep_cache_records": len(records) if handled else 0,
+        }
+        if reason is not None:
+            attributes["agentgrep_cache_fallback_reason"] = reason
+        _record_engine_profile_sample(
+            "search.cache.decision",
+            time.perf_counter() - start,
+            **attributes,
+        )
+
+
 def run_search_query(
     home: pathlib.Path,
     query: SearchQuery,
@@ -3619,6 +3722,12 @@ def run_search_query(
     active_progress.start(query)
     interrupted = False
     try:
+        cache_handled, cache_records = _db_search_result(query, runtime)
+        if cache_handled:
+            active_progress.sources_discovered(0)
+            active_progress.sources_planned(0, 0)
+            active_progress.finish(len(cache_records))
+            return cache_records
         sources = discover_sources_for_search(
             home,
             query,
@@ -6158,9 +6267,21 @@ def parse_cursor_state_db(
         connection.close()
 
 
+#: Memory-map budget for SQLite connections. Measured on the real
+#: 3.8 GB cache: mapping the file cuts hot-term probes ~20-45% and the
+#: short-term scan ~35%, and the OS page cache is shared across the
+#: per-consult connections the MCP server opens — unlike a per-
+#: connection cache_size, which would re-warm on every consult.
+#: SQLite clamps the value to its compile-time SQLITE_MAX_MMAP_SIZE
+#: (commonly ~2 GiB); requesting more is harmless.
+SQLITE_MMAP_BYTES = 8 * 1024 * 1024 * 1024
+
+
 def open_readonly_sqlite(path: pathlib.Path) -> sqlite3.Connection:
     """Open a SQLite database with a read-only URI."""
-    return sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    _ = connection.execute(f"PRAGMA mmap_size={SQLITE_MMAP_BYTES}")
+    return connection
 
 
 def sqlite_table_names(connection: sqlite3.Connection) -> set[str]:
@@ -7321,6 +7442,8 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
             return run_grep_command(parsed)
         if isinstance(parsed, SearchArgs):
             return run_search_command(parsed)
+        if isinstance(parsed, DbArgs):
+            return run_db_command(parsed)
         if isinstance(parsed, UIArgs):
             return run_ui_command(parsed)
         return run_find_command(parsed)
@@ -7330,6 +7453,7 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
 
 
 from agentgrep._engine import (  # noqa: E402  (re-exports must follow main definition)
+    CacheMode,
     SearchRuntime,
     SourceScanCache,
     SourceScanCacheStats,
@@ -7339,6 +7463,7 @@ from agentgrep._engine import (  # noqa: E402  (re-exports must follow main defi
 )
 from agentgrep.cli.parser import (  # noqa: E402  (re-exports must follow main definition)
     CaseMode,
+    DbArgs,
     FindArgs,
     FindPatternMode,
     FindTypeFilter,
@@ -7347,6 +7472,7 @@ from agentgrep.cli.parser import (  # noqa: E402  (re-exports must follow main d
     PatternMode,
     SearchArgs,
     UIArgs,
+    add_cache_options,
     add_common_agent_options,
     add_output_mode_options,
     build_docs_parser,
@@ -7365,6 +7491,7 @@ from agentgrep.cli.render import (  # noqa: E402  (re-exports must follow main d
     maybe_build_pydantic,
     print_find_results,
     print_grep_results,
+    run_db_command,
     run_find_command,
     run_grep_command,
     run_search_command,

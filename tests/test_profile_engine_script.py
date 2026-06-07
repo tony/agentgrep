@@ -680,3 +680,128 @@ def test_profile_rejects_conflicting_limit_aliases() -> None:
 
     with pytest.raises(ValueError, match="--limit and --max-count disagree"):
         _ = profile_engine._resolve_result_limit(args)
+
+
+def test_profile_payload_records_cache_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Profile artifacts disclose the active cache mode."""
+    parser = profile_engine._build_parser()
+    args = parser.parse_args(["grep-prompts", "tmux", "--agent", "codex", "--max-count", "1"])
+
+    monkeypatch.setenv("AGENTGREP_CACHE", "off")
+    cold = profile_engine._run(args)
+    monkeypatch.delenv("AGENTGREP_CACHE", raising=False)
+    default = profile_engine._run(args)
+
+    assert cold["cache_mode"] == "off"
+    assert default["cache_mode"] == "auto"
+
+
+class ProfileCacheConsultCase(t.NamedTuple):
+    """Named case for the profiled run's cache consultation."""
+
+    test_id: str
+    cache_env: str
+    expects_decision_span: bool
+    expects_collect_span: bool
+
+
+PROFILE_CACHE_CONSULT_CASES: tuple[ProfileCacheConsultCase, ...] = (
+    ProfileCacheConsultCase(
+        test_id="require-serves-from-cache",
+        cache_env="require",
+        expects_decision_span=True,
+        expects_collect_span=False,
+    ),
+    ProfileCacheConsultCase(
+        test_id="off-profiles-live-engine",
+        cache_env="off",
+        expects_decision_span=False,
+        expects_collect_span=True,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    PROFILE_CACHE_CONSULT_CASES,
+    ids=[case.test_id for case in PROFILE_CACHE_CONSULT_CASES],
+)
+def test_profile_run_honors_cache_mode(
+    case: ProfileCacheConsultCase,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AGENTGREP_CACHE controls the profiled path, not just the label.
+
+    A require-mode profile must measure the cache consult (decision
+    span, no collection phase); off must profile the live engine.
+    """
+    import agentgrep
+    from agentgrep.db import DbRuntime, SyncCoverage, default_db_path
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    source_path = tmp_path / "session.jsonl"
+    source_path.write_text("alpaca", encoding="utf-8")
+    source = agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=source_path,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=source_path.parent,
+        mtime_ns=source_path.stat().st_mtime_ns,
+    )
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store=source.store,
+        adapter_id=source.adapter_id,
+        path=source.path,
+        text="alpaca cached profile record",
+        timestamp="2026-06-05T12:00:00Z",
+        session_id="session-a",
+    )
+    db_runtime = DbRuntime.open(default_db_path())
+    _ = db_runtime.sync_records(
+        ((source, (record,)),),
+        coverage=SyncCoverage(agents=("codex",), scope="all", complete=True),
+    )
+    db_runtime.close()
+    monkeypatch.setenv("AGENTGREP_CACHE", case.cache_env)
+    parser = profile_engine._build_parser()
+    args = parser.parse_args(
+        ["grep-prompts", "alpaca", "--agent", "codex", "--max-count", "5"],
+    )
+
+    payload = profile_engine._run(args)
+
+    samples = t.cast("list[dict[str, object]]", payload["profile"]["samples"])
+    names = [str(sample["name"]) for sample in samples]
+    assert payload["cache_mode"] == case.cache_env
+    assert ("search.cache.decision" in names) is case.expects_decision_span
+    assert any(name.startswith("search.collect") for name in names) is case.expects_collect_span
+    if case.expects_decision_span:
+        decision = next(sample for sample in samples if sample["name"] == "search.cache.decision")
+        attributes = t.cast("dict[str, object]", decision["attributes"])
+        assert attributes["agentgrep_cache_handled"] is True
+
+
+def test_profile_payload_records_sql_explain_lever(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Profile artifacts disclose whether plan capture was active."""
+    parser = profile_engine._build_parser()
+    args = parser.parse_args(["grep-prompts", "tmux", "--agent", "codex", "--max-count", "1"])
+
+    monkeypatch.setenv("AGENTGREP_SQL_EXPLAIN", "1")
+    captured = profile_engine._run(args)
+    monkeypatch.delenv("AGENTGREP_SQL_EXPLAIN", raising=False)
+    default = profile_engine._run(args)
+
+    assert captured["sql_explain"] is True
+    assert default["sql_explain"] is False

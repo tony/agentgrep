@@ -691,7 +691,7 @@ def test_collect_search_records_does_not_import_profiler_when_inactive(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The non-profiled collection path keeps the profiler module unloaded."""
+    """The non-profiled collect_search_records path keeps the profiler unloaded."""
     source = agentgrep.SourceHandle(
         agent="codex",
         store="codex.sessions",

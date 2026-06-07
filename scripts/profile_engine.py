@@ -14,6 +14,7 @@ import argparse
 import dataclasses
 import io
 import json
+import os
 import pathlib
 import sys
 import typing as t
@@ -32,6 +33,9 @@ from agentgrep._engine.profiling import (  # noqa: E402  (standalone script boot
     profile_find_query,
     profile_search_query,
 )
+
+if t.TYPE_CHECKING:
+    from agentgrep._engine.runtime import SearchRuntime
 
 ProfileCommand = t.Literal["search", "find", "grep"]
 ProfileComponent = t.Literal[
@@ -250,6 +254,40 @@ def _resolve_component_specs(args: argparse.Namespace) -> tuple[ProfileRunSpec, 
     return (PROFILE_COMPONENTS[t.cast("ProfileComponent", component)],)
 
 
+def _resolved_cache_mode() -> str:
+    """Return the cache mode AGENTGREP_CACHE resolves to."""
+    from agentgrep.cli.parser import resolve_cache_mode
+
+    return resolve_cache_mode(None, os.environ.get("AGENTGREP_CACHE"))
+
+
+def _sql_explain_echo() -> bool:
+    """Return whether AGENTGREP_SQL_EXPLAIN plan capture was active."""
+    return bool(os.environ.get("AGENTGREP_SQL_EXPLAIN"))
+
+
+def _cache_search_runtime() -> SearchRuntime | None:
+    """Build the search runtime the resolved cache mode calls for.
+
+    Mirrors the CLI: ``off`` profiles the live engine with no cache;
+    ``auto``/``require`` attach the read-only DB when one exists so
+    warm-cache profiles exercise the cache path the way searches do.
+    The script is single-threaded, so a held handle is safe; the
+    caller closes it after the profiled run.
+    """
+    from agentgrep._engine.runtime import SearchRuntime
+    from agentgrep.db import DbRuntime, default_db_path
+
+    mode = _resolved_cache_mode()
+    if mode == "off":
+        return None
+    runtime = SearchRuntime(cache_mode=mode)
+    db_path = default_db_path()
+    if db_path.exists():
+        runtime.db = DbRuntime.open_readonly(db_path)
+    return runtime
+
+
 def _run_spec(
     args: argparse.Namespace,
     spec: ProfileRunSpec,
@@ -286,7 +324,12 @@ def _run_spec(
             dedupe=True,
             match_surface=spec.match_surface,
         )
-        profiled_search = profile_search_query(home, query)
+        runtime = _cache_search_runtime()
+        try:
+            profiled_search = profile_search_query(home, query, runtime=runtime)
+        finally:
+            if runtime is not None and runtime.db is not None:
+                runtime.db.close()
         payload = profiled_search.to_payload()
         payload["scope"] = scope
         terms = query.terms
@@ -294,6 +337,8 @@ def _run_spec(
     payload["profile_component"] = spec.component
     payload["schema_version"] = SCHEMA_VERSION
     payload["artifact_kind"] = PROFILE_RUN_ARTIFACT_KIND
+    payload["cache_mode"] = _resolved_cache_mode()
+    payload["sql_explain"] = _sql_explain_echo()
     payload["agent_count"] = len(agents)
     payload["term_count"] = len(terms)
     payload["limit"] = limit

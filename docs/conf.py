@@ -68,6 +68,7 @@ conf["fastmcp_model_classes"] = (
     "SourceRecordModel",
     "SearchToolQuery",
     "SearchToolResponse",
+    "DbStatusModel",
     "FindToolQuery",
     "FindToolResponse",
     "BackendAvailabilityModel",
@@ -95,6 +96,7 @@ conf["fastmcp_section_badge_map"] = {
     "Discovery": "readonly",
     "Catalog": "readonly",
     "Diagnostic": "readonly",
+    "DB": "readonly",
 }
 conf["fastmcp_section_badge_pages"] = ("mcp/tools", "mcp/index", "index")
 
