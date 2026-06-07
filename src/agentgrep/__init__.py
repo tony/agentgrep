@@ -3665,6 +3665,13 @@ def _db_search_result(
                 msg = "DB cache required but no db runtime is configured"
                 raise RuntimeError(msg)
             return False, []
+        if runtime.cache_mode == "auto" and not db.covers_query(query):
+            # A partial sync (agent subset, narrowed scope, capped or
+            # interrupted run) leaves the index covering less than the
+            # query; auto must not pass off a subset as the answer.
+            # require keeps serving - the caller demanded the cache.
+            reason = "partial-coverage"
+            return False, []
         from agentgrep.db import DbQueryUnsupported
 
         try:

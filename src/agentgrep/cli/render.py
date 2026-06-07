@@ -574,7 +574,33 @@ def _format_db_explain_text(payload: object, *, colors: agentgrep.AnsiColors) ->
     if last_synced is not None:
         lines.append(f"{colors.muted('Last synced')} | {last_synced}")
     lines.append(f"{colors.muted('Answerable')} | {answerable}")
+    lines.append(_format_db_explain_coverage_line(payload, colors=colors))
     return "\n".join(lines)
+
+
+def _format_db_explain_coverage_line(payload: object, *, colors: agentgrep.AnsiColors) -> str:
+    """Return the coverage line for the db explain text summary.
+
+    ``None`` coverage means no completed sync has recorded coverage —
+    rendered distinctly from a recorded-but-empty map so cache misses
+    in auto mode are explainable.
+    """
+    coverage = _attribute_or_mapping_value(payload, "coverage", None)
+    if coverage is None:
+        return f"{colors.muted('Coverage')} | {colors.warning('not recorded')}"
+    if not isinstance(coverage, cabc.Mapping) or not coverage:
+        return f"{colors.muted('Coverage')} | {colors.warning('none')}"
+    mapping = t.cast("cabc.Mapping[str, object]", coverage)
+    parts = []
+    for agent in sorted(str(key) for key in mapping):
+        scopes = mapping.get(agent)
+        scope_list = (
+            ",".join(str(scope) for scope in t.cast("cabc.Iterable[object]", scopes))
+            if isinstance(scopes, list | tuple)
+            else str(scopes)
+        )
+        parts.append(f"{agent}={scope_list}")
+    return f"{colors.muted('Coverage')} | {colors.success(' '.join(parts))}"
 
 
 def _format_db_sync_result_text(payload: object, *, colors: agentgrep.AnsiColors) -> str:
@@ -1350,6 +1376,7 @@ def _run_db_status_command(args: DbArgs) -> int:
                 sync_errors=0,
                 last_synced_at=None,
                 answerable=ANSWERABLE_QUERY_FORMS,
+                coverage=None,
             )
         else:
             payload = DbStatus(
@@ -1372,6 +1399,8 @@ def _run_db_status_command(args: DbArgs) -> int:
 
 def _run_db_command_with_runtime(args: DbArgs, runtime: DbRuntime) -> int:
     """Execute one db sync action against an already-open runtime."""
+    from agentgrep.db import SyncCoverage
+
     query = agentgrep.SearchQuery(
         terms=(),
         scope=args.scope,
@@ -1416,11 +1445,20 @@ def _run_db_command_with_runtime(args: DbArgs, runtime: DbRuntime) -> int:
         )
         if args.limit_sources is not None:
             sources = sources[: args.limit_sources]
+        # A capped source list slices across agents, so it can never
+        # claim agent/scope coverage; interrupted and early-exited
+        # loops record nothing inside sync_records itself.
+        coverage = SyncCoverage(
+            agents=args.agents,
+            scope=args.scope,
+            complete=args.limit_sources is None,
+        )
         result = runtime.sync_sources(
             sources,
             control=control,
             progress=progress,
             force=args.force,
+            coverage=coverage,
         )
     except KeyboardInterrupt:
         if progress is not None:
