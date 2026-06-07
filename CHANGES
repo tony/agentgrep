@@ -42,6 +42,17 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### What's new
+
+#### Responsive detail pane in the TUI
+
+The record-detail pane now adapts to the terminal width. Wide terminals
+keep it on the right beside the results; narrow terminals (under ~100
+columns) stack it below the results and leave it closed until you select
+a row, so small screens get a full-height result list and the detail
+opens on demand — the same shape `tig` uses for its diff view. Resizing
+across the threshold moves the pane live.
+
 ## agentgrep 0.1.0a19 (2026-06-07)
 
 agentgrep 0.1.0a19 reworks the TUI's live search progress into a calm,
