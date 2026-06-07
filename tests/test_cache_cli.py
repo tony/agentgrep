@@ -811,3 +811,83 @@ def test_db_explain_text_output_shows_sync_summary(
     assert "DB explain" in captured.out
     assert "0 ok" in captured.out
     assert "Answerable" in captured.out
+
+
+class CacheEnvCase(t.NamedTuple):
+    """Named case for AGENTGREP_CACHE resolution."""
+
+    test_id: str
+    env_value: str | None
+    argv: tuple[str, ...]
+    expected_cache_mode: agentgrep.CacheMode
+
+
+CACHE_ENV_CASES: tuple[CacheEnvCase, ...] = (
+    CacheEnvCase(
+        test_id="env-off-applies",
+        env_value="off",
+        argv=("grep", "ruff"),
+        expected_cache_mode="off",
+    ),
+    CacheEnvCase(
+        test_id="env-require-applies",
+        env_value="require",
+        argv=("search", "ruff"),
+        expected_cache_mode="require",
+    ),
+    CacheEnvCase(
+        test_id="flag-overrides-env",
+        env_value="off",
+        argv=("grep", "--cache", "require", "ruff"),
+        expected_cache_mode="require",
+    ),
+    CacheEnvCase(
+        test_id="no-cache-flag-overrides-env",
+        env_value="require",
+        argv=("search", "--no-cache", "ruff"),
+        expected_cache_mode="off",
+    ),
+    CacheEnvCase(
+        test_id="unset-env-defaults-auto",
+        env_value=None,
+        argv=("grep", "ruff"),
+        expected_cache_mode="auto",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    CACHE_ENV_CASES,
+    ids=[case.test_id for case in CACHE_ENV_CASES],
+)
+def test_cache_mode_resolves_flag_over_env(
+    case: CacheEnvCase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cache mode resolution honors flag > AGENTGREP_CACHE > auto."""
+    if case.env_value is None:
+        monkeypatch.delenv("AGENTGREP_CACHE", raising=False)
+    else:
+        monkeypatch.setenv("AGENTGREP_CACHE", case.env_value)
+
+    parsed = agentgrep.parse_args(case.argv)
+
+    assert isinstance(parsed, (agentgrep.GrepArgs, agentgrep.SearchArgs))
+    assert parsed.cache_mode == case.expected_cache_mode
+
+
+def test_invalid_cache_env_value_fails_at_parse_time(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An invalid AGENTGREP_CACHE value is a clean parse-time error."""
+    monkeypatch.setenv("AGENTGREP_CACHE", "never")
+
+    with pytest.raises(SystemExit) as exc_info:
+        _ = agentgrep.parse_args(("grep", "ruff"))
+
+    captured = capsys.readouterr()
+    assert exc_info.value.code == 2
+    assert "AGENTGREP_CACHE must be one of auto, require, off" in captured.err
+    assert "Traceback" not in captured.err

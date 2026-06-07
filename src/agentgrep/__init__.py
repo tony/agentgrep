@@ -525,6 +525,7 @@ from agentgrep._engine import (  # noqa: E402  (re-exports must follow main defi
     run_search_result,
 )
 from agentgrep._engine.orchestration import (  # noqa: E402  (re-exports must follow main definition)
+    _db_search_result,
     _source_profile_attributes,
     build_grep_command,
     build_record_match_surface,

@@ -834,7 +834,7 @@ class DbRuntime:
         """Close the underlying store connection."""
         self.store.close()
 
-    def __enter__(self) -> DbRuntime:
+    def __enter__(self) -> t.Self:
         """Return the runtime for use as a context manager."""
         return self
 
