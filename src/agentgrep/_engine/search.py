@@ -27,6 +27,14 @@ The generator owns these invariants:
   exits early via :attr:`agentgrep.SearchControl.request_answer_now`
   still fires ``SearchFinished`` so cleanup is uniform.
 
+Cache-served searches keep the same envelope with zero sources: when
+the DB cache answers the query, the stream is ``SearchStarted`` with
+``source_count=0``, one ``RecordEmitted`` per cached record, then
+``SearchFinished`` — no ``SourceStarted``/``SourceFinished`` pairs
+fire because no source is scanned. ``source_count=0`` therefore means
+either "nothing discovered" or "served from cache"; the
+``search.cache.decision`` profile span disambiguates the two.
+
 Cancellation honors the existing :class:`agentgrep.SearchControl`
 primitive — call :meth:`agentgrep.SearchControl.request_answer_now`
 to break out at the next per-record boundary. Async consumers wrap
