@@ -131,6 +131,29 @@ until implemented and documented.
   DB index. Search planning uses this to decide when indexed and raw
   source plans must be combined.
 
+## Cache control and transparency
+
+Every cache layer must expose a bypass lever and a hit-or-miss signal.
+A cache a user cannot turn off, or whose effect on a result cannot be
+observed, is a correctness liability rather than an optimization.
+
+The levers, in precedence order where they overlap:
+
+- `AGENTGREP_DB` selects the cache location; pointing it at a
+  scratch path isolates tests, benchmarks, and experiments.
+- `--cache {auto,require,off}` (with `--no-cache` as the `off`
+  shorthand) selects the mode per invocation, and `AGENTGREP_CACHE`
+  supplies the same mode for whole environments — benchmark harnesses,
+  CI jobs, and MCP server configuration blocks. An explicit flag beats
+  the environment; the default is `auto`. `require` exists so warm
+  measurements fail loudly instead of silently timing a live scan.
+- The `search.cache.decision` profile span reports one aggregate
+  sample per consulted query — mode, whether the cache served it, the
+  served record count, and the fallback reason — and
+  `search.collect.source_scan_cache` reports per-source scan-cache
+  lookups. Together they make every cache's contribution visible in
+  profiles and benchmark artifacts.
+
 ## Sync rules
 
 Sync is itself planned work:
