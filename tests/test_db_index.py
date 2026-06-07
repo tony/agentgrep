@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import logging
 import pathlib
 import typing as t
 
@@ -1316,3 +1317,162 @@ def test_cached_search_with_empty_agent_selection_returns_nothing(
     runtime.close()
 
     assert found == []
+
+
+class SqlTelemetrySearchCase(t.NamedTuple):
+    """Named case for SQL statement samples emitted by cached search."""
+
+    test_id: str
+    term: str
+    expected_statement: str
+
+
+SQL_TELEMETRY_SEARCH_CASES: tuple[SqlTelemetrySearchCase, ...] = (
+    SqlTelemetrySearchCase(
+        test_id="fts-path-statement",
+        term="alpaca",
+        expected_statement="records.search_fts",
+    ),
+    SqlTelemetrySearchCase(
+        test_id="scan-path-statement",
+        term="zq",
+        expected_statement="records.search_scan",
+    ),
+)
+
+
+def _sql_samples(
+    profiler_samples: t.Any,
+) -> dict[str, t.Any]:
+    """Index db.sql.statement samples by statement name."""
+    return {
+        str(sample.attributes["agentgrep_sql_statement"]): sample
+        for sample in profiler_samples
+        if sample.name == "db.sql.statement"
+    }
+
+
+@pytest.mark.parametrize(
+    "case",
+    SQL_TELEMETRY_SEARCH_CASES,
+    ids=[case.test_id for case in SQL_TELEMETRY_SEARCH_CASES],
+)
+def test_search_emits_aggregated_sql_statement_samples(
+    case: SqlTelemetrySearchCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Cached search emits one db.sql.statement sample per statement shape."""
+    from agentgrep._engine.profiling import EngineProfiler, use_engine_profiler
+
+    source_path = tmp_path / "session.jsonl"
+    source_path.write_text("ruff", encoding="utf-8")
+    source = _source(source_path)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    _ = runtime.sync_records(
+        ((source, (_record(source, "alpaca zq sentinel-free text"),)),),
+    )
+    profiler = EngineProfiler()
+
+    with use_engine_profiler(profiler):
+        _ = runtime.search_records(_query(case.term))
+    runtime.close()
+
+    samples = _sql_samples(profiler.snapshot().samples)
+    assert case.expected_statement in samples
+    statement = samples[case.expected_statement]
+    assert statement.attributes["agentgrep_sql_count"] == 1
+    assert statement.attributes["agentgrep_sql_rows"] == 1
+
+
+def test_sync_aggregates_sql_statement_samples(tmp_path: pathlib.Path) -> None:
+    """A multi-record sync emits one aggregated sample per statement shape.
+
+    Per-record statements (records.insert, fts.insert) must show up as
+    one sample with a count — the n+1 signal — never as one sample per
+    execution.
+    """
+    from agentgrep._engine.profiling import EngineProfiler, use_engine_profiler
+
+    source_path = tmp_path / "session.jsonl"
+    source_path.write_text("ruff", encoding="utf-8")
+    source = _source(source_path)
+    records = tuple(
+        _record(source, f"alpaca record {index}", session_id=f"session-{index}")
+        for index in range(3)
+    )
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    profiler = EngineProfiler()
+
+    with use_engine_profiler(profiler):
+        _ = runtime.sync_records(((source, records),))
+    runtime.close()
+
+    all_sql = [
+        sample for sample in profiler.snapshot().samples if sample.name == "db.sql.statement"
+    ]
+    samples = _sql_samples(all_sql)
+    assert samples["records.insert"].attributes["agentgrep_sql_count"] == 3
+    assert samples["fts.insert"].attributes["agentgrep_sql_count"] == 3
+    statement_names = [str(sample.attributes["agentgrep_sql_statement"]) for sample in all_sql]
+    assert len(statement_names) == len(set(statement_names))
+
+
+def test_sql_telemetry_is_silent_without_active_profiler(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Without an active profiler, ops run clean and leave no stats behind."""
+    from agentgrep._engine.profiling import EngineProfiler, use_engine_profiler
+
+    source_path = tmp_path / "session.jsonl"
+    source_path.write_text("ruff", encoding="utf-8")
+    source = _source(source_path)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    _ = runtime.sync_records(
+        ((source, (_record(source, "alpaca quiet"),)),),
+    )
+    _ = runtime.search_records(_query("alpaca"))
+    assert runtime.store._sql_stats == {}
+
+    late_profiler = EngineProfiler()
+    with use_engine_profiler(late_profiler):
+        pass
+    runtime.close()
+
+    assert late_profiler.snapshot().samples == ()
+
+
+def test_sql_telemetry_never_captures_bound_parameters(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Statement telemetry carries placeholders only — never search terms."""
+    from agentgrep._engine.profiling import EngineProfiler, use_engine_profiler
+
+    sentinel = "zanzibar7sentinel"
+    source_path = tmp_path / "session.jsonl"
+    source_path.write_text("ruff", encoding="utf-8")
+    source = _source(source_path)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    _ = runtime.sync_records(
+        ((source, (_record(source, f"prompt mentioning {sentinel} once"),)),),
+    )
+    profiler = EngineProfiler()
+
+    with (
+        caplog.at_level(logging.DEBUG, logger="agentgrep.db"),
+        use_engine_profiler(profiler),
+    ):
+        found = runtime.search_records(_query(sentinel))
+    runtime.close()
+
+    assert len(found) == 1
+    sql_records = [
+        record for record in caplog.records if hasattr(record, "agentgrep_sql_statement")
+    ]
+    assert sql_records
+    for record in sql_records:
+        assert sentinel not in record.getMessage()
+        assert sentinel not in str(record.agentgrep_sql_statement)
+    for sample in profiler.snapshot().samples:
+        for value in sample.attributes.values():
+            assert sentinel not in str(value)
