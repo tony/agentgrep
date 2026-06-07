@@ -325,6 +325,45 @@ def _fts_indexable(term: str) -> bool:
     return len(term) >= 3
 
 
+def _record_in_cached_scope(
+    record: agentgrep.SearchRecord,
+    scope: agentgrep.SearchScope,
+    prompt_history_agents: frozenset[str],
+) -> bool:
+    """Return whether a cached record belongs to the requested scope.
+
+    Composes the live pipeline's two scope filters: the per-record
+    :func:`agentgrep.record_matches_scope` check and the planner's
+    :func:`agentgrep.source_matches_scope` store selection. The cached
+    table holds records from every synced store, so the planner's
+    source-level decisions must be re-applied per record — most
+    visibly for prompts scope, where an agent with a dedicated
+    prompt-history store never serves user turns from its chat stores.
+
+    Parameters
+    ----------
+    record : agentgrep.SearchRecord
+        Cached record reconstructed from the records table.
+    scope : agentgrep.SearchScope
+        Requested search scope; ``"all"`` is handled by the caller.
+    prompt_history_agents : frozenset[str]
+        Agents holding a synced prompt-history-role source.
+
+    Returns
+    -------
+    bool
+        Whether the record is in scope.
+    """
+    role = agentgrep.store_role_for_record(record.store, record.adapter_id)
+    if scope == "conversations":
+        return role in agentgrep.CONVERSATION_STORE_ROLES
+    if record.kind != "prompt":
+        return False
+    if role in agentgrep.CONVERSATION_STORE_ROLES:
+        return record.agent not in prompt_history_agents
+    return True
+
+
 class DbStore:
     """SQLite-backed store for the persistent DB index."""
 
@@ -723,6 +762,24 @@ class DbStore:
         )
         return record_id
 
+    def _prompt_history_agents(self) -> frozenset[str]:
+        """Return agents with a synced prompt-history-role source.
+
+        Mirrors :func:`agentgrep.prompt_history_agents_for_sources`
+        against the synced source ledger so cached prompts-scope
+        results gate conversation stores per agent exactly like the
+        live planner does.
+        """
+        rows = self.connection.execute(
+            "SELECT DISTINCT agent, store, adapter_id FROM sources",
+        ).fetchall()
+        return frozenset(
+            str(row["agent"])
+            for row in rows
+            if agentgrep.store_role_for_record(str(row["store"]), str(row["adapter_id"]))
+            in agentgrep.PROMPT_HISTORY_STORE_ROLES
+        )
+
     def search_records(self, query: agentgrep.SearchQuery) -> list[agentgrep.SearchRecord]:
         """Return SearchRecord objects matching ``query`` from SQLite/FTS."""
         if query.regex or query.any_term or query.compiled is not None:
@@ -732,9 +789,13 @@ class DbStore:
         where = ["r.agent IN ({})".format(",".join("?" for _ in query.agents))]
         params.extend(query.agents)
         if query.scope == "prompts":
+            # Correct superset prefilter: live prompts-scope results
+            # are always kind='prompt'. The per-agent store gate runs
+            # in the scope post-filter below. Conversations scope has
+            # no kind prefilter at all — chat stores emit user turns
+            # as kind='prompt', so a kind predicate would drop records
+            # the live store-role scope admits.
             where.append("r.kind = 'prompt'")
-        elif query.scope == "conversations":
-            where.append("r.kind = 'history'")
         if query.terms and all(_fts_indexable(term) for term in query.terms):
             # The indexed haystack and the query term are both Python-
             # casefolded, so trigram candidates are a superset of the
@@ -758,6 +819,15 @@ class DbStore:
                 scan_params,
             ).fetchall()
         records = [self._row_to_record(row) for row in rows]
+        if query.scope != "all":
+            prompt_history_agents = (
+                self._prompt_history_agents() if query.scope == "prompts" else frozenset()
+            )
+            records = [
+                record
+                for record in records
+                if _record_in_cached_scope(record, query.scope, prompt_history_agents)
+            ]
         filtered = [record for record in records if agentgrep.matches_record(record, query)]
         filtered.sort(key=agentgrep.search_record_sort_key, reverse=True)
         if query.dedupe:
