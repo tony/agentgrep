@@ -2792,46 +2792,160 @@ class _FakeFilterCompleted(t.NamedTuple):
     payload: t.Any
 
 
-class AutohighlightArmCase(t.NamedTuple):
-    """One filter-result scenario for the autohighlight-suppression flag."""
+class AutohighlightQueueCase(t.NamedTuple):
+    """One filter-result scenario for queued programmatic highlights."""
 
     test_id: str
     record_count: int
-    expect_armed: bool
+    matching_count: int
+    initial_highlighted: int | None
+    expect_pending: int
 
 
-AUTOHIGHLIGHT_ARM_CASES: tuple[AutohighlightArmCase, ...] = (
-    AutohighlightArmCase(test_id="results-arm-the-flag", record_count=3, expect_armed=True),
-    AutohighlightArmCase(test_id="empty-leaves-it-disarmed", record_count=0, expect_armed=False),
+AUTOHIGHLIGHT_QUEUE_CASES: tuple[AutohighlightQueueCase, ...] = (
+    AutohighlightQueueCase(
+        test_id="streamed-results-without-highlight",
+        record_count=3,
+        matching_count=3,
+        initial_highlighted=None,
+        expect_pending=0,
+    ),
+    AutohighlightQueueCase(
+        test_id="empty-leaves-it-disarmed",
+        record_count=3,
+        matching_count=0,
+        initial_highlighted=None,
+        expect_pending=0,
+    ),
+    AutohighlightQueueCase(
+        test_id="single-clamp-highlight",
+        record_count=3,
+        matching_count=2,
+        initial_highlighted=2,
+        expect_pending=1,
+    ),
+    AutohighlightQueueCase(
+        test_id="multi-clamp-highlights",
+        record_count=10,
+        matching_count=5,
+        initial_highlighted=9,
+        expect_pending=5,
+    ),
 )
 
 
 @pytest.mark.parametrize(
     "case",
-    AUTOHIGHLIGHT_ARM_CASES,
-    ids=[case.test_id for case in AUTOHIGHLIGHT_ARM_CASES],
+    AUTOHIGHLIGHT_QUEUE_CASES,
+    ids=[case.test_id for case in AUTOHIGHLIGHT_QUEUE_CASES],
 )
-async def test_filter_completion_arms_autohighlight_only_with_results(
+async def test_filter_completion_counts_only_queued_autohighlights(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
-    case: AutohighlightArmCase,
+    case: AutohighlightQueueCase,
 ) -> None:
-    """An empty filter leaves the autohighlight flag disarmed.
-
-    ``set_records([])`` emits no ``OptionHighlighted`` to consume the flag,
-    so arming it on an empty result set would swallow the user's next real
-    cursor move once results return. The flag is asserted immediately,
-    before the queued highlight (for the non-empty case) consumes it.
-    """
+    """The suppression counter tracks queued highlights, not non-empty results."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     records = _seed_records(agentgrep, tmp_path, case.record_count)
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        app._pending_autohighlight = False
-        payload = agentgrep.FilterCompletedPayload(text="", matching=tuple(records))
+        app.all_records.extend(records)
+        app.filtered_records = list(records)
+        app._results.append_records(records)
+        if case.initial_highlighted is not None:
+            app._results._reactive_highlighted = case.initial_highlighted
+        app._pending_autohighlights = 99
+        payload = agentgrep.FilterCompletedPayload(
+            text="",
+            matching=tuple(records[: case.matching_count]),
+        )
         app.on_filter_completed(_FakeFilterCompleted(payload=payload))
-        assert app._pending_autohighlight is case.expect_armed
+        assert app._pending_autohighlights == case.expect_pending
+
+
+class FilterUserMoveCase(t.NamedTuple):
+    """One filter path and the first genuine cursor move after it."""
+
+    test_id: str
+    record_count: int
+    matching_count: int
+    initial_highlighted: int | None
+    first_user_key: str
+
+
+FILTER_USER_MOVE_CASES: tuple[FilterUserMoveCase, ...] = (
+    FilterUserMoveCase(
+        test_id="streamed-results-without-highlight",
+        record_count=3,
+        matching_count=3,
+        initial_highlighted=None,
+        first_user_key="j",
+    ),
+    FilterUserMoveCase(
+        test_id="narrowing-keeps-highlight-index",
+        record_count=3,
+        matching_count=2,
+        initial_highlighted=0,
+        first_user_key="j",
+    ),
+    FilterUserMoveCase(
+        test_id="single-clamp-highlight-is-programmatic",
+        record_count=3,
+        matching_count=2,
+        initial_highlighted=2,
+        first_user_key="k",
+    ),
+    FilterUserMoveCase(
+        test_id="multi-clamp-highlights-are-programmatic",
+        record_count=10,
+        matching_count=5,
+        initial_highlighted=9,
+        first_user_key="k",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    FILTER_USER_MOVE_CASES,
+    ids=[case.test_id for case in FILTER_USER_MOVE_CASES],
+)
+async def test_filter_completion_does_not_swallow_first_real_cursor_move(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: FilterUserMoveCase,
+) -> None:
+    """Only queued programmatic highlights may keep stacked detail collapsed."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, case.record_count)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.all_records.extend(records)
+        app.filtered_records = list(records)
+        app._results.append_records(records)
+        if case.initial_highlighted is not None:
+            app._results._reactive_highlighted = case.initial_highlighted
+        app._detail_opened = False
+        app._apply_responsive_layout()
+        app._results.focus()
+        await pilot.pause()
+
+        payload = agentgrep.FilterCompletedPayload(
+            text="",
+            matching=tuple(records[: case.matching_count]),
+        )
+        app.on_filter_completed(_FakeFilterCompleted(payload=payload))
+        await pilot.pause()
+        await pilot.pause()
+        assert app._detail_opened is False
+        assert app._detail_column.has_class("-collapsed")
+
+        await pilot.press(case.first_user_key)
+        await pilot.pause()
+        assert app._detail_opened is True
+        assert not app._detail_column.has_class("-collapsed")
 
 
 async def test_right_on_non_empty_filter_moves_cursor(
@@ -3708,9 +3822,10 @@ async def test_narrow_detail_opens_on_user_selection_not_autohighlight(
         assert app._stacked is True
         assert app._detail_column.has_class("-collapsed")
         # The programmatic row-0 highlight must NOT open it.
-        app._pending_autohighlight = True
+        app._pending_autohighlights = 1
         app.on_option_list_option_highlighted(_FakeHighlight(0))
         await pilot.pause()
+        assert app._pending_autohighlights == 0
         assert app._detail_opened is False
         assert app._detail_column.has_class("-collapsed")
         # A real cursor move opens it and keeps it open.

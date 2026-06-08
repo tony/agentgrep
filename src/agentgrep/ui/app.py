@@ -653,7 +653,7 @@ def build_streaming_ui_app(
                 [option_type(self._render_record(r), id=str(id(r))) for r in records],
             )
 
-        def set_records(self, records: cabc.Sequence[SearchRecord]) -> None:
+        def set_records(self, records: cabc.Sequence[SearchRecord]) -> int:
             """Apply a new filter result by patching the existing options.
 
             For the common "user typed another character" narrowing case the
@@ -664,20 +664,23 @@ def build_streaming_ui_app(
             when more than half of the current options would be removed
             (where ``remove_option_at_index`` would do worse than a single
             ``clear_options`` + ``add_options`` pair).
+
+            Returns the number of programmatic ``OptionHighlighted`` messages
+            Textual queued while applying the record update.
             """
             new_records = list(records)
             new_ids: set[int] = {id(record) for record in new_records}
             current_records = self._records
             if not current_records:
                 self._rebuild_options(new_records)
-                return
+                return 0
             current_index_by_id: dict[int, int] = {
                 id(record): idx for idx, record in enumerate(current_records)
             }
             additions = [record for record in new_records if id(record) not in current_index_by_id]
             if additions:
                 self._rebuild_options(new_records)
-                return
+                return 0
             to_remove_indices = sorted(
                 (
                     current_index_by_id[id(record)]
@@ -691,10 +694,16 @@ def build_streaming_ui_app(
                 # than N ``remove_option_at_index`` calls (each shifts the
                 # internal options list).
                 self._rebuild_options(new_records)
-                return
+                return 0
+            programmatic_highlights = 0
             for idx in to_remove_indices:
+                before_highlighted = t.cast("int | None", getattr(self, "highlighted", None))
                 self.remove_option_at_index(idx)
+                after_highlighted = t.cast("int | None", getattr(self, "highlighted", None))
+                if after_highlighted is not None and after_highlighted != before_highlighted:
+                    programmatic_highlights += 1
             self._records = new_records
+            return programmatic_highlights
 
         def _rebuild_options(self, records: cabc.Sequence[SearchRecord]) -> None:
             """Full clear + rebuild path. Used when delta-apply isn't safe."""
@@ -1269,11 +1278,11 @@ def build_streaming_ui_app(
             # Responsive split: True when the detail pane is stacked
             # below the results rather than beside them. ``_detail_opened``
             # is the tig-style "user selected a row" gate that reveals the
-            # stacked detail; the auto row-0 highlight after each filter
-            # pass (``_pending_autohighlight``) must not trip it.
+            # stacked detail; programmatic highlights caused by filter-list
+            # patching (``_pending_autohighlights``) must not trip it.
             self._stacked: bool = False
             self._detail_opened: bool = False
-            self._pending_autohighlight: bool = False
+            self._pending_autohighlights: int = 0
             # LRU caches for detail-pane work. Keyed by
             # ``(id(record), query.terms, case_sensitive, regex)`` — the
             # tuple of attributes that determines the rendered body and
@@ -1445,7 +1454,7 @@ def build_streaming_ui_app(
             # A fresh search re-collapses the stacked detail pane until
             # the user selects a row again.
             self._detail_opened = False
-            self._pending_autohighlight = False
+            self._pending_autohighlights = 0
             if self._results is not None:
                 self._results.set_records([])
             self._apply_responsive_layout()
@@ -1886,9 +1895,7 @@ def build_streaming_ui_app(
             """Apply the worker's filter result if it matches the current input.
 
             Skips :meth:`show_detail` when the top filtered record is already
-            the one being displayed — ``set_records`` re-emits an
-            ``OptionHighlighted`` event during its rebuild which triggers a
-            detail re-render anyway, and detail rendering (Rich Text header,
+            the one being displayed — detail rendering (Rich Text header,
             JSON/Markdown body, scroll-to-match) is one of the heavier
             main-thread units per filter pass.
             """
@@ -1897,14 +1904,10 @@ def build_streaming_ui_app(
                 return
             self.filtered_records = list(payload.matching)
             if self._results is not None:
-                # ``set_records`` on a non-empty list re-highlights row 0;
-                # flag that the next OptionHighlighted is programmatic so it
-                # doesn't count as the user opening the stacked detail. An
-                # empty list emits no OptionHighlighted, so leave the flag
-                # disarmed — otherwise it would swallow the user's next
-                # genuine cursor move once results return.
-                self._pending_autohighlight = bool(payload.matching)
-                self._results.set_records(payload.matching)
+                # Only suppress the programmatic highlights Textual actually
+                # queued while patching the list. Non-empty filter results do
+                # not guarantee a highlight message will be emitted.
+                self._pending_autohighlights = self._results.set_records(payload.matching)
             if self._detail is not None:
                 if self.filtered_records:
                     top = self.filtered_records[0]
@@ -1930,11 +1933,11 @@ def build_streaming_ui_app(
                 self._refresh_results_status_right()
                 return
             row_index = int(option_index)
-            if self._pending_autohighlight:
-                # The programmatic row-0 highlight after a filter pass —
-                # update content (so the wide pane stays populated) but
-                # don't treat it as the user opening the stacked detail.
-                self._pending_autohighlight = False
+            if self._pending_autohighlights > 0:
+                # A programmatic highlight after a filter pass — update
+                # content (so the wide pane stays populated) but don't treat
+                # it as the user opening the stacked detail.
+                self._pending_autohighlights -= 1
             else:
                 # A genuine cursor move: open the stacked detail pane and
                 # keep it open for the rest of this result set (tig-style).
