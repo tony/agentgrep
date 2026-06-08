@@ -47,6 +47,9 @@ Repository = "https://github.com/tony/agentgrep"
 agentgrep = "agentgrep.cli:main"
 agentgrep-mcp = "agentgrep.mcp:main"
 
+[project.entry-points.pytest11]
+pytest-documentation = "pytest_documentation.plugin"
+
 [dependency-groups]
 dev = [
   # Docs
@@ -194,6 +197,7 @@ pyupgrade.keep-runtime-typing = false
 [tool.ruff.lint.isort]
 known-first-party = [
   "agentgrep",
+  "pytest_documentation",
 ]
 combine-as-imports = true
 required-imports = [
@@ -231,6 +235,8 @@ doctest_optionflags = [
 ]
 testpaths = [
   "src/agentgrep",
+  "src/pytest_documentation",
+  "docs",
   "tests",
 ]
 asyncio_mode = "auto"
