@@ -31,6 +31,18 @@ a backend search immediately:
 $ agentgrep ui bliss
 ```
 
+Hand a one-shot `search` straight to the explorer with `--ui`:
+
+```console
+$ agentgrep search bliss --ui
+```
+
+Open the explorer over prompts and conversations at once:
+
+```console
+$ agentgrep grep tmux --scope all --ui
+```
+
 ## Command
 
 ```{eval-rst}

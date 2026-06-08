@@ -16,6 +16,21 @@ Search only Codex prompts:
 $ uv run agentgrep grep "draft pr" --agent codex
 ```
 
+## Ranked search
+
+`search` ranks, dedupes, and groups results by session — the smart
+default when you want the most relevant matches first:
+
+```console
+$ uv run agentgrep search "draft pr"
+```
+
+Sweep prompts and conversations together:
+
+```console
+$ uv run agentgrep search "draft pr" --scope all
+```
+
 ## Search conversations
 
 Search assistant, tool, event, and full conversation records:

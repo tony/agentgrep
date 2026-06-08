@@ -103,8 +103,8 @@ METHODS: tuple[Method, ...] = (
 
 _USAGE_SUFFIXES: tuple[str, ...] = (
     'search "deploy"',
-    'search --agent claude --json "deploy"',
-    "find --json",
+    'search "deploy" --scope all',
+    'search "deploy" --ui',
 )
 
 

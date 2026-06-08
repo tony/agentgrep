@@ -15,7 +15,20 @@ $ uv sync --all-groups
 
 ## 2. Search local agent prompts
 
-Search prompt-scope records across supported stores:
+Ranked search across supported stores — deduped, newest first:
+
+```console
+$ uv run agentgrep search "release notes"
+```
+
+Search prompts and conversations together in one sweep:
+
+```console
+$ uv run agentgrep search "release notes" --scope all
+```
+
+Prefer ripgrep-shaped flags? `grep` searches prompt-scope records
+across supported stores:
 
 ```console
 $ uv run agentgrep grep "release notes"

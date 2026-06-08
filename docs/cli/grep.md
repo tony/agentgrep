@@ -111,7 +111,11 @@ deduplication.
 prompt-history logs and user turns projected from transcript-only
 stores. Pass `--scope conversations` for full conversation, session,
 assistant, tool, and event records, or `--scope all` to search both
-surfaces together.
+surfaces together:
+
+```console
+$ agentgrep grep tmux --scope all
+```
 
 ## Progress
 

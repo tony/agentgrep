@@ -77,6 +77,18 @@ surface, but exposed as MCP tools with typed schemas.
 
 ## Examples
 
+Ranked search — deduped and grouped by session:
+
+```console
+$ agentgrep search "deploy"
+```
+
+Sweep prompts and conversations in one pass:
+
+```console
+$ agentgrep search "deploy" --scope all
+```
+
 Search prompts with rg-shaped flags:
 
 ```console
@@ -87,6 +99,12 @@ Combine multiple patterns with an agent filter:
 
 ```console
 $ agentgrep grep serene bliss --agent codex
+```
+
+Snippet-first output with highlighted matches:
+
+```console
+$ agentgrep grep --style pretty deploy
 ```
 
 Stream full-conversation matches as NDJSON:

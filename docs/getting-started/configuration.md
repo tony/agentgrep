@@ -24,6 +24,12 @@ transcript-only stores. Use `--scope` to opt into broader records:
 $ uv run agentgrep grep "docs deploy" --scope conversations
 ```
 
+Or search both surfaces at once:
+
+```console
+$ uv run agentgrep grep "docs deploy" --scope all
+```
+
 Allowed values are `prompts`, `conversations`, and `all`.
 
 ## Output

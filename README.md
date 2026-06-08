@@ -29,13 +29,21 @@ snippets live in the
 
 ## CLI quickstart
 
-Search user prompts across every configured agent:
+Search your prompts across every configured agent — ranked, deduped,
+newest first:
 
 ```console
-$ agentgrep grep "deploy"
+$ agentgrep search "deploy"
 ```
 
-Search full conversations explicitly:
+Search prompts and conversations together in one sweep:
+
+```console
+$ agentgrep search "deploy" --scope all
+```
+
+Prefer ripgrep-shaped flags? `grep` mirrors `rg` / `ag` against the
+same records:
 
 ```console
 $ agentgrep grep "deploy" --scope conversations
@@ -48,14 +56,16 @@ results:
 $ agentgrep find --json
 ```
 
-Open the read-only Textual TUI for interactive browsing:
+Open the read-only Textual explorer, seeded with a query:
 
 ```console
-$ agentgrep grep --ui
+$ agentgrep ui "deploy"
 ```
 
-`--json` and `--ndjson` make every command pipe-friendly. Agents that
-don't speak MCP can drive the CLI directly; see
+`--json` and `--ndjson` make every command pipe-friendly, and any
+search-shaped subcommand takes `--ui` to hand the same query to the
+explorer (e.g. `agentgrep grep "deploy" --ui`). Agents that don't
+speak MCP can drive the CLI directly; see
 <https://agentgrep.org/cli/> for the per-subcommand reference.
 
 ## MCP server: quickest setup

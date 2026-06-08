@@ -16,6 +16,26 @@ Read-only search for local AI agent prompts and opt-in conversations across Code
 :variant: compact
 ```
 
+## Try it
+
+Ranked search across every agent's prompts:
+
+```console
+$ agentgrep search "deploy"
+```
+
+Sweep prompts and conversations together:
+
+```console
+$ agentgrep search "deploy" --scope all
+```
+
+Browse matches in the interactive explorer:
+
+```console
+$ agentgrep ui "deploy"
+```
+
 ::::{grid} 1 1 2 3
 :gutter: 2 2 3 3
 
