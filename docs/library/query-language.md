@@ -51,7 +51,7 @@ predicates prune sources before any file is opened.
 
 | Field | Kind | Notes |
 |---|---|---|
-| `agent` | enum | One of `codex`, `claude`, `cursor-cli`, `cursor-ide`, `gemini`, `grok` |
+| `agent` | enum | One of `codex`, `claude`, `cursor-cli`, `cursor-ide`, `gemini`, `grok`, `pi`, `opencode` |
 | `store` | string | Substring against the source's store name |
 | `adapter_id` | string | Substring; alias `adapter` |
 | `path` | path | Glob (with `*` / `?` / `[…]`) or substring |
@@ -126,10 +126,13 @@ Records from either codex or cursor mentioning "deploy". Claude /
 gemini are pruned at source level.
 
 ```console
-$ agentgrep grep '-agent:claude bliss'
+$ agentgrep grep 'NOT agent:claude' bliss
 ```
 
-Records from anyone except claude that mention "bliss".
+Records from anyone except claude that mention "bliss". The
+`-agent:claude` negation shortcut is rejected at parse time (see
+"Leading `-` on a field predicate" below) — `NOT` is the readable
+form, `--` the surgical one.
 
 ```console
 $ agentgrep grep 'timestamp:>2026-01-01 bliss'
@@ -139,10 +142,12 @@ Records after 2026-01-01 mentioning "bliss". The timestamp filter
 runs at the record layer.
 
 ```console
-$ agentgrep grep 'timestamp:[2026-01 TO 2026-03] model:claude'
+$ agentgrep grep 'timestamp:[2026-01 TO 2026-03] model:claude bliss'
 ```
 
-Records in Q1 2026 from any claude-* model.
+Records in Q1 2026 from any claude-* model that mention "bliss".
+Field predicates filter, but `grep` still needs a text term to match
+lines against.
 
 ```console
 $ agentgrep grep 'scope:conversations pytest'
@@ -153,10 +158,13 @@ prompt scope; `scope:conversations` is the inline form of
 `--scope conversations`.
 
 ```console
-$ agentgrep find path:~/.codex agent:codex
+$ agentgrep find 'path:*codex* agent:codex'
 ```
 
-Codex-agent sources under `~/.codex/`.
+Codex-agent sources whose path contains `codex`. `find` takes a
+single positional, so quote the whole query as one token; `path:`
+globs against the absolute path, so match a path fragment rather than
+a `~`-relative prefix.
 
 ```console
 $ agentgrep grep agent:codex bliss
