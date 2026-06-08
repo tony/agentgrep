@@ -6,8 +6,8 @@
 
 The `agentgrep` CLI is the fastest path to your local AI agent prompt
 and history archives from a terminal. It wraps the same read-only
-discovery and parsing layer the MCP server exposes — grep, find
-stores, filter by agent — and lets you pipe everything through
+discovery and parsing layer the MCP server exposes — ranked search,
+grep, find stores, filter by agent — and lets you pipe everything through
 `--json` or `--ndjson` so any script or non-MCP agent can consume the
 results. Bare `agentgrep` (no subcommand) prints a colorized
 directory of choices listing every subcommand with example
@@ -34,10 +34,22 @@ rather than a grep; reach for `agentgrep grep bliss`.
 Content search with rg/ag-shaped flags, output, and exit codes.
 :::
 
+:::{grid-item-card} agentgrep search
+:link: search
+:link-type: doc
+Ranked, deduped search grouped by session — best matches first.
+:::
+
 :::{grid-item-card} agentgrep find
 :link: find
 :link-type: doc
 Enumerate on-disk stores with fd-shaped flag grammar.
+:::
+
+:::{grid-item-card} agentgrep ui
+:link: tui
+:link-type: ref
+Interactive Textual explorer for browsing prompts and conversations.
 :::
 
 :::{grid-item-card} API Reference
@@ -68,7 +80,7 @@ MCP. Two flags govern machine-readable output:
   `jq`, into another CLI, or into an agent that consumes results
   incrementally.
 
-Both flags work on `grep` and `find`. See
+Both flags work on `search`, `grep`, and `find`. See
 [](#cli-find-json-output) for the record shapes.
 
 Agents that already speak MCP should prefer
@@ -140,6 +152,7 @@ $ agentgrep
 :hidden:
 
 grep
+search
 find
 reference
 ```
