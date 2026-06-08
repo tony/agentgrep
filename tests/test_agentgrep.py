@@ -1901,7 +1901,9 @@ async def test_streaming_ui_app_mounts_cleanly(
     subclass.
     """
     app = _build_empty_ui_app(tmp_path, monkeypatch)
-    async with app.run_test() as pilot:
+    # Wide enough for the side-by-side layout — below the split breakpoint
+    # the detail pane collapses (display: none) and leaves the focus chain.
+    async with app.run_test(size=(120, 24)) as pilot:
         await pilot.pause()
         focus_chain_ids = {getattr(w, "id", None) for w in app.screen.focus_chain}
         assert "results" in focus_chain_ids, f"#results not in focus chain; chain={focus_chain_ids}"
@@ -2334,7 +2336,7 @@ async def test_g_on_detail_scrolls_to_top(
         path=tmp_path / "long.jsonl",
         text=long_body,
     )
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(120, 24)) as pilot:
         await pilot.pause()
         app.all_records.append(record)
         app.filtered_records.append(record)
@@ -2399,7 +2401,7 @@ async def test_ctrl_f_on_detail_pages_down(
         path=tmp_path / "long.jsonl",
         text=long_body,
     )
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(120, 24)) as pilot:
         await pilot.pause()
         app.all_records.append(record)
         app.filtered_records.append(record)
@@ -2517,7 +2519,7 @@ async def test_ctrl_k_from_detail_focuses_filter(
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     records = _seed_records(agentgrep, tmp_path, 3)
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(120, 24)) as pilot:
         await pilot.pause()
         app.all_records.extend(records)
         app.filtered_records.extend(records)
@@ -2633,21 +2635,371 @@ async def test_up_on_filter_with_cursor_at_start_releases_focus_to_search(
         assert app.focused.id == "search"
 
 
-async def test_right_on_empty_filter_releases_focus_to_detail(
+class FocusDetailRevealCase(t.NamedTuple):
+    """One width scenario for ``right``/``l`` focusing the detail pane."""
+
+    test_id: str
+    size: tuple[int, int]
+    expect_opened: bool
+
+
+FOCUS_DETAIL_REVEAL_CASES: tuple[FocusDetailRevealCase, ...] = (
+    FocusDetailRevealCase(
+        test_id="wide-records-explicit-focus", size=(120, 24), expect_opened=True
+    ),
+    FocusDetailRevealCase(test_id="narrow-opens-on-focus", size=(80, 24), expect_opened=True),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    FOCUS_DETAIL_REVEAL_CASES,
+    ids=[case.test_id for case in FOCUS_DETAIL_REVEAL_CASES],
+)
+async def test_right_on_empty_filter_focuses_and_opens_detail(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
+    case: FocusDetailRevealCase,
 ) -> None:
-    """``right`` on an empty filter hands focus across to the detail pane."""
+    """``right`` on an empty filter focuses the detail — opening it when stacked.
+
+    On a narrow terminal the detail starts collapsed (``display: none``);
+    focusing it must reveal it first, not move focus into a hidden pane.
+    """
     app = _build_empty_ui_app(tmp_path, monkeypatch)
-    async with app.run_test() as pilot:
+    async with app.run_test(size=case.size) as pilot:
         await pilot.pause()
         app._filter_input.focus()
         await pilot.pause()
         assert app._filter_input.value == ""
         await pilot.press("right")
         await pilot.pause()
-        assert app.focused is not None
-        assert app.focused.id == "detail-scroll"
+        assert app.focused is not None and app.focused.id == "detail-scroll"
+        assert not app._detail_column.has_class("-collapsed")
+        # Explicit detail focus records the user's reader intent even when
+        # wide mode already has the pane visible.
+        assert app._detail_opened is case.expect_opened
+
+
+class DetailFocusResizeCase(t.NamedTuple):
+    """One explicit detail-focus route before a wide-to-narrow resize."""
+
+    test_id: str
+    key: str
+
+
+DETAIL_FOCUS_RESIZE_CASES: tuple[DetailFocusResizeCase, ...] = (
+    DetailFocusResizeCase(test_id="l-from-results", key="l"),
+    DetailFocusResizeCase(test_id="right-from-results", key="right"),
+    DetailFocusResizeCase(test_id="ctrl-l-from-results", key="ctrl+l"),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    DETAIL_FOCUS_RESIZE_CASES,
+    ids=[case.test_id for case in DETAIL_FOCUS_RESIZE_CASES],
+)
+async def test_explicit_wide_detail_focus_survives_narrow_resize(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: DetailFocusResizeCase,
+) -> None:
+    """Explicit reader focus in wide mode remains visible after stacking."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 5)
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        app.all_records.extend(records)
+        app.filtered_records = list(records)
+        app._results.set_records(records)
+        app._apply_responsive_layout()
+        app._results.focus()
+        await pilot.pause()
+
+        await pilot.press(case.key)
+        await pilot.pause()
+        assert app._stacked is False
+        assert app.focused is not None and app.focused.id == "detail-scroll"
+        assert app._detail_opened is True
+
+        await pilot.resize_terminal(80, 24)
+        await pilot.pause(0.1)
+        assert app._stacked is True
+        assert app._detail_opened is True
+        assert not app._detail_column.has_class("-collapsed")
+        assert app.focused is not None and app.focused.id == "detail-scroll"
+
+
+async def test_l_from_results_opens_stacked_detail(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pressing ``l`` in the results list opens + focuses the stacked detail."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 5)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.all_records.extend(records)
+        app.filtered_records = list(records)
+        app._results.set_records(records)
+        app._apply_responsive_layout()
+        await pilot.pause()
+        assert app._detail_column.has_class("-collapsed")
+        app._results.focus()
+        await pilot.pause()
+        await pilot.press("l")
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "detail-scroll"
+        assert not app._detail_column.has_class("-collapsed")
+        assert app._detail_opened is True
+
+
+class FocusDetailRenderCase(t.NamedTuple):
+    """One explicit-detail focus scenario and the record it should render."""
+
+    test_id: str
+    highlighted: int | None
+    expected_index: int
+
+
+FOCUS_DETAIL_RENDER_CASES: tuple[FocusDetailRenderCase, ...] = (
+    FocusDetailRenderCase(
+        test_id="no-highlight-falls-back-to-first-record",
+        highlighted=None,
+        expected_index=0,
+    ),
+    FocusDetailRenderCase(
+        test_id="highlighted-record-wins",
+        highlighted=2,
+        expected_index=2,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    FOCUS_DETAIL_RENDER_CASES,
+    ids=[case.test_id for case in FOCUS_DETAIL_RENDER_CASES],
+)
+async def test_focus_detail_renders_record_when_opening_stacked_streaming_results(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: FocusDetailRenderCase,
+) -> None:
+    """Opening a stacked streaming result renders a readable detail body."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    app.query = agentgrep.SearchQuery(
+        terms=("VISIBLEPROBE",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+    records = [
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="codex.sessions",
+            adapter_id="codex.sessions_jsonl.v1",
+            path=tmp_path / f"r{idx}.jsonl",
+            text=f"prefix\nVISIBLEPROBE record {idx}\nsuffix",
+        )
+        for idx in range(3)
+    ]
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.all_records.extend(records)
+        app.filtered_records = list(records)
+        app._results.append_records(records)
+        if case.highlighted is not None:
+            # Seed Textual's reactive storage directly so this case can
+            # model a highlighted row without dispatching the same genuine
+            # cursor-move event that normally opens the stacked detail.
+            app._results._reactive_highlighted = case.highlighted
+            app._current_detail_record = records[0]
+            app._detail_opened = False
+        app._apply_responsive_layout()
+        await pilot.pause()
+        assert app._detail_column.has_class("-collapsed")
+        app._results.focus()
+        await pilot.pause()
+        await pilot.press("l")
+        await pilot.pause()
+        expected = records[case.expected_index]
+        assert app.focused is not None and app.focused.id == "detail-scroll"
+        assert app._current_detail_record is expected
+        assert not app._detail_column.has_class("-collapsed")
+        screenshot = app.export_screenshot(simplify=True)
+        assert "VISIBLEPROBE" in screenshot
+        assert f"record&#160;{case.expected_index}" in screenshot
+
+
+class _FakeFilterCompleted(t.NamedTuple):
+    """Minimal ``FilterCompleted`` stand-in carrying just the payload."""
+
+    payload: t.Any
+
+
+class AutohighlightQueueCase(t.NamedTuple):
+    """One filter-result scenario for queued programmatic highlights."""
+
+    test_id: str
+    record_count: int
+    matching_count: int
+    initial_highlighted: int | None
+    expect_pending: int
+
+
+AUTOHIGHLIGHT_QUEUE_CASES: tuple[AutohighlightQueueCase, ...] = (
+    AutohighlightQueueCase(
+        test_id="streamed-results-without-highlight",
+        record_count=3,
+        matching_count=3,
+        initial_highlighted=None,
+        expect_pending=0,
+    ),
+    AutohighlightQueueCase(
+        test_id="empty-leaves-it-disarmed",
+        record_count=3,
+        matching_count=0,
+        initial_highlighted=None,
+        expect_pending=0,
+    ),
+    AutohighlightQueueCase(
+        test_id="single-clamp-highlight",
+        record_count=3,
+        matching_count=2,
+        initial_highlighted=2,
+        expect_pending=1,
+    ),
+    AutohighlightQueueCase(
+        test_id="multi-clamp-highlights",
+        record_count=10,
+        matching_count=5,
+        initial_highlighted=9,
+        expect_pending=5,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    AUTOHIGHLIGHT_QUEUE_CASES,
+    ids=[case.test_id for case in AUTOHIGHLIGHT_QUEUE_CASES],
+)
+async def test_filter_completion_counts_only_queued_autohighlights(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: AutohighlightQueueCase,
+) -> None:
+    """The suppression counter tracks queued highlights, not non-empty results."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, case.record_count)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.all_records.extend(records)
+        app.filtered_records = list(records)
+        app._results.append_records(records)
+        if case.initial_highlighted is not None:
+            app._results._reactive_highlighted = case.initial_highlighted
+        app._pending_autohighlights = 99
+        payload = agentgrep.FilterCompletedPayload(
+            text="",
+            matching=tuple(records[: case.matching_count]),
+        )
+        app.on_filter_completed(_FakeFilterCompleted(payload=payload))
+        assert app._pending_autohighlights == case.expect_pending
+
+
+class FilterUserMoveCase(t.NamedTuple):
+    """One filter path and the first genuine cursor move after it."""
+
+    test_id: str
+    record_count: int
+    matching_count: int
+    initial_highlighted: int | None
+    first_user_key: str
+
+
+FILTER_USER_MOVE_CASES: tuple[FilterUserMoveCase, ...] = (
+    FilterUserMoveCase(
+        test_id="streamed-results-without-highlight",
+        record_count=3,
+        matching_count=3,
+        initial_highlighted=None,
+        first_user_key="j",
+    ),
+    FilterUserMoveCase(
+        test_id="narrowing-keeps-highlight-index",
+        record_count=3,
+        matching_count=2,
+        initial_highlighted=0,
+        first_user_key="j",
+    ),
+    FilterUserMoveCase(
+        test_id="single-clamp-highlight-is-programmatic",
+        record_count=3,
+        matching_count=2,
+        initial_highlighted=2,
+        first_user_key="k",
+    ),
+    FilterUserMoveCase(
+        test_id="multi-clamp-highlights-are-programmatic",
+        record_count=10,
+        matching_count=5,
+        initial_highlighted=9,
+        first_user_key="k",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    FILTER_USER_MOVE_CASES,
+    ids=[case.test_id for case in FILTER_USER_MOVE_CASES],
+)
+async def test_filter_completion_does_not_swallow_first_real_cursor_move(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: FilterUserMoveCase,
+) -> None:
+    """Only queued programmatic highlights may keep stacked detail collapsed."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, case.record_count)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.all_records.extend(records)
+        app.filtered_records = list(records)
+        app._results.append_records(records)
+        if case.initial_highlighted is not None:
+            app._results._reactive_highlighted = case.initial_highlighted
+        app._detail_opened = False
+        app._apply_responsive_layout()
+        app._results.focus()
+        await pilot.pause()
+
+        payload = agentgrep.FilterCompletedPayload(
+            text="",
+            matching=tuple(records[: case.matching_count]),
+        )
+        app.on_filter_completed(_FakeFilterCompleted(payload=payload))
+        await pilot.pause()
+        await pilot.pause()
+        assert app._detail_opened is False
+        assert app._detail_column.has_class("-collapsed")
+
+        await pilot.press(case.first_user_key)
+        await pilot.pause()
+        assert app._detail_opened is True
+        assert not app._detail_column.has_class("-collapsed")
 
 
 async def test_right_on_non_empty_filter_moves_cursor(
@@ -3467,6 +3819,152 @@ async def test_narrow_statusline_drops_bar_and_elapsed(
         assert "▰" not in app._meter_widget._compose_text()
 
 
+class _FakeHighlight(t.NamedTuple):
+    """Minimal ``OptionHighlighted`` stand-in for the detail handler."""
+
+    option_index: int | None
+
+
+class SplitOrientationCase(t.NamedTuple):
+    """One terminal-width scenario for the responsive detail split."""
+
+    test_id: str
+    size: tuple[int, int]
+    expect_stacked: bool
+
+
+SPLIT_ORIENTATION_CASES: tuple[SplitOrientationCase, ...] = (
+    SplitOrientationCase(test_id="wide-side-by-side", size=(120, 24), expect_stacked=False),
+    SplitOrientationCase(test_id="narrow-stacked", size=(80, 24), expect_stacked=True),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    SPLIT_ORIENTATION_CASES,
+    ids=[case.test_id for case in SPLIT_ORIENTATION_CASES],
+)
+async def test_body_stacks_below_split_breakpoint(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: SplitOrientationCase,
+) -> None:
+    """The body flips to a stacked layout below 100 cols, side-by-side above."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=case.size) as pilot:
+        await pilot.pause()
+        assert app._stacked is case.expect_stacked
+        assert app._body.has_class("-stacked") is case.expect_stacked
+
+
+async def test_narrow_detail_opens_on_user_selection_not_autohighlight(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stacked detail stays collapsed until a genuine cursor move (tig-style)."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 5)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.all_records.extend(records)
+        app.filtered_records = list(records)
+        app._results.set_records(records)
+        app._apply_responsive_layout()
+        await pilot.pause()
+        # Narrow + nothing opened → detail collapsed.
+        assert app._stacked is True
+        assert app._detail_column.has_class("-collapsed")
+        # The programmatic row-0 highlight must NOT open it.
+        app._pending_autohighlights = 1
+        app.on_option_list_option_highlighted(_FakeHighlight(0))
+        await pilot.pause()
+        assert app._pending_autohighlights == 0
+        assert app._detail_opened is False
+        assert app._detail_column.has_class("-collapsed")
+        # A real cursor move opens it and keeps it open.
+        app.on_option_list_option_highlighted(_FakeHighlight(1))
+        await pilot.pause()
+        assert app._detail_opened is True
+        assert not app._detail_column.has_class("-collapsed")
+
+
+async def test_wide_detail_always_visible(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Side-by-side keeps the detail pane visible regardless of selection."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 5)
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        app.all_records.extend(records)
+        app.filtered_records = list(records)
+        app._apply_responsive_layout()
+        await pilot.pause()
+        assert app._stacked is False
+        # Visible before any selection.
+        assert app._detail_opened is False
+        assert not app._detail_column.has_class("-collapsed")
+        # ...and still visible after a genuine selection (the "regardless
+        # of selection" property the docstring promises).
+        app.on_option_list_option_highlighted(_FakeHighlight(0))
+        await pilot.pause()
+        assert not app._detail_column.has_class("-collapsed")
+
+
+async def test_new_search_recollapses_narrow_detail(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``_reset_search_chrome`` re-collapses the stacked detail pane."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 5)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.all_records.extend(records)
+        app.filtered_records = list(records)
+        app._results.set_records(records)
+        app._detail_opened = True
+        app._apply_responsive_layout()
+        await pilot.pause()
+        assert not app._detail_column.has_class("-collapsed")
+        app._reset_search_chrome()
+        await pilot.pause()
+        assert app._detail_opened is False
+        assert app._detail_column.has_class("-collapsed")
+
+
+async def test_stacked_focus_routes_results_and_detail_vertically(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When stacked, ctrl+j reaches the detail below and ctrl+k returns up."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 5)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.all_records.extend(records)
+        app.filtered_records = list(records)
+        app._results.set_records(records)
+        app._apply_responsive_layout()
+        await pilot.pause()
+        app._results.focus()
+        await pilot.pause()
+        # Down from results opens + focuses the detail below.
+        app.action_focus_pane_down()
+        await pilot.pause()
+        assert app._detail_opened is True
+        assert app.focused is not None and app.focused.id == "detail-scroll"
+        # Up from the detail returns to the results.
+        app.action_focus_pane_up()
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "results"
+
+
 def test_format_compact_path_passes_short_paths_through(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: pathlib.Path,
@@ -3777,7 +4275,7 @@ async def test_show_detail_scrolls_to_first_match(
         path=tmp_path / "match.jsonl",
         text=body,
     )
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(120, 24)) as pilot:
         await pilot.pause()
         app.show_detail(record)
         await pilot.pause()
