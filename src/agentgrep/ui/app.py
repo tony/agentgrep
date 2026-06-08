@@ -2313,12 +2313,13 @@ def build_streaming_ui_app(
             """Focus the detail pane, opening it first when stacked-collapsed.
 
             A ``display: none`` pane cannot take focus, so on a narrow
-            statusline the detail is revealed (and marked opened) before
-            the focus call. Explicit focus also renders the best available
-            record so streaming results opened before a cursor move don't
-            reveal a blank reader.
+            statusline the detail is revealed before the focus call. Explicit
+            focus also records the user's reader intent in wide mode so the
+            pane stays visible if a later resize stacks the layout. It renders
+            the best available record so streaming results opened before a
+            cursor move don't reveal a blank reader.
             """
-            if self._stacked and not self._detail_opened:
+            if not self._detail_opened:
                 self._detail_opened = True
                 self._apply_responsive_layout()
             record = self._record_for_detail_focus()

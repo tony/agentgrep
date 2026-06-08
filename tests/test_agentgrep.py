@@ -2640,12 +2640,14 @@ class FocusDetailRevealCase(t.NamedTuple):
 
     test_id: str
     size: tuple[int, int]
-    expect_revealed: bool
+    expect_opened: bool
 
 
 FOCUS_DETAIL_REVEAL_CASES: tuple[FocusDetailRevealCase, ...] = (
-    FocusDetailRevealCase(test_id="wide-already-visible", size=(120, 24), expect_revealed=False),
-    FocusDetailRevealCase(test_id="narrow-opens-on-focus", size=(80, 24), expect_revealed=True),
+    FocusDetailRevealCase(
+        test_id="wide-records-explicit-focus", size=(120, 24), expect_opened=True
+    ),
+    FocusDetailRevealCase(test_id="narrow-opens-on-focus", size=(80, 24), expect_opened=True),
 )
 
 
@@ -2674,8 +2676,60 @@ async def test_right_on_empty_filter_focuses_and_opens_detail(
         await pilot.pause()
         assert app.focused is not None and app.focused.id == "detail-scroll"
         assert not app._detail_column.has_class("-collapsed")
-        # On narrow the pane was revealed by the focus; wide was never closed.
-        assert app._detail_opened is case.expect_revealed
+        # Explicit detail focus records the user's reader intent even when
+        # wide mode already has the pane visible.
+        assert app._detail_opened is case.expect_opened
+
+
+class DetailFocusResizeCase(t.NamedTuple):
+    """One explicit detail-focus route before a wide-to-narrow resize."""
+
+    test_id: str
+    key: str
+
+
+DETAIL_FOCUS_RESIZE_CASES: tuple[DetailFocusResizeCase, ...] = (
+    DetailFocusResizeCase(test_id="l-from-results", key="l"),
+    DetailFocusResizeCase(test_id="right-from-results", key="right"),
+    DetailFocusResizeCase(test_id="ctrl-l-from-results", key="ctrl+l"),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    DETAIL_FOCUS_RESIZE_CASES,
+    ids=[case.test_id for case in DETAIL_FOCUS_RESIZE_CASES],
+)
+async def test_explicit_wide_detail_focus_survives_narrow_resize(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: DetailFocusResizeCase,
+) -> None:
+    """Explicit reader focus in wide mode remains visible after stacking."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 5)
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        app.all_records.extend(records)
+        app.filtered_records = list(records)
+        app._results.set_records(records)
+        app._apply_responsive_layout()
+        app._results.focus()
+        await pilot.pause()
+
+        await pilot.press(case.key)
+        await pilot.pause()
+        assert app._stacked is False
+        assert app.focused is not None and app.focused.id == "detail-scroll"
+        assert app._detail_opened is True
+
+        await pilot.resize_terminal(80, 24)
+        await pilot.pause(0.1)
+        assert app._stacked is True
+        assert app._detail_opened is True
+        assert not app._detail_column.has_class("-collapsed")
+        assert app.focused is not None and app.focused.id == "detail-scroll"
 
 
 async def test_l_from_results_opens_stacked_detail(
