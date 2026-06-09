@@ -213,15 +213,22 @@ def print_find_results(records: list[FindRecord], args: FindArgs) -> None:
             print(_format_find_text_line(record, args))
         return
     for record in records:
-        print(agentgrep.format_display_path(record.path))
+        print(_format_find_path(record, args))
 
 
 def _format_find_text_line(record: FindRecord, args: FindArgs) -> str:
     """Compose one line for ``--list-details`` / ``--print0`` output."""
-    path = agentgrep.format_display_path(record.path)
+    path = _format_find_path(record, args)
     if args.list_details:
         return f"{record.agent}\t{record.path_kind}\t{record.store}\t{record.adapter_id}\t{path}"
     return path
+
+
+def _format_find_path(record: FindRecord, args: FindArgs) -> str:
+    """Return the find path according to display vs. shell-consumer mode."""
+    if args.print0 or args.absolute_path:
+        return str(record.path)
+    return agentgrep.format_display_path(record.path)
 
 
 def _resolve_find_case_sensitive(pattern: str | None, mode: agentgrep.CaseMode) -> bool:
@@ -368,7 +375,7 @@ def stream_find_results(args: FindArgs) -> int:
             sys.stdout.write(_format_find_text_line(event.record, args))
             sys.stdout.write("\0")
         else:
-            print(agentgrep.format_display_path(event.record.path))
+            print(_format_find_path(event.record, args))
         if is_tty:
             sys.stdout.flush()
         match_count += 1

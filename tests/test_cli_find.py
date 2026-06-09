@@ -15,6 +15,7 @@ import typing as t
 import pytest
 
 import agentgrep
+from agentgrep import events as ag_events
 
 
 class FindParseCase(t.NamedTuple):
@@ -442,6 +443,23 @@ def test_print_find_results_default_emits_one_path_per_record(
     assert "sessions" not in captured
 
 
+def test_print_find_results_default_collapses_home_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Default text output preserves privacy by collapsing home paths."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    record = _make_find_record(path=str(home / ".codex" / "history.jsonl"))
+    args = _make_find_args()
+
+    agentgrep.print_find_results([record], args)
+
+    captured = capsys.readouterr().out
+    assert captured == "~/.codex/history.jsonl\n"
+
+
 def test_print_find_results_list_details_uses_tabs(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -468,6 +486,72 @@ def test_print_find_results_print0_uses_nul_separator(
     assert "\0" in captured
     # No standalone newlines when -0 is on.
     assert captured.count("\n") == 0
+
+
+def test_print_find_results_print0_emits_raw_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``-0`` emits real paths so shell consumers can open them."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    raw_path = home / ".codex" / "history.jsonl"
+    record = _make_find_record(path=str(raw_path))
+    args = _make_find_args(print0=True)
+
+    agentgrep.print_find_results([record], args)
+
+    captured = capsys.readouterr().out
+    assert captured == f"{raw_path}\0"
+
+
+def test_print_find_results_absolute_path_emits_raw_text_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--absolute-path`` opts text output into real filesystem paths."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    raw_path = home / ".codex" / "history.jsonl"
+    record = _make_find_record(path=str(raw_path))
+    args = _make_find_args(absolute_path=True)
+
+    agentgrep.print_find_results([record], args)
+
+    captured = capsys.readouterr().out
+    assert captured == f"{raw_path}\n"
+
+
+def test_stream_find_results_print0_emits_raw_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Streaming ``find -0`` keeps the same shell-safe raw path contract."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    raw_path = home / ".codex" / "history.jsonl"
+    record = _make_find_record(path=str(raw_path))
+
+    def _stub_iter_find_events(
+        *args: object,
+        **kwargs: object,
+    ) -> t.Iterator[ag_events.FindEvent]:
+        del args, kwargs
+        yield ag_events.FindStarted(source_count=1)
+        yield ag_events.FindRecordEmitted(record=record)
+        yield ag_events.FindFinished(match_count=1, elapsed_seconds=0.0)
+
+    monkeypatch.setattr(agentgrep, "iter_find_events", _stub_iter_find_events)
+    args = _make_find_args(print0=True)
+
+    exit_code = agentgrep.stream_find_results(args)
+
+    captured = capsys.readouterr().out
+    assert exit_code == 0
+    assert captured == f"{raw_path}\0"
 
 
 def test_find_invalid_regex_errors_at_parse_time() -> None:

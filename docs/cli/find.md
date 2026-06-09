@@ -17,8 +17,10 @@ file basename by default; `--full-path` opts into matching the
 absolute path (fd's `-p`).
 
 The default output is **one path per line** — the fd-faithful
-shape. Use `-l/--list-details` to add metadata (agent, kind, store,
-adapter_id) as tab-separated columns.
+shape. Display output collapses the current user's home directory to
+`~`; use `--absolute-path` or `-0/--print0` when a downstream shell
+tool needs real filesystem paths. Use `-l/--list-details` to add
+metadata (agent, kind, store, adapter_id) as tab-separated columns.
 
 ## Examples
 
@@ -86,10 +88,11 @@ $ agentgrep find --no-progress codex
 ## Live streaming
 
 `find` consumes the {ref}`library-event-stream` directly — text,
-NDJSON, and `--print0` output emit each path as the engine discovers
-it, with stdout flushed when stdout is a TTY. `--json` and
-`--list-details` buffer because their output shape benefits from
-the full record list up front.
+NDJSON, and `--print0` output emit each record as the engine discovers
+it, with stdout flushed when stdout is a TTY. Text output remains
+privacy-collapsed for display; `--print0` emits raw paths for shell
+consumers. `--json` and `--list-details` buffer because their output
+shape benefits from the full record list up front.
 
 ## Command
 
@@ -148,7 +151,8 @@ backend.
 
 `find` accepts the same Lucene-style field syntax as the other
 subcommands. Source-level field predicates (`agent:`, `path:`,
-`store:`, `mtime:`) prune sources before they're emitted:
+`store:`, `mtime:`) prune sources before they're emitted. `path:`
+matches real absolute paths and also accepts current-user `~` prefixes:
 
 ```console
 $ agentgrep find agent:codex

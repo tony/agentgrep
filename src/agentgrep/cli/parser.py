@@ -455,7 +455,7 @@ def create_parser(
         "-a",
         "--absolute-path",
         action="store_true",
-        help="Print absolute paths (already the default; flag is symbolic)",
+        help="Print real absolute paths instead of privacy-collapsed display paths",
     )
     _ = find_parser.add_argument(
         "--full-path",
