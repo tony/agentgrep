@@ -202,7 +202,8 @@ class TempHomeSandbox:
     def _prepare_project(self, project: pathlib.Path) -> None:
         """Create an isolated project tree for relative command side effects."""
         project.parent.mkdir(parents=True, exist_ok=True)
-        if (self.project_root / ".git").exists():
+        has_git_metadata = (self.project_root / ".git").exists()
+        if has_git_metadata and not self._project_is_dirty():
             completed = subprocess.run(
                 (
                     "git",
@@ -219,6 +220,25 @@ class TempHomeSandbox:
             )
             if completed.returncode == 0:
                 return
+        self._copy_project(project)
+        if has_git_metadata:
+            self._initialize_copied_git_repo(project)
+
+    def _project_is_dirty(self) -> bool:
+        """Return whether the source git worktree has uncommitted content."""
+        completed = subprocess.run(
+            ("git", "status", "--porcelain", "--untracked-files=all"),
+            cwd=self.project_root,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if completed.returncode != 0:
+            return True
+        return bool(completed.stdout.strip())
+
+    def _copy_project(self, project: pathlib.Path) -> None:
+        """Copy the source project without git metadata or generated caches."""
         ignore = shutil.ignore_patterns(
             ".git",
             ".mypy_cache",
@@ -230,6 +250,36 @@ class TempHomeSandbox:
             "_build",
         )
         shutil.copytree(self.project_root, project, ignore=ignore)
+
+    def _initialize_copied_git_repo(self, project: pathlib.Path) -> None:
+        """Create a harmless git HEAD for copied dirty projects."""
+        init = subprocess.run(
+            ("git", "init", "--quiet"),
+            cwd=project,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if init.returncode != 0:
+            return
+        _ = subprocess.run(
+            (
+                "git",
+                "-c",
+                "user.name=pytest-documentation",
+                "-c",
+                "user.email=pytest-documentation@example.invalid",
+                "commit",
+                "--allow-empty",
+                "--quiet",
+                "-m",
+                "sandbox project",
+            ),
+            cwd=project,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
 
     def _sandbox_cwd(self, project: pathlib.Path) -> pathlib.Path:
         """Return the command cwd inside the isolated project tree."""
