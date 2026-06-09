@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pathlib
 import subprocess
+import sys
 import typing as t
 import uuid
 
@@ -559,33 +560,97 @@ def test_fastmcp_config_evaluator_accepts_existing_entrypoint(tmp_path: pathlib.
     assert result.status is EvaluationStatus.PASSED
 
 
-def test_justfile_recipe_collector_and_doctest_evaluator(tmp_path: pathlib.Path) -> None:
-    """Justfile doctest recipes are collected and validated against Sphinx config."""
+class SphinxDoctestRecipeCase(t.NamedTuple):
+    """Expected result for one Sphinx doctest recipe evaluation."""
+
+    test_id: str
+    conf_text: str
+    expected_status: EvaluationStatus
+    expected_failure_kind: EvaluationFailureKind
+    expected_message: str
+
+
+SPHINX_DOCTEST_RECIPE_CASES: tuple[SphinxDoctestRecipeCase, ...] = (
+    SphinxDoctestRecipeCase(
+        test_id="missing-doctest-extension",
+        conf_text="project = 'pytest-documentation-test'\n",
+        expected_status=EvaluationStatus.FAILED,
+        expected_failure_kind=EvaluationFailureKind.DOCTEST_FAILED,
+        expected_message="Builder name doctest",
+    ),
+    SphinxDoctestRecipeCase(
+        test_id="missing-global-setup",
+        conf_text=("project = 'pytest-documentation-test'\nextensions = ['sphinx.ext.doctest']\n"),
+        expected_status=EvaluationStatus.FAILED,
+        expected_failure_kind=EvaluationFailureKind.DOCTEST_FAILED,
+        expected_message="NameError",
+    ),
+    SphinxDoctestRecipeCase(
+        test_id="configured-doctest",
+        conf_text=(
+            "project = 'pytest-documentation-test'\n"
+            "extensions = ['sphinx.ext.doctest']\n"
+            "doctest_global_setup = 'from agentgrep import format_timestamp_tig'\n"
+        ),
+        expected_status=EvaluationStatus.PASSED,
+        expected_failure_kind=EvaluationFailureKind.NONE,
+        expected_message="",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    SPHINX_DOCTEST_RECIPE_CASES,
+    ids=[case.test_id for case in SPHINX_DOCTEST_RECIPE_CASES],
+)
+def test_justfile_recipe_collector_and_doctest_evaluator(
+    tmp_path: pathlib.Path,
+    case: SphinxDoctestRecipeCase,
+) -> None:
+    """Justfile doctest recipes are collected and evaluated with Sphinx."""
     docs = tmp_path / "docs"
     docs.mkdir()
     justfile = docs / "justfile"
     justfile.write_text(
-        'sphinxbuild := "uv run sphinx-build"\n\n'
+        f'sphinxbuild := "{sys.executable} -m sphinx"\n'
+        'builddir := "_build"\n'
+        'allsphinxopts := "-d " + builddir + "/doctrees ."\n\n'
         "doctest:\n"
-        "    {{ sphinxbuild }} -b doctest . _build/doctest\n"
+        "    {{ sphinxbuild }} -b doctest {{ allsphinxopts }} {{ builddir }}/doctest\n"
         "\n"
         "[group: 'misc']\n"
         "clean:\n"
         "    rm -rf _build\n",
         encoding="utf-8",
     )
-    (docs / "conf.py").write_text("extensions = ['myst_parser']\n", encoding="utf-8")
+    (docs / "conf.py").write_text(case.conf_text, encoding="utf-8")
+    (docs / "index.rst").write_text(
+        "Doctest fixture\n"
+        "===============\n"
+        "\n"
+        ".. doctest::\n"
+        "\n"
+        "   >>> format_timestamp_tig(None)\n"
+        "   ''\n",
+        encoding="utf-8",
+    )
 
     example = collect_examples(
         [justfile],
         collectors=[JustfileRecipeCollector(recipe_names={"doctest"})],
         project_root=tmp_path,
     )[0]
-    result = SphinxDoctestEvaluator(project_root=tmp_path).evaluate(example)
+    result = SphinxDoctestEvaluator(project_root=tmp_path, timeout=30.0).evaluate(example)
 
     assert example.language == "just-recipe"
     assert example.location.group == "doctest"
     assert "[group:" not in example.source
-    assert result.status is EvaluationStatus.FAILED
-    assert result.failure_kind is EvaluationFailureKind.DOCTEST_FAILED
-    assert "sphinx.ext.doctest" in result.message
+    assert result.status is case.expected_status
+    assert result.failure_kind is case.expected_failure_kind
+    assert not (docs / "_build").exists()
+    if case.expected_message:
+        diagnostic = result.message + result.stdout + result.stderr
+        assert case.expected_message in diagnostic
+    if case.expected_status is EvaluationStatus.PASSED:
+        assert result.returncode == 0
