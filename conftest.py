@@ -7,8 +7,12 @@ import pathlib
 from pytest_documentation import (
     ConsoleCommandEvaluator,
     DocumentationSuite,
+    FastMCPConfigCollector,
+    FastMCPConfigEvaluator,
+    JustfileRecipeCollector,
     MarkdownFenceCollector,
     SandboxSeed,
+    SphinxDoctestEvaluator,
     TempHomeSandbox,
 )
 
@@ -37,15 +41,27 @@ _DOCS_SANDBOX = TempHomeSandbox(
             _SAMPLES_ROOT / "claude" / "claude.history" / "history.jsonl",
             ".claude/history.jsonl",
         ),
+        _sample_seed(
+            _SAMPLES_ROOT / "cursor-cli" / "cursor-cli.prompt_history" / "prompt_history.json",
+            ".config/cursor/prompt_history.json",
+        ),
+        _sample_seed(
+            _SAMPLES_ROOT / "cursor-cli" / "cursor-cli.transcripts" / "example.jsonl",
+            ".cursor/projects/docs/agent-transcripts/docs/docs.jsonl",
+        ),
     ),
 )
 _DOCS_SUITE = DocumentationSuite(
     project_root=_REPO_ROOT,
-    include_paths=("docs",),
+    include_paths=("docs", "fastmcp.json"),
     exclude_parts=("_build",),
 )
 _DOCS_SUITE.register_collector(MarkdownFenceCollector(languages={"console"}))
+_DOCS_SUITE.register_collector(FastMCPConfigCollector())
+_DOCS_SUITE.register_collector(JustfileRecipeCollector(recipe_names={"doctest"}))
 _DOCS_SUITE.register_evaluator("console", ConsoleCommandEvaluator(sandbox=_DOCS_SANDBOX))
+_DOCS_SUITE.register_evaluator("fastmcp-config", FastMCPConfigEvaluator(project_root=_REPO_ROOT))
+_DOCS_SUITE.register_evaluator("just-recipe", SphinxDoctestEvaluator(project_root=_REPO_ROOT))
 
 pytest_collect_file = _DOCS_SUITE.pytest_collect_file
 

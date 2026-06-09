@@ -17,6 +17,7 @@ from .core import (
     DocumentationExample,
     DocumentationExampleFailure,
     DocumentationSuite,
+    EvaluationFailureKind,
     EvaluationResult,
 )
 
@@ -88,7 +89,11 @@ class DocumentationItem(pytest.Item):
 
     def _failure_result(self, message: str) -> EvaluationResult:
         """Create an evaluator-shaped failure for internal pytest errors."""
-        return EvaluationResult(passed=False, example=self.example, message=message)
+        return EvaluationResult.failed_result(
+            self.example,
+            failure_kind=EvaluationFailureKind.HARNESS_ERROR,
+            message=message,
+        )
 
 
 class DocumentationFile(pytest.File):
@@ -113,6 +118,14 @@ def pytest_configure(config: pytest.Config) -> None:
     )
     config.addinivalue_line("markers", "documentation_python: Python documentation example")
     config.addinivalue_line("markers", "documentation_console: console documentation example")
+    config.addinivalue_line(
+        "markers",
+        "documentation_fastmcp_config: FastMCP config documentation example",
+    )
+    config.addinivalue_line(
+        "markers",
+        "documentation_just_recipe: justfile recipe documentation example",
+    )
 
 
 def pytest_terminal_summary(

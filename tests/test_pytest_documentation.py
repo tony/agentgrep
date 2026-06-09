@@ -3,20 +3,28 @@
 from __future__ import annotations
 
 import pathlib
-import subprocess
 import typing as t
+import uuid
 
 import pytest
 
 from pytest_documentation import (
     ConsoleCommandEvaluator,
     DocumentationSuite,
+    EvaluationFailureKind,
+    EvaluationStatus,
+    FastMCPConfigCollector,
+    FastMCPConfigEvaluator,
+    JustfileRecipeCollector,
     MarkdownFenceCollector,
     PythonDocstringCollector,
+    SphinxDoctestEvaluator,
     TempHomeSandbox,
     collect_examples,
     redact_path,
 )
+
+_REPO_ROOT = pathlib.Path(__file__).parents[1]
 
 
 class MarkdownFenceCase(t.NamedTuple):
@@ -201,6 +209,8 @@ def test_literal_shell_evaluator_fails_unsupported_cli_option(tmp_path: pathlib.
     result = evaluator.evaluate(example)
 
     assert result.passed is False
+    assert result.status is EvaluationStatus.FAILED
+    assert result.failure_kind is EvaluationFailureKind.COMMAND_FAILED
     assert result.returncode == 7
 
 
@@ -224,6 +234,7 @@ def test_literal_shell_evaluator_accepts_expected_error_output(tmp_path: pathlib
     result = evaluator.evaluate(example)
 
     assert result.passed is True
+    assert result.status is EvaluationStatus.PASSED
     assert result.returncode == 4
 
 
@@ -265,15 +276,262 @@ def test_console_evaluator_redacts_paths_in_failures(tmp_path: pathlib.Path) -> 
     assert "/home/<user>/private/token.txt" in result.failure_message()
 
 
-def test_sandbox_rejects_blocked_commands(tmp_path: pathlib.Path) -> None:
-    """The default command policy blocks install and network-shaped commands."""
+def test_sandbox_reports_blocked_commands_as_classified_failures(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Stateful install commands are rewritten into safe dry runs."""
     doc = tmp_path / "README.md"
-    doc.write_text("```console\n$ pip install agentgrep\n```\n", encoding="utf-8")
+    doc.write_text("```console\n$ uv sync --all-groups\n```\n", encoding="utf-8")
     example = collect_examples(
         [doc],
         collectors=[MarkdownFenceCollector(languages={"console"})],
         project_root=tmp_path,
     )[0]
 
-    with pytest.raises(subprocess.SubprocessError, match="blocked command"):
-        ConsoleCommandEvaluator(sandbox=TempHomeSandbox(project_root=tmp_path)).evaluate(example)
+    result = ConsoleCommandEvaluator(sandbox=TempHomeSandbox(project_root=_REPO_ROOT)).evaluate(
+        example,
+    )
+
+    assert result.status is EvaluationStatus.PASSED
+    assert result.returncode == 0
+    assert "uv sync dry-run" in result.message
+
+
+def test_console_evaluator_classifies_data_dependent_empty_results(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Configured no-match docs examples pass as data-dependent empty results."""
+    doc = tmp_path / "README.md"
+    doc.write_text(
+        "```console\n$ agentgrep search --threshold 70 migration\n```\n",
+        encoding="utf-8",
+    )
+    example = collect_examples(
+        [doc],
+        collectors=[MarkdownFenceCollector(languages={"console"})],
+        project_root=tmp_path,
+    )[0]
+
+    result = ConsoleCommandEvaluator(
+        sandbox=TempHomeSandbox(project_root=tmp_path),
+    ).evaluate(example)
+
+    assert result.status is EvaluationStatus.PASSED
+    assert result.returncode == 1
+    assert "accepted data-dependent empty result" in result.message
+
+
+def test_console_evaluator_keeps_path_tilde_empty_result_as_failure(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The real ``path:~`` failure is not hidden by empty-result policy."""
+    doc = tmp_path / "README.md"
+    doc.write_text(
+        "```console\n$ agentgrep find 'path:~/.codex agent:codex'\n```\n",
+        encoding="utf-8",
+    )
+    example = collect_examples(
+        [doc],
+        collectors=[MarkdownFenceCollector(languages={"console"})],
+        project_root=tmp_path,
+    )[0]
+
+    result = ConsoleCommandEvaluator(
+        sandbox=TempHomeSandbox(project_root=tmp_path),
+    ).evaluate(example)
+
+    assert result.status is EvaluationStatus.FAILED
+    assert result.failure_kind is EvaluationFailureKind.COMMAND_FAILED
+    assert result.returncode == 1
+
+
+def test_temp_home_sandbox_keeps_profile_artifacts_inside_temp_project(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Relative redirections from docs examples do not write into the real project."""
+    output_name = f"docs-profile-{uuid.uuid4().hex}.json"
+    real_output = tmp_path / ".tmp" / output_name
+    doc = tmp_path / "README.md"
+    doc.write_text(
+        "```console\n"
+        "$ python -c 'from pathlib import Path; Path(\".tmp/"
+        f'{output_name}").write_text("ok", encoding="utf-8")\'\n'
+        "```\n",
+        encoding="utf-8",
+    )
+    example = collect_examples(
+        [doc],
+        collectors=[MarkdownFenceCollector(languages={"console"})],
+        project_root=tmp_path,
+    )[0]
+
+    result = ConsoleCommandEvaluator(
+        sandbox=TempHomeSandbox(project_root=tmp_path),
+    ).evaluate(example)
+
+    assert result.status is EvaluationStatus.PASSED
+    assert not real_output.exists()
+
+
+def test_temp_home_sandbox_records_claude_mcp_add_in_temp_home(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Client registration examples use a shim that writes only to temp HOME."""
+    real_home = tmp_path / "real-home"
+    real_home.mkdir()
+    monkeypatch.setenv("HOME", str(real_home))
+    doc = tmp_path / "README.md"
+    doc.write_text(
+        "```console\n$ claude mcp add agentgrep -- uv run agentgrep-mcp\n```\n",
+        encoding="utf-8",
+    )
+    example = collect_examples(
+        [doc],
+        collectors=[MarkdownFenceCollector(languages={"console"})],
+        project_root=tmp_path,
+    )[0]
+
+    result = ConsoleCommandEvaluator(
+        sandbox=TempHomeSandbox(project_root=tmp_path),
+    ).evaluate(example)
+
+    assert result.status is EvaluationStatus.PASSED
+    assert not (real_home / ".claude" / "mcp-additions.jsonl").exists()
+    assert "claude mcp add shim" in result.message
+
+
+def test_temp_home_sandbox_treats_standalone_cd_agentgrep_as_sequence_step(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Install-sequence ``cd agentgrep`` examples no longer count as real bugs."""
+    doc = tmp_path / "README.md"
+    doc.write_text("```console\n$ cd agentgrep\n```\n", encoding="utf-8")
+    example = collect_examples(
+        [doc],
+        collectors=[MarkdownFenceCollector(languages={"console"})],
+        project_root=tmp_path,
+    )[0]
+
+    result = ConsoleCommandEvaluator(
+        sandbox=TempHomeSandbox(project_root=tmp_path),
+    ).evaluate(example)
+
+    assert result.status is EvaluationStatus.PASSED
+    assert result.returncode == 0
+    assert "standalone sequence step accepted" in result.message
+
+
+def test_temp_home_sandbox_accepts_ref_dependent_benchmark_recipes(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Benchmark examples with trunk/master refs are recipes, not local-env failures."""
+    doc = tmp_path / "README.md"
+    doc.write_text(
+        "```console\n$ uv run scripts/benchmark.py run --target trunk\n```\n",
+        encoding="utf-8",
+    )
+    example = collect_examples(
+        [doc],
+        collectors=[MarkdownFenceCollector(languages={"console"})],
+        project_root=tmp_path,
+    )[0]
+
+    result = ConsoleCommandEvaluator(
+        sandbox=TempHomeSandbox(project_root=_REPO_ROOT),
+    ).evaluate(example)
+
+    assert result.status is EvaluationStatus.PASSED
+    assert result.returncode == 0
+    assert "benchmark ref-dependent recipe accepted" in result.message
+
+
+def test_fastmcp_config_evaluator_reports_missing_source_path(tmp_path: pathlib.Path) -> None:
+    """FastMCP config examples validate source loading without starting a server."""
+    config = tmp_path / "fastmcp.json"
+    config.write_text(
+        """
+        {
+          "$schema": "https://gofastmcp.com/public/schemas/fastmcp.json/v1.json",
+          "source": {
+            "type": "filesystem",
+            "path": "src/pkg/mcp.py",
+            "entrypoint": "build_mcp_server"
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    example = collect_examples(
+        [config],
+        collectors=[FastMCPConfigCollector()],
+        project_root=tmp_path,
+    )[0]
+    result = FastMCPConfigEvaluator(project_root=tmp_path).evaluate(example)
+
+    assert result.status is EvaluationStatus.FAILED
+    assert result.failure_kind is EvaluationFailureKind.CONFIG_INVALID
+    assert "source path does not exist" in result.message
+    assert "src/pkg/mcp.py" in result.message
+
+
+def test_fastmcp_config_evaluator_accepts_existing_entrypoint(tmp_path: pathlib.Path) -> None:
+    """FastMCP config validation checks the filesystem source and named entrypoint."""
+    source = tmp_path / "src" / "pkg" / "mcp.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("def build_mcp_server():\n    return object()\n", encoding="utf-8")
+    config = tmp_path / "fastmcp.json"
+    config.write_text(
+        """
+        {
+          "source": {
+            "type": "filesystem",
+            "path": "src/pkg/mcp.py",
+            "entrypoint": "build_mcp_server"
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    example = collect_examples(
+        [config],
+        collectors=[FastMCPConfigCollector()],
+        project_root=tmp_path,
+    )[0]
+    result = FastMCPConfigEvaluator(project_root=tmp_path).evaluate(example)
+
+    assert result.status is EvaluationStatus.PASSED
+
+
+def test_justfile_recipe_collector_and_doctest_evaluator(tmp_path: pathlib.Path) -> None:
+    """Justfile doctest recipes are collected and validated against Sphinx config."""
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    justfile = docs / "justfile"
+    justfile.write_text(
+        'sphinxbuild := "uv run sphinx-build"\n\n'
+        "doctest:\n"
+        "    {{ sphinxbuild }} -b doctest . _build/doctest\n"
+        "\n"
+        "[group: 'misc']\n"
+        "clean:\n"
+        "    rm -rf _build\n",
+        encoding="utf-8",
+    )
+    (docs / "conf.py").write_text("extensions = ['myst_parser']\n", encoding="utf-8")
+
+    example = collect_examples(
+        [justfile],
+        collectors=[JustfileRecipeCollector(recipe_names={"doctest"})],
+        project_root=tmp_path,
+    )[0]
+    result = SphinxDoctestEvaluator(project_root=tmp_path).evaluate(example)
+
+    assert example.language == "just-recipe"
+    assert example.location.group == "doctest"
+    assert "[group:" not in example.source
+    assert result.status is EvaluationStatus.FAILED
+    assert result.failure_kind is EvaluationFailureKind.DOCTEST_FAILED
+    assert "sphinx.ext.doctest" in result.message

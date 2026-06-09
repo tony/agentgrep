@@ -237,6 +237,7 @@ testpaths = [
   "src/agentgrep",
   "src/pytest_documentation",
   "docs",
+  "fastmcp.json",
   "tests",
 ]
 asyncio_mode = "auto"

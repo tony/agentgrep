@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import enum
 import pathlib
 import posixpath
 import re
@@ -133,6 +134,29 @@ class DocumentationExample:
         return self.test_id
 
 
+class EvaluationStatus(enum.Enum):
+    """Terminal status for one documentation example evaluation."""
+
+    PASSED = "passed"
+    FAILED = "failed"
+
+
+class EvaluationFailureKind(enum.Enum):
+    """Machine-readable reason for a failed documentation example."""
+
+    NONE = "none"
+    BLOCKED_BY_POLICY = "blocked_by_policy"
+    SETUP_OR_INSTALL_COMMAND = "setup_or_install_command"
+    INTERACTIVE_COMMAND = "interactive_command"
+    LONG_RUNNING_COMMAND = "long_running_command"
+    DATA_DEPENDENT_EMPTY_RESULT = "data_dependent_empty_result"
+    STANDALONE_SEQUENCE_STEP = "standalone_sequence_step"
+    COMMAND_FAILED = "command_failed"
+    CONFIG_INVALID = "config_invalid"
+    DOCTEST_FAILED = "doctest_failed"
+    HARNESS_ERROR = "harness_error"
+
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class ExampleDocument:
     """Source document provided to collectors."""
@@ -159,12 +183,60 @@ class CollectionContext:
 class EvaluationResult:
     """Result returned by documentation example evaluators."""
 
-    passed: bool
+    status: EvaluationStatus
     example: DocumentationExample
+    failure_kind: EvaluationFailureKind = EvaluationFailureKind.NONE
     returncode: int = 0
     stdout: str = ""
     stderr: str = ""
     message: str = ""
+
+    @property
+    def passed(self) -> bool:
+        """Return whether the example evaluation passed."""
+        return self.status is EvaluationStatus.PASSED
+
+    @classmethod
+    def passed_result(
+        cls,
+        example: DocumentationExample,
+        *,
+        returncode: int = 0,
+        stdout: str = "",
+        stderr: str = "",
+        message: str = "",
+    ) -> EvaluationResult:
+        """Create a passed evaluation result."""
+        return cls(
+            status=EvaluationStatus.PASSED,
+            example=example,
+            returncode=returncode,
+            stdout=stdout,
+            stderr=stderr,
+            message=message,
+        )
+
+    @classmethod
+    def failed_result(
+        cls,
+        example: DocumentationExample,
+        *,
+        failure_kind: EvaluationFailureKind,
+        returncode: int = 0,
+        stdout: str = "",
+        stderr: str = "",
+        message: str = "",
+    ) -> EvaluationResult:
+        """Create a failed evaluation result."""
+        return cls(
+            status=EvaluationStatus.FAILED,
+            example=example,
+            failure_kind=failure_kind,
+            returncode=returncode,
+            stdout=stdout,
+            stderr=stderr,
+            message=message,
+        )
 
     def failure_message(self) -> str:
         """Return a redacted failure message for pytest rendering.
@@ -176,7 +248,10 @@ class EvaluationResult:
         """
         if self.passed:
             return ""
-        parts = [f"{self.example.location.label()}: documentation example failed"]
+        parts = [
+            f"{self.example.location.label()}: classified documentation example failure",
+            f"failure_kind: {self.failure_kind.value}",
+        ]
         if self.message:
             parts.append(self.message)
         if self.returncode:
@@ -416,9 +491,9 @@ def failure_from_exception(
 ) -> EvaluationResult:
     """Create an evaluation failure result from an exception."""
     message = "".join(traceback.format_exception(exception))
-    return EvaluationResult(
-        passed=False,
-        example=example,
+    return EvaluationResult.failed_result(
+        example,
+        failure_kind=EvaluationFailureKind.HARNESS_ERROR,
         message=redact_text(message, project_root=project_root),
     )
 
