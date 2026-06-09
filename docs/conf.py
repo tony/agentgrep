@@ -34,6 +34,7 @@ conf = merge_sphinx_config(
     html_favicon="_static/favicon.ico",
     html_extra_path=["manifest.json"],
     extra_extensions=[
+        "sphinx.ext.doctest",
         "sphinx_autodoc_api_style",
         "sphinx_autodoc_argparse",
         "sphinx_autodoc_fastmcp",
@@ -97,6 +98,7 @@ conf["fastmcp_section_badge_map"] = {
     "Diagnostic": "readonly",
 }
 conf["fastmcp_section_badge_pages"] = ("mcp/tools", "mcp/index", "index")
+conf["doctest_global_setup"] = "from agentgrep import format_timestamp_tig"
 
 # IBM Plex Mono 400 italic shows up on every page that has a syntax-
 # highlighted code block — Furo's Pygments style renders comment tokens
