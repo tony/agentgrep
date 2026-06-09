@@ -7,6 +7,8 @@ import contextlib
 import io
 import json
 import pathlib
+import subprocess
+import tempfile
 import traceback
 import typing as t
 
@@ -201,30 +203,80 @@ class FastMCPConfigEvaluator:
 
 
 class SphinxDoctestEvaluator:
-    """Validate Sphinx doctest recipe prerequisites."""
+    """Evaluate Sphinx doctest recipes through ``just``."""
 
-    def __init__(self, *, project_root: pathlib.Path | None = None) -> None:
+    def __init__(self, *, project_root: pathlib.Path | None = None, timeout: float = 60.0) -> None:
         """Create a Sphinx doctest evaluator."""
         self.project_root = (project_root or pathlib.Path.cwd()).expanduser().resolve()
+        self.timeout = timeout
 
     def evaluate(self, example: DocumentationExample) -> EvaluationResult:
         """Evaluate a collected justfile doctest recipe."""
         docs_root = example.location.path.parent
-        conf_path = docs_root / "conf.py"
-        if not conf_path.exists():
+        recipe = example.location.group
+        if not recipe:
             return EvaluationResult.failed_result(
                 example,
                 failure_kind=EvaluationFailureKind.DOCTEST_FAILED,
-                message=f"Sphinx conf.py does not exist: {conf_path.name}",
+                message="justfile recipe example does not name a recipe",
             )
-        conf_text = conf_path.read_text(encoding="utf-8")
-        if "sphinx.ext.doctest" not in conf_text:
+        if not example.location.path.exists():
             return EvaluationResult.failed_result(
                 example,
                 failure_kind=EvaluationFailureKind.DOCTEST_FAILED,
-                message="docs/justfile doctest recipe requires sphinx.ext.doctest in docs/conf.py",
+                message=f"justfile does not exist: {example.location.display_path}",
             )
-        return EvaluationResult.passed_result(example)
+        try:
+            with tempfile.TemporaryDirectory(prefix="pytest-documentation-doctest-") as temp_dir:
+                builddir = pathlib.Path(temp_dir) / "build"
+                completed = subprocess.run(
+                    (
+                        "just",
+                        "-f",
+                        str(example.location.path),
+                        "--set",
+                        "builddir",
+                        str(builddir),
+                        recipe,
+                    ),
+                    cwd=docs_root,
+                    text=True,
+                    capture_output=True,
+                    timeout=self.timeout,
+                    check=False,
+                )
+        except subprocess.TimeoutExpired as exc:
+            return EvaluationResult.failed_result(
+                example,
+                failure_kind=EvaluationFailureKind.LONG_RUNNING_COMMAND,
+                stdout=redact_text(_output_to_text(exc.stdout), project_root=self.project_root),
+                stderr=redact_text(_output_to_text(exc.stderr), project_root=self.project_root),
+                message=f"just doctest recipe exceeded {self.timeout:g}s timeout",
+            )
+        except OSError as exc:
+            return EvaluationResult.failed_result(
+                example,
+                failure_kind=EvaluationFailureKind.HARNESS_ERROR,
+                message=redact_text(str(exc), project_root=self.project_root),
+            )
+        stdout = redact_text(completed.stdout, project_root=self.project_root)
+        stderr = redact_text(completed.stderr, project_root=self.project_root)
+        if completed.returncode != 0:
+            return EvaluationResult.failed_result(
+                example,
+                failure_kind=EvaluationFailureKind.DOCTEST_FAILED,
+                returncode=completed.returncode,
+                stdout=stdout,
+                stderr=stderr,
+                message="just doctest recipe failed",
+            )
+        return EvaluationResult.passed_result(
+            example,
+            returncode=completed.returncode,
+            stdout=stdout,
+            stderr=stderr,
+            message="just doctest recipe passed",
+        )
 
 
 def _parse_console_source(source: str) -> tuple[str, list[str]]:
@@ -255,6 +307,15 @@ def _expected_output_matches(expected_lines: list[str], actual: str) -> bool:
 def _normalize_output(text: str) -> str:
     """Normalize output for compact transcript matching."""
     return " ".join(text.split())
+
+
+def _output_to_text(output: str | bytes | None) -> str:
+    """Return subprocess output as text."""
+    if output is None:
+        return ""
+    if isinstance(output, bytes):
+        return output.decode(errors="replace")
+    return output
 
 
 def _failure_kind_for_returncode(script: str, returncode: int) -> EvaluationFailureKind:
