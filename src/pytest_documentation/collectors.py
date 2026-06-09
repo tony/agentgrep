@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import json
 import re
 import shlex
 import textwrap
@@ -176,6 +177,87 @@ class PythonDocstringCollector:
             yield from self._markdown.collect_range(document, start, end)
 
 
+class FastMCPConfigCollector:
+    """Collect ``fastmcp.json`` files as documentation examples."""
+
+    name = "fastmcp-config"
+    suffixes = frozenset({".json"})
+
+    def collect(self, document: ExampleDocument) -> t.Iterable[DocumentationExample]:
+        """Collect one example from a FastMCP config file."""
+        if "fastmcp.json" not in document.path.name:
+            return
+        try:
+            json.loads(document.text)
+        except json.JSONDecodeError:
+            return
+        location = ExampleLocation(
+            path=document.path,
+            display_path=redact_path(document.path, project_root=document.context.project_root),
+            start_line=1,
+            end_line=max(document.text.count("\n"), 1),
+            start_index=0,
+            end_index=len(document.text),
+            group="fastmcp.json",
+        )
+        yield DocumentationExample(
+            kind="config",
+            language="fastmcp-config",
+            source=document.text,
+            raw_source=document.text,
+            location=location,
+        )
+
+
+class JustfileRecipeCollector:
+    """Collect selected recipes from justfiles."""
+
+    name = "justfile-recipe"
+    suffixes = frozenset({""})
+
+    def __init__(self, *, recipe_names: set[str] | frozenset[str] | None = None) -> None:
+        """Create a justfile recipe collector."""
+        self.recipe_names = (
+            None if recipe_names is None else frozenset(name.lower() for name in recipe_names)
+        )
+
+    def collect(self, document: ExampleDocument) -> t.Iterable[DocumentationExample]:
+        """Collect recipes from a justfile."""
+        if document.path.name != "justfile":
+            return
+        lines = document.text.splitlines(keepends=True)
+        line_starts = _line_starts(document.text)
+        for line_index, line in enumerate(lines):
+            recipe = _parse_recipe_header(line)
+            if recipe is None:
+                continue
+            if self.recipe_names is not None and recipe.lower() not in self.recipe_names:
+                continue
+            start_index = line_starts[line_index]
+            end_index = _recipe_end_index(lines, line_starts, line_index)
+            source = document.text[start_index:end_index]
+            location = ExampleLocation(
+                path=document.path,
+                display_path=redact_path(
+                    document.path,
+                    project_root=document.context.project_root,
+                ),
+                start_line=line_index + 1,
+                end_line=_line_number(line_starts, max(end_index - 1, start_index)),
+                start_index=start_index,
+                end_index=end_index,
+                group=recipe,
+            )
+            yield DocumentationExample(
+                kind="recipe",
+                language="just-recipe",
+                source=source,
+                raw_source=source,
+                location=location,
+                test_id=f"{location.display_path}:{location.start_line}:just:{recipe}",
+            )
+
+
 def _parse_info(info: str) -> _FenceInfo:
     """Parse a Markdown fence info string."""
     stripped = info.strip()
@@ -308,3 +390,28 @@ def _docstring_ranges(source: str) -> t.Iterator[tuple[int, int]]:
             continue
         quote = match.group("quote")
         yield match.end(), end - len(quote)
+
+
+def _parse_recipe_header(line: str) -> str | None:
+    """Return a just recipe name when ``line`` starts one."""
+    if line.startswith((" ", "\t", "@", "#", "[")) or ":=" in line:
+        return None
+    match = re.match(r"(?P<name>[A-Za-z_][A-Za-z0-9_-]*)(?:\s+[^:]*)?:", line)
+    if match is None:
+        return None
+    return match.group("name")
+
+
+def _recipe_end_index(lines: list[str], line_starts: list[int], start_line: int) -> int:
+    """Return the absolute end index for a just recipe body."""
+    for line_index in range(start_line + 1, len(lines)):
+        line = lines[line_index]
+        if line.startswith("["):
+            return line_starts[line_index]
+        if (
+            line.strip()
+            and not line.startswith((" ", "\t", "#", "@", "["))
+            and (_parse_recipe_header(line) is not None or ":=" in line)
+        ):
+            return line_starts[line_index]
+    return sum(len(line) for line in lines)
