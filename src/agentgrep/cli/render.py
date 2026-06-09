@@ -891,7 +891,7 @@ def build_grep_query(args: GrepArgs) -> agentgrep.SearchQuery:
         regex=regex,
         case_sensitive=case_sensitive,
         agents=args.agents,
-        limit=args.max_count,
+        limit=args.limit,
         dedupe=not args.no_dedupe,
         compiled=args.compiled,
         match_surface="text",

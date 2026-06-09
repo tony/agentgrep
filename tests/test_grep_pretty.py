@@ -35,7 +35,7 @@ def _make_grep_args(**overrides: t.Any) -> GrepArgs:
         "no_dedupe": False,
         "line_number": None,
         "heading": None,
-        "max_count": None,
+        "limit": None,
         "vimgrep": False,
         "column": False,
         "output_mode": "text",

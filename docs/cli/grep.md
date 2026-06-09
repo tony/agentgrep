@@ -45,6 +45,12 @@ Stream an rg-style event stream as JSON:
 $ agentgrep grep --json design
 ```
 
+Limit the result stream:
+
+```console
+$ agentgrep grep --limit 10 migration
+```
+
 Drop session dedup for the raw rg-faithful view:
 
 ```console
@@ -104,6 +110,13 @@ appear within milliseconds, not after the whole scan finishes.
 The eager output modes (`--json`, `-c`, `-l`, `-v`) buffer
 because their output shape needs the final tally or cross-record
 deduplication.
+
+## Result limits
+
+Use `--limit N` to stop after N matching records. The `-m N` and
+`--max-count N` spellings remain available as grep-friendly aliases,
+but `--limit` is the canonical agentgrep spelling because the cap is
+applied to the normalized result stream.
 
 ## Search scope
 
