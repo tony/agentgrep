@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pathlib
+import subprocess
 import typing as t
 import uuid
 
@@ -25,6 +26,19 @@ from pytest_documentation import (
 )
 
 _REPO_ROOT = pathlib.Path(__file__).parents[1]
+
+
+def _run_git(repo: pathlib.Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """Run a git command in a test repository."""
+    completed = subprocess.run(
+        ("git", *args),
+        cwd=repo,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return completed
 
 
 class MarkdownFenceCase(t.NamedTuple):
@@ -212,6 +226,46 @@ def test_literal_shell_evaluator_fails_unsupported_cli_option(tmp_path: pathlib.
     assert result.status is EvaluationStatus.FAILED
     assert result.failure_kind is EvaluationFailureKind.COMMAND_FAILED
     assert result.returncode == 7
+
+
+def test_temp_home_sandbox_copies_dirty_git_project(tmp_path: pathlib.Path) -> None:
+    """Dirty worktree content is what documentation examples execute against."""
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "README.md").write_text(
+        "```console\n"
+        "$ python -c 'import pathlib, sys; "
+        'sys.exit(0 if pathlib.Path("tracked.txt").read_text(encoding="utf-8") '
+        '== "new" else 3)\' && git rev-parse --verify HEAD >/dev/null\n'
+        "```\n",
+        encoding="utf-8",
+    )
+    (project / "tracked.txt").write_text("old", encoding="utf-8")
+    _run_git(project, "init", "-b", "main")
+    _run_git(project, "add", ".")
+    _run_git(
+        project,
+        "-c",
+        "user.name=agentgrep tests",
+        "-c",
+        "user.email=agentgrep-tests@example.invalid",
+        "commit",
+        "-m",
+        "initial",
+    )
+    (project / "tracked.txt").write_text("new", encoding="utf-8")
+    example = collect_examples(
+        [project / "README.md"],
+        collectors=[MarkdownFenceCollector(languages={"console"})],
+        project_root=project,
+    )[0]
+
+    result = ConsoleCommandEvaluator(sandbox=TempHomeSandbox(project_root=project)).evaluate(
+        example,
+    )
+
+    assert result.passed is True
+    assert result.returncode == 0
 
 
 def test_literal_shell_evaluator_accepts_expected_error_output(tmp_path: pathlib.Path) -> None:
