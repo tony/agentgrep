@@ -30,6 +30,8 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import fnmatch
+import os
+import pathlib
 import typing as t
 
 import agentgrep
@@ -80,6 +82,15 @@ class CompiledQuery:
     is_pure_text: bool
 
 
+@dataclasses.dataclass(slots=True, frozen=True)
+class _CompiledPathPattern:
+    """Pre-expanded path predicate used by compiled query closures."""
+
+    raw: str
+    variants: tuple[str, ...]
+    is_glob: bool
+
+
 class QueryCompileError(ValueError):
     """Raised when a query AST can't be compiled.
 
@@ -116,12 +127,13 @@ def compile_query(ast: QueryNode, registry: FieldRegistry) -> CompiledQuery:
 
     _validate_ast(ast, registry)
     text_terms = tuple(_collect_text_terms(ast))
+    path_patterns = _compile_path_patterns(ast)
 
     def source_predicate(source: agentgrep.SourceHandle) -> bool:
-        return _evaluate_source(ast, source, registry) != "F"
+        return _evaluate_source(ast, source, registry, path_patterns) != "F"
 
     def record_predicate(record: agentgrep.SearchRecord) -> bool:
-        return _evaluate_record(ast, record, registry)
+        return _evaluate_record(ast, record, registry, path_patterns)
 
     return CompiledQuery(
         source_predicate=source_predicate,
@@ -373,10 +385,75 @@ def _collect_text_terms(node: QueryNode) -> list[str]:
     return []
 
 
+def _compile_path_patterns(node: QueryNode) -> dict[str, _CompiledPathPattern]:
+    """Return pre-expanded path patterns keyed by their raw query value."""
+    if isinstance(node, FieldEqNode) and node.field == "path":
+        return {node.value: _compile_path_pattern(node.value)}
+    if isinstance(node, NotNode):
+        return _compile_path_patterns(node.child)
+    if isinstance(node, AndNode | OrNode):
+        patterns: dict[str, _CompiledPathPattern] = {}
+        for child in node.children:
+            patterns.update(_compile_path_patterns(child))
+        return patterns
+    return {}
+
+
+def _compile_path_pattern(raw: str) -> _CompiledPathPattern:
+    """Compile one ``path:`` value into raw and home-expanded variants."""
+    variants = [raw]
+    variants.extend(_expand_current_user_home_patterns(raw))
+    unique_variants = _dedupe_preserving_order(variants)
+    return _CompiledPathPattern(
+        raw=raw,
+        variants=unique_variants,
+        is_glob=any(ch in variant for variant in unique_variants for ch in "*?["),
+    )
+
+
+def _expand_current_user_home_patterns(raw: str) -> tuple[str, ...]:
+    """Expand only current-user ``~`` and ``~/`` path query prefixes."""
+    home = str(pathlib.Path.home())
+    if raw == "~":
+        child_patterns = [
+            (home if home.endswith(separator) else home + separator) + "*"
+            for separator in _path_separators()
+        ]
+        return _dedupe_preserving_order([home, *child_patterns])
+    if raw.startswith("~/"):
+        return (home + raw[1:],)
+    if os.sep != "/" and raw.startswith(f"~{os.sep}"):
+        return (home + raw[1:],)
+    if os.altsep is not None and raw.startswith(f"~{os.altsep}"):
+        return (home + raw[1:],)
+    return ()
+
+
+def _path_separators() -> tuple[str, ...]:
+    """Return filesystem separators that may appear in local path strings."""
+    separators = [os.sep]
+    if os.altsep is not None:
+        separators.append(os.altsep)
+    return _dedupe_preserving_order(separators)
+
+
+def _dedupe_preserving_order(values: t.Iterable[str]) -> tuple[str, ...]:
+    """Return unique values while preserving first-seen order."""
+    seen: set[str] = set()
+    unique: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        unique.append(value)
+    return tuple(unique)
+
+
 def _evaluate_source(
     node: QueryNode,
     source: agentgrep.SourceHandle,
     registry: FieldRegistry,
+    path_patterns: dict[str, _CompiledPathPattern],
 ) -> _Trilean:
     """Evaluate ``node`` against ``source`` using three-valued logic.
 
@@ -397,24 +474,24 @@ def _evaluate_source(
         # (F means "definitely false given known facts").
         if spec.name == "mtime" and source.mtime_ns <= 0:
             return "U"
-        result = _field_matches_source(node, source, spec)
+        result = _field_matches_source(node, source, spec, path_patterns)
         return "T" if result else "F"
     if isinstance(node, NotNode):
-        inner = _evaluate_source(node.child, source, registry)
+        inner = _evaluate_source(node.child, source, registry, path_patterns)
         if inner == "T":
             return "F"
         if inner == "F":
             return "T"
         return "U"
     if isinstance(node, AndNode):
-        states = [_evaluate_source(c, source, registry) for c in node.children]
+        states = [_evaluate_source(c, source, registry, path_patterns) for c in node.children]
         if "F" in states:
             return "F"
         if "U" in states:
             return "U"
         return "T"
     if isinstance(node, OrNode):
-        states = [_evaluate_source(c, source, registry) for c in node.children]
+        states = [_evaluate_source(c, source, registry, path_patterns) for c in node.children]
         if "T" in states:
             return "T"
         if "U" in states:
@@ -427,6 +504,7 @@ def _evaluate_record(
     node: QueryNode,
     record: agentgrep.SearchRecord,
     registry: FieldRegistry,
+    path_patterns: dict[str, _CompiledPathPattern],
 ) -> bool:
     """Evaluate ``node`` exactly against ``record``.
 
@@ -441,7 +519,7 @@ def _evaluate_record(
         spec = registry.get(node.field)
         if spec is None:
             return False
-        return _field_matches_record(node, record, spec)
+        return _field_matches_record(node, record, spec, path_patterns)
     if isinstance(node, FieldCmpNode):
         spec = registry.get(node.field)
         if spec is None:
@@ -453,11 +531,11 @@ def _evaluate_record(
             return False
         return _field_range_matches_record(node, record, spec)
     if isinstance(node, NotNode):
-        return not _evaluate_record(node.child, record, registry)
+        return not _evaluate_record(node.child, record, registry, path_patterns)
     if isinstance(node, AndNode):
-        return all(_evaluate_record(c, record, registry) for c in node.children)
+        return all(_evaluate_record(c, record, registry, path_patterns) for c in node.children)
     if isinstance(node, OrNode):
-        return any(_evaluate_record(c, record, registry) for c in node.children)
+        return any(_evaluate_record(c, record, registry, path_patterns) for c in node.children)
     return False
 
 
@@ -465,6 +543,7 @@ def _field_matches_source(
     node: FieldEqNode | FieldCmpNode | FieldRangeNode,
     source: agentgrep.SourceHandle,
     spec: FieldSpec,
+    path_patterns: dict[str, _CompiledPathPattern],
 ) -> bool:
     """Decide whether ``source`` matches a source-layer field predicate."""
     if spec.name == "agent":
@@ -474,7 +553,7 @@ def _field_matches_source(
     if spec.name == "adapter_id":
         return _string_substring(source.adapter_id, _eq_value(node))
     if spec.name == "path":
-        return _path_match(str(source.path), _eq_value(node))
+        return _path_match(str(source.path), _path_pattern_for(node, path_patterns))
     if spec.name == "mtime":
         return _date_predicate_matches(
             node,
@@ -487,11 +566,12 @@ def _field_matches_record(
     node: FieldEqNode,
     record: agentgrep.SearchRecord,
     spec: FieldSpec,
+    path_patterns: dict[str, _CompiledPathPattern],
 ) -> bool:
     """Decide whether ``record`` matches a record-layer FieldEqNode."""
     if spec.layer == "source":
         # Source-level fields can be read off the record too.
-        return _field_matches_record_via_source(node, record, spec)
+        return _field_matches_record_via_source(node, record, spec, path_patterns)
     if spec.name == "scope":
         return agentgrep.record_matches_scope(
             record,
@@ -515,6 +595,7 @@ def _field_matches_record_via_source(
     node: FieldEqNode,
     record: agentgrep.SearchRecord,
     spec: FieldSpec,
+    path_patterns: dict[str, _CompiledPathPattern],
 ) -> bool:
     """Evaluate a source-layer field against record metadata.
 
@@ -529,7 +610,7 @@ def _field_matches_record_via_source(
     if spec.name == "adapter_id":
         return node.value in record.adapter_id
     if spec.name == "path":
-        return _path_match(str(record.path), node.value)
+        return _path_match(str(record.path), _path_pattern_for(node, path_patterns))
     return False
 
 
@@ -662,16 +743,28 @@ def _string_substring(haystack: str, needle: str) -> bool:
     return needle.casefold() in haystack.casefold()
 
 
-def _path_match(path: str, pattern: str) -> bool:
+def _path_pattern_for(
+    node: FieldEqNode | FieldCmpNode | FieldRangeNode,
+    path_patterns: dict[str, _CompiledPathPattern],
+) -> _CompiledPathPattern:
+    """Return the precompiled path pattern for a path predicate node."""
+    raw = _eq_value(node)
+    compiled = path_patterns.get(raw)
+    if compiled is not None:
+        return compiled
+    return _compile_path_pattern(raw)
+
+
+def _path_match(path: str, pattern: _CompiledPathPattern) -> bool:
     """Match a path against a pattern; substring fallback for non-glob input.
 
     Globs (`*`, `?`, `[...]`) trigger fnmatch; everything else
     falls through to substring containment so users can write
     `path:codex` without typing a leading `*`.
     """
-    if any(ch in pattern for ch in "*?["):
-        return fnmatch.fnmatchcase(path, pattern)
-    return pattern in path
+    if pattern.is_glob:
+        return any(fnmatch.fnmatchcase(path, variant) for variant in pattern.variants)
+    return any(variant in path for variant in pattern.variants)
 
 
 def _text_matches(record: agentgrep.SearchRecord, needle: str) -> bool:

@@ -163,8 +163,8 @@ $ agentgrep find 'path:*codex* agent:codex'
 
 Codex-agent sources whose path contains `codex`. `find` takes a
 single positional, so quote the whole query as one token; `path:`
-globs against the absolute path, so match a path fragment rather than
-a `~`-relative prefix.
+matches against the absolute path and accepts current-user `~`
+prefixes, so both `path:*codex*` and `path:~/.codex` work.
 
 ```console
 $ agentgrep grep agent:codex bliss
