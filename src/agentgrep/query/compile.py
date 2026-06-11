@@ -758,9 +758,11 @@ def _path_pattern_for(
 def _path_match(path: str, pattern: _CompiledPathPattern) -> bool:
     """Match a path against a pattern; substring fallback for non-glob input.
 
-    Globs (`*`, `?`, `[...]`) trigger fnmatch; everything else
-    falls through to substring containment so users can write
-    `path:codex` without typing a leading `*`.
+    Globs (`*`, `?`, `[...]`) in any compiled variant — including the
+    home-expanded forms of `path:~` and `path:~/...` — trigger fnmatch;
+    patterns whose variants stay glob-free fall through to substring
+    containment so users can write `path:codex` without typing a
+    leading `*`.
     """
     if pattern.is_glob:
         return any(fnmatch.fnmatchcase(path, variant) for variant in pattern.variants)
