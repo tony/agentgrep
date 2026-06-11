@@ -171,7 +171,7 @@ class TempHomeSandbox:
             if blocked in lowered:
                 raise blocked_command_error(blocked)
         home = pathlib.Path.home().as_posix()
-        if home and home in script:
+        if home and _mentions_real_home(script, home):
             label = "real home path"
             raise blocked_command_error(label)
 
@@ -466,6 +466,28 @@ def _looks_sensitive(key: str) -> bool:
     """Return whether an env var key is likely secret-bearing."""
     upper = key.upper()
     return any(token in upper for token in ("TOKEN", "SECRET", "PASSWORD", "API_KEY", "AUTH"))
+
+
+def _mentions_real_home(script: str, home: str) -> bool:
+    """Return whether ``script`` references ``home`` at a path boundary.
+
+    A bare prefix hit is not enough: home ``/home/d`` must not block a
+    sibling path such as ``/home/developer``.
+
+    >>> _mentions_real_home("cat /home/d/notes.txt", "/home/d")
+    True
+    >>> _mentions_real_home("echo /home/d", "/home/d")
+    True
+    >>> _mentions_real_home("cat /home/developer/notes.txt", "/home/d")
+    False
+    """
+    start = 0
+    while (index := script.find(home, start)) != -1:
+        end = index + len(home)
+        if end == len(script) or not (script[end].isalnum() or script[end] in "._-"):
+            return True
+        start = index + 1
+    return False
 
 
 def _normalize_script(script: str) -> str:
