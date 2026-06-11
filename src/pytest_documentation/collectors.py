@@ -168,7 +168,14 @@ class PythonDocstringCollector:
     suffixes = frozenset({".py"})
 
     def __init__(self, *, languages: set[str] | frozenset[str] | None = None) -> None:
-        """Create a Python docstring collector."""
+        """Create a Python docstring collector.
+
+        Parameters
+        ----------
+        languages : set[str] | frozenset[str] | None
+            Optional lower-case language allowlist. ``None`` collects every
+            fence.
+        """
         self._markdown = MarkdownFenceCollector(languages=languages)
 
     def collect(self, document: ExampleDocument) -> t.Iterable[DocumentationExample]:
@@ -216,7 +223,14 @@ class JustfileRecipeCollector:
     suffixes = frozenset({""})
 
     def __init__(self, *, recipe_names: set[str] | frozenset[str] | None = None) -> None:
-        """Create a justfile recipe collector."""
+        """Create a justfile recipe collector.
+
+        Parameters
+        ----------
+        recipe_names : set[str] | frozenset[str] | None
+            Optional case-insensitive recipe allowlist. ``None`` collects
+            every recipe.
+        """
         self.recipe_names = (
             None if recipe_names is None else frozenset(name.lower() for name in recipe_names)
         )
