@@ -269,6 +269,78 @@ def test_temp_home_sandbox_copies_dirty_git_project(tmp_path: pathlib.Path) -> N
     assert result.returncode == 0
 
 
+class CloneFallbackCase(t.NamedTuple):
+    """One failed-clone fallback scenario for ``_prepare_project``."""
+
+    test_id: str
+    leave_stale_destination: bool
+
+
+CLONE_FALLBACK_CASES: tuple[CloneFallbackCase, ...] = (
+    CloneFallbackCase(test_id="stale-partial-clone", leave_stale_destination=True),
+    CloneFallbackCase(test_id="clean-destination", leave_stale_destination=False),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    CLONE_FALLBACK_CASES,
+    ids=[case.test_id for case in CLONE_FALLBACK_CASES],
+)
+def test_prepare_project_copy_fallback_survives_failed_clone(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: CloneFallbackCase,
+) -> None:
+    """A failed clone's leftover destination does not break the copy fallback.
+
+    ``monkeypatch`` intercepts only the ``git clone`` subprocess because a
+    clone that dies after creating its destination directory (the bug
+    trigger) cannot be provoked reliably with a real git invocation.
+    """
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "tracked.txt").write_text("content", encoding="utf-8")
+    _run_git(source, "init", "-b", "main")
+    _run_git(source, "add", ".")
+    _run_git(
+        source,
+        "-c",
+        "user.name=agentgrep tests",
+        "-c",
+        "user.email=agentgrep-tests@example.invalid",
+        "commit",
+        "-m",
+        "initial",
+    )
+    sandbox = TempHomeSandbox(project_root=source)
+    destination = tmp_path / "world" / "project" / source.name
+    if case.leave_stale_destination:
+        destination.mkdir(parents=True)
+        (destination / "partial.txt").write_text("partial", encoding="utf-8")
+    real_run = subprocess.run
+
+    def fake_run(
+        command: tuple[str, ...],
+        **kwargs: t.Any,
+    ) -> subprocess.CompletedProcess[str]:
+        if command[:2] == ("git", "clone"):
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=128,
+                stdout="",
+                stderr="fatal: simulated clone interruption",
+            )
+        return real_run(command, **kwargs)
+
+    monkeypatch.setattr("pytest_documentation.sandbox.subprocess.run", fake_run)
+
+    sandbox._prepare_project(destination)
+
+    assert (destination / "tracked.txt").read_text(encoding="utf-8") == "content"
+    assert not (destination / "partial.txt").exists()
+
+
 def test_literal_shell_evaluator_accepts_expected_error_output(tmp_path: pathlib.Path) -> None:
     """Console transcripts can document expected non-zero command output."""
     path = tmp_path / "README.md"
