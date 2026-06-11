@@ -182,12 +182,15 @@ class _GrepLimitAction(argparse.Action):
         option_string: str | None = None,
     ) -> None:
         """Record a grep result cap and reject conflicting alias repeats."""
-        _ = option_string
+        spelling = option_string or "--limit"
+        spelling_dest = f"_{self.dest}_option_string"
         value = t.cast("int", values)
         current = t.cast("int | None", getattr(namespace, self.dest, None))
         if current is not None and current != value:
-            parser.error("--limit and --max-count disagree")
+            previous = t.cast("str", getattr(namespace, spelling_dest, "--limit"))
+            parser.error(f"{previous} and {spelling} disagree")
         setattr(namespace, self.dest, value)
+        setattr(namespace, spelling_dest, spelling)
 
 
 def normalize_color_mode(argv: cabc.Sequence[str] | None) -> ColorMode:
