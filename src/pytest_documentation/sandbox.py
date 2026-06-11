@@ -103,7 +103,25 @@ class TempHomeSandbox:
         extra_env: t.Mapping[str, str] | None = None,
         blocked_words: t.Iterable[str] | None = None,
     ) -> None:
-        """Create a temporary-home sandbox."""
+        """Create a temporary-home sandbox.
+
+        Parameters
+        ----------
+        project_root : pathlib.Path | None
+            Source project cloned or copied into the sandbox. ``None`` uses
+            the current working directory.
+        timeout : float
+            Per-script subprocess timeout in seconds.
+        cwd : pathlib.Path | None
+            Command cwd, remapped into the sandboxed project tree when it
+            lies inside ``project_root``.
+        seeds : t.Iterable[SandboxSeed]
+            Files or directories copied into the sandbox home.
+        extra_env : t.Mapping[str, str] | None
+            Environment overrides applied after the redirected roots.
+        blocked_words : t.Iterable[str] | None
+            Substrings that reject a script. ``None`` uses the defaults.
+        """
         self.project_root = (project_root or pathlib.Path.cwd()).expanduser().resolve()
         self.timeout = timeout
         self.cwd = cwd.expanduser().resolve() if cwd is not None else None

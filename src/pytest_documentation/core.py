@@ -489,7 +489,22 @@ def failure_from_exception(
     *,
     project_root: pathlib.Path | None = None,
 ) -> EvaluationResult:
-    """Create an evaluation failure result from an exception."""
+    """Create an evaluation failure result from an exception.
+
+    Parameters
+    ----------
+    example : DocumentationExample
+        Example whose evaluation raised.
+    exception : BaseException
+        Exception converted into a harness-error failure.
+    project_root : pathlib.Path | None
+        Root stripped from paths in the redacted traceback message.
+
+    Returns
+    -------
+    EvaluationResult
+        Failed result carrying the redacted traceback.
+    """
     message = "".join(traceback.format_exception(exception))
     return EvaluationResult.failed_result(
         example,

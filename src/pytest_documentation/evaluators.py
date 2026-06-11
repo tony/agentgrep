@@ -20,7 +20,13 @@ class PythonCodeEvaluator:
     """Evaluate Python examples with ``exec`` in an isolated namespace."""
 
     def __init__(self, *, globals_: dict[str, object] | None = None) -> None:
-        """Create a Python evaluator."""
+        """Create a Python evaluator.
+
+        Parameters
+        ----------
+        globals_ : dict[str, object] | None
+            Base globals copied into each example's exec namespace.
+        """
         self.globals = dict(globals_ or {})
 
     def evaluate(self, example: DocumentationExample) -> EvaluationResult:
@@ -52,7 +58,14 @@ class ConsoleCommandEvaluator:
     """Evaluate console examples as literal shell scripts."""
 
     def __init__(self, *, sandbox: SandboxBackend | None = None) -> None:
-        """Create a console evaluator."""
+        """Create a console evaluator.
+
+        Parameters
+        ----------
+        sandbox : SandboxBackend | None
+            Sandbox used to run scripts. ``None`` creates a
+            :class:`~pytest_documentation.sandbox.TempHomeSandbox`.
+        """
         self.sandbox = sandbox or TempHomeSandbox()
 
     def evaluate(self, example: DocumentationExample) -> EvaluationResult:
@@ -132,7 +145,14 @@ class FastMCPConfigEvaluator:
     _DEFAULT_ENTRYPOINTS = frozenset({"mcp", "server", "app"})
 
     def __init__(self, *, project_root: pathlib.Path | None = None) -> None:
-        """Create a FastMCP config evaluator."""
+        """Create a FastMCP config evaluator.
+
+        Parameters
+        ----------
+        project_root : pathlib.Path | None
+            Root the evaluator treats as the project checkout. ``None``
+            uses the current working directory.
+        """
         self.project_root = (project_root or pathlib.Path.cwd()).expanduser().resolve()
 
     def evaluate(self, example: DocumentationExample) -> EvaluationResult:
@@ -206,7 +226,16 @@ class SphinxDoctestEvaluator:
     """Evaluate Sphinx doctest recipes through ``just``."""
 
     def __init__(self, *, project_root: pathlib.Path | None = None, timeout: float = 60.0) -> None:
-        """Create a Sphinx doctest evaluator."""
+        """Create a Sphinx doctest evaluator.
+
+        Parameters
+        ----------
+        project_root : pathlib.Path | None
+            Root stripped from paths in redacted recipe output. ``None``
+            uses the current working directory.
+        timeout : float
+            Recipe subprocess timeout in seconds.
+        """
         self.project_root = (project_root or pathlib.Path.cwd()).expanduser().resolve()
         self.timeout = timeout
 
@@ -400,5 +429,19 @@ def evaluate_many(
     | PythonCodeEvaluator
     | SphinxDoctestEvaluator,
 ) -> list[EvaluationResult]:
-    """Evaluate many examples with one evaluator."""
+    """Evaluate many examples with one evaluator.
+
+    Parameters
+    ----------
+    examples : t.Iterable[DocumentationExample]
+        Examples to evaluate in order.
+    evaluator
+        Evaluator applied to every example; any evaluator class from
+        this module.
+
+    Returns
+    -------
+    list[EvaluationResult]
+        One result per example, in input order.
+    """
     return [evaluator.evaluate(example) for example in examples]
