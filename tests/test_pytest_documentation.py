@@ -352,6 +352,63 @@ def test_sandbox_reports_blocked_commands_as_classified_failures(
     assert "uv sync dry-run" in result.message
 
 
+class HomePolicyScriptCase(t.NamedTuple):
+    """One script template for the real-home policy boundary check."""
+
+    test_id: str
+    script_template: str
+    expected_blocked: bool
+
+
+HOME_POLICY_SCRIPT_CASES: tuple[HomePolicyScriptCase, ...] = (
+    HomePolicyScriptCase(
+        test_id="real-home-subpath",
+        script_template="cat {home}/notes.txt",
+        expected_blocked=True,
+    ),
+    HomePolicyScriptCase(
+        test_id="real-home-bare",
+        script_template="echo {home}",
+        expected_blocked=True,
+    ),
+    HomePolicyScriptCase(
+        test_id="real-home-quoted",
+        script_template='printf "%s" "{home}"',
+        expected_blocked=True,
+    ),
+    HomePolicyScriptCase(
+        test_id="sibling-prefix-path",
+        script_template="cat {home}xtra/notes.txt",
+        expected_blocked=False,
+    ),
+    HomePolicyScriptCase(
+        test_id="no-home-mention",
+        script_template="printf ok",
+        expected_blocked=False,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    HOME_POLICY_SCRIPT_CASES,
+    ids=[case.test_id for case in HOME_POLICY_SCRIPT_CASES],
+)
+def test_sandbox_blocks_real_home_only_at_path_boundaries(
+    tmp_path: pathlib.Path,
+    case: HomePolicyScriptCase,
+) -> None:
+    """The real-home policy ignores sibling paths that merely share a prefix."""
+    sandbox = TempHomeSandbox(project_root=tmp_path)
+    script = case.script_template.format(home=pathlib.Path.home().as_posix())
+
+    if case.expected_blocked:
+        with pytest.raises(subprocess.SubprocessError, match="real home path"):
+            sandbox._check_policy(script)
+    else:
+        sandbox._check_policy(script)
+
+
 def test_console_evaluator_classifies_data_dependent_empty_results(
     tmp_path: pathlib.Path,
 ) -> None:
