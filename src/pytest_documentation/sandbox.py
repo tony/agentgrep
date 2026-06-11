@@ -220,6 +220,10 @@ class TempHomeSandbox:
             )
             if completed.returncode == 0:
                 return
+            # An interrupted clone can leave a partial destination behind;
+            # clear it so the copytree fallback starts from a clean slate.
+            if project.exists():
+                shutil.rmtree(project)
         self._copy_project(project)
         if has_git_metadata:
             self._initialize_copied_git_repo(project)
