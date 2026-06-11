@@ -174,15 +174,48 @@ def test_grep_limit_aliases_accept_matching_values() -> None:
     assert parsed.limit == 5
 
 
+class LimitConflictCase(t.NamedTuple):
+    """Parametrized case for disagreeing grep cap alias spellings."""
+
+    test_id: str
+    argv: list[str]
+    expected_message: str
+
+
+LIMIT_CONFLICT_CASES: tuple[LimitConflictCase, ...] = (
+    LimitConflictCase(
+        test_id="limit-then-max-count",
+        argv=["grep", "--limit", "5", "--max-count", "4", "foo"],
+        expected_message="--limit and --max-count disagree",
+    ),
+    LimitConflictCase(
+        test_id="short-alias-then-limit",
+        argv=["grep", "-m", "5", "--limit", "4", "foo"],
+        expected_message="-m and --limit disagree",
+    ),
+    LimitConflictCase(
+        test_id="max-count-then-short-alias",
+        argv=["grep", "--max-count", "5", "-m", "4", "foo"],
+        expected_message="--max-count and -m disagree",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    LIMIT_CONFLICT_CASES,
+    ids=[case.test_id for case in LIMIT_CONFLICT_CASES],
+)
 def test_grep_limit_aliases_reject_conflicting_values(
     capsys: pytest.CaptureFixture[str],
+    case: LimitConflictCase,
 ) -> None:
-    """Repeated cap aliases fail loudly when they disagree."""
+    """Repeated cap aliases fail loudly, naming the flags the user typed."""
     with pytest.raises(SystemExit) as exc_info:
-        _ = agentgrep.parse_args(["grep", "--limit", "5", "--max-count", "4", "foo"])
+        _ = agentgrep.parse_args(case.argv)
     assert exc_info.value.code == 2
     captured = capsys.readouterr()
-    assert "--limit and --max-count disagree" in captured.err
+    assert case.expected_message in captured.err
 
 
 def test_grep_limit_rejects_non_positive_value(capsys: pytest.CaptureFixture[str]) -> None:
