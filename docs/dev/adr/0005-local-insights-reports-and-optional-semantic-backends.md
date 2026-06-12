@@ -117,7 +117,7 @@ must degrade to a clear "not installed" message instead of a traceback.
 | 2 | `agentgrep[insights-ml]` | `scikit-learn` | TF-IDF terms, classical clustering, outlier sessions, topic candidate labels | no model downloads |
 | 3 | `agentgrep[insights-embeddings]` | `sentence-transformers` | dense/sparse embeddings, semantic clustering, semantic dedupe, nearest-session examples | explicit model install only |
 | 4 | `agentgrep[insights-index]` | `sqlite-vec` or `tantivy`; Chroma remains an experimental heavier option | persistent local indexes, incremental embedding reuse, fast nearest-neighbor or full-text report refreshes | reuses installed embedding models only |
-| 5 | `agentgrep[insights-llm]` | `llama-cpp-python` for embedded local inference, `httpx` for local HTTP backends such as Ollama | local narrative synthesis, cluster naming, unanswered-question extraction, report refinement from evidence | explicit local model or endpoint only |
+| 5 | backend-specific `agentgrep[insights-llm-*]` extras | `llama-cpp-python` for GGUF inference, `httpx` for local HTTP backends such as Ollama, `litert-lm-api` for in-process `.litertlm` inference | local narrative synthesis, cluster naming, unanswered-question extraction, report refinement from evidence | explicit local model or endpoint only |
 
 `agentgrep[insights-all]` may install levels 1 through 4. Level 5 should remain
 separate unless its dependency set has reliable wheels and a manageable install
@@ -126,15 +126,30 @@ permissively licensed, not available on supported platforms, or too fragile for
 normal users must stay behind an experimental extra such as
 `agentgrep[insights-llm-experimental]`.
 
+LLM adapters may be split further by backend, for example
+`agentgrep[insights-llm-ollama]`, `agentgrep[insights-llm-llama-cpp]`, and
+`agentgrep[insights-llm-litert-lm]`. A compatibility umbrella extra may keep the
+older `agentgrep[insights-llm]` name, but setup commands should prefer a
+backend-specific extra so one local LLM backend does not require installing
+every other adapter.
+
 The default command does not auto-upgrade to the highest installed level. If a
 user wants richer behavior, they must ask for it:
 
 ```console
-agentgrep insights report --level builtin
-agentgrep insights report --level ml
-agentgrep insights report --level embeddings --model /path/to/all-MiniLM-L6-v2
-agentgrep insights report --level llm --model /path/to/model.gguf
-agentgrep insights report --level best-installed
+$ agentgrep insights report --level builtin
+```
+
+```console
+$ agentgrep insights report --level ml
+```
+
+For embeddings and LLM reports, the user passes a real local model path, such
+as `agentgrep insights report --level embeddings --model /path/to/all-MiniLM-L6-v2`
+or `agentgrep insights report --level llm --model /path/to/model.gguf`.
+
+```console
+$ agentgrep insights report --level best-installed
 ```
 
 `builtin` is the default. `best-installed` is an explicit opt-in that selects the
@@ -147,36 +162,47 @@ dependency or local model requirement is not met.
 agentgrep may provide setup commands that install optional extras on request:
 
 ```console
-agentgrep insights setup html
-agentgrep insights setup ml
-agentgrep insights setup embeddings
-agentgrep insights setup index
-agentgrep insights setup llm
+$ agentgrep insights setup html
+```
+
+```console
+$ agentgrep insights setup ml
+```
+
+```console
+$ agentgrep insights setup embeddings
+```
+
+```console
+$ agentgrep insights setup index
+```
+
+```console
+$ agentgrep insights setup llm --llm-backend litert-lm
 ```
 
 Setup must be explicit. By default, it prints the exact command it would run,
 preferring uv when available and falling back to the current Python executable:
 
 ```console
-uv pip install "agentgrep[insights-embeddings]"
-python -m pip install "agentgrep[insights-embeddings]"
+$ uv pip install "agentgrep[insights-embeddings]"
 ```
+
+The fallback installer shape is
+`python -m pip install "agentgrep[insights-embeddings]"`.
 
 It may execute the install only with an affirmative flag such as `--install` or
 `--yes`. After changing the environment, the command should either re-exec or
 ask the user to rerun the requested report command. It must not silently mutate
 the environment as a side effect of `agentgrep insights report`.
 
-Model management is a separate surface:
-
-```console
-agentgrep insights models list
-agentgrep insights models available --level embeddings
-agentgrep insights models install all-MiniLM-L6-v2 --level embeddings
-agentgrep insights models install tinyllama --level llm --backend llama-cpp
-agentgrep insights models remove all-MiniLM-L6-v2
-agentgrep insights doctor
-```
+Model management is a separate future surface. The intended command family is
+`agentgrep insights models list`,
+`agentgrep insights models available --level embeddings`,
+`agentgrep insights models install all-MiniLM-L6-v2 --level embeddings`,
+`agentgrep insights models install tinyllama --level llm --backend llama-cpp`,
+`agentgrep insights models remove all-MiniLM-L6-v2`, and
+`agentgrep insights doctor`.
 
 The model registry is local and inspectable. It records model ID, backend,
 source URL or local path, revision or content hash, license, file sizes,
@@ -210,7 +236,8 @@ Or use the default report: agentgrep insights report --level builtin
 The implementation should use lazy backend loading:
 
 - Importing `agentgrep` must not import `sklearn`, `torch`,
-  `sentence_transformers`, `sqlite_vec`, `tantivy`, `llama_cpp`, or `httpx`.
+  `sentence_transformers`, `sqlite_vec`, `tantivy`, `llama_cpp`, `httpx`, or
+  `litert_lm`.
 - Each optional backend has a small capability probe and a typed failure result.
 - The report command prints the selected level, whether models are installed,
   and which enrichers were skipped.

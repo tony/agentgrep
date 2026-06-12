@@ -162,6 +162,7 @@ class InsightsSetupArgs:
     """Typed arguments for ``agentgrep insights setup``."""
 
     level: InsightsSetupLevel
+    llm_backend: InsightsLLMBackend
     manager: InsightsInstallManager
     install: bool
     yes: bool
@@ -676,7 +677,7 @@ def create_parser(
     )
     _ = insights_report_parser.add_argument(
         "--llm-backend",
-        choices=["auto", "llama-cpp", "ollama"],
+        choices=["auto", "llama-cpp", "ollama", "litert-lm"],
         default="auto",
         help="Local LLM backend to use when --level llm is requested",
     )
@@ -726,6 +727,12 @@ def create_parser(
         "level",
         choices=["html", "ml", "embeddings", "index", "llm"],
         help="Optional insights level to install",
+    )
+    _ = insights_setup_parser.add_argument(
+        "--llm-backend",
+        choices=["auto", "llama-cpp", "ollama", "litert-lm"],
+        default="auto",
+        help="Specific LLM adapter extra to install when level is llm",
     )
     _ = insights_setup_parser.add_argument(
         "--manager",
@@ -1044,6 +1051,7 @@ def parse_args(
         if insights_command == "setup":
             return InsightsSetupArgs(
                 level=t.cast("InsightsSetupLevel", namespace.level),
+                llm_backend=t.cast("InsightsLLMBackend", namespace.llm_backend),
                 manager=t.cast("InsightsInstallManager", namespace.manager),
                 install=t.cast("bool", namespace.install),
                 yes=t.cast("bool", namespace.yes),

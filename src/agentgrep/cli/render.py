@@ -251,6 +251,8 @@ class InsightsReportProgress:
         """Report that a local LLM request is starting."""
         if backend == "ollama":
             detail = f"Contacting Ollama at {endpoint} with model {model}"
+        elif backend == "litert-lm":
+            detail = f"Loading LiteRT-LM model {model}"
         else:
             detail = f"Contacting {backend} model {model}"
         self._set_detail(detail, emit=True)
@@ -259,6 +261,8 @@ class InsightsReportProgress:
         """Report that a local LLM request is waiting for tokens."""
         if backend == "ollama":
             detail = f"Waiting for Ollama model {model} at {endpoint}"
+        elif backend == "litert-lm":
+            detail = f"Waiting for LiteRT-LM model {model}"
         else:
             detail = f"Waiting for {backend} model {model}"
         self._set_detail(detail, emit=True)
@@ -272,9 +276,10 @@ class InsightsReportProgress:
         char_count: int,
     ) -> None:
         """Report streamed local LLM response progress."""
-        _ = (backend, model)
+        _ = model
+        backend_name = _format_llm_backend_name(backend)
         detail = (
-            "Streaming Ollama response: "
+            f"Streaming {backend_name} response: "
             f"{_format_count(chunk_count, 'chunk')}, {_format_count(char_count, 'char')}"
         )
         self._set_detail(detail, emit=chunk_count == 1 or chunk_count % 10 == 0)
@@ -288,9 +293,10 @@ class InsightsReportProgress:
         char_count: int,
     ) -> None:
         """Report that local LLM response streaming has finished."""
-        _ = (backend, model)
+        _ = model
+        backend_name = _format_llm_backend_name(backend)
         detail = (
-            "Ollama response complete: "
+            f"{backend_name} response complete: "
             f"{_format_count(chunk_count, 'chunk')}, {_format_count(char_count, 'char')}"
         )
         self._set_detail(detail, emit=True)
@@ -424,6 +430,14 @@ class InsightsReportProgress:
 def _format_count(value: int, singular: str) -> str:
     suffix = "" if value == 1 else "s"
     return f"{value} {singular}{suffix}"
+
+
+def _format_llm_backend_name(backend: str) -> str:
+    if backend == "litert-lm":
+        return "LiteRT-LM"
+    if backend == "ollama":
+        return "Ollama"
+    return backend
 
 
 def run_insights_report_command(args: InsightsReportArgs) -> int:
@@ -573,7 +587,6 @@ def run_insights_setup_command(args: InsightsSetupArgs) -> int:
     """Execute ``agentgrep insights setup``."""
     from agentgrep.insights import build_setup_plan
 
-    plan = build_setup_plan(args.level, manager=args.manager)
     if args.install and not args.yes:
         print(
             "Refusing to install optional insights dependencies without --yes.",
@@ -584,8 +597,17 @@ def run_insights_setup_command(args: InsightsSetupArgs) -> int:
             file=sys.stderr,
         )
         return 2
+    if args.level == "llm" and args.llm_backend == "auto":
+        _print_llm_setup_backend_options(file=sys.stderr if args.install else sys.stdout)
+        return 2 if args.install else 0
 
-    print(f"Install command: {plan.command_text}")
+    plan = build_setup_plan(
+        args.level,
+        manager=args.manager,
+        llm_backend=args.llm_backend,
+    )
+
+    print(f"Install command: {plan.command_text}", flush=True)
     if not args.install:
         print("Dry run; pass --install --yes to execute.")
         return 0
@@ -594,17 +616,48 @@ def run_insights_setup_command(args: InsightsSetupArgs) -> int:
     if completed.returncode == 0:
         print("Install completed. Rerun the requested insights command.")
         if args.level == "llm":
-            print(
-                "For llama.cpp, pass a local GGUF model path: "
-                "agentgrep insights report --level llm --model /path/to/model.gguf",
-            )
-            print(
-                "For Ollama, pass a local model name: "
-                "agentgrep insights report --level llm --llm-backend ollama --model llama3",
-            )
+            _print_llm_setup_next_step(args.llm_backend)
     else:
         print("Install failed. Review installer output and rerun setup.", file=sys.stderr)
     return completed.returncode
+
+
+def _print_llm_setup_backend_options(*, file: t.TextIO) -> None:
+    print(
+        "Choose an LLM backend before installing optional LLM dependencies.",
+        file=file,
+    )
+    print(
+        "Run: agentgrep insights setup llm --llm-backend ollama --install --yes",
+        file=file,
+    )
+    print(
+        "Run: agentgrep insights setup llm --llm-backend llama-cpp --install --yes",
+        file=file,
+    )
+    print(
+        "Run: agentgrep insights setup llm --llm-backend litert-lm --install --yes",
+        file=file,
+    )
+
+
+def _print_llm_setup_next_step(backend: str) -> None:
+    if backend == "llama-cpp":
+        print(
+            "For llama.cpp, pass a local GGUF model path: "
+            "agentgrep insights report --level llm --model /path/to/model.gguf",
+        )
+    elif backend == "ollama":
+        print(
+            "For Ollama, pass a local model name: "
+            "agentgrep insights report --level llm --llm-backend ollama --model llama3",
+        )
+    elif backend == "litert-lm":
+        print(
+            "For LiteRT-LM, pass a local .litertlm model path: "
+            "agentgrep insights report --level llm --llm-backend litert-lm "
+            "--model /path/to/model.litertlm",
+        )
 
 
 def _print_insights_report_text(payload: dict[str, object]) -> None:

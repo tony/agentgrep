@@ -97,7 +97,7 @@ The five optional dependency levels are independent package extras:
 | `ml` | `agentgrep[insights-ml]` | TF-IDF features and classical clustering | no model downloads |
 | `embeddings` | `agentgrep[insights-embeddings]` | Dense and sparse semantic grouping | explicit model install only |
 | `index` | `agentgrep[insights-index]` | Persistent local indexes for report refreshes | reuses installed embedding models only |
-| `llm` | `agentgrep[insights-llm]` | Local narrative synthesis through embedded or HTTP backends | explicit local model or endpoint only |
+| `llm` | backend-specific `agentgrep[insights-llm-*]` extras | Local narrative synthesis through embedded or HTTP backends | explicit local model or endpoint only |
 
 `agentgrep[insights-all]` installs levels 1 through 4. The local LLM
 level stays separate because it has a heavier runtime and model story.
@@ -105,14 +105,21 @@ level stays separate because it has a heavier runtime and model story.
 Report generation is offline by default. `--allow-download` is an
 explicit opt-in for model loaders that support local-only switches, and
 non-loopback LLM endpoints require `--allow-network`.
-Installing the `llm` extra only installs the local runtime adapter. A
-report still needs either a local GGUF model path or a local backend
-model name:
+Install one LLM adapter extra at a time:
 
-```text
-agentgrep insights report --level llm --model /path/to/model.gguf
-agentgrep insights report --level llm --llm-backend ollama --model llama3
-```
+| Backend | Extra | Use when |
+| --- | --- | --- |
+| `ollama` | `agentgrep[insights-llm-ollama]` | an Ollama-compatible local HTTP daemon already owns model management |
+| `llama-cpp` | `agentgrep[insights-llm-llama-cpp]` | you have a local GGUF model file |
+| `litert-lm` | `agentgrep[insights-llm-litert-lm]` | you have a local `.litertlm` model file |
+
+The compatibility extra `agentgrep[insights-llm]` installs all stable
+LLM adapters, but `agentgrep insights setup llm` asks for a specific
+backend before mutating the environment. A report still needs a real local
+model path or a local backend model name. For example, pass
+`--llm-backend llama-cpp --model /path/to/model.gguf`,
+`--llm-backend litert-lm --model /path/to/model.litertlm`, or
+`--llm-backend ollama --model llama3`.
 
 ## Setup
 
@@ -137,9 +144,19 @@ environment:
 $ agentgrep insights setup ml --manager pip
 ```
 
+LLM setup requires an explicit adapter:
+
+```console
+$ agentgrep insights setup \
+    llm \
+    --llm-backend litert-lm \
+    --install \
+    --yes
+```
+
 `insights doctor` uses `importlib.util.find_spec` probes. It does not
 import `sklearn`, `torch`, `sentence_transformers`, `sqlite_vec`,
-`tantivy`, `llama_cpp`, or `httpx`.
+`tantivy`, `llama_cpp`, `httpx`, or `litert_lm`.
 
 ## Command
 

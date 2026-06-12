@@ -55,8 +55,18 @@ LOADER_CASES: tuple[LoaderCase, ...] = (
     ),
     LoaderCase(
         test_id="llm-imports-local-model-modules",
-        level="llm",
-        modules=("llama_cpp", "httpx"),
+        level="llm-llama-cpp",
+        modules=("llama_cpp",),
+    ),
+    LoaderCase(
+        test_id="llm-imports-ollama-modules",
+        level="llm-ollama",
+        modules=("httpx",),
+    ),
+    LoaderCase(
+        test_id="llm-imports-litert-lm-modules",
+        level="llm-litert-lm",
+        modules=("litert_lm",),
     ),
 )
 
@@ -64,16 +74,20 @@ CONFIG_ERROR_CASES: tuple[ConfigErrorCase, ...] = (
     ConfigErrorCase(
         test_id="llm-requires-model-or-local-endpoint-model",
         level="llm",
-        requirement="local llama.cpp model path or Ollama model name",
+        requirement="local .gguf model path, local .litertlm model path, or Ollama model name",
         examples=(
             "agentgrep insights report --level llm --model /path/to/model.gguf",
+            "agentgrep insights report --level llm --llm-backend litert-lm "
+            "--model /path/to/model.litertlm",
             "agentgrep insights report --level llm --llm-backend ollama --model llama3",
         ),
         expected_lines=(
             "Insights backend 'llm' needs runtime configuration: "
-            "local llama.cpp model path or Ollama model name.",
+            "local .gguf model path, local .litertlm model path, or Ollama model name.",
             "Try:",
             "  agentgrep insights report --level llm --model /path/to/model.gguf",
+            "  agentgrep insights report --level llm --llm-backend litert-lm "
+            "--model /path/to/model.litertlm",
             "  agentgrep insights report --level llm --llm-backend ollama --model llama3",
         ),
     ),
@@ -117,6 +131,26 @@ def test_load_backend_modules_reports_all_missing_modules() -> None:
     assert exc_info.value.level == "ml"
     assert exc_info.value.missing_modules == ("sklearn", "sklearn.cluster")
     assert "agentgrep insights setup ml --install --yes" in str(exc_info.value)
+
+
+def test_llm_adapter_unavailable_reports_backend_specific_setup() -> None:
+    """Backend-specific LLM loaders suggest the matching adapter extra."""
+
+    def fake_import_module(name: str) -> types.ModuleType:
+        raise ModuleNotFoundError(name=name)
+
+    with pytest.raises(BackendUnavailable) as exc_info:
+        _ = load_backend_modules(
+            "llm-litert-lm",
+            ("litert_lm",),
+            import_module=fake_import_module,
+        )
+
+    assert exc_info.value.level == "llm-litert-lm"
+    assert exc_info.value.missing_modules == ("litert_lm",)
+    assert "agentgrep insights setup llm --llm-backend litert-lm --install --yes" in str(
+        exc_info.value
+    )
 
 
 @pytest.mark.parametrize(

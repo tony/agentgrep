@@ -162,6 +162,148 @@ def test_build_report_streams_ollama_summary_and_reports_progress() -> None:
     assert progress.events[-1].char_count == len("Local summary")
 
 
+def test_build_report_streams_litert_lm_summary_and_reports_progress(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The LiteRT-LM backend streams chunks through the in-process Python API."""
+    model_path = tmp_path / "model.litertlm"
+    model_path.write_text("fake model", encoding="utf-8")
+    litert_lm = _fake_litert_lm_module(
+        (
+            {"content": [{"type": "text", "text": "Local "}]},
+            {"content": [{"type": "text", "text": "summary"}]},
+        ),
+    )
+    progress = RecordingInsightsProgress()
+
+    report = insights.build_report(
+        _records(),
+        scope="prompts",
+        requested_level="llm",
+        record_limit=10,
+        sampled=True,
+        model=str(model_path),
+        llm_backend="litert-lm",
+        import_module_for_backend=_fake_litert_lm_import_module(litert_lm),
+        progress=progress,
+    )
+
+    payload = report.to_payload()
+    enrichment = payload["enrichments"][0]
+    assert enrichment["backend"] == "litert-lm"
+    assert enrichment["data"]["summary"] == "Local summary"
+    assert enrichment["data"]["model"] == str(model_path)
+
+    engines = t.cast("list[dict[str, object]]", litert_lm.__dict__["engines"])
+    assert engines == [
+        {
+            "model_path": str(model_path),
+            "backend": "cpu",
+            "max_num_tokens": 2048,
+        },
+    ]
+    prompts = t.cast("list[str]", litert_lm.__dict__["prompts"])
+    assert len(prompts) == 1
+    assert "Top terms:" in prompts[0]
+    assert [event.name for event in progress.events] == [
+        "started",
+        "waiting",
+        "chunk",
+        "chunk",
+        "finished",
+    ]
+    assert progress.events[0].backend == "litert-lm"
+    assert progress.events[-1].chunk_count == 2
+    assert progress.events[-1].char_count == len("Local summary")
+
+
+def test_build_report_supports_released_litert_lm_stream_signature(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The LiteRT-LM adapter supports PyPI releases without token-budget kwargs."""
+    model_path = tmp_path / "model.litertlm"
+    model_path.write_text("fake model", encoding="utf-8")
+    litert_lm = _fake_litert_lm_module(
+        ({"content": [{"type": "text", "text": "Released wheel"}]},),
+        supports_max_output_tokens=False,
+    )
+
+    report = insights.build_report(
+        _records(),
+        scope="prompts",
+        requested_level="llm",
+        record_limit=10,
+        sampled=True,
+        model=str(model_path),
+        llm_backend="litert-lm",
+        import_module_for_backend=_fake_litert_lm_import_module(litert_lm),
+        progress=RecordingInsightsProgress(),
+    )
+
+    payload = report.to_payload()
+    enrichment = payload["enrichments"][0]
+    assert enrichment["backend"] == "litert-lm"
+    assert enrichment["data"]["summary"] == "Released wheel"
+
+
+def test_build_report_cancels_unbounded_litert_lm_stream(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The released LiteRT-LM stream path is capped and drained after cancel."""
+    model_path = tmp_path / "model.litertlm"
+    model_path.write_text("fake model", encoding="utf-8")
+    litert_lm = _fake_litert_lm_module(
+        tuple({"content": [{"type": "text", "text": "x"}]} for _ in range(100)),
+        supports_max_output_tokens=False,
+    )
+
+    report = insights.build_report(
+        _records(),
+        scope="prompts",
+        requested_level="llm",
+        record_limit=10,
+        sampled=True,
+        model=str(model_path),
+        llm_backend="litert-lm",
+        import_module_for_backend=_fake_litert_lm_import_module(litert_lm),
+        progress=RecordingInsightsProgress(),
+    )
+
+    payload = report.to_payload()
+    enrichment = payload["enrichments"][0]
+    assert enrichment["data"]["summary"] == "x" * 64
+    assert litert_lm.__dict__["cancellations"] == 1
+    assert litert_lm.__dict__["drains_after_cancel"] == 1
+
+
+def test_build_report_rejects_malformed_litert_lm_stream(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Malformed LiteRT-LM streaming chunks become actionable runtime errors."""
+    model_path = tmp_path / "model.litertlm"
+    model_path.write_text("fake model", encoding="utf-8")
+    litert_lm = _fake_litert_lm_module(({"content": [{"type": "image"}]},))
+
+    with pytest.raises(insights.BackendRuntimeError) as exc_info:
+        insights.build_report(
+            _records(),
+            scope="prompts",
+            requested_level="llm",
+            record_limit=10,
+            sampled=True,
+            model=str(model_path),
+            llm_backend="litert-lm",
+            import_module_for_backend=_fake_litert_lm_import_module(litert_lm),
+            progress=RecordingInsightsProgress(),
+        )
+
+    error = exc_info.value
+    assert "empty response from LiteRT-LM model" in error.detail
+    assert "agentgrep insights setup llm --llm-backend litert-lm --install --yes" in (
+        error.examples
+    )
+
+
 def test_build_report_rejects_malformed_ollama_stream() -> None:
     """Malformed Ollama streaming JSON becomes an actionable runtime error."""
     httpx = _fake_streaming_httpx_module(("not-json",))
@@ -224,7 +366,6 @@ def _fake_import_module(name: str) -> types.ModuleType:
         "sqlite_vec": _fake_sqlite_vec_module(),
         "tantivy": _fake_tantivy_module(),
         "llama_cpp": _fake_llama_cpp_module(),
-        "httpx": types.ModuleType("httpx"),
     }
     try:
         return modules[name]
@@ -309,8 +450,15 @@ def _fake_ollama_import_module(httpx: types.ModuleType) -> insights.ImportModule
     def fake_import_module(name: str) -> types.ModuleType:
         if name == "httpx":
             return httpx
-        if name == "llama_cpp":
-            return types.ModuleType("llama_cpp")
+        raise ModuleNotFoundError(name=name)
+
+    return fake_import_module
+
+
+def _fake_litert_lm_import_module(litert_lm: types.ModuleType) -> insights.ImportModule:
+    def fake_import_module(name: str) -> types.ModuleType:
+        if name == "litert_lm":
+            return litert_lm
         raise ModuleNotFoundError(name=name)
 
     return fake_import_module
@@ -402,6 +550,126 @@ def _fake_streaming_httpx_module(lines: t.Sequence[str]) -> types.ModuleType:
             "TimeoutException": FakeTimeoutException,
             "requests": requests,
             "timeouts": timeouts,
+        },
+    )
+    return module
+
+
+def _fake_litert_lm_module(
+    chunks: t.Sequence[dict[str, t.Any]],
+    *,
+    supports_max_output_tokens: bool = True,
+) -> types.ModuleType:
+    module = types.ModuleType("litert_lm")
+    engines: list[dict[str, object]] = []
+    prompts: list[str] = []
+    cancellations = 0
+    drains_after_cancel = 0
+
+    class CPU:
+        def get_name(self) -> str:
+            return "cpu"
+
+    class SamplerConfig:
+        def __init__(self, *, temperature: float) -> None:
+            self.temperature = temperature
+
+    class BaseFakeConversation:
+        def __init__(self) -> None:
+            self.cancelled = False
+
+        def __enter__(self) -> t.Self:
+            return self
+
+        def __exit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            traceback: types.TracebackType | None,
+        ) -> bool:
+            _ = (exc_type, exc, traceback)
+            return False
+
+        def cancel_process(self) -> None:
+            nonlocal cancellations
+            cancellations += 1
+            module.__dict__["cancellations"] = cancellations
+            self.cancelled = True
+
+    class FakeConversationWithTokenBudget(BaseFakeConversation):
+        def send_message_async(
+            self,
+            message: str,
+            *,
+            max_output_tokens: int | None = None,
+        ) -> t.Iterator[dict[str, object]]:
+            assert max_output_tokens == 256
+            prompts.append(message)
+            return iter(chunks)
+
+    class FakeConversationWithoutTokenBudget(BaseFakeConversation):
+        def send_message_async(
+            self,
+            message: str,
+        ) -> t.Iterator[dict[str, t.Any]]:
+            nonlocal drains_after_cancel
+            prompts.append(message)
+            for chunk in chunks:
+                if self.cancelled:
+                    drains_after_cancel += 1
+                    module.__dict__["drains_after_cancel"] = drains_after_cancel
+                    return
+                yield chunk
+
+    class Engine:
+        def __init__(
+            self,
+            model_path: str,
+            *,
+            backend: CPU,
+            max_num_tokens: int,
+        ) -> None:
+            engines.append(
+                {
+                    "model_path": model_path,
+                    "backend": backend.get_name(),
+                    "max_num_tokens": max_num_tokens,
+                },
+            )
+
+        def __enter__(self) -> t.Self:
+            return self
+
+        def __exit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            traceback: types.TracebackType | None,
+        ) -> bool:
+            _ = (exc_type, exc, traceback)
+            return False
+
+        def create_conversation(
+            self,
+            *,
+            system_message: str,
+            sampler_config: SamplerConfig,
+        ) -> BaseFakeConversation:
+            assert system_message == "Summarize local aggregate agentgrep report facts."
+            assert sampler_config.temperature == 0.0
+            if supports_max_output_tokens:
+                return FakeConversationWithTokenBudget()
+            return FakeConversationWithoutTokenBudget()
+
+    module.__dict__.update(
+        {
+            "Backend": types.SimpleNamespace(CPU=CPU),
+            "Engine": Engine,
+            "SamplerConfig": SamplerConfig,
+            "cancellations": cancellations,
+            "drains_after_cancel": drains_after_cancel,
+            "engines": engines,
+            "prompts": prompts,
         },
     )
     return module

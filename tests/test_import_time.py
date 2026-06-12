@@ -33,6 +33,7 @@ _DEFERRED_MODULES: tuple[str, ...] = (
     "tantivy",
     "llama_cpp",
     "httpx",
+    "litert_lm",
 )
 
 

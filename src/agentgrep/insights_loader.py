@@ -55,6 +55,11 @@ class BackendUnavailable(RuntimeError):
     @property
     def setup_command(self) -> str | None:
         """Return the setup command for installable optional levels."""
+        if self.level.startswith("llm-"):
+            backend = self.level.removeprefix("llm-")
+            return f"agentgrep insights setup llm --llm-backend {backend} --install --yes"
+        if self.level == "llm":
+            return "agentgrep insights setup llm"
         if self.level in {"html", "ml", "embeddings", "index", "llm"}:
             return f"agentgrep insights setup {self.level} --install --yes"
         return None

@@ -28,6 +28,7 @@ class InsightsParseCase(t.NamedTuple):
     argv: tuple[str, ...]
     expected_scope: agentgrep.SearchScope
     expected_level: str
+    expected_llm_backend: str
     expected_limit: int | None
     expected_all_records: bool
     expected_report_format: str
@@ -40,6 +41,7 @@ INSIGHTS_PARSE_CASES: tuple[InsightsParseCase, ...] = (
         argv=("insights", "report"),
         expected_scope="prompts",
         expected_level="builtin",
+        expected_llm_backend="auto",
         expected_limit=500,
         expected_all_records=False,
         expected_report_format="text",
@@ -50,6 +52,7 @@ INSIGHTS_PARSE_CASES: tuple[InsightsParseCase, ...] = (
         argv=("insights", "report", "--all"),
         expected_scope="prompts",
         expected_level="builtin",
+        expected_llm_backend="auto",
         expected_limit=None,
         expected_all_records=True,
         expected_report_format="text",
@@ -60,6 +63,7 @@ INSIGHTS_PARSE_CASES: tuple[InsightsParseCase, ...] = (
         argv=("insights", "report", "--scope", "all", "--level", "best-installed"),
         expected_scope="all",
         expected_level="best-installed",
+        expected_llm_backend="auto",
         expected_limit=500,
         expected_all_records=False,
         expected_report_format="text",
@@ -79,10 +83,31 @@ INSIGHTS_PARSE_CASES: tuple[InsightsParseCase, ...] = (
         ),
         expected_scope="prompts",
         expected_level="html",
+        expected_llm_backend="auto",
         expected_limit=500,
         expected_all_records=False,
         expected_report_format="html",
         expected_output_path=pathlib.Path("report.html"),
+    ),
+    InsightsParseCase(
+        test_id="report-litert-lm-backend",
+        argv=(
+            "insights",
+            "report",
+            "--level",
+            "llm",
+            "--llm-backend",
+            "litert-lm",
+            "--model",
+            "model.litertlm",
+        ),
+        expected_scope="prompts",
+        expected_level="llm",
+        expected_llm_backend="litert-lm",
+        expected_limit=500,
+        expected_all_records=False,
+        expected_report_format="text",
+        expected_output_path=None,
     ),
 )
 
@@ -93,6 +118,7 @@ class InsightsSetupParseCase(t.NamedTuple):
     test_id: str
     argv: tuple[str, ...]
     expected_level: str
+    expected_llm_backend: str
     expected_manager: str
     expected_install: bool
     expected_yes: bool
@@ -143,6 +169,7 @@ INSIGHTS_SETUP_PARSE_CASES: tuple[InsightsSetupParseCase, ...] = (
         test_id="setup-defaults-to-dry-run-auto-manager",
         argv=("insights", "setup", "html"),
         expected_level="html",
+        expected_llm_backend="auto",
         expected_manager="auto",
         expected_install=False,
         expected_yes=False,
@@ -151,9 +178,19 @@ INSIGHTS_SETUP_PARSE_CASES: tuple[InsightsSetupParseCase, ...] = (
         test_id="setup-captures-explicit-install-confirmation",
         argv=("insights", "setup", "embeddings", "--manager", "pip", "--install", "--yes"),
         expected_level="embeddings",
+        expected_llm_backend="auto",
         expected_manager="pip",
         expected_install=True,
         expected_yes=True,
+    ),
+    InsightsSetupParseCase(
+        test_id="setup-captures-llm-backend-extra",
+        argv=("insights", "setup", "llm", "--llm-backend", "litert-lm", "--manager", "pip"),
+        expected_level="llm",
+        expected_llm_backend="litert-lm",
+        expected_manager="pip",
+        expected_install=False,
+        expected_yes=False,
     ),
 )
 
@@ -161,10 +198,12 @@ RUNTIME_CONFIG_CASES: tuple[RuntimeConfigCase, ...] = (
     RuntimeConfigCase(
         test_id="llm-installed-but-no-model",
         level="llm",
-        modules=("llama_cpp", "httpx"),
-        expected_detail="local llama.cpp model path or Ollama model name",
+        modules=("llama_cpp",),
+        expected_detail="local .gguf model path, local .litertlm model path, or Ollama model name",
         expected_examples=(
             "agentgrep insights report --level llm --model /path/to/model.gguf",
+            "agentgrep insights report --level llm --llm-backend litert-lm "
+            "--model /path/to/model.litertlm",
             "agentgrep insights report --level llm --llm-backend ollama --model llama3",
         ),
     ),
@@ -187,6 +226,7 @@ def test_insights_report_parse_args(case: InsightsParseCase) -> None:
     assert isinstance(parsed, agentgrep.InsightsReportArgs)
     assert parsed.scope == case.expected_scope
     assert parsed.level == case.expected_level
+    assert parsed.llm_backend == case.expected_llm_backend
     assert parsed.limit == case.expected_limit
     assert parsed.all_records == case.expected_all_records
     assert parsed.report_format == case.expected_report_format
@@ -217,6 +257,7 @@ def test_insights_setup_parse_args(case: InsightsSetupParseCase) -> None:
     parsed = agentgrep.parse_args(case.argv)
     assert isinstance(parsed, agentgrep.InsightsSetupArgs)
     assert parsed.level == case.expected_level
+    assert parsed.llm_backend == case.expected_llm_backend
     assert parsed.manager == case.expected_manager
     assert parsed.install is case.expected_install
     assert parsed.yes is case.expected_yes
@@ -762,6 +803,23 @@ def test_insights_levels_json_reports_optional_extras(
     assert by_level["llm"]["extra"] == "insights-llm"
 
 
+def test_insights_levels_counts_any_llm_backend_as_installed(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``insights levels`` treats each LLM adapter as an alternative backend."""
+    monkeypatch.setattr(insights, "_module_available", lambda name: name == "litert_lm")
+
+    exit_code = agentgrep.main(("insights", "levels", "--json"))
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    by_level = {row["level"]: row for row in payload["results"]}
+    assert by_level["llm"]["installed"] is True
+    assert by_level["llm"]["missing_modules"] == []
+    assert by_level["llm"]["extra"] == "insights-llm"
+
+
 def test_insights_doctor_text_lists_setup_hints(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -830,6 +888,19 @@ def test_insights_setup_install_requires_yes(
     assert "Traceback" not in captured.err
 
 
+def test_insights_setup_llm_install_requires_backend(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """LLM setup requires an explicit adapter before environment mutation."""
+    exit_code = agentgrep.main(("insights", "setup", "llm", "--install", "--yes"))
+
+    assert exit_code == 2
+    captured = capsys.readouterr()
+    assert "Choose an LLM backend before installing optional LLM dependencies." in captured.err
+    assert "agentgrep insights setup llm --llm-backend litert-lm --install --yes" in captured.err
+    assert "Traceback" not in captured.err
+
+
 def test_insights_setup_install_executes_confirmed_command(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -859,11 +930,55 @@ def test_insights_setup_install_executes_confirmed_command(
     assert "Install completed" in capsys.readouterr().out
 
 
+def test_insights_setup_llm_backend_installs_specific_extra(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Confirmed LLM setup installs only the requested adapter extra."""
+    calls: list[tuple[str, ...]] = []
+
+    def fake_run(
+        command: tuple[str, ...],
+        *,
+        check: bool,
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        assert check is False
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("agentgrep.cli.render.subprocess.run", fake_run)
+
+    exit_code = agentgrep.main(
+        (
+            "insights",
+            "setup",
+            "llm",
+            "--llm-backend",
+            "litert-lm",
+            "--manager",
+            "pip",
+            "--install",
+            "--yes",
+        ),
+    )
+
+    assert exit_code == 0
+    assert calls == [
+        (sys.executable, "-m", "pip", "install", "agentgrep[insights-llm-litert-lm]"),
+    ]
+    output = capsys.readouterr().out
+    assert "Install completed" in output
+    assert (
+        "agentgrep insights report --level llm --llm-backend litert-lm "
+        "--model /path/to/model.litertlm"
+    ) in output
+
+
 def test_insights_setup_llm_install_guides_model_next_step(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """LLM setup install completion tells users how to provide a local model."""
+    """LLM setup install completion tells users how to use the selected adapter."""
 
     def fake_run(
         command: tuple[str, ...],
@@ -876,10 +991,12 @@ def test_insights_setup_llm_install_guides_model_next_step(
 
     monkeypatch.setattr("agentgrep.cli.render.subprocess.run", fake_run)
 
-    exit_code = agentgrep.main(("insights", "setup", "llm", "--install", "--yes"))
+    exit_code = agentgrep.main(
+        ("insights", "setup", "llm", "--llm-backend", "llama-cpp", "--install", "--yes"),
+    )
 
     assert exit_code == 0
     output = capsys.readouterr().out
     assert "Install completed" in output
     assert "agentgrep insights report --level llm --model /path/to/model.gguf" in output
-    assert "agentgrep insights report --level llm --llm-backend ollama --model llama3" in output
+    assert "agentgrep insights report --level llm --llm-backend ollama --model llama3" not in output

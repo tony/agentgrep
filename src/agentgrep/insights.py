@@ -42,7 +42,8 @@ InsightsLevel = t.Literal[
 InsightsInstallManager = t.Literal["auto", "uv", "pip"]
 ResolvedInsightsInstallManager = t.Literal["uv", "pip"]
 InsightsReportFormat = t.Literal["text", "markdown", "html"]
-InsightsLLMBackend = t.Literal["auto", "llama-cpp", "ollama"]
+InsightsLLMBackend = t.Literal["auto", "llama-cpp", "ollama", "litert-lm"]
+ConcreteInsightsLLMBackend = t.Literal["llama-cpp", "ollama", "litert-lm"]
 InsightsIndexBackend = t.Literal["auto", "tantivy", "sqlite-vec"]
 ModuleProbe = cabc.Callable[[str], bool]
 
@@ -67,6 +68,13 @@ _STOPWORDS = frozenset(
 _OLLAMA_CONNECT_TIMEOUT_SECONDS = 5.0
 _OLLAMA_WRITE_TIMEOUT_SECONDS = 30.0
 _OLLAMA_POOL_TIMEOUT_SECONDS = 5.0
+_LITERT_LM_FALLBACK_MAX_CHUNKS = 64
+_LITERT_LM_FALLBACK_MAX_CHARS = 2048
+_LLM_BACKEND_IMPORT_PATHS: dict[ConcreteInsightsLLMBackend, tuple[str, ...]] = {
+    "llama-cpp": ("llama_cpp",),
+    "ollama": ("httpx",),
+    "litert-lm": ("litert_lm",),
+}
 
 
 class InsightsProgress(t.Protocol):
@@ -178,11 +186,12 @@ class InsightsLevelStatus:
     def to_payload(self) -> InsightsLevelStatusPayload:
         """Return the JSON-compatible representation."""
         setup_level = self.spec.setup_level
-        setup_command = (
-            f"agentgrep insights setup {setup_level} --install --yes"
-            if setup_level is not None
-            else None
-        )
+        if setup_level == "llm":
+            setup_command = "agentgrep insights setup llm"
+        elif setup_level is not None:
+            setup_command = f"agentgrep insights setup {setup_level} --install --yes"
+        else:
+            setup_command = None
         return {
             "level": self.spec.level,
             "extra": self.spec.extra,
@@ -325,8 +334,12 @@ INSIGHTS_LEVEL_SPECS: tuple[InsightsLevelSpec, ...] = (
     InsightsLevelSpec(
         level="llm",
         extra="insights-llm",
-        dependencies=("llama-cpp-python>=0.3.28", "httpx>=0.28"),
-        modules=("llama_cpp", "httpx"),
+        dependencies=(
+            "httpx>=0.28",
+            "llama-cpp-python>=0.3.28",
+            "litert-lm-api>=0.13.1",
+        ),
+        modules=("llama_cpp", "httpx", "litert_lm"),
         description="Local narrative synthesis through embedded or local HTTP backends.",
         model_behavior="explicit local model or endpoint only",
     ),
@@ -430,21 +443,23 @@ def build_setup_plan(
     level: InsightsSetupLevel,
     *,
     manager: InsightsInstallManager,
+    llm_backend: InsightsLLMBackend = "auto",
 ) -> InsightsSetupPlan:
     """Build the install command for one optional insights extra."""
     spec = _setup_spec(level)
-    if spec.extra is None:  # pragma: no cover - guarded by _setup_spec
+    extra = _setup_extra(spec, llm_backend=llm_backend)
+    if extra is None:  # pragma: no cover - guarded by _setup_spec
         msg = f"{level!r} is not an installable insights level"
         raise ValueError(msg)
     resolved_manager = _resolve_install_manager(manager)
-    package_spec = f"agentgrep[{spec.extra}]"
+    package_spec = f"agentgrep[{extra}]"
     if resolved_manager == "uv":
         command = ("uv", "pip", "install", package_spec)
     else:
         command = (sys.executable, "-m", "pip", "install", package_spec)
     return InsightsSetupPlan(
         level=level,
-        extra=spec.extra,
+        extra=extra,
         manager=resolved_manager,
         command=command,
         command_text=format_install_command(command),
@@ -549,15 +564,18 @@ def _assert_level_is_usable(
     importer: ImportModule,
     policy: BackendPolicy,
 ) -> None:
+    if level == "llm":
+        llm_runtime_backend = _resolve_llm_runtime_backend(
+            model,
+            llm_backend=llm_backend,
+        )
+        if llm_runtime_backend is None:
+            raise _llm_configuration_error()
+        _ = _load_llm_backend(llm_runtime_backend, importer=importer)
+        return
     _ = _load_level_backend(level, importer=importer)
     if level == "embeddings" and not _model_is_usable(model, policy=policy):
         raise _embedding_configuration_error()
-    if level == "llm" and not _llm_is_usable(
-        model,
-        llm_backend=llm_backend,
-        policy=policy,
-    ):
-        raise _llm_configuration_error()
 
 
 def _build_enrichment(
@@ -760,8 +778,11 @@ def _build_llm_enrichment(
     policy: BackendPolicy,
     progress: InsightsProgress | None,
 ) -> InsightsEnrichment:
-    backend = _load_level_backend("llm", importer=importer)
-    if llm_backend in {"auto", "llama-cpp"} and _local_path_exists(model):
+    runtime_backend = _resolve_llm_runtime_backend(model, llm_backend=llm_backend)
+    if runtime_backend is None:
+        raise _llm_configuration_error()
+    if runtime_backend == "llama-cpp":
+        backend = _load_llm_backend("llama-cpp", importer=importer)
         summary = _summarize_with_llama_cpp(
             backend,
             model=t.cast("str", model),
@@ -775,10 +796,27 @@ def _build_llm_enrichment(
             message="Synthesized a local narrative with llama-cpp-python.",
             data={"summary": summary, "model": model},
         )
-    if llm_backend in {"auto", "ollama"} and _ollama_is_allowed(
+    if runtime_backend == "litert-lm":
+        backend = _load_llm_backend("litert-lm", importer=importer)
+        summary = _summarize_with_litert_lm(
+            backend,
+            model=t.cast("str", model),
+            records=records,
+            top_terms=top_terms,
+            progress=progress,
+        )
+        return InsightsEnrichment(
+            level="llm",
+            backend="litert-lm",
+            status="applied",
+            message="Synthesized a local narrative with LiteRT-LM.",
+            data={"summary": summary, "model": model},
+        )
+    if runtime_backend == "ollama" and _ollama_is_allowed(
         llm_endpoint,
         policy=policy,
     ):
+        backend = _load_llm_backend("ollama", importer=importer)
         summary = _summarize_with_ollama(
             backend,
             model=t.cast("str", model),
@@ -812,9 +850,11 @@ def _embedding_configuration_error() -> BackendConfigurationError:
 def _llm_configuration_error() -> BackendConfigurationError:
     return BackendConfigurationError(
         "llm",
-        requirement="local llama.cpp model path or Ollama model name",
+        requirement="local .gguf model path, local .litertlm model path, or Ollama model name",
         examples=(
             "agentgrep insights report --level llm --model /path/to/model.gguf",
+            "agentgrep insights report --level llm --llm-backend litert-lm "
+            "--model /path/to/model.litertlm",
             "agentgrep insights report --level llm --llm-backend ollama --model llama3",
         ),
     )
@@ -822,6 +862,18 @@ def _llm_configuration_error() -> BackendConfigurationError:
 
 def _load_level_backend(level: InsightsSetupLevel, *, importer: ImportModule) -> LoadedBackend:
     return load_backend_modules(level, _backend_import_paths(level), import_module=importer)
+
+
+def _load_llm_backend(
+    backend: ConcreteInsightsLLMBackend,
+    *,
+    importer: ImportModule,
+) -> LoadedBackend:
+    return load_backend_modules(
+        f"llm-{backend}",
+        _LLM_BACKEND_IMPORT_PATHS[backend],
+        import_module=importer,
+    )
 
 
 def _backend_import_paths(level: InsightsSetupLevel) -> tuple[str, ...]:
@@ -833,23 +885,30 @@ def _backend_import_paths(level: InsightsSetupLevel) -> tuple[str, ...]:
         return ("sentence_transformers",)
     if level == "index":
         return ("sqlite_vec", "tantivy")
-    return ("llama_cpp", "httpx")
+    return tuple(module for modules in _LLM_BACKEND_IMPORT_PATHS.values() for module in modules)
 
 
 def _model_is_usable(model: str | None, *, policy: BackendPolicy) -> bool:
     return _local_path_exists(model) or (policy.allow_download and bool(model))
 
 
-def _llm_is_usable(
+def _resolve_llm_runtime_backend(
     model: str | None,
     *,
     llm_backend: InsightsLLMBackend,
-    policy: BackendPolicy,
-) -> bool:
-    if llm_backend in {"auto", "llama-cpp"} and _local_path_exists(model):
-        return True
-    _ = policy
-    return llm_backend in {"auto", "ollama"} and bool(model) and not _local_path_exists(model)
+) -> ConcreteInsightsLLMBackend | None:
+    if llm_backend == "auto":
+        if _local_path_exists(model):
+            return "litert-lm" if _is_litert_lm_model_path(model) else "llama-cpp"
+        return "ollama" if model else None
+    concrete_backend = llm_backend
+    if concrete_backend == "ollama":
+        return concrete_backend if bool(model) and not _local_path_exists(model) else None
+    return concrete_backend if _local_path_exists(model) else None
+
+
+def _is_litert_lm_model_path(value: str | None) -> bool:
+    return bool(value) and pathlib.Path(t.cast("str", value)).suffix == ".litertlm"
 
 
 def _local_path_exists(value: str | None) -> bool:
@@ -886,6 +945,89 @@ def _summarize_with_llama_cpp(
         max_tokens=256,
     )
     return _extract_llm_summary(response)
+
+
+def _summarize_with_litert_lm(
+    backend: LoadedBackend,
+    *,
+    model: str,
+    records: cabc.Sequence[agentgrep.SearchRecord],
+    top_terms: cabc.Sequence[InsightsTerm],
+    progress: InsightsProgress | None,
+) -> str:
+    module = backend.require("litert_lm")
+    _configure_litert_lm_logging(module)
+    module_any = t.cast("t.Any", module)
+    engine_factory = t.cast("type[t.Any]", module_any.Engine)
+    backend_factory = module_any.Backend.CPU
+    sampler_factory = t.cast("type[t.Any] | None", getattr(module, "SamplerConfig", None))
+    model_path = str(pathlib.Path(model).expanduser())
+    try:
+        _notify_llm_started(
+            progress,
+            backend="litert-lm",
+            model=model_path,
+            endpoint="local",
+        )
+        conversation_kwargs: dict[str, object] = {
+            "system_message": "Summarize local aggregate agentgrep report facts.",
+        }
+        if sampler_factory is not None:
+            conversation_kwargs["sampler_config"] = sampler_factory(temperature=0.0)
+        with (
+            engine_factory(
+                model_path,
+                backend=backend_factory(),
+                max_num_tokens=2048,
+            ) as engine,
+            engine.create_conversation(**conversation_kwargs) as conversation,
+        ):
+            _notify_llm_waiting(
+                progress,
+                backend="litert-lm",
+                model=model_path,
+                endpoint="local",
+            )
+            chunks = _send_litert_lm_message_async(
+                conversation,
+                _llm_prompt(records=records, top_terms=top_terms),
+            )
+            return _extract_litert_lm_stream_summary(
+                chunks,
+                conversation=conversation,
+                model=model_path,
+                progress=progress,
+            )
+    except BackendRuntimeError:
+        raise
+    except Exception as exc:
+        raise _litert_lm_runtime_error(
+            model=model_path,
+            detail=f"LiteRT-LM execution failed: {_exception_detail(exc)}",
+        ) from exc
+
+
+def _configure_litert_lm_logging(module: types.ModuleType) -> None:
+    severity = getattr(getattr(module, "LogSeverity", None), "ERROR", None)
+    set_min_log_severity = getattr(module, "set_min_log_severity", None)
+    if callable(set_min_log_severity) and severity is not None:
+        set_min_log_severity(severity)
+
+
+def _send_litert_lm_message_async(
+    conversation: object,
+    prompt: str,
+) -> cabc.Iterable[object]:
+    send_message_async = t.cast("t.Any", conversation).send_message_async
+    try:
+        return t.cast(
+            "cabc.Iterable[object]",
+            send_message_async(prompt, max_output_tokens=256),
+        )
+    except TypeError as exc:
+        if "max_output_tokens" not in _exception_detail(exc):
+            raise
+        return t.cast("cabc.Iterable[object]", send_message_async(prompt))
 
 
 def _summarize_with_ollama(
@@ -977,6 +1119,88 @@ def _ollama_http_timeout(httpx: types.ModuleType) -> object:
         write=_OLLAMA_WRITE_TIMEOUT_SECONDS,
         pool=_OLLAMA_POOL_TIMEOUT_SECONDS,
     )
+
+
+def _extract_litert_lm_stream_summary(
+    chunks: cabc.Iterable[object],
+    *,
+    conversation: object,
+    model: str,
+    progress: InsightsProgress | None,
+) -> str:
+    parts: list[str] = []
+    chunk_count = 0
+    char_count = 0
+    chunk_iterator = iter(chunks)
+    for chunk in chunk_iterator:
+        content = _litert_lm_chunk_content(chunk)
+        if not content:
+            continue
+        chunk_count += 1
+        parts.append(content)
+        char_count += len(content)
+        _notify_llm_chunk(
+            progress,
+            backend="litert-lm",
+            model=model,
+            chunk_count=chunk_count,
+            char_count=char_count,
+        )
+        if (
+            chunk_count >= _LITERT_LM_FALLBACK_MAX_CHUNKS
+            or char_count >= _LITERT_LM_FALLBACK_MAX_CHARS
+        ):
+            _cancel_and_drain_litert_lm_stream(conversation, chunk_iterator)
+            break
+    summary = "".join(parts).strip()
+    if not summary:
+        raise _litert_lm_runtime_error(
+            model=model,
+            detail="empty response from LiteRT-LM model",
+        )
+    _notify_llm_finished(
+        progress,
+        backend="litert-lm",
+        model=model,
+        chunk_count=chunk_count,
+        char_count=char_count,
+    )
+    return summary
+
+
+def _cancel_and_drain_litert_lm_stream(
+    conversation: object,
+    chunks: cabc.Iterator[object],
+) -> None:
+    cancel_process = getattr(conversation, "cancel_process", None)
+    if callable(cancel_process):
+        cancel_process()
+    try:
+        for _ in chunks:
+            pass
+    except RuntimeError as exc:
+        detail = _exception_detail(exc)
+        if "CANCELLED" not in detail and "Max number of tokens reached" not in detail:
+            raise
+
+
+def _litert_lm_chunk_content(chunk: object) -> str:
+    if not isinstance(chunk, cabc.Mapping):
+        return ""
+    chunk_mapping = t.cast("cabc.Mapping[str, object]", chunk)
+    content = chunk_mapping.get("content")
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, cabc.Sequence) or isinstance(content, bytes | str):
+        return ""
+    parts: list[str] = []
+    for item in content:
+        if isinstance(item, cabc.Mapping):
+            item_mapping = t.cast("cabc.Mapping[str, object]", item)
+            text = item_mapping.get("text") if item_mapping.get("type") == "text" else None
+            if isinstance(text, str):
+                parts.append(text)
+    return "".join(parts)
 
 
 def _extract_ollama_stream_summary(
@@ -1180,6 +1404,18 @@ def _ollama_runtime_error(*, endpoint: str, model: str, detail: str) -> BackendR
     )
 
 
+def _litert_lm_runtime_error(*, model: str, detail: str) -> BackendRuntimeError:
+    return BackendRuntimeError(
+        "llm",
+        "LiteRT-LM",
+        detail=detail,
+        examples=(
+            "agentgrep insights setup llm --llm-backend litert-lm --install --yes",
+            f"agentgrep insights report --level llm --llm-backend litert-lm --model {model}",
+        ),
+    )
+
+
 def _llm_prompt(
     *,
     records: cabc.Sequence[agentgrep.SearchRecord],
@@ -1311,11 +1547,24 @@ def _skipped_enrichers(
 
 
 def _inspect_level(spec: InsightsLevelSpec, *, probe: ModuleProbe) -> InsightsLevelStatus:
+    if spec.level == "llm":
+        missing = () if _any_llm_backend_available(probe) else spec.modules
+        return InsightsLevelStatus(
+            spec=spec,
+            installed=not missing,
+            missing_modules=missing,
+        )
     missing = tuple(module for module in spec.modules if not probe(module))
     return InsightsLevelStatus(
         spec=spec,
         installed=not missing,
         missing_modules=missing,
+    )
+
+
+def _any_llm_backend_available(probe: ModuleProbe) -> bool:
+    return any(
+        all(probe(module) for module in modules) for modules in _LLM_BACKEND_IMPORT_PATHS.values()
     )
 
 
@@ -1330,6 +1579,20 @@ def _setup_spec(level: InsightsSetupLevel) -> InsightsLevelSpec:
             return spec
     msg = f"Unknown insights setup level: {level}"
     raise ValueError(msg)
+
+
+def _setup_extra(
+    spec: InsightsLevelSpec,
+    *,
+    llm_backend: InsightsLLMBackend,
+) -> str | None:
+    if spec.level != "llm" or llm_backend == "auto":
+        return spec.extra
+    return _llm_backend_extra(llm_backend)
+
+
+def _llm_backend_extra(backend: ConcreteInsightsLLMBackend) -> str:
+    return f"insights-llm-{backend}"
 
 
 def _resolve_install_manager(manager: InsightsInstallManager) -> ResolvedInsightsInstallManager:

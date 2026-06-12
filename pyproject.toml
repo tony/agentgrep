@@ -54,9 +54,19 @@ insights-index = [
   "sqlite-vec>=0.1.9",
   "tantivy>=0.26",
 ]
+insights-llm-ollama = [
+  "httpx>=0.28",
+]
+insights-llm-llama-cpp = [
+  "llama-cpp-python>=0.3.28",
+]
+insights-llm-litert-lm = [
+  "litert-lm-api>=0.13.1",
+]
 insights-llm = [
   "httpx>=0.28",
   "llama-cpp-python>=0.3.28",
+  "litert-lm-api>=0.13.1",
 ]
 insights-all = [
   "jinja2>=3.1",
