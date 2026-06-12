@@ -167,6 +167,19 @@ class ModelListCase(t.NamedTuple):
     expected_models: tuple[str, ...]
 
 
+class InsightsModelsInstallParseCase(t.NamedTuple):
+    """Parametrized parse case for ``agentgrep insights models install``."""
+
+    test_id: str
+    argv: tuple[str, ...]
+    expected_llm_backend: str
+    expected_model: str
+    expected_yes: bool
+    expected_dry_run: bool
+    expected_model_cache: pathlib.Path | None
+    expected_model_id: str | None
+
+
 class ReportProgress(t.Protocol):
     """Progress callbacks expected by insights report enrichment."""
 
@@ -268,6 +281,63 @@ MODEL_LIST_CASES: tuple[ModelListCase, ...] = (
             "phi4-mini",
         ),
     ),
+    ModelListCase(
+        test_id="models-list-litert-lm-json",
+        argv=("insights", "models", "list", "--llm-backend", "litert-lm", "--json"),
+        expected_command="insights models list",
+        expected_models=(
+            "litert-community/gemma-4-E2B-it-litert-lm",
+            "litert-community/gemma-4-E4B-it-litert-lm",
+            "litert-community/gemma-4-12B-it-litert-lm",
+            "google/gemma-3n-E2B-it-litert-lm",
+            "google/gemma-3n-E4B-it-litert-lm",
+            "litert-community/Gemma3-1B-IT",
+            "litert-community/Phi-4-mini-instruct",
+        ),
+    ),
+)
+
+INSIGHTS_MODELS_INSTALL_PARSE_CASES: tuple[InsightsModelsInstallParseCase, ...] = (
+    InsightsModelsInstallParseCase(
+        test_id="litert-lm-install-confirmed",
+        argv=(
+            "insights",
+            "models",
+            "install",
+            "--llm-backend",
+            "litert-lm",
+            "litert-community/gemma-4-E2B-it-litert-lm",
+            "--yes",
+        ),
+        expected_llm_backend="litert-lm",
+        expected_model="litert-community/gemma-4-E2B-it-litert-lm",
+        expected_yes=True,
+        expected_dry_run=False,
+        expected_model_cache=None,
+        expected_model_id=None,
+    ),
+    InsightsModelsInstallParseCase(
+        test_id="litert-lm-install-dry-run-with-cache-and-model-id",
+        argv=(
+            "insights",
+            "models",
+            "install",
+            "--llm-backend",
+            "litert-lm",
+            "--model-cache",
+            "models",
+            "--model-id",
+            "gemma4-e2b-local",
+            "--dry-run",
+            "litert-community/gemma-4-E2B-it-litert-lm",
+        ),
+        expected_llm_backend="litert-lm",
+        expected_model="litert-community/gemma-4-E2B-it-litert-lm",
+        expected_yes=False,
+        expected_dry_run=True,
+        expected_model_cache=pathlib.Path("models"),
+        expected_model_id="gemma4-e2b-local",
+    ),
 )
 
 
@@ -323,6 +393,25 @@ def test_insights_setup_parse_args(case: InsightsSetupParseCase) -> None:
     assert parsed.manager == case.expected_manager
     assert parsed.install is case.expected_install
     assert parsed.yes is case.expected_yes
+
+
+@pytest.mark.parametrize(
+    "case",
+    INSIGHTS_MODELS_INSTALL_PARSE_CASES,
+    ids=[case.test_id for case in INSIGHTS_MODELS_INSTALL_PARSE_CASES],
+)
+def test_insights_models_install_parse_args(
+    case: InsightsModelsInstallParseCase,
+) -> None:
+    """The model installer parser captures explicit model mutation choices."""
+    parsed = agentgrep.parse_args(case.argv)
+    assert isinstance(parsed, agentgrep.InsightsModelsInstallArgs)
+    assert parsed.llm_backend == case.expected_llm_backend
+    assert parsed.model == case.expected_model
+    assert parsed.yes is case.expected_yes
+    assert parsed.dry_run is case.expected_dry_run
+    assert parsed.model_cache == case.expected_model_cache
+    assert parsed.model_id == case.expected_model_id
 
 
 def test_insights_report_rejects_limit_with_all(
@@ -545,6 +634,197 @@ def test_insights_report_model_list_rejects_unknown_backend(
     assert "litert-lm" in captured.err
     assert "ollama" in captured.err
     assert "Traceback" not in captured.err
+
+
+def test_insights_models_install_requires_confirmation(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Model install refuses local state mutation without ``--yes``."""
+
+    def fail_download(*args: object, **kwargs: object) -> pathlib.Path:
+        _ = (args, kwargs)
+        pytest.fail("model install must not download without --yes")
+
+    monkeypatch.setattr("agentgrep.insights.install_litert_lm_model", fail_download)
+
+    exit_code = agentgrep.main(
+        (
+            "insights",
+            "models",
+            "install",
+            "--llm-backend",
+            "litert-lm",
+            "litert-community/gemma-4-E2B-it-litert-lm",
+        ),
+    )
+
+    assert exit_code == 2
+    captured = capsys.readouterr()
+    assert "Refusing to install an insights model without --yes." in captured.err
+    assert (
+        "agentgrep insights models install --llm-backend litert-lm "
+        "litert-community/gemma-4-E2B-it-litert-lm --yes"
+    ) in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_insights_models_install_litert_lm_downloads_to_agentgrep_cache(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Confirmed LiteRT-LM model install downloads the curated artifact."""
+    calls: list[dict[str, object]] = []
+
+    def fake_install_litert_lm_model(
+        model: str,
+        *,
+        model_cache: pathlib.Path | None,
+        model_id: str | None,
+    ) -> pathlib.Path:
+        calls.append(
+            {
+                "model": model,
+                "model_cache": model_cache,
+                "model_id": model_id,
+            },
+        )
+        target = tmp_path / "litert-lm" / "gemma-4-E2B-it.litertlm"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"fake model")
+        return target
+
+    monkeypatch.setattr(
+        "agentgrep.insights.install_litert_lm_model",
+        fake_install_litert_lm_model,
+    )
+
+    exit_code = agentgrep.main(
+        (
+            "insights",
+            "models",
+            "install",
+            "--llm-backend",
+            "litert-lm",
+            "--model-cache",
+            str(tmp_path),
+            "litert-community/gemma-4-E2B-it-litert-lm",
+            "--yes",
+        ),
+    )
+
+    assert exit_code == 0
+    assert calls == [
+        {
+            "model": "litert-community/gemma-4-E2B-it-litert-lm",
+            "model_cache": tmp_path,
+            "model_id": None,
+        },
+    ]
+    output = capsys.readouterr().out
+    assert "Installed LiteRT-LM model." in output
+    assert "gemma-4-E2B-it.litertlm" in output
+    assert "agentgrep insights report --level llm --llm-backend litert-lm --model" in output
+
+
+def test_install_litert_lm_model_downloads_curated_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    """The LiteRT-LM installer downloads the exact curated HF artifact."""
+    requests: list[t.Any] = []
+
+    class FakeResponse:
+        def __init__(self, content: bytes) -> None:
+            self._content = content
+            self.headers = {"Content-Length": str(len(content))}
+
+        def __enter__(self) -> FakeResponse:
+            return self
+
+        def __exit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            traceback: object | None,
+        ) -> None:
+            _ = (exc_type, exc, traceback)
+
+        def read(self, size: int) -> bytes:
+            _ = size
+            content = self._content
+            self._content = b""
+            return content
+
+    def fake_urlopen(request: object) -> FakeResponse:
+        requests.append(request)
+        return FakeResponse(b"litertlm-bytes")
+
+    monkeypatch.setenv("AGENTGREP_MODEL_DIR", str(tmp_path))
+    monkeypatch.setattr("agentgrep.insights.urllib.request.urlopen", fake_urlopen)
+
+    target = insights.install_litert_lm_model(
+        "litert-community/gemma-4-E2B-it-litert-lm",
+        model_cache=None,
+    )
+
+    expected_target = (
+        tmp_path
+        / "litert-lm"
+        / "litert-community--gemma-4-E2B-it-litert-lm"
+        / "gemma-4-E2B-it.litertlm"
+    )
+    assert target == expected_target
+    assert target.read_bytes() == b"litertlm-bytes"
+    assert requests
+    assert (
+        requests[0].full_url
+        == "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm"
+    )
+    manifest = json.loads(target.with_name(target.name + ".agentgrep.json").read_text())
+    assert manifest["backend"] == "litert-lm"
+    assert manifest["model"] == "litert-community/gemma-4-E2B-it-litert-lm"
+    assert manifest["artifact_filename"] == "gemma-4-E2B-it.litertlm"
+
+
+def test_insights_models_install_ollama_runs_pull(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Confirmed Ollama model install delegates to ``ollama pull``."""
+    calls: list[tuple[str, ...]] = []
+
+    def fake_run(
+        command: tuple[str, ...],
+        *,
+        check: bool,
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        assert check is False
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("agentgrep.cli.render.subprocess.run", fake_run)
+
+    exit_code = agentgrep.main(
+        (
+            "insights",
+            "models",
+            "install",
+            "--llm-backend",
+            "ollama",
+            "gemma3n:e2b",
+            "--yes",
+        ),
+    )
+
+    assert exit_code == 0
+    assert calls == [("ollama", "pull", "gemma3n:e2b")]
+    output = capsys.readouterr().out
+    assert "Installed Ollama model." in output
+    assert "agentgrep insights report --level llm --llm-backend ollama --model gemma3n:e2b" in (
+        output
+    )
 
 
 def test_insights_report_progress_always_emits_search_and_report_steps(

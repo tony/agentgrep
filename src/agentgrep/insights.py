@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import collections
 import collections.abc as cabc
+import contextlib
 import dataclasses
 import importlib
 import importlib.util
 import json
+import os
 import pathlib
 import re
 import shutil
@@ -15,7 +17,9 @@ import sqlite3
 import sys
 import types
 import typing as t
+import urllib.error
 import urllib.parse
+import urllib.request
 
 import agentgrep
 from agentgrep.insights_loader import (
@@ -149,6 +153,8 @@ class InsightsLLMModelPayload(t.TypedDict):
     license: str
     access: str
     source_url: str
+    artifact_filename: str | None
+    local_model_id: str | None
     install_hint: str
     report_hint: str
     notes: str
@@ -280,6 +286,8 @@ class InsightsLLMModelSpec:
     install_hint: str
     report_hint: str
     notes: str
+    artifact_filename: str | None = None
+    local_model_id: str | None = None
 
     def to_payload(self) -> InsightsLLMModelPayload:
         """Return the JSON-compatible representation."""
@@ -292,10 +300,29 @@ class InsightsLLMModelSpec:
             "license": self.license,
             "access": self.access,
             "source_url": self.source_url,
+            "artifact_filename": self.artifact_filename,
+            "local_model_id": self.local_model_id,
             "install_hint": self.install_hint,
             "report_hint": self.report_hint,
             "notes": self.notes,
         }
+
+
+class InsightsModelInstallError(RuntimeError):
+    """Raised when a curated insights model cannot be installed."""
+
+    def __init__(self, detail: str, *, examples: cabc.Sequence[str] = ()) -> None:
+        super().__init__(detail)
+        self.detail = detail
+        self.examples = tuple(examples)
+
+    def __str__(self) -> str:
+        """Return an actionable CLI error message."""
+        if not self.examples:
+            return self.detail
+        lines = [self.detail, "Try:"]
+        lines.extend(f"  {example}" for example in self.examples)
+        return "\n".join(lines)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -408,9 +435,14 @@ _CURATED_LLM_MODELS: tuple[InsightsLLMModelSpec, ...] = (
         license="Apache-2.0",
         access="public",
         source_url="https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm",
-        install_hint="Download the .litertlm artifact from Hugging Face.",
+        install_hint=(
+            "agentgrep insights models install --llm-backend litert-lm "
+            "litert-community/gemma-4-E2B-it-litert-lm --yes"
+        ),
         report_hint=_LITERT_LM_REPORT_HINT,
         notes="Smallest default US LiteRT-LM suggestion from the allowlist.",
+        artifact_filename="gemma-4-E2B-it.litertlm",
+        local_model_id="gemma4-e2b",
     ),
     InsightsLLMModelSpec(
         backend="litert-lm",
@@ -421,9 +453,14 @@ _CURATED_LLM_MODELS: tuple[InsightsLLMModelSpec, ...] = (
         license="Apache-2.0",
         access="public",
         source_url="https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm",
-        install_hint="Download the .litertlm artifact from Hugging Face.",
+        install_hint=(
+            "agentgrep insights models install --llm-backend litert-lm "
+            "litert-community/gemma-4-E4B-it-litert-lm --yes"
+        ),
         report_hint=_LITERT_LM_REPORT_HINT,
         notes="Larger Apache-2.0 LiteRT-LM Gemma option.",
+        artifact_filename="gemma-4-E4B-it.litertlm",
+        local_model_id="gemma4-e4b",
     ),
     InsightsLLMModelSpec(
         backend="litert-lm",
@@ -434,9 +471,14 @@ _CURATED_LLM_MODELS: tuple[InsightsLLMModelSpec, ...] = (
         license="Apache-2.0",
         access="public",
         source_url="https://huggingface.co/litert-community/gemma-4-12B-it-litert-lm",
-        install_hint="Download the .litertlm artifact from Hugging Face.",
+        install_hint=(
+            "agentgrep insights models install --llm-backend litert-lm "
+            "litert-community/gemma-4-12B-it-litert-lm --yes"
+        ),
         report_hint=_LITERT_LM_REPORT_HINT,
         notes="Heavier Apache-2.0 LiteRT-LM Gemma option.",
+        artifact_filename="gemma-4-12B-it.litertlm",
+        local_model_id="gemma4-12b",
     ),
     InsightsLLMModelSpec(
         backend="litert-lm",
@@ -447,9 +489,15 @@ _CURATED_LLM_MODELS: tuple[InsightsLLMModelSpec, ...] = (
         license="Gemma Terms",
         access="gated",
         source_url="https://huggingface.co/google/gemma-3n-E2B-it-litert-lm",
-        install_hint="Accept the gated Hugging Face terms, then download the .litertlm artifact.",
+        install_hint=(
+            "Accept the gated Hugging Face terms, then run: "
+            "agentgrep insights models install --llm-backend litert-lm "
+            "google/gemma-3n-E2B-it-litert-lm --yes"
+        ),
         report_hint=_LITERT_LM_REPORT_HINT,
         notes="Official Google LiteRT-LM model; requires license acceptance.",
+        artifact_filename="gemma-3n-E2B-it-int4.litertlm",
+        local_model_id="gemma3n-e2b",
     ),
     InsightsLLMModelSpec(
         backend="litert-lm",
@@ -460,9 +508,15 @@ _CURATED_LLM_MODELS: tuple[InsightsLLMModelSpec, ...] = (
         license="Gemma Terms",
         access="gated",
         source_url="https://huggingface.co/google/gemma-3n-E4B-it-litert-lm",
-        install_hint="Accept the gated Hugging Face terms, then download the .litertlm artifact.",
+        install_hint=(
+            "Accept the gated Hugging Face terms, then run: "
+            "agentgrep insights models install --llm-backend litert-lm "
+            "google/gemma-3n-E4B-it-litert-lm --yes"
+        ),
         report_hint=_LITERT_LM_REPORT_HINT,
         notes="Larger official Google LiteRT-LM model; requires license acceptance.",
+        artifact_filename="gemma-3n-E4B-it-int4.litertlm",
+        local_model_id="gemma3n-e4b",
     ),
     InsightsLLMModelSpec(
         backend="litert-lm",
@@ -473,9 +527,15 @@ _CURATED_LLM_MODELS: tuple[InsightsLLMModelSpec, ...] = (
         license="Gemma Terms",
         access="gated",
         source_url="https://huggingface.co/litert-community/Gemma3-1B-IT",
-        install_hint="Accept the gated Hugging Face terms, then download the .litertlm artifact.",
+        install_hint=(
+            "Accept the gated Hugging Face terms, then run: "
+            "agentgrep insights models install --llm-backend litert-lm "
+            "litert-community/Gemma3-1B-IT --yes"
+        ),
         report_hint=_LITERT_LM_REPORT_HINT,
         notes="Small Gemma 3 LiteRT-LM option; requires license acceptance.",
+        artifact_filename="gemma3-1b-it-int4.litertlm",
+        local_model_id="gemma3-1b-it",
     ),
     InsightsLLMModelSpec(
         backend="litert-lm",
@@ -486,9 +546,14 @@ _CURATED_LLM_MODELS: tuple[InsightsLLMModelSpec, ...] = (
         license="MIT",
         access="public",
         source_url="https://huggingface.co/litert-community/Phi-4-mini-instruct",
-        install_hint="Download the .litertlm artifact from Hugging Face.",
+        install_hint=(
+            "agentgrep insights models install --llm-backend litert-lm "
+            "litert-community/Phi-4-mini-instruct --yes"
+        ),
         report_hint=_LITERT_LM_REPORT_HINT,
         notes="Permissive Microsoft LiteRT-LM option.",
+        artifact_filename="Phi-4-mini-instruct_multi-prefill-seq_q8_ekv4096.litertlm",
+        local_model_id="phi4-mini-instruct",
     ),
     InsightsLLMModelSpec(
         backend="ollama",
@@ -657,6 +722,187 @@ def list_llm_model_specs(
     if llm_backend == "auto":
         return _CURATED_LLM_MODELS
     return tuple(spec for spec in _CURATED_LLM_MODELS if spec.backend == llm_backend)
+
+
+def resolve_llm_model_spec(
+    model: str,
+    *,
+    llm_backend: InsightsLLMBackend,
+) -> InsightsLLMModelSpec:
+    """Return one curated model spec or raise an actionable install error."""
+    candidates = [
+        spec
+        for spec in list_llm_model_specs(llm_backend)
+        if spec.model == model or spec.local_model_id == model
+    ]
+    if len(candidates) == 1:
+        return candidates[0]
+    if candidates:
+        detail = f"Model {model!r} is ambiguous across curated insights backends."
+        raise InsightsModelInstallError(
+            detail,
+            examples=("agentgrep insights models list",),
+        )
+    backend_hint = "" if llm_backend == "auto" else f" for backend {llm_backend!r}"
+    detail = f"No curated insights model {model!r}{backend_hint}."
+    raise InsightsModelInstallError(
+        detail,
+        examples=(
+            "agentgrep insights models list --llm-backend litert-lm",
+            "agentgrep insights models list --llm-backend ollama",
+        ),
+    )
+
+
+def default_model_cache_dir() -> pathlib.Path:
+    """Return agentgrep's default local model cache directory."""
+    model_dir = os.environ.get("AGENTGREP_MODEL_DIR")
+    if model_dir:
+        return pathlib.Path(model_dir).expanduser()
+    cache_dir = os.environ.get("AGENTGREP_CACHE_DIR")
+    if cache_dir:
+        return pathlib.Path(cache_dir).expanduser() / "models"
+    if sys.platform == "win32":
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            return pathlib.Path(local_app_data) / "agentgrep" / "models"
+    if sys.platform == "darwin":
+        return pathlib.Path.home() / "Library" / "Caches" / "agentgrep" / "models"
+    xdg_cache_home = os.environ.get("XDG_CACHE_HOME")
+    if xdg_cache_home:
+        return pathlib.Path(xdg_cache_home).expanduser() / "agentgrep" / "models"
+    return pathlib.Path.home() / ".cache" / "agentgrep" / "models"
+
+
+def litert_lm_model_install_target(
+    model: str,
+    *,
+    model_cache: pathlib.Path | None,
+    model_id: str | None = None,
+) -> pathlib.Path:
+    """Return the local path for one curated LiteRT-LM model artifact."""
+    spec = resolve_llm_model_spec(model, llm_backend="litert-lm")
+    artifact = _litert_lm_artifact_filename(spec)
+    cache_root = model_cache.expanduser() if model_cache is not None else default_model_cache_dir()
+    return cache_root / "litert-lm" / _safe_model_cache_key(model_id or spec.model) / artifact
+
+
+def litert_lm_download_url(spec: InsightsLLMModelSpec) -> str:
+    """Return the Hugging Face download URL for a curated LiteRT-LM model."""
+    artifact = _litert_lm_artifact_filename(spec)
+    quoted_artifact = urllib.parse.quote(artifact, safe="/")
+    return f"https://huggingface.co/{spec.model}/resolve/main/{quoted_artifact}"
+
+
+def install_litert_lm_model(
+    model: str,
+    *,
+    model_cache: pathlib.Path | None,
+    model_id: str | None = None,
+) -> pathlib.Path:
+    """Download a curated LiteRT-LM artifact into the agentgrep model cache."""
+    spec = resolve_llm_model_spec(model, llm_backend="litert-lm")
+    target_path = litert_lm_model_install_target(
+        spec.model,
+        model_cache=model_cache,
+        model_id=model_id,
+    )
+    if target_path.is_file():
+        _write_model_install_manifest(target_path, spec=spec, model_id=model_id)
+        return target_path
+
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = target_path.with_name(target_path.name + ".tmp")
+    headers = _hugging_face_download_headers()
+    request = urllib.request.Request(litert_lm_download_url(spec), headers=headers)
+    try:
+        with urllib.request.urlopen(request) as response, temporary_path.open("wb") as stream:
+            while True:
+                chunk = response.read(1024 * 1024)
+                if not chunk:
+                    break
+                stream.write(chunk)
+    except urllib.error.HTTPError as exc:
+        _remove_partial_download(temporary_path)
+        if exc.code in {401, 403}:
+            detail = (
+                f"Could not download gated Hugging Face model {spec.model!r}. "
+                "Accept the model terms and set HF_TOKEN before retrying."
+            )
+            example = (
+                "HF_TOKEN=... agentgrep insights models install "
+                f"--llm-backend litert-lm {spec.model} --yes"
+            )
+            raise InsightsModelInstallError(
+                detail,
+                examples=(
+                    "hf auth login",
+                    example,
+                ),
+            ) from exc
+        detail = f"Could not download {spec.model!r}: HTTP {exc.code} {exc.reason}"
+        raise InsightsModelInstallError(
+            detail,
+            examples=(spec.source_url,),
+        ) from exc
+    except urllib.error.URLError as exc:
+        _remove_partial_download(temporary_path)
+        detail = f"Could not download {spec.model!r}: {exc.reason}"
+        raise InsightsModelInstallError(
+            detail,
+            examples=(spec.source_url,),
+        ) from exc
+
+    temporary_path.replace(target_path)
+    _write_model_install_manifest(target_path, spec=spec, model_id=model_id)
+    return target_path
+
+
+def _litert_lm_artifact_filename(spec: InsightsLLMModelSpec) -> str:
+    if spec.backend != "litert-lm" or spec.artifact_filename is None:
+        detail = f"Curated model {spec.model!r} does not have a LiteRT-LM artifact."
+        raise InsightsModelInstallError(
+            detail,
+            examples=("agentgrep insights models list --llm-backend litert-lm",),
+        )
+    return spec.artifact_filename
+
+
+def _hugging_face_download_headers() -> dict[str, str]:
+    token = os.environ.get("HF_TOKEN")
+    if not token:
+        return {}
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _safe_model_cache_key(value: str) -> str:
+    key = re.sub(r"[^A-Za-z0-9._-]+", "--", value).strip("-")
+    return key or "model"
+
+
+def _write_model_install_manifest(
+    model_path: pathlib.Path,
+    *,
+    spec: InsightsLLMModelSpec,
+    model_id: str | None,
+) -> None:
+    manifest_path = model_path.with_name(model_path.name + ".agentgrep.json")
+    payload = {
+        "backend": spec.backend,
+        "model": spec.model,
+        "local_model_id": model_id or spec.local_model_id,
+        "artifact_filename": spec.artifact_filename,
+        "source_url": spec.source_url,
+        "license": spec.license,
+        "access": spec.access,
+        "path": str(model_path),
+    }
+    manifest_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _remove_partial_download(path: pathlib.Path) -> None:
+    with contextlib.suppress(FileNotFoundError):
+        path.unlink()
 
 
 def build_setup_plan(

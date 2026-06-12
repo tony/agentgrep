@@ -7351,6 +7351,10 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
             return run_insights_doctor_command(parsed)
         if isinstance(parsed, InsightsSetupArgs):
             return run_insights_setup_command(parsed)
+        if isinstance(parsed, InsightsModelsListArgs):
+            return run_insights_models_list_command(parsed)
+        if isinstance(parsed, InsightsModelsInstallArgs):
+            return run_insights_models_install_command(parsed)
         return run_find_command(parsed)
     except KeyboardInterrupt:
         _write_interrupt_notice()
@@ -7373,6 +7377,8 @@ from agentgrep.cli.parser import (  # noqa: E402  (re-exports must follow main d
     GrepArgs,
     InsightsDoctorArgs,
     InsightsLevelsArgs,
+    InsightsModelsInstallArgs,
+    InsightsModelsListArgs,
     InsightsReportArgs,
     InsightsSetupArgs,
     ParserBundle,
@@ -7401,6 +7407,8 @@ from agentgrep.cli.render import (  # noqa: E402  (re-exports must follow main d
     run_grep_command,
     run_insights_doctor_command,
     run_insights_levels_command,
+    run_insights_models_install_command,
+    run_insights_models_list_command,
     run_insights_report_command,
     run_insights_setup_command,
     run_search_command,

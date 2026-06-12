@@ -111,7 +111,7 @@ Install one LLM adapter extra at a time:
 | --- | --- | --- |
 | `ollama` | `agentgrep[insights-llm-ollama]` | an Ollama-compatible local HTTP daemon already owns model management |
 | `llama-cpp` | `agentgrep[insights-llm-llama-cpp]` | you have a local GGUF model file |
-| `litert-lm` | `agentgrep[insights-llm-litert-lm]` | you have a local `.litertlm` model file |
+| `litert-lm` | `agentgrep[insights-llm-litert-lm]` | you have or want to install a local `.litertlm` model file |
 
 The compatibility extra `agentgrep[insights-llm]` installs all stable
 LLM adapters, but `agentgrep insights setup llm` asks for a specific
@@ -121,9 +121,15 @@ model path or a local backend model name. For example, pass
 `--llm-backend litert-lm --model /path/to/model.litertlm`, or
 `--llm-backend ollama --model llama3`.
 
-Use `--list` to print the curated local LLM model allowlist without
-searching local history, importing optional LLM packages, contacting
-Ollama, or downloading model files:
+Use `insights models list` to print the curated local LLM model allowlist
+without searching local history, importing optional LLM packages,
+contacting Ollama, or downloading model files:
+
+```console
+$ agentgrep insights models list --llm-backend litert-lm
+```
+
+The older report-scoped spelling remains available for compatibility:
 
 ```console
 $ agentgrep insights report --llm-backend litert-lm --list
@@ -145,6 +151,54 @@ $ agentgrep insights report --llm-backend litert-lm --list --json
 ```console
 $ agentgrep insights report --llm-backend ollama --list --ndjson
 ```
+
+## Models
+
+`insights models install` is the explicit model-management surface. It
+requires `--yes` before downloading a LiteRT-LM artifact or running
+`ollama pull`.
+
+Preview the LiteRT-LM download plan without mutating local state:
+
+```console
+$ agentgrep insights models install \
+    --llm-backend litert-lm \
+    litert-community/gemma-4-E2B-it-litert-lm \
+    --dry-run
+```
+
+Install the default curated LiteRT-LM Gemma artifact into agentgrep's
+model cache:
+
+```{code-block} console
+$ agentgrep insights models install \
+    --llm-backend litert-lm \
+    litert-community/gemma-4-E2B-it-litert-lm \
+    --yes
+```
+
+Then run the report with the printed local `.litertlm` path:
+
+```{code-block} console
+$ agentgrep insights report \
+    --level llm \
+    --llm-backend litert-lm \
+    --model ~/.cache/agentgrep/models/litert-lm/litert-community--gemma-4-E2B-it-litert-lm/gemma-4-E2B-it.litertlm
+```
+
+Pull a curated Ollama model through the local Ollama CLI:
+
+```{code-block} console
+$ agentgrep insights models install \
+    --llm-backend ollama \
+    gemma3n:e2b \
+    --yes
+```
+
+LiteRT-LM downloads use `AGENTGREP_MODEL_DIR` first, then
+`AGENTGREP_CACHE_DIR`, then platform cache locations. Gated Hugging Face
+models require accepting the model terms and setting `HF_TOKEN` before
+installing.
 
 ## Setup
 

@@ -49,6 +49,8 @@ from agentgrep.cli.parser import (
     GrepArgs,
     InsightsDoctorArgs,
     InsightsLevelsArgs,
+    InsightsModelsInstallArgs,
+    InsightsModelsListArgs,
     InsightsReportArgs,
     InsightsSetupArgs,
     SearchArgs,
@@ -76,6 +78,8 @@ __all__ = [
     "run_grep_command",
     "run_insights_doctor_command",
     "run_insights_levels_command",
+    "run_insights_models_install_command",
+    "run_insights_models_list_command",
     "run_insights_report_command",
     "run_insights_setup_command",
     "run_search_command",
@@ -550,33 +554,142 @@ def run_insights_report_command(args: InsightsReportArgs) -> int:
 
 def _run_insights_model_list_command(args: InsightsReportArgs) -> int:
     """Execute ``agentgrep insights report --list``."""
+    return _emit_insights_model_list(
+        llm_backend=args.llm_backend,
+        output_mode=args.output_mode,
+        command="insights report --list",
+    )
+
+
+def run_insights_models_list_command(args: InsightsModelsListArgs) -> int:
+    """Execute ``agentgrep insights models list``."""
+    return _emit_insights_model_list(
+        llm_backend=args.llm_backend,
+        output_mode=args.output_mode,
+        command="insights models list",
+    )
+
+
+def _emit_insights_model_list(
+    *,
+    llm_backend: str,
+    output_mode: str,
+    command: str,
+) -> int:
+    """Print a curated local LLM model allowlist."""
     from agentgrep.insights import list_llm_model_specs
 
-    specs = list_llm_model_specs(args.llm_backend)
+    specs = list_llm_model_specs(t.cast("t.Any", llm_backend))
     if not specs:
         print(
-            f"No curated model allowlist for LLM backend {args.llm_backend!r}.",
+            f"No curated model allowlist for LLM backend {llm_backend!r}.",
             file=sys.stderr,
         )
         print("Supported list backends: litert-lm, ollama.", file=sys.stderr)
         return 2
 
     payloads = [spec.to_payload() for spec in specs]
-    if args.output_mode == "json":
+    if output_mode == "json":
         results = t.cast("list[dict[str, object]]", payloads)
         envelope = build_envelope(
-            "insights report --list",
-            {"llm_backend": args.llm_backend},
+            command,
+            {"llm_backend": llm_backend},
             results,
         )
         print(json.dumps(envelope, ensure_ascii=False, indent=2))
-    elif args.output_mode == "ndjson":
+    elif output_mode == "ndjson":
         for payload in payloads:
             print(json.dumps(payload, ensure_ascii=False))
     else:
         _print_insights_llm_model_list_text(
             t.cast("list[dict[str, object]]", payloads),
         )
+    return 0
+
+
+def run_insights_models_install_command(args: InsightsModelsInstallArgs) -> int:
+    """Execute ``agentgrep insights models install``."""
+    from agentgrep.insights import (
+        InsightsModelInstallError,
+        install_litert_lm_model,
+        litert_lm_download_url,
+        litert_lm_model_install_target,
+        resolve_llm_model_spec,
+    )
+
+    try:
+        spec = resolve_llm_model_spec(args.model, llm_backend=args.llm_backend)
+    except InsightsModelInstallError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    if args.model_id is not None and spec.backend != "litert-lm":
+        detail = "--model-id is only supported for LiteRT-LM model downloads."
+        error = InsightsModelInstallError(
+            detail,
+            examples=(_format_insights_model_install_command(spec.to_payload()),),
+        )
+        print(str(error), file=sys.stderr)
+        return 2
+
+    if args.dry_run:
+        _print_insights_model_install_plan(
+            spec.to_payload(),
+            model_cache=args.model_cache,
+            model_id=args.model_id,
+        )
+        return 0
+
+    if not args.yes:
+        print("Refusing to install an insights model without --yes.", file=sys.stderr)
+        print(
+            "Run: " + _format_insights_model_install_command(spec.to_payload()),
+            file=sys.stderr,
+        )
+        return 2
+
+    if spec.backend == "litert-lm":
+        try:
+            target = litert_lm_model_install_target(
+                spec.model,
+                model_cache=args.model_cache,
+                model_id=args.model_id,
+            )
+            print(f"Downloading LiteRT-LM model: {spec.model}", flush=True)
+            print(f"source: {litert_lm_download_url(spec)}", flush=True)
+            print(f"target: {target}", flush=True)
+            path = install_litert_lm_model(
+                spec.model,
+                model_cache=args.model_cache,
+                model_id=args.model_id,
+            )
+        except InsightsModelInstallError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        print("Installed LiteRT-LM model.")
+        print(f"path: {path}")
+        print(
+            f"report: agentgrep insights report --level llm --llm-backend litert-lm --model {path}",
+        )
+        return 0
+
+    command = ("ollama", "pull", spec.model)
+    print("Pulling Ollama model.", flush=True)
+    print("command: " + " ".join(command), flush=True)
+    try:
+        completed = subprocess.run(command, check=False)
+    except FileNotFoundError:
+        print(
+            "Could not find the `ollama` command. Install Ollama and retry.",
+            file=sys.stderr,
+        )
+        return 2
+    if completed.returncode != 0:
+        print("Ollama model pull failed. Review Ollama output and retry.", file=sys.stderr)
+        return completed.returncode
+    print("Installed Ollama model.")
+    print(
+        f"report: agentgrep insights report --level llm --llm-backend ollama --model {spec.model}",
+    )
     return 0
 
 
@@ -715,6 +828,54 @@ def _print_insights_report_text(payload: dict[str, object]) -> None:
     skipped = t.cast("list[str]", payload["skipped_enrichers"])
     if skipped:
         print("optional enrichers skipped: " + ", ".join(skipped))
+
+
+def _print_insights_model_install_plan(
+    payload: cabc.Mapping[str, object],
+    *,
+    model_cache: pathlib.Path | None,
+    model_id: str | None,
+) -> None:
+    """Print the install plan for a curated local LLM model."""
+    from agentgrep.insights import (
+        litert_lm_download_url,
+        litert_lm_model_install_target,
+        resolve_llm_model_spec,
+    )
+
+    backend = t.cast("str", payload["backend"])
+    model = t.cast("str", payload["model"])
+    print("Insights model install plan")
+    print(f"backend: {_format_llm_backend_name(backend)}")
+    print(f"model: {model}")
+    print(f"license: {payload['license']}")
+    print(f"access: {payload['access']}")
+    if backend == "litert-lm":
+        spec = resolve_llm_model_spec(model, llm_backend="litert-lm")
+        target = litert_lm_model_install_target(
+            model,
+            model_cache=model_cache,
+            model_id=model_id,
+        )
+        print(f"artifact: {payload['artifact_filename']}")
+        print(f"source: {litert_lm_download_url(spec)}")
+        print(f"target: {target}")
+        print(
+            "report: "
+            "agentgrep insights report --level llm --llm-backend litert-lm "
+            f"--model {target}",
+        )
+    else:
+        print(f"command: ollama pull {model}")
+        print(
+            f"report: agentgrep insights report --level llm --llm-backend ollama --model {model}",
+        )
+
+
+def _format_insights_model_install_command(payload: cabc.Mapping[str, object]) -> str:
+    backend = t.cast("str", payload["backend"])
+    model = t.cast("str", payload["model"])
+    return f"agentgrep insights models install --llm-backend {backend} {model} --yes"
 
 
 def _print_insights_llm_model_list_text(payloads: list[dict[str, object]]) -> None:

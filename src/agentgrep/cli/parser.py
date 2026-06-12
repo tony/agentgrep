@@ -63,6 +63,8 @@ __all__ = [
     "GrepArgs",
     "InsightsDoctorArgs",
     "InsightsLevelsArgs",
+    "InsightsModelsInstallArgs",
+    "InsightsModelsListArgs",
     "InsightsReportArgs",
     "InsightsSetupArgs",
     "ParserBundle",
@@ -171,6 +173,28 @@ class InsightsSetupArgs:
 
 
 @dataclasses.dataclass(slots=True)
+class InsightsModelsListArgs:
+    """Typed arguments for ``agentgrep insights models list``."""
+
+    llm_backend: InsightsLLMBackend
+    output_mode: OutputMode
+    color_mode: ColorMode
+
+
+@dataclasses.dataclass(slots=True)
+class InsightsModelsInstallArgs:
+    """Typed arguments for ``agentgrep insights models install``."""
+
+    model: str
+    llm_backend: InsightsLLMBackend
+    model_cache: pathlib.Path | None
+    model_id: str | None
+    dry_run: bool
+    yes: bool
+    color_mode: ColorMode
+
+
+@dataclasses.dataclass(slots=True)
 class GrepArgs:
     """Typed arguments for ``agentgrep grep``.
 
@@ -236,6 +260,7 @@ class ParserBundle:
     grep_parser: argparse.ArgumentParser
     insights_doctor_parser: argparse.ArgumentParser
     insights_levels_parser: argparse.ArgumentParser
+    insights_models_parser: argparse.ArgumentParser
     insights_parser: argparse.ArgumentParser
     insights_report_parser: argparse.ArgumentParser
     insights_setup_parser: argparse.ArgumentParser
@@ -757,6 +782,68 @@ def create_parser(
         action="store_true",
         help="Confirm environment mutation when used with --install",
     )
+    insights_models_parser = insights_subparsers.add_parser(
+        "models",
+        help="List and install curated local insights models",
+        description="Manage local model artifacts used by optional insights backends.",
+        formatter_class=formatter_class,
+        color=color_mode != "never",
+    )
+    insights_models_subparsers = insights_models_parser.add_subparsers(
+        dest="models_command",
+    )
+    insights_models_list_parser = insights_models_subparsers.add_parser(
+        "list",
+        help="List curated local LLM model suggestions",
+        description="List curated local LLM model suggestions without downloading models.",
+        formatter_class=formatter_class,
+        color=color_mode != "never",
+    )
+    _ = insights_models_list_parser.add_argument(
+        "--llm-backend",
+        choices=["auto", "llama-cpp", "ollama", "litert-lm"],
+        default="auto",
+        help="Local LLM backend allowlist to print",
+    )
+    add_output_mode_options(insights_models_list_parser, allow_ui=False)
+    insights_models_install_parser = insights_models_subparsers.add_parser(
+        "install",
+        help="Install a curated local insights model",
+        description="Download or pull one curated local model after explicit confirmation.",
+        formatter_class=formatter_class,
+        color=color_mode != "never",
+    )
+    _ = insights_models_install_parser.add_argument(
+        "model",
+        help="Curated model id from `agentgrep insights models list`",
+    )
+    _ = insights_models_install_parser.add_argument(
+        "--llm-backend",
+        choices=["auto", "ollama", "litert-lm"],
+        default="auto",
+        help="Local LLM backend that owns the model install",
+    )
+    _ = insights_models_install_parser.add_argument(
+        "--model-cache",
+        type=pathlib.Path,
+        metavar="PATH",
+        help="Model cache directory for downloaded LiteRT-LM artifacts",
+    )
+    _ = insights_models_install_parser.add_argument(
+        "--model-id",
+        metavar="ID",
+        help="Local model id to record for downloaded LiteRT-LM artifacts",
+    )
+    _ = insights_models_install_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the install plan without mutating local model state",
+    )
+    _ = insights_models_install_parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Confirm model download or pull",
+    )
     search_parser = subparsers.add_parser(
         "search",
         help="Smart search with relevance ranking and deduplication",
@@ -826,6 +913,7 @@ def create_parser(
         grep_parser=grep_parser,
         insights_doctor_parser=insights_doctor_parser,
         insights_levels_parser=insights_levels_parser,
+        insights_models_parser=insights_models_parser,
         insights_parser=insights_parser,
         insights_report_parser=insights_report_parser,
         insights_setup_parser=insights_setup_parser,
@@ -1011,6 +1099,8 @@ def parse_args(
     | GrepArgs
     | InsightsDoctorArgs
     | InsightsLevelsArgs
+    | InsightsModelsInstallArgs
+    | InsightsModelsListArgs
     | InsightsReportArgs
     | InsightsSetupArgs
     | SearchArgs
@@ -1061,6 +1151,27 @@ def parse_args(
                 llm_backend=t.cast("InsightsLLMBackend", namespace.llm_backend),
                 manager=t.cast("InsightsInstallManager", namespace.manager),
                 install=t.cast("bool", namespace.install),
+                yes=t.cast("bool", namespace.yes),
+                color_mode=color_mode,
+            )
+        if insights_command == "models":
+            models_command = t.cast("str | None", namespace.models_command)
+            if models_command is None:
+                with configured_color_environment(color_mode):
+                    bundle.insights_models_parser.print_help()
+                return None
+            if models_command == "list":
+                return InsightsModelsListArgs(
+                    llm_backend=t.cast("InsightsLLMBackend", namespace.llm_backend),
+                    output_mode=parse_output_mode(namespace),
+                    color_mode=color_mode,
+                )
+            return InsightsModelsInstallArgs(
+                model=t.cast("str", namespace.model),
+                llm_backend=t.cast("InsightsLLMBackend", namespace.llm_backend),
+                model_cache=t.cast("pathlib.Path | None", namespace.model_cache),
+                model_id=t.cast("str | None", namespace.model_id),
+                dry_run=t.cast("bool", namespace.dry_run),
                 yes=t.cast("bool", namespace.yes),
                 color_mode=color_mode,
             )
