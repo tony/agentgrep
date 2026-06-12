@@ -26,6 +26,7 @@ from agentgrep import (
     CLI_DESCRIPTION,
     FIND_DESCRIPTION,
     GREP_DESCRIPTION,
+    INSIGHTS_DESCRIPTION,
     SEARCH_DESCRIPTION,
     UI_DESCRIPTION,
     AgentName,
@@ -38,6 +39,7 @@ from agentgrep import (
 )
 
 if t.TYPE_CHECKING:
+    from agentgrep.insights import InsightsLevel
     from agentgrep.query import CompiledQuery
 
 CaseMode = t.Literal["smart", "ignore", "respect"]
@@ -51,6 +53,7 @@ __all__ = [
     "FindPatternMode",
     "FindTypeFilter",
     "GrepArgs",
+    "InsightsReportArgs",
     "ParserBundle",
     "PatternMode",
     "SearchArgs",
@@ -102,6 +105,20 @@ class UIArgs:
 
     initial_query: str
     color_mode: ColorMode
+
+
+@dataclasses.dataclass(slots=True)
+class InsightsReportArgs:
+    """Typed arguments for ``agentgrep insights report``."""
+
+    agents: tuple[AgentName, ...]
+    scope: SearchScope
+    output_mode: OutputMode
+    color_mode: ColorMode
+    progress_mode: ProgressMode
+    level: InsightsLevel = "builtin"
+    limit: int | None = 500
+    all_records: bool = False
 
 
 @dataclasses.dataclass(slots=True)
@@ -168,6 +185,8 @@ class ParserBundle:
     parser: argparse.ArgumentParser
     find_parser: argparse.ArgumentParser
     grep_parser: argparse.ArgumentParser
+    insights_parser: argparse.ArgumentParser
+    insights_report_parser: argparse.ArgumentParser
     search_parser: argparse.ArgumentParser
 
 
@@ -523,6 +542,61 @@ def create_parser(
         default="",
         help="Optional initial search text to populate the search bar",
     )
+    insights_parser = subparsers.add_parser(
+        "insights",
+        help="Create local reports and inspect optional insights backends",
+        description=INSIGHTS_DESCRIPTION,
+        formatter_class=formatter_class,
+        color=color_mode != "never",
+    )
+    insights_subparsers = insights_parser.add_subparsers(dest="insights_command")
+    insights_report_parser = insights_subparsers.add_parser(
+        "report",
+        help="Create a local builtin insights report",
+        description="Create a pure-Python report from local agentgrep records.",
+        formatter_class=formatter_class,
+        color=color_mode != "never",
+    )
+    add_common_agent_options(insights_report_parser)
+    _ = insights_report_parser.add_argument(
+        "--scope",
+        choices=["prompts", "conversations", "all"],
+        default="prompts",
+        help="Report scope: prompts, conversations, or all (default: prompts)",
+    )
+    _ = insights_report_parser.add_argument(
+        "--level",
+        choices=["builtin", "html", "ml", "embeddings", "index", "llm", "best-installed"],
+        default="builtin",
+        help="Optional insights level to request (default: builtin)",
+    )
+    _ = insights_report_parser.add_argument(
+        "--limit",
+        type=int,
+        metavar="N",
+        default=500,
+        help="Analyze at most N newest records (default: 500)",
+    )
+    _ = insights_report_parser.add_argument(
+        "--all",
+        dest="all_records",
+        action="store_true",
+        help="Analyze every selected record instead of the bounded default",
+    )
+    _ = insights_report_parser.add_argument(
+        "--progress",
+        choices=["auto", "always", "never"],
+        default="auto",
+        help="Show report progress on stderr",
+    )
+    _ = insights_report_parser.add_argument(
+        "--no-progress",
+        dest="progress",
+        action="store_const",
+        const="never",
+        help="Silence the stderr progress spinner (alias for --progress=never)",
+    )
+    add_output_mode_options(insights_report_parser, allow_ui=False)
     search_parser = subparsers.add_parser(
         "search",
         help="Smart search with relevance ranking and deduplication",
@@ -590,6 +664,8 @@ def create_parser(
         parser=parser,
         find_parser=find_parser,
         grep_parser=grep_parser,
+        insights_parser=insights_parser,
+        insights_report_parser=insights_report_parser,
         search_parser=search_parser,
     )
 
@@ -766,7 +842,7 @@ def _check_for_mangled_field_predicate(
 
 def parse_args(
     argv: cabc.Sequence[str] | None = None,
-) -> FindArgs | UIArgs | GrepArgs | SearchArgs | None:
+) -> FindArgs | UIArgs | GrepArgs | InsightsReportArgs | SearchArgs | None:
     """Parse CLI arguments into typed dataclasses."""
     color_mode = normalize_color_mode(argv)
     effective_argv = list(argv) if argv is not None else list(sys.argv[1:])
@@ -788,6 +864,37 @@ def parse_args(
         return UIArgs(
             initial_query=t.cast("str", namespace.initial_query),
             color_mode=color_mode,
+        )
+
+    if command == "insights":
+        insights_command = t.cast("str | None", namespace.insights_command)
+        if insights_command is None:
+            with configured_color_environment(color_mode):
+                bundle.insights_parser.print_help()
+            return None
+        agents = parse_agents(t.cast("list[str]", namespace.agent))
+        output_mode = parse_output_mode(namespace)
+        limit = t.cast("int | None", namespace.limit)
+        all_records = t.cast("bool", namespace.all_records)
+        if all_records and limit != 500:
+            with configured_color_environment(color_mode):
+                bundle.insights_report_parser.error(
+                    "--all cannot be combined with --limit",
+                )
+        if all_records:
+            limit = None
+        if limit is not None and limit < 1:
+            with configured_color_environment(color_mode):
+                bundle.insights_report_parser.error("--limit must be greater than 0")
+        return InsightsReportArgs(
+            agents=agents,
+            scope=t.cast("SearchScope", namespace.scope),
+            output_mode=output_mode,
+            color_mode=color_mode,
+            progress_mode=t.cast("ProgressMode", namespace.progress),
+            level=t.cast("InsightsLevel", namespace.level),
+            limit=limit,
+            all_records=all_records,
         )
 
     agents = parse_agents(t.cast("list[str]", namespace.agent))

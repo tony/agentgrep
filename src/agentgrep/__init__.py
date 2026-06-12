@@ -317,6 +317,24 @@ SEARCH_DESCRIPTION = build_description(
         ),
     ),
 )
+INSIGHTS_DESCRIPTION = build_description(
+    """
+    Create local insights reports and inspect optional semantic backends.
+
+    The default report is pure Python and never installs packages,
+    downloads models, or imports optional ML/LLM libraries.
+    """,
+    (
+        (
+            None,
+            (
+                "agentgrep insights report",
+                "agentgrep insights report --json",
+                "agentgrep insights report --all --scope all",
+            ),
+        ),
+    ),
+)
 GREP_DESCRIPTION = build_description(
     """
     Content search across normalized records with rg/ag-shaped flags.
@@ -7323,6 +7341,8 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
             return run_search_command(parsed)
         if isinstance(parsed, UIArgs):
             return run_ui_command(parsed)
+        if isinstance(parsed, InsightsReportArgs):
+            return run_insights_report_command(parsed)
         return run_find_command(parsed)
     except KeyboardInterrupt:
         _write_interrupt_notice()
@@ -7343,6 +7363,7 @@ from agentgrep.cli.parser import (  # noqa: E402  (re-exports must follow main d
     FindPatternMode,
     FindTypeFilter,
     GrepArgs,
+    InsightsReportArgs,
     ParserBundle,
     PatternMode,
     SearchArgs,
@@ -7367,6 +7388,7 @@ from agentgrep.cli.render import (  # noqa: E402  (re-exports must follow main d
     print_grep_results,
     run_find_command,
     run_grep_command,
+    run_insights_report_command,
     run_search_command,
     run_ui_command,
     serialize_find_record,

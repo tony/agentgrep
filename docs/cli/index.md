@@ -46,6 +46,12 @@ Ranked, deduped search grouped by session — best matches first.
 Enumerate on-disk stores with fd-shaped flag grammar.
 :::
 
+:::{grid-item-card} agentgrep insights
+:link: insights
+:link-type: doc
+Create local aggregate reports with a pure-Python default.
+:::
+
 :::{grid-item-card} agentgrep ui
 :link: tui
 :link-type: ref
@@ -131,6 +137,12 @@ List stores for one agent as JSON:
 $ agentgrep find cursor-cli --json
 ```
 
+Create a bounded local report:
+
+```console
+$ agentgrep insights report
+```
+
 Open the directory of choices:
 
 ```console
@@ -154,5 +166,6 @@ $ agentgrep
 grep
 search
 find
+insights
 reference
 ```

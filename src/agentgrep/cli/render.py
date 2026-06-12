@@ -38,7 +38,7 @@ from agentgrep import (
     SourceVersionDetection,
     SourceVersionDetectionPayload,
 )
-from agentgrep.cli.parser import FindArgs, GrepArgs, SearchArgs, UIArgs
+from agentgrep.cli.parser import FindArgs, GrepArgs, InsightsReportArgs, SearchArgs, UIArgs
 
 __all__ = [
     "GrepSummary",
@@ -58,6 +58,7 @@ __all__ = [
     "print_grep_results",
     "run_find_command",
     "run_grep_command",
+    "run_insights_report_command",
     "run_search_command",
     "run_ui_command",
     "serialize_find_record",
@@ -170,6 +171,76 @@ def build_envelope(
         "query": query_data,
         "results": results,
     }
+
+
+def run_insights_report_command(args: InsightsReportArgs) -> int:
+    """Execute ``agentgrep insights report``."""
+    query = agentgrep.SearchQuery(
+        terms=(),
+        scope=args.scope,
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=args.agents,
+        limit=args.limit,
+        dedupe=False,
+    )
+    records = agentgrep.run_search_query(
+        pathlib.Path.home(),
+        query,
+        progress=agentgrep.noop_search_progress(),
+        control=agentgrep.SearchControl(),
+    )
+    from agentgrep.insights import build_report
+
+    report = build_report(
+        records,
+        scope=args.scope,
+        requested_level=args.level,
+        record_limit=args.limit,
+        sampled=not args.all_records,
+    )
+    payload = t.cast("dict[str, object]", report.to_payload())
+    if args.output_mode == "json":
+        envelope = build_envelope(
+            "insights report",
+            {
+                "agents": list(args.agents),
+                "scope": args.scope,
+                "level": args.level,
+                "limit": args.limit,
+                "all": args.all_records,
+            },
+            [payload],
+        )
+        print(json.dumps(envelope, ensure_ascii=False, indent=2))
+    elif args.output_mode == "ndjson":
+        print(json.dumps(payload, ensure_ascii=False))
+    else:
+        _print_insights_report_text(payload)
+    return 0
+
+
+def _print_insights_report_text(payload: dict[str, object]) -> None:
+    """Print a compact human-readable insights report."""
+    print("Insights report")
+    print(f"level: {payload['level']}")
+    print(f"records analyzed: {payload['records_analyzed']}")
+    if payload["sampled"]:
+        print(f"sample: newest {payload['record_limit']} records")
+    agents = t.cast("dict[str, int]", payload["agents"])
+    if agents:
+        print("agents: " + ", ".join(f"{name}={count}" for name, count in agents.items()))
+    stores = t.cast("dict[str, int]", payload["stores"])
+    if stores:
+        print("stores: " + ", ".join(f"{name}={count}" for name, count in stores.items()))
+    terms = t.cast("list[dict[str, object]]", payload["top_terms"])
+    if terms:
+        term_text = ", ".join(f"{row['term']}={row['count']}" for row in terms[:5])
+        print(f"top terms: {term_text}")
+    skipped = t.cast("list[str]", payload["skipped_enrichers"])
+    if skipped:
+        print("optional enrichers skipped: " + ", ".join(skipped))
 
 
 def print_find_results(records: list[FindRecord], args: FindArgs) -> None:
