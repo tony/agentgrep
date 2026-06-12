@@ -121,6 +121,31 @@ model path or a local backend model name. For example, pass
 `--llm-backend litert-lm --model /path/to/model.litertlm`, or
 `--llm-backend ollama --model llama3`.
 
+Use `--list` to print the curated local LLM model allowlist without
+searching local history, importing optional LLM packages, contacting
+Ollama, or downloading model files:
+
+```console
+$ agentgrep insights report --llm-backend litert-lm --list
+```
+
+The same allowlist is available for local Ollama model names:
+
+```console
+$ agentgrep insights report --llm-backend ollama --list
+```
+
+Machine-readable output uses the same `--json` and `--ndjson` flags as
+other insights commands:
+
+```console
+$ agentgrep insights report --llm-backend litert-lm --list --json
+```
+
+```console
+$ agentgrep insights report --llm-backend ollama --list --ndjson
+```
+
 ## Setup
 
 `insights setup` is explicit and dry-run by default. It prints the

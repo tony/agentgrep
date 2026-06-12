@@ -135,6 +135,7 @@ class InsightsReportArgs:
     model: str | None = None
     model_cache: pathlib.Path | None = None
     allow_download: bool = False
+    list_models: bool = False
     llm_backend: InsightsLLMBackend = "auto"
     llm_endpoint: str = "http://127.0.0.1:11434"
     allow_network: bool = False
@@ -676,6 +677,12 @@ def create_parser(
         help="Allow model downloads for backends that support an offline switch",
     )
     _ = insights_report_parser.add_argument(
+        "--list",
+        dest="list_models",
+        action="store_true",
+        help="List curated local LLM model suggestions instead of building a report",
+    )
+    _ = insights_report_parser.add_argument(
         "--llm-backend",
         choices=["auto", "llama-cpp", "ollama", "litert-lm"],
         default="auto",
@@ -1060,6 +1067,17 @@ def parse_args(
         agents = parse_agents(t.cast("list[str]", namespace.agent))
         output_mode = parse_output_mode(namespace)
         report_format = t.cast("InsightsReportFormat", namespace.format)
+        list_models = t.cast("bool", namespace.list_models)
+        if list_models and report_format != "text":
+            with configured_color_environment(color_mode):
+                bundle.insights_report_parser.error(
+                    "--list cannot be combined with --format",
+                )
+        if list_models and namespace.output is not None:
+            with configured_color_environment(color_mode):
+                bundle.insights_report_parser.error(
+                    "--list cannot be combined with --output",
+                )
         if output_mode != "text" and report_format != "text":
             with configured_color_environment(color_mode):
                 bundle.insights_report_parser.error(
@@ -1091,6 +1109,7 @@ def parse_args(
             model=t.cast("str | None", namespace.model),
             model_cache=t.cast("pathlib.Path | None", namespace.model_cache),
             allow_download=t.cast("bool", namespace.allow_download),
+            list_models=list_models,
             llm_backend=t.cast("InsightsLLMBackend", namespace.llm_backend),
             llm_endpoint=t.cast("str", namespace.llm_endpoint),
             allow_network=t.cast("bool", namespace.allow_network),

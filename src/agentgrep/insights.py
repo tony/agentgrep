@@ -138,6 +138,22 @@ class InsightsEnrichmentPayload(t.TypedDict):
     data: dict[str, object]
 
 
+class InsightsLLMModelPayload(t.TypedDict):
+    """JSON payload for one curated local LLM model."""
+
+    backend: str
+    model: str
+    family: str
+    steward: str
+    jurisdiction: str
+    license: str
+    access: str
+    source_url: str
+    install_hint: str
+    report_hint: str
+    notes: str
+
+
 class InsightsReportPayload(t.TypedDict):
     """JSON payload for a builtin insights report."""
 
@@ -250,6 +266,39 @@ class InsightsEnrichment:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class InsightsLLMModelSpec:
+    """One curated local LLM model that agentgrep is willing to suggest."""
+
+    backend: ConcreteInsightsLLMBackend
+    model: str
+    family: str
+    steward: str
+    jurisdiction: str
+    license: str
+    access: str
+    source_url: str
+    install_hint: str
+    report_hint: str
+    notes: str
+
+    def to_payload(self) -> InsightsLLMModelPayload:
+        """Return the JSON-compatible representation."""
+        return {
+            "backend": self.backend,
+            "model": self.model,
+            "family": self.family,
+            "steward": self.steward,
+            "jurisdiction": self.jurisdiction,
+            "license": self.license,
+            "access": self.access,
+            "source_url": self.source_url,
+            "install_hint": self.install_hint,
+            "report_hint": self.report_hint,
+            "notes": self.notes,
+        }
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class InsightsReport:
     """Aggregated local insights report."""
 
@@ -345,6 +394,164 @@ INSIGHTS_LEVEL_SPECS: tuple[InsightsLevelSpec, ...] = (
     ),
 )
 
+_LITERT_LM_REPORT_HINT = (
+    "agentgrep insights report --level llm --llm-backend litert-lm --model /path/to/model.litertlm"
+)
+
+_CURATED_LLM_MODELS: tuple[InsightsLLMModelSpec, ...] = (
+    InsightsLLMModelSpec(
+        backend="litert-lm",
+        model="litert-community/gemma-4-E2B-it-litert-lm",
+        family="Gemma 4",
+        steward="Google/Gemma",
+        jurisdiction="US",
+        license="Apache-2.0",
+        access="public",
+        source_url="https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm",
+        install_hint="Download the .litertlm artifact from Hugging Face.",
+        report_hint=_LITERT_LM_REPORT_HINT,
+        notes="Smallest default US LiteRT-LM suggestion from the allowlist.",
+    ),
+    InsightsLLMModelSpec(
+        backend="litert-lm",
+        model="litert-community/gemma-4-E4B-it-litert-lm",
+        family="Gemma 4",
+        steward="Google/Gemma",
+        jurisdiction="US",
+        license="Apache-2.0",
+        access="public",
+        source_url="https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm",
+        install_hint="Download the .litertlm artifact from Hugging Face.",
+        report_hint=_LITERT_LM_REPORT_HINT,
+        notes="Larger Apache-2.0 LiteRT-LM Gemma option.",
+    ),
+    InsightsLLMModelSpec(
+        backend="litert-lm",
+        model="litert-community/gemma-4-12B-it-litert-lm",
+        family="Gemma 4",
+        steward="Google/Gemma",
+        jurisdiction="US",
+        license="Apache-2.0",
+        access="public",
+        source_url="https://huggingface.co/litert-community/gemma-4-12B-it-litert-lm",
+        install_hint="Download the .litertlm artifact from Hugging Face.",
+        report_hint=_LITERT_LM_REPORT_HINT,
+        notes="Heavier Apache-2.0 LiteRT-LM Gemma option.",
+    ),
+    InsightsLLMModelSpec(
+        backend="litert-lm",
+        model="google/gemma-3n-E2B-it-litert-lm",
+        family="Gemma 3n",
+        steward="Google/Gemma",
+        jurisdiction="US",
+        license="Gemma Terms",
+        access="gated",
+        source_url="https://huggingface.co/google/gemma-3n-E2B-it-litert-lm",
+        install_hint="Accept the gated Hugging Face terms, then download the .litertlm artifact.",
+        report_hint=_LITERT_LM_REPORT_HINT,
+        notes="Official Google LiteRT-LM model; requires license acceptance.",
+    ),
+    InsightsLLMModelSpec(
+        backend="litert-lm",
+        model="google/gemma-3n-E4B-it-litert-lm",
+        family="Gemma 3n",
+        steward="Google/Gemma",
+        jurisdiction="US",
+        license="Gemma Terms",
+        access="gated",
+        source_url="https://huggingface.co/google/gemma-3n-E4B-it-litert-lm",
+        install_hint="Accept the gated Hugging Face terms, then download the .litertlm artifact.",
+        report_hint=_LITERT_LM_REPORT_HINT,
+        notes="Larger official Google LiteRT-LM model; requires license acceptance.",
+    ),
+    InsightsLLMModelSpec(
+        backend="litert-lm",
+        model="litert-community/Gemma3-1B-IT",
+        family="Gemma 3",
+        steward="Google/Gemma",
+        jurisdiction="US",
+        license="Gemma Terms",
+        access="gated",
+        source_url="https://huggingface.co/litert-community/Gemma3-1B-IT",
+        install_hint="Accept the gated Hugging Face terms, then download the .litertlm artifact.",
+        report_hint=_LITERT_LM_REPORT_HINT,
+        notes="Small Gemma 3 LiteRT-LM option; requires license acceptance.",
+    ),
+    InsightsLLMModelSpec(
+        backend="litert-lm",
+        model="litert-community/Phi-4-mini-instruct",
+        family="Phi 4 Mini",
+        steward="Microsoft/Phi",
+        jurisdiction="US",
+        license="MIT",
+        access="public",
+        source_url="https://huggingface.co/litert-community/Phi-4-mini-instruct",
+        install_hint="Download the .litertlm artifact from Hugging Face.",
+        report_hint=_LITERT_LM_REPORT_HINT,
+        notes="Permissive Microsoft LiteRT-LM option.",
+    ),
+    InsightsLLMModelSpec(
+        backend="ollama",
+        model="gemma3n:e2b",
+        family="Gemma 3n",
+        steward="Google/Gemma",
+        jurisdiction="US",
+        license="Gemma Terms",
+        access="public",
+        source_url="https://ollama.com/library/gemma3n:e2b",
+        install_hint="ollama pull gemma3n:e2b",
+        report_hint=(
+            "agentgrep insights report --level llm --llm-backend ollama --model gemma3n:e2b"
+        ),
+        notes="Smallest curated Google model in the Ollama allowlist.",
+    ),
+    InsightsLLMModelSpec(
+        backend="ollama",
+        model="gemma3n:e4b",
+        family="Gemma 3n",
+        steward="Google/Gemma",
+        jurisdiction="US",
+        license="Gemma Terms",
+        access="public",
+        source_url="https://ollama.com/library/gemma3n:e4b",
+        install_hint="ollama pull gemma3n:e4b",
+        report_hint=(
+            "agentgrep insights report --level llm --llm-backend ollama --model gemma3n:e4b"
+        ),
+        notes="Larger curated Google model in the Ollama allowlist.",
+    ),
+    InsightsLLMModelSpec(
+        backend="ollama",
+        model="gemma3:1b",
+        family="Gemma 3",
+        steward="Google/Gemma",
+        jurisdiction="US",
+        license="Gemma Terms",
+        access="public",
+        source_url="https://ollama.com/library/gemma3:1b",
+        install_hint="ollama pull gemma3:1b",
+        report_hint=(
+            "agentgrep insights report --level llm --llm-backend ollama --model gemma3:1b"
+        ),
+        notes="Small Gemma option available through Ollama.",
+    ),
+    InsightsLLMModelSpec(
+        backend="ollama",
+        model="phi4-mini",
+        family="Phi 4 Mini",
+        steward="Microsoft/Phi",
+        jurisdiction="US",
+        license="MIT",
+        access="public",
+        source_url="https://ollama.com/library/phi4-mini",
+        install_hint="ollama pull phi4-mini",
+        report_hint=(
+            "agentgrep insights report --level llm --llm-backend ollama --model phi4-mini"
+        ),
+        notes="Permissive Microsoft model available through Ollama.",
+    ),
+)
+
 
 def build_report(
     records: cabc.Iterable[agentgrep.SearchRecord],
@@ -437,6 +644,19 @@ def inspect_levels(probe: ModuleProbe | None = None) -> tuple[InsightsLevelStatu
     if probe is None:
         probe = _module_available
     return tuple(_inspect_level(spec, probe=probe) for spec in INSIGHTS_LEVEL_SPECS)
+
+
+def list_llm_model_specs(
+    llm_backend: InsightsLLMBackend = "auto",
+) -> tuple[InsightsLLMModelSpec, ...]:
+    """Return curated local LLM model suggestions for one backend.
+
+    The registry is intentionally static and local. It does not import optional
+    LLM packages, contact Hugging Face, or query an Ollama daemon.
+    """
+    if llm_backend == "auto":
+        return _CURATED_LLM_MODELS
+    return tuple(spec for spec in _CURATED_LLM_MODELS if spec.backend == llm_backend)
 
 
 def build_setup_plan(

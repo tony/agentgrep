@@ -442,6 +442,9 @@ def _format_llm_backend_name(backend: str) -> str:
 
 def run_insights_report_command(args: InsightsReportArgs) -> int:
     """Execute ``agentgrep insights report``."""
+    if args.list_models:
+        return _run_insights_model_list_command(args)
+
     human_output = args.output_mode == "text"
     progress_enabled = args.progress_mode == "always" or (
         args.progress_mode == "auto" and human_output
@@ -542,6 +545,38 @@ def run_insights_report_command(args: InsightsReportArgs) -> int:
             args.output_path.write_text(document, encoding="utf-8")
     else:
         _print_insights_report_text(payload)
+    return 0
+
+
+def _run_insights_model_list_command(args: InsightsReportArgs) -> int:
+    """Execute ``agentgrep insights report --list``."""
+    from agentgrep.insights import list_llm_model_specs
+
+    specs = list_llm_model_specs(args.llm_backend)
+    if not specs:
+        print(
+            f"No curated model allowlist for LLM backend {args.llm_backend!r}.",
+            file=sys.stderr,
+        )
+        print("Supported list backends: litert-lm, ollama.", file=sys.stderr)
+        return 2
+
+    payloads = [spec.to_payload() for spec in specs]
+    if args.output_mode == "json":
+        results = t.cast("list[dict[str, object]]", payloads)
+        envelope = build_envelope(
+            "insights report --list",
+            {"llm_backend": args.llm_backend},
+            results,
+        )
+        print(json.dumps(envelope, ensure_ascii=False, indent=2))
+    elif args.output_mode == "ndjson":
+        for payload in payloads:
+            print(json.dumps(payload, ensure_ascii=False))
+    else:
+        _print_insights_llm_model_list_text(
+            t.cast("list[dict[str, object]]", payloads),
+        )
     return 0
 
 
@@ -680,6 +715,26 @@ def _print_insights_report_text(payload: dict[str, object]) -> None:
     skipped = t.cast("list[str]", payload["skipped_enrichers"])
     if skipped:
         print("optional enrichers skipped: " + ", ".join(skipped))
+
+
+def _print_insights_llm_model_list_text(payloads: list[dict[str, object]]) -> None:
+    """Print the curated local LLM model allowlist."""
+    print("Insights LLM model allowlist")
+    current_backend: str | None = None
+    for payload in payloads:
+        backend = t.cast("str", payload["backend"])
+        if backend != current_backend:
+            current_backend = backend
+            print(f"backend: {_format_llm_backend_name(backend)}")
+        print(f"- {payload['model']}")
+        print(f"  family: {payload['family']}")
+        print(f"  steward: {payload['steward']}")
+        print(f"  jurisdiction: {payload['jurisdiction']}")
+        print(f"  license: {payload['license']}")
+        print(f"  access: {payload['access']}")
+        print(f"  source: {payload['source_url']}")
+        print(f"  install: {payload['install_hint']}")
+        print(f"  report: {payload['report_hint']}")
 
 
 def _print_insights_levels_text(payloads: list[dict[str, object]]) -> None:

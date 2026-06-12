@@ -33,6 +33,7 @@ class InsightsParseCase(t.NamedTuple):
     expected_all_records: bool
     expected_report_format: str
     expected_output_path: pathlib.Path | None
+    expected_list_models: bool
 
 
 INSIGHTS_PARSE_CASES: tuple[InsightsParseCase, ...] = (
@@ -46,6 +47,7 @@ INSIGHTS_PARSE_CASES: tuple[InsightsParseCase, ...] = (
         expected_all_records=False,
         expected_report_format="text",
         expected_output_path=None,
+        expected_list_models=False,
     ),
     InsightsParseCase(
         test_id="report-all-removes-bound",
@@ -57,6 +59,7 @@ INSIGHTS_PARSE_CASES: tuple[InsightsParseCase, ...] = (
         expected_all_records=True,
         expected_report_format="text",
         expected_output_path=None,
+        expected_list_models=False,
     ),
     InsightsParseCase(
         test_id="report-best-installed-level",
@@ -68,6 +71,7 @@ INSIGHTS_PARSE_CASES: tuple[InsightsParseCase, ...] = (
         expected_all_records=False,
         expected_report_format="text",
         expected_output_path=None,
+        expected_list_models=False,
     ),
     InsightsParseCase(
         test_id="report-html-output-options",
@@ -88,6 +92,7 @@ INSIGHTS_PARSE_CASES: tuple[InsightsParseCase, ...] = (
         expected_all_records=False,
         expected_report_format="html",
         expected_output_path=pathlib.Path("report.html"),
+        expected_list_models=False,
     ),
     InsightsParseCase(
         test_id="report-litert-lm-backend",
@@ -108,6 +113,25 @@ INSIGHTS_PARSE_CASES: tuple[InsightsParseCase, ...] = (
         expected_all_records=False,
         expected_report_format="text",
         expected_output_path=None,
+        expected_list_models=False,
+    ),
+    InsightsParseCase(
+        test_id="report-litert-lm-model-list",
+        argv=(
+            "insights",
+            "report",
+            "--llm-backend",
+            "litert-lm",
+            "--list",
+        ),
+        expected_scope="prompts",
+        expected_level="builtin",
+        expected_llm_backend="litert-lm",
+        expected_limit=500,
+        expected_all_records=False,
+        expected_report_format="text",
+        expected_output_path=None,
+        expected_list_models=True,
     ),
 )
 
@@ -132,6 +156,15 @@ class RuntimeConfigCase(t.NamedTuple):
     modules: tuple[str, ...]
     expected_detail: str
     expected_examples: tuple[str, ...]
+
+
+class ModelListCase(t.NamedTuple):
+    """One machine-readable LLM model list output case."""
+
+    test_id: str
+    argv: tuple[str, ...]
+    expected_command: str | None
+    expected_models: tuple[str, ...]
 
 
 class ReportProgress(t.Protocol):
@@ -209,6 +242,34 @@ RUNTIME_CONFIG_CASES: tuple[RuntimeConfigCase, ...] = (
     ),
 )
 
+MODEL_LIST_CASES: tuple[ModelListCase, ...] = (
+    ModelListCase(
+        test_id="litert-lm-json",
+        argv=("insights", "report", "--llm-backend", "litert-lm", "--list", "--json"),
+        expected_command="insights report --list",
+        expected_models=(
+            "litert-community/gemma-4-E2B-it-litert-lm",
+            "litert-community/gemma-4-E4B-it-litert-lm",
+            "litert-community/gemma-4-12B-it-litert-lm",
+            "google/gemma-3n-E2B-it-litert-lm",
+            "google/gemma-3n-E4B-it-litert-lm",
+            "litert-community/Gemma3-1B-IT",
+            "litert-community/Phi-4-mini-instruct",
+        ),
+    ),
+    ModelListCase(
+        test_id="ollama-ndjson",
+        argv=("insights", "report", "--llm-backend", "ollama", "--list", "--ndjson"),
+        expected_command=None,
+        expected_models=(
+            "gemma3n:e2b",
+            "gemma3n:e4b",
+            "gemma3:1b",
+            "phi4-mini",
+        ),
+    ),
+)
+
 
 def strip_ansi(text: str) -> str:
     """Remove ANSI control sequences from terminal output."""
@@ -231,6 +292,7 @@ def test_insights_report_parse_args(case: InsightsParseCase) -> None:
     assert parsed.all_records == case.expected_all_records
     assert parsed.report_format == case.expected_report_format
     assert parsed.output_path == case.expected_output_path
+    assert parsed.list_models is case.expected_list_models
 
 
 def test_insights_levels_parse_args() -> None:
@@ -272,6 +334,28 @@ def test_insights_report_rejects_limit_with_all(
     assert exc_info.value.code == 2
     captured = capsys.readouterr()
     assert "--all cannot be combined with --limit" in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_insights_report_rejects_model_list_document_output(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--list`` is a registry query, not a report document renderer."""
+    with pytest.raises(SystemExit) as exc_info:
+        _ = agentgrep.parse_args(
+            (
+                "insights",
+                "report",
+                "--llm-backend",
+                "litert-lm",
+                "--list",
+                "--format",
+                "html",
+            ),
+        )
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert "--list cannot be combined with --format" in captured.err
     assert "Traceback" not in captured.err
 
 
@@ -374,6 +458,93 @@ def test_insights_report_text_output(
     assert "level: builtin" in output
     assert "records analyzed: 1" in output
     assert "optional enrichers skipped" in output
+
+
+def test_insights_report_list_litert_lm_models_text_does_not_search(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """LiteRT-LM model listing is a cheap allowlist lookup."""
+
+    def fail_run_search_query(
+        home: pathlib.Path,
+        query: agentgrep.SearchQuery,
+        *,
+        progress: object | None = None,
+        control: object | None = None,
+    ) -> list[agentgrep.SearchRecord]:
+        _ = (home, query, progress, control)
+        pytest.fail("model listing must not search local agent history")
+
+    monkeypatch.setattr(agentgrep, "run_search_query", fail_run_search_query)
+
+    exit_code = agentgrep.main(
+        ("insights", "report", "--llm-backend", "litert-lm", "--list"),
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "Insights LLM model allowlist" in output
+    assert "backend: LiteRT-LM" in output
+    assert "litert-community/gemma-4-E2B-it-litert-lm" in output
+    assert "google/gemma-3n-E2B-it-litert-lm" in output
+    assert "litert-community/Phi-4-mini-instruct" in output
+    assert "license: Apache-2.0" in output
+    assert "access: gated" in output
+
+
+@pytest.mark.parametrize(
+    "case",
+    MODEL_LIST_CASES,
+    ids=[case.test_id for case in MODEL_LIST_CASES],
+)
+def test_insights_report_model_list_machine_output(
+    case: ModelListCase,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Model allowlists support JSON envelopes and NDJSON rows."""
+
+    def fail_run_search_query(
+        home: pathlib.Path,
+        query: agentgrep.SearchQuery,
+        *,
+        progress: object | None = None,
+        control: object | None = None,
+    ) -> list[agentgrep.SearchRecord]:
+        _ = (home, query, progress, control)
+        pytest.fail("model listing must not search local agent history")
+
+    monkeypatch.setattr(agentgrep, "run_search_query", fail_run_search_query)
+
+    exit_code = agentgrep.main(case.argv)
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    if case.expected_command is not None:
+        payload = json.loads(output)
+        assert payload["command"] == case.expected_command
+        rows = payload["results"]
+    else:
+        rows = [json.loads(line) for line in output.splitlines()]
+    assert tuple(row["model"] for row in rows) == case.expected_models
+    assert {row["jurisdiction"] for row in rows} == {"US"}
+
+
+def test_insights_report_model_list_rejects_unknown_backend(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Model listing only advertises curated local LLM backends."""
+    exit_code = agentgrep.main(
+        ("insights", "report", "--llm-backend", "llama-cpp", "--list"),
+    )
+
+    assert exit_code == 2
+    captured = capsys.readouterr()
+    assert "No curated model allowlist for LLM backend 'llama-cpp'" in captured.err
+    assert "litert-lm" in captured.err
+    assert "ollama" in captured.err
+    assert "Traceback" not in captured.err
 
 
 def test_insights_report_progress_always_emits_search_and_report_steps(
