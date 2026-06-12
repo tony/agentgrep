@@ -21,8 +21,10 @@ import datetime
 import fnmatch
 import itertools
 import json
+import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -329,7 +331,10 @@ class InsightsReportProgress:
             self._stop_event.wait(self._refresh_interval)
 
     def _render_tty(self, frame: str) -> None:
-        line = f"{self._colors.info(frame)} {self._summary(include_elapsed=True)}"
+        frame_text = self._colors.info(frame)
+        summary_width = max(1, self._terminal_width() - agentgrep._visible_width(frame_text) - 1)
+        summary = self._summary(include_elapsed=True, max_width=summary_width)
+        line = f"{frame_text} {summary}"
         with self._lock:
             try:
                 self._stream.write("\r\033[2K" + line)
@@ -364,13 +369,20 @@ class InsightsReportProgress:
         with self._lock:
             return self._last_heartbeat_at
 
-    def _summary(self, *, include_elapsed: bool = False) -> str:
+    def _summary(
+        self,
+        *,
+        include_elapsed: bool = False,
+        max_width: int | None = None,
+    ) -> str:
         level, detail = self._current_state()
         text = f"{self._colors.heading('Building insights report:')} level {level}"
         if detail is not None:
             text += f" - {detail}"
         if include_elapsed:
             text += f" ({self._colors.muted(f'{self._elapsed_seconds():.1f}s elapsed')})"
+        if max_width is not None:
+            return agentgrep._hard_truncate_ansi(text, max_width)
         return text
 
     def _heartbeat_summary(self, now: float) -> str:
@@ -394,6 +406,12 @@ class InsightsReportProgress:
         if started is None:
             return 0.0
         return (time.monotonic() if now is None else now) - started
+
+    def _terminal_width(self) -> int:
+        try:
+            return max(1, os.get_terminal_size(self._stream.fileno()).columns)
+        except AttributeError, OSError, TypeError, ValueError:
+            return max(1, shutil.get_terminal_size(fallback=(80, 24)).columns)
 
     def _emit_line(self, line: str) -> None:
         try:

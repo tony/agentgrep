@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import pathlib
+import re
 import subprocess
 import sys
 import time
@@ -16,6 +17,8 @@ import pytest
 import agentgrep
 import agentgrep.insights as insights
 from agentgrep.cli import render as cli_render
+
+ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 class InsightsParseCase(t.NamedTuple):
@@ -166,6 +169,11 @@ RUNTIME_CONFIG_CASES: tuple[RuntimeConfigCase, ...] = (
         ),
     ),
 )
+
+
+def strip_ansi(text: str) -> str:
+    """Remove ANSI control sequences from terminal output."""
+    return ANSI_RE.sub("", text)
 
 
 @pytest.mark.parametrize(
@@ -381,6 +389,36 @@ def test_insights_report_progress_heartbeats_while_building() -> None:
     output = stream.getvalue()
     assert "Building insights report: level llm" in output
     assert "... still building insights report: level llm" in output
+
+
+def test_insights_report_tty_progress_render_fits_terminal_width(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TTY report progress renders must not wrap into uncleared terminal rows."""
+    columns = 78
+    stream = io.StringIO()
+    monkeypatch.setenv("COLUMNS", str(columns))
+    monkeypatch.setenv("LINES", "24")
+    progress = cli_render.InsightsReportProgress(
+        enabled=True,
+        stream=stream,
+        tty=True,
+        color_mode="never",
+        refresh_interval=100.0,
+    )
+
+    progress.start("llm")
+    progress._stop_thread()
+    progress.llm_started(
+        backend="ollama",
+        model="llama3",
+        endpoint="http://127.0.0.1:11434",
+    )
+    progress._render_tty("-")
+
+    rendered = stream.getvalue().split("\r\033[2K")[-1]
+    assert "\n" not in rendered
+    assert len(strip_ansi(rendered)) <= columns
 
 
 def test_insights_report_progress_reports_ollama_streaming_steps(
