@@ -330,6 +330,8 @@ INSIGHTS_DESCRIPTION = build_description(
             (
                 "agentgrep insights report",
                 "agentgrep insights report --json",
+                "agentgrep insights levels",
+                "agentgrep insights setup embeddings",
                 "agentgrep insights report --all --scope all",
             ),
         ),
@@ -7343,6 +7345,12 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
             return run_ui_command(parsed)
         if isinstance(parsed, InsightsReportArgs):
             return run_insights_report_command(parsed)
+        if isinstance(parsed, InsightsLevelsArgs):
+            return run_insights_levels_command(parsed)
+        if isinstance(parsed, InsightsDoctorArgs):
+            return run_insights_doctor_command(parsed)
+        if isinstance(parsed, InsightsSetupArgs):
+            return run_insights_setup_command(parsed)
         return run_find_command(parsed)
     except KeyboardInterrupt:
         _write_interrupt_notice()
@@ -7363,7 +7371,10 @@ from agentgrep.cli.parser import (  # noqa: E402  (re-exports must follow main d
     FindPatternMode,
     FindTypeFilter,
     GrepArgs,
+    InsightsDoctorArgs,
+    InsightsLevelsArgs,
     InsightsReportArgs,
+    InsightsSetupArgs,
     ParserBundle,
     PatternMode,
     SearchArgs,
@@ -7388,7 +7399,10 @@ from agentgrep.cli.render import (  # noqa: E402  (re-exports must follow main d
     print_grep_results,
     run_find_command,
     run_grep_command,
+    run_insights_doctor_command,
+    run_insights_levels_command,
     run_insights_report_command,
+    run_insights_setup_command,
     run_search_command,
     run_ui_command,
     serialize_find_record,

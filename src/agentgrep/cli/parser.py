@@ -39,7 +39,7 @@ from agentgrep import (
 )
 
 if t.TYPE_CHECKING:
-    from agentgrep.insights import InsightsLevel
+    from agentgrep.insights import InsightsInstallManager, InsightsLevel, InsightsSetupLevel
     from agentgrep.query import CompiledQuery
 
 CaseMode = t.Literal["smart", "ignore", "respect"]
@@ -53,7 +53,10 @@ __all__ = [
     "FindPatternMode",
     "FindTypeFilter",
     "GrepArgs",
+    "InsightsDoctorArgs",
+    "InsightsLevelsArgs",
     "InsightsReportArgs",
+    "InsightsSetupArgs",
     "ParserBundle",
     "PatternMode",
     "SearchArgs",
@@ -122,6 +125,33 @@ class InsightsReportArgs:
 
 
 @dataclasses.dataclass(slots=True)
+class InsightsLevelsArgs:
+    """Typed arguments for ``agentgrep insights levels``."""
+
+    output_mode: OutputMode
+    color_mode: ColorMode
+
+
+@dataclasses.dataclass(slots=True)
+class InsightsDoctorArgs:
+    """Typed arguments for ``agentgrep insights doctor``."""
+
+    output_mode: OutputMode
+    color_mode: ColorMode
+
+
+@dataclasses.dataclass(slots=True)
+class InsightsSetupArgs:
+    """Typed arguments for ``agentgrep insights setup``."""
+
+    level: InsightsSetupLevel
+    manager: InsightsInstallManager
+    install: bool
+    yes: bool
+    color_mode: ColorMode
+
+
+@dataclasses.dataclass(slots=True)
 class GrepArgs:
     """Typed arguments for ``agentgrep grep``.
 
@@ -185,8 +215,11 @@ class ParserBundle:
     parser: argparse.ArgumentParser
     find_parser: argparse.ArgumentParser
     grep_parser: argparse.ArgumentParser
+    insights_doctor_parser: argparse.ArgumentParser
+    insights_levels_parser: argparse.ArgumentParser
     insights_parser: argparse.ArgumentParser
     insights_report_parser: argparse.ArgumentParser
+    insights_setup_parser: argparse.ArgumentParser
     search_parser: argparse.ArgumentParser
 
 
@@ -597,6 +630,52 @@ def create_parser(
         help="Silence the stderr progress spinner (alias for --progress=never)",
     )
     add_output_mode_options(insights_report_parser, allow_ui=False)
+    insights_levels_parser = insights_subparsers.add_parser(
+        "levels",
+        help="List optional insights dependency levels",
+        description=(
+            "List builtin and optional insights levels without importing optional packages."
+        ),
+        formatter_class=formatter_class,
+        color=color_mode != "never",
+    )
+    add_output_mode_options(insights_levels_parser, allow_ui=False)
+    insights_doctor_parser = insights_subparsers.add_parser(
+        "doctor",
+        help="Diagnose optional insights dependency availability",
+        description="Check optional insights dependencies and print setup hints.",
+        formatter_class=formatter_class,
+        color=color_mode != "never",
+    )
+    add_output_mode_options(insights_doctor_parser, allow_ui=False)
+    insights_setup_parser = insights_subparsers.add_parser(
+        "setup",
+        help="Print or run an optional insights extra install command",
+        description="Install optional insights dependencies only when explicitly confirmed.",
+        formatter_class=formatter_class,
+        color=color_mode != "never",
+    )
+    _ = insights_setup_parser.add_argument(
+        "level",
+        choices=["html", "ml", "embeddings", "index", "llm"],
+        help="Optional insights level to install",
+    )
+    _ = insights_setup_parser.add_argument(
+        "--manager",
+        choices=["auto", "uv", "pip"],
+        default="auto",
+        help="Installer command shape to use (default: auto)",
+    )
+    _ = insights_setup_parser.add_argument(
+        "--install",
+        action="store_true",
+        help="Execute the install command instead of printing a dry run",
+    )
+    _ = insights_setup_parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Confirm environment mutation when used with --install",
+    )
     search_parser = subparsers.add_parser(
         "search",
         help="Smart search with relevance ranking and deduplication",
@@ -664,8 +743,11 @@ def create_parser(
         parser=parser,
         find_parser=find_parser,
         grep_parser=grep_parser,
+        insights_doctor_parser=insights_doctor_parser,
+        insights_levels_parser=insights_levels_parser,
         insights_parser=insights_parser,
         insights_report_parser=insights_report_parser,
+        insights_setup_parser=insights_setup_parser,
         search_parser=search_parser,
     )
 
@@ -842,7 +924,17 @@ def _check_for_mangled_field_predicate(
 
 def parse_args(
     argv: cabc.Sequence[str] | None = None,
-) -> FindArgs | UIArgs | GrepArgs | InsightsReportArgs | SearchArgs | None:
+) -> (
+    FindArgs
+    | UIArgs
+    | GrepArgs
+    | InsightsDoctorArgs
+    | InsightsLevelsArgs
+    | InsightsReportArgs
+    | InsightsSetupArgs
+    | SearchArgs
+    | None
+):
     """Parse CLI arguments into typed dataclasses."""
     color_mode = normalize_color_mode(argv)
     effective_argv = list(argv) if argv is not None else list(sys.argv[1:])
@@ -872,6 +964,24 @@ def parse_args(
             with configured_color_environment(color_mode):
                 bundle.insights_parser.print_help()
             return None
+        if insights_command == "levels":
+            return InsightsLevelsArgs(
+                output_mode=parse_output_mode(namespace),
+                color_mode=color_mode,
+            )
+        if insights_command == "doctor":
+            return InsightsDoctorArgs(
+                output_mode=parse_output_mode(namespace),
+                color_mode=color_mode,
+            )
+        if insights_command == "setup":
+            return InsightsSetupArgs(
+                level=t.cast("InsightsSetupLevel", namespace.level),
+                manager=t.cast("InsightsInstallManager", namespace.manager),
+                install=t.cast("bool", namespace.install),
+                yes=t.cast("bool", namespace.yes),
+                color_mode=color_mode,
+            )
         agents = parse_agents(t.cast("list[str]", namespace.agent))
         output_mode = parse_output_mode(namespace)
         limit = t.cast("int | None", namespace.limit)

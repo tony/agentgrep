@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import json
 import pathlib
+import subprocess
+import sys
 import typing as t
 
 import pytest
 
 import agentgrep
+import agentgrep.insights as insights
 
 
 class InsightsParseCase(t.NamedTuple):
@@ -50,6 +53,37 @@ INSIGHTS_PARSE_CASES: tuple[InsightsParseCase, ...] = (
 )
 
 
+class InsightsSetupParseCase(t.NamedTuple):
+    """Parametrized parse case for ``agentgrep insights setup``."""
+
+    test_id: str
+    argv: tuple[str, ...]
+    expected_level: str
+    expected_manager: str
+    expected_install: bool
+    expected_yes: bool
+
+
+INSIGHTS_SETUP_PARSE_CASES: tuple[InsightsSetupParseCase, ...] = (
+    InsightsSetupParseCase(
+        test_id="setup-defaults-to-dry-run-auto-manager",
+        argv=("insights", "setup", "html"),
+        expected_level="html",
+        expected_manager="auto",
+        expected_install=False,
+        expected_yes=False,
+    ),
+    InsightsSetupParseCase(
+        test_id="setup-captures-explicit-install-confirmation",
+        argv=("insights", "setup", "embeddings", "--manager", "pip", "--install", "--yes"),
+        expected_level="embeddings",
+        expected_manager="pip",
+        expected_install=True,
+        expected_yes=True,
+    ),
+)
+
+
 @pytest.mark.parametrize(
     "case",
     INSIGHTS_PARSE_CASES,
@@ -63,6 +97,35 @@ def test_insights_report_parse_args(case: InsightsParseCase) -> None:
     assert parsed.level == case.expected_level
     assert parsed.limit == case.expected_limit
     assert parsed.all_records == case.expected_all_records
+
+
+def test_insights_levels_parse_args() -> None:
+    """The levels command supports machine-readable output."""
+    parsed = agentgrep.parse_args(("insights", "levels", "--json"))
+    assert isinstance(parsed, agentgrep.InsightsLevelsArgs)
+    assert parsed.output_mode == "json"
+
+
+def test_insights_doctor_parse_args() -> None:
+    """The doctor command supports machine-readable output."""
+    parsed = agentgrep.parse_args(("insights", "doctor", "--ndjson"))
+    assert isinstance(parsed, agentgrep.InsightsDoctorArgs)
+    assert parsed.output_mode == "ndjson"
+
+
+@pytest.mark.parametrize(
+    "case",
+    INSIGHTS_SETUP_PARSE_CASES,
+    ids=[case.test_id for case in INSIGHTS_SETUP_PARSE_CASES],
+)
+def test_insights_setup_parse_args(case: InsightsSetupParseCase) -> None:
+    """The setup parser captures explicit environment mutation choices."""
+    parsed = agentgrep.parse_args(case.argv)
+    assert isinstance(parsed, agentgrep.InsightsSetupArgs)
+    assert parsed.level == case.expected_level
+    assert parsed.manager == case.expected_manager
+    assert parsed.install is case.expected_install
+    assert parsed.yes is case.expected_yes
 
 
 def test_insights_report_rejects_limit_with_all(
@@ -175,3 +238,124 @@ def test_insights_report_text_output(
     assert "level: builtin" in output
     assert "records analyzed: 1" in output
     assert "optional enrichers skipped" in output
+
+
+def test_insights_levels_json_reports_optional_extras(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``insights levels`` reports five optional extras without imports."""
+    monkeypatch.setattr(insights, "_module_available", lambda name: name == "sklearn")
+
+    exit_code = agentgrep.main(("insights", "levels", "--json"))
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["command"] == "insights levels"
+    by_level = {row["level"]: row for row in payload["results"]}
+    assert tuple(by_level) == ("builtin", "html", "ml", "embeddings", "index", "llm")
+    assert by_level["builtin"]["installed"] is True
+    assert by_level["builtin"]["extra"] is None
+    assert by_level["html"]["extra"] == "insights-html"
+    assert by_level["html"]["installed"] is False
+    assert by_level["html"]["missing_modules"] == ["jinja2", "platformdirs"]
+    assert by_level["ml"]["extra"] == "insights-ml"
+    assert by_level["ml"]["installed"] is True
+    assert by_level["llm"]["extra"] == "insights-llm"
+
+
+def test_insights_doctor_text_lists_setup_hints(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``insights doctor`` gives actionable missing-extra hints."""
+    seen_modules: list[str] = []
+
+    def fake_module_available(name: str) -> bool:
+        seen_modules.append(name)
+        return False
+
+    monkeypatch.setattr(insights, "_module_available", fake_module_available)
+
+    exit_code = agentgrep.main(("insights", "doctor"))
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "Insights doctor" in output
+    assert "builtin: available" in output
+    assert "html: missing" in output
+    assert "agentgrep insights setup html --install --yes" in output
+    assert "sklearn" in seen_modules
+    assert "sentence_transformers" in seen_modules
+
+
+def test_insights_setup_dry_run_prefers_uv(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Setup defaults to a dry-run command and prefers uv when available."""
+    monkeypatch.setattr(
+        insights.shutil,
+        "which",
+        lambda name: "/usr/bin/uv" if name == "uv" else None,
+    )
+
+    exit_code = agentgrep.main(("insights", "setup", "embeddings"))
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert 'uv pip install "agentgrep[insights-embeddings]"' in output
+    assert "Dry run" in output
+
+
+def test_insights_setup_dry_run_can_force_pip(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Users can request a pip-shaped setup command explicitly."""
+    exit_code = agentgrep.main(("insights", "setup", "ml", "--manager", "pip"))
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert f"{sys.executable} -m pip install " in output
+    assert '"agentgrep[insights-ml]"' in output
+
+
+def test_insights_setup_install_requires_yes(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Setup refuses environment mutation without explicit confirmation."""
+    exit_code = agentgrep.main(("insights", "setup", "llm", "--install"))
+
+    assert exit_code == 2
+    captured = capsys.readouterr()
+    assert "--yes" in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_insights_setup_install_executes_confirmed_command(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Confirmed setup executes the exact extra install command."""
+    calls: list[tuple[str, ...]] = []
+
+    def fake_run(
+        command: tuple[str, ...],
+        *,
+        check: bool,
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        assert check is False
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("agentgrep.cli.render.subprocess.run", fake_run)
+
+    exit_code = agentgrep.main(
+        ("insights", "setup", "html", "--manager", "pip", "--install", "--yes"),
+    )
+
+    assert exit_code == 0
+    assert calls == [
+        (sys.executable, "-m", "pip", "install", "agentgrep[insights-html]"),
+    ]
+    assert "Install completed" in capsys.readouterr().out

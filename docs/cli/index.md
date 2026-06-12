@@ -143,6 +143,13 @@ Create a bounded local report:
 $ agentgrep insights report
 ```
 
+Inspect optional local-report backends:
+
+```console
+$ agentgrep insights levels
+$ agentgrep insights setup ml
+```
+
 Open the directory of choices:
 
 ```console

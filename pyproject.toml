@@ -39,6 +39,34 @@ dependencies = [
   "rapidfuzz>=3.10.0",
 ]
 
+[project.optional-dependencies]
+insights-html = [
+  "jinja2>=3.1",
+  "platformdirs>=4",
+]
+insights-ml = [
+  "scikit-learn>=1.9",
+]
+insights-embeddings = [
+  "sentence-transformers>=5.5",
+]
+insights-index = [
+  "sqlite-vec>=0.1.9",
+  "tantivy>=0.26",
+]
+insights-llm = [
+  "httpx>=0.28",
+  "llama-cpp-python>=0.3.28",
+]
+insights-all = [
+  "jinja2>=3.1",
+  "platformdirs>=4",
+  "scikit-learn>=1.9",
+  "sentence-transformers>=5.5",
+  "sqlite-vec>=0.1.9",
+  "tantivy>=0.26",
+]
+
 [project.urls]
 "Bug Tracker" = "https://github.com/tony/agentgrep/issues"
 Repository = "https://github.com/tony/agentgrep"

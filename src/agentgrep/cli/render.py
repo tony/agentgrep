@@ -22,6 +22,7 @@ import fnmatch
 import json
 import pathlib
 import re
+import subprocess
 import sys
 import typing as t
 
@@ -38,7 +39,16 @@ from agentgrep import (
     SourceVersionDetection,
     SourceVersionDetectionPayload,
 )
-from agentgrep.cli.parser import FindArgs, GrepArgs, InsightsReportArgs, SearchArgs, UIArgs
+from agentgrep.cli.parser import (
+    FindArgs,
+    GrepArgs,
+    InsightsDoctorArgs,
+    InsightsLevelsArgs,
+    InsightsReportArgs,
+    InsightsSetupArgs,
+    SearchArgs,
+    UIArgs,
+)
 
 __all__ = [
     "GrepSummary",
@@ -58,7 +68,10 @@ __all__ = [
     "print_grep_results",
     "run_find_command",
     "run_grep_command",
+    "run_insights_doctor_command",
+    "run_insights_levels_command",
     "run_insights_report_command",
+    "run_insights_setup_command",
     "run_search_command",
     "run_ui_command",
     "serialize_find_record",
@@ -221,6 +234,73 @@ def run_insights_report_command(args: InsightsReportArgs) -> int:
     return 0
 
 
+def run_insights_levels_command(args: InsightsLevelsArgs) -> int:
+    """Execute ``agentgrep insights levels``."""
+    from agentgrep.insights import inspect_levels
+
+    payloads = [status.to_payload() for status in inspect_levels()]
+    if args.output_mode == "json":
+        results = t.cast("list[dict[str, object]]", payloads)
+        envelope = build_envelope("insights levels", {}, results)
+        print(json.dumps(envelope, ensure_ascii=False, indent=2))
+    elif args.output_mode == "ndjson":
+        for payload in payloads:
+            print(json.dumps(payload, ensure_ascii=False))
+    else:
+        _print_insights_levels_text(t.cast("list[dict[str, object]]", payloads))
+    return 0
+
+
+def run_insights_doctor_command(args: InsightsDoctorArgs) -> int:
+    """Execute ``agentgrep insights doctor``."""
+    from agentgrep.insights import inspect_levels
+
+    payloads = [status.to_payload() for status in inspect_levels()]
+    payload = {
+        "default_level": "builtin",
+        "optional_import_policy": "probe with importlib.util.find_spec; do not import extras",
+        "levels": payloads,
+    }
+    if args.output_mode == "json":
+        result = t.cast("dict[str, object]", payload)
+        envelope = build_envelope("insights doctor", {}, [result])
+        print(json.dumps(envelope, ensure_ascii=False, indent=2))
+    elif args.output_mode == "ndjson":
+        print(json.dumps(payload, ensure_ascii=False))
+    else:
+        _print_insights_doctor_text(t.cast("dict[str, object]", payload))
+    return 0
+
+
+def run_insights_setup_command(args: InsightsSetupArgs) -> int:
+    """Execute ``agentgrep insights setup``."""
+    from agentgrep.insights import build_setup_plan
+
+    plan = build_setup_plan(args.level, manager=args.manager)
+    if args.install and not args.yes:
+        print(
+            "Refusing to install optional insights dependencies without --yes.",
+            file=sys.stderr,
+        )
+        print(
+            f"Run: agentgrep insights setup {args.level} --install --yes",
+            file=sys.stderr,
+        )
+        return 2
+
+    print(f"Install command: {plan.command_text}")
+    if not args.install:
+        print("Dry run; pass --install --yes to execute.")
+        return 0
+
+    completed = subprocess.run(plan.command, check=False)
+    if completed.returncode == 0:
+        print("Install completed. Rerun the requested insights command.")
+    else:
+        print("Install failed. Review installer output and rerun setup.", file=sys.stderr)
+    return completed.returncode
+
+
 def _print_insights_report_text(payload: dict[str, object]) -> None:
     """Print a compact human-readable insights report."""
     print("Insights report")
@@ -241,6 +321,35 @@ def _print_insights_report_text(payload: dict[str, object]) -> None:
     skipped = t.cast("list[str]", payload["skipped_enrichers"])
     if skipped:
         print("optional enrichers skipped: " + ", ".join(skipped))
+
+
+def _print_insights_levels_text(payloads: list[dict[str, object]]) -> None:
+    """Print human-readable optional insights level status."""
+    print("Insights levels")
+    for payload in payloads:
+        status = "installed" if payload["installed"] else "missing"
+        extra = payload["extra"]
+        suffix = f" (agentgrep[{extra}])" if extra is not None else " (core)"
+        print(f"{payload['level']}: {status}{suffix}")
+        missing = t.cast("list[str]", payload["missing_modules"])
+        if missing:
+            print("  missing modules: " + ", ".join(missing))
+
+
+def _print_insights_doctor_text(payload: dict[str, object]) -> None:
+    """Print human-readable optional insights diagnostics."""
+    print("Insights doctor")
+    levels = t.cast("list[dict[str, object]]", payload["levels"])
+    for level in levels:
+        status = "available" if level["installed"] else "missing"
+        print(f"{level['level']}: {status}")
+        missing = t.cast("list[str]", level["missing_modules"])
+        if missing:
+            print("  missing modules: " + ", ".join(missing))
+        setup_command = t.cast("str | None", level["setup_command"])
+        if setup_command is not None and missing:
+            print(f"  setup: {setup_command}")
+    print("default: agentgrep insights report --level builtin")
 
 
 def print_find_results(records: list[FindRecord], args: FindArgs) -> None:
