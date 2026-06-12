@@ -99,7 +99,7 @@ class RuntimeConfigCase(t.NamedTuple):
     level: insights.InsightsLevel
     modules: tuple[str, ...]
     expected_detail: str
-    expected_example: str
+    expected_examples: tuple[str, ...]
 
 
 INSIGHTS_SETUP_PARSE_CASES: tuple[InsightsSetupParseCase, ...] = (
@@ -127,7 +127,10 @@ RUNTIME_CONFIG_CASES: tuple[RuntimeConfigCase, ...] = (
         level="llm",
         modules=("llama_cpp", "httpx"),
         expected_detail="local llama.cpp model path or Ollama model name",
-        expected_example="agentgrep insights report --level llm --model /path/to/model.gguf",
+        expected_examples=(
+            "agentgrep insights report --level llm --model /path/to/model.gguf",
+            "agentgrep insights report --level llm --llm-backend ollama --model llama3",
+        ),
     ),
 )
 
@@ -358,7 +361,9 @@ def test_insights_report_installed_backend_missing_runtime_config_guides_next_st
     captured = capsys.readouterr()
     assert "needs runtime configuration" in captured.err
     assert case.expected_detail in captured.err
-    assert case.expected_example in captured.err
+    assert "\nTry:\n" in captured.err
+    for command in case.expected_examples:
+        assert f"  {command}\n" in captured.err
     assert f"agentgrep insights setup {case.level}" not in captured.err
     assert "Traceback" not in captured.err
 

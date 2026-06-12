@@ -86,7 +86,8 @@ class BackendConfigurationError(RuntimeError):
             f"Insights backend {self.level!r} needs runtime configuration: {self.requirement}."
         )
         if self.examples:
-            message += " Try: " + " Or: ".join(self.examples)
+            examples = "\n".join(f"  {example}" for example in self.examples)
+            message += f"\nTry:\n{examples}"
         return message
 
 

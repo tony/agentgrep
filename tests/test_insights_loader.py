@@ -29,6 +29,7 @@ class ConfigErrorCase(t.NamedTuple):
     level: str
     requirement: str
     examples: tuple[str, ...]
+    expected_lines: tuple[str, ...]
 
 
 LOADER_CASES: tuple[LoaderCase, ...] = (
@@ -67,6 +68,13 @@ CONFIG_ERROR_CASES: tuple[ConfigErrorCase, ...] = (
         examples=(
             "agentgrep insights report --level llm --model /path/to/model.gguf",
             "agentgrep insights report --level llm --llm-backend ollama --model llama3",
+        ),
+        expected_lines=(
+            "Insights backend 'llm' needs runtime configuration: "
+            "local llama.cpp model path or Ollama model name.",
+            "Try:",
+            "  agentgrep insights report --level llm --model /path/to/model.gguf",
+            "  agentgrep insights report --level llm --llm-backend ollama --model llama3",
         ),
     ),
 )
@@ -129,7 +137,5 @@ def test_backend_configuration_error_does_not_suggest_reinstall(
     assert error.level == case.level
     assert error.requirement == case.requirement
     assert error.examples == case.examples
-    assert "needs runtime configuration" in str(error)
-    for example in case.examples:
-        assert example in str(error)
+    assert str(error).splitlines() == list(case.expected_lines)
     assert f"agentgrep insights setup {case.level}" not in str(error)
