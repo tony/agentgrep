@@ -603,16 +603,36 @@ def test_insights_report_ollama_timeout_fails_cleanly(
     class FakeHTTPError(Exception):
         """Base fake httpx transport error."""
 
-    class FakeTimeoutException(FakeHTTPError):
-        """Fake timeout raised by the local Ollama client."""
+    class FakeConnectTimeout(FakeHTTPError):
+        """Fake connect timeout raised by the local Ollama client."""
 
         def __init__(self) -> None:
-            super().__init__("timed out")
+            super().__init__("connect timed out")
+
+    class Timeout:
+        """Fake ``httpx.Timeout`` value."""
+
+        def __init__(
+            self,
+            *,
+            connect: float,
+            read: float | None,
+            write: float,
+            pool: float,
+        ) -> None:
+            self.connect = connect
+            self.read = read
+            self.write = write
+            self.pool = pool
 
     class FakeClient:
         """Minimal context-manager client with the httpx.Client surface."""
 
-        def __init__(self, *, timeout: float) -> None:
+        def __init__(self, *, timeout: Timeout) -> None:
+            assert timeout.connect == 5.0
+            assert timeout.read is None
+            assert timeout.write == 30.0
+            assert timeout.pool == 5.0
             self.timeout = timeout
 
         def __enter__(self) -> t.Self:
@@ -629,7 +649,7 @@ def test_insights_report_ollama_timeout_fails_cleanly(
 
         def stream(self, method: str, url: str, *, json: object) -> object:
             _ = (method, url, json)
-            raise FakeTimeoutException()
+            raise FakeConnectTimeout()
 
     def fake_run_search_query(
         home: pathlib.Path,
@@ -645,8 +665,10 @@ def test_insights_report_ollama_timeout_fails_cleanly(
     vars(httpx).update(
         {
             "Client": FakeClient,
+            "ConnectTimeout": FakeConnectTimeout,
             "HTTPError": FakeHTTPError,
-            "TimeoutException": FakeTimeoutException,
+            "Timeout": Timeout,
+            "TimeoutException": FakeConnectTimeout,
         },
     )
 
@@ -679,7 +701,7 @@ def test_insights_report_ollama_timeout_fails_cleanly(
     captured = capsys.readouterr()
     assert "Building insights report: level llm" in captured.err
     assert "Ollama" in captured.err
-    assert "timed out" in captured.err
+    assert "could not connect to http://127.0.0.1:11434 within 5s" in captured.err
     assert "ollama serve" in captured.err
     assert "Traceback" not in captured.err
 

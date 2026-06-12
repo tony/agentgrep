@@ -41,6 +41,15 @@ class StreamRequest(t.NamedTuple):
     payload: dict[str, object]
 
 
+class TimeoutConfig(t.NamedTuple):
+    """One fake httpx timeout configuration."""
+
+    connect: float
+    read: float | None
+    write: float
+    pool: float
+
+
 ENRICHER_CASES: tuple[EnricherCase, ...] = (
     EnricherCase(
         test_id="html-renders-report-document",
@@ -139,6 +148,8 @@ def test_build_report_streams_ollama_summary_and_reports_progress() -> None:
     assert request.url == "http://127.0.0.1:11434/api/chat"
     assert request.payload["model"] == "llama3"
     assert request.payload["stream"] is True
+    timeouts = t.cast("list[TimeoutConfig]", httpx.__dict__["timeouts"])
+    assert timeouts == [TimeoutConfig(connect=5.0, read=None, write=30.0, pool=5.0)]
 
     assert [event.name for event in progress.events] == [
         "started",
@@ -308,12 +319,31 @@ def _fake_ollama_import_module(httpx: types.ModuleType) -> insights.ImportModule
 def _fake_streaming_httpx_module(lines: t.Sequence[str]) -> types.ModuleType:
     module = types.ModuleType("httpx")
     requests: list[StreamRequest] = []
+    timeouts: list[TimeoutConfig] = []
 
     class FakeHTTPError(Exception):
         """Base fake HTTP transport error."""
 
     class FakeTimeoutException(FakeHTTPError):
         """Fake timeout transport error."""
+
+    class Timeout:
+        """Fake ``httpx.Timeout`` value."""
+
+        def __init__(
+            self,
+            *,
+            connect: float,
+            read: float | None,
+            write: float,
+            pool: float,
+        ) -> None:
+            self.config = TimeoutConfig(
+                connect=connect,
+                read=read,
+                write=write,
+                pool=pool,
+            )
 
     class FakeStreamResponse:
         """Context manager for streaming response lines."""
@@ -339,8 +369,8 @@ def _fake_streaming_httpx_module(lines: t.Sequence[str]) -> types.ModuleType:
     class FakeClient:
         """Minimal context-manager client with ``httpx.Client.stream``."""
 
-        def __init__(self, *, timeout: float) -> None:
-            self.timeout = timeout
+        def __init__(self, *, timeout: Timeout) -> None:
+            timeouts.append(timeout.config)
 
         def __enter__(self) -> t.Self:
             return self
@@ -368,8 +398,10 @@ def _fake_streaming_httpx_module(lines: t.Sequence[str]) -> types.ModuleType:
         {
             "Client": FakeClient,
             "HTTPError": FakeHTTPError,
+            "Timeout": Timeout,
             "TimeoutException": FakeTimeoutException,
             "requests": requests,
+            "timeouts": timeouts,
         },
     )
     return module

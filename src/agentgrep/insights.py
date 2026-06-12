@@ -64,6 +64,9 @@ _STOPWORDS = frozenset(
         "without",
     },
 )
+_OLLAMA_CONNECT_TIMEOUT_SECONDS = 5.0
+_OLLAMA_WRITE_TIMEOUT_SECONDS = 30.0
+_OLLAMA_POOL_TIMEOUT_SECONDS = 5.0
 
 
 class InsightsProgress(t.Protocol):
@@ -898,7 +901,7 @@ def _summarize_with_ollama(
     client_factory = t.cast("type[t.Any]", t.cast("t.Any", httpx).Client)
     url = endpoint.rstrip("/") + "/api/chat"
     try:
-        with client_factory(timeout=60.0) as client:
+        with client_factory(timeout=_ollama_http_timeout(httpx)) as client:
             _notify_llm_started(
                 progress,
                 backend="ollama",
@@ -933,6 +936,22 @@ def _summarize_with_ollama(
                     progress=progress,
                 )
     except Exception as exc:
+        if _is_module_exception(exc, httpx, "ConnectTimeout"):
+            raise _ollama_runtime_error(
+                endpoint=endpoint,
+                model=model,
+                detail=(
+                    f"could not connect to {endpoint} within "
+                    f"{_OLLAMA_CONNECT_TIMEOUT_SECONDS:g}s: {_exception_detail(exc)}"
+                ),
+            ) from exc
+        if _is_module_exception(exc, httpx, "ReadTimeout"):
+            raise _ollama_runtime_error(
+                endpoint=endpoint,
+                model=model,
+                detail=f"timed out waiting for Ollama response from {endpoint}: "
+                f"{_exception_detail(exc)}",
+            ) from exc
         if _is_module_exception(exc, httpx, "TimeoutException"):
             raise _ollama_runtime_error(
                 endpoint=endpoint,
@@ -946,6 +965,18 @@ def _summarize_with_ollama(
                 detail=f"request to {endpoint} failed: {_exception_detail(exc)}",
             ) from exc
         raise
+
+
+def _ollama_http_timeout(httpx: types.ModuleType) -> object:
+    timeout_factory = getattr(httpx, "Timeout", None)
+    if not callable(timeout_factory):
+        return 60.0
+    return timeout_factory(
+        connect=_OLLAMA_CONNECT_TIMEOUT_SECONDS,
+        read=None,
+        write=_OLLAMA_WRITE_TIMEOUT_SECONDS,
+        pool=_OLLAMA_POOL_TIMEOUT_SECONDS,
+    )
 
 
 def _extract_ollama_stream_summary(
