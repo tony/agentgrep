@@ -8,6 +8,7 @@ import typing as t
 import pytest
 
 from agentgrep.insights_loader import (
+    BackendConfigurationError,
     BackendUnavailable,
     load_backend_modules,
 )
@@ -19,6 +20,15 @@ class LoaderCase(t.NamedTuple):
     test_id: str
     level: str
     modules: tuple[str, ...]
+
+
+class ConfigErrorCase(t.NamedTuple):
+    """One runtime configuration failure case."""
+
+    test_id: str
+    level: str
+    requirement: str
+    examples: tuple[str, ...]
 
 
 LOADER_CASES: tuple[LoaderCase, ...] = (
@@ -46,6 +56,18 @@ LOADER_CASES: tuple[LoaderCase, ...] = (
         test_id="llm-imports-local-model-modules",
         level="llm",
         modules=("llama_cpp", "httpx"),
+    ),
+)
+
+CONFIG_ERROR_CASES: tuple[ConfigErrorCase, ...] = (
+    ConfigErrorCase(
+        test_id="llm-requires-model-or-local-endpoint-model",
+        level="llm",
+        requirement="local llama.cpp model path or Ollama model name",
+        examples=(
+            "agentgrep insights report --level llm --model /path/to/model.gguf",
+            "agentgrep insights report --level llm --llm-backend ollama --model llama3",
+        ),
     ),
 )
 
@@ -87,3 +109,27 @@ def test_load_backend_modules_reports_all_missing_modules() -> None:
     assert exc_info.value.level == "ml"
     assert exc_info.value.missing_modules == ("sklearn", "sklearn.cluster")
     assert "agentgrep insights setup ml --install --yes" in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    "case",
+    CONFIG_ERROR_CASES,
+    ids=[case.test_id for case in CONFIG_ERROR_CASES],
+)
+def test_backend_configuration_error_does_not_suggest_reinstall(
+    case: ConfigErrorCase,
+) -> None:
+    """Installed backends with missing runtime inputs should not suggest reinstalling."""
+    error = BackendConfigurationError(
+        case.level,
+        requirement=case.requirement,
+        examples=case.examples,
+    )
+
+    assert error.level == case.level
+    assert error.requirement == case.requirement
+    assert error.examples == case.examples
+    assert "needs runtime configuration" in str(error)
+    for example in case.examples:
+        assert example in str(error)
+    assert f"agentgrep insights setup {case.level}" not in str(error)

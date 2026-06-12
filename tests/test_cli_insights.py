@@ -92,6 +92,16 @@ class InsightsSetupParseCase(t.NamedTuple):
     expected_yes: bool
 
 
+class RuntimeConfigCase(t.NamedTuple):
+    """One installed backend with missing runtime configuration."""
+
+    test_id: str
+    level: insights.InsightsLevel
+    modules: tuple[str, ...]
+    expected_detail: str
+    expected_example: str
+
+
 INSIGHTS_SETUP_PARSE_CASES: tuple[InsightsSetupParseCase, ...] = (
     InsightsSetupParseCase(
         test_id="setup-defaults-to-dry-run-auto-manager",
@@ -108,6 +118,16 @@ INSIGHTS_SETUP_PARSE_CASES: tuple[InsightsSetupParseCase, ...] = (
         expected_manager="pip",
         expected_install=True,
         expected_yes=True,
+    ),
+)
+
+RUNTIME_CONFIG_CASES: tuple[RuntimeConfigCase, ...] = (
+    RuntimeConfigCase(
+        test_id="llm-installed-but-no-model",
+        level="llm",
+        modules=("llama_cpp", "httpx"),
+        expected_detail="local llama.cpp model path or Ollama model name",
+        expected_example="agentgrep insights report --level llm --model /path/to/model.gguf",
     ),
 )
 
@@ -302,6 +322,47 @@ def test_insights_report_explicit_missing_backend_fails_cleanly(
     assert "Traceback" not in captured.err
 
 
+@pytest.mark.parametrize(
+    "case",
+    RUNTIME_CONFIG_CASES,
+    ids=[case.test_id for case in RUNTIME_CONFIG_CASES],
+)
+def test_insights_report_installed_backend_missing_runtime_config_guides_next_step(
+    case: RuntimeConfigCase,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Installed optional backends ask for runtime inputs, not reinstall."""
+
+    def fake_run_search_query(
+        home: pathlib.Path,
+        query: agentgrep.SearchQuery,
+        *,
+        progress: object | None = None,
+        control: object | None = None,
+    ) -> list[agentgrep.SearchRecord]:
+        _ = (home, query, progress, control)
+        return [_search_record("Local report without models")]
+
+    def fake_import_module(name: str) -> types.ModuleType:
+        if name in case.modules:
+            return types.ModuleType(name)
+        raise ModuleNotFoundError(name=name)
+
+    monkeypatch.setattr(agentgrep, "run_search_query", fake_run_search_query)
+    monkeypatch.setattr(insights, "import_module_for_backend", fake_import_module)
+
+    exit_code = agentgrep.main(("insights", "report", "--level", case.level))
+
+    assert exit_code == 2
+    captured = capsys.readouterr()
+    assert "needs runtime configuration" in captured.err
+    assert case.expected_detail in captured.err
+    assert case.expected_example in captured.err
+    assert f"agentgrep insights setup {case.level}" not in captured.err
+    assert "Traceback" not in captured.err
+
+
 def test_insights_report_best_installed_falls_back_to_builtin(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -453,3 +514,29 @@ def test_insights_setup_install_executes_confirmed_command(
         (sys.executable, "-m", "pip", "install", "agentgrep[insights-html]"),
     ]
     assert "Install completed" in capsys.readouterr().out
+
+
+def test_insights_setup_llm_install_guides_model_next_step(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """LLM setup install completion tells users how to provide a local model."""
+
+    def fake_run(
+        command: tuple[str, ...],
+        *,
+        check: bool,
+    ) -> subprocess.CompletedProcess[str]:
+        _ = command
+        assert check is False
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("agentgrep.cli.render.subprocess.run", fake_run)
+
+    exit_code = agentgrep.main(("insights", "setup", "llm", "--install", "--yes"))
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "Install completed" in output
+    assert "agentgrep insights report --level llm --model /path/to/model.gguf" in output
+    assert "agentgrep insights report --level llm --llm-backend ollama --model llama3" in output

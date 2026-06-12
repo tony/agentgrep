@@ -205,7 +205,11 @@ def run_insights_report_command(args: InsightsReportArgs) -> int:
         control=agentgrep.SearchControl(),
     )
     from agentgrep.insights import InsightsReportPayload, build_report, render_report_document
-    from agentgrep.insights_loader import BackendLoadError, BackendUnavailable
+    from agentgrep.insights_loader import (
+        BackendConfigurationError,
+        BackendLoadError,
+        BackendUnavailable,
+    )
 
     try:
         report = build_report(
@@ -222,7 +226,7 @@ def run_insights_report_command(args: InsightsReportArgs) -> int:
             allow_network=args.allow_network,
             index_backend=args.index_backend,
         )
-    except (BackendLoadError, BackendUnavailable) as exc:
+    except (BackendConfigurationError, BackendLoadError, BackendUnavailable) as exc:
         print(str(exc), file=sys.stderr)
         return 2
     payload = t.cast("dict[str, object]", report.to_payload())
@@ -247,7 +251,7 @@ def run_insights_report_command(args: InsightsReportArgs) -> int:
                 t.cast("InsightsReportPayload", payload),
                 report_format=args.report_format,
             )
-        except (BackendLoadError, BackendUnavailable) as exc:
+        except (BackendConfigurationError, BackendLoadError, BackendUnavailable) as exc:
             print(str(exc), file=sys.stderr)
             return 2
         if args.output_path is None:
@@ -321,6 +325,15 @@ def run_insights_setup_command(args: InsightsSetupArgs) -> int:
     completed = subprocess.run(plan.command, check=False)
     if completed.returncode == 0:
         print("Install completed. Rerun the requested insights command.")
+        if args.level == "llm":
+            print(
+                "For llama.cpp, pass a local GGUF model path: "
+                "agentgrep insights report --level llm --model /path/to/model.gguf",
+            )
+            print(
+                "For Ollama, pass a local model name: "
+                "agentgrep insights report --level llm --llm-backend ollama --model llama3",
+            )
     else:
         print("Install failed. Review installer output and rerun setup.", file=sys.stderr)
     return completed.returncode

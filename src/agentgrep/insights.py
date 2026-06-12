@@ -17,6 +17,7 @@ import urllib.parse
 
 import agentgrep
 from agentgrep.insights_loader import (
+    BackendConfigurationError,
     BackendLoadError,
     BackendPolicy,
     BackendUnavailable,
@@ -431,7 +432,11 @@ def render_report_document(
     html = _html_from_enrichments(payload["enrichments"])
     if html is None:
         level = "html"
-        raise BackendUnavailable(level, ("html enrichment",))
+        raise BackendConfigurationError(
+            level,
+            requirement="an HTML report enrichment",
+            examples=("agentgrep insights report --level html --format html",),
+        )
     return html
 
 
@@ -493,7 +498,7 @@ def _level_is_usable(
             importer=importer,
             policy=policy,
         )
-    except BackendLoadError, BackendUnavailable:
+    except BackendConfigurationError, BackendLoadError, BackendUnavailable:
         return False
     return True
 
@@ -508,16 +513,13 @@ def _assert_level_is_usable(
 ) -> None:
     _ = _load_level_backend(level, importer=importer)
     if level == "embeddings" and not _model_is_usable(model, policy=policy):
-        raise BackendUnavailable(level, ("local embedding model path",))
+        raise _embedding_configuration_error()
     if level == "llm" and not _llm_is_usable(
         model,
         llm_backend=llm_backend,
         policy=policy,
     ):
-        raise BackendUnavailable(
-            level,
-            ("local llama.cpp model path or Ollama model name",),
-        )
+        raise _llm_configuration_error()
 
 
 def _build_enrichment(
@@ -650,8 +652,7 @@ def _build_embeddings_enrichment(
     policy: BackendPolicy,
 ) -> InsightsEnrichment:
     if not _model_is_usable(model, policy=policy):
-        level = "embeddings"
-        raise BackendUnavailable(level, ("local embedding model path",))
+        raise _embedding_configuration_error()
     backend = _load_level_backend("embeddings", importer=importer)
     module = backend.require("sentence_transformers")
     transformer_factory = t.cast("type[t.Any]", t.cast("t.Any", module).SentenceTransformer)
@@ -751,8 +752,30 @@ def _build_llm_enrichment(
             message="Synthesized a local narrative with Ollama.",
             data={"summary": summary, "model": model, "endpoint": llm_endpoint},
         )
-    level = "llm"
-    raise BackendUnavailable(level, ("local llama.cpp model path or Ollama model name",))
+    raise _llm_configuration_error()
+
+
+def _embedding_configuration_error() -> BackendConfigurationError:
+    return BackendConfigurationError(
+        "embeddings",
+        requirement="local embedding model path or explicit download permission",
+        examples=(
+            "agentgrep insights report --level embeddings --model /path/to/model",
+            "agentgrep insights report --level embeddings --model all-MiniLM-L6-v2 "
+            "--allow-download",
+        ),
+    )
+
+
+def _llm_configuration_error() -> BackendConfigurationError:
+    return BackendConfigurationError(
+        "llm",
+        requirement="local llama.cpp model path or Ollama model name",
+        examples=(
+            "agentgrep insights report --level llm --model /path/to/model.gguf",
+            "agentgrep insights report --level llm --llm-backend ollama --model llama3",
+        ),
+    )
 
 
 def _load_level_backend(level: InsightsSetupLevel, *, importer: ImportModule) -> LoadedBackend:

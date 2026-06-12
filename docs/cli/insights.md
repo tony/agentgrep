@@ -105,6 +105,14 @@ level stays separate because it has a heavier runtime and model story.
 Report generation is offline by default. `--allow-download` is an
 explicit opt-in for model loaders that support local-only switches, and
 non-loopback LLM endpoints require `--allow-network`.
+Installing the `llm` extra only installs the local runtime adapter. A
+report still needs either a local GGUF model path or a local backend
+model name:
+
+```text
+agentgrep insights report --level llm --model /path/to/model.gguf
+agentgrep insights report --level llm --llm-backend ollama --model llama3
+```
 
 ## Setup
 

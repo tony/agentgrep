@@ -9,6 +9,7 @@ import types
 import typing as t
 
 __all__ = [
+    "BackendConfigurationError",
     "BackendLoadError",
     "BackendPolicy",
     "BackendUnavailable",
@@ -62,6 +63,30 @@ class BackendUnavailable(RuntimeError):
         message = f"Missing optional insights backend for level {self.level!r}: {missing}."
         if self.setup_command is not None:
             message += f" Run: {self.setup_command}"
+        return message
+
+
+class BackendConfigurationError(RuntimeError):
+    """Raised when an installed optional backend needs runtime configuration."""
+
+    def __init__(
+        self,
+        level: str,
+        *,
+        requirement: str,
+        examples: cabc.Iterable[str] = (),
+    ) -> None:
+        self.level = level
+        self.requirement = requirement
+        self.examples = tuple(examples)
+        super().__init__(self._format_message())
+
+    def _format_message(self) -> str:
+        message = (
+            f"Insights backend {self.level!r} needs runtime configuration: {self.requirement}."
+        )
+        if self.examples:
+            message += " Try: " + " Or: ".join(self.examples)
         return message
 
 
