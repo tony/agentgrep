@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import pathlib
 import types
 import typing as t
@@ -19,6 +20,25 @@ class EnricherCase(t.NamedTuple):
     level: insights.InsightsLevel
     expected_backend: str
     expected_data_key: str
+
+
+class ProgressEvent(t.NamedTuple):
+    """One recorded insights-progress callback."""
+
+    name: str
+    backend: str
+    model: str
+    endpoint: str
+    chunk_count: int
+    char_count: int
+
+
+class StreamRequest(t.NamedTuple):
+    """One fake HTTP streaming request."""
+
+    method: str
+    url: str
+    payload: dict[str, object]
 
 
 ENRICHER_CASES: tuple[EnricherCase, ...] = (
@@ -85,6 +105,74 @@ def test_build_report_applies_optional_enrichment(
     assert case.expected_data_key in enrichment["data"]
 
 
+def test_build_report_streams_ollama_summary_and_reports_progress() -> None:
+    """The Ollama backend streams chunks and exposes chunk progress."""
+    httpx = _fake_streaming_httpx_module(
+        (
+            json.dumps({"message": {"content": "Local "}, "done": False}),
+            json.dumps({"message": {"content": "summary"}, "done": True}),
+        ),
+    )
+    progress = RecordingInsightsProgress()
+
+    report = insights.build_report(
+        _records(),
+        scope="prompts",
+        requested_level="llm",
+        record_limit=10,
+        sampled=True,
+        model="llama3",
+        llm_backend="ollama",
+        import_module_for_backend=_fake_ollama_import_module(httpx),
+        progress=progress,
+    )
+
+    payload = report.to_payload()
+    enrichment = payload["enrichments"][0]
+    assert enrichment["backend"] == "ollama"
+    assert enrichment["data"]["summary"] == "Local summary"
+
+    requests = t.cast("list[StreamRequest]", httpx.__dict__["requests"])
+    assert len(requests) == 1
+    request = requests[0]
+    assert request.method == "POST"
+    assert request.url == "http://127.0.0.1:11434/api/chat"
+    assert request.payload["model"] == "llama3"
+    assert request.payload["stream"] is True
+
+    assert [event.name for event in progress.events] == [
+        "started",
+        "waiting",
+        "chunk",
+        "chunk",
+        "finished",
+    ]
+    assert progress.events[-1].chunk_count == 2
+    assert progress.events[-1].char_count == len("Local summary")
+
+
+def test_build_report_rejects_malformed_ollama_stream() -> None:
+    """Malformed Ollama streaming JSON becomes an actionable runtime error."""
+    httpx = _fake_streaming_httpx_module(("not-json",))
+
+    with pytest.raises(insights.BackendRuntimeError) as exc_info:
+        insights.build_report(
+            _records(),
+            scope="prompts",
+            requested_level="llm",
+            record_limit=10,
+            sampled=True,
+            model="llama3",
+            llm_backend="ollama",
+            import_module_for_backend=_fake_ollama_import_module(httpx),
+            progress=RecordingInsightsProgress(),
+        )
+
+    error = exc_info.value
+    assert "invalid streaming response from http://127.0.0.1:11434" in error.detail
+    assert "ollama serve" in error.examples
+
+
 def _records() -> list[agentgrep.SearchRecord]:
     return [
         _search_record(
@@ -131,6 +219,160 @@ def _fake_import_module(name: str) -> types.ModuleType:
         return modules[name]
     except KeyError as exc:
         raise ModuleNotFoundError(name=name) from exc
+
+
+class RecordingInsightsProgress:
+    """Test progress recorder with the insights progress surface."""
+
+    def __init__(self) -> None:
+        self.events: list[ProgressEvent] = []
+
+    def llm_started(self, *, backend: str, model: str, endpoint: str) -> None:
+        """Record an LLM-start callback."""
+        self.events.append(
+            ProgressEvent(
+                "started",
+                backend,
+                model,
+                endpoint,
+                0,
+                0,
+            ),
+        )
+
+    def llm_waiting(self, *, backend: str, model: str, endpoint: str) -> None:
+        """Record an LLM-waiting callback."""
+        self.events.append(
+            ProgressEvent(
+                "waiting",
+                backend,
+                model,
+                endpoint,
+                0,
+                0,
+            ),
+        )
+
+    def llm_chunk(
+        self,
+        *,
+        backend: str,
+        model: str,
+        chunk_count: int,
+        char_count: int,
+    ) -> None:
+        """Record a streamed chunk callback."""
+        self.events.append(
+            ProgressEvent(
+                "chunk",
+                backend,
+                model,
+                "",
+                chunk_count,
+                char_count,
+            ),
+        )
+
+    def llm_finished(
+        self,
+        *,
+        backend: str,
+        model: str,
+        chunk_count: int,
+        char_count: int,
+    ) -> None:
+        """Record an LLM-complete callback."""
+        self.events.append(
+            ProgressEvent(
+                "finished",
+                backend,
+                model,
+                "",
+                chunk_count,
+                char_count,
+            ),
+        )
+
+
+def _fake_ollama_import_module(httpx: types.ModuleType) -> insights.ImportModule:
+    def fake_import_module(name: str) -> types.ModuleType:
+        if name == "httpx":
+            return httpx
+        if name == "llama_cpp":
+            return types.ModuleType("llama_cpp")
+        raise ModuleNotFoundError(name=name)
+
+    return fake_import_module
+
+
+def _fake_streaming_httpx_module(lines: t.Sequence[str]) -> types.ModuleType:
+    module = types.ModuleType("httpx")
+    requests: list[StreamRequest] = []
+
+    class FakeHTTPError(Exception):
+        """Base fake HTTP transport error."""
+
+    class FakeTimeoutException(FakeHTTPError):
+        """Fake timeout transport error."""
+
+    class FakeStreamResponse:
+        """Context manager for streaming response lines."""
+
+        def __enter__(self) -> t.Self:
+            return self
+
+        def __exit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            traceback: types.TracebackType | None,
+        ) -> bool:
+            _ = (exc_type, exc, traceback)
+            return False
+
+        def raise_for_status(self) -> None:
+            """Pretend the HTTP status was successful."""
+
+        def iter_lines(self) -> t.Iterator[str]:
+            return iter(lines)
+
+    class FakeClient:
+        """Minimal context-manager client with ``httpx.Client.stream``."""
+
+        def __init__(self, *, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self) -> t.Self:
+            return self
+
+        def __exit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            traceback: types.TracebackType | None,
+        ) -> bool:
+            _ = (exc_type, exc, traceback)
+            return False
+
+        def stream(self, method: str, url: str, *, json: object) -> FakeStreamResponse:
+            requests.append(
+                StreamRequest(
+                    method=method,
+                    url=url,
+                    payload=t.cast("dict[str, object]", json),
+                ),
+            )
+            return FakeStreamResponse()
+
+    module.__dict__.update(
+        {
+            "Client": FakeClient,
+            "HTTPError": FakeHTTPError,
+            "TimeoutException": FakeTimeoutException,
+            "requests": requests,
+        },
+    )
+    return module
 
 
 def _fake_jinja2_module() -> types.ModuleType:

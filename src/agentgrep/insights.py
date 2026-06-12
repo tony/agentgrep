@@ -7,6 +7,7 @@ import collections.abc as cabc
 import dataclasses
 import importlib
 import importlib.util
+import json
 import pathlib
 import re
 import shutil
@@ -63,6 +64,36 @@ _STOPWORDS = frozenset(
         "without",
     },
 )
+
+
+class InsightsProgress(t.Protocol):
+    """Progress callbacks for optional report enrichment."""
+
+    def llm_started(self, *, backend: str, model: str, endpoint: str) -> None:
+        """Report that a local LLM request is starting."""
+
+    def llm_waiting(self, *, backend: str, model: str, endpoint: str) -> None:
+        """Report that a local LLM request is waiting for tokens."""
+
+    def llm_chunk(
+        self,
+        *,
+        backend: str,
+        model: str,
+        chunk_count: int,
+        char_count: int,
+    ) -> None:
+        """Report one or more streamed response chunks."""
+
+    def llm_finished(
+        self,
+        *,
+        backend: str,
+        model: str,
+        chunk_count: int,
+        char_count: int,
+    ) -> None:
+        """Report that local LLM streaming has finished."""
 
 
 class InsightsLevelStatusPayload(t.TypedDict):
@@ -314,6 +345,7 @@ def build_report(
     allow_network: bool = False,
     index_backend: InsightsIndexBackend = "auto",
     import_module_for_backend: ImportModule | None = None,
+    progress: InsightsProgress | None = None,
 ) -> InsightsReport:
     """Build a deterministic builtin report from normalized records."""
     record_list = list(records)
@@ -362,6 +394,7 @@ def build_report(
                 index_backend=index_backend,
                 importer=importer,
                 policy=policy,
+                progress=progress,
             ),
         )
 
@@ -536,6 +569,7 @@ def _build_enrichment(
     index_backend: InsightsIndexBackend,
     importer: ImportModule,
     policy: BackendPolicy,
+    progress: InsightsProgress | None,
 ) -> InsightsEnrichment:
     setup_level = t.cast("InsightsSetupLevel", level)
     if setup_level == "html":
@@ -564,6 +598,7 @@ def _build_enrichment(
         llm_endpoint=llm_endpoint,
         importer=importer,
         policy=policy,
+        progress=progress,
     )
 
 
@@ -720,6 +755,7 @@ def _build_llm_enrichment(
     llm_endpoint: str,
     importer: ImportModule,
     policy: BackendPolicy,
+    progress: InsightsProgress | None,
 ) -> InsightsEnrichment:
     backend = _load_level_backend("llm", importer=importer)
     if llm_backend in {"auto", "llama-cpp"} and _local_path_exists(model):
@@ -746,6 +782,7 @@ def _build_llm_enrichment(
             endpoint=llm_endpoint,
             records=records,
             top_terms=top_terms,
+            progress=progress,
         )
         return InsightsEnrichment(
             level="llm",
@@ -855,16 +892,25 @@ def _summarize_with_ollama(
     endpoint: str,
     records: cabc.Sequence[agentgrep.SearchRecord],
     top_terms: cabc.Sequence[InsightsTerm],
+    progress: InsightsProgress | None,
 ) -> str:
     httpx = backend.require("httpx")
     client_factory = t.cast("type[t.Any]", t.cast("t.Any", httpx).Client)
+    url = endpoint.rstrip("/") + "/api/chat"
     try:
         with client_factory(timeout=60.0) as client:
-            response = client.post(
-                endpoint.rstrip("/") + "/api/chat",
+            _notify_llm_started(
+                progress,
+                backend="ollama",
+                model=model,
+                endpoint=endpoint,
+            )
+            with client.stream(
+                "POST",
+                url,
                 json={
                     "model": model,
-                    "stream": False,
+                    "stream": True,
                     "messages": [
                         {
                             "role": "user",
@@ -872,9 +918,20 @@ def _summarize_with_ollama(
                         },
                     ],
                 },
-            )
-            response.raise_for_status()
-            return _extract_llm_summary(response.json())
+            ) as response:
+                response.raise_for_status()
+                _notify_llm_waiting(
+                    progress,
+                    backend="ollama",
+                    model=model,
+                    endpoint=endpoint,
+                )
+                return _extract_ollama_stream_summary(
+                    response,
+                    endpoint=endpoint,
+                    model=model,
+                    progress=progress,
+                )
     except Exception as exc:
         if _is_module_exception(exc, httpx, "TimeoutException"):
             raise _ollama_runtime_error(
@@ -889,6 +946,174 @@ def _summarize_with_ollama(
                 detail=f"request to {endpoint} failed: {_exception_detail(exc)}",
             ) from exc
         raise
+
+
+def _extract_ollama_stream_summary(
+    response: object,
+    *,
+    endpoint: str,
+    model: str,
+    progress: InsightsProgress | None,
+) -> str:
+    parts: list[str] = []
+    last_payload: dict[str, object] | None = None
+    chunk_count = 0
+    char_count = 0
+    response_any = t.cast("t.Any", response)
+    for raw_line in response_any.iter_lines():
+        payload = _parse_ollama_stream_line(raw_line, endpoint=endpoint, model=model)
+        if not payload:
+            continue
+        last_payload = payload
+        _raise_for_ollama_stream_error(payload, endpoint=endpoint, model=model)
+        chunk_count += 1
+        content = _ollama_stream_content(payload)
+        if content:
+            parts.append(content)
+            char_count += len(content)
+        _notify_llm_chunk(
+            progress,
+            backend="ollama",
+            model=model,
+            chunk_count=chunk_count,
+            char_count=char_count,
+        )
+    _notify_llm_finished(
+        progress,
+        backend="ollama",
+        model=model,
+        chunk_count=chunk_count,
+        char_count=char_count,
+    )
+    summary = "".join(parts)
+    if summary:
+        return summary
+    if last_payload is not None:
+        return _extract_llm_summary(last_payload)
+    return ""
+
+
+def _parse_ollama_stream_line(
+    raw_line: object,
+    *,
+    endpoint: str,
+    model: str,
+) -> dict[str, object]:
+    if isinstance(raw_line, bytes):
+        try:
+            line = raw_line.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise _ollama_runtime_error(
+                endpoint=endpoint,
+                model=model,
+                detail=(f"invalid streaming response from {endpoint}: {_exception_detail(exc)}"),
+            ) from exc
+    elif isinstance(raw_line, str):
+        line = raw_line
+    else:
+        line = str(raw_line)
+    line = line.strip()
+    if not line:
+        return {}
+    try:
+        payload = json.loads(line)
+    except json.JSONDecodeError as exc:
+        raise _ollama_runtime_error(
+            endpoint=endpoint,
+            model=model,
+            detail=f"invalid streaming response from {endpoint}: {_exception_detail(exc)}",
+        ) from exc
+    if not isinstance(payload, dict):
+        raise _ollama_runtime_error(
+            endpoint=endpoint,
+            model=model,
+            detail=f"invalid streaming response from {endpoint}: expected JSON object",
+        )
+    return t.cast("dict[str, object]", payload)
+
+
+def _raise_for_ollama_stream_error(
+    payload: dict[str, object],
+    *,
+    endpoint: str,
+    model: str,
+) -> None:
+    error = payload.get("error")
+    if isinstance(error, str) and error:
+        raise _ollama_runtime_error(
+            endpoint=endpoint,
+            model=model,
+            detail=f"streaming response from {endpoint} failed: {error}",
+        )
+
+
+def _ollama_stream_content(payload: dict[str, object]) -> str:
+    message = payload.get("message")
+    if isinstance(message, dict):
+        message_map = t.cast("dict[str, object]", message)
+        content = message_map.get("content")
+        if isinstance(content, str):
+            return content
+    response = payload.get("response")
+    if isinstance(response, str):
+        return response
+    return ""
+
+
+def _notify_llm_started(
+    progress: InsightsProgress | None,
+    *,
+    backend: str,
+    model: str,
+    endpoint: str,
+) -> None:
+    if progress is not None:
+        progress.llm_started(backend=backend, model=model, endpoint=endpoint)
+
+
+def _notify_llm_waiting(
+    progress: InsightsProgress | None,
+    *,
+    backend: str,
+    model: str,
+    endpoint: str,
+) -> None:
+    if progress is not None:
+        progress.llm_waiting(backend=backend, model=model, endpoint=endpoint)
+
+
+def _notify_llm_chunk(
+    progress: InsightsProgress | None,
+    *,
+    backend: str,
+    model: str,
+    chunk_count: int,
+    char_count: int,
+) -> None:
+    if progress is not None:
+        progress.llm_chunk(
+            backend=backend,
+            model=model,
+            chunk_count=chunk_count,
+            char_count=char_count,
+        )
+
+
+def _notify_llm_finished(
+    progress: InsightsProgress | None,
+    *,
+    backend: str,
+    model: str,
+    chunk_count: int,
+    char_count: int,
+) -> None:
+    if progress is not None:
+        progress.llm_finished(
+            backend=backend,
+            model=model,
+            chunk_count=chunk_count,
+            char_count=char_count,
+        )
 
 
 def _is_module_exception(

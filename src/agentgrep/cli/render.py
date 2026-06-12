@@ -19,11 +19,14 @@ import collections.abc as cabc
 import dataclasses
 import datetime
 import fnmatch
+import itertools
 import json
 import pathlib
 import re
 import subprocess
 import sys
+import threading
+import time
 import typing as t
 
 import agentgrep
@@ -52,6 +55,7 @@ from agentgrep.cli.parser import (
 
 __all__ = [
     "GrepSummary",
+    "InsightsReportProgress",
     "build_envelope",
     "build_grep_query",
     "extract_search_snippet",
@@ -186,6 +190,224 @@ def build_envelope(
     }
 
 
+class InsightsReportProgress:
+    """Human progress reporter for report enrichment work."""
+
+    _SPINNER_FRAMES: t.ClassVar[str] = "|/-\\"
+
+    def __init__(
+        self,
+        *,
+        enabled: bool,
+        stream: t.TextIO | None = None,
+        tty: bool | None = None,
+        color_mode: agentgrep.ColorMode = "auto",
+        refresh_interval: float = 0.1,
+        heartbeat_interval: float = 10.0,
+    ) -> None:
+        self._enabled = enabled
+        self._stream = stream if stream is not None else sys.stderr
+        self._tty = (
+            tty if tty is not None else bool(getattr(self._stream, "isatty", lambda: False)())
+        )
+        self._colors = agentgrep.AnsiColors.for_stream(color_mode, self._stream)
+        self._refresh_interval = refresh_interval
+        self._heartbeat_interval = heartbeat_interval
+        self._lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._started_at: float | None = None
+        self._last_heartbeat_at: float | None = None
+        self._level = "builtin"
+        self._detail: str | None = None
+        self._last_line_len = 0
+
+    def start(self, level: str) -> None:
+        """Begin report progress for an insights level."""
+        if not self._enabled:
+            return
+        now = time.monotonic()
+        with self._lock:
+            self._level = level
+            self._detail = None
+            self._started_at = now
+            self._last_heartbeat_at = now
+            self._last_line_len = 0
+        if not self._tty:
+            self._emit_line(self._summary())
+        self._ensure_thread()
+
+    def close(self) -> None:
+        """Stop report progress rendering."""
+        if not self._enabled:
+            return
+        self._stop_thread()
+        if self._tty:
+            self._clear_tty_line()
+
+    def llm_started(self, *, backend: str, model: str, endpoint: str) -> None:
+        """Report that a local LLM request is starting."""
+        if backend == "ollama":
+            detail = f"Contacting Ollama at {endpoint} with model {model}"
+        else:
+            detail = f"Contacting {backend} model {model}"
+        self._set_detail(detail, emit=True)
+
+    def llm_waiting(self, *, backend: str, model: str, endpoint: str) -> None:
+        """Report that a local LLM request is waiting for tokens."""
+        if backend == "ollama":
+            detail = f"Waiting for Ollama model {model} at {endpoint}"
+        else:
+            detail = f"Waiting for {backend} model {model}"
+        self._set_detail(detail, emit=True)
+
+    def llm_chunk(
+        self,
+        *,
+        backend: str,
+        model: str,
+        chunk_count: int,
+        char_count: int,
+    ) -> None:
+        """Report streamed local LLM response progress."""
+        _ = (backend, model)
+        detail = (
+            "Streaming Ollama response: "
+            f"{_format_count(chunk_count, 'chunk')}, {_format_count(char_count, 'char')}"
+        )
+        self._set_detail(detail, emit=chunk_count == 1 or chunk_count % 10 == 0)
+
+    def llm_finished(
+        self,
+        *,
+        backend: str,
+        model: str,
+        chunk_count: int,
+        char_count: int,
+    ) -> None:
+        """Report that local LLM response streaming has finished."""
+        _ = (backend, model)
+        detail = (
+            "Ollama response complete: "
+            f"{_format_count(chunk_count, 'chunk')}, {_format_count(char_count, 'char')}"
+        )
+        self._set_detail(detail, emit=True)
+
+    def _set_detail(self, detail: str, *, emit: bool) -> None:
+        if not self._enabled:
+            return
+        with self._lock:
+            self._detail = detail
+        if emit and not self._tty:
+            self._emit_line(self._summary())
+
+    def _ensure_thread(self) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._stop_event.clear()
+        self._thread = threading.Thread(
+            target=self._loop,
+            daemon=True,
+            name="agentgrep-insights-report-progress",
+        )
+        self._thread.start()
+
+    def _stop_thread(self) -> None:
+        self._stop_event.set()
+        thread = self._thread
+        self._thread = None
+        if thread is not None:
+            thread.join(timeout=1.0)
+
+    def _loop(self) -> None:
+        frames = itertools.cycle(self._SPINNER_FRAMES)
+        while not self._stop_event.is_set():
+            if self._tty:
+                self._render_tty(next(frames))
+            else:
+                self._emit_heartbeat_if_due()
+            self._stop_event.wait(self._refresh_interval)
+
+    def _render_tty(self, frame: str) -> None:
+        line = f"{self._colors.info(frame)} {self._summary(include_elapsed=True)}"
+        with self._lock:
+            try:
+                self._stream.write("\r\033[2K" + line)
+                self._stream.flush()
+                self._last_line_len = len(line)
+            except OSError, ValueError:
+                pass
+
+    def _clear_tty_line(self) -> None:
+        with self._lock:
+            if self._last_line_len == 0:
+                return
+            try:
+                self._stream.write("\r\033[2K")
+                self._stream.flush()
+            except OSError, ValueError:
+                pass
+            self._last_line_len = 0
+
+    def _emit_heartbeat_if_due(self) -> None:
+        last = self._last_heartbeat()
+        if last is None:
+            return
+        now = time.monotonic()
+        if now - last < self._heartbeat_interval:
+            return
+        self._emit_line(self._heartbeat_summary(now))
+        with self._lock:
+            self._last_heartbeat_at = now
+
+    def _last_heartbeat(self) -> float | None:
+        with self._lock:
+            return self._last_heartbeat_at
+
+    def _summary(self, *, include_elapsed: bool = False) -> str:
+        level, detail = self._current_state()
+        text = f"{self._colors.heading('Building insights report:')} level {level}"
+        if detail is not None:
+            text += f" - {detail}"
+        if include_elapsed:
+            text += f" ({self._colors.muted(f'{self._elapsed_seconds():.1f}s elapsed')})"
+        return text
+
+    def _heartbeat_summary(self, now: float) -> str:
+        level, detail = self._current_state()
+        elapsed = self._elapsed_seconds(now=now)
+        detail_text = f" - {detail}" if detail is not None else ""
+        return (
+            f"{self._colors.muted('...')} "
+            f"{self._colors.heading('still building insights report:')} "
+            f"level {level}{detail_text} "
+            f"({self._colors.muted(f'{elapsed:.0f}s elapsed')})"
+        )
+
+    def _current_state(self) -> tuple[str, str | None]:
+        with self._lock:
+            return self._level, self._detail
+
+    def _elapsed_seconds(self, *, now: float | None = None) -> float:
+        with self._lock:
+            started = self._started_at
+        if started is None:
+            return 0.0
+        return (time.monotonic() if now is None else now) - started
+
+    def _emit_line(self, line: str) -> None:
+        try:
+            self._stream.write(line + "\n")
+            self._stream.flush()
+        except OSError, ValueError:
+            pass
+
+
+def _format_count(value: int, singular: str) -> str:
+    suffix = "" if value == 1 else "s"
+    return f"{value} {singular}{suffix}"
+
+
 def run_insights_report_command(args: InsightsReportArgs) -> int:
     """Execute ``agentgrep insights report``."""
     human_output = args.output_mode == "text"
@@ -226,21 +448,29 @@ def run_insights_report_command(args: InsightsReportArgs) -> int:
     )
 
     try:
-        _print_insights_report_progress(args, enabled=progress_enabled)
-        report = build_report(
-            records,
-            scope=args.scope,
-            requested_level=args.level,
-            record_limit=args.limit,
-            sampled=not args.all_records,
-            model=args.model,
-            model_cache=args.model_cache,
-            allow_download=args.allow_download,
-            llm_backend=args.llm_backend,
-            llm_endpoint=args.llm_endpoint,
-            allow_network=args.allow_network,
-            index_backend=args.index_backend,
+        report_progress = InsightsReportProgress(
+            enabled=progress_enabled,
+            color_mode=args.color_mode,
         )
+        report_progress.start(args.level)
+        try:
+            report = build_report(
+                records,
+                scope=args.scope,
+                requested_level=args.level,
+                record_limit=args.limit,
+                sampled=not args.all_records,
+                model=args.model,
+                model_cache=args.model_cache,
+                allow_download=args.allow_download,
+                llm_backend=args.llm_backend,
+                llm_endpoint=args.llm_endpoint,
+                allow_network=args.allow_network,
+                index_backend=args.index_backend,
+                progress=report_progress,
+            )
+        finally:
+            report_progress.close()
     except (
         BackendConfigurationError,
         BackendLoadError,
@@ -281,13 +511,6 @@ def run_insights_report_command(args: InsightsReportArgs) -> int:
     else:
         _print_insights_report_text(payload)
     return 0
-
-
-def _print_insights_report_progress(args: InsightsReportArgs, *, enabled: bool) -> None:
-    """Emit one report-building progress line for non-search enrichment work."""
-    if not enabled:
-        return
-    print(f"Building insights report: level {args.level}", file=sys.stderr)
 
 
 def run_insights_levels_command(args: InsightsLevelsArgs) -> int:

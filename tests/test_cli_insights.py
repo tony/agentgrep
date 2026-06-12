@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import io
 import json
 import pathlib
 import subprocess
 import sys
+import time
 import types
 import typing as t
 
@@ -13,6 +15,7 @@ import pytest
 
 import agentgrep
 import agentgrep.insights as insights
+from agentgrep.cli import render as cli_render
 
 
 class InsightsParseCase(t.NamedTuple):
@@ -100,6 +103,36 @@ class RuntimeConfigCase(t.NamedTuple):
     modules: tuple[str, ...]
     expected_detail: str
     expected_examples: tuple[str, ...]
+
+
+class ReportProgress(t.Protocol):
+    """Progress callbacks expected by insights report enrichment."""
+
+    def llm_started(self, *, backend: str, model: str, endpoint: str) -> None:
+        """Report that a local LLM request is starting."""
+
+    def llm_waiting(self, *, backend: str, model: str, endpoint: str) -> None:
+        """Report that a local LLM request is waiting for tokens."""
+
+    def llm_chunk(
+        self,
+        *,
+        backend: str,
+        model: str,
+        chunk_count: int,
+        char_count: int,
+    ) -> None:
+        """Report one or more streamed response chunks."""
+
+    def llm_finished(
+        self,
+        *,
+        backend: str,
+        model: str,
+        chunk_count: int,
+        char_count: int,
+    ) -> None:
+        """Report that local LLM streaming has finished."""
 
 
 INSIGHTS_SETUP_PARSE_CASES: tuple[InsightsSetupParseCase, ...] = (
@@ -326,6 +359,129 @@ def test_insights_report_progress_always_emits_search_and_report_steps(
     assert "Traceback" not in captured.err
 
 
+def test_insights_report_progress_heartbeats_while_building() -> None:
+    """Long report enrichment emits ongoing progress before it returns."""
+    stream = io.StringIO()
+    progress = cli_render.InsightsReportProgress(
+        enabled=True,
+        stream=stream,
+        tty=False,
+        refresh_interval=0.005,
+        heartbeat_interval=0.01,
+    )
+
+    progress.start("llm")
+    deadline = time.monotonic() + 1.0
+    while "... still building insights report: level llm" not in stream.getvalue():
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.005)
+    progress.close()
+
+    output = stream.getvalue()
+    assert "Building insights report: level llm" in output
+    assert "... still building insights report: level llm" in output
+
+
+def test_insights_report_progress_reports_ollama_streaming_steps(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """LLM report progress includes Ollama contact, wait, chunk, and done states."""
+
+    def fake_run_search_query(
+        home: pathlib.Path,
+        query: agentgrep.SearchQuery,
+        *,
+        progress: object | None = None,
+        control: object | None = None,
+    ) -> list[agentgrep.SearchRecord]:
+        _ = (home, query, progress, control)
+        return [_search_record("Local report with Ollama progress")]
+
+    def fake_build_report(
+        records: t.Iterable[agentgrep.SearchRecord],
+        *,
+        scope: agentgrep.SearchScope,
+        requested_level: insights.InsightsLevel,
+        record_limit: int | None,
+        sampled: bool,
+        model: str | None = None,
+        model_cache: pathlib.Path | None = None,
+        allow_download: bool = False,
+        llm_backend: insights.InsightsLLMBackend = "auto",
+        llm_endpoint: str = "http://127.0.0.1:11434",
+        allow_network: bool = False,
+        index_backend: insights.InsightsIndexBackend = "auto",
+        progress: ReportProgress | None = None,
+    ) -> insights.InsightsReport:
+        _ = (
+            model_cache,
+            allow_download,
+            llm_backend,
+            allow_network,
+            index_backend,
+        )
+        records_list = list(records)
+        assert progress is not None
+        progress.llm_started(backend="ollama", model=model or "", endpoint=llm_endpoint)
+        progress.llm_waiting(backend="ollama", model=model or "", endpoint=llm_endpoint)
+        progress.llm_chunk(
+            backend="ollama",
+            model=model or "",
+            chunk_count=1,
+            char_count=7,
+        )
+        progress.llm_finished(
+            backend="ollama",
+            model=model or "",
+            chunk_count=1,
+            char_count=7,
+        )
+        return insights.InsightsReport(
+            level="llm",
+            requested_level=requested_level,
+            scope=scope,
+            records_analyzed=len(records_list),
+            record_limit=record_limit,
+            sampled=sampled,
+            agents={"codex": len(records_list)},
+            stores={"codex.history": len(records_list)},
+            kinds={"prompt": len(records_list)},
+            earliest_timestamp=None,
+            latest_timestamp=None,
+            top_terms=(),
+            skipped_enrichers=(),
+            enrichments=(),
+        )
+
+    monkeypatch.setattr(agentgrep, "run_search_query", fake_run_search_query)
+    monkeypatch.setattr(insights, "build_report", fake_build_report)
+
+    exit_code = agentgrep.main(
+        (
+            "insights",
+            "report",
+            "--level",
+            "llm",
+            "--llm-backend",
+            "ollama",
+            "--model",
+            "llama3",
+            "--progress",
+            "always",
+        ),
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "Building insights report: level llm" in captured.err
+    assert "Contacting Ollama at http://127.0.0.1:11434" in captured.err
+    assert "Waiting for Ollama model llama3" in captured.err
+    assert "Streaming Ollama response: 1 chunk, 7 chars" in captured.err
+    assert "Ollama response complete: 1 chunk, 7 chars" in captured.err
+
+
 def test_insights_report_explicit_missing_backend_fails_cleanly(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -433,9 +589,9 @@ def test_insights_report_ollama_timeout_fails_cleanly(
             _ = (exc_type, exc, traceback)
             return False
 
-        def post(self, url: str, *, json: object) -> object:
-            _ = (url, json)
-            raise FakeTimeoutException
+        def stream(self, method: str, url: str, *, json: object) -> object:
+            _ = (method, url, json)
+            raise FakeTimeoutException()
 
     def fake_run_search_query(
         home: pathlib.Path,
