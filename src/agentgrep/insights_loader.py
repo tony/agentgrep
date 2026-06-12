@@ -12,6 +12,7 @@ __all__ = [
     "BackendConfigurationError",
     "BackendLoadError",
     "BackendPolicy",
+    "BackendRuntimeError",
     "BackendUnavailable",
     "ImportModule",
     "LoadedBackend",
@@ -85,6 +86,32 @@ class BackendConfigurationError(RuntimeError):
         message = (
             f"Insights backend {self.level!r} needs runtime configuration: {self.requirement}."
         )
+        if self.examples:
+            examples = "\n".join(f"  {example}" for example in self.examples)
+            message += f"\nTry:\n{examples}"
+        return message
+
+
+class BackendRuntimeError(RuntimeError):
+    """Raised when a configured optional backend fails at runtime."""
+
+    def __init__(
+        self,
+        level: str,
+        backend: str,
+        *,
+        detail: str,
+        examples: cabc.Iterable[str] = (),
+    ) -> None:
+        self.level = level
+        self.backend = backend
+        self.detail = detail
+        self.examples = tuple(examples)
+        super().__init__(self._format_message())
+
+    def _format_message(self) -> str:
+        detail = self.detail.rstrip(".")
+        message = f"Insights backend {self.level!r} failed while running {self.backend}: {detail}."
         if self.examples:
             examples = "\n".join(f"  {example}" for example in self.examples)
             message += f"\nTry:\n{examples}"

@@ -188,6 +188,19 @@ def build_envelope(
 
 def run_insights_report_command(args: InsightsReportArgs) -> int:
     """Execute ``agentgrep insights report``."""
+    human_output = args.output_mode == "text"
+    progress_enabled = args.progress_mode == "always" or (
+        args.progress_mode == "auto" and human_output
+    )
+    progress: agentgrep.SearchProgress
+    if not progress_enabled:
+        progress = agentgrep.noop_search_progress()
+    else:
+        progress = agentgrep.ConsoleSearchProgress(
+            enabled=True,
+            color_mode=args.color_mode,
+            answer_now_hint=False,
+        )
     query = agentgrep.SearchQuery(
         terms=(),
         scope=args.scope,
@@ -201,17 +214,19 @@ def run_insights_report_command(args: InsightsReportArgs) -> int:
     records = agentgrep.run_search_query(
         pathlib.Path.home(),
         query,
-        progress=agentgrep.noop_search_progress(),
+        progress=progress,
         control=agentgrep.SearchControl(),
     )
     from agentgrep.insights import InsightsReportPayload, build_report, render_report_document
     from agentgrep.insights_loader import (
         BackendConfigurationError,
         BackendLoadError,
+        BackendRuntimeError,
         BackendUnavailable,
     )
 
     try:
+        _print_insights_report_progress(args, enabled=progress_enabled)
         report = build_report(
             records,
             scope=args.scope,
@@ -226,7 +241,12 @@ def run_insights_report_command(args: InsightsReportArgs) -> int:
             allow_network=args.allow_network,
             index_backend=args.index_backend,
         )
-    except (BackendConfigurationError, BackendLoadError, BackendUnavailable) as exc:
+    except (
+        BackendConfigurationError,
+        BackendLoadError,
+        BackendRuntimeError,
+        BackendUnavailable,
+    ) as exc:
         print(str(exc), file=sys.stderr)
         return 2
     payload = t.cast("dict[str, object]", report.to_payload())
@@ -261,6 +281,13 @@ def run_insights_report_command(args: InsightsReportArgs) -> int:
     else:
         _print_insights_report_text(payload)
     return 0
+
+
+def _print_insights_report_progress(args: InsightsReportArgs, *, enabled: bool) -> None:
+    """Emit one report-building progress line for non-search enrichment work."""
+    if not enabled:
+        return
+    print(f"Building insights report: level {args.level}", file=sys.stderr)
 
 
 def run_insights_levels_command(args: InsightsLevelsArgs) -> int:

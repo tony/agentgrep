@@ -294,6 +294,38 @@ def test_insights_report_text_output(
     assert "optional enrichers skipped" in output
 
 
+def test_insights_report_progress_always_emits_search_and_report_steps(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Report progress mirrors search progress and names report-building work."""
+
+    def fake_run_search_query(
+        home: pathlib.Path,
+        query: agentgrep.SearchQuery,
+        *,
+        progress: agentgrep.SearchProgress | None = None,
+        control: object | None = None,
+    ) -> list[agentgrep.SearchRecord]:
+        _ = (home, control)
+        assert progress is not None
+        progress.start(query)
+        progress.sources_discovered(1)
+        progress.finish(1)
+        return [_search_record("Progress report")]
+
+    monkeypatch.setattr(agentgrep, "run_search_query", fake_run_search_query)
+
+    exit_code = agentgrep.main(("insights", "report", "--progress", "always"))
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "Searching all records" in captured.err
+    assert "Search complete: 1 match" in captured.err
+    assert "Building insights report: level builtin" in captured.err
+    assert "Traceback" not in captured.err
+
+
 def test_insights_report_explicit_missing_backend_fails_cleanly(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -365,6 +397,96 @@ def test_insights_report_installed_backend_missing_runtime_config_guides_next_st
     for command in case.expected_examples:
         assert f"  {command}\n" in captured.err
     assert f"agentgrep insights setup {case.level}" not in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_insights_report_ollama_timeout_fails_cleanly(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Ollama connection failures are CLI diagnostics, not Python tracebacks."""
+
+    class FakeHTTPError(Exception):
+        """Base fake httpx transport error."""
+
+    class FakeTimeoutException(FakeHTTPError):
+        """Fake timeout raised by the local Ollama client."""
+
+        def __init__(self) -> None:
+            super().__init__("timed out")
+
+    class FakeClient:
+        """Minimal context-manager client with the httpx.Client surface."""
+
+        def __init__(self, *, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self) -> t.Self:
+            return self
+
+        def __exit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            traceback: types.TracebackType | None,
+        ) -> bool:
+            _ = (exc_type, exc, traceback)
+            return False
+
+        def post(self, url: str, *, json: object) -> object:
+            _ = (url, json)
+            raise FakeTimeoutException
+
+    def fake_run_search_query(
+        home: pathlib.Path,
+        query: agentgrep.SearchQuery,
+        *,
+        progress: agentgrep.SearchProgress | None = None,
+        control: object | None = None,
+    ) -> list[agentgrep.SearchRecord]:
+        _ = (home, query, progress, control)
+        return [_search_record("Local report with Ollama")]
+
+    httpx = types.ModuleType("httpx")
+    vars(httpx).update(
+        {
+            "Client": FakeClient,
+            "HTTPError": FakeHTTPError,
+            "TimeoutException": FakeTimeoutException,
+        },
+    )
+
+    def fake_import_module(name: str) -> types.ModuleType:
+        if name == "httpx":
+            return httpx
+        if name == "llama_cpp":
+            return types.ModuleType("llama_cpp")
+        raise ModuleNotFoundError(name=name)
+
+    monkeypatch.setattr(agentgrep, "run_search_query", fake_run_search_query)
+    monkeypatch.setattr(insights, "import_module_for_backend", fake_import_module)
+
+    exit_code = agentgrep.main(
+        (
+            "insights",
+            "report",
+            "--level",
+            "llm",
+            "--llm-backend",
+            "ollama",
+            "--model",
+            "llama3",
+            "--progress",
+            "always",
+        ),
+    )
+
+    assert exit_code == 2
+    captured = capsys.readouterr()
+    assert "Building insights report: level llm" in captured.err
+    assert "Ollama" in captured.err
+    assert "timed out" in captured.err
+    assert "ollama serve" in captured.err
     assert "Traceback" not in captured.err
 
 

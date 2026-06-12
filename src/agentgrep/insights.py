@@ -12,6 +12,7 @@ import re
 import shutil
 import sqlite3
 import sys
+import types
 import typing as t
 import urllib.parse
 
@@ -20,6 +21,7 @@ from agentgrep.insights_loader import (
     BackendConfigurationError,
     BackendLoadError,
     BackendPolicy,
+    BackendRuntimeError,
     BackendUnavailable,
     ImportModule,
     LoadedBackend,
@@ -856,22 +858,70 @@ def _summarize_with_ollama(
 ) -> str:
     httpx = backend.require("httpx")
     client_factory = t.cast("type[t.Any]", t.cast("t.Any", httpx).Client)
-    with client_factory(timeout=60.0) as client:
-        response = client.post(
-            endpoint.rstrip("/") + "/api/chat",
-            json={
-                "model": model,
-                "stream": False,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": _llm_prompt(records=records, top_terms=top_terms),
-                    },
-                ],
-            },
-        )
-        response.raise_for_status()
-        return _extract_llm_summary(response.json())
+    try:
+        with client_factory(timeout=60.0) as client:
+            response = client.post(
+                endpoint.rstrip("/") + "/api/chat",
+                json={
+                    "model": model,
+                    "stream": False,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": _llm_prompt(records=records, top_terms=top_terms),
+                        },
+                    ],
+                },
+            )
+            response.raise_for_status()
+            return _extract_llm_summary(response.json())
+    except Exception as exc:
+        if _is_module_exception(exc, httpx, "TimeoutException"):
+            raise _ollama_runtime_error(
+                endpoint=endpoint,
+                model=model,
+                detail=f"timed out while contacting {endpoint}: {_exception_detail(exc)}",
+            ) from exc
+        if _is_module_exception(exc, httpx, "HTTPError"):
+            raise _ollama_runtime_error(
+                endpoint=endpoint,
+                model=model,
+                detail=f"request to {endpoint} failed: {_exception_detail(exc)}",
+            ) from exc
+        raise
+
+
+def _is_module_exception(
+    exc: BaseException,
+    module: types.ModuleType,
+    name: str,
+) -> bool:
+    exception_type = getattr(module, name, None)
+    if not isinstance(exception_type, type):
+        return False
+    try:
+        if not issubclass(exception_type, BaseException):
+            return False
+    except TypeError:
+        return False
+    return isinstance(exc, exception_type)
+
+
+def _exception_detail(exc: BaseException) -> str:
+    return str(exc).strip() or exc.__class__.__name__
+
+
+def _ollama_runtime_error(*, endpoint: str, model: str, detail: str) -> BackendRuntimeError:
+    return BackendRuntimeError(
+        "llm",
+        "Ollama",
+        detail=detail,
+        examples=(
+            "ollama serve",
+            f"ollama pull {model}",
+            f"agentgrep insights report --level llm --llm-backend ollama --model {model}",
+        ),
+    )
 
 
 def _llm_prompt(
