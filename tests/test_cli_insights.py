@@ -6,6 +6,7 @@ import json
 import pathlib
 import subprocess
 import sys
+import types
 import typing as t
 
 import pytest
@@ -23,6 +24,8 @@ class InsightsParseCase(t.NamedTuple):
     expected_level: str
     expected_limit: int | None
     expected_all_records: bool
+    expected_report_format: str
+    expected_output_path: pathlib.Path | None
 
 
 INSIGHTS_PARSE_CASES: tuple[InsightsParseCase, ...] = (
@@ -33,6 +36,8 @@ INSIGHTS_PARSE_CASES: tuple[InsightsParseCase, ...] = (
         expected_level="builtin",
         expected_limit=500,
         expected_all_records=False,
+        expected_report_format="text",
+        expected_output_path=None,
     ),
     InsightsParseCase(
         test_id="report-all-removes-bound",
@@ -41,6 +46,8 @@ INSIGHTS_PARSE_CASES: tuple[InsightsParseCase, ...] = (
         expected_level="builtin",
         expected_limit=None,
         expected_all_records=True,
+        expected_report_format="text",
+        expected_output_path=None,
     ),
     InsightsParseCase(
         test_id="report-best-installed-level",
@@ -49,6 +56,27 @@ INSIGHTS_PARSE_CASES: tuple[InsightsParseCase, ...] = (
         expected_level="best-installed",
         expected_limit=500,
         expected_all_records=False,
+        expected_report_format="text",
+        expected_output_path=None,
+    ),
+    InsightsParseCase(
+        test_id="report-html-output-options",
+        argv=(
+            "insights",
+            "report",
+            "--level",
+            "html",
+            "--format",
+            "html",
+            "--output",
+            "report.html",
+        ),
+        expected_scope="prompts",
+        expected_level="html",
+        expected_limit=500,
+        expected_all_records=False,
+        expected_report_format="html",
+        expected_output_path=pathlib.Path("report.html"),
     ),
 )
 
@@ -97,6 +125,8 @@ def test_insights_report_parse_args(case: InsightsParseCase) -> None:
     assert parsed.level == case.expected_level
     assert parsed.limit == case.expected_limit
     assert parsed.all_records == case.expected_all_records
+    assert parsed.report_format == case.expected_report_format
+    assert parsed.output_path == case.expected_output_path
 
 
 def test_insights_levels_parse_args() -> None:
@@ -210,6 +240,7 @@ def test_insights_report_json_uses_bounded_builtin_query(
     assert result["agents"] == {"claude": 1, "codex": 1}
     assert result["stores"] == {"claude.projects": 1, "codex.history": 1}
     assert result["top_terms"][0]["term"] == "docs"
+    assert result["enrichments"] == []
 
 
 def test_insights_report_text_output(
@@ -238,6 +269,69 @@ def test_insights_report_text_output(
     assert "level: builtin" in output
     assert "records analyzed: 1" in output
     assert "optional enrichers skipped" in output
+
+
+def test_insights_report_explicit_missing_backend_fails_cleanly(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Explicit optional levels fail instead of silently falling back."""
+
+    def fake_run_search_query(
+        home: pathlib.Path,
+        query: agentgrep.SearchQuery,
+        *,
+        progress: object | None = None,
+        control: object | None = None,
+    ) -> list[agentgrep.SearchRecord]:
+        _ = (home, query, progress, control)
+        return [_search_record("Local report without models")]
+
+    def fake_import_module(name: str) -> types.ModuleType:
+        raise ModuleNotFoundError(name=name)
+
+    monkeypatch.setattr(agentgrep, "run_search_query", fake_run_search_query)
+    monkeypatch.setattr(insights, "import_module_for_backend", fake_import_module)
+
+    exit_code = agentgrep.main(("insights", "report", "--level", "ml"))
+
+    assert exit_code == 2
+    captured = capsys.readouterr()
+    assert "Missing optional insights backend for level 'ml'" in captured.err
+    assert "agentgrep insights setup ml --install --yes" in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_insights_report_best_installed_falls_back_to_builtin(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``best-installed`` stays offline and safe when no optional backend is usable."""
+
+    def fake_run_search_query(
+        home: pathlib.Path,
+        query: agentgrep.SearchQuery,
+        *,
+        progress: object | None = None,
+        control: object | None = None,
+    ) -> list[agentgrep.SearchRecord]:
+        _ = (home, query, progress, control)
+        return [_search_record("Builtin fallback report")]
+
+    def fake_import_module(name: str) -> types.ModuleType:
+        raise ModuleNotFoundError(name=name)
+
+    monkeypatch.setattr(agentgrep, "run_search_query", fake_run_search_query)
+    monkeypatch.setattr(insights, "import_module_for_backend", fake_import_module)
+
+    exit_code = agentgrep.main(("insights", "report", "--level", "best-installed", "--json"))
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    result = payload["results"][0]
+    assert result["requested_level"] == "best-installed"
+    assert result["level"] == "builtin"
+    assert result["enrichments"] == []
 
 
 def test_insights_levels_json_reports_optional_extras(

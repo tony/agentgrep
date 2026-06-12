@@ -22,6 +22,13 @@ Emit one JSON document for scripts:
 $ agentgrep insights report --json
 ```
 
+Write Markdown or HTML document output:
+
+```console
+$ agentgrep insights report --format markdown --output report.md
+$ agentgrep insights report --level html --format html --output report.html
+```
+
 Analyze prompts and conversations together:
 
 ```console
@@ -65,18 +72,22 @@ simple terms. It does not include raw prompt text.
 
 ## Optional levels
 
-`--level` records the optional insight level the user asked for. The
-default is always `builtin`, even if optional packages are installed.
-In this first concept slice, only `builtin` executes analysis. Other
-levels report that optional enrichers were skipped instead of importing
-or installing heavy dependencies:
+`--level` selects the insight level the user asked for. The default is
+always `builtin`, even if optional packages are installed. Explicit
+optional levels import only their own backend modules through the lazy
+loader. If a requested backend is unavailable, the command exits with a
+configuration error and a setup hint instead of falling back silently.
+Use `best-installed` when you want an executable fallback that stays
+offline:
 
 ```console
-$ agentgrep insights report --level embeddings
+$ agentgrep insights report --level best-installed
 ```
 
-Future slices will add setup, model management, and richer enrichers
-behind optional extras while keeping `builtin` as the default.
+`best-installed` is the explicit fallback mode. It checks installed
+optional backends under the current offline policy and uses the richest
+usable level. If no optional backend is usable, it returns the builtin
+report.
 
 The five optional dependency levels are independent package extras:
 
@@ -90,6 +101,10 @@ The five optional dependency levels are independent package extras:
 
 `agentgrep[insights-all]` installs levels 1 through 4. The local LLM
 level stays separate because it has a heavier runtime and model story.
+
+Report generation is offline by default. `--allow-download` is an
+explicit opt-in for model loaders that support local-only switches, and
+non-loopback LLM endpoints require `--allow-network`.
 
 ## Setup
 

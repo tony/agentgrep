@@ -24,6 +24,15 @@ _DEFERRED_MODULES: tuple[str, ...] = (
     "agentgrep.query.compile",
     "agentgrep.query.ast",
     "agentgrep.events",
+    "jinja2",
+    "platformdirs",
+    "sklearn",
+    "sentence_transformers",
+    "torch",
+    "sqlite_vec",
+    "tantivy",
+    "llama_cpp",
+    "httpx",
 )
 
 

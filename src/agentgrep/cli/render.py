@@ -204,15 +204,27 @@ def run_insights_report_command(args: InsightsReportArgs) -> int:
         progress=agentgrep.noop_search_progress(),
         control=agentgrep.SearchControl(),
     )
-    from agentgrep.insights import build_report
+    from agentgrep.insights import InsightsReportPayload, build_report, render_report_document
+    from agentgrep.insights_loader import BackendLoadError, BackendUnavailable
 
-    report = build_report(
-        records,
-        scope=args.scope,
-        requested_level=args.level,
-        record_limit=args.limit,
-        sampled=not args.all_records,
-    )
+    try:
+        report = build_report(
+            records,
+            scope=args.scope,
+            requested_level=args.level,
+            record_limit=args.limit,
+            sampled=not args.all_records,
+            model=args.model,
+            model_cache=args.model_cache,
+            allow_download=args.allow_download,
+            llm_backend=args.llm_backend,
+            llm_endpoint=args.llm_endpoint,
+            allow_network=args.allow_network,
+            index_backend=args.index_backend,
+        )
+    except (BackendLoadError, BackendUnavailable) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     payload = t.cast("dict[str, object]", report.to_payload())
     if args.output_mode == "json":
         envelope = build_envelope(
@@ -229,6 +241,19 @@ def run_insights_report_command(args: InsightsReportArgs) -> int:
         print(json.dumps(envelope, ensure_ascii=False, indent=2))
     elif args.output_mode == "ndjson":
         print(json.dumps(payload, ensure_ascii=False))
+    elif args.report_format != "text":
+        try:
+            document = render_report_document(
+                t.cast("InsightsReportPayload", payload),
+                report_format=args.report_format,
+            )
+        except (BackendLoadError, BackendUnavailable) as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        if args.output_path is None:
+            print(document)
+        else:
+            args.output_path.write_text(document, encoding="utf-8")
     else:
         _print_insights_report_text(payload)
     return 0

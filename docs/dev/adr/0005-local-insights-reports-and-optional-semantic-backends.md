@@ -4,7 +4,7 @@
 
 ## Status
 
-Proposed.
+Accepted.
 
 ## Context
 
@@ -72,15 +72,16 @@ The base implementation is always selected by default:
 
 ```console
 agentgrep insights report
-agentgrep insights report --scope conversations --output report.md
-agentgrep insights report --format json --output report.json
+agentgrep insights report --scope conversations --format markdown --output report.md
+agentgrep insights report --json
+agentgrep insights report --level html --format html --output report.html
 ```
 
 The base report uses only the normal `agentgrep` installation. It may use the
 standard library plus dependencies already required by agentgrep, but it must
 not import optional ML, vector, template, or LLM packages. It produces a stable
-report model and renders terminal, JSON, Markdown, and simple single-file HTML
-outputs without optional packages.
+report model and renders terminal, JSON, and Markdown outputs without optional
+packages. Template-based HTML output belongs to the optional HTML level.
 
 The pipeline has six contracts:
 
@@ -95,8 +96,8 @@ The pipeline has six contracts:
 5. **Evidence policy**: reports include aggregate facts by default. Raw prompt
    or transcript text appears only with an explicit `--include-text` or
    `--sample-text` option.
-6. **Renderers**: terminal, JSON, Markdown, and static HTML consume the same
-   report model. Renderers do not discover stores, parse records, install
+6. **Renderers**: terminal, JSON, Markdown, and optional static HTML consume the
+   same report model. Renderers do not discover stores, parse records, install
    packages, or call models.
 
 No live upstream agent is required. Insights code may understand storage written
@@ -111,7 +112,7 @@ must degrade to a clear "not installed" message instead of a traceback.
 
 | Level | Extra | Candidate dependencies | Adds | Model behavior |
 | --- | --- | --- | --- | --- |
-| 0 | none | none beyond `agentgrep` | deterministic local reports, JSON, Markdown, terminal, simple HTML | no models |
+| 0 | none | none beyond `agentgrep` | deterministic local reports, JSON, Markdown, terminal text | no models |
 | 1 | `agentgrep[insights-html]` | `jinja2`, optional `platformdirs` if not promoted to core | custom report templates, reusable report profiles, cross-platform cache/report directories | no models |
 | 2 | `agentgrep[insights-ml]` | `scikit-learn` | TF-IDF terms, classical clustering, outlier sessions, topic candidate labels | no model downloads |
 | 3 | `agentgrep[insights-embeddings]` | `sentence-transformers` | dense/sparse embeddings, semantic clustering, semantic dedupe, nearest-session examples | explicit model install only |
@@ -131,14 +132,15 @@ user wants richer behavior, they must ask for it:
 ```console
 agentgrep insights report --level builtin
 agentgrep insights report --level ml
-agentgrep insights report --level embeddings --model all-MiniLM-L6-v2
-agentgrep insights report --level llm --model local:llama-cpp:tinyllama
+agentgrep insights report --level embeddings --model /path/to/all-MiniLM-L6-v2
+agentgrep insights report --level llm --model /path/to/model.gguf
 agentgrep insights report --level best-installed
 ```
 
 `builtin` is the default. `best-installed` is an explicit opt-in that selects the
 highest usable installed backend without installing packages or downloading
-models.
+models. Explicit optional levels fail with a configuration error when their
+dependency or local model requirement is not met.
 
 ## Installation and model management
 
@@ -180,7 +182,8 @@ The model registry is local and inspectable. It records model ID, backend,
 source URL or local path, revision or content hash, license, file sizes,
 installed path, install time, and whether the model can run offline. Model
 downloads require an explicit install command. Report generation may use only
-already-installed models unless the user passes an explicit install flag.
+already-installed models unless the user passes an explicit install or download
+flag.
 
 Model and index locations follow a cross-platform order:
 

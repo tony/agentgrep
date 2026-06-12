@@ -17,6 +17,7 @@ import collections.abc as cabc
 import contextlib
 import dataclasses
 import os
+import pathlib
 import re
 import sys
 import typing as t
@@ -39,7 +40,14 @@ from agentgrep import (
 )
 
 if t.TYPE_CHECKING:
-    from agentgrep.insights import InsightsInstallManager, InsightsLevel, InsightsSetupLevel
+    from agentgrep.insights import (
+        InsightsIndexBackend,
+        InsightsInstallManager,
+        InsightsLevel,
+        InsightsLLMBackend,
+        InsightsReportFormat,
+        InsightsSetupLevel,
+    )
     from agentgrep.query import CompiledQuery
 
 CaseMode = t.Literal["smart", "ignore", "respect"]
@@ -122,6 +130,15 @@ class InsightsReportArgs:
     level: InsightsLevel = "builtin"
     limit: int | None = 500
     all_records: bool = False
+    report_format: InsightsReportFormat = "text"
+    output_path: pathlib.Path | None = None
+    model: str | None = None
+    model_cache: pathlib.Path | None = None
+    allow_download: bool = False
+    llm_backend: InsightsLLMBackend = "auto"
+    llm_endpoint: str = "http://127.0.0.1:11434"
+    allow_network: bool = False
+    index_backend: InsightsIndexBackend = "auto"
 
 
 @dataclasses.dataclass(slots=True)
@@ -629,6 +646,56 @@ def create_parser(
         const="never",
         help="Silence the stderr progress spinner (alias for --progress=never)",
     )
+    _ = insights_report_parser.add_argument(
+        "--format",
+        choices=["text", "markdown", "html"],
+        default="text",
+        help="Document output format for non-JSON reports (default: text)",
+    )
+    _ = insights_report_parser.add_argument(
+        "--output",
+        type=pathlib.Path,
+        metavar="PATH",
+        help="Write markdown or HTML report output to PATH",
+    )
+    _ = insights_report_parser.add_argument(
+        "--model",
+        metavar="PATH_OR_ID",
+        help="Local model path or local backend model name for optional semantic levels",
+    )
+    _ = insights_report_parser.add_argument(
+        "--model-cache",
+        type=pathlib.Path,
+        metavar="PATH",
+        help="Model cache directory for explicit download-enabled runs",
+    )
+    _ = insights_report_parser.add_argument(
+        "--allow-download",
+        action="store_true",
+        help="Allow model downloads for backends that support an offline switch",
+    )
+    _ = insights_report_parser.add_argument(
+        "--llm-backend",
+        choices=["auto", "llama-cpp", "ollama"],
+        default="auto",
+        help="Local LLM backend to use when --level llm is requested",
+    )
+    _ = insights_report_parser.add_argument(
+        "--llm-endpoint",
+        default="http://127.0.0.1:11434",
+        help="Ollama-compatible endpoint for --llm-backend ollama",
+    )
+    _ = insights_report_parser.add_argument(
+        "--allow-network",
+        action="store_true",
+        help="Allow non-loopback LLM endpoints for explicit LLM runs",
+    )
+    _ = insights_report_parser.add_argument(
+        "--index-backend",
+        choices=["auto", "tantivy", "sqlite-vec"],
+        default="auto",
+        help="Local index backend preference when --level index is requested",
+    )
     add_output_mode_options(insights_report_parser, allow_ui=False)
     insights_levels_parser = insights_subparsers.add_parser(
         "levels",
@@ -984,6 +1051,12 @@ def parse_args(
             )
         agents = parse_agents(t.cast("list[str]", namespace.agent))
         output_mode = parse_output_mode(namespace)
+        report_format = t.cast("InsightsReportFormat", namespace.format)
+        if output_mode != "text" and report_format != "text":
+            with configured_color_environment(color_mode):
+                bundle.insights_report_parser.error(
+                    "--format cannot be combined with --json or --ndjson",
+                )
         limit = t.cast("int | None", namespace.limit)
         all_records = t.cast("bool", namespace.all_records)
         if all_records and limit != 500:
@@ -1005,6 +1078,15 @@ def parse_args(
             level=t.cast("InsightsLevel", namespace.level),
             limit=limit,
             all_records=all_records,
+            report_format=report_format,
+            output_path=t.cast("pathlib.Path | None", namespace.output),
+            model=t.cast("str | None", namespace.model),
+            model_cache=t.cast("pathlib.Path | None", namespace.model_cache),
+            allow_download=t.cast("bool", namespace.allow_download),
+            llm_backend=t.cast("InsightsLLMBackend", namespace.llm_backend),
+            llm_endpoint=t.cast("str", namespace.llm_endpoint),
+            allow_network=t.cast("bool", namespace.allow_network),
+            index_backend=t.cast("InsightsIndexBackend", namespace.index_backend),
         )
 
     agents = parse_agents(t.cast("list[str]", namespace.agent))
