@@ -323,13 +323,18 @@ def test_python_docstring_collector_tracks_docstring_code_blocks(tmp_path: pathl
     assert all(example.location.display_path == "src/pkg/module.py" for example in examples)
 
 
-def test_redact_path_prefers_project_relative_then_home() -> None:
+def test_redact_path_prefers_project_relative_then_home(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Path redaction uses project-relative paths first and falls back to home-safe rendering."""
     project_root = pathlib.Path("/home/d/work/python/agentgrep")
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
 
     assert redact_path(project_root / "docs" / "cli.md", project_root=project_root) == "docs/cli.md"
     assert (
-        redact_path(pathlib.Path("/home/d/.codex/history.jsonl"), project_root=project_root)
+        redact_path(home / ".codex" / "history.jsonl", project_root=project_root)
         == "~/.codex/history.jsonl"
     )
     assert (
