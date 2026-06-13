@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import fnmatch
 import json
 import re
 import shlex
@@ -16,6 +17,7 @@ _FENCE_RE = re.compile(
     r"^(?P<prefix>(?:[ \t]*>[ \t]*)*)(?P<indent>[ \t]*)(?P<fence>`{3,}|~{3,})(?P<info>[^\r\n]*)",
 )
 _DOCSTRING_PUNCTUATION_RE = re.compile(r"[rRuUbBfF]*(?P<quote>'''|\"\"\"|'|\")")
+_MYST_CODE_DIRECTIVES = frozenset({"code", "code-block", "code-cell", "sourcecode"})
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -26,6 +28,7 @@ class _FenceInfo:
     tags: frozenset[str]
     settings: dict[str, str]
     group: str
+    strip_directive_options: bool = False
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -38,6 +41,16 @@ class _OpenFence:
     info: str
     content_start: int
     line_number: int
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _NormalizedLine:
+    """One source line after Markdown quote/list prefix removal."""
+
+    text: str
+    line_offset: int
+    removed_prefix_length: int
+    end_offset: int
 
 
 class MarkdownFenceCollector:
@@ -135,8 +148,10 @@ class MarkdownFenceCollector:
             content_start=opening.content_start,
             prefix=prefix,
             indent=indent,
+            strip_myst_options=info.strip_directive_options,
         )
-        start_line = opening.line_number + 1
+        line_starts = _line_starts(document.text)
+        start_line = _line_number(line_starts, start_index) if source else opening.line_number + 1
         line_count = source.count("\n")
         end_line = start_line + line_count - 1 if source else start_line - 1
         location = ExampleLocation(
@@ -158,6 +173,61 @@ class MarkdownFenceCollector:
             location=location,
             tags=info.tags,
             settings=info.settings,
+        )
+
+
+class MarkdownPythonPageCollector:
+    """Collect page-level Python narratives from Markdown/MyST documents."""
+
+    name = "markdown-python-page"
+    suffixes = frozenset({".md", ".mdx"})
+    _DEFAULT_INCLUDE_GLOBS = ("README.md", "docs/library/*.md")
+
+    def __init__(
+        self,
+        *,
+        include_globs: t.Iterable[str] = _DEFAULT_INCLUDE_GLOBS,
+        languages: set[str] | frozenset[str] | None = None,
+    ) -> None:
+        """Create a page-level Python collector.
+
+        Parameters
+        ----------
+        include_globs : Iterable[str]
+            Project-relative glob patterns eligible for page-level execution.
+        languages : set[str] | frozenset[str] | None
+            Fence languages treated as Python. ``None`` uses ``python`` and
+            ``py``.
+        """
+        self.include_globs = tuple(include_globs)
+        python_languages = {"python", "py"} if languages is None else languages
+        self._markdown = MarkdownFenceCollector(languages=python_languages)
+
+    def collect(self, document: ExampleDocument) -> t.Iterable[DocumentationExample]:
+        """Collect one combined Python page example from ``document``."""
+        if not _matches_include_globs(document.display_path, self.include_globs):
+            return
+        examples = list(self._markdown.collect(document))
+        if not examples:
+            return
+        first = examples[0]
+        last = examples[-1]
+        source = _combine_python_page_source(examples)
+        location = ExampleLocation(
+            path=document.path,
+            display_path=document.display_path,
+            start_line=first.location.start_line,
+            end_line=last.location.end_line,
+            start_index=first.location.start_index,
+            end_index=last.location.end_index,
+        )
+        yield DocumentationExample(
+            kind="code",
+            language="python-page",
+            source=source,
+            raw_source=source,
+            location=location,
+            test_id=f"{document.display_path}:python-page",
         )
 
 
@@ -281,6 +351,12 @@ def _parse_info(info: str) -> _FenceInfo:
         tokens = shlex.split(stripped)
     except ValueError:
         tokens = stripped.split()
+    strip_directive_options = False
+    if tokens:
+        directive = _myst_directive_name(tokens[0])
+        if directive in _MYST_CODE_DIRECTIVES:
+            strip_directive_options = True
+            tokens = tokens[1:]
     language = ""
     tags: set[str] = set()
     settings: dict[str, str] = {}
@@ -303,6 +379,7 @@ def _parse_info(info: str) -> _FenceInfo:
         tags=frozenset(tags),
         settings=settings,
         group=group,
+        strip_directive_options=strip_directive_options,
     )
 
 
@@ -324,14 +401,13 @@ def _strip_line_prefixes(
     content_start: int,
     prefix: str,
     indent: str,
+    strip_myst_options: bool = False,
 ) -> tuple[str, str, int, int]:
     """Strip Markdown quote/list prefixes and indentation from content lines."""
     strip_token = prefix + indent
     raw_lines = raw_content.splitlines(keepends=True)
-    normalized_lines: list[str] = []
-    first_offset: int | None = None
+    normalized_lines: list[_NormalizedLine] = []
     consumed = 0
-    last_end = content_start
     for raw_line in raw_lines:
         line_offset = content_start + consumed
         stripped_line = raw_line
@@ -342,19 +418,77 @@ def _strip_line_prefixes(
         elif prefix and raw_line.startswith(prefix):
             stripped_line = raw_line[len(prefix) :]
             removed = len(prefix)
-        normalized_lines.append(stripped_line)
-        if first_offset is None and stripped_line.strip():
-            first_offset = line_offset + removed
         last_end = line_offset + len(raw_line)
+        normalized_lines.append(
+            _NormalizedLine(
+                text=stripped_line,
+                line_offset=line_offset,
+                removed_prefix_length=removed,
+                end_offset=last_end,
+            ),
+        )
         consumed += len(raw_line)
-    raw_source = "".join(normalized_lines)
+    if strip_myst_options:
+        normalized_lines = _strip_myst_directive_options(normalized_lines)
+    first_offset: int | None = None
+    for line in normalized_lines:
+        if line.text.strip():
+            first_offset = line.line_offset + line.removed_prefix_length
+            break
+    raw_source = "".join(line.text for line in normalized_lines)
     source = textwrap.dedent(raw_source)
     if first_offset is None:
         first_offset = content_start
     if normalized_lines:
         line_delta = len(raw_source) - len(source)
         first_offset += max(line_delta, 0)
+    last_end = normalized_lines[-1].end_offset if normalized_lines else content_start
     return raw_source, source, first_offset, last_end
+
+
+def _myst_directive_name(token: str) -> str:
+    """Return a MyST directive name from ``{directive}`` info tokens."""
+    stripped = token.strip()
+    if not (stripped.startswith("{") and stripped.endswith("}")):
+        return ""
+    return stripped[1:-1].strip().lower()
+
+
+def _strip_myst_directive_options(lines: list[_NormalizedLine]) -> list[_NormalizedLine]:
+    """Drop leading MyST directive options from executable code content."""
+    index = 0
+    stripped_option = False
+    while index < len(lines) and _is_myst_directive_option(lines[index].text):
+        index += 1
+        stripped_option = True
+    if stripped_option:
+        while index < len(lines) and not lines[index].text.strip():
+            index += 1
+    return lines[index:]
+
+
+def _is_myst_directive_option(line: str) -> bool:
+    """Return whether ``line`` is a MyST directive option line."""
+    stripped = line.strip()
+    return stripped.startswith(":") and not stripped.startswith("::") and ":" in stripped[1:]
+
+
+def _matches_include_globs(display_path: str, include_globs: t.Iterable[str]) -> bool:
+    """Return whether a project-relative display path is included."""
+    return any(fnmatch.fnmatchcase(display_path, pattern) for pattern in include_globs)
+
+
+def _combine_python_page_source(examples: t.Sequence[DocumentationExample]) -> str:
+    """Combine document-ordered Python fences while preserving source line numbers."""
+    parts: list[str] = []
+    current_line = 1
+    for example in examples:
+        gap = example.location.start_line - current_line
+        if gap > 0:
+            parts.append("\n" * gap)
+        parts.append(example.source)
+        current_line = example.location.end_line + 1
+    return "".join(parts)
 
 
 def _line_starts(text: str) -> list[int]:

@@ -6,6 +6,7 @@ from .collectors import (
     FastMCPConfigCollector,
     JustfileRecipeCollector,
     MarkdownFenceCollector,
+    MarkdownPythonPageCollector,
     PythonDocstringCollector,
 )
 from .core import (
@@ -27,6 +28,7 @@ from .evaluators import (
     ConsoleCommandEvaluator,
     FastMCPConfigEvaluator,
     PythonCodeEvaluator,
+    PythonPageEvaluator,
     SphinxDoctestEvaluator,
 )
 from .sandbox import (
@@ -54,8 +56,10 @@ __all__ = [
     "FastMCPConfigEvaluator",
     "JustfileRecipeCollector",
     "MarkdownFenceCollector",
+    "MarkdownPythonPageCollector",
     "PythonCodeEvaluator",
     "PythonDocstringCollector",
+    "PythonPageEvaluator",
     "SandboxBackend",
     "SandboxCommandPlan",
     "SandboxExecution",

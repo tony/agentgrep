@@ -20,7 +20,9 @@ from pytest_documentation import (
     FastMCPConfigEvaluator,
     JustfileRecipeCollector,
     MarkdownFenceCollector,
+    MarkdownPythonPageCollector,
     PythonDocstringCollector,
+    PythonPageEvaluator,
     SandboxExecution,
     SphinxDoctestEvaluator,
     TempHomeSandbox,
@@ -93,6 +95,30 @@ MARKDOWN_FENCE_CASES: tuple[MarkdownFenceCase, ...] = (
         expected_indent="   ",
         expected_group="",
     ),
+    MarkdownFenceCase(
+        test_id="myst-code-block-console-options",
+        text=(
+            "```{code-block} console group=cli\n:caption: CLI smoke\n\n$ agentgrep --help\n```\n"
+        ),
+        expected_source="$ agentgrep --help\n",
+        expected_language="console",
+        expected_start_line=4,
+        expected_end_line=4,
+        expected_prefix="",
+        expected_indent="",
+        expected_group="cli",
+    ),
+    MarkdownFenceCase(
+        test_id="myst-sourcecode-python",
+        text="```{sourcecode} python\nvalue = 3\n```\n",
+        expected_source="value = 3\n",
+        expected_language="python",
+        expected_start_line=2,
+        expected_end_line=2,
+        expected_prefix="",
+        expected_indent="",
+        expected_group="",
+    ),
 )
 
 
@@ -140,6 +166,81 @@ def test_markdown_fence_collector_reports_unclosed_fence(tmp_path: pathlib.Path)
 
     with pytest.raises(ValueError, match=r"docs/broken\.md:1"):
         collect_examples([path], collectors=[MarkdownFenceCollector()], project_root=tmp_path)
+
+
+def test_markdown_fence_collector_does_not_collect_eval_rst_as_console(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Only MyST code directives map to executable languages."""
+    path = tmp_path / "docs" / "example.md"
+    path.parent.mkdir()
+    path.write_text(
+        "```{eval-rst}\n.. code-block:: console\n\n   $ agentgrep --help\n```\n",
+        encoding="utf-8",
+    )
+
+    examples = collect_examples(
+        [path],
+        collectors=[MarkdownFenceCollector(languages={"console"})],
+        project_root=tmp_path,
+    )
+
+    assert examples == []
+
+
+def test_python_page_collector_combines_library_examples_with_line_padding(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Python page examples share one narrative namespace while preserving line numbers."""
+    path = tmp_path / "docs" / "library" / "event-stream.md"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "# Event stream\n"
+        "\n"
+        "```python\n"
+        "value = 3\n"
+        "```\n"
+        "\n"
+        "Narrative text.\n"
+        "\n"
+        "```py\n"
+        "assert value == 3\n"
+        "```\n",
+        encoding="utf-8",
+    )
+
+    examples = collect_examples(
+        [path],
+        collectors=[MarkdownPythonPageCollector()],
+        project_root=tmp_path,
+    )
+
+    assert len(examples) == 1
+    example = examples[0]
+    assert example.language == "python-page"
+    assert example.kind == "code"
+    assert example.location.start_line == 4
+    assert example.location.end_line == 10
+    assert example.test_id == "docs/library/event-stream.md:python-page"
+    assert example.source.splitlines()[3] == "value = 3"
+    assert example.source.splitlines()[9] == "assert value == 3"
+
+
+def test_python_page_collector_keeps_non_library_docs_out_of_scope(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Python execution is limited to README and public library docs."""
+    path = tmp_path / "docs" / "dev" / "adr" / "0001.md"
+    path.parent.mkdir(parents=True)
+    path.write_text("```python\nassert False\n```\n", encoding="utf-8")
+
+    examples = collect_examples(
+        [path],
+        collectors=[MarkdownPythonPageCollector()],
+        project_root=tmp_path,
+    )
+
+    assert examples == []
 
 
 def test_python_docstring_collector_tracks_docstring_code_blocks(tmp_path: pathlib.Path) -> None:
@@ -230,6 +331,88 @@ def test_literal_shell_evaluator_fails_unsupported_cli_option(tmp_path: pathlib.
     assert result.status is EvaluationStatus.FAILED
     assert result.failure_kind is EvaluationFailureKind.COMMAND_FAILED
     assert result.returncode == 7
+
+
+def test_python_page_evaluator_shares_namespace_in_temp_home(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Python page examples run in a temp home with one namespace per page."""
+    real_home = tmp_path / "real-home"
+    real_home.mkdir()
+    monkeypatch.setenv("HOME", str(real_home))
+    path = tmp_path / "README.md"
+    path.write_text(
+        "```python\n"
+        "import pathlib\n"
+        "home = pathlib.Path.home()\n"
+        "value = 3\n"
+        "```\n"
+        "\n"
+        "```python\n"
+        "assert value == 3\n"
+        "assert home != pathlib.Path.home() or not (home / 'real-marker').exists()\n"
+        "(pathlib.Path.home() / 'page-marker').write_text('ok', encoding='utf-8')\n"
+        "```\n",
+        encoding="utf-8",
+    )
+    example = collect_examples(
+        [path],
+        collectors=[MarkdownPythonPageCollector()],
+        project_root=tmp_path,
+    )[0]
+
+    result = PythonPageEvaluator(
+        sandbox=TempHomeSandbox(project_root=tmp_path),
+    ).evaluate(example)
+
+    assert result.status is EvaluationStatus.PASSED
+    assert not (real_home / "page-marker").exists()
+
+
+def test_python_page_evaluator_failure_uses_document_line_numbers(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Python page tracebacks point at the original documentation line."""
+    path = tmp_path / "README.md"
+    path.write_text(
+        "# README\n\n```python\nvalue = 3\n```\n\n```python\nassert value == 4\n```\n",
+        encoding="utf-8",
+    )
+    example = collect_examples(
+        [path],
+        collectors=[MarkdownPythonPageCollector()],
+        project_root=tmp_path,
+    )[0]
+
+    result = PythonPageEvaluator(
+        sandbox=TempHomeSandbox(project_root=tmp_path),
+    ).evaluate(example)
+
+    assert result.status is EvaluationStatus.FAILED
+    assert result.failure_kind is EvaluationFailureKind.COMMAND_FAILED
+    assert result.returncode == 1
+    assert 'File "README.md", line 8' in result.stderr
+
+
+def test_temp_home_sandbox_redirects_uvx_agentgrep_to_local_checkout(
+    tmp_path: pathlib.Path,
+) -> None:
+    """README ``uvx agentgrep`` smoke examples use the local project."""
+    doc = tmp_path / "README.md"
+    doc.write_text("```console\n$ uvx agentgrep --help\n```\n", encoding="utf-8")
+    example = collect_examples(
+        [doc],
+        collectors=[MarkdownFenceCollector(languages={"console"})],
+        project_root=tmp_path,
+    )[0]
+
+    result = ConsoleCommandEvaluator(
+        sandbox=TempHomeSandbox(project_root=_REPO_ROOT),
+    ).evaluate(example)
+
+    assert result.status is EvaluationStatus.PASSED
+    assert "uvx agentgrep redirected to local checkout" in result.message
 
 
 class ConsoleSourceCase(t.NamedTuple):

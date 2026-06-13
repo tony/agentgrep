@@ -108,6 +108,43 @@ def test_pytest_failure_renders_classified_documentation_reason(
     )
 
 
+def test_suite_collects_python_page_examples_as_single_pytest_item(
+    pytester: pytest.Pytester,
+) -> None:
+    """A Python page narrative runs as one pytest item with shared state."""
+    pytester.makeconftest(
+        """
+        from __future__ import annotations
+
+        import pathlib
+
+        from pytest_documentation import (
+            DocumentationSuite,
+            MarkdownPythonPageCollector,
+            PythonPageEvaluator,
+            TempHomeSandbox,
+        )
+
+        root = pathlib.Path(__file__).parent
+        suite = DocumentationSuite(project_root=root, include_paths=("README.md",))
+        suite.register_collector(MarkdownPythonPageCollector())
+        suite.register_evaluator(
+            "python-page",
+            PythonPageEvaluator(sandbox=TempHomeSandbox(project_root=root)),
+        )
+        pytest_collect_file = suite.pytest_collect_file
+        """,
+    )
+    pytester.makefile(
+        ".md",
+        README=("```python\nvalue = 3\n```\n\n```python\nassert value == 3\n```\n"),
+    )
+
+    result = pytester.runpytest(*_NESTED_RUN_ARGS)
+
+    result.assert_outcomes(passed=1)
+
+
 def test_plugin_entrypoint_is_dormant_without_configured_suite(pytester: pytest.Pytester) -> None:
     """Loading the plugin alone does not start collecting every documentation file."""
     pytester.makeini(

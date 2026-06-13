@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import ast
+import base64
 import contextlib
 import io
 import json
 import pathlib
+import shlex
 import subprocess
 import tempfile
 import traceback
@@ -57,6 +59,71 @@ class PythonCodeEvaluator:
             example,
             stdout=stdout.getvalue(),
             stderr=stderr.getvalue(),
+        )
+
+
+class PythonPageEvaluator:
+    """Evaluate page-level Python examples in a sandboxed subprocess."""
+
+    def __init__(self, *, sandbox: SandboxBackend | None = None) -> None:
+        """Create a Python page evaluator.
+
+        Parameters
+        ----------
+        sandbox : SandboxBackend | None
+            Sandbox used to run the Python page. ``None`` creates a
+            :class:`~pytest_documentation.sandbox.TempHomeSandbox`.
+        """
+        self.sandbox = sandbox or TempHomeSandbox()
+
+    def evaluate(self, example: DocumentationExample) -> EvaluationResult:
+        """Evaluate a combined Python page example in the configured sandbox."""
+        script = _python_page_script(example)
+        try:
+            execution = self.sandbox.run_script(script, example=example)
+        except subprocess.TimeoutExpired as exc:
+            return EvaluationResult.failed_result(
+                example,
+                failure_kind=EvaluationFailureKind.LONG_RUNNING_COMMAND,
+                message=str(exc),
+            )
+        except OSError as exc:
+            return EvaluationResult.failed_result(
+                example,
+                failure_kind=EvaluationFailureKind.HARNESS_ERROR,
+                message=str(exc),
+            )
+        except Exception as exc:
+            return EvaluationResult.failed_result(
+                example,
+                failure_kind=EvaluationFailureKind.BLOCKED_BY_POLICY,
+                message=str(exc),
+            )
+        completed = execution.completed
+        if execution.failure_kind is not None:
+            return EvaluationResult.failed_result(
+                example,
+                failure_kind=execution.failure_kind,
+                returncode=completed.returncode,
+                stdout=completed.stdout,
+                stderr=completed.stderr,
+                message=execution.message,
+            )
+        if completed.returncode == 0:
+            return EvaluationResult.passed_result(
+                example,
+                returncode=completed.returncode,
+                stdout=completed.stdout,
+                stderr=completed.stderr,
+                message=execution.message,
+            )
+        return EvaluationResult.failed_result(
+            example,
+            failure_kind=EvaluationFailureKind.COMMAND_FAILED,
+            returncode=completed.returncode,
+            stdout=completed.stdout,
+            stderr=completed.stderr,
+            message=execution.message,
         )
 
 
@@ -326,6 +393,20 @@ def _parse_console_source(source: str) -> tuple[str, list[str]]:
         elif line.strip():
             expected_output.append(line)
     return "\n".join(script_lines) + ("\n" if script_lines else ""), expected_output
+
+
+def _python_page_script(example: DocumentationExample) -> str:
+    """Return a shell command that executes a combined Python page."""
+    encoded_source = base64.b64encode(example.source.encode("utf-8")).decode("ascii")
+    filename = example.location.display_path
+    wrapper = (
+        "import base64\n"
+        f"source = base64.b64decode({encoded_source!r}).decode('utf-8')\n"
+        f"filename = {filename!r}\n"
+        "namespace = {'__name__': '__main__', '__file__': filename}\n"
+        "exec(compile(source, filename, 'exec'), namespace, namespace)\n"
+    )
+    return "uv run python -c " + shlex.quote(wrapper)
 
 
 def _expected_output_matches(expected_lines: list[str], actual: str) -> bool:

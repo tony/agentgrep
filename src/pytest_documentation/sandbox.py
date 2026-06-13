@@ -331,6 +331,18 @@ class TempHomeSandbox:
                 reason="standalone sequence step accepted: cd agentgrep",
                 execute=False,
             )
+        if words[:2] == ["uvx", "agentgrep"]:
+            return SandboxCommandPlan(
+                original_script=script,
+                script=shlex.join(["uv", "run", "agentgrep", *words[2:]]),
+                reason="uvx agentgrep redirected to local checkout",
+            )
+        if words[:3] == ["uvx", "--from", "agentgrep"] and len(words) >= 4:
+            return SandboxCommandPlan(
+                original_script=script,
+                script=shlex.join(["uv", "run", words[3], *words[4:]]),
+                reason="uvx agentgrep redirected to local checkout",
+            )
         if words[:2] == ["uv", "sync"]:
             safe_words = _append_missing(words, ("--dry-run", "--frozen"))
             return SandboxCommandPlan(

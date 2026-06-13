@@ -117,6 +117,10 @@ def pytest_configure(config: pytest.Config) -> None:
         "documentation: documentation example collected by pytest-documentation",
     )
     config.addinivalue_line("markers", "documentation_python: Python documentation example")
+    config.addinivalue_line(
+        "markers",
+        "documentation_python_page: page-level Python documentation example",
+    )
     config.addinivalue_line("markers", "documentation_console: console documentation example")
     config.addinivalue_line(
         "markers",
