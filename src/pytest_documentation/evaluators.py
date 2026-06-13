@@ -79,7 +79,7 @@ class ConsoleCommandEvaluator:
         script, expected_output = _parse_console_source(example.source)
         try:
             execution = self.sandbox.run_script(script, example=example)
-        except TimeoutError as exc:
+        except subprocess.TimeoutExpired as exc:
             return EvaluationResult.failed_result(
                 example,
                 failure_kind=EvaluationFailureKind.LONG_RUNNING_COMMAND,

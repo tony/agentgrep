@@ -12,6 +12,7 @@ import pytest
 
 from pytest_documentation import (
     ConsoleCommandEvaluator,
+    DocumentationExample,
     DocumentationSuite,
     EvaluationFailureKind,
     EvaluationStatus,
@@ -20,6 +21,7 @@ from pytest_documentation import (
     JustfileRecipeCollector,
     MarkdownFenceCollector,
     PythonDocstringCollector,
+    SandboxExecution,
     SphinxDoctestEvaluator,
     TempHomeSandbox,
     collect_examples,
@@ -280,6 +282,74 @@ def test_parse_console_source_keeps_indented_output_out_of_script(
 
     assert script == case.expected_script
     assert expected_output == case.expected_output
+
+
+class _RaisingSandbox:
+    """SandboxBackend stub that raises a fixed error from ``run_script``."""
+
+    def __init__(self, error: BaseException) -> None:
+        """Store the error to raise."""
+        self._error = error
+
+    def run_script(self, script: str, *, example: DocumentationExample) -> SandboxExecution:
+        """Raise the configured error instead of running a script."""
+        raise self._error
+
+
+class SandboxErrorCase(t.NamedTuple):
+    """Expected failure kind for one exception raised by the sandbox."""
+
+    test_id: str
+    error: BaseException
+    expected_kind: EvaluationFailureKind
+
+
+SANDBOX_ERROR_CASES: tuple[SandboxErrorCase, ...] = (
+    SandboxErrorCase(
+        test_id="subprocess-timeout-is-long-running",
+        error=subprocess.TimeoutExpired(cmd="sleep 99", timeout=0.01),
+        expected_kind=EvaluationFailureKind.LONG_RUNNING_COMMAND,
+    ),
+    SandboxErrorCase(
+        test_id="os-error-is-harness-error",
+        error=PermissionError("denied"),
+        expected_kind=EvaluationFailureKind.HARNESS_ERROR,
+    ),
+    SandboxErrorCase(
+        test_id="other-error-is-blocked-by-policy",
+        error=RuntimeError("boom"),
+        expected_kind=EvaluationFailureKind.BLOCKED_BY_POLICY,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    SANDBOX_ERROR_CASES,
+    ids=[case.test_id for case in SANDBOX_ERROR_CASES],
+)
+def test_console_evaluator_maps_sandbox_exceptions_to_failure_kinds(
+    tmp_path: pathlib.Path,
+    case: SandboxErrorCase,
+) -> None:
+    """A timing-out console command is long_running_command, not blocked_by_policy.
+
+    A real timeout would need a slow subprocess, so a lightweight
+    ``SandboxBackend`` stub raises the exception types ``run_script`` surfaces.
+    """
+    path = tmp_path / "README.md"
+    path.write_text("```console\n$ sleep 99\n```\n", encoding="utf-8")
+    example = collect_examples(
+        [path],
+        collectors=[MarkdownFenceCollector(languages={"console"})],
+        project_root=tmp_path,
+    )[0]
+    evaluator = ConsoleCommandEvaluator(sandbox=_RaisingSandbox(case.error))
+
+    result = evaluator.evaluate(example)
+
+    assert result.passed is False
+    assert result.failure_kind is case.expected_kind
 
 
 def test_temp_home_sandbox_copies_dirty_git_project(tmp_path: pathlib.Path) -> None:
