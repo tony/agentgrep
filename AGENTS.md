@@ -19,7 +19,8 @@ Key features:
 - Cross-tool search over Codex, Claude Code, and Cursor prompt/history stores
 - CLI entry point with a Textual TUI for interactive browsing
 - MCP server entry point exposing the same search surface as MCP tools
-- Pydantic models for every CLI/MCP output, with a pydantic-free fallback
+- Dependency-light record/envelope contracts, with Pydantic adapters for MCP,
+  schema, docs, and other typed boundaries where useful
 - Full type safety (ty, strict warning-as-error)
 
 ### Platform Support
@@ -40,141 +41,35 @@ reasonably handle on its own.
 
 ### Native Boundary Policy
 
-Native boundary shapes and the rules for choosing them are ADR 0003. Default
-to no native code. Prove the bottleneck first: a measurement of the
-user-visible path, against a named baseline, must show a performance, latency,
-scale, memory, reliability, or platform-interface limit Python cannot resolve
-algorithmically or structurally before you reach for Rust. Native code must not
-define public behavior, add public API, or be required to install, import, or
-run the package.
+Default to no native code. Native code must be justified by measurement of a
+user-visible path against a named baseline, and it must not become the source
+of public behavior by accident.
 
-Classify the boundary, not the component, before writing native code. Take the
-narrowest shape that honestly fits:
+ADR 0003 is the canonical policy for native boundary shapes:
 
-1. Accelerator - a drop-in for a public Python callable. Removing the native
-   build changes nothing observable except speed. Follows ADR 0002.
-2. Engine - in-process native code that executes a normalized plan or batch
-   the Python runtime builds; runs to completion, no user Python in the hot
-   loop; may be approximate, tested within a documented tolerance. Follows ADR
-   0003.
-3. Worker - an independent process, binary, or long-lived native thread behind
-   a versioned message-passing protocol. A separate execution mode, not a
-   hidden accelerator; its execution mode and protocol ship under a follow-up
-   ADR. Follows ADR 0003.
+- Accelerator - a drop-in for a public Python callable. Removing the native
+  build changes nothing observable except speed. ADR 0002 owns the
+  compatibility contract.
+- Engine - in-process native code over a normalized plan, batch, buffer, or
+  scoped state. ADR 0003 owns the boundary, lifecycle, and test obligations.
+- Worker - an independent process, binary, or long-lived native thread behind
+  a versioned message-passing protocol. ADR 0003 owns the classification; a
+  worker protocol needs its own follow-up ADR.
 
-A component exposing more than one boundary must satisfy every shape it
-touches. On a genuine tie between two adjacent shapes for one boundary, take
-the stricter shape: engine over accelerator, worker over engine. A boundary
-that fits none is not designed yet.
-
-Do not cross an engine or worker boundary inside per-source, per-record,
-per-line, per-event, or per-callback loops unless a user-visible benchmark
-proves the cost is acceptable, and do not call user Python from a native hot
-loop. Prefer plans, batches, buffers, and protocol messages. Release the
-interpreter lock during heavy native work that touches no Python objects.
-
-Keep native logic in a core with no Python-binding dependency; keep the
-binding thin and separate. The base package must install, import, and run
-without native code unless an ADR explicitly changes that policy; do not split
-native artifacts into separate user-facing distributions without documenting
-the trigger.
+Do not duplicate the accelerator import pattern, CI matrix, or native change
+checklists here. Keep those details in ADR 0002 and ADR 0003 so agents and
+reviewers have one source of truth.
 
 ### Pure Python / Rust Accelerator Compatibility
 
-This project is Python-first. The pure Python implementation is the reference
-implementation. Rust is an optional accelerator and must not redefine public
-behavior.
+The pure Python implementation is the semantic source of truth. Rust may make
+agentgrep faster, but it must not make agentgrep less Pythonic, less portable,
+less tested, or less predictable.
 
-Required engineering policy:
-
-- Implement every public API in pure Python before adding Rust acceleration.
-- Treat the Python implementation as the semantic source of truth.
-- Keep Rust acceleration optional. The package must import, install, and pass
-  tests without the Rust extension.
-- Do not expose public Rust-only functions, classes, attributes, argument
-  forms, return shapes, or behaviors.
-- Run the same behavioral tests against both the pure Python path and the
-  Rust-accelerated path.
-- Preserve Python duck typing. If Python accepts an iterable, mapping,
-  sequence, path-like object, buffer-like object, subclass, or file-like
-  object, Rust must not narrow that contract.
-- Preserve observable behavior: return values, return types where public,
-  exceptions, mutation, ordering, equality, hashing, warnings, serialization,
-  context-manager behavior, and async behavior.
-- Rust-specific tests are allowed, but they do not replace shared
-  compatibility tests.
-- Public documentation and type hints describe the Python API, not Rust
-  internals.
-- `unsafe` Rust must be minimal, justified with a nearby `SAFETY:` comment,
-  and covered by relevant tests.
-
-Import and fallback rule:
-
-```python
-from ._module_py import normalize, parse
-
-_HAS_RUST_ACCELERATOR = False
-
-try:
-    from ._native import normalize as normalize
-    from ._native import parse as parse
-except ImportError:
-    pass
-else:
-    _HAS_RUST_ACCELERATOR = True
-```
-
-Do not use broad fallback in normal imports:
-
-```python
-# Avoid: this can hide real defects in the Rust extension.
-try:
-    from ._native import parse
-except Exception:
-    from ._module_py import parse
-```
-
-Tests may deliberately fail on unexpected Rust import errors so native defects
-are not silently masked.
-
-Compatibility test requirement: each accelerated API must have shared
-behavioral tests that run against both implementations. Those tests must
-include normal cases, empty inputs, boundary values, invalid inputs, subclass
-or duck-typed inputs where relevant, mutation and aliasing behavior, repeated
-calls, large inputs, Unicode or binary edge cases, and error paths.
-
-CI must exercise both modes:
-
-```text
-Python-only job:
-  - install without the Rust extension or force the Python fallback
-  - run the full shared behavioral test suite
-
-Rust-enabled job:
-  - build/install the Rust extension
-  - run the same shared behavioral test suite
-  - run Rust-specific tests where applicable
-```
-
-A green Rust-enabled job does not compensate for a broken Python-only job.
-
-Before merging a change that adds or modifies Rust acceleration, confirm:
-
-```text
-[ ] Public behavior exists first in pure Python.
-[ ] Shared tests cover the Python behavior.
-[ ] The same tests pass with Rust enabled.
-[ ] The package imports and runs without Rust.
-[ ] Rust exposes no additional public API.
-[ ] Error behavior matches the Python implementation.
-[ ] Duck-typed inputs remain supported.
-[ ] Type hints and documentation remain accurate.
-[ ] Benchmarks or a clear performance rationale justify the accelerator.
-[ ] Unsafe Rust, if present, is documented and reviewed.
-```
-
-Final rule: Rust may make agentgrep faster. Rust must not make it less
-Pythonic, less portable, less tested, or less predictable.
+Use ADR 0002 for the full accelerator compatibility policy: Python-first public
+behavior, optional Rust imports, shared Python/Rust behavioral tests, duck
+typing preservation, documentation/type-hint alignment, CI expectations, and
+`unsafe` review requirements.
 
 ## Development Environment
 
@@ -421,36 +316,73 @@ keep it scoped to a separate issue and use sanitized fixture-only payloads.
 
 ## Code Architecture
 
-agentgrep is a small surface — a single package with a CLI/TUI module and an MCP module that share the search engine:
+agentgrep is no longer a single-module surface. Treat this section as an
+operational source map, not as the architectural source of truth. Durable
+behavioral contracts belong in ADRs and focused contract docs.
 
 ```
 src/agentgrep/
-  __init__.py     # library, CLI, TUI — search engine and record types
-  __main__.py     # `python -m agentgrep` entry point
-  mcp.py          # FastMCP server, pydantic models, agentgrep-mcp entry
+  __init__.py       # public compatibility facade, record dataclasses, legacy helpers
+  __main__.py       # `python -m agentgrep` entry point
+  cli/              # argparse surface and text/JSON/NDJSON renderers
+  query/            # field registry, parser, AST, compiler, date helpers
+  events.py         # typed SearchEvent / FindEvent stream contracts
+  _engine/          # planning, matching, scanning, scheduling, runtime, profiling
+  mcp/              # FastMCP server, models, middleware, resources, prompts, tools
+  ui/               # Textual application
+  store_catalog.py  # store discovery/catalog helpers
+  stores.py         # typed store descriptors and availability metadata
+  ranking.py        # ranking helpers shared by engine/frontend surfaces
 ```
 
 ### Core Modules
 
-1. **Library + CLI** (`src/agentgrep/__init__.py`)
-   - Search engine across Codex, Claude Code, and Cursor stores
-   - `SearchRecord` / `FindRecord` dataclasses + serializers
-   - JSON envelope builder (`build_envelope`)
-   - Pydantic-aware serialization via `maybe_build_pydantic()` with a pydantic-free fallback
-   - Textual TUI (`run_ui`) for interactive browsing of normalized records
-   - `main()` console script entry point (`agentgrep`)
+1. **Compatibility facade** (`src/agentgrep/__init__.py`)
+   - Public compatibility exports and legacy helper implementations while the
+     split modules continue to settle
+   - `SearchRecord` / `FindRecord` dataclasses and serialization-compatible
+     payload shapes
+   - Backward-compatible entry points for CLI, TUI, and JSON output helpers
 
 2. **`python -m` entry** (`src/agentgrep/__main__.py`)
    - Thin wrapper so `python -m agentgrep` works alongside the console script
 
-3. **MCP server** (`src/agentgrep/mcp.py`)
-   - Builds the FastMCP server (`build_mcp_server`)
-   - Pydantic models for every tool input/output (`SearchToolQuery`, `SearchToolResponse`, `FindToolQuery`, `FindToolResponse`, `SearchRecordModel`, `FindRecordModel`, `SourceRecordModel`, `BackendAvailabilityModel`, `CapabilitiesModel`, …)
-   - `main()` console script entry point (`agentgrep-mcp`)
+3. **CLI surface** (`src/agentgrep/cli/`)
+   - Argument parsing and output rendering for `agentgrep`
+   - JSON envelope construction, NDJSON/event rendering, and
+     pydantic-aware serialization with a pydantic-free fallback path
+
+4. **Query language** (`src/agentgrep/query/`)
+   - Search field registry, AST, parser, compiler, and date matching helpers
+   - Keep query semantics frontend-neutral; CLI and MCP should consume the
+     same compiled request/plan vocabulary
+
+5. **Execution engine** (`src/agentgrep/_engine/`)
+   - Query planning, matching, source scanning, scheduling, runtime orchestration,
+     and profiling
+   - ADR 0004 owns the planning/execution/result-stream architecture
+
+6. **MCP server** (`src/agentgrep/mcp/`)
+   - FastMCP assembly, middleware, input/output models, resources, prompts, and
+     tools
+   - Pydantic models adapt public contracts for MCP schemas; they do not own
+     search semantics
+
+7. **TUI** (`src/agentgrep/ui/`)
+   - Textual application for interactive browsing of normalized records
+   - Keep blocking discovery, parsing, and ranking work behind the execution
+     engine rather than on the UI event loop
 
 ### Backend availability
 
-agentgrep is opportunistic about its dependencies. `pydantic`, `textual`, and `fastmcp` are declared, but the search core also runs without them — the JSON path uses a typed-dict fallback so a CLI invocation works even when pydantic is unavailable. When adding code that imports an optional dependency, keep the fallback path intact and covered by a test (see `test_json_output_falls_back_without_pydantic` for the pattern).
+agentgrep is opportunistic about its dependencies. `pydantic`, `textual`, and
+`fastmcp` are declared, but the CLI JSON path must keep its pydantic-free
+fallback so basic search output remains available when Pydantic cannot be
+imported. Treat Pydantic as a schema, validation, and adapter layer at explicit
+boundaries; do not make Pydantic-only model behavior the semantic source of
+truth for CLI/MCP/search contracts. When adding code that imports an optional
+dependency, keep the fallback path intact and covered by a test (see
+`test_json_output_falls_back_without_pydantic` for the pattern).
 
 ## Testing Strategy
 
