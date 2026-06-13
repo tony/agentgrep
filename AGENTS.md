@@ -169,16 +169,37 @@ just start-docs
 just design-docs
 ```
 
-### Required Pre-commit Gate
+### Focused Local Checks
 
-Before every commit, run the full repository gate:
+Use focused checks while iterating, then run the completion gate before calling
+the branch done.
+
+Recommended focused checks:
+
+- Docs-only AGENTS/ADR edits: `git diff --check` and `just build-docs`.
+- Python implementation edits: `uv run ruff check .`, `uv run ty check`, and
+  the touched pytest files or node ids.
+- CLI/MCP/query contract edits: add the relevant CLI, MCP, query, event-stream,
+  and documentation tests that prove the public behavior.
+- Formatting-only edits: `uv run ruff format .` and `git diff --check`.
+
+Focused checks are local feedback. They are not a substitute for the completion
+gate when reporting that a branch is ready.
+
+### Required Completion Gate
+
+Before describing code as complete, working, PR-ready, merge-ready, or
+release-ready, run the full repository gate:
 
 ```console
 $ rm -rf docs/_build; uv run ruff check . --fix --show-fixes; uv run ruff format .; uv run ty check; uv run py.test --reruns 0 -vvv; just build-docs;
 ```
 
-Do not commit until that command exits successfully. If it fails, fix the
-failure and rerun the full command rather than committing from partial checks.
+Do not claim completion until that command exits successfully. If it fails, fix
+the failure and rerun the full command rather than relying on partial checks.
+If an intermediate commit uses only focused checks, state that clearly in the
+commit or PR context and run the full gate before the branch is presented as
+done.
 
 ### Profiling and Benchmarking
 
@@ -390,7 +411,11 @@ agentgrep uses pytest with `--doctest-modules` enabled by default (`testpaths = 
 
 ### Testing Guidelines
 
-1. **Use functional tests only**: Write tests as standalone functions, not classes. Avoid `class TestFoo:` groupings — use descriptive function names and file organization instead.
+1. **Use functional tests by default**: Write tests as standalone functions,
+   not classes. Avoid `class TestFoo:` groupings for namespacing, and do not
+   reintroduce `unittest.TestCase`. For stateful engine/driver behavior, use
+   fixtures, typed case helpers, and parametrized tables when a flat function
+   would obscure the state machine or contract matrix.
 
 2. **Use existing fixtures over mocks**
    - Use fixtures from `conftest.py` instead of `monkeypatch` and `MagicMock` when available
@@ -440,7 +465,10 @@ Key highlights:
   current ruff config does not flag function-local imports (`PLC` is
   not in `select`); if it is ever enabled, add the relevant paths to
   `per-file-ignores`. Pattern follows CPython's own
-  `Lib/importlib/__init__.py`.
+  `Lib/importlib/__init__.py`. Bounded introspection subcommands, such
+  as future `query fields` or `query explain` commands, may import the
+  query registry and planner because their purpose is introspection; keep
+  the root help path cold.
 
 ### Docstrings
 
