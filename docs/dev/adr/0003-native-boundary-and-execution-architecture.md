@@ -42,6 +42,11 @@ three native integration shapes for the exceptions: **accelerator**,
 shape before code is written. The assigned shape fixes the boundary rules,
 test obligations, and governing ADR.
 
+This ADR is the canonical home for native-boundary classification, engine and
+worker obligations, packaging guidance, and the native change record.
+Always-loaded agent instructions may summarize the default posture, but they
+must point here instead of maintaining a second copy of the ladder or checklist.
+
 ### Default rule: no native code until measurement proves otherwise
 
 Native code is not added because a path might be hot, because Rust is
