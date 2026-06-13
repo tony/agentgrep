@@ -191,14 +191,17 @@ state, then expose that state through the frontend response shape.
     was examined.
 
   `bounded`
-  : The run intentionally stopped at a documented bound, such as a page limit,
-    source-local bounded scan, answer-now request, or configured result cap.
-    More records may exist outside the examined bound.
+  : The run intentionally stopped at a documented semantic bound, such as a
+    requested result/page limit, source-local bounded scan, answer-now request,
+    or configured result cap. A normal paginated response that emits a complete
+    page and a usable `next_cursor` is `bounded`, not `truncated`. More records
+    may exist outside the examined bound.
 
   `truncated`
   : The sink stopped emitting because of an output budget, byte budget, tool
-    response budget, page size, or client-imposed limit. More matching records
-    are known or likely to exist.
+    response budget, or client-imposed response limit before it could deliver
+    the requested page/envelope. More matching records are known or likely to
+    exist, and cursor continuation may be unavailable or unreliable.
 
   `cancelled`
   : The caller, terminal user, TUI, MCP client, timeout, or replacement search
