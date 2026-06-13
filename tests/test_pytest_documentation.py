@@ -1188,3 +1188,23 @@ def test_justfile_recipe_collector_and_doctest_evaluator(
         assert case.expected_message in diagnostic
     if case.expected_status is EvaluationStatus.PASSED:
         assert result.returncode == 0
+
+
+def test_fastmcp_config_collector_yields_malformed_json_for_evaluation(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Malformed fastmcp.json is collected so the evaluator can fail it (not skipped)."""
+    config = tmp_path / "fastmcp.json"
+    config.write_text("{ not valid json ", encoding="utf-8")
+
+    examples = collect_examples(
+        [config],
+        collectors=[FastMCPConfigCollector()],
+        project_root=tmp_path,
+    )
+
+    assert len(examples) == 1
+    result = FastMCPConfigEvaluator(project_root=tmp_path).evaluate(examples[0])
+    assert result.status is EvaluationStatus.FAILED
+    assert result.failure_kind is EvaluationFailureKind.CONFIG_INVALID
+    assert "invalid JSON" in result.message

@@ -5,7 +5,6 @@ from __future__ import annotations
 import ast
 import dataclasses
 import fnmatch
-import json
 import re
 import shlex
 import textwrap
@@ -253,10 +252,6 @@ class FastMCPConfigCollector:
     def collect(self, document: ExampleDocument) -> t.Iterable[DocumentationExample]:
         """Collect one example from a FastMCP config file."""
         if "fastmcp.json" not in document.path.name:
-            return
-        try:
-            json.loads(document.text)
-        except json.JSONDecodeError:
             return
         location = ExampleLocation(
             path=document.path,
