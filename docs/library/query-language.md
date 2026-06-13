@@ -221,11 +221,8 @@ into a totally different command.
 agentgrep rejects this argv shape at parse time with a clear
 error and two workarounds:
 
-```{code-block} console
+```console
 $ agentgrep find -agent:claude
-```
-
-```text
 agentgrep: error: argument '-agent:claude' looks like a field
 predicate but argparse parses the leading '-' as combined short
 options. Use one of:
