@@ -169,6 +169,102 @@ APIs until implemented and documented.
   source-task counts, subprocess families, bytes/counts, cancellation, and
   output backpressure without prompt text, raw argv, or local absolute paths.
 
+## Result contract
+
+The result contract must answer the user-facing questions raised by
+[#55](https://github.com/tony/agentgrep/issues/55): did the run finish, was it
+bounded, is there another page, and how can a caller inspect one result without
+guessing at source paths?
+
+Record emission alone is not a sufficient contract. Search and find collectors
+must consume lifecycle events, counters, cancellation, warnings, and finish
+state, then expose that state through the frontend response shape.
+
+### Completion vocabulary
+
+`CompletionState`
+: The terminal run state exposed by JSON, NDJSON final summaries, MCP tool
+  responses, and TUI completion chrome.
+
+  `complete`
+  : Every planned source and batch that could affect the requested result set
+    was examined.
+
+  `bounded`
+  : The run intentionally stopped at a documented bound, such as a page limit,
+    source-local bounded scan, answer-now request, or configured result cap.
+    More records may exist outside the examined bound.
+
+  `truncated`
+  : The sink stopped emitting because of an output budget, byte budget, tool
+    response budget, page size, or client-imposed limit. More matching records
+    are known or likely to exist.
+
+  `cancelled`
+  : The caller, terminal user, TUI, MCP client, timeout, or replacement search
+    cancelled the run before normal completion.
+
+  `approximate`
+  : The run used an accepted approximation whose assumptions can affect
+    completeness, such as mtime-as-recency or bounded newest-first scanning
+    across stores with shared dedupe keys.
+
+  `failed`
+  : The run stopped because of an unrecovered error. Partial results may be
+    present only if the envelope marks them as partial and includes a
+    diagnostic.
+
+`CompletionState` values are compatibility-sensitive. Additive values require
+tests for every sink that renders or serializes completion state.
+
+### Envelope fields
+
+`ResponseEnvelope`
+: The default machine-readable response shape for JSON and MCP collection. A
+  streaming NDJSON sink may emit events incrementally, but it must finish with
+  an equivalent lifecycle summary.
+
+Minimum envelope fields:
+
+- `schema_version`: response schema version.
+- `query`: normalized query/request summary, excluding private text that is not
+  already part of the user's command input.
+- `stats`: counts for sources discovered, eligible, searched, skipped,
+  cancelled, records seen, matches seen, records emitted, dedupe drops, elapsed
+  time, and the active limit/page size.
+- `page`: page metadata with `limit`, emitted count, and opaque `next_cursor`
+  when another page can be requested.
+- `completion`: `CompletionState` plus optional reason, source/budget that
+  caused truncation, cancellation point, and approximation notes.
+- `diagnostics`: privacy-safe warnings and errors, including unsupported
+  pushdown, malformed stores, unavailable optional tools, timeout/cancellation,
+  and source-level failures.
+- `results`: emitted records in sink-specific record models.
+
+`PageState`
+: The pagination contract. `next_cursor` is opaque, stable only for the
+  documented cursor lifetime, and must carry enough planner/execution state to
+  resume without callers reconstructing source paths. Absence of `next_cursor`
+  means there is no supported next-page request for that envelope.
+
+`Diagnostic`
+: A privacy-safe warning or error record with a stable code, severity, message,
+  optional source/store classifier, and optional remediation. Diagnostics must
+  not include prompt text, raw argv, secret values, or local absolute paths.
+
+`RecordRef`
+: An opaque handle for result drilldown. It identifies the emitted record or
+  source-scoped record position through a stable, private representation chosen
+  by agentgrep. Callers use the handle with an inspect/drilldown operation
+  instead of building tool calls from local file paths, adapter ids, or record
+  offsets. Source path, adapter id, and line/offset metadata may be included as
+  display or debug metadata, but they are not the primary public drilldown
+  input.
+
+MCP, JSON, and NDJSON collectors must preserve these fields by default.
+Collecting only `RecordEmitted` events and discarding started, progress,
+warning, cancellation, and finished events is not compliant with this ADR.
+
 ## Execution rules
 
 Discovery must be planned. A query that can be answered from source metadata
@@ -257,10 +353,14 @@ CLI output modes are sinks:
   arrive.
 - Optional answer-early behavior in interactive terminals.
 
-MCP tools are sinks over the same event stream. A tool may collect events into
-the existing response models, but the collection must happen through a
-non-blocking wrapper so the MCP server event loop is not blocked by local
-store scans.
+MCP tools are sinks over the same event stream. A tool must collect lifecycle
+events into response envelopes that expose stats, page state, completion state,
+diagnostics, emitted records, and opaque drilldown handles by default. The
+collection must happen through a non-blocking wrapper so the MCP server event
+loop is not blocked by local store scans. MCP collectors must consume started,
+progress, warning/cancellation when present, emitted-record, and finished
+events; collecting only emitted records hides truncation and is not compliant
+with this ADR.
 
 ## Observability and benchmarks
 

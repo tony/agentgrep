@@ -37,6 +37,12 @@ shared compatibility tests.
 
 The package must remain usable without the Rust extension.
 
+This ADR is the canonical home for accelerator import/fallback rules, shared
+Python/Rust compatibility-test expectations, the Python-only and Rust-enabled
+CI matrix, and the accelerator pull request checklist. Always-loaded agent
+instructions may point here, but they must not maintain a second copy of those
+mechanics.
+
 ## Scope
 
 This ADR applies to:
@@ -349,11 +355,12 @@ Public Rust-only names must not be re-exported from the public module.
 
 ## Pull request checklist
 
-A pull request that adds or modifies Rust acceleration must confirm:
+A pull request that adds or modifies Rust acceleration must confirm this
+implementation checklist:
 
 ```text
 [ ] Public behavior exists first in pure Python.
-[ ] Shared tests cover the Python implementation.
+[ ] Shared tests cover the Python behavior.
 [ ] The same shared tests pass with Rust enabled.
 [ ] The package imports and runs without Rust.
 [ ] Rust exposes no extra public API.
