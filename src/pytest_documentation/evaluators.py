@@ -157,10 +157,11 @@ class ConsoleCommandEvaluator:
                 message=message,
             )
         completed = execution.completed
-        passed = completed.returncode == 0 or _expected_output_matches(
-            expected_output,
-            completed.stdout + completed.stderr,
-        )
+        combined_output = completed.stdout + completed.stderr
+        if any("[...]" not in line for line in expected_output):
+            passed = _expected_output_matches(expected_output, combined_output)
+        else:
+            passed = completed.returncode == 0
         if not passed and completed.returncode == 1 and execution.accept_empty_result:
             return EvaluationResult.passed_result(
                 example,

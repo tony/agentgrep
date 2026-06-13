@@ -1208,3 +1208,53 @@ def test_fastmcp_config_collector_yields_malformed_json_for_evaluation(
     assert result.status is EvaluationStatus.FAILED
     assert result.failure_kind is EvaluationFailureKind.CONFIG_INVALID
     assert "invalid JSON" in result.message
+
+
+class ExpectedOutputCase(t.NamedTuple):
+    """Whether a successful console example passes given its documented output."""
+
+    test_id: str
+    documented_output: str
+    expected_passed: bool
+
+
+EXPECTED_OUTPUT_CASES: tuple[ExpectedOutputCase, ...] = (
+    ExpectedOutputCase(
+        test_id="matching-output-passes",
+        documented_output="right",
+        expected_passed=True,
+    ),
+    ExpectedOutputCase(
+        test_id="wrong-output-fails-despite-exit-zero",
+        documented_output="wrong",
+        expected_passed=False,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    EXPECTED_OUTPUT_CASES,
+    ids=[case.test_id for case in EXPECTED_OUTPUT_CASES],
+)
+def test_console_evaluator_checks_expected_output_on_success(
+    tmp_path: pathlib.Path,
+    case: ExpectedOutputCase,
+) -> None:
+    """Documented console output must match even when the command exits 0."""
+    path = tmp_path / "docs" / "example.md"
+    path.parent.mkdir()
+    path.write_text(
+        f"```console\n$ printf right\n{case.documented_output}\n```\n",
+        encoding="utf-8",
+    )
+    example = collect_examples(
+        [path],
+        collectors=[MarkdownFenceCollector(languages={"console"})],
+        project_root=tmp_path,
+    )[0]
+    result = ConsoleCommandEvaluator(sandbox=TempHomeSandbox(project_root=tmp_path)).evaluate(
+        example
+    )
+
+    assert result.passed is case.expected_passed
