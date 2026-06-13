@@ -181,7 +181,7 @@ class _GrepLimitAction(argparse.Action):
         values: object,
         option_string: str | None = None,
     ) -> None:
-        """Record a grep result cap and reject conflicting alias repeats."""
+        """Record a grep result cap; error when two cap aliases disagree."""
         spelling = option_string or "--limit"
         spelling_dest = f"_{self.dest}_option_string"
         value = t.cast("int", values)
