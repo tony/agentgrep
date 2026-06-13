@@ -28,9 +28,10 @@ Greenfield and policy reviews in
 [#58](https://github.com/tony/agentgrep/issues/58), and
 [#59](https://github.com/tony/agentgrep/issues/59) converge on the same
 direction: keep AGENTS.md operational, keep planning/execution in ADR 0004, and
-give the CLI/MCP surface its own durable contract. ADR 0005 is reserved by the
-local-insights report work in the stacked branch; this ADR uses the next public
-number so the surface contract can land independently.
+give the CLI/MCP surface its own durable contract. ADR 0005 defines the local
+insights report and model-backed enrichment architecture; this ADR follows it
+with the public surface contract that those reports and the core search tools
+share.
 
 ## Decision
 
@@ -209,11 +210,9 @@ actions.
 
 ADR 0001 owns storage-version evidence and source compatibility. ADR 0004 owns
 planning, execution, events, envelopes, completion, pagination, diagnostics, and
-record references. This ADR owns how those contracts appear in public CLI and
-MCP surfaces.
-
-The local-insights ADR 0005 work should reuse ADR 0004 envelope vocabulary and
-this ADR's public-surface vocabulary after it is rebased onto this branch.
+record references. ADR 0005 owns local insights reports and model-backed
+enrichment. This ADR owns how those contracts appear in public CLI and MCP
+surfaces.
 
 ## Final position
 
