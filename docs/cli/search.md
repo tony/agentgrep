@@ -175,4 +175,3 @@ Progress always writes to stderr, so it never collides with stdout —
 `search` has no separate runtime-error exit code — unlike {ref}`grep
 <cli-grep>`, whose `2` covers invalid-regex and unreadable-store errors.
 Malformed flags are still rejected by argparse before the search starts.
-```

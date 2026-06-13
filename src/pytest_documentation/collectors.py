@@ -98,9 +98,6 @@ class MarkdownFenceCollector:
             match = _FENCE_RE.match(line)
             if match is not None:
                 if open_fence is None:
-                    if not self._language_allowed(match.group("info")):
-                        index = next_index
-                        continue
                     open_fence = _OpenFence(
                         prefix=match.group("prefix"),
                         indent=match.group("indent"),
@@ -121,13 +118,6 @@ class MarkdownFenceCollector:
             location = f"{document.display_path}:{open_fence.line_number}"
             message = f"unclosed Markdown fence at {location}"
             raise ValueError(message)
-
-    def _language_allowed(self, info: str) -> bool:
-        """Return whether a fence info string should be collected."""
-        if self.languages is None:
-            return True
-        parsed = _parse_info(info)
-        return parsed.language.lower() in self.languages
 
     def _make_example(
         self,

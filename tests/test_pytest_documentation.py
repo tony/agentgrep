@@ -188,6 +188,56 @@ def test_markdown_fence_collector_does_not_collect_eval_rst_as_console(
     assert examples == []
 
 
+class NestedFenceCase(t.NamedTuple):
+    """Console sources expected from a document with an excluded outer fence."""
+
+    test_id: str
+    text: str
+    expected_sources: tuple[str, ...]
+
+
+NESTED_FENCE_CASES: tuple[NestedFenceCase, ...] = (
+    NestedFenceCase(
+        test_id="literal-console-in-backtick-demo",
+        text="````markdown\n```console\n$ should-not-run\n```\n````\n",
+        expected_sources=(),
+    ),
+    NestedFenceCase(
+        test_id="literal-console-in-tilde-demo",
+        text="~~~markdown\n```console\n$ should-not-run\n```\n~~~\n",
+        expected_sources=(),
+    ),
+    NestedFenceCase(
+        test_id="real-top-level-console-still-collected",
+        text="```console\n$ agentgrep find foo\n```\n",
+        expected_sources=("$ agentgrep find foo\n",),
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    NESTED_FENCE_CASES,
+    ids=[case.test_id for case in NESTED_FENCE_CASES],
+)
+def test_markdown_fence_collector_skips_console_nested_in_excluded_fence(
+    tmp_path: pathlib.Path,
+    case: NestedFenceCase,
+) -> None:
+    """A literal console fence inside an excluded outer fence is not collected."""
+    path = tmp_path / "docs" / "example.md"
+    path.parent.mkdir()
+    path.write_text(case.text, encoding="utf-8")
+
+    examples = collect_examples(
+        [path],
+        collectors=[MarkdownFenceCollector(languages={"console"})],
+        project_root=tmp_path,
+    )
+
+    assert tuple(example.source for example in examples) == case.expected_sources
+
+
 def test_python_page_collector_combines_library_examples_with_line_padding(
     tmp_path: pathlib.Path,
 ) -> None:
