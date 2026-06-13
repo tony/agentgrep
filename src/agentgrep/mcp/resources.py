@@ -84,6 +84,7 @@ def build_capabilities() -> CapabilitiesModel:
             "list_stores",
             "get_store_descriptor",
             "inspect_record_sample",
+            "inspect_result",
             "validate_query",
         ],
         resources=[

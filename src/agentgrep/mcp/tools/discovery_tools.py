@@ -7,24 +7,31 @@ import collections
 import pathlib
 import typing as t
 
+from fastmcp.exceptions import ToolError
 from pydantic import Field
 
+from agentgrep import events as ag_events
+from agentgrep.mcp import refs
 from agentgrep.mcp._library import (
     READONLY_TAGS,
     AgentSelector,
+    FindRecordLike,
     agentgrep,
     normalize_agent_selection,
 )
 from agentgrep.mcp.models import (
+    DiagnosticModel,
     DiscoverySummaryRequest,
     DiscoverySummaryResponse,
     FilterSourcesRequest,
     FindRecordModel,
     FindRequestModel,
-    FindToolQuery,
     FindToolResponse,
     ListSourcesRequest,
     ListSourcesResponse,
+    PageInfoModel,
+    ResultStatsModel,
+    RunStatusModel,
     SourceRecordModel,
 )
 
@@ -32,21 +39,97 @@ if t.TYPE_CHECKING:
     from fastmcp import FastMCP
 
 
+def _page_status(next_cursor: str | None) -> RunStatusModel:
+    """Return the status for a normal MCP result page."""
+    if next_cursor is None:
+        return RunStatusModel(state="complete")
+    return RunStatusModel(state="bounded", reason="page_limit")
+
+
+def _page_diagnostics(next_cursor: str | None) -> list[DiagnosticModel]:
+    """Return diagnostics for a normal MCP result page."""
+    if next_cursor is None:
+        return []
+    return [
+        DiagnosticModel(
+            code="page_limit",
+            message="More records are available via page.next_cursor.",
+        )
+    ]
+
+
+def _request_from_cursor(request: FindRequestModel) -> tuple[FindRequestModel, int]:
+    """Return the effective request and offset for a find page."""
+    if request.cursor is None:
+        return request, 0
+    try:
+        cursor = refs.parse_find_cursor(request.cursor)
+    except refs.McpTokenError as exc:
+        raise ToolError(str(exc)) from exc
+    return (
+        FindRequestModel(
+            pattern=cursor.pattern,
+            agent=cursor.agent,
+            limit=cursor.limit,
+            cursor=request.cursor,
+        ),
+        cursor.offset,
+    )
+
+
 def _find_sync(request: FindRequestModel) -> FindToolResponse:
     """Run the blocking find work and build a typed response."""
-    records = agentgrep.run_find_query(
+    effective_request, offset = _request_from_cursor(request)
+    page_limit = effective_request.limit
+    query_limit = None if page_limit is None else offset + page_limit + 1
+    records: list[FindRecordLike] = []
+    source_count = 0
+    matched = 0
+    for event in agentgrep.iter_find_events(
         pathlib.Path.home(),
-        normalize_agent_selection(request.agent),
-        pattern=request.pattern,
-        limit=request.limit,
-    )
+        normalize_agent_selection(effective_request.agent),
+        pattern=effective_request.pattern,
+        limit=query_limit,
+    ):
+        if isinstance(event, ag_events.FindStarted):
+            source_count = event.source_count
+        elif isinstance(event, ag_events.FindRecordEmitted):
+            records.append(t.cast("FindRecordLike", event.record))
+        elif isinstance(event, ag_events.FindFinished):
+            matched = max(matched, event.match_count)
+    if page_limit is None:
+        page_records = records[offset:]
+        next_cursor = None
+    else:
+        page_records = records[offset : offset + page_limit]
+        has_more = len(records) > offset + page_limit
+        next_cursor = (
+            refs.make_find_cursor(
+                offset=offset + len(page_records),
+                pattern=effective_request.pattern,
+                agent=effective_request.agent,
+                limit=page_limit,
+            )
+            if has_more
+            else None
+        )
+    matched = max(matched, len(records))
     return FindToolResponse(
-        query=FindToolQuery(
-            pattern=request.pattern,
-            agent=request.agent,
-            limit=request.limit,
+        request=effective_request,
+        stats=ResultStatsModel(
+            sources=source_count,
+            searched=source_count,
+            matched=matched,
+            emitted=len(page_records),
         ),
-        results=[FindRecordModel.from_record(record) for record in records],
+        page=PageInfoModel(
+            limit=page_limit,
+            count=len(page_records),
+            next_cursor=next_cursor,
+        ),
+        status=_page_status(next_cursor),
+        diagnostics=_page_diagnostics(next_cursor),
+        results=[FindRecordModel.from_record(record) for record in page_records],
     )
 
 
@@ -78,19 +161,12 @@ def _list_sources_sync(request: ListSourcesRequest) -> ListSourcesResponse:
 
 def _filter_sources_sync(request: FilterSourcesRequest) -> FindToolResponse:
     """Run the find pipeline with the requested pattern."""
-    records = agentgrep.run_find_query(
-        pathlib.Path.home(),
-        normalize_agent_selection(request.agent),
-        pattern=request.pattern,
-        limit=request.limit,
-    )
-    return FindToolResponse(
-        query=FindToolQuery(
+    return _find_sync(
+        FindRequestModel(
             pattern=request.pattern,
             agent=request.agent,
             limit=request.limit,
         ),
-        results=[FindRecordModel.from_record(record) for record in records],
     )
 
 
@@ -146,8 +222,15 @@ def register(mcp: FastMCP) -> None:
                 description="Maximum number of discovered sources to return.",
             ),
         ] = 50,
+        cursor: t.Annotated[
+            str | None,
+            Field(
+                default=None,
+                description="Opaque page cursor returned by a previous find response.",
+            ),
+        ] = None,
     ) -> FindToolResponse:
-        request = FindRequestModel(pattern=pattern, agent=agent, limit=limit)
+        request = FindRequestModel(pattern=pattern, agent=agent, limit=limit, cursor=cursor)
         return await asyncio.to_thread(_find_sync, request)
 
     _ = find_tool

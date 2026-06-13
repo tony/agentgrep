@@ -14,7 +14,7 @@ agentgrep's tools are read-only. They return structured Pydantic models and prot
 `scope="conversations"` for full conversation, assistant, tool, and
 event records, or `scope="all"` for both surfaces.
 
-**Returns:** query metadata plus normalized records with agent, store, adapter, path, text, title, role, timestamp, model, session ID, conversation ID, and metadata.
+**Returns:** request metadata, run status, result stats, page metadata, and normalized records with `ref`, agent, store, adapter, path, text, title, role, timestamp, model, session ID, conversation ID, and metadata. When `page.next_cursor` is present, pass it back as `cursor` to continue the same search without rebuilding the request.
 
 **Example:**
 
@@ -52,7 +52,7 @@ event records, or `scope="all"` for both surfaces.
 
 **Use when** you need to inspect which stores, session files, and databases agentgrep can read.
 
-**Returns:** query metadata plus source records with agent, store, adapter, protected path, path kind, and metadata.
+**Returns:** request metadata, run status, result stats, page metadata, and source records with `ref`, agent, store, adapter, protected path, path kind, and metadata. When `page.next_cursor` is present, pass it back as `cursor` to continue the same discovery scan.
 
 **Example:**
 
@@ -80,8 +80,10 @@ optional path-kind, source-kind, and coverage filters. By default this
 matches the default-search surface; pass `include_non_default=true` or
 set `coverage_filter` to inspect inventory-only stores such as Codex
 SQLite DBs or Claude session memory. Each returned source includes
-`version_detection`, which records the strategy and evidence agentgrep
-used to identify the app/data version for that concrete file or DB.
+`searchable`, `search_by_default`, `searchable_reason`, `inspectable`,
+and `version_detection`, which records the strategy and evidence
+agentgrep used to identify the app/data version for that concrete file
+or DB.
 
 ```{fastmcp-tool-input} list_sources
 ```
@@ -130,6 +132,14 @@ used to identify the app/data version for that concrete file or DB.
 **Use when** you want a few raw records from one adapter+path to validate parser output or discover schema variations.
 
 ```{fastmcp-tool-input} inspect_record_sample
+```
+
+```{fastmcp-tool} inspect_result
+```
+
+**Use when** you have a `ref` returned by `search` or `find` and need to inspect the matching result or sample records from that source without reconstructing local paths.
+
+```{fastmcp-tool-input} inspect_result
 ```
 
 ## Diagnostics

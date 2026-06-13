@@ -9,6 +9,7 @@ import os
 import pathlib
 import typing as t
 
+import pytest
 from fastmcp import Client
 
 from agentgrep import mcp as _agentgrep_mcp_module
@@ -16,7 +17,6 @@ from agentgrep import mcp as _agentgrep_mcp_module
 if t.TYPE_CHECKING:
     import collections.abc as cabc
 
-    import pytest
     from fastmcp import FastMCP
 
 
@@ -28,8 +28,8 @@ class SearchRecordLike(t.Protocol):
     agent: str
 
 
-class SearchQueryLike(t.Protocol):
-    """Structural type for search query echoes."""
+class SearchRequestLike(t.Protocol):
+    """Structural type for search request echoes."""
 
     terms: list[str]
     scope: str
@@ -39,7 +39,7 @@ class SearchQueryLike(t.Protocol):
 class SearchToolDataLike(t.Protocol):
     """Structural type for search tool responses."""
 
-    query: SearchQueryLike
+    request: SearchRequestLike
     results: list[SearchRecordLike]
 
 
@@ -54,6 +54,42 @@ class FindToolDataLike(t.Protocol):
     """Structural type for find tool responses."""
 
     results: list[FindRecordLike]
+
+
+class McpResultShapeCase(t.NamedTuple):
+    """Parametrized case for common search/find result payload fields."""
+
+    test_id: str
+    tool_name: t.Literal["search", "find"]
+    arguments: dict[str, t.Any]
+    expected_request: dict[str, t.Any]
+
+
+RESULT_SHAPE_CASES = [
+    McpResultShapeCase(
+        test_id="search",
+        tool_name="search",
+        arguments={
+            "terms": ["serenity"],
+            "agent": "codex",
+            "scope": "prompts",
+            "limit": 1,
+        },
+        expected_request={
+            "terms": ["serenity"],
+            "agent": "codex",
+            "scope": "prompts",
+            "case_sensitive": False,
+            "limit": 1,
+        },
+    ),
+    McpResultShapeCase(
+        test_id="find",
+        tool_name="find",
+        arguments={"pattern": "codex", "agent": "codex", "limit": 1},
+        expected_request={"pattern": "codex", "agent": "codex", "limit": 1},
+    ),
+]
 
 
 class ResourceTextLike(t.Protocol):
@@ -103,6 +139,62 @@ def write_jsonl(path: pathlib.Path, rows: cabc.Sequence[object]) -> None:
     _ = path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
 
 
+def write_codex_prompt_session(
+    path: pathlib.Path,
+    *,
+    session_id: str,
+    timestamp: str,
+    text: str,
+) -> None:
+    """Write a minimal Codex session containing one user prompt."""
+    write_jsonl(
+        path,
+        [
+            {
+                "type": "session_meta",
+                "payload": {"id": session_id, "model_provider": "openai"},
+            },
+            {
+                "timestamp": timestamp,
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": text}],
+                },
+            },
+        ],
+    )
+
+
+def write_mcp_search_fixture(home: pathlib.Path) -> None:
+    """Create enough Codex prompt data for bounded search pages."""
+    sessions = home / ".codex" / "sessions" / "2026" / "01" / "01"
+    write_codex_prompt_session(
+        sessions / "new.jsonl",
+        session_id="session-new",
+        timestamp="2026-01-02T00:00:00Z",
+        text="serenity new",
+    )
+    write_codex_prompt_session(
+        sessions / "old.jsonl",
+        session_id="session-old",
+        timestamp="2026-01-01T00:00:00Z",
+        text="serenity old",
+    )
+
+
+def write_mcp_find_fixture(home: pathlib.Path) -> None:
+    """Create enough Codex sources for bounded find pages."""
+    history_json = home / ".codex" / "history.json"
+    history_json.parent.mkdir(parents=True, exist_ok=True)
+    _ = history_json.write_text("[]", encoding="utf-8")
+    write_jsonl(
+        home / ".codex" / "history.jsonl",
+        [{"session_id": "history-jsonl", "ts": 1_700_000_000, "text": "codex history"}],
+    )
+
+
 def extract_resource_text(contents: object) -> str:
     """Extract text from a FastMCP resource read response."""
     items = t.cast("cabc.Sequence[ResourceTextLike]", contents)
@@ -146,6 +238,7 @@ async def test_mcp_lists_tools_resources_prompts_and_templates() -> None:
         "list_stores",
         "get_store_descriptor",
         "inspect_record_sample",
+        "inspect_result",
         "validate_query",
         "recent_sessions",
     }
@@ -197,9 +290,9 @@ async def test_mcp_search_tool_returns_full_prompt(
         )
 
     data = t.cast("SearchToolDataLike", result.data)
-    assert data.query.terms == ["serenity", "bliss"]
-    assert data.query.scope == "prompts"
-    assert data.query.agent == "codex"
+    assert data.request.terms == ["serenity", "bliss"]
+    assert data.request.scope == "prompts"
+    assert data.request.agent == "codex"
     assert len(data.results) == 1
     assert data.results[0].kind == "prompt"
     assert data.results[0].agent == "codex"
@@ -299,6 +392,128 @@ async def test_mcp_find_tool_and_sources_resource(
     source_payload = t.cast("list[dict[str, object]]", json.loads(source_text))
     assert source_payload
     assert all(row["agent"] == "cursor-ide" for row in source_payload)
+
+
+@pytest.mark.parametrize(
+    "case",
+    RESULT_SHAPE_CASES,
+    ids=[case.test_id for case in RESULT_SHAPE_CASES],
+)
+async def test_mcp_result_payload_exposes_page_status_stats_and_refs(
+    case: McpResultShapeCase,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``search`` and ``find`` expose a resumable result page shape."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    if case.tool_name == "search":
+        write_mcp_search_fixture(home)
+    else:
+        write_mcp_find_fixture(home)
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        result = await client.call_tool(case.tool_name, case.arguments)
+
+    data = tool_payload(result)
+    assert "query" not in data
+    for key, expected in case.expected_request.items():
+        assert data["request"][key] == expected
+    assert data["status"] == {"state": "bounded", "reason": "page_limit"}
+    assert data["page"]["limit"] == 1
+    assert data["page"]["count"] == 1
+    assert isinstance(data["page"]["next_cursor"], str)
+    assert data["stats"]["emitted"] == 1
+    assert data["stats"]["matched"] >= 2
+    assert data["stats"]["searched"] >= 2
+    assert data["results"][0]["ref"].startswith("agref1:")
+
+
+async def test_mcp_search_cursor_returns_next_page_without_duplicate(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A search cursor resumes without callers reconstructing the request."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    write_mcp_search_fixture(home)
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        first = await client.call_tool(
+            "search",
+            {"terms": ["serenity"], "agent": "codex", "scope": "prompts", "limit": 1},
+        )
+        first_data = tool_payload(first)
+        cursor = first_data["page"]["next_cursor"]
+        second = await client.call_tool("search", {"cursor": cursor})
+
+    second_data = tool_payload(second)
+    assert [row["text"] for row in first_data["results"]] == ["serenity new"]
+    assert [row["text"] for row in second_data["results"]] == ["serenity old"]
+    assert second_data["status"] == {"state": "complete", "reason": None}
+    assert second_data["page"]["next_cursor"] is None
+    assert second_data["request"]["terms"] == ["serenity"]
+
+
+async def test_mcp_inspect_result_uses_opaque_ref(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``inspect_result`` resolves an opaque result ref to source records."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    write_mcp_search_fixture(home)
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        search_result = await client.call_tool(
+            "search",
+            {"terms": ["serenity"], "agent": "codex", "scope": "prompts", "limit": 1},
+        )
+        ref = tool_payload(search_result)["results"][0]["ref"]
+        inspect_result = await client.call_tool("inspect_result", {"ref": ref})
+
+    data = tool_payload(inspect_result)
+    assert data["ref"] == ref
+    assert data["error_message"] is None
+    assert data["sample_count"] == 1
+    assert data["records"][0]["text"] == "serenity new"
+
+
+async def test_mcp_list_sources_exposes_searchability_metadata(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Source rows tell agents whether a store is searched or inspected."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    write_mcp_find_fixture(home)
+    state_db = home / ".codex" / "state_5.sqlite"
+    state_db.touch()
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        result = await client.call_tool(
+            "list_sources",
+            {"agent": "codex", "include_non_default": True},
+        )
+
+    data = tool_payload(result)
+    default_source = next(
+        source for source in data["sources"] if source["coverage"] == "default_search"
+    )
+    inspectable_source = next(
+        source for source in data["sources"] if source["coverage"] == "inspectable"
+    )
+    assert default_source["searchable"] is True
+    assert default_source["search_by_default"] is True
+    assert default_source["inspectable"] is True
+    assert inspectable_source["searchable"] is False
+    assert inspectable_source["search_by_default"] is False
+    assert inspectable_source["inspectable"] is True
+    assert inspectable_source["searchable_reason"]
 
 
 async def test_mcp_capabilities_resource_reports_read_only() -> None:
@@ -468,6 +683,7 @@ def test_mcp_instructions_carry_every_segment_header() -> None:
         "ANTI-TRIGGERS:",
         "search vs discovery:",
         "Defaults:",
+        "Result loop:",
         "Resources:",
         "Privacy:",
     ):

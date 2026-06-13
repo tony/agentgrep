@@ -16,16 +16,34 @@ FastMCP server factory, payload models, and MCP helpers.
 .. autoclass:: agentgrep.mcp.SourceRecordModel
    :members:
 
-.. autoclass:: agentgrep.mcp.SearchToolQuery
+.. autoclass:: agentgrep.mcp.SearchRequestModel
    :members:
 
 .. autoclass:: agentgrep.mcp.SearchToolResponse
    :members:
 
-.. autoclass:: agentgrep.mcp.FindToolQuery
+.. autoclass:: agentgrep.mcp.FindRequestModel
    :members:
 
 .. autoclass:: agentgrep.mcp.FindToolResponse
+   :members:
+
+.. autoclass:: agentgrep.mcp.ResultStatsModel
+   :members:
+
+.. autoclass:: agentgrep.mcp.PageInfoModel
+   :members:
+
+.. autoclass:: agentgrep.mcp.RunStatusModel
+   :members:
+
+.. autoclass:: agentgrep.mcp.DiagnosticModel
+   :members:
+
+.. autoclass:: agentgrep.mcp.InspectResultRequest
+   :members:
+
+.. autoclass:: agentgrep.mcp.InspectResultResponse
    :members:
 
 .. autoclass:: agentgrep.mcp.BackendAvailabilityModel
