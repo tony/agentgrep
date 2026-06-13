@@ -36,11 +36,20 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a21 (Yet to be released)
+## agentgrep 0.1.0a22 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a21 (2026-06-13)
+
+agentgrep 0.1.0a21 makes `--limit N` the canonical result cap for
+`grep`, keeping `-m` and `--max-count` as grep-family aliases, and
+teaches `path:` predicates to accept the current user's `~` and `~/...`
+home prefixes. It also fixes `find --print0` and `--absolute-path` to
+emit real filesystem paths for shell pipelines like `xargs -0`, instead
+of the privacy-collapsed `~` display paths they produced before.
 
 ### What's new
 
