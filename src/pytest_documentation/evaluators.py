@@ -12,7 +12,13 @@ import tempfile
 import traceback
 import typing as t
 
-from .core import DocumentationExample, EvaluationFailureKind, EvaluationResult, redact_text
+from .core import (
+    DocumentationExample,
+    EvaluationFailureKind,
+    EvaluationResult,
+    ExampleEvaluator,
+    redact_text,
+)
 from .sandbox import SandboxBackend, TempHomeSandbox
 
 
@@ -424,10 +430,7 @@ def _target_names(target: ast.expr) -> set[str]:
 
 def evaluate_many(
     examples: t.Iterable[DocumentationExample],
-    evaluator: ConsoleCommandEvaluator
-    | FastMCPConfigEvaluator
-    | PythonCodeEvaluator
-    | SphinxDoctestEvaluator,
+    evaluator: ExampleEvaluator,
 ) -> list[EvaluationResult]:
     """Evaluate many examples with one evaluator.
 
