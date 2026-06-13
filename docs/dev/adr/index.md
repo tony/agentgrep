@@ -12,5 +12,6 @@ multiple adapters or public payloads.
 0002-pure-python-rust-accelerator-module-compatibility-requirements
 0003-native-boundary-and-execution-architecture
 0004-headless-query-planning-and-non-blocking-execution
+0005-local-insights-reports-and-model-backed-enrichment
 0006-public-cli-mcp-surface-contract
 ```
