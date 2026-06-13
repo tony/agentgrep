@@ -25,6 +25,7 @@ from pytest_documentation import (
     collect_examples,
     redact_path,
 )
+from pytest_documentation.evaluators import _parse_console_source
 
 _REPO_ROOT = pathlib.Path(__file__).parents[1]
 
@@ -227,6 +228,58 @@ def test_literal_shell_evaluator_fails_unsupported_cli_option(tmp_path: pathlib.
     assert result.status is EvaluationStatus.FAILED
     assert result.failure_kind is EvaluationFailureKind.COMMAND_FAILED
     assert result.returncode == 7
+
+
+class ConsoleSourceCase(t.NamedTuple):
+    """Expected script / expected-output split for one console transcript."""
+
+    test_id: str
+    source: str
+    expected_script: str
+    expected_output: list[str]
+
+
+CONSOLE_SOURCE_CASES: tuple[ConsoleSourceCase, ...] = (
+    ConsoleSourceCase(
+        test_id="indented-output-is-not-script",
+        source="$ agentgrep find -agent:claude\n  -- positional separator\n  NOT agent:claude\n",
+        expected_script="agentgrep find -agent:claude\n",
+        expected_output=["  -- positional separator", "  NOT agent:claude"],
+    ),
+    ConsoleSourceCase(
+        test_id="backslash-continuation-joins-script",
+        source="$ cmd --a \\\n    --b \\\n    tail\n",
+        expected_script="cmd --a \\\n    --b \\\n    tail\n",
+        expected_output=[],
+    ),
+    ConsoleSourceCase(
+        test_id="ps2-prompt-continuation-joins-script",
+        source="$ for f in a b; do\n> echo $f\n> done\n",
+        expected_script="for f in a b; do\necho $f\ndone\n",
+        expected_output=[],
+    ),
+    ConsoleSourceCase(
+        test_id="plain-output-is-captured",
+        source="$ echo hi\nhi\n",
+        expected_script="echo hi\n",
+        expected_output=["hi"],
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    CONSOLE_SOURCE_CASES,
+    ids=[case.test_id for case in CONSOLE_SOURCE_CASES],
+)
+def test_parse_console_source_keeps_indented_output_out_of_script(
+    case: ConsoleSourceCase,
+) -> None:
+    """Indented transcript lines are expected output, not executed script."""
+    script, expected_output = _parse_console_source(case.source)
+
+    assert script == case.expected_script
+    assert expected_output == case.expected_output
 
 
 def test_temp_home_sandbox_copies_dirty_git_project(tmp_path: pathlib.Path) -> None:

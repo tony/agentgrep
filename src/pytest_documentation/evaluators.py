@@ -321,9 +321,7 @@ def _parse_console_source(source: str) -> tuple[str, list[str]]:
     for line in source.splitlines():
         if line.startswith(("$ ", "> ")):
             script_lines.append(line[2:])
-        elif script_lines and (
-            script_lines[-1].rstrip().endswith("\\") or line.startswith((" ", "\t"))
-        ):
+        elif script_lines and script_lines[-1].rstrip().endswith("\\"):
             script_lines.append(line)
         elif line.strip():
             expected_output.append(line)
