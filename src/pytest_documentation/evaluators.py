@@ -435,7 +435,7 @@ def evaluate_many(
     ----------
     examples : t.Iterable[DocumentationExample]
         Examples to evaluate in order.
-    evaluator
+    evaluator : ExampleEvaluator
         Evaluator applied to every example; any evaluator class from
         this module.
 
