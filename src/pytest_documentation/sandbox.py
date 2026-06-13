@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 import typing as t
 
-from .core import DocumentationExample, EvaluationFailureKind, blocked_command_error, redact_text
+from .core import DocumentationExample, blocked_command_error, redact_text
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -32,7 +32,6 @@ class SandboxCommandPlan:
     reason: str = "literal"
     execute: bool = True
     accept_empty_result: bool = False
-    failure_kind: EvaluationFailureKind | None = None
     returncode: int = 0
     stdout: str = ""
     stderr: str = ""
@@ -45,7 +44,6 @@ class SandboxExecution:
     plan: SandboxCommandPlan
     completed: subprocess.CompletedProcess[str]
     message: str = ""
-    failure_kind: EvaluationFailureKind | None = None
     accept_empty_result: bool = False
 
 
@@ -178,7 +176,6 @@ class TempHomeSandbox:
             plan=plan,
             completed=redacted_completed,
             message=plan.reason if plan.reason != "literal" else "",
-            failure_kind=plan.failure_kind,
             accept_empty_result=plan.accept_empty_result,
         )
 

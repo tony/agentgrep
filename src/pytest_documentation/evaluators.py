@@ -100,15 +100,6 @@ class PythonPageEvaluator:
                 message=str(exc),
             )
         completed = execution.completed
-        if execution.failure_kind is not None:
-            return EvaluationResult.failed_result(
-                example,
-                failure_kind=execution.failure_kind,
-                returncode=completed.returncode,
-                stdout=completed.stdout,
-                stderr=completed.stderr,
-                message=execution.message,
-            )
         if completed.returncode == 0:
             return EvaluationResult.passed_result(
                 example,
@@ -166,15 +157,6 @@ class ConsoleCommandEvaluator:
                 message=message,
             )
         completed = execution.completed
-        if execution.failure_kind is not None:
-            return EvaluationResult.failed_result(
-                example,
-                failure_kind=execution.failure_kind,
-                returncode=completed.returncode,
-                stdout=completed.stdout,
-                stderr=completed.stderr,
-                message=execution.message,
-            )
         passed = completed.returncode == 0 or _expected_output_matches(
             expected_output,
             completed.stdout + completed.stderr,

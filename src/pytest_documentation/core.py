@@ -146,11 +146,8 @@ class EvaluationFailureKind(enum.Enum):
 
     NONE = "none"
     BLOCKED_BY_POLICY = "blocked_by_policy"
-    SETUP_OR_INSTALL_COMMAND = "setup_or_install_command"
-    INTERACTIVE_COMMAND = "interactive_command"
     LONG_RUNNING_COMMAND = "long_running_command"
     DATA_DEPENDENT_EMPTY_RESULT = "data_dependent_empty_result"
-    STANDALONE_SEQUENCE_STEP = "standalone_sequence_step"
     COMMAND_FAILED = "command_failed"
     CONFIG_INVALID = "config_invalid"
     DOCTEST_FAILED = "doctest_failed"
