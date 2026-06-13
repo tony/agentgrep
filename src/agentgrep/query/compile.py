@@ -412,7 +412,7 @@ def _compile_path_pattern(raw: str) -> _CompiledPathPattern:
 
 
 def _expand_current_user_home_patterns(raw: str) -> tuple[str, ...]:
-    """Expand only current-user ``~`` and ``~/`` path query prefixes."""
+    """Expand current-user ``~`` and home-rooted (``~/`` or platform sep) path prefixes."""
     home = str(pathlib.Path.home())
     if raw == "~":
         child_patterns = [
