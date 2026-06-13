@@ -535,6 +535,50 @@ def test_console_evaluator_maps_sandbox_exceptions_to_failure_kinds(
     assert result.failure_kind is case.expected_kind
 
 
+class ExceptionRedactionCase(t.NamedTuple):
+    """One sandbox exception whose surfaced message must be redacted."""
+
+    test_id: str
+    error: BaseException
+
+
+EXCEPTION_REDACTION_CASES: tuple[ExceptionRedactionCase, ...] = (
+    ExceptionRedactionCase(
+        test_id="os-error-home-path",
+        error=OSError(f"cannot open {pathlib.Path.home()}/secret"),
+    ),
+    ExceptionRedactionCase(
+        test_id="generic-error-home-path",
+        error=RuntimeError(f"boom near {pathlib.Path.home()}/secret"),
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    EXCEPTION_REDACTION_CASES,
+    ids=[case.test_id for case in EXCEPTION_REDACTION_CASES],
+)
+def test_console_evaluator_redacts_home_in_exception_messages(
+    tmp_path: pathlib.Path,
+    case: ExceptionRedactionCase,
+) -> None:
+    """Sandbox exception messages must not leak the real home directory."""
+    path = tmp_path / "README.md"
+    path.write_text("```console\n$ true\n```\n", encoding="utf-8")
+    example = collect_examples(
+        [path],
+        collectors=[MarkdownFenceCollector(languages={"console"})],
+        project_root=tmp_path,
+    )[0]
+    evaluator = ConsoleCommandEvaluator(sandbox=_RaisingSandbox(case.error))
+
+    result = evaluator.evaluate(example)
+
+    assert result.passed is False
+    assert str(pathlib.Path.home()) not in result.message
+
+
 def test_temp_home_sandbox_copies_dirty_git_project(tmp_path: pathlib.Path) -> None:
     """Dirty worktree content is what documentation examples execute against."""
     project = tmp_path / "project"

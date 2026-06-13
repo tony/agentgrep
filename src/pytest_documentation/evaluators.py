@@ -85,19 +85,19 @@ class PythonPageEvaluator:
             return EvaluationResult.failed_result(
                 example,
                 failure_kind=EvaluationFailureKind.LONG_RUNNING_COMMAND,
-                message=str(exc),
+                message=redact_text(str(exc)),
             )
         except OSError as exc:
             return EvaluationResult.failed_result(
                 example,
                 failure_kind=EvaluationFailureKind.HARNESS_ERROR,
-                message=str(exc),
+                message=redact_text(str(exc)),
             )
         except Exception as exc:
             return EvaluationResult.failed_result(
                 example,
                 failure_kind=EvaluationFailureKind.BLOCKED_BY_POLICY,
-                message=str(exc),
+                message=redact_text(str(exc)),
             )
         completed = execution.completed
         if completed.returncode == 0:
@@ -141,16 +141,16 @@ class ConsoleCommandEvaluator:
             return EvaluationResult.failed_result(
                 example,
                 failure_kind=EvaluationFailureKind.LONG_RUNNING_COMMAND,
-                message=str(exc),
+                message=redact_text(str(exc)),
             )
         except OSError as exc:
             return EvaluationResult.failed_result(
                 example,
                 failure_kind=EvaluationFailureKind.HARNESS_ERROR,
-                message=str(exc),
+                message=redact_text(str(exc)),
             )
         except Exception as exc:
-            message = str(exc)
+            message = redact_text(str(exc))
             return EvaluationResult.failed_result(
                 example,
                 failure_kind=EvaluationFailureKind.BLOCKED_BY_POLICY,
