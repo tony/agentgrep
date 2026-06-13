@@ -200,12 +200,13 @@ Treat committed `[bench.X]` keys and descriptions as the human audit
 surface for performance runs. If a command is capped, the cap must be
 visible before anyone reads the command string:
 
-- `grep --max-count N` benches use `max-count-N` in the key and
-  `max-count N` in the description.
+- `grep --limit N` benches use `limit-N` in the key and `limit N`
+  in the description.
 - `search --limit N` and `find --limit N` benches use `limit-N` in
   the key and `limit N` in the description.
-- Committed `grep` benches use the long `--max-count` flag rather
-  than `-m`, so `list-commands` stays self-explanatory.
+- Committed `grep` benches use the primary `--limit` flag rather
+  than the `-m` / `--max-count` aliases, so `list-commands` stays
+  self-explanatory.
 
 The ordinary benches are shaped for repeatable time-series
 comparisons. `profile-*` benches are still bounded and explicit, but

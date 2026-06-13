@@ -281,6 +281,58 @@ def test_compile_query_source_predicate_prunes(
     assert compiled.source_predicate(source) is case.expected_passes
 
 
+def test_path_query_expands_current_user_home_for_source_predicate(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    """``path:~`` matches source paths under the current user's home."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    ast = parse_query("path:~/.codex", default_registry())
+    compiled = compile_query(ast, default_registry())
+    assert compiled.source_predicate is not None
+
+    matching = _make_source(path=str(home / ".codex" / "history.jsonl"))
+    sibling = _make_source(path=str(tmp_path / "home-other" / ".codex" / "history.jsonl"))
+
+    assert compiled.source_predicate(matching) is True
+    assert compiled.source_predicate(sibling) is False
+
+
+def test_path_query_home_root_does_not_match_sibling_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    """``path:~`` matches the home tree without leaking into sibling prefixes."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    ast = parse_query("path:~", default_registry())
+    compiled = compile_query(ast, default_registry())
+    assert compiled.source_predicate is not None
+
+    child = _make_source(path=str(home / ".codex" / "history.jsonl"))
+    sibling = _make_source(path=str(tmp_path / "home-other" / ".codex" / "history.jsonl"))
+
+    assert compiled.source_predicate(child) is True
+    assert compiled.source_predicate(sibling) is False
+
+
+def test_path_query_home_glob_expands_for_source_predicate(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    """``path:~`` expansion preserves glob matching semantics."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    ast = parse_query("path:~/.codex/*", default_registry())
+    compiled = compile_query(ast, default_registry())
+    assert compiled.source_predicate is not None
+
+    source = _make_source(path=str(home / ".codex" / "history.jsonl"))
+
+    assert compiled.source_predicate(source) is True
+
+
 # ----- record-side exact evaluation ----------------------------------------
 
 
@@ -464,6 +516,24 @@ def test_compile_query_record_predicate_filters(
     assert compiled.record_predicate is not None
     record = _make_record(**case.record_kwargs)
     assert compiled.record_predicate(record) is case.expected_matches
+
+
+def test_path_query_expands_current_user_home_for_record_predicate(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    """``path:~`` matches record paths under the current user's home."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    ast = parse_query("path:~/.codex", default_registry())
+    compiled = compile_query(ast, default_registry())
+    assert compiled.record_predicate is not None
+
+    matching = _make_record(path=str(home / ".codex" / "history.jsonl"))
+    sibling = _make_record(path=str(tmp_path / "home-other" / ".codex" / "history.jsonl"))
+
+    assert compiled.record_predicate(matching) is True
+    assert compiled.record_predicate(sibling) is False
 
 
 # ----- compile-time semantic errors ---------------------------------------

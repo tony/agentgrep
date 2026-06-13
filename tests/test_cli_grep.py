@@ -155,11 +155,76 @@ def test_grep_column_default_is_false() -> None:
     assert parsed.column is False
 
 
-def test_grep_max_count_propagates() -> None:
-    """``-m N`` propagates as max_count."""
-    parsed = agentgrep.parse_args(["grep", "-m", "5", "foo"])
+@pytest.mark.parametrize(
+    "flag",
+    ("--limit", "-m", "--max-count"),
+    ids=("limit", "short-max-count-alias", "long-max-count-alias"),
+)
+def test_grep_limit_aliases_propagate(flag: str) -> None:
+    """``grep`` cap flags propagate through the canonical limit field."""
+    parsed = agentgrep.parse_args(["grep", flag, "5", "foo"])
     assert isinstance(parsed, agentgrep.GrepArgs)
-    assert parsed.max_count == 5
+    assert parsed.limit == 5
+
+
+def test_grep_limit_aliases_accept_matching_values() -> None:
+    """Repeated cap aliases are accepted when they agree."""
+    parsed = agentgrep.parse_args(["grep", "--limit", "5", "--max-count", "5", "foo"])
+    assert isinstance(parsed, agentgrep.GrepArgs)
+    assert parsed.limit == 5
+
+
+class LimitConflictCase(t.NamedTuple):
+    """Parametrized case for disagreeing grep cap alias spellings."""
+
+    test_id: str
+    argv: list[str]
+    expected_message: str
+
+
+LIMIT_CONFLICT_CASES: tuple[LimitConflictCase, ...] = (
+    LimitConflictCase(
+        test_id="limit-then-max-count",
+        argv=["grep", "--limit", "5", "--max-count", "4", "foo"],
+        expected_message="--limit and --max-count disagree",
+    ),
+    LimitConflictCase(
+        test_id="short-alias-then-limit",
+        argv=["grep", "-m", "5", "--limit", "4", "foo"],
+        expected_message="-m and --limit disagree",
+    ),
+    LimitConflictCase(
+        test_id="max-count-then-short-alias",
+        argv=["grep", "--max-count", "5", "-m", "4", "foo"],
+        expected_message="--max-count and -m disagree",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    LIMIT_CONFLICT_CASES,
+    ids=[case.test_id for case in LIMIT_CONFLICT_CASES],
+)
+def test_grep_limit_aliases_reject_conflicting_values(
+    capsys: pytest.CaptureFixture[str],
+    case: LimitConflictCase,
+) -> None:
+    """Repeated cap aliases fail loudly, naming the flags the user typed."""
+    with pytest.raises(SystemExit) as exc_info:
+        _ = agentgrep.parse_args(case.argv)
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert case.expected_message in captured.err
+
+
+def test_grep_limit_rejects_non_positive_value(capsys: pytest.CaptureFixture[str]) -> None:
+    """``grep --limit`` requires a positive match cap."""
+    with pytest.raises(SystemExit) as exc_info:
+        _ = agentgrep.parse_args(["grep", "--limit", "0", "foo"])
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert "--limit must be greater than 0" in captured.err
 
 
 def test_grep_scope_conversations_propagates() -> None:
@@ -294,7 +359,7 @@ def test_build_grep_query_translates_modes(case: QueryTranslationCase) -> None:
         no_dedupe=case.no_dedupe,
         line_number=None,
         heading=None,
-        max_count=None,
+        limit=None,
         vimgrep=False,
         column=False,
         output_mode="text",
@@ -306,6 +371,7 @@ def test_build_grep_query_translates_modes(case: QueryTranslationCase) -> None:
     assert query.regex is case.expected_regex
     assert query.dedupe is case.expected_dedupe
     assert query.terms == case.expected_terms
+    assert query.limit is None
     assert query.match_surface == "text"
 
 
@@ -372,7 +438,7 @@ def _make_grep_args(**overrides: object) -> agentgrep.GrepArgs:
         "no_dedupe": False,
         "line_number": None,
         "heading": None,
-        "max_count": None,
+        "limit": None,
         "vimgrep": False,
         "column": False,
         "output_mode": "text",
@@ -970,7 +1036,7 @@ def _make_grep_args_for_helpers(**overrides: t.Any) -> agentgrep.GrepArgs:
         "no_dedupe": False,
         "line_number": None,
         "heading": None,
-        "max_count": None,
+        "limit": None,
         "vimgrep": False,
         "column": False,
         "output_mode": "text",

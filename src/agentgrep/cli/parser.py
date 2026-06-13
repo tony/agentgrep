@@ -126,7 +126,7 @@ class GrepArgs:
     no_dedupe: bool
     line_number: bool | None
     heading: bool | None
-    max_count: int | None
+    limit: int | None
     vimgrep: bool
     column: bool
     output_mode: OutputMode
@@ -169,6 +169,28 @@ class ParserBundle:
     find_parser: argparse.ArgumentParser
     grep_parser: argparse.ArgumentParser
     search_parser: argparse.ArgumentParser
+
+
+class _GrepLimitAction(argparse.Action):
+    """Store grep cap aliases in one canonical ``limit`` namespace field."""
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: object,
+        option_string: str | None = None,
+    ) -> None:
+        """Record a grep result cap; error when two cap aliases disagree."""
+        spelling = option_string or "--limit"
+        spelling_dest = f"_{self.dest}_option_string"
+        value = t.cast("int", values)
+        current = t.cast("int | None", getattr(namespace, self.dest, None))
+        if current is not None and current != value:
+            previous = t.cast("str", getattr(namespace, spelling_dest, "--limit"))
+            parser.error(f"{previous} and {spelling} disagree")
+        setattr(namespace, self.dest, value)
+        setattr(namespace, spelling_dest, spelling)
 
 
 def normalize_color_mode(argv: cabc.Sequence[str] | None) -> ColorMode:
@@ -331,11 +353,14 @@ def create_parser(
         help="Suppress file-grouped headings (default on pipe)",
     )
     _ = grep_parser.add_argument(
+        "--limit",
         "-m",
         "--max-count",
+        action=_GrepLimitAction,
+        dest="limit",
         type=int,
         metavar="N",
-        help="Stop after N matches",
+        help="Stop after N matches (-m/--max-count aliases)",
     )
     _ = grep_parser.add_argument(
         "--vimgrep",
@@ -455,7 +480,7 @@ def create_parser(
         "-a",
         "--absolute-path",
         action="store_true",
-        help="Print absolute paths (already the default; flag is symbolic)",
+        help="Print real absolute paths instead of privacy-collapsed display paths",
     )
     _ = find_parser.add_argument(
         "--full-path",
@@ -854,10 +879,10 @@ def _build_grep_args(
     bundle: ParserBundle,
 ) -> GrepArgs:
     """Build :class:`GrepArgs` from a parsed argparse namespace."""
-    max_count = t.cast("int | None", namespace.max_count)
-    if max_count is not None and max_count < 1:
+    limit = t.cast("int | None", namespace.limit)
+    if limit is not None and limit < 1:
         with configured_color_environment(color_mode):
-            bundle.grep_parser.error("--max-count must be greater than 0")
+            bundle.grep_parser.error("--limit must be greater than 0")
 
     if t.cast("bool", namespace.ignore_case):
         case_mode: CaseMode = "ignore"
@@ -949,7 +974,7 @@ def _build_grep_args(
         no_dedupe=t.cast("bool", namespace.no_dedupe),
         line_number=line_number,
         heading=heading,
-        max_count=max_count,
+        limit=limit,
         vimgrep=t.cast("bool", namespace.vimgrep),
         column=t.cast("bool", namespace.column),
         output_mode=output_mode,

@@ -42,6 +42,33 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### What's new
+
+#### Result cap `--limit` for `grep` (#53)
+
+`grep` now takes `--limit N` as its primary result cap, keeping `-m` and
+`--max-count` as grep-family aliases.
+
+#### Home-relative `path:` predicates (#53)
+
+`path:` predicates accept current-user `~`/`~/...` prefixes.
+
+### Fixes
+
+#### `find --print0`/`--absolute-path` emit real filesystem paths (#53)
+
+`find --print0` and `--absolute-path` now emit real filesystem paths for
+shell pipelines like `xargs -0`, instead of the privacy-collapsed `~`
+display paths they produced before. Text and JSON output stay collapsed.
+
+### Development
+
+#### Documentation examples tested as pytest items (#53)
+
+A new `pytest_documentation` plugin runs the docs' `console` examples,
+`fastmcp.json`, and the `just doctest` recipe as pytest items against
+sandboxed fake agent history, so broken copied commands fail the test gate.
+
 ## agentgrep 0.1.0a20 (2026-06-07)
 
 agentgrep 0.1.0a20 makes the TUI's record-detail pane responsive to the

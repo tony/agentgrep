@@ -567,6 +567,51 @@ def test_find_pipeline_consumes_compiled_query(
     assert tuple(sorted(r.agent for r in emitted)) == case.expected_agents
 
 
+def test_find_pipeline_matches_home_relative_path_query(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    """``find 'path:~/.codex agent:codex'`` emits the matching Codex source."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    sources = [
+        _make_source(
+            agent="codex",
+            path=str(home / ".codex" / "history.jsonl"),
+            store="codex.history",
+            adapter_id="codex.history_jsonl.v1",
+        ),
+        _make_source(
+            agent="claude",
+            path=str(home / ".claude" / "history.jsonl"),
+            store="claude.history",
+            adapter_id="claude.history_jsonl.v1",
+        ),
+    ]
+    monkeypatch.setattr(
+        agentgrep,
+        "discover_sources",
+        lambda *args, **kwargs: list(sources),
+    )
+
+    compiled = _compile_query("path:~/.codex agent:codex")
+    emitted = [
+        event.record
+        for event in agentgrep.iter_find_events(
+            pathlib.Path.home(),
+            agentgrep.AGENT_CHOICES,
+            pattern=None,
+            limit=None,
+            compiled=compiled,
+        )
+        if isinstance(event, ag_events.FindRecordEmitted)
+    ]
+
+    assert [(record.agent, record.path) for record in emitted] == [
+        ("codex", home / ".codex" / "history.jsonl"),
+    ]
+
+
 def test_find_pipeline_compiled_none_keeps_legacy_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

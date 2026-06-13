@@ -177,8 +177,10 @@ def print_find_results(records: list[FindRecord], args: FindArgs) -> None:
 
     ``--list-details`` switches to a one-line-per-record long format with
     agent / kind / store / adapter_id / path columns. ``--print0``
-    separates records with NUL instead of newline (for ``xargs -0``).
-    ``--json`` / ``--ndjson`` are unaffected by these flags.
+    separates records with NUL instead of newline (for ``xargs -0``) and,
+    like ``--absolute-path``, emits real filesystem paths; other modes
+    collapse the home directory to ``~``. ``--json`` / ``--ndjson`` are
+    unaffected by these flags.
     """
     _, serialize_find, serialize_envelope = maybe_build_pydantic()
     query_data: dict[str, object] = {
@@ -213,15 +215,22 @@ def print_find_results(records: list[FindRecord], args: FindArgs) -> None:
             print(_format_find_text_line(record, args))
         return
     for record in records:
-        print(agentgrep.format_display_path(record.path))
+        print(_format_find_path(record, args))
 
 
 def _format_find_text_line(record: FindRecord, args: FindArgs) -> str:
     """Compose one line for ``--list-details`` / ``--print0`` output."""
-    path = agentgrep.format_display_path(record.path)
+    path = _format_find_path(record, args)
     if args.list_details:
         return f"{record.agent}\t{record.path_kind}\t{record.store}\t{record.adapter_id}\t{path}"
     return path
+
+
+def _format_find_path(record: FindRecord, args: FindArgs) -> str:
+    """Return the find path according to display vs. shell-consumer mode."""
+    if args.print0 or args.absolute_path:
+        return str(record.path)
+    return agentgrep.format_display_path(record.path)
 
 
 def _resolve_find_case_sensitive(pattern: str | None, mode: agentgrep.CaseMode) -> bool:
@@ -368,7 +377,7 @@ def stream_find_results(args: FindArgs) -> int:
             sys.stdout.write(_format_find_text_line(event.record, args))
             sys.stdout.write("\0")
         else:
-            print(agentgrep.format_display_path(event.record.path))
+            print(_format_find_path(event.record, args))
         if is_tty:
             sys.stdout.flush()
         match_count += 1
@@ -884,7 +893,7 @@ def build_grep_query(args: GrepArgs) -> agentgrep.SearchQuery:
         regex=regex,
         case_sensitive=case_sensitive,
         agents=args.agents,
-        limit=args.max_count,
+        limit=args.limit,
         dedupe=not args.no_dedupe,
         compiled=args.compiled,
         match_surface="text",

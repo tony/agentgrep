@@ -627,9 +627,9 @@ TEMPLATE_CASES: tuple[TemplatingCase, ...] = (
     ),
     TemplatingCase(
         test_id="multi-token-grep-shape",
-        template="{venv}/bin/agentgrep grep --max-count 1 {query}",
+        template="{venv}/bin/agentgrep grep --limit 1 {query}",
         context={"venv": ".venv", "query": "libtmux"},
-        expected=".venv/bin/agentgrep grep --max-count 1 libtmux",
+        expected=".venv/bin/agentgrep grep --limit 1 libtmux",
         raises=None,
     ),
     TemplatingCase(
@@ -672,7 +672,7 @@ def test_measurement_json_shape_preserves_documented_keys() -> None:
         short_sha="0123456",
         subject="feat: a thing",
         command_name="grep",
-        command_string=".venv/bin/agentgrep grep --max-count 1 libtmux",
+        command_string=".venv/bin/agentgrep grep --limit 1 libtmux",
         samples=[0.5, 0.6, 0.55],
         status="ok",
     )
@@ -1147,14 +1147,14 @@ def test_sanitize_command_string_replaces_local_context_values(tmp_path: pathlib
         "sha": "a" * 40,
         "short_sha": "aaaaaaa",
     }
-    raw = f"{tmp_path}/.venv/bin/agentgrep grep --max-count 500 private-token --repo {tmp_path}"
+    raw = f"{tmp_path}/.venv/bin/agentgrep grep --limit 500 private-token --repo {tmp_path}"
 
     sanitized = benchmark.sanitize_command_string(raw, context)
 
     assert str(tmp_path) not in sanitized
     assert "private-token" not in sanitized
     assert "{venv}/bin/agentgrep grep" in sanitized
-    assert "--max-count 500 {query}" in sanitized
+    assert "--limit 500 {query}" in sanitized
     assert "--repo {repo}" in sanitized
 
 
