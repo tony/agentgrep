@@ -177,8 +177,10 @@ def print_find_results(records: list[FindRecord], args: FindArgs) -> None:
 
     ``--list-details`` switches to a one-line-per-record long format with
     agent / kind / store / adapter_id / path columns. ``--print0``
-    separates records with NUL instead of newline (for ``xargs -0``).
-    ``--json`` / ``--ndjson`` are unaffected by these flags.
+    separates records with NUL instead of newline (for ``xargs -0``) and,
+    like ``--absolute-path``, emits real filesystem paths; other modes
+    collapse the home directory to ``~``. ``--json`` / ``--ndjson`` are
+    unaffected by these flags.
     """
     _, serialize_find, serialize_envelope = maybe_build_pydantic()
     query_data: dict[str, object] = {
