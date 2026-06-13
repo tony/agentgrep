@@ -1,6 +1,6 @@
 (adr-public-cli-mcp-surface-contract)=
 
-# ADR 0006: Public CLI and MCP surface contract
+# ADR 0006: Public CLI and MCP surface
 
 ## Status
 
@@ -10,7 +10,7 @@ Proposed.
 
 agentgrep has one search backend and multiple user-facing surfaces: CLI,
 Textual TUI, MCP tools, JSON, and NDJSON. ADR 0004 defines the headless
-planning, execution, event-stream, and result-envelope architecture. It does
+planning, execution, event-stream, and result-type architecture. It does
 not by itself define the public vocabulary users and MCP clients rely on.
 
 The open design issues describe two related gaps:
@@ -28,35 +28,35 @@ Greenfield and policy reviews in
 [#58](https://github.com/tony/agentgrep/issues/58), and
 [#59](https://github.com/tony/agentgrep/issues/59) converge on the same
 direction: keep AGENTS.md operational, keep planning/execution in ADR 0004, and
-give the CLI/MCP surface its own durable contract. ADR 0005 defines the local
+give the CLI/MCP surface its own durable vocabulary. ADR 0005 defines the local
 insights report and model-backed enrichment architecture; this ADR follows it
-with the public surface contract that those reports and the core search tools
+with the public surface vocabulary that those reports and the core search tools
 share.
 
 ## Decision
 
-agentgrep will treat the public CLI/MCP surface as a compatibility-sensitive
-contract. AGENTS.md may point to the contract, but it is not the contract.
-CLI help, rendered docs, MCP tool schemas, MCP resources, JSON envelopes, and
-NDJSON lifecycle summaries should be audited against this ADR and the focused
-contract docs/tests that implement it.
+agentgrep will treat the public CLI/MCP surface as compatibility-sensitive.
+AGENTS.md may point to this ADR, but it is not the source of public behavior.
+CLI help, rendered docs, MCP tool schemas, MCP resources, JSON result payloads,
+and NDJSON lifecycle summaries should be audited against this ADR and the
+focused public-surface docs/tests that implement it.
 
-### Contract ownership
+### Surface ownership
 
-The public surface contract owns:
+The public surface owns:
 
 - command and tool vocabulary;
 - query field names, aliases, comparison rules, and examples;
 - default behaviors for scope, agent selection, limits, ordering, ranking,
   dedupe, and case handling;
-- response envelope, pagination, diagnostics, completion state, and drilldown
-  handles as defined by ADR 0004;
+- result payloads, pagination, diagnostics, run status, and drilldown handles
+  as defined by ADR 0004;
 - source catalog vocabulary and coverage states;
 - MCP loop shape and next-action guidance.
 
 The implementation may use argparse, FastMCP, Pydantic, Textual, Rich, or other
-libraries to expose the contract. Those libraries adapt the contract; they do
-not define it.
+libraries to expose the surface. Those libraries adapt the public request and
+result types; they do not define them.
 
 ### Registry-backed discovery
 
@@ -79,8 +79,8 @@ The CLI keeps the existing verbs, but their shared vocabulary becomes explicit:
 - `search`: general record search over the selected scope.
 - `grep`: grep-shaped text search that preserves familiar grep expectations
   where they do not conflict with agentgrep privacy or source semantics.
-- `find`: source discovery and catalog filtering.
-- `ui`: Textual browsing over the same query/search contracts.
+- `find`: fd/find-shaped source and storage discovery across agent stores.
+- `ui`: Textual browsing over the same query, result, and event types.
 
 Canonical shared options:
 
@@ -120,7 +120,7 @@ Query introspection may import the query registry and planner even when root
 `agentgrep --help` stays cold-start sensitive. Introspection commands exist to
 load and explain that registry.
 
-### Source catalog contract
+### Source catalog vocabulary
 
 Source discovery must expose machine-readable coverage instead of free-form
 strings alone. A source or source-family response should include:
@@ -135,20 +135,20 @@ strings alone. A source or source-family response should include:
   or intentionally out of default search;
 - `inspectable` when result drilldown can target the source;
 - version-detection strategy or availability state;
-- page state and diagnostics when discovery is paginated or partial.
+- page info and diagnostics when discovery is paginated or partial.
 
 Display paths may be rendered for humans, but MCP clients should use stable
-identifiers, envelope cursors, and `RecordRef` handles rather than local paths
+identifiers, result cursors, and `RecordRef` handles rather than local paths
 as primary inputs.
 
-### MCP loop contract
+### MCP loop
 
 MCP tools should support this loop:
 
 1. Discover capabilities, query fields, and source coverage.
 2. Explain or validate the intended query when needed.
 3. Search with an explicit scope, limit, and output expectation.
-4. Read the response envelope's stats, completion state, diagnostics, and
+4. Read the result payload's stats, run status, diagnostics, and
    `next_cursor`.
 5. Request the next page when `next_cursor` is present.
 6. Inspect a result through `RecordRef` when the user needs more context.
@@ -156,18 +156,18 @@ MCP tools should support this loop:
    backend-specific flags or file paths.
 
 MCP responses should include concise next-action hints only when they are
-grounded in envelope state, such as "request next page", "narrow by agent",
+grounded in result state, such as "request next page", "narrow by agent",
 "inspect this record", or "enable non-default source coverage". Next actions
 must not include prompt text, secret values, raw argv, or local absolute paths.
 
-### Response contract
+### Result payloads
 
-ADR 0004 owns the event stream and result envelope vocabulary. This ADR makes
-that vocabulary public-surface policy:
+ADR 0004 owns the event streams and result type vocabulary. This ADR makes that
+vocabulary public-surface policy:
 
-- JSON responses expose the envelope by default.
+- JSON responses expose the result payload by default.
 - NDJSON responses emit lifecycle events and finish with an equivalent summary.
-- MCP tool responses expose stats, page state, completion state, diagnostics,
+- MCP tool responses expose stats, page info, run status, diagnostics,
   records, and `RecordRef` handles by default.
 - Pydantic models and FastMCP schemas adapt those fields for MCP clients but do
   not own the semantics.
@@ -185,7 +185,7 @@ that vocabulary public-surface policy:
 
 ### Tradeoffs
 
-- New flags, fields, tools, and response keys need contract tests or generated
+- New flags, fields, tools, and response keys need surface tests or generated
   descriptions to prevent drift.
 - Some compatibility aliases must be maintained and normalized carefully.
 - The source catalog needs stable public names for states that were previously
@@ -193,7 +193,7 @@ that vocabulary public-surface policy:
 
 ### Risks
 
-Contract sprawl: too many public names can make the CLI and MCP harder to
+Surface sprawl: too many public names can make the CLI and MCP harder to
 learn. The mitigation is canonical vocabulary plus aliases that normalize
 before planning.
 
@@ -209,14 +209,14 @@ actions.
 ## Relationship to other ADRs
 
 ADR 0001 owns storage-version evidence and source compatibility. ADR 0004 owns
-planning, execution, events, envelopes, completion, pagination, diagnostics, and
-record references. ADR 0005 owns local insights reports and model-backed
-enrichment. This ADR owns how those contracts appear in public CLI and MCP
-surfaces.
+planning, execution, events, result payloads, run status, pagination,
+diagnostics, and record references. ADR 0005 owns local insights reports and
+model-backed enrichment. This ADR owns how those names appear in public CLI and
+MCP surfaces.
 
 ## Final position
 
 agentgrep should feel like one tool whether reached from a terminal, a TUI, or
-an MCP client. The public contract is the shared vocabulary, normalized request,
-response envelope, source catalog, and drilldown loop. Implementation libraries
-can make that surface convenient; they should not redefine it.
+an MCP client. The public surface is the shared vocabulary, normalized request,
+result payload, source catalog, and drilldown loop. Implementation libraries can
+make that surface convenient; they should not redefine it.

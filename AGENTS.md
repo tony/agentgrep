@@ -19,8 +19,8 @@ Key features:
 - Cross-tool search over Codex, Claude Code, and Cursor prompt/history stores
 - CLI entry point with a Textual TUI for interactive browsing
 - MCP server entry point exposing the same search surface as MCP tools
-- Dependency-light record/envelope contracts, with Pydantic adapters for MCP,
-  schema, docs, and other typed boundaries where useful
+- Dependency-light request, result, and event types, with Pydantic adapters
+  for MCP schemas, docs, and other typed boundaries where useful
 - Full type safety (ty, strict warning-as-error)
 
 ### Platform Support
@@ -49,7 +49,7 @@ ADR 0003 is the canonical policy for native boundary shapes:
 
 - Accelerator - a drop-in for a public Python callable. Removing the native
   build changes nothing observable except speed. ADR 0002 owns the
-  compatibility contract.
+  compatibility rules.
 - Engine - in-process native code over a normalized plan, batch, buffer, or
   scoped state. ADR 0003 owns the boundary, lifecycle, and test obligations.
 - Worker - an independent process, binary, or long-lived native thread behind
@@ -179,7 +179,7 @@ Recommended focused checks:
 - Docs-only AGENTS/ADR edits: `git diff --check` and `just build-docs`.
 - Python implementation edits: `uv run ruff check .`, `uv run ty check`, and
   the touched pytest files or node ids.
-- CLI/MCP/query contract edits: add the relevant CLI, MCP, query, event-stream,
+- CLI/MCP/query surface edits: add the relevant CLI, MCP, query, event-stream,
   and documentation tests that prove the public behavior.
 - Formatting-only edits: `uv run ruff format .` and `git diff --check`.
 
@@ -339,7 +339,7 @@ keep it scoped to a separate issue and use sanitized fixture-only payloads.
 
 agentgrep is no longer a single-module surface. Treat this section as an
 operational source map, not as the architectural source of truth. Durable
-behavioral contracts belong in ADRs and focused contract docs.
+behavior belongs in ADRs and focused public-surface docs.
 
 ```
 src/agentgrep/
@@ -347,7 +347,7 @@ src/agentgrep/
   __main__.py       # `python -m agentgrep` entry point
   cli/              # argparse surface and text/JSON/NDJSON renderers
   query/            # field registry, parser, AST, compiler, date helpers
-  events.py         # typed SearchEvent / FindEvent stream contracts
+  events.py         # typed SearchEvent / FindEvent stream types
   _engine/          # planning, matching, scanning, scheduling, runtime, profiling
   mcp/              # FastMCP server, models, middleware, resources, prompts, tools
   ui/               # Textual application
@@ -362,7 +362,7 @@ src/agentgrep/
    - Public compatibility exports and legacy helper implementations while the
      split modules continue to settle
    - `SearchRecord` / `FindRecord` dataclasses and serialization-compatible
-     payload shapes
+     payload types
    - Backward-compatible entry points for CLI, TUI, and JSON output helpers
 
 2. **`python -m` entry** (`src/agentgrep/__main__.py`)
@@ -370,7 +370,7 @@ src/agentgrep/
 
 3. **CLI surface** (`src/agentgrep/cli/`)
    - Argument parsing and output rendering for `agentgrep`
-   - JSON envelope construction, NDJSON/event rendering, and
+   - JSON result payload construction, NDJSON/event rendering, and
      pydantic-aware serialization with a pydantic-free fallback path
 
 4. **Query language** (`src/agentgrep/query/`)
@@ -386,8 +386,8 @@ src/agentgrep/
 6. **MCP server** (`src/agentgrep/mcp/`)
    - FastMCP assembly, middleware, input/output models, resources, prompts, and
      tools
-   - Pydantic models adapt public contracts for MCP schemas; they do not own
-     search semantics
+   - Pydantic models adapt public request/result types for MCP schemas; they
+     do not own search semantics
 
 7. **TUI** (`src/agentgrep/ui/`)
    - Textual application for interactive browsing of normalized records
@@ -401,7 +401,7 @@ agentgrep is opportunistic about its dependencies. `pydantic`, `textual`, and
 fallback so basic search output remains available when Pydantic cannot be
 imported. Treat Pydantic as a schema, validation, and adapter layer at explicit
 boundaries; do not make Pydantic-only model behavior the semantic source of
-truth for CLI/MCP/search contracts. When adding code that imports an optional
+truth for CLI/MCP/search behavior. When adding code that imports an optional
 dependency, keep the fallback path intact and covered by a test (see
 `test_json_output_falls_back_without_pydantic` for the pattern).
 
@@ -415,7 +415,7 @@ agentgrep uses pytest with `--doctest-modules` enabled by default (`testpaths = 
    not classes. Avoid `class TestFoo:` groupings for namespacing, and do not
    reintroduce `unittest.TestCase`. For stateful engine/driver behavior, use
    fixtures, typed case helpers, and parametrized tables when a flat function
-   would obscure the state machine or contract matrix.
+   would obscure the state machine or behavior matrix.
 
 2. **Use existing fixtures over mocks**
    - Use fixtures from `conftest.py` instead of `monkeypatch` and `MagicMock` when available
@@ -441,7 +441,7 @@ def test_json_output_falls_back_without_pydantic(monkeypatch: pytest.MonkeyPatch
     agentgrep = load_agentgrep_module()
     # ... build a SearchRecord ...
     monkeypatch.setattr(agentgrep.importlib, "import_module", fake_import_module)
-    # ... assert envelope shape ...
+    # ... assert result payload shape ...
 ```
 
 ## Coding Standards

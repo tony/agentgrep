@@ -44,8 +44,8 @@ not feature copying:
   [base model loader](https://github.com/huggingface/sentence-transformers/blob/82ea2dc/sentence_transformers/base/model.py).
 - [Tantivy 0.26.1](https://github.com/quickwit-oss/tantivy/tree/0.26.1)
   separates query parsing from execution through `Query`, `Weight`, and
-  `Scorer` contracts; this is the right shape for optional full-text indexes
-  that should not leak into report semantics.
+  `Scorer` types; this is the right shape for optional full-text indexes that
+  should not leak into report semantics.
 - [SQLite](https://github.com/sqlite/sqlite/tree/002d33d) is the baseline for
   local, inspectable, removable state. Schema and pragma surfaces are explicit
   engine metadata, not hidden side effects.
@@ -67,11 +67,11 @@ run a report, see which evidence was used, understand which optional backends
 were skipped, and choose the next bounded command. It should not receive an
 opaque prose blob that cannot be traced back to local records.
 
-ADR 0004 defines the shared lifecycle vocabulary for completion state,
-response envelopes, diagnostics, pagination, and `RecordRef` drilldown handles.
-ADR 0006 defines the public CLI/MCP surface vocabulary and loop. Insights must
-reuse those contracts rather than creating report-only names for completion,
-source coverage, diagnostics, next actions, or record inspection.
+ADR 0004 defines the shared lifecycle vocabulary for run status, result
+payloads, diagnostics, pagination, and `RecordRef` drilldown handles. ADR 0006
+defines the public CLI/MCP surface vocabulary and loop. Insights must reuse
+those result types rather than creating report-only names for status, source
+coverage, diagnostics, next actions, or record inspection.
 
 ## Decision
 
@@ -79,7 +79,7 @@ agentgrep will define insights as a staged report pipeline over local records.
 The pipeline is headless and deterministic first; optional enrichers attach to
 the same report model.
 
-The pipeline has these contracts:
+The pipeline has these pieces:
 
 1. **Record source**: existing discovery and adapters yield normalized prompt
    and conversation records.
@@ -95,7 +95,7 @@ The pipeline has these contracts:
    `RecordRef` evidence, sampled snippets, generated summaries, and
    diagnostics.
 6. **Renderers**: terminal, JSON, Markdown, HTML, MCP, and future TUI views
-   consume the same report model and expose ADR 0004 envelope state where the
+   consume the same report model and expose ADR 0004 result state where the
    sink is machine-readable.
 
 No renderer discovers stores, parses records, installs packages, downloads
@@ -103,7 +103,7 @@ models, or calls a model. Renderers only present the report payload.
 
 The command shapes below are intentionally non-executable `text` examples until
 the feature exists. Once implemented, user-facing examples should move to
-`console` fences and become documentation-test contracts.
+`console` fences and become documentation-test cases.
 
 The default command remains vanilla:
 
@@ -162,7 +162,7 @@ The base import path must stay lazy:
 - Each optional backend exposes a small capability probe with a typed failure
   reason.
 - A report records which level was selected, which enrichers ran, which
-  enrichers were skipped, the ADR 0004 `CompletionState`, and grounded next
+  enrichers were skipped, the ADR 0004 `RunStatus`, and grounded next
   actions the user or MCP client can run next.
 
 `agentgrep[insights-all]` may install levels 1 through 4 once those levels are
@@ -268,8 +268,8 @@ The human CLI should optimize for copy-pasteable, bounded commands:
 - Cancellation leaves cache state either unchanged or inspectably partial.
 - Errors name the failing backend and the fallback report level when available.
 
-Machine output is a stable contract. JSON and MCP report responses use the ADR
-0004 `ResponseEnvelope` vocabulary adapted for reports; NDJSON streams emit
+Machine output is stable. JSON and MCP report responses use a `ReportResult`
+shape adapted from the ADR 0004 result vocabulary; NDJSON streams emit
 lifecycle events and finish with an equivalent summary:
 
 ```text
@@ -284,7 +284,7 @@ The JSON payload includes:
 
 - `schema_version`
 - normalized report request, selected level, and backend capabilities
-- ADR 0004 `CompletionState`, page state, and `next_cursor` when report rows or
+- ADR 0004 `RunStatus`, `PageInfo`, and `next_cursor` when report rows or
   evidence lists are paginated
 - ADR 0004 `Diagnostic` entries for skipped sources, missing optional
   dependencies, model/cache issues, malformed stores, cancellation, and
@@ -300,8 +300,8 @@ The JSON payload includes:
 - grounded next actions
 
 Report-specific field names are allowed when they clarify the report domain,
-but they must map into these envelope concepts rather than forming a second
-schema vocabulary.
+but they must map into these result concepts rather than forming a second
+result vocabulary.
 
 Local model summaries are always grounded in reduced evidence. The LLM prompt
 receives compact facts, session IDs, timestamps, labels, and opt-in snippets,
@@ -344,7 +344,7 @@ Each optional level gets focused tests:
 - missing dependency produces the intended setup guidance
 - capability probes classify unavailable, installed, misconfigured, and stale
   cache states
-- report JSON and MCP responses keep stable envelope keys, `CompletionState`,
+- report JSON and MCP responses keep stable result keys, `RunStatus`,
   diagnostics, source coverage, `RecordRef` evidence, next actions, and privacy
   defaults
 - model provisioning uses fake registries or tiny fixtures by default
@@ -352,20 +352,20 @@ Each optional level gets focused tests:
 - LiteRT-LM and Ollama backends test cache/provenance behavior without requiring
   normal unit tests to download a model
 
-The docs should treat examples as contracts. Console examples for setup,
+The docs should treat examples as executable behavior. Console examples for setup,
 doctor, model install, and report generation need either executable fixtures or
 explicit non-executed annotations with a reason.
 
 ## Relationship to ADR 0004 and ADR 0006
 
-ADR 0004 owns event streams, response envelopes, completion state, pagination,
+ADR 0004 owns event streams, result payloads, run status, pagination,
 diagnostics, and `RecordRef`. Insights is a specialized producer of report
 facts and enrichment evidence inside that lifecycle vocabulary.
 
 ADR 0006 owns public CLI/MCP surface vocabulary, source catalog terminology,
 and the MCP loop shape. Insights report commands, MCP tools, source coverage,
 and next actions must use those public names so agents can move between search
-and insights without learning a second contract.
+and insights without learning a second vocabulary.
 
 ## Consequences
 
@@ -379,7 +379,7 @@ needed.
 The cost is a larger compatibility matrix. Optional extras, model registries,
 daemon reachability, platform caches, and integration tests all need careful
 ownership. The levelled architecture keeps that cost isolated from the default
-install and from the core search contracts.
+install and from the core search types.
 
 ## Rejected and Deferred
 
@@ -396,7 +396,7 @@ downloads are acceptable only through explicit model commands or explicit report
 flags with confirmation and cache provenance.
 
 Remote hosted LLM providers are deferred. A future decision can define a remote
-provider contract, but local reports and local model enrichment must stand on
+provider API, but local reports and local model enrichment must stand on
 their own.
 
 Making Chroma or another full vector database the default index is deferred.

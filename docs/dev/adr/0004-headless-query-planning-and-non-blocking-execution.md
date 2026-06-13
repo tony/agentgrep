@@ -31,7 +31,7 @@ wrappers without blocking the server.
 Prior systems point to the same direction:
 
 - Dask keeps user intent as a logical expression tree and lowers it through
-  optimizer phases before scheduling work. Its scheduler contract separates
+  optimizer phases before scheduling work. Its scheduler boundary separates
   graph execution from the concrete submit function:
   [expression planning](https://github.com/dask/dask/blob/a588170/dask/_expr.py)
   and [local async scheduling](https://github.com/dask/dask/blob/a588170/dask/local.py).
@@ -67,13 +67,13 @@ Prior systems point to the same direction:
 
 agentgrep does not need to become any of those systems. The useful pattern is
 the separation: user intent, logical plan, physical plan, execution driver,
-result stream, and measurement are distinct contracts.
+result stream, and measurement are distinct responsibilities.
 
 ## Decision
 
 agentgrep will evolve the search backend into a typed query planning and
 execution system. The backend remains headless. CLI, TUI, and MCP are
-frontends over the same library contracts.
+frontends over the same library request, result, and event types.
 
 The architecture has six layers:
 
@@ -94,15 +94,15 @@ The architecture has six layers:
 6. **Result sinks**: translate backend events into CLI Rich/text/JSON/NDJSON,
    TUI updates, and MCP response models.
 
-The public contract is the event stream and result models, not the concrete
+The public surface is the event stream and result models, not the concrete
 execution strategy. A query that runs inline for tests, threaded for a classic
 CLI command, and async for the TUI must produce the same records, ordering,
 dedupe semantics, errors, and privacy-safe profile observations.
 
 ## Interfaces
 
-Names below describe the intended internal contracts. They are not all public
-APIs until implemented and documented.
+Names below describe the intended internal types and boundaries. They are not
+all public APIs until implemented and documented.
 
 `QueryRequest`
 : Frozen user intent. It includes query text or a compiled query, target
@@ -132,7 +132,7 @@ APIs until implemented and documented.
   deterministic driver for tests and a non-blocking async/thread-backed driver
   for CLI/TUI/MCP. Source-local scanning and driver scheduling are separate
   modules so future process or worker drivers can keep the same logical and
-  physical plan contracts.
+  physical plan types.
 
 `SourceScanResult`
 : The source-local execution boundary. A worker scans one `SourceTask` and
@@ -152,10 +152,10 @@ APIs until implemented and documented.
   can be skipped once enough candidates have reached the owner-thread
   frontier. The default policy preserves the current source-order frontier
   behavior; stricter global-newest policies can be added behind the same typed
-  seam when source metadata can prove them.
+  boundary when source metadata can prove them.
 
 `SearchEvent` / `FindEvent`
-: The stream contract. Existing events remain the baseline. Future events may
+: The stream types. Existing events remain the baseline. Future events may
   add planning, warning, cancellation, or profile summaries only if old
   consumers can continue to ignore unknown event variants safely.
 
@@ -169,20 +169,20 @@ APIs until implemented and documented.
   source-task counts, subprocess families, bytes/counts, cancellation, and
   output backpressure without prompt text, raw argv, or local absolute paths.
 
-## Result contract
+## Result types
 
-The result contract must answer the user-facing questions raised by
+The result types must answer the user-facing questions raised by
 [#55](https://github.com/tony/agentgrep/issues/55): did the run finish, was it
 bounded, is there another page, and how can a caller inspect one result without
 guessing at source paths?
 
-Record emission alone is not a sufficient contract. Search and find collectors
-must consume lifecycle events, counters, cancellation, warnings, and finish
-state, then expose that state through the frontend response shape.
+Record emission alone is not sufficient. Search and find collectors must
+consume lifecycle events, counters, cancellation, warnings, and finish state,
+then expose that state through the frontend result payload.
 
-### Completion vocabulary
+### Run status vocabulary
 
-`CompletionState`
+`RunStatus`
 : The terminal run state exposed by JSON, NDJSON final summaries, MCP tool
   responses, and TUI completion chrome.
 
@@ -200,8 +200,8 @@ state, then expose that state through the frontend response shape.
   `truncated`
   : The sink stopped emitting because of an output budget, byte budget, tool
     response budget, or client-imposed response limit before it could deliver
-    the requested page/envelope. More matching records are known or likely to
-    exist, and cursor continuation may be unavailable or unreliable.
+    the requested page/result payload. More matching records are known or
+    likely to exist, and cursor continuation may be unavailable or unreliable.
 
   `cancelled`
   : The caller, terminal user, TUI, MCP client, timeout, or replacement search
@@ -214,41 +214,41 @@ state, then expose that state through the frontend response shape.
 
   `failed`
   : The run stopped because of an unrecovered error. Partial results may be
-    present only if the envelope marks them as partial and includes a
+    present only if the result payload marks them as partial and includes a
     diagnostic.
 
-`CompletionState` values are compatibility-sensitive. Additive values require
-tests for every sink that renders or serializes completion state.
+`RunStatus` values are compatibility-sensitive. Additive values require tests
+for every sink that renders or serializes run status.
 
-### Envelope fields
+### Result payload fields
 
-`ResponseEnvelope`
-: The default machine-readable response shape for JSON and MCP collection. A
+`SearchResult` / `FindResult`
+: The default machine-readable result types for JSON and MCP collection. A
   streaming NDJSON sink may emit events incrementally, but it must finish with
   an equivalent lifecycle summary.
 
-Minimum envelope fields:
+Minimum result payload fields:
 
 - `schema_version`: response schema version.
-- `query`: normalized query/request summary, excluding private text that is not
-  already part of the user's command input.
+- `request`: normalized query/request summary, excluding private text that is
+  not already part of the user's command input.
 - `stats`: counts for sources discovered, eligible, searched, skipped,
   cancelled, records seen, matches seen, records emitted, dedupe drops, elapsed
   time, and the active limit/page size.
 - `page`: page metadata with `limit`, emitted count, and opaque `next_cursor`
   when another page can be requested.
-- `completion`: `CompletionState` plus optional reason, source/budget that
+- `status`: `RunStatus` plus optional reason, source/budget that
   caused truncation, cancellation point, and approximation notes.
 - `diagnostics`: privacy-safe warnings and errors, including unsupported
   pushdown, malformed stores, unavailable optional tools, timeout/cancellation,
   and source-level failures.
 - `results`: emitted records in sink-specific record models.
 
-`PageState`
-: The pagination contract. `next_cursor` is opaque, stable only for the
+`PageInfo`
+: The pagination type. `next_cursor` is opaque, stable only for the
   documented cursor lifetime, and must carry enough planner/execution state to
   resume without callers reconstructing source paths. Absence of `next_cursor`
-  means there is no supported next-page request for that envelope.
+  means there is no supported next-page request for that result payload.
 
 `Diagnostic`
 : A privacy-safe warning or error record with a stable code, severity, message,
@@ -264,7 +264,7 @@ Minimum envelope fields:
   display or debug metadata, but they are not the primary public drilldown
   input.
 
-MCP, JSON, and NDJSON collectors must preserve these fields by default.
+MCP, JSON, and NDJSON collectors must preserve these result fields by default.
 Collecting only `RecordEmitted` events and discarding started, progress,
 warning, cancellation, and finished events is not compliant with this ADR.
 
@@ -276,7 +276,13 @@ conversation-only stores unless the requested scope requires them. A field
 predicate such as `agent:grok` or `path:*session*` must prune before record
 parsing whenever the adapter can prove the predicate from source metadata.
 
-Planning must choose the cheapest correct adapter strategy:
+Planning must choose the cheapest correct adapter strategy. `find` remains a
+first-class fd/find-shaped source and storage discovery command; it may share
+planner, driver, pagination, diagnostics, and result collection internals with
+search, but it must not be replaced by a parallel source-listing API with
+different semantics.
+
+Planning strategies include:
 
 - Direct metadata enumeration for `find`-shaped queries.
 - SQLite predicates for stores whose schema can answer them safely.
@@ -339,8 +345,8 @@ parallelism worthwhile. Profiling controls the default worker count because
 local JSONL parsing is often CPU-bound enough that unbounded worker fan-out
 hurts latency. Interactive CLI runs may map blank Enter to an answer-early
 request. The TUI maps Esc/Ctrl-C and replacement searches to the same
-cancellation contract. MCP maps client cancellation or timeout to the same
-contract when the framework exposes it.
+cancellation path. MCP maps client cancellation or timeout to the same path
+when the framework exposes it.
 
 The TUI must remain non-blocking. It may receive events on the event loop, but
 broad discovery, subprocess work, SQLite reads, JSON/JSONL parsing, ranking,
@@ -351,13 +357,13 @@ rendering.
 CLI output modes are sinks:
 
 - Rich/text progress for humans.
-- JSON for complete machine-readable envelopes.
+- JSON for complete machine-readable result payloads.
 - NDJSON or equivalent streaming output for consumers that want events as they
   arrive.
 - Optional answer-early behavior in interactive terminals.
 
 MCP tools are sinks over the same event stream. A tool must collect lifecycle
-events into response envelopes that expose stats, page state, completion state,
+events into result payloads that expose stats, page info, run status,
 diagnostics, emitted records, and opaque drilldown handles by default. The
 collection must happen through a non-blocking wrapper so the MCP server event
 loop is not blocked by local store scans. MCP collectors must consume started,
@@ -450,7 +456,8 @@ mitigation is ADR 0002, ADR 0003, and this ADR's plan/batch/protocol boundary.
 ## Final position
 
 agentgrep's scalable shape is a typed, headless query system: discover, plan,
-execute, observe, and render are separate contracts. The first implementation
-target is still Python, but the structure must be ready for non-blocking TUI
-execution, fast CLI streaming, MCP collection, richer profiling, and future
-parallel or worker drivers without changing user-visible search semantics.
+execute, observe, and render are separate responsibilities. The first
+implementation target is still Python, but the structure must be ready for
+non-blocking TUI execution, fast CLI streaming, MCP collection, richer
+profiling, and future parallel or worker drivers without changing user-visible
+search semantics.
