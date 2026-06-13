@@ -49,11 +49,17 @@ $ uvx --from 'agentgrep' --prerelease allow python
 `grep` now takes `--limit N` as its primary result cap, keeping `-m` and
 `--max-count` as grep-family aliases.
 
-#### Home-relative paths in queries and `find` output (#53)
+#### Home-relative `path:` predicates (#53)
 
-`path:` predicates accept current-user `~`/`~/...` prefixes, and `find
---print0`/`--absolute-path` emit real filesystem paths for shell pipelines
-while display output stays collapsed to `~`.
+`path:` predicates accept current-user `~`/`~/...` prefixes.
+
+### Fixes
+
+#### `find --print0`/`--absolute-path` emit real filesystem paths (#53)
+
+`find --print0` and `--absolute-path` now emit real filesystem paths for
+shell pipelines like `xargs -0`, instead of the privacy-collapsed `~`
+display paths they produced before. Text and JSON output stay collapsed.
 
 ### Development
 
