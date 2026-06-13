@@ -22,6 +22,12 @@ Key features:
 - Pydantic models for every CLI/MCP output, with a pydantic-free fallback
 - Full type safety (ty, strict warning-as-error)
 
+### Platform Support
+
+agentgrep does not currently support native Windows. Windows Subsystem for
+Linux (WSL) is supported. Users who want native Windows support can register
+their interest in the issue tracker.
+
 ## Engineering Policies
 
 ### Python First
