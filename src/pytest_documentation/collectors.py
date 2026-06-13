@@ -455,7 +455,7 @@ def _myst_directive_name(token: str) -> str:
 
 
 def _strip_myst_directive_options(lines: list[_NormalizedLine]) -> list[_NormalizedLine]:
-    """Drop leading MyST directive options from executable code content."""
+    """Drop leading MyST directive options and the blank separator that follows them."""
     index = 0
     stripped_option = False
     while index < len(lines) and _is_myst_directive_option(lines[index].text):
