@@ -710,6 +710,20 @@ STRATEGY_CASES: tuple[SourceStrategyCase, ...] = (
         expected_limit_behavior="bounded_source",
     ),
     SourceStrategyCase(
+        test_id="grep-text-antigravity-cli-history-limited-still-bounded-raw-prefilter",
+        query=_query(match_surface="text", agents=("antigravity-cli",)),
+        source=_source(
+            agent="antigravity-cli",
+            path="/tmp/antigravity-history.jsonl",
+            store="antigravity-cli.history",
+            adapter_id="antigravity_cli.history_jsonl.v1",
+            path_kind="history_file",
+        ),
+        expected_strategy="jsonl_bounded_reverse_raw_text_prefilter",
+        expected_record_order="newest_first",
+        expected_limit_behavior="bounded_source",
+    ),
+    SourceStrategyCase(
         test_id="search-haystack-pi-sessions-limited-keeps-full-scan",
         query=_query(
             scope="conversations",
