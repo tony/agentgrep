@@ -155,7 +155,7 @@ class PageInfoModel(AgentGrepModel):
 class RunStatusModel(AgentGrepModel):
     """Search or find completion state."""
 
-    state: t.Literal["complete", "bounded", "truncated", "cancelled", "approximate"]
+    state: t.Literal["complete", "bounded", "truncated", "cancelled", "approximate", "failed"]
     reason: str | None = None
 
 

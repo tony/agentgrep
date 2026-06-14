@@ -433,6 +433,19 @@ async def test_mcp_result_payload_exposes_page_status_stats_and_refs(
     assert data["results"][0]["ref"].startswith("agref1:")
 
 
+@pytest.mark.parametrize(
+    "state",
+    ["complete", "bounded", "truncated", "cancelled", "approximate", "failed"],
+)
+def test_mcp_run_status_model_accepts_adr_vocabulary(
+    state: t.Literal["complete", "bounded", "truncated", "cancelled", "approximate", "failed"],
+) -> None:
+    """The MCP status schema accepts the ADR 0004 status vocabulary."""
+    from agentgrep.mcp import RunStatusModel
+
+    assert RunStatusModel(state=state).state == state
+
+
 async def test_mcp_search_cursor_returns_next_page_without_duplicate(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
