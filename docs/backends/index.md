@@ -41,6 +41,12 @@ Cursor desktop app `state.vscdb` SQLite — global and per-workspace chat histor
 Gemini CLI chat sessions, prompt logs, checkpoints, settings, and skills.
 :::
 
+:::{grid-item-card} Antigravity
+:link: antigravity
+:link-type: doc
+Google Antigravity overview, split into CLI prompt recall and IDE-local stores.
+:::
+
 :::{grid-item-card} Antigravity CLI
 :link: antigravity-cli
 :link-type: doc
@@ -112,6 +118,7 @@ claude
 cursor-cli
 cursor-ide
 gemini
+antigravity
 antigravity-cli
 antigravity-ide
 grok
