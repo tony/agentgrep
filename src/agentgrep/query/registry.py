@@ -178,5 +178,11 @@ def default_registry() -> FieldRegistry:
         FieldSpec(name="project", kind="string", layer="record"),
         FieldSpec(name="cwd_hash", kind="string", layer="record"),
         FieldSpec(name="text", kind="string", layer="record"),
+        FieldSpec(
+            name="human",
+            kind="enum",
+            layer="record",
+            enum_values=("true", "false"),
+        ),
     )
     return FieldRegistry(specs=specs)
