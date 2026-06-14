@@ -495,6 +495,18 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
             return run_search_command(parsed)
         if isinstance(parsed, UIArgs):
             return run_ui_command(parsed)
+        if isinstance(parsed, InsightsReportArgs):
+            return run_insights_report_command(parsed)
+        if isinstance(parsed, InsightsLevelsArgs):
+            return run_insights_levels_command(parsed)
+        if isinstance(parsed, InsightsDoctorArgs):
+            return run_insights_doctor_command(parsed)
+        if isinstance(parsed, InsightsSetupArgs):
+            return run_insights_setup_command(parsed)
+        if isinstance(parsed, InsightsModelsArgs):
+            return run_insights_models_command(parsed)
+        if isinstance(parsed, InsightsCacheArgs):
+            return run_insights_cache_command(parsed)
         return run_find_command(parsed)
     except KeyboardInterrupt:
         _write_interrupt_notice()
@@ -547,12 +559,26 @@ from agentgrep.cli.help_theme import (  # noqa: E402  (re-exports must follow ma
     create_themed_formatter,
     should_enable_help_color,
 )
+from agentgrep.cli.insights_render import (  # noqa: E402  (re-exports must follow main definition)
+    run_insights_cache_command,
+    run_insights_doctor_command,
+    run_insights_levels_command,
+    run_insights_models_command,
+    run_insights_report_command,
+    run_insights_setup_command,
+)
 from agentgrep.cli.parser import (  # noqa: E402  (re-exports must follow main definition)
     CaseMode,
     FindArgs,
     FindPatternMode,
     FindTypeFilter,
     GrepArgs,
+    InsightsCacheArgs,
+    InsightsDoctorArgs,
+    InsightsLevelsArgs,
+    InsightsModelsArgs,
+    InsightsReportArgs,
+    InsightsSetupArgs,
     ParserBundle,
     PatternMode,
     SearchArgs,
