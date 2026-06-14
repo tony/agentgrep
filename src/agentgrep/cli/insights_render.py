@@ -489,6 +489,40 @@ def _build_skill_namer(args: InsightsSkillsArgs) -> t.Any:
         except ImportError:
             sys.stderr.write("[insights] litert-lm not installed; using deterministic names\n")
             return None
+    if backend == "transformers":
+        from agentgrep.insights import models as models_mod
+
+        if args.model:
+            pinned = models_mod.resolve_llm_model(args.model, "transformers")
+            candidates: tuple[t.Any, ...] = (pinned,) if pinned is not None else ()
+        else:
+            candidates = models_mod.default_transformers_chain()
+        if not candidates:
+            sys.stderr.write(
+                "[insights] no curated transformers model; using deterministic names\n"
+            )
+            return None
+
+        def _load_one(spec: t.Any) -> t.Any:
+            if not models_mod.is_installed(spec):
+                if not args.allow_download:
+                    return None
+                models_mod.install_model(spec, import_module=importlib.import_module)
+            return skills_mod.build_transformers_complete(
+                model_path=str(models_mod.model_cache_path(spec)),
+                import_module=importlib.import_module,
+                max_tokens=256,
+                quantization=spec.quantization,
+                trust_remote_code=spec.trust_remote_code,
+            )
+
+        chosen = skills_mod.first_working_transformers(candidates, load_one=_load_one)
+        if chosen is None:
+            sys.stderr.write(
+                "[insights] no transformers model could be loaded; using deterministic names\n"
+            )
+            return None
+        return chosen[1]
     sys.stderr.write(f"[insights] unknown LLM backend {backend!r}; using deterministic names\n")
     return None
 
@@ -699,6 +733,8 @@ def _run_models_listing(args: InsightsModelsArgs, models_mod: t.Any) -> int:
     """Render the curated/installed model listing."""
     if args.kind == "llm":
         specs = models_mod.list_llm_models(args.llm_backend)
+    elif args.kind == "reranker":
+        specs = models_mod.list_models("reranker")
     else:
         specs = models_mod.list_embedding_models()
     rows = [(spec, models_mod.is_installed(spec)) for spec in specs]
@@ -726,6 +762,8 @@ def _run_models_install(args: InsightsModelsArgs, models_mod: t.Any) -> int:
         return 1
     if args.kind == "llm":
         spec = models_mod.resolve_llm_model(args.model, args.llm_backend)
+    elif args.kind == "reranker":
+        spec = models_mod.resolve_reranker_model(args.model)
     else:
         spec = models_mod.resolve_embedding_model(args.model)
     if spec is None:

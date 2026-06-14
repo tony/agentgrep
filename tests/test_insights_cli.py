@@ -260,3 +260,37 @@ def test_skills_command_returns_one_without_suggestions(
 
     assert run_insights_skills_command(_skills_args()) == 1
     assert "no recurring-request skill suggestions" in capsys.readouterr().err
+
+
+def test_build_skill_namer_wires_transformers_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``skills --llm --backend transformers`` builds a real namer, not a silent fallback."""
+    from agentgrep.insights import models as models_mod, skills as skills_mod
+
+    def _stub_complete(prompt: str) -> str:
+        return '{"name": "x", "description": "Use when y"}'
+
+    monkeypatch.setattr(models_mod, "is_installed", lambda spec, *a, **k: True)
+    monkeypatch.setattr(skills_mod, "build_transformers_complete", lambda **kwargs: _stub_complete)
+
+    namer = insights_render._build_skill_namer(
+        _skills_args(llm_backend="transformers", use_llm=True)
+    )
+    assert namer is _stub_complete
+
+
+def test_parse_models_list_reranker_level() -> None:
+    """``models list --level reranker`` parses; the reranker kind is exposed on the CLI."""
+    parsed = parse_args(["insights", "models", "list", "--level", "reranker"])
+    assert isinstance(parsed, InsightsModelsArgs)
+    assert parsed.kind == "reranker"
+
+
+def test_models_listing_includes_reranker(capsys: pytest.CaptureFixture[str]) -> None:
+    """``models available --level reranker --format json`` lists the curated cross-encoder."""
+    args = parse_args(
+        ["insights", "models", "available", "--level", "reranker", "--format", "json"]
+    )
+    assert isinstance(args, InsightsModelsArgs)
+    assert insights_render.run_insights_models_command(args) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert any(row["kind"] == "reranker" for row in payload)

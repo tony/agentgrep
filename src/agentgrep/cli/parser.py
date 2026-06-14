@@ -238,7 +238,7 @@ class InsightsModelsArgs:
     """Typed arguments for ``agentgrep insights models …``."""
 
     action: InsightsModelsAction
-    kind: t.Literal["embeddings", "llm"]
+    kind: t.Literal["embeddings", "llm", "reranker"]
     llm_backend: str | None
     model: str | None
     yes: bool
@@ -959,7 +959,10 @@ def _add_insights_parser(
             color=use_color,
         )
         _ = action_parser.add_argument(
-            "--level", dest="model_kind", choices=["embeddings", "llm"], default="embeddings"
+            "--level",
+            dest="model_kind",
+            choices=["embeddings", "llm", "reranker"],
+            default="embeddings",
         )
         _ = action_parser.add_argument("--backend", dest="llm_backend", default=None)
         _ = action_parser.add_argument(

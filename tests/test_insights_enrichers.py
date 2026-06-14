@@ -533,6 +533,21 @@ def test_llm_enricher_transformers_falls_back_when_quant_lib_missing(
     assert enrichment.data["model"] == "smollm2-1.7b-instruct"
 
 
+def test_llm_enricher_rejects_unknown_backend() -> None:
+    """An unknown --backend errors clearly instead of silently using the default backend."""
+    report = build_report(
+        _RECORDS,
+        ReportRequest(requested_level="llm", llm_backend="bogus"),
+        # httpx present so ollama *would* be selectable — proves the unknown-name
+        # check fires before any backend is run.
+        import_module=_importer({"httpx": types.SimpleNamespace()}),
+    )
+    enrichment = report.enrichments[0]
+    assert enrichment.status == "error"
+    assert "bogus" in enrichment.message
+    assert "unknown" in enrichment.message.lower()
+
+
 def test_llm_enricher_transformers_loads_4bit_when_quant_lib_present(
     tmp_path: pathlib.Path,
 ) -> None:

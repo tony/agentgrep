@@ -240,6 +240,21 @@ def run_level(
     """
     diagnostics: list[ReportDiagnostic] = []
     backends = _ordered_backends(level, request)
+    if level == "llm" and request.llm_backend not in ("auto", "", *(b.name for b in backends)):
+        valid = ", ".join(b.name for b in backends)
+        unknown = f"unknown LLM backend {request.llm_backend!r}; valid backends: {valid}"
+        diagnostics.append(
+            ReportDiagnostic(severity="error", code="unknown-backend", message=unknown)
+        )
+        return (
+            InsightsEnrichment(
+                level=level,
+                backend=request.llm_backend,
+                status="error",
+                message=unknown,
+            ),
+            diagnostics,
+        )
     chosen = _first_available(backends, import_module=import_module)
     if chosen is None:
         preferred = backends[0]
