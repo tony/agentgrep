@@ -225,6 +225,11 @@ def _field_matches_record(
         if _is_wildcard(node.value):
             return _string_match(record.text, node.value)
         return _text_matches(record, node.value)
+    if spec.name == "human":
+        # Adapters tag tool results / agent output with human_typed=False;
+        # absence means a user-typed turn. ``human:true`` keeps the user's asks.
+        human_typed = record.metadata.get("human_typed", True) is not False
+        return human_typed == (node.value == "true")
     return False
 
 

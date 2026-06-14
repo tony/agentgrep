@@ -10786,6 +10786,52 @@ def test_search_grok_chat_history_drops_empty_content(
     assert chat_records == []
 
 
+def test_search_grok_chat_history_tags_tool_turns_non_human(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Grok tool_use/tool_result turns carry metadata['human_typed']=False."""
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("GROK_HOME", raising=False)
+    chat_file = home / ".grok" / "sessions" / "%2Ftmp%2Fproj" / "sess-1" / "chat_history.jsonl"
+    write_jsonl(
+        chat_file,
+        [
+            {"type": "user", "content": "search the repo", "timestamp": "2026-05-25T10:00:01Z"},
+            {
+                "type": "tool_use",
+                "content": "ripgrep --files",
+                "timestamp": "2026-05-25T10:00:02Z",
+            },
+            {
+                "type": "tool_result",
+                "content": "matched 11 files",
+                "timestamp": "2026-05-25T10:00:03Z",
+            },
+        ],
+    )
+
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    query = t.cast("t.Any", agentgrep).SearchQuery(
+        terms=(),
+        scope="all",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("grok",),
+        limit=None,
+    )
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("grok",), backends)
+    records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
+
+    by_role = {r.role: r for r in records if r.store == "grok.sessions"}
+    assert by_role["user"].metadata == {}
+    assert by_role["tool_use"].metadata == {"human_typed": False}
+    assert by_role["tool_result"].metadata == {"human_typed": False}
+
+
 def test_search_grok_session_search_db(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

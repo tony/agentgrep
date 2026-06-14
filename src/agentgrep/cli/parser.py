@@ -675,6 +675,7 @@ _QUERY_FIELD_NAMES: frozenset[str] = frozenset(
         "model",
         "role",
         "text",
+        "human",
     },
 )
 
