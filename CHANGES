@@ -42,6 +42,16 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### What's new
+
+#### Resumable MCP result pages (#64)
+
+MCP {tooliconl}`search` and {tooliconl}`find` responses now report whether a
+scan finished or stopped at the page limit, and hand back an opaque cursor to
+fetch the next page. Each result carries an opaque ref, and the new
+{tooliconl}`inspect_result` tool reads the records behind a ref so agents can
+drill into a hit without reconstructing local file paths.
+
 ## agentgrep 0.1.0a21 (2026-06-13)
 
 agentgrep 0.1.0a21 makes `--limit N` the canonical result cap for
