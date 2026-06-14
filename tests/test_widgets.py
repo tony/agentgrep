@@ -155,6 +155,8 @@ def test_backend_index_renders_backend_shortcut_grid(tmp_path: pathlib.Path) -> 
         "cursor-cli",
         "cursor-ide",
         "gemini",
+        "antigravity-cli",
+        "antigravity-ide",
         "grok",
         "pi",
         "opencode",

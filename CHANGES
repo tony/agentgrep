@@ -52,6 +52,16 @@ fetch the next page. Each result carries an opaque ref, and the new
 {tooliconl}`inspect_result` tool reads the records behind a ref so agents can
 drill into a hit without reconstructing local file paths.
 
+#### Antigravity CLI and IDE backends (#66)
+
+agentgrep now treats Google Antigravity as two separate backends:
+`--agent antigravity-cli` for CLI prompt history and
+`--agent antigravity-ide` for IDE-local artifacts. CLI `history.jsonl` is
+searched by default; protobuf conversation files and Markdown brain/skill
+artifacts are documented and exposed as inspectable stores without joining
+default search. See {doc}`/backends/antigravity-cli` and
+{doc}`/backends/antigravity-ide` for the split layout.
+
 ## agentgrep 0.1.0a21 (2026-06-13)
 
 agentgrep 0.1.0a21 makes `--limit N` the canonical result cap for

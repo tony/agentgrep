@@ -51,7 +51,7 @@ predicates prune sources before any file is opened.
 
 | Field | Kind | Notes |
 |---|---|---|
-| `agent` | enum | One of `codex`, `claude`, `cursor-cli`, `cursor-ide`, `gemini`, `grok`, `pi`, `opencode` |
+| `agent` | enum | One of `codex`, `claude`, `cursor-cli`, `cursor-ide`, `gemini`, `antigravity-cli`, `antigravity-ide`, `grok`, `pi`, `opencode` |
 | `store` | string | Substring against the source's store name |
 | `adapter_id` | string | Substring; alias `adapter` |
 | `path` | path | Glob (with `*` / `?` / `[…]`) or substring |
