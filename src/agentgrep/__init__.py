@@ -479,6 +479,8 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
             return run_ui_command(parsed)
         if isinstance(parsed, InsightsReportArgs):
             return run_insights_report_command(parsed)
+        if isinstance(parsed, InsightsSkillsArgs):
+            return run_insights_skills_command(parsed)
         if isinstance(parsed, InsightsLevelsArgs):
             return run_insights_levels_command(parsed)
         if isinstance(parsed, InsightsDoctorArgs):
@@ -548,6 +550,7 @@ from agentgrep.cli.insights_render import (  # noqa: E402  (re-exports must foll
     run_insights_models_command,
     run_insights_report_command,
     run_insights_setup_command,
+    run_insights_skills_command,
 )
 from agentgrep.cli.parser import (  # noqa: E402  (re-exports must follow main definition)
     CaseMode,
@@ -561,6 +564,7 @@ from agentgrep.cli.parser import (  # noqa: E402  (re-exports must follow main d
     InsightsModelsArgs,
     InsightsReportArgs,
     InsightsSetupArgs,
+    InsightsSkillsArgs,
     ParserBundle,
     PatternMode,
     SearchArgs,

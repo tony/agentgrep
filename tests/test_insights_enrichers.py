@@ -399,3 +399,161 @@ def test_llm_enricher_litert_errors_when_model_not_provisioned(tmp_path: pathlib
     assert enrichment.status == "error"
     setup = next(d.setup_command for d in report.diagnostics if d.setup_command)
     assert "models install" in setup
+
+
+def _fake_transformers() -> tuple[t.Any, t.Any]:
+    """Return fake ``(torch, transformers)`` for the transformers LLM backend."""
+
+    class _InputIds:
+        shape = (1, 3)  # prompt is 3 tokens
+
+    class _Inputs(dict):
+        def to(self, _device: str) -> _Inputs:
+            return self
+
+    class _Tokenizer:
+        eos_token_id = 0
+
+        @classmethod
+        def from_pretrained(cls, _path: str, **_kwargs: object) -> _Tokenizer:
+            return cls()
+
+        def apply_chat_template(self, _messages: object, **_kwargs: object) -> _Inputs:
+            return _Inputs(input_ids=_InputIds())
+
+        def decode(self, _tokens: object, **_kwargs: object) -> str:
+            return "Worked on indexing."
+
+    class _Model:
+        @classmethod
+        def from_pretrained(cls, _path: str, **_kwargs: object) -> _Model:
+            return cls()
+
+        def to(self, _device: str) -> _Model:
+            return self
+
+        def eval(self) -> _Model:
+            return self
+
+        def generate(self, **_kwargs: object) -> list[list[int]]:
+            return [[0, 1, 2, 7, 8]]  # outputs[0][3:] -> the new tokens
+
+    class _InferenceMode:
+        def __enter__(self) -> _InferenceMode:
+            return self
+
+        def __exit__(self, *_exc: object) -> bool:
+            return False
+
+    torch = types.SimpleNamespace(
+        cuda=types.SimpleNamespace(is_available=lambda: False),
+        float16=object(),
+        float32=object(),
+        inference_mode=_InferenceMode,
+    )
+    transformers = types.SimpleNamespace(
+        AutoTokenizer=_Tokenizer,
+        AutoModelForCausalLM=_Model,
+        BitsAndBytesConfig=lambda **_kwargs: object(),
+    )
+    return torch, transformers
+
+
+def _provision(model_id: str, model_cache: pathlib.Path) -> None:
+    """Write an empty manifest so ``models_mod.is_installed`` reports the model."""
+    spec = models_mod.resolve_llm_model(model_id, "transformers")
+    assert spec is not None
+    target = models_mod.model_cache_path(spec, model_cache)
+    target.mkdir(parents=True, exist_ok=True)
+    (target / "agentgrep-manifest.json").write_text("{}", encoding="utf-8")
+
+
+def test_llm_enricher_transformers_generates_from_local_model(tmp_path: pathlib.Path) -> None:
+    """The transformers backend loads a provisioned model and returns a summary."""
+    spec = models_mod.resolve_llm_model("gemma-3-1b-it", "transformers")
+    assert spec is not None
+    target = models_mod.model_cache_path(spec, tmp_path)
+    target.mkdir(parents=True, exist_ok=True)
+    (target / "agentgrep-manifest.json").write_text("{}", encoding="utf-8")
+
+    torch, transformers = _fake_transformers()
+    report = build_report(
+        _RECORDS,
+        ReportRequest(requested_level="llm", llm_backend="transformers", model="gemma-3-1b-it"),
+        import_module=_importer({"torch": torch, "transformers": transformers}),
+        model_cache=tmp_path,
+    )
+    enrichment = report.enrichments[0]
+    assert enrichment.status == "ok"
+    assert enrichment.backend == "transformers"
+    assert enrichment.data["summary"] == "Worked on indexing."
+    assert enrichment.provenance is not None and enrichment.provenance["endpoint"] == "cpu"
+
+
+def test_llm_enricher_transformers_default_chain_uses_first_loadable(
+    tmp_path: pathlib.Path,
+) -> None:
+    """With no --model, the default chain skips unprovisioned specs to the first ready one."""
+    # Phi (chain head) is left unprovisioned; download is off, so it is skipped.
+    _provision("smollm2-1.7b-instruct", tmp_path)
+
+    torch, transformers = _fake_transformers()
+    report = build_report(
+        _RECORDS,
+        ReportRequest(requested_level="llm", llm_backend="transformers"),
+        import_module=_importer({"torch": torch, "transformers": transformers}),
+        model_cache=tmp_path,
+    )
+    enrichment = report.enrichments[0]
+    assert enrichment.status == "ok"
+    assert enrichment.backend == "transformers"
+    assert enrichment.data["model"] == "smollm2-1.7b-instruct"
+    assert enrichment.provenance is not None
+    assert enrichment.provenance["quantization"] == "none"
+
+
+def test_llm_enricher_transformers_falls_back_when_quant_lib_missing(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A 4-bit candidate whose bitsandbytes import fails drops to the next chain spec."""
+    # Both provisioned, but bitsandbytes is absent from the importer, so the
+    # 4-bit Phi head raises on load and the fp16 SmolLM2 default serves.
+    _provision("phi-4-mini-instruct", tmp_path)
+    _provision("smollm2-1.7b-instruct", tmp_path)
+
+    torch, transformers = _fake_transformers()
+    report = build_report(
+        _RECORDS,
+        ReportRequest(requested_level="llm", llm_backend="transformers"),
+        import_module=_importer({"torch": torch, "transformers": transformers}),
+        model_cache=tmp_path,
+    )
+    enrichment = report.enrichments[0]
+    assert enrichment.status == "ok"
+    assert enrichment.data["model"] == "smollm2-1.7b-instruct"
+
+
+def test_llm_enricher_transformers_loads_4bit_when_quant_lib_present(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A pinned 4-bit model loads through the quant path when bitsandbytes is importable."""
+    _provision("phi-4-mini-instruct", tmp_path)
+
+    torch, transformers = _fake_transformers()
+    report = build_report(
+        _RECORDS,
+        ReportRequest(
+            requested_level="llm",
+            llm_backend="transformers",
+            model="phi-4-mini-instruct",
+        ),
+        import_module=_importer(
+            {"torch": torch, "transformers": transformers, "bitsandbytes": object()}
+        ),
+        model_cache=tmp_path,
+    )
+    enrichment = report.enrichments[0]
+    assert enrichment.status == "ok"
+    assert enrichment.data["model"] == "phi-4-mini-instruct"
+    assert enrichment.provenance is not None
+    assert enrichment.provenance["quantization"] == "4bit"

@@ -96,9 +96,9 @@ def test_sampled_flag_set_when_limit_reached() -> None:
 
 
 def test_levels_field_lists_every_rung() -> None:
-    """The report enumerates all six levels for the levels/doctor surfaces."""
+    """The report enumerates every level for the levels/doctor surfaces."""
     report = build_report(_RECORDS, ReportRequest(), import_module=_none_importer)
     listed = {status.level for status in report.levels}
-    assert listed == {"builtin", "html", "ml", "embeddings", "index", "llm"}
+    assert listed == {"builtin", "html", "ml", "embeddings", "index", "graph", "llm"}
     builtin = next(s for s in report.levels if s.level == "builtin")
     assert builtin.available is True

@@ -18,6 +18,7 @@ def _rec(
     session_id: str | None = None,
     kind: t.Literal["prompt", "history"] = "prompt",
     path: str = "/x/proj/file.jsonl",
+    metadata: dict[str, t.Any] | None = None,
 ) -> agentgrep.SearchRecord:
     """Build a synthetic SearchRecord for activity tests."""
     return agentgrep.SearchRecord(
@@ -29,6 +30,7 @@ def _rec(
         text=text,
         timestamp=timestamp,
         session_id=session_id,
+        metadata={} if metadata is None else metadata,
     )
 
 
@@ -105,6 +107,23 @@ def test_open_threads_flag_trailing_questions() -> None:
     assert any("Why does the parser fail" in title for title in titles)
     assert all("Refactor" not in title for title in titles)
     assert activity.open_threads[0].ref.session_id == "s1"
+
+
+def test_non_human_turns_excluded_from_instructions_and_threads() -> None:
+    """Tool output / agent replies (human_typed=False) are not user signals."""
+    records = [
+        _rec("commit your files"),
+        _rec("commit your files"),
+        # A tool turn that happens to repeat and ends with a question must not
+        # count as a repeated instruction or an open thread.
+        _rec("did the build pass?", metadata={"human_typed": False}),
+        _rec("did the build pass?", metadata={"human_typed": False}),
+    ]
+    activity = build_activity(records, sampled=False)
+    assert "commit your files" in activity.repeated_instructions
+    assert "did the build pass?" not in activity.repeated_instructions
+    titles = [thread.title for thread in activity.open_threads]
+    assert all("did the build pass" not in title for title in titles)
 
 
 def test_coverage_counts_timestamp_and_session() -> None:

@@ -64,6 +64,7 @@ __all__ = [
     "InsightsModelsArgs",
     "InsightsReportArgs",
     "InsightsSetupArgs",
+    "InsightsSkillsArgs",
     "ParserBundle",
     "PatternMode",
     "SearchArgs",
@@ -202,6 +203,10 @@ class InsightsReportArgs:
     include_text: bool
     color_mode: ColorMode
     progress_mode: ProgressMode = "auto"
+    since: str | None = None
+    until: str | None = None
+    conversation_summaries: bool = False
+    graph_vector_backend: str = "sqlite-vec"
 
 
 @dataclasses.dataclass(slots=True)
@@ -252,6 +257,26 @@ class InsightsCacheArgs:
     color_mode: ColorMode
 
 
+@dataclasses.dataclass(slots=True)
+class InsightsSkillsArgs:
+    """Typed arguments for ``agentgrep insights skills``."""
+
+    output_format: InsightsFormat
+    scope: SearchScope
+    agents: tuple[AgentName, ...]
+    limit: int | None
+    model: str | None
+    llm_backend: str
+    use_llm: bool
+    write_dir: str | None
+    allow_download: bool
+    yes: bool
+    color_mode: ColorMode
+    progress_mode: ProgressMode = "auto"
+    since: str | None = None
+    until: str | None = None
+
+
 InsightsArgs = (
     InsightsReportArgs
     | InsightsLevelsArgs
@@ -259,6 +284,7 @@ InsightsArgs = (
     | InsightsSetupArgs
     | InsightsModelsArgs
     | InsightsCacheArgs
+    | InsightsSkillsArgs
 )
 
 
@@ -741,7 +767,7 @@ def _add_insights_parser(
     )
     insights_sub = insights_parser.add_subparsers(dest="insights_command")
     use_color = color_mode != "never"
-    levels = ["builtin", "html", "ml", "embeddings", "index", "llm", "best-installed"]
+    levels = ["builtin", "html", "ml", "embeddings", "index", "graph", "llm", "best-installed"]
     formats = ["text", "markdown", "html", "json", "ndjson"]
 
     report_parser = insights_sub.add_parser(
@@ -795,9 +821,94 @@ def _add_insights_parser(
         help="Allow raw snippets in summaries (default: aggregate only)",
     )
     _ = report_parser.add_argument(
+        "--conversation-summaries",
+        dest="conversation_summaries",
+        action="store_true",
+        help="Graph level: vector each conversation by a local-LLM summary (opt-in, slow)",
+    )
+    _ = report_parser.add_argument(
+        "--graph-vector-backend",
+        dest="graph_vector_backend",
+        choices=["sqlite-vec", "lancedb"],
+        default="sqlite-vec",
+        help="Graph level: vector kNN backend (lancedb = IVF-PQ ANN; default sqlite-vec)",
+    )
+    _ = report_parser.add_argument(
+        "--since",
+        default=None,
+        metavar="WHEN",
+        help="Only analyze records on/after WHEN (e.g. 30d, 2026-05-14)",
+    )
+    _ = report_parser.add_argument(
+        "--until", default=None, metavar="WHEN", help="Only analyze records on/before WHEN"
+    )
+    _ = report_parser.add_argument(
         "--progress", choices=["auto", "always", "never"], default="auto", help="Progress on stderr"
     )
     _ = report_parser.add_argument(
+        "--no-progress",
+        dest="progress",
+        action="store_const",
+        const="never",
+        help=argparse.SUPPRESS,
+    )
+
+    skills_parser = insights_sub.add_parser(
+        "skills",
+        help="Draft SKILL.md files from recurring requests",
+        formatter_class=formatter_class,
+        color=use_color,
+    )
+    add_common_agent_options(skills_parser)
+    _ = skills_parser.add_argument(
+        "--format",
+        dest="insights_format",
+        choices=["text", "markdown", "json"],
+        default="text",
+        help="Output format (default: text)",
+    )
+    _ = skills_parser.add_argument(
+        "--limit", type=int, default=500, metavar="N", help="Max records to analyze"
+    )
+    _ = skills_parser.add_argument(
+        "--llm",
+        dest="use_llm",
+        action="store_true",
+        help="Name and describe each skill with a local LLM (falls back to deterministic)",
+    )
+    _ = skills_parser.add_argument(
+        "--write",
+        dest="write_dir",
+        default=None,
+        metavar="DIR",
+        help="Write each SKILL.md under DIR/<name>/ (default: print to stdout)",
+    )
+    _ = skills_parser.add_argument("--model", default=None, help="Model id for embeddings/LLM")
+    _ = skills_parser.add_argument(
+        "--backend", dest="llm_backend", default="ollama", help="Local LLM backend for --llm"
+    )
+    _ = skills_parser.add_argument(
+        "--auto-download-models",
+        dest="allow_download",
+        action="store_true",
+        help="Permit downloading a missing model during naming",
+    )
+    _ = skills_parser.add_argument(
+        "--yes", action="store_true", help="Assume yes for non-interactive downloads"
+    )
+    _ = skills_parser.add_argument(
+        "--since",
+        default=None,
+        metavar="WHEN",
+        help="Only analyze records on/after WHEN (e.g. 30d, 2026-05-14)",
+    )
+    _ = skills_parser.add_argument(
+        "--until", default=None, metavar="WHEN", help="Only analyze records on/before WHEN"
+    )
+    _ = skills_parser.add_argument(
+        "--progress", choices=["auto", "always", "never"], default="auto", help="Progress on stderr"
+    )
+    _ = skills_parser.add_argument(
         "--no-progress",
         dest="progress",
         action="store_const",
@@ -1218,10 +1329,28 @@ def _build_insights_args(
     if insights_command is None:
         with configured_color_environment(color_mode):
             bundle.parser.error(
-                "insights requires a subcommand: report, levels, doctor, setup, models, cache"
+                "insights requires a subcommand: report, skills, levels, doctor, "
+                "setup, models, cache"
             )
     fmt = t.cast("InsightsFormat", getattr(namespace, "insights_format", "text"))
 
+    if insights_command == "skills":
+        return InsightsSkillsArgs(
+            output_format=fmt,
+            scope="conversations",
+            agents=parse_agents(t.cast("list[str]", namespace.agent)),
+            limit=t.cast("int | None", namespace.limit),
+            model=t.cast("str | None", namespace.model),
+            llm_backend=t.cast("str", namespace.llm_backend),
+            use_llm=t.cast("bool", namespace.use_llm),
+            write_dir=t.cast("str | None", namespace.write_dir),
+            allow_download=t.cast("bool", namespace.allow_download),
+            yes=t.cast("bool", namespace.yes),
+            color_mode=color_mode,
+            progress_mode=t.cast("ProgressMode", namespace.progress),
+            since=t.cast("str | None", namespace.since),
+            until=t.cast("str | None", namespace.until),
+        )
     if insights_command == "report":
         return InsightsReportArgs(
             requested_level=t.cast("InsightsLevelName", namespace.level),
@@ -1237,6 +1366,10 @@ def _build_insights_args(
             include_text=t.cast("bool", namespace.include_text),
             color_mode=color_mode,
             progress_mode=t.cast("ProgressMode", namespace.progress),
+            since=t.cast("str | None", namespace.since),
+            until=t.cast("str | None", namespace.until),
+            conversation_summaries=t.cast("bool", namespace.conversation_summaries),
+            graph_vector_backend=t.cast("str", namespace.graph_vector_backend),
         )
     if insights_command == "levels":
         return InsightsLevelsArgs(output_format=fmt, color_mode=color_mode)

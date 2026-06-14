@@ -49,10 +49,30 @@ insights-embeddings-st = ["sentence-transformers>=5.5"]
 insights-index = ["tantivy>=0.26", "sqlite-vec>=0.1.9", "numpy>=1.24"]
 # Alternative single-store index backend.
 insights-index-lancedb = ["lancedb>=0.33", "numpy>=1.24"]
+# Prompt/reply/conversation similarity network + workflow mining (sqlite-vec store).
+# scikit-learn powers HDBSCAN archetype clustering; the engine falls back to a
+# greedy cosine pass when it is absent.
+insights-graph = [
+    "model2vec>=0.8",
+    "huggingface-hub>=0.20",
+    "sqlite-vec>=0.1.9",
+    "numpy>=1.24",
+    "scikit-learn>=1.4",
+]
+insights-graph-st = ["sentence-transformers>=5.5"]
+# True IVF-PQ ANN vector backend for the graph similar-edge kNN (scale store).
+insights-graph-lancedb = ["lancedb>=0.33", "numpy>=1.24"]
 # Local-LLM summaries over the Ollama HTTP control plane.
 insights-llm = ["httpx>=0.28"]
 # In-process LiteRT-LM runtime for local Gemma .litertlm artifacts.
 insights-llm-litert = ["litert-lm-api>=0.13"]
+# In-process transformers runtime: a small, non-gated instruction-tuned model on
+# GPU/CUDA (the GPU-capable path where LiteRT's OpenCL delegate is unavailable).
+# The transformers floor covers the Granite and Phi-4 architectures.
+insights-llm-transformers = ["torch>=2.2", "transformers>=4.50", "accelerate>=0.30"]
+# Optional 4-bit NF4 quantization so a larger model (Phi-4-mini, Granite-2b)
+# fits a 4 GB GPU. The fp16 SmolLM2 default works without this.
+insights-llm-transformers-quant = ["bitsandbytes>=0.43"]
 # Every stable level (1-4); excludes the -st embedding runtime and the LLM level.
 insights-all = [
   "jinja2>=3.1",

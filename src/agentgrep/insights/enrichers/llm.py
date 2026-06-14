@@ -1,7 +1,9 @@
 """Level 5 enricher: local-LLM narrative summary.
 
-Two runtimes are wired: Ollama over local HTTP, and LiteRT-LM in-process
-(e.g. a Gemma ``.litertlm`` artifact loaded from the model cache). The
+Three runtimes are wired: Ollama over local HTTP, LiteRT-LM in-process
+(a Gemma ``.litertlm`` artifact), and transformers in-process (a small,
+non-gated instruction-tuned model on GPU/CUDA via ``AutoModelForCausalLM``
+— the GPU-capable path where LiteRT's OpenCL delegate is unavailable). The
 summary is grounded in compact facts — counts, top terms, timeline, and
 open-thread titles — never raw transcripts unless ``--include-text`` is
 set. Tokens stream to the progress sink as they arrive so the CLI can
@@ -25,7 +27,10 @@ if t.TYPE_CHECKING:
 _DEFAULT_ENDPOINT = "http://127.0.0.1:11434"
 _DEFAULT_OLLAMA_MODEL = "llama3.2"
 _DEFAULT_LITERT_MODEL = "gemma-4-e2b"
-_LITERT_MAX_TOKENS = 2048
+# A grounded 3-5 sentence summary; bounded so CPU generation can't run away
+# (the LiteRT GPU delegate needs OpenCL/WebGPU, absent on most CPU-only hosts).
+_LITERT_MAX_TOKENS = 512
+_TRANSFORMERS_MAX_TOKENS = 256
 _MAX_FACT_TERMS = 12
 _MAX_FACT_THREADS = 8
 
@@ -68,6 +73,8 @@ def build_llm(ctx: EnricherContext) -> InsightsEnrichment:
         return _run_litert(ctx, prompt)
     if ctx.backend == "ollama":
         return _run_ollama(ctx, prompt)
+    if ctx.backend == "transformers":
+        return _run_transformers(ctx, prompt)
     message = f"local LLM backend {ctx.backend!r} is fetch-only in this build"
     raise BackendConfigurationError(message, level="llm")
 
@@ -206,19 +213,96 @@ def _litert_chunk_text(chunk: t.Any) -> str:
     return ""
 
 
+def _run_transformers(ctx: EnricherContext, prompt: str) -> InsightsEnrichment:
+    """Generate a grounded summary from a transformers model on GPU/CPU.
+
+    With no ``--model`` the non-gated default chain is walked (Phi-4-mini 4-bit
+    → SmolLM2 fp16 → Granite 4-bit) and the first model that provisions and
+    loads serves; an explicit ``--model`` pins one curated spec. The shared
+    :func:`~agentgrep.insights.skills.build_transformers_complete` loader formats
+    the prompt with the chat template and generates a bounded summary on CUDA
+    when available. The resolved device and quantization are recorded in the
+    enrichment provenance.
+    """
+    from agentgrep.insights import models as models_mod, skills as skills_mod
+
+    torch = ctx.modules["torch"]
+    importer = ctx.import_module or __import__("importlib").import_module
+    requested = ctx.request.model
+    if requested:
+        pinned = models_mod.resolve_llm_model(requested, "transformers")
+        if pinned is None:
+            message = f"no curated transformers model {requested!r}"
+            raise BackendConfigurationError(message, level="llm")
+        candidates: tuple[t.Any, ...] = (pinned,)
+    else:
+        candidates = models_mod.default_transformers_chain()
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    def _load_one(spec: t.Any) -> t.Any:
+        if not models_mod.is_installed(spec, ctx.model_cache):
+            if not ctx.policy.allow_download:
+                return None
+            models_mod.install_model(
+                spec,
+                model_cache=ctx.model_cache,
+                progress=ctx.progress,
+                import_module=importer,
+            )
+        if ctx.progress is not None:
+            ctx.progress.phase("summarize", detail=f"transformers:{spec.model_id}@{device}")
+        return skills_mod.build_transformers_complete(
+            model_path=str(models_mod.model_cache_path(spec, ctx.model_cache)),
+            import_module=importer,
+            max_tokens=_TRANSFORMERS_MAX_TOKENS,
+            quantization=spec.quantization,
+            trust_remote_code=spec.trust_remote_code,
+        )
+
+    chosen = skills_mod.first_working_transformers(candidates, load_one=_load_one)
+    if chosen is None:
+        tried = ", ".join(spec.model_id for spec in candidates) or "(none)"
+        message = f"no transformers model could be loaded (tried: {tried})"
+        install = (
+            "uv pip install 'agentgrep[insights-llm-transformers,insights-llm-transformers-quant]'"
+        )
+        raise BackendConfigurationError(message, level="llm", setup_command=install)
+
+    spec, complete = chosen
+    text = complete(prompt)
+    accumulated = _emit_delta(ctx, "transformers", spec.model_id, "", text)
+    return _summary_enrichment(
+        accumulated.strip(),
+        backend="transformers",
+        model=spec.model_id,
+        endpoint=device,
+        extra={"quantization": spec.quantization},
+    )
+
+
 def _summary_enrichment(
     summary: str,
     *,
     backend: str,
     model: str,
     endpoint: str,
+    extra: dict[str, t.Any] | None = None,
 ) -> InsightsEnrichment:
-    """Build the enrichment payload for a generated summary."""
+    """Build the enrichment payload for a generated summary.
+
+    ``extra`` merges backend-specific provenance (e.g. the transformers device
+    and quantization mode) without changing the stable ``backend``/``model``/
+    ``endpoint`` keys other runtimes share.
+    """
+    provenance: dict[str, t.Any] = {"backend": backend, "model": model, "endpoint": endpoint}
+    if extra:
+        provenance.update(extra)
     return InsightsEnrichment(
         level="llm",
         backend=backend,
         status="ok",
         message=f"summarized via {backend}:{model}",
         data={"summary": summary, "model": model, "endpoint": endpoint},
-        provenance={"backend": backend, "model": model, "endpoint": endpoint},
+        provenance=provenance,
     )

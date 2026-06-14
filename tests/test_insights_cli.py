@@ -9,17 +9,20 @@ import typing as t
 import pytest
 
 import agentgrep
+from agentgrep.cli import insights_render
 from agentgrep.cli.insights_render import (
     run_insights_cache_command,
     run_insights_levels_command,
     run_insights_report_command,
     run_insights_setup_command,
+    run_insights_skills_command,
 )
 from agentgrep.cli.parser import (
     InsightsCacheArgs,
     InsightsLevelsArgs,
     InsightsModelsArgs,
     InsightsReportArgs,
+    InsightsSkillsArgs,
     parse_args,
 )
 
@@ -89,6 +92,27 @@ def test_parse_cache_prune_args() -> None:
     assert isinstance(parsed, InsightsCacheArgs)
     assert parsed.action == "prune"
     assert parsed.dry_run is True
+
+
+def test_parse_skills_args() -> None:
+    """``insights skills`` parses into InsightsSkillsArgs with the opt-in flags."""
+    parsed = parse_args(["insights", "skills", "--llm", "--write", "out", "--since", "30d"])
+    assert isinstance(parsed, InsightsSkillsArgs)
+    assert parsed.use_llm is True
+    assert parsed.write_dir == "out"
+    assert parsed.since == "30d"
+    assert parsed.scope == "conversations"
+
+
+_SKILL_SUGGESTION = {
+    "type": "template",
+    "name": "vcspull-commit",
+    "evidence": "3 similar asks across 2 conversations",
+    "rationale": "A parameterized skill for this recurring request.",
+    "support": 3,
+    "terms": ["vcspull", "commit"],
+    "examples": ["read .vcspull.yaml changes and commit"],
+}
 
 
 # --- dispatch --------------------------------------------------------------
@@ -171,3 +195,68 @@ def test_cache_dir_command(
     assert run_insights_cache_command(args) == 0
     out = capsys.readouterr().out
     assert str(tmp_path) in out
+
+
+def _skills_args(**overrides: t.Any) -> InsightsSkillsArgs:
+    """Build InsightsSkillsArgs with test defaults."""
+    base = {
+        "output_format": "text",
+        "scope": "conversations",
+        "agents": (),
+        "limit": 500,
+        "model": None,
+        "llm_backend": "ollama",
+        "use_llm": False,
+        "write_dir": None,
+        "allow_download": False,
+        "yes": False,
+        "color_mode": "never",
+        "progress_mode": "never",
+    }
+    base.update(overrides)
+    return InsightsSkillsArgs(**t.cast("t.Any", base))
+
+
+def _patch_one_suggestion(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub record collection, the report build, and the graph suggestions."""
+    monkeypatch.setattr(agentgrep, "run_search_query", lambda home, query, **kwargs: [_rec("x")])
+    monkeypatch.setattr(agentgrep.insights, "build_report", lambda *a, **k: None)
+    monkeypatch.setattr(
+        insights_render, "_graph_skill_suggestions", lambda report: [_SKILL_SUGGESTION]
+    )
+
+
+def test_skills_command_prints_skill_md(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The skills dispatcher renders a SKILL.md from a graph suggestion."""
+    _patch_one_suggestion(monkeypatch)
+
+    assert run_insights_skills_command(_skills_args()) == 0
+    out = capsys.readouterr().out
+    assert "name: vcspull-commit" in out
+    assert "## Example requests" in out
+
+
+def test_skills_command_writes_files(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """``--write DIR`` writes one SKILL.md per suggestion under DIR."""
+    _patch_one_suggestion(monkeypatch)
+
+    assert run_insights_skills_command(_skills_args(write_dir=str(tmp_path))) == 0
+    written = tmp_path / "vcspull-commit" / "SKILL.md"
+    assert written.is_file()
+    assert "name: vcspull-commit" in written.read_text(encoding="utf-8")
+
+
+def test_skills_command_returns_one_without_suggestions(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No recurring-request suggestions exits non-zero with guidance."""
+    monkeypatch.setattr(agentgrep, "run_search_query", lambda home, query, **kwargs: [_rec("x")])
+    monkeypatch.setattr(agentgrep.insights, "build_report", lambda *a, **k: None)
+    monkeypatch.setattr(insights_render, "_graph_skill_suggestions", lambda report: [])
+
+    assert run_insights_skills_command(_skills_args()) == 1
+    assert "no recurring-request skill suggestions" in capsys.readouterr().err

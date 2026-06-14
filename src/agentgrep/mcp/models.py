@@ -503,3 +503,31 @@ class InspectResultResponse(AgentGrepModel):
     sample_count: int
     records: list[SearchRecordModel]
     error_message: str | None = None
+
+
+class InsightsSkillsRequest(AgentGrepModel):
+    """Validated request for the graph skill-suggestion tool."""
+
+    agent: AgentSelector = "all"
+    limit: int = Field(default=500, ge=1, le=5000)
+    since: str | None = None
+    until: str | None = None
+
+
+class InsightsSkillsResponse(AgentGrepModel):
+    """Recurring-request skills and similarity sections from the graph level.
+
+    ``status`` is ``ok`` when the graph level ran, ``unavailable`` when its
+    optional backend is not installed (``setup_command`` then carries the
+    install hint), and ``empty`` when there were no conversation turns to
+    analyze.
+    """
+
+    schema_version: str = agentgrep.SCHEMA_VERSION
+    status: t.Literal["ok", "unavailable", "empty"]
+    records_analyzed: int
+    setup_command: str | None = None
+    skill_suggestions: list[dict[str, t.Any]] = Field(default_factory=list)
+    similar_prompts: list[dict[str, t.Any]] = Field(default_factory=list)
+    recurring_conversations: list[dict[str, t.Any]] = Field(default_factory=list)
+    forgotten_similar: list[dict[str, t.Any]] = Field(default_factory=list)
