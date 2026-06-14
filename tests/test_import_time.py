@@ -36,6 +36,7 @@ _DEFERRED_MODULES: tuple[str, ...] = (
     "httpx",
     "jinja2",
     "huggingface_hub",
+    "litert_lm",
 )
 
 
