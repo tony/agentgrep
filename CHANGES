@@ -36,11 +36,22 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a22 (Yet to be released)
+## agentgrep 0.1.0a23 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a22 (2026-06-14)
+
+agentgrep 0.1.0a22 adds Google Antigravity as two new backends:
+`antigravity-cli` searches the `agy` CLI's prompt-recall log, and
+`antigravity-ide` covers the IDE's local artifacts. It also makes the
+MCP server's `search` and `find` responses resumable — each reports
+whether a scan finished or stopped at the page limit and hands back an
+opaque cursor for the next page — and adds an `inspect_result` tool that
+reads the records behind a returned ref without reconstructing local
+file paths.
 
 ### What's new
 
