@@ -271,8 +271,8 @@ def parse_search_cursor(cursor: str) -> SearchCursor:
     if not isinstance(offset, int) or offset < 0:
         msg = "cursor offset must be non-negative"
         raise McpTokenError(msg)
-    if not isinstance(terms, list) or not all(isinstance(term, str) for term in terms):
-        msg = "cursor terms must be a list of strings"
+    if not isinstance(terms, list) or not terms or not all(isinstance(term, str) for term in terms):
+        msg = "cursor terms must be a non-empty list of strings"
         raise McpTokenError(msg)
     if agent not in t.get_args(AgentSelector):
         msg = "cursor agent is invalid"

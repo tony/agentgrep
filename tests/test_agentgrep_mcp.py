@@ -460,6 +460,38 @@ async def test_mcp_search_cursor_returns_next_page_without_duplicate(
     assert second_data["request"]["terms"] == ["serenity"]
 
 
+async def test_mcp_search_cursor_rejects_empty_terms(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tampered cursors cannot turn into an unfiltered search scan."""
+    from fastmcp.exceptions import ToolError
+
+    from agentgrep.mcp import refs
+
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    cursor = refs.make_search_cursor(
+        offset=1,
+        terms=[],
+        agent="codex",
+        scope="prompts",
+        case_sensitive=False,
+        limit=1,
+    )
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        try:
+            _ = await client.call_tool("search", {"cursor": cursor})
+        except ToolError as exc:
+            error_message = str(exc)
+        else:
+            error_message = ""
+
+    assert "non-empty list" in error_message
+
+
 async def test_mcp_inspect_result_uses_opaque_ref(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
