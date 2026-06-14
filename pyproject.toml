@@ -36,6 +36,32 @@ dependencies = [
 # agentgrep runs without it; stdlib json stays the semantic source of truth
 # (see docs/dev/adr/0002).
 speedups = ["orjson>=3.10"]
+# Insights enrichment ladder (ADR 0005). Each level is independent and the
+# base install pulls in none of these. See docs/cli/insights.md.
+insights-html = ["jinja2>=3.1", "platformdirs>=4"]
+insights-ml = ["scikit-learn>=1.6"]
+# Torch-free default embedding runtime; the model weights download via the
+# same urllib artifact path used for local LLM models.
+insights-embeddings = ["model2vec>=0.8", "numpy>=1.24", "huggingface-hub>=0.20"]
+# Heavier, higher-quality embedding runtime; preferred when installed.
+insights-embeddings-st = ["sentence-transformers>=5.5"]
+# Persistent hybrid index: tantivy (BM25) + sqlite-vec (vectors).
+insights-index = ["tantivy>=0.26", "sqlite-vec>=0.1.9", "numpy>=1.24"]
+# Alternative single-store index backend.
+insights-index-lancedb = ["lancedb>=0.33", "numpy>=1.24"]
+# Local-LLM summaries over the Ollama HTTP control plane.
+insights-llm = ["httpx>=0.28"]
+# Every stable level (1-4); excludes the -st embedding runtime and the LLM level.
+insights-all = [
+  "jinja2>=3.1",
+  "platformdirs>=4",
+  "scikit-learn>=1.6",
+  "model2vec>=0.8",
+  "huggingface-hub>=0.20",
+  "tantivy>=0.26",
+  "sqlite-vec>=0.1.9",
+  "numpy>=1.24",
+]
 
 [project.urls]
 "Bug Tracker" = "https://github.com/tony/agentgrep/issues"
