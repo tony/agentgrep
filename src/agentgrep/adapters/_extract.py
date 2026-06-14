@@ -290,6 +290,15 @@ def flatten_summary_bullets(value: object) -> str | None:
     return None
 
 
+def candidate_is_human_typed(candidate: MessageCandidate) -> bool:
+    """Return whether a role-keyed candidate is a user-typed turn.
+
+    Adapters whose store separates turns by role (Gemini, Cursor, Pi, ...)
+    use this: a non-user role is assistant or tool output, not a typed prompt.
+    """
+    return (candidate.role or "").casefold() in USER_ROLES
+
+
 def build_search_record(
     source: SourceHandle,
     candidate: MessageCandidate,

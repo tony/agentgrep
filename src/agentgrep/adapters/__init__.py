@@ -19,6 +19,7 @@ import typing as t
 from agentgrep.adapters._extract import (
     build_search_record,
     candidate_from_mapping,
+    candidate_is_human_typed,
     extract_conversation_id,
     extract_message_text,
     extract_model,
@@ -133,6 +134,7 @@ __all__ = (
     "CLAUDE_PASTE_REF_RE",
     "build_search_record",
     "candidate_from_mapping",
+    "candidate_is_human_typed",
     "claude_event_is_human_authored",
     "claude_history_paste_text",
     "codex_event_is_human_authored",

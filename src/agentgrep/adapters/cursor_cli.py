@@ -14,6 +14,7 @@ from agentgrep.adapters._common import (
 )
 from agentgrep.adapters._extract import (
     build_search_record,
+    candidate_is_human_typed,
     flatten_summary_bullets,
     iter_message_candidates,
 )
@@ -80,7 +81,11 @@ def parse_cursor_cli_transcript(
             if key in seen:
                 continue
             seen.add(key)
-            yield build_search_record(source, candidate)
+            yield build_search_record(
+                source,
+                candidate,
+                human_typed=candidate_is_human_typed(candidate),
+            )
 
 
 def parse_cursor_ai_tracking_db(
