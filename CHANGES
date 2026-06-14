@@ -54,13 +54,17 @@ drill into a hit without reconstructing local file paths.
 
 #### Antigravity CLI and IDE backends (#67)
 
-agentgrep now treats Google Antigravity as two separate backends:
-`--agent antigravity-cli` for CLI prompt history and
-`--agent antigravity-ide` for IDE-local artifacts. CLI `history.jsonl` is
-searched by default; protobuf conversation files and Markdown brain/skill
-artifacts are documented and exposed as inspectable stores without joining
-default search. See {doc}`/backends/antigravity-cli` and
-{doc}`/backends/antigravity-ide` for the split layout.
+agentgrep now searches Google Antigravity. Because the `agy` CLI and the
+Antigravity IDE keep their data in unrelated trees under the shared
+`~/.gemini` home, agentgrep models them as two backends:
+`--agent antigravity-cli` searches the CLI's `history.jsonl` prompt recall
+log by default, while `--agent antigravity-ide` covers the IDE's local
+artifacts. The protobuf conversation transcripts on both sides (no
+published schema) and the IDE's Markdown brain and skill files (planning
+notes, not chat history) are catalogued as inspectable-only stores,
+reachable on request but kept out of default search. See
+{doc}`/backends/antigravity-cli` and {doc}`/backends/antigravity-ide` for
+the split layout.
 
 ## agentgrep 0.1.0a21 (2026-06-13)
 
