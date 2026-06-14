@@ -88,6 +88,7 @@ def _request_from_cursor(request: SearchRequestModel) -> tuple[SearchRequestMode
             cwd=cursor.cwd,
             repo=cursor.repo,
             branch=cursor.branch,
+            human=t.cast("t.Literal['true', 'false'] | None", cursor.human),
         ),
         cursor.offset,
     )
@@ -204,6 +205,16 @@ async def _search_async(
                 records.append(t.cast("SearchRecordLike", event.record))
             elif isinstance(event, ag_events.SearchFinished):
                 matched = max(matched, event.match_count)
+    if effective_request.human is not None:
+        # Adapters tag tool/assistant output with human_typed=False; a missing
+        # tag means a user-typed turn (the same rule the ``human:`` query field uses).
+        want_human = effective_request.human == "true"
+        records = [
+            record
+            for record in records
+            if ((getattr(record, "metadata", None) or {}).get("human_typed", True) is not False)
+            == want_human
+        ]
     # The inline execution driver emits records per source, not in final
     # result order; restore the newest-first contract the list-returning
     # search path guarantees before building the response.
@@ -225,6 +236,7 @@ async def _search_async(
                 cwd=effective_request.cwd,
                 repo=effective_request.repo,
                 branch=effective_request.branch,
+                human=effective_request.human,
             )
             if has_more
             else None
@@ -343,6 +355,16 @@ def register(mcp: FastMCP, *, runtime: SearchRuntime | None = None) -> None:
                 description="Only return records whose recorded git branch matches this name.",
             ),
         ] = None,
+        human: t.Annotated[
+            t.Literal["true", "false"] | None,
+            Field(
+                default=None,
+                description=(
+                    "Filter by who authored the turn: 'true' keeps user-typed prompts, "
+                    "'false' keeps tool/assistant output. Omit to keep both."
+                ),
+            ),
+        ] = None,
     ) -> SearchToolResponse:
         request = SearchRequestModel(
             terms=terms or [],
@@ -354,6 +376,7 @@ def register(mcp: FastMCP, *, runtime: SearchRuntime | None = None) -> None:
             cwd=cwd,
             repo=repo,
             branch=branch,
+            human=human,
         )
         return await _search_async(request, runtime=runtime)
 

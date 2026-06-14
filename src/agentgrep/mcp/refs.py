@@ -45,6 +45,7 @@ class _SearchCursorPayload(t.TypedDict):
     cwd: str | None
     repo: str | None
     branch: str | None
+    human: str | None
 
 
 class _FindCursorPayload(t.TypedDict):
@@ -79,6 +80,7 @@ class SearchCursor:
     cwd: str | None = None
     repo: str | None = None
     branch: str | None = None
+    human: str | None = None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -245,6 +247,7 @@ def make_search_cursor(
     cwd: str | None = None,
     repo: str | None = None,
     branch: str | None = None,
+    human: str | None = None,
 ) -> str:
     """Build an opaque cursor for the next search page."""
     return _encode_token(
@@ -263,6 +266,7 @@ def make_search_cursor(
                 cwd=cwd,
                 repo=repo,
                 branch=branch,
+                human=human,
             ),
         ),
     )
@@ -313,6 +317,8 @@ def parse_search_cursor(cursor: str) -> SearchCursor:
     if branch is not None and not isinstance(branch, str):
         msg = "cursor branch must be a string or null"
         raise McpTokenError(msg)
+    human_raw = payload.get("human")
+    human = human_raw if human_raw in ("true", "false") else None
     return SearchCursor(
         offset=offset,
         terms=t.cast("list[str]", terms),
@@ -323,6 +329,7 @@ def parse_search_cursor(cursor: str) -> SearchCursor:
         cwd=cwd,
         repo=repo,
         branch=branch,
+        human=t.cast("str | None", human),
     )
 
 
