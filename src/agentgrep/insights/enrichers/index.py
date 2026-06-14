@@ -122,7 +122,7 @@ def _build_tantivy_sqlitevec(
             doc = searcher.doc(address)
             doc_id = int(doc["doc_id"][0])
             hits.append(_record_ref(records[doc_id]).to_payload())
-    except Exception:
+    except Exception:  # noqa: BLE001
         hits = []
 
     return {
@@ -166,7 +166,7 @@ def _build_lancedb(
     try:
         results = table.search(_sample_term(ctx), query_type="fts").limit(_SAMPLE_HITS).to_list()
         hits = [_record_ref(records[int(result["doc_id"])]).to_payload() for result in results]
-    except Exception:
+    except Exception:  # noqa: BLE001
         hits = []
 
     return {

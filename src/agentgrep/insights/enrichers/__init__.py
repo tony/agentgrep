@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 from agentgrep.insights.loader import (
     BackendError,
-    BackendUnavailable,
+    BackendUnavailableError,
     load_modules,
     probe_modules,
 )
@@ -69,6 +69,7 @@ _BUILDER_MODULE: dict[InsightsLevel, str] = {
     "ml": "agentgrep.insights.enrichers.ml",
     "embeddings": "agentgrep.insights.enrichers.embeddings",
     "index": "agentgrep.insights.enrichers.index",
+    "graph": "agentgrep.insights.enrichers.graph",
     "llm": "agentgrep.insights.enrichers.llm",
 }
 
@@ -117,6 +118,20 @@ _BACKENDS: dict[InsightsLevel, tuple[BackendSpec, ...]] = {
             builder="build_index",
         ),
     ),
+    "graph": (
+        BackendSpec(
+            name="sentence-transformers",
+            modules=("sentence_transformers", "sqlite_vec", "numpy"),
+            setup_command="uv pip install 'agentgrep[insights-graph-st]'",
+            builder="build_graph",
+        ),
+        BackendSpec(
+            name="model2vec",
+            modules=("model2vec", "sqlite_vec", "numpy"),
+            setup_command="uv pip install 'agentgrep[insights-graph]'",
+            builder="build_graph",
+        ),
+    ),
     "llm": (
         BackendSpec(
             name="ollama",
@@ -128,6 +143,12 @@ _BACKENDS: dict[InsightsLevel, tuple[BackendSpec, ...]] = {
             name="litert-lm",
             modules=("litert_lm",),
             setup_command="uv pip install 'agentgrep[insights-llm-litert]'",
+            builder="build_llm",
+        ),
+        BackendSpec(
+            name="transformers",
+            modules=("torch", "transformers"),
+            setup_command="uv pip install 'agentgrep[insights-llm-transformers]'",
             builder="build_llm",
         ),
     ),
@@ -262,7 +283,7 @@ def run_level(
             model_cache=model_cache,
         )
         enrichment = builder(context)
-    except BackendUnavailable as exc:
+    except BackendUnavailableError as exc:
         diagnostics.append(
             ReportDiagnostic(
                 severity="warning",
@@ -298,7 +319,7 @@ def run_level(
             ),
             diagnostics,
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         diagnostics.append(
             ReportDiagnostic(
                 severity="error",

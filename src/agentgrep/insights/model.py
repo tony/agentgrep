@@ -20,10 +20,12 @@ from dataclasses import dataclass, field
 SCHEMA_VERSION = 1
 """Schema version embedded in the machine-readable report payload."""
 
-InsightsLevel = t.Literal["builtin", "html", "ml", "embeddings", "index", "llm"]
+InsightsLevel = t.Literal["builtin", "html", "ml", "embeddings", "index", "graph", "llm"]
 """A concrete enrichment rung. ``builtin`` is always available."""
 
-RequestedLevel = t.Literal["builtin", "html", "ml", "embeddings", "index", "llm", "best-installed"]
+RequestedLevel = t.Literal[
+    "builtin", "html", "ml", "embeddings", "index", "graph", "llm", "best-installed"
+]
 """A level the user may request, including the ``best-installed`` selector."""
 
 ReportStatusName = t.Literal["ok", "partial", "empty", "error"]
@@ -38,6 +40,7 @@ LEVEL_ORDER: tuple[InsightsLevel, ...] = (
     "ml",
     "embeddings",
     "index",
+    "graph",
     "llm",
 )
 """Levels from cheapest/always-available to heaviest. Order is load-bearing
@@ -420,6 +423,15 @@ class ReportRequest:
     index_backend: str = "tantivy"
     allow_download: bool = False
     include_text: bool = False
+    # Opt-in (graph level): use a local-LLM one-line summary as each
+    # conversation's vector instead of the prompt-mean. Sharper but expensive;
+    # summaries are cached by conversation content hash. Falls back to
+    # prompt-mean when no LLM backend is reachable.
+    conversation_summaries: bool = False
+    # Graph level: which vector backend builds the similar-edge kNN.
+    # "sqlite-vec" (default, embedded, brute-force) or "lancedb" (true IVF-PQ
+    # ANN; needs agentgrep[insights-graph-lancedb]).
+    graph_vector_backend: str = "sqlite-vec"
 
 
 @dataclass(frozen=True, slots=True)
