@@ -38,6 +38,15 @@ _TRANSFORM_THRESHOLD = 0.6
 _TOPK = 8
 _MIN_SUPPORT = 2
 _MAX_SECTION = 12
+# Skill suggestions: top multi-step macros, then up to this many ranked
+# recurring-ask templates (was a hard cap of 8, which hid most of a large
+# corpus's real recurring asks).
+_MAX_MACRO_SUGGESTIONS = 5
+_MAX_SKILL_SUGGESTIONS = 50
+# A macro leads the suggestion list, so a barely-recurring chain (support 2)
+# would outrank a broadly-repeated template. Require a macro to recur at least
+# this often before it is surfaced as a skill candidate.
+_MIN_MACRO_SUPPORT = 3
 
 
 class Turn(t.NamedTuple):
@@ -321,8 +330,8 @@ def _build_similar_edges(
                 prompt_matrix,
                 import_module=importer,
             )
-        except ImportError:
-            # lancedb not installed — fall back to the embedded default.
+        except Exception:
+            # lancedb absent or backend error — fall back to the embedded default.
             backend = "sqlite-vec"
         else:
             if ctx.progress is not None:
@@ -940,10 +949,12 @@ def _skill_suggestions(
     parameterizes the request). Deterministic — names come from slash
     commands or the cluster's top terms.
     """
-    suggestions: list[dict[str, t.Any]] = []
-    for workflow in workflows[:5]:
+    macros: list[dict[str, t.Any]] = []
+    for workflow in workflows[:_MAX_MACRO_SUGGESTIONS]:
+        if workflow["support"] < _MIN_MACRO_SUPPORT:
+            continue
         steps = [step.strip() for step in str(workflow["example"]).split(" → ")]
-        suggestions.append(
+        macros.append(
             {
                 "type": "macro",
                 "name": _skill_slug_from_steps(steps),
@@ -954,6 +965,7 @@ def _skill_suggestions(
                 "steps": steps,
             }
         )
+    templates: list[dict[str, t.Any]] = []
     for members in prompt_clusters:
         if len(members) < 3:
             continue
@@ -966,7 +978,7 @@ def _skill_suggestions(
         terms = _key_terms(texts)
         if not terms:
             continue
-        suggestions.append(
+        templates.append(
             {
                 "type": "template",
                 "name": "-".join(terms[:3]),
@@ -975,18 +987,24 @@ def _skill_suggestions(
                 "rationale": "A parameterized skill for this recurring request.",
                 "support": len(members),
                 "conversations": len(conversations),
+                # Reuse value: a recurring ask that spans many conversations is a
+                # better skill candidate than one repeated inside a single thread.
+                "score": len(members) * len(conversations),
                 "terms": terms[:6],
                 "examples": [text.strip()[:200] for text in texts[:4]],
             }
         )
+    # Rank the recurring-ask templates by reuse value so the most broadly-repeated
+    # asks surface first; macros (multi-step chains) are already fitness-ranked.
+    templates.sort(key=lambda suggestion: suggestion["score"], reverse=True)
     seen: set[str] = set()
     unique: list[dict[str, t.Any]] = []
-    for suggestion in suggestions:
+    for suggestion in (*macros, *templates):
         if suggestion["name"] in seen:
             continue
         seen.add(suggestion["name"])
         unique.append(suggestion)
-    return unique[:8]
+    return unique[:_MAX_SKILL_SUGGESTIONS]
 
 
 def _recurring_conversations(
