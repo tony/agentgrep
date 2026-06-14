@@ -101,7 +101,11 @@ def test_parse_skills_args() -> None:
     assert parsed.use_llm is True
     assert parsed.write_dir == "out"
     assert parsed.since == "30d"
-    assert parsed.scope == "conversations"
+    # skills now defaults to the clean prompt corpus, not the noisy transcripts.
+    assert parsed.scope == "prompts"
+    override = parse_args(["insights", "skills", "--scope", "conversations"])
+    assert isinstance(override, InsightsSkillsArgs)
+    assert override.scope == "conversations"
 
 
 _SKILL_SUGGESTION = {
@@ -123,7 +127,10 @@ def test_report_command_emits_json(
 ) -> None:
     """The report dispatcher renders JSON from the collected records."""
     records = [_rec("Configure tantivy"), _rec("Add sqlite-vec index")]
-    monkeypatch.setattr(agentgrep, "run_search_query", lambda home, query, **kwargs: records)
+    monkeypatch.setattr(
+        "agentgrep._engine.orchestration.run_search_query",
+        lambda home, query, **kwargs: records,
+    )
 
     args = t.cast(
         "InsightsReportArgs",
@@ -142,7 +149,9 @@ def test_report_command_returns_one_when_empty(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An empty record set exits non-zero (no matches)."""
-    monkeypatch.setattr(agentgrep, "run_search_query", lambda home, query, **kwargs: [])
+    monkeypatch.setattr(
+        "agentgrep._engine.orchestration.run_search_query", lambda home, query, **kwargs: []
+    )
     args = t.cast(
         "InsightsReportArgs",
         parse_args(["insights", "report", "--format", "json", "--no-progress"]),
@@ -219,7 +228,10 @@ def _skills_args(**overrides: t.Any) -> InsightsSkillsArgs:
 
 def _patch_one_suggestion(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stub record collection, the report build, and the graph suggestions."""
-    monkeypatch.setattr(agentgrep, "run_search_query", lambda home, query, **kwargs: [_rec("x")])
+    monkeypatch.setattr(
+        "agentgrep._engine.orchestration.run_search_query",
+        lambda home, query, **kwargs: [_rec("x")],
+    )
     monkeypatch.setattr(agentgrep.insights, "build_report", lambda *a, **k: None)
     monkeypatch.setattr(
         insights_render, "_graph_skill_suggestions", lambda report: [_SKILL_SUGGESTION]
@@ -254,7 +266,10 @@ def test_skills_command_returns_one_without_suggestions(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """No recurring-request suggestions exits non-zero with guidance."""
-    monkeypatch.setattr(agentgrep, "run_search_query", lambda home, query, **kwargs: [_rec("x")])
+    monkeypatch.setattr(
+        "agentgrep._engine.orchestration.run_search_query",
+        lambda home, query, **kwargs: [_rec("x")],
+    )
     monkeypatch.setattr(agentgrep.insights, "build_report", lambda *a, **k: None)
     monkeypatch.setattr(insights_render, "_graph_skill_suggestions", lambda report: [])
 

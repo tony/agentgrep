@@ -375,9 +375,10 @@ def run_insights_report_command(args: InsightsReportArgs) -> int:
     """Collect records, build the report, and render it."""
     import pathlib
 
-    import agentgrep
     from agentgrep import insights
+    from agentgrep._engine.orchestration import run_search_query
     from agentgrep.insights.model import ReportRequest
+    from agentgrep.records import SearchQuery
 
     human = args.output_format in ("text", "markdown", "html")
     progress = _make_progress(human=human, progress_mode=args.progress_mode)
@@ -393,7 +394,7 @@ def run_insights_report_command(args: InsightsReportArgs) -> int:
     # appear under conversation scope without session dedup.
     scope = "conversations" if args.requested_level == "graph" else args.scope
     dedupe = args.requested_level != "graph"
-    query = agentgrep.SearchQuery(
+    query = SearchQuery(
         terms=(),
         scope=scope,
         any_term=False,
@@ -405,7 +406,7 @@ def run_insights_report_command(args: InsightsReportArgs) -> int:
     )
     if progress is not None:
         progress.phase("collect", detail=f"scope={scope}")
-    records = agentgrep.run_search_query(pathlib.Path.home(), query)
+    records = run_search_query(pathlib.Path.home(), query)
     records = _apply_window(records, since=args.since, until=args.until)
 
     request = ReportRequest(
@@ -571,19 +572,20 @@ def run_insights_skills_command(args: InsightsSkillsArgs) -> int:
     """Draft SKILL.md files from the graph engine's recurring-request suggestions."""
     import pathlib
 
-    import agentgrep
     from agentgrep import insights
+    from agentgrep._engine.orchestration import run_search_query
     from agentgrep.insights import skills as skills_mod
     from agentgrep.insights.model import ReportRequest
+    from agentgrep.records import SearchQuery
 
     human = args.output_format in ("text", "markdown")
     progress = _make_progress(human=human, progress_mode=args.progress_mode)
     interactive = bool(getattr(sys.stdin, "isatty", lambda: False)())
     allow_download = args.allow_download and (args.yes or interactive)
 
-    query = agentgrep.SearchQuery(
+    query = SearchQuery(
         terms=(),
-        scope="conversations",
+        scope=args.scope,
         any_term=False,
         regex=False,
         case_sensitive=False,
@@ -592,12 +594,12 @@ def run_insights_skills_command(args: InsightsSkillsArgs) -> int:
         dedupe=False,
     )
     if progress is not None:
-        progress.phase("collect", detail="scope=conversations")
-    records = agentgrep.run_search_query(pathlib.Path.home(), query)
+        progress.phase("collect", detail=f"scope={args.scope}")
+    records = run_search_query(pathlib.Path.home(), query)
     records = _apply_window(records, since=args.since, until=args.until)
 
     request = ReportRequest(
-        scope="conversations",
+        scope=args.scope,
         requested_level="graph",
         record_limit=args.limit,
         model=args.model,

@@ -839,6 +839,15 @@ def _add_insights_parser(
         "--limit", type=int, default=500, metavar="N", help="Max records to analyze"
     )
     _ = skills_parser.add_argument(
+        "--scope",
+        choices=["prompts", "conversations", "all"],
+        default="prompts",
+        help=(
+            "Record scope (default: prompts — your typed asks). 'conversations' "
+            "also mines multi-step macro workflows but includes tool output."
+        ),
+    )
+    _ = skills_parser.add_argument(
         "--llm",
         dest="use_llm",
         action="store_true",
@@ -1240,7 +1249,7 @@ def _build_insights_args(
     if insights_command == "skills":
         return InsightsSkillsArgs(
             output_format=fmt,
-            scope="conversations",
+            scope=t.cast("SearchScope", namespace.scope),
             agents=parse_agents(t.cast("list[str]", namespace.agent)),
             limit=t.cast("int | None", namespace.limit),
             model=t.cast("str | None", namespace.model),

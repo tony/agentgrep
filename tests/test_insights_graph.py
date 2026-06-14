@@ -545,3 +545,56 @@ def test_mine_workflows_ranks_resolved_chain_above_retried() -> None:
     assert patch["correctness"] == 0.0
     assert deploy["score"] > patch["score"]
     assert workflows[0]["example"].startswith("deploy")  # resolved chain leads
+
+
+def test_skill_suggestions_ranks_templates_and_lifts_cap() -> None:
+    """Recurring-ask templates rank by reuse value, past the old hard cap of 8."""
+    words = [
+        "refactor",
+        "deploy",
+        "benchmark",
+        "document",
+        "migrate",
+        "audit",
+        "optimize",
+        "cluster",
+        "embed",
+        "rerank",
+        "summarize",
+        "validate",
+    ]
+    prompts: list[G.Turn] = []
+    clusters: list[list[int]] = []
+    # 12 distinct recurring asks with decreasing support (14..3), each spanning
+    # three conversations, so the raised cap and the ranking are both observable.
+    for index, word in enumerate(words):
+        support = 14 - index
+        members: list[int] = []
+        for occurrence in range(support):
+            members.append(len(prompts))
+            prompts.append(
+                G.Turn(
+                    conversation_id=f"conv-{index}-{occurrence % 3}",
+                    position=occurrence,
+                    role="user",
+                    text=f"{word} the whole codebase now",
+                )
+            )
+        clusters.append(members)
+
+    suggestions = G._skill_suggestions([], clusters, prompts)
+    templates = [s for s in suggestions if s["type"] == "template"]
+    assert len(templates) > 8  # the old hard cap of 8 is lifted
+    scores = [s["score"] for s in templates]
+    assert scores == sorted(scores, reverse=True)  # ranked by reuse value desc
+
+
+def test_skill_suggestions_drops_barely_recurring_macros() -> None:
+    """A macro leads the list, so a support-2 chain must not be surfaced there."""
+    workflows = [
+        {"support": 2, "example": "commit → push", "pattern": ["commit", "push"]},
+        {"support": 4, "example": "test → commit → push", "pattern": ["test", "commit", "push"]},
+    ]
+    suggestions = G._skill_suggestions(workflows, [], [])
+    macros = [s for s in suggestions if s["type"] == "macro"]
+    assert [s["support"] for s in macros] == [4]  # the support-2 chain is dropped
