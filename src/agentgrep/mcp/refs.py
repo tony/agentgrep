@@ -140,6 +140,8 @@ def search_record_fingerprint(record: SearchRecordLike) -> str:
     return _record_fingerprint(
         {
             "kind": "search",
+            "record_kind": record.kind,
+            "role": record.role,
             "agent": record.agent,
             "store": record.store,
             "adapter_id": record.adapter_id,

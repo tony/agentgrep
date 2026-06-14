@@ -12,12 +12,15 @@ import typing as t
 import pytest
 from fastmcp import Client
 
+import agentgrep
 from agentgrep import mcp as _agentgrep_mcp_module
 
 if t.TYPE_CHECKING:
     import collections.abc as cabc
 
     from fastmcp import FastMCP
+
+    from agentgrep.mcp import SearchRecordLike as McpSearchRecordLike
 
 
 class SearchRecordLike(t.Protocol):
@@ -480,6 +483,47 @@ async def test_mcp_inspect_result_uses_opaque_ref(
     assert data["error_message"] is None
     assert data["sample_count"] == 1
     assert data["records"][0]["text"] == "serenity new"
+
+
+def test_mcp_search_ref_fingerprint_distinguishes_kind_and_role(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Prompt/history siblings with the same text do not collide."""
+    from agentgrep.mcp import refs
+
+    path = tmp_path / "duplicate.jsonl"
+    path.touch()
+    prompt = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=path,
+        text="duplicate text",
+        role="user",
+        timestamp="2026-01-03T00:00:00Z",
+        session_id="duplicate-session",
+        conversation_id="duplicate-session",
+    )
+    history = agentgrep.SearchRecord(
+        kind="history",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=path,
+        text="duplicate text",
+        role="assistant",
+        timestamp="2026-01-03T00:00:00Z",
+        session_id="duplicate-session",
+        conversation_id="duplicate-session",
+    )
+
+    prompt_like = t.cast("McpSearchRecordLike", prompt)
+    history_like = t.cast("McpSearchRecordLike", history)
+    assert refs.search_record_fingerprint(prompt_like) != refs.search_record_fingerprint(
+        history_like,
+    )
+    assert refs.make_search_ref(prompt_like) != refs.make_search_ref(history_like)
 
 
 async def test_mcp_list_sources_exposes_searchability_metadata(
