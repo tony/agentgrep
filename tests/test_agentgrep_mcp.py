@@ -68,6 +68,13 @@ class McpResultShapeCase(t.NamedTuple):
     expected_request: dict[str, t.Any]
 
 
+class McpInstructionAgentCase(t.NamedTuple):
+    """Parametrized case for MCP instruction agent-list tokens."""
+
+    test_id: str
+    expected_token: str
+
+
 RESULT_SHAPE_CASES = [
     McpResultShapeCase(
         test_id="search",
@@ -93,6 +100,18 @@ RESULT_SHAPE_CASES = [
         expected_request={"pattern": "codex", "agent": "codex", "limit": 1},
     ),
 ]
+
+
+MCP_INSTRUCTION_AGENT_CASES: tuple[McpInstructionAgentCase, ...] = (
+    McpInstructionAgentCase(
+        test_id="header-mentions-antigravity",
+        expected_token="Antigravity",
+    ),
+    McpInstructionAgentCase(
+        test_id="scope-example-mentions-antigravity",
+        expected_token="Claude/Codex/Cursor/Gemini/Antigravity/Grok/Pi/OpenCode",
+    ),
+)
 
 
 class ResourceTextLike(t.Protocol):
@@ -845,6 +864,24 @@ def test_mcp_instructions_carry_every_segment_header() -> None:
         "Privacy:",
     ):
         assert marker in rendered, marker
+
+
+@pytest.mark.parametrize(
+    McpInstructionAgentCase._fields,
+    MCP_INSTRUCTION_AGENT_CASES,
+    ids=[case.test_id for case in MCP_INSTRUCTION_AGENT_CASES],
+)
+def test_mcp_instructions_mention_antigravity(
+    test_id: str,
+    expected_token: str,
+) -> None:
+    """MCP handshake instructions mention Antigravity routing examples."""
+    del test_id
+
+    from agentgrep.mcp.instructions import _build_instructions
+
+    rendered = _build_instructions()
+    assert expected_token in rendered
 
 
 async def test_mcp_list_stores_returns_catalog_entries() -> None:
