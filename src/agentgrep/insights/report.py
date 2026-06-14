@@ -246,5 +246,4 @@ def representative_refs(
     A convenience for renderers and MCP callers that want a few
     :class:`RecordRef` handles without re-deriving them.
     """
-    refs = tuple(thread.ref for thread in report.activity.open_threads[:limit])
-    return refs
+    return tuple(thread.ref for thread in report.activity.open_threads[:limit])

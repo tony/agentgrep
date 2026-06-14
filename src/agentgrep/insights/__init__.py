@@ -27,7 +27,7 @@ from agentgrep.insights.loader import (
     BackendLoadError,
     BackendPolicy,
     BackendRuntimeError,
-    BackendUnavailable,
+    BackendUnavailableError,
 )
 from agentgrep.insights.model import (
     LEVEL_ORDER,
@@ -49,7 +49,7 @@ __all__ = [
     "BackendLoadError",
     "BackendPolicy",
     "BackendRuntimeError",
-    "BackendUnavailable",
+    "BackendUnavailableError",
     "InsightsActivity",
     "InsightsEnrichment",
     "InsightsLevel",

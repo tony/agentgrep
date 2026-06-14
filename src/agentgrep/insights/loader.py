@@ -7,7 +7,7 @@ the missing-dependency guidance) without installing PyTorch, tantivy,
 LanceDB, or scikit-learn.
 
 The typed error hierarchy lets callers distinguish *not installed*
-(:class:`BackendUnavailable`) from *installed but failed to import*
+(:class:`BackendUnavailableError`) from *installed but failed to import*
 (:class:`BackendLoadError`), *misconfigured* (e.g. an un-provisioned
 model — :class:`BackendConfigurationError`), and *ran but raised*
 (:class:`BackendRuntimeError`). Each carries the precise next command.
@@ -55,7 +55,7 @@ class BackendError(Exception):
         self.setup_command = setup_command
 
 
-class BackendUnavailable(BackendError):
+class BackendUnavailableError(BackendError):
     """A required optional dependency is not installed."""
 
     def __init__(
@@ -133,7 +133,7 @@ def load_modules(
 
     Raises
     ------
-    BackendUnavailable
+    BackendUnavailableError
         When any module is not installed (``ImportError``).
     BackendLoadError
         When a module is installed but raises a non-import error while
@@ -151,7 +151,7 @@ def load_modules(
             message = f"insights level {level!r} failed to import {name!r}: {exc}"
             raise BackendLoadError(message, level=level, setup_command=setup_command) from exc
     if missing:
-        raise BackendUnavailable(
+        raise BackendUnavailableError(
             level=level,
             missing=missing,
             setup_command=setup_command,
