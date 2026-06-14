@@ -426,6 +426,7 @@ class SearchRequestModel(AgentGrepModel):
     repo: str | None = None
     branch: str | None = None
     scope_provenance: t.Literal["inferred", "explicit"] = "inferred"
+    human: t.Literal["true", "false"] | None = None
 
 
 class SearchToolResponse(AgentGrepModel):
