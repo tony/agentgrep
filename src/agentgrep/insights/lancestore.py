@@ -15,6 +15,7 @@ memory.
 
 from __future__ import annotations
 
+import math
 import typing as t
 
 if t.TYPE_CHECKING:
@@ -69,10 +70,18 @@ class LanceVectorBackend:
         table = connection.create_table(table_name, data=rows, mode="overwrite")
         indexed = False
         if len(rows) >= _MIN_IVFPQ_ROWS:
-            index_module = import_module("lancedb.index")
+            dim = len(rows[0]["vector"])
+            # PQ requires num_sub_vectors to divide the dimension; dim/16 is the
+            # SIMD-friendly default, stepped down to a divisor when it isn't one.
+            num_sub_vectors = max(1, dim // 16)
+            while num_sub_vectors > 1 and dim % num_sub_vectors != 0:
+                num_sub_vectors -= 1
             table.create_index(
-                "vector",
-                config=index_module.IvfPq(distance_type=distance),
+                metric=distance,
+                vector_column_name="vector",
+                index_type="IVF_PQ",
+                num_partitions=max(1, math.isqrt(len(rows))),
+                num_sub_vectors=num_sub_vectors,
                 replace=True,
             )
             indexed = True
