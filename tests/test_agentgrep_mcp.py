@@ -654,6 +654,45 @@ async def test_audit_middleware_redacts_pattern(
     assert secret not in str(summary)
 
 
+async def test_audit_middleware_redacts_cursor(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Cursor arguments are handles for sensitive terms and get digested."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    write_mcp_search_fixture(home)
+
+    secret = "serenity"
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        first = await client.call_tool(
+            "search",
+            {"terms": [secret], "agent": "codex", "scope": "prompts", "limit": 1},
+        )
+        cursor = t.cast("str", tool_payload(first)["page"]["next_cursor"])
+        with caplog.at_level(logging.INFO, logger="agentgrep.audit"):
+            _ = await client.call_tool("search", {"cursor": cursor})
+
+    audit_records = [
+        r
+        for r in caplog.records
+        if getattr(r, "agentgrep_tool", None) == "search"
+        and getattr(r, "agentgrep_outcome", None) == "ok"
+    ]
+    assert audit_records
+    summary = t.cast(
+        "dict[str, t.Any]",
+        getattr(audit_records[-1], "agentgrep_args_summary", None),
+    )
+    assert isinstance(summary["cursor"], dict)
+    assert set(summary["cursor"]) == {"len", "sha256_prefix"}
+    assert summary["cursor"]["len"] == len(cursor)
+    assert cursor not in str(summary)
+    assert secret not in str(summary)
+
+
 def test_response_limit_middleware_is_wired() -> None:
     """The server installs a ResponseLimitingMiddleware backstop."""
     from fastmcp.server.middleware.response_limiting import ResponseLimitingMiddleware
