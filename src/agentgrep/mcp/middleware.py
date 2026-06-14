@@ -16,12 +16,15 @@ import typing as t
 
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 
-_SENSITIVE_ARG_NAMES: frozenset[str] = frozenset({"terms", "pattern", "sample_text"})
+_SENSITIVE_ARG_NAMES: frozenset[str] = frozenset(
+    {"terms", "pattern", "sample_text", "cursor"},
+)
 """Tool argument names whose values get redacted before logging.
 
 ``terms`` and ``pattern`` can carry user secrets when an agent searches its
-own history for tokens; ``sample_text`` is the validate-query payload and may
-contain anything the caller pastes in.
+own history for tokens; page ``cursor`` values encode those same inputs;
+``sample_text`` is the validate-query payload and may contain anything the
+caller pastes in.
 """
 
 _MAX_LOGGED_STR_LEN: int = 200
@@ -73,6 +76,12 @@ def _summarize_args(args: dict[str, t.Any]) -> dict[str, t.Any]:
     [5, 4]
     >>> "alpha" in str(redacted)
     False
+
+    Opaque page cursors are digested as a whole because they encode the
+    original terms or pattern:
+
+    >>> _summarize_args({"cursor": "agcur1:secret"})["cursor"]["len"]
+    13
     """
     summary: dict[str, t.Any] = {}
     for key, value in args.items():

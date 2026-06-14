@@ -27,6 +27,7 @@ class SearchRecordModel(AgentGrepModel):
     """Normalized search result payload."""
 
     schema_version: str = agentgrep.SCHEMA_VERSION
+    ref: str
     kind: t.Literal["prompt", "history"]
     agent: t.Literal[
         "codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi", "opencode"
@@ -46,13 +47,18 @@ class SearchRecordModel(AgentGrepModel):
     @classmethod
     def from_record(cls, record: SearchRecordLike) -> SearchRecordModel:
         """Build a typed result from an ``agentgrep`` search record."""
-        return cls.model_validate(agentgrep.serialize_search_record(record))
+        from agentgrep.mcp import refs
+
+        payload = agentgrep.serialize_search_record(record)
+        payload["ref"] = refs.make_search_ref(record)
+        return cls.model_validate(payload)
 
 
 class FindRecordModel(AgentGrepModel):
     """Normalized find result payload."""
 
     schema_version: str = agentgrep.SCHEMA_VERSION
+    ref: str
     kind: t.Literal["find"]
     agent: t.Literal[
         "codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi", "opencode"
@@ -66,7 +72,11 @@ class FindRecordModel(AgentGrepModel):
     @classmethod
     def from_record(cls, record: FindRecordLike) -> FindRecordModel:
         """Build a typed result from an ``agentgrep`` find record."""
-        return cls.model_validate(agentgrep.serialize_find_record(record))
+        from agentgrep.mcp import refs
+
+        payload = agentgrep.serialize_find_record(record)
+        payload["ref"] = refs.make_find_ref(record)
+        return cls.model_validate(payload)
 
 
 class SourceVersionDetectionModel(AgentGrepModel):
@@ -97,6 +107,10 @@ class SourceRecordModel(AgentGrepModel):
     path_kind: t.Literal["history_file", "session_file", "sqlite_db", "store_file"]
     source_kind: t.Literal["json", "jsonl", "sqlite", "text", "opaque"]
     coverage: t.Literal["default_search", "inspectable", "catalog_only", "private"]
+    searchable: bool
+    search_by_default: bool
+    searchable_reason: str
+    inspectable: bool
     version_detection: SourceVersionDetectionModel | None = None
     search_root: str | None = None
     mtime_ns: int
@@ -104,40 +118,99 @@ class SourceRecordModel(AgentGrepModel):
     @classmethod
     def from_source(cls, source: SourceHandleLike) -> SourceRecordModel:
         """Build a typed result from a discovered source."""
-        return cls.model_validate(agentgrep.serialize_source_handle(source))
+        payload = agentgrep.serialize_source_handle(source)
+        coverage = str(payload["coverage"])
+        search_by_default = coverage == "default_search"
+        inspectable = coverage in {"default_search", "inspectable"}
+        if search_by_default:
+            searchable_reason = "searched by default"
+        elif inspectable:
+            searchable_reason = "inspectable only; not searched by default"
+        else:
+            searchable_reason = "catalog only; not searched by default"
+        payload["searchable"] = search_by_default
+        payload["search_by_default"] = search_by_default
+        payload["searchable_reason"] = searchable_reason
+        payload["inspectable"] = inspectable
+        return cls.model_validate(payload)
 
 
-class SearchToolQuery(AgentGrepModel):
-    """Echo of normalized search tool inputs."""
+class ResultStatsModel(AgentGrepModel):
+    """Counters collected while building one MCP result page.
+
+    ``searched`` is tool-relative: search reports records examined, while
+    find reports sources examined.
+    """
+
+    sources: int
+    searched: int
+    matched: int
+    emitted: int
+
+
+class PageInfoModel(AgentGrepModel):
+    """Pagination metadata for a result page."""
+
+    limit: int | None = None
+    count: int
+    next_cursor: str | None = None
+
+
+class RunStatusModel(AgentGrepModel):
+    """Search or find completion state."""
+
+    state: t.Literal["complete", "bounded", "truncated", "cancelled", "approximate", "failed"]
+    reason: str | None = None
+
+
+class DiagnosticModel(AgentGrepModel):
+    """Machine-readable result diagnostic."""
+
+    code: str
+    message: str
+
+
+class SearchRequestModel(AgentGrepModel):
+    """Validated search request payload."""
 
     terms: list[str]
     agent: AgentSelector
     scope: SearchScopeName
     case_sensitive: bool
     limit: int | None = None
+    cursor: str | None = None
 
 
 class SearchToolResponse(AgentGrepModel):
     """Structured response for the MCP search tool."""
 
     schema_version: str = agentgrep.SCHEMA_VERSION
-    query: SearchToolQuery
+    request: SearchRequestModel
+    stats: ResultStatsModel
+    page: PageInfoModel
+    status: RunStatusModel
+    diagnostics: list[DiagnosticModel] = Field(default_factory=list)
     results: list[SearchRecordModel]
 
 
-class FindToolQuery(AgentGrepModel):
-    """Echo of normalized find tool inputs."""
+class FindRequestModel(AgentGrepModel):
+    """Validated find request payload."""
 
     pattern: str | None = None
     agent: AgentSelector
     limit: int | None = None
+    cursor: str | None = None
 
 
 class FindToolResponse(AgentGrepModel):
     """Structured response for the MCP find tool."""
 
     schema_version: str = agentgrep.SCHEMA_VERSION
-    query: FindToolQuery
+    request: FindRequestModel
+    stats: ResultStatsModel
+    page: PageInfoModel
+    status: RunStatusModel
+    diagnostics: list[DiagnosticModel] = Field(default_factory=list)
     results: list[FindRecordModel]
 
 
@@ -168,24 +241,6 @@ class CapabilitiesModel(AgentGrepModel):
 
 
 SourceListAdapter = TypeAdapter(list[SourceRecordModel])
-
-
-class SearchRequestModel(AgentGrepModel):
-    """Validated search request payload."""
-
-    terms: list[str]
-    agent: AgentSelector
-    scope: SearchScopeName
-    case_sensitive: bool
-    limit: int | None = None
-
-
-class FindRequestModel(AgentGrepModel):
-    """Validated find request payload."""
-
-    pattern: str | None = None
-    agent: AgentSelector
-    limit: int | None = None
 
 
 class StoreDescriptorModel(AgentGrepModel):
@@ -265,9 +320,10 @@ class ListSourcesResponse(AgentGrepModel):
 class FilterSourcesRequest(AgentGrepModel):
     """Validated filter-sources request payload."""
 
-    pattern: str = Field(min_length=1)
+    pattern: str | None = Field(default=None, min_length=1)
     agent: AgentSelector = "all"
     limit: int | None = Field(default=50, ge=1)
+    cursor: str | None = None
 
 
 class DiscoverySummaryRequest(AgentGrepModel):
@@ -327,11 +383,28 @@ class InspectSampleRequest(AgentGrepModel):
     sample_size: int = Field(default=1, ge=1, le=20)
 
 
+class InspectResultRequest(AgentGrepModel):
+    """Validated inspect-result request payload."""
+
+    ref: str = Field(min_length=1)
+    sample_size: int = Field(default=1, ge=1, le=20)
+
+
 class InspectSampleResponse(AgentGrepModel):
     """Sample records read from one source."""
 
     schema_version: str = agentgrep.SCHEMA_VERSION
     adapter_id: str
+    sample_count: int
+    records: list[SearchRecordModel]
+    error_message: str | None = None
+
+
+class InspectResultResponse(AgentGrepModel):
+    """Records read through an opaque result ref."""
+
+    schema_version: str = agentgrep.SCHEMA_VERSION
+    ref: str
     sample_count: int
     records: list[SearchRecordModel]
     error_message: str | None = None

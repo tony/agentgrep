@@ -36,7 +36,16 @@ _INSTR_SEARCH_VS_DISCOVERY = (
 
 _INSTR_DEFAULTS = (
     "Defaults: results are newest-first and deduplicated by session. "
-    "search uses substring AND-matching across all terms and scope='prompts'."
+    "search uses substring AND-matching across all terms and scope='prompts'. "
+    "Read status, stats, and page.next_cursor on search/find responses; pass "
+    "the cursor back for the next page."
+)
+
+_INSTR_RESULT_LOOP = (
+    "Result loop: search() and find() return opaque result refs. Use "
+    "inspect_result(ref=...) to drill into a returned result without "
+    "reconstructing local paths. inspect_record_sample() is for adapter+path "
+    "schema inspection, not normal result drilldown."
 )
 
 _INSTR_RESOURCES = (
@@ -56,6 +65,7 @@ _BASE_INSTRUCTIONS = "\n\n".join(
         _INSTR_SCOPE,
         _INSTR_SEARCH_VS_DISCOVERY,
         _INSTR_DEFAULTS,
+        _INSTR_RESULT_LOOP,
         _INSTR_RESOURCES,
         _INSTR_PRIVACY,
     )

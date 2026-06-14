@@ -193,6 +193,16 @@ class AgentGrepModule(t.Protocol):
         runtime: object | None = None,
     ) -> t.AsyncIterator[object]: ...
 
+    def iter_find_events(
+        self,
+        home: pathlib.Path,
+        agents: tuple[str, ...],
+        *,
+        pattern: str | None,
+        limit: int | None,
+        backends: BackendSelectionLike | None = None,
+    ) -> t.Iterator[object]: ...
+
     def run_find_query(
         self,
         home: pathlib.Path,
@@ -222,6 +232,13 @@ class AgentGrepModule(t.Protocol):
         self,
         source: SourceHandleLike,
     ) -> dict[str, object]: ...
+
+    def format_display_path(
+        self,
+        path: pathlib.Path,
+        *,
+        directory: bool = False,
+    ) -> str: ...
 
     def matches_text(
         self,

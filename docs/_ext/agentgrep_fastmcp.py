@@ -21,6 +21,7 @@ from agentgrep.mcp import (
 )
 from agentgrep.mcp.models import (
     DiscoverySummaryResponse,
+    InspectResultResponse,
     InspectSampleResponse,
     ListSourcesResponse,
     ListStoresResponse,
@@ -35,12 +36,12 @@ DOCS_ONLY_MESSAGE = "Documentation signature only."
 
 async def search(
     terms: t.Annotated[
-        list[str],
+        list[str] | None,
         Field(
-            min_length=1,
+            default=None,
             description="One or more literal search terms (AND-matched).",
         ),
-    ],
+    ] = None,
     agent: t.Annotated[
         AgentSelector,
         Field(description="Limit search to one agent or search all agents."),
@@ -61,6 +62,13 @@ async def search(
             description="Maximum number of search results to return.",
         ),
     ] = 20,
+    cursor: t.Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Opaque page cursor returned by a previous search response.",
+        ),
+    ] = None,
 ) -> SearchToolResponse:
     """Search normalized prompts or conversations across local agent stores."""
     raise NotImplementedError(DOCS_ONLY_MESSAGE)
@@ -94,6 +102,13 @@ async def find(
             description="Maximum number of discovered sources to return.",
         ),
     ] = 50,
+    cursor: t.Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Opaque page cursor returned by a previous find response.",
+        ),
+    ] = None,
 ) -> FindToolResponse:
     """Find known agent stores, session files, and SQLite databases."""
     raise NotImplementedError(DOCS_ONLY_MESSAGE)
@@ -204,6 +219,36 @@ t.cast(t.Any, inspect_record_sample).__fastmcp__ = types.SimpleNamespace(
 )
 
 
+async def inspect_result(
+    ref: t.Annotated[
+        str,
+        Field(
+            min_length=1,
+            description="Opaque ref from a search or find result.",
+        ),
+    ],
+    sample_size: t.Annotated[
+        int,
+        Field(
+            default=1,
+            ge=1,
+            le=20,
+            description="Number of source records to return for find refs (1-20).",
+        ),
+    ] = 1,
+) -> InspectResultResponse:
+    """Inspect records behind an opaque search/find result ref."""
+    raise NotImplementedError(DOCS_ONLY_MESSAGE)
+
+
+t.cast(t.Any, inspect_result).__fastmcp__ = types.SimpleNamespace(
+    name="inspect_result",
+    title="Inspect Result",
+    tags=READONLY_TAGS | {"search", "discovery"},
+    annotations=None,
+)
+
+
 async def list_sources(
     agent: t.Annotated[
         AgentSelector,
@@ -236,13 +281,14 @@ t.cast(t.Any, list_sources).__fastmcp__ = types.SimpleNamespace(
 
 async def filter_sources(
     pattern: t.Annotated[
-        str,
+        str | None,
         Field(
+            default=None,
             min_length=1,
-            description="Required substring pattern.",
+            description="Required substring pattern unless cursor is provided.",
             examples=["state", ".jsonl"],
         ),
-    ],
+    ] = None,
     agent: t.Annotated[
         AgentSelector,
         Field(description="Limit discovery to one agent or scan every agent."),
@@ -251,6 +297,13 @@ async def filter_sources(
         int | None,
         Field(default=50, ge=1, description="Maximum number of sources to return."),
     ] = 50,
+    cursor: t.Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Opaque page cursor returned by a previous filter_sources response.",
+        ),
+    ] = None,
 ) -> FindToolResponse:
     """Filter discovered sources by required substring pattern."""
     raise NotImplementedError(DOCS_ONLY_MESSAGE)
