@@ -74,6 +74,7 @@ from agentgrep.adapters.claude import (
 )
 from agentgrep.adapters.codex import (
     _CODEX_PARSERS,
+    codex_event_is_human_authored,
     parse_codex_external_imports_file,
     parse_codex_goals_db,
     parse_codex_history_file,
@@ -134,6 +135,7 @@ __all__ = (
     "candidate_from_mapping",
     "claude_event_is_human_authored",
     "claude_history_paste_text",
+    "codex_event_is_human_authored",
     "expand_claude_history_pastes",
     "extract_conversation_id",
     "extract_message_text",
