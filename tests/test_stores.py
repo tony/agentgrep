@@ -39,6 +39,23 @@ KNOWN_AGENTS: tuple[AgentName, ...] = (
 PATH_TOKEN_RE = re.compile(r"\$\{(?:HOME|[A-Z][A-Z0-9_]*)(?:\s+or\s+[^}]+)?\}")
 
 
+class CatalogPathPatternCase(t.NamedTuple):
+    """Expected path pattern for one catalog store."""
+
+    test_id: str
+    store_id: str
+    expected_path_pattern: str
+
+
+CATALOG_PATH_PATTERN_CASES: tuple[CatalogPathPatternCase, ...] = (
+    CatalogPathPatternCase(
+        test_id="antigravity-cli-log-directory",
+        store_id="antigravity-cli.log",
+        expected_path_pattern="${HOME}/.gemini/antigravity-cli/log/",
+    ),
+)
+
+
 def test_catalog_has_known_metadata() -> None:
     assert CATALOG.catalog_version >= 1
     assert CATALOG.captured_at.year >= 2026
@@ -77,6 +94,21 @@ def test_path_patterns_use_token_form() -> None:
         )
         assert "/home/" not in store.path_pattern, store.store_id
         assert "/Users/" not in store.path_pattern, store.store_id
+
+
+@pytest.mark.parametrize(
+    CatalogPathPatternCase._fields,
+    CATALOG_PATH_PATTERN_CASES,
+    ids=[case.test_id for case in CATALOG_PATH_PATTERN_CASES],
+)
+def test_catalog_path_patterns_match_observed_layout(
+    test_id: str,
+    store_id: str,
+    expected_path_pattern: str,
+) -> None:
+    del test_id
+
+    assert CATALOG.by_id(store_id).path_pattern == expected_path_pattern
 
 
 def test_primary_chat_stores_have_upstream_or_sample() -> None:
