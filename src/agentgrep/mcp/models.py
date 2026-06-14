@@ -136,7 +136,11 @@ class SourceRecordModel(AgentGrepModel):
 
 
 class ResultStatsModel(AgentGrepModel):
-    """Counters collected while building one MCP result page."""
+    """Counters collected while building one MCP result page.
+
+    ``searched`` is tool-relative: search reports records examined, while
+    find reports sources examined.
+    """
 
     sources: int
     searched: int
