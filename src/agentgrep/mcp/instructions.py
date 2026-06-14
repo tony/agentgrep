@@ -10,16 +10,16 @@ from __future__ import annotations
 
 _INSTR_HEADER = (
     "agentgrep MCP server. Read-only search over local AI-agent prompts and "
-    "opt-in conversations across Codex, Claude Code, Cursor, Gemini, Grok, Pi, and "
-    "OpenCode CLIs. All tools are read-only and never spawn writes."
+    "opt-in conversations across Codex, Claude Code, Cursor, Gemini, Antigravity, "
+    "Grok, Pi, and OpenCode CLIs. All tools are read-only and never spawn writes."
 )
 
 _INSTR_SCOPE = (
     "TRIGGERS: invoke for retrospective questions about what the user typed "
     "into or received from a coding-agent CLI (prompts, prompt history, session "
     "transcripts, store discovery). Bare 'prompt', 'history', 'transcript', "
-    "'session', 'what did I ask Claude/Codex/Cursor/Gemini/Grok/Pi/OpenCode' default to "
-    "agentgrep.\n"
+    "'session', 'what did I ask Claude/Codex/Cursor/Gemini/Antigravity/Grok/Pi/"
+    "OpenCode' default to agentgrep.\n"
     "ANTI-TRIGGERS: do NOT invoke for IDE editor history (VS Code timeline), "
     "shell history (zsh/fish history), browser tabs, or live agent sessions "
     "in progress. Use shell tools for filesystem-wide grep that is not "

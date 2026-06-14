@@ -101,7 +101,8 @@ def default_registry() -> FieldRegistry:
     Field         Kind   Layer   Notes
     ============= ====== ======= ===========================================
     ``agent``     enum   source  Values: codex, claude, cursor-cli, cursor-ide,
-                                         gemini, grok, pi, opencode
+                                         gemini, antigravity-cli,
+                                         antigravity-ide, grok, pi, opencode
     ``store``     string source  Substring against :attr:`SourceHandle.store`
     ``adapter``   string source  Alias of ``adapter_id``
     ``path``      path   source  Glob against the file basename by default
@@ -124,6 +125,8 @@ def default_registry() -> FieldRegistry:
                 "cursor-cli",
                 "cursor-ide",
                 "gemini",
+                "antigravity-cli",
+                "antigravity-ide",
                 "grok",
                 "pi",
                 "opencode",

@@ -2,7 +2,7 @@
 
 # agentgrep
 
-Read-only search for local AI agent prompts and opt-in conversations across Codex, Claude Code, Cursor, Gemini, Grok, Pi, and OpenCode.
+Read-only search for local AI agent prompts and opt-in conversations across Codex, Claude Code, Cursor, Gemini, Antigravity, Grok, Pi, and OpenCode.
 
 ```{warning}
 **Pre-alpha.** APIs may change. [Feedback welcome](https://github.com/tony/agentgrep/issues).

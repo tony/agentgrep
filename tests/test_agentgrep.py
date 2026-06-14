@@ -28,7 +28,16 @@ if t.TYPE_CHECKING:
     import collections.abc as cabc
 
 AgentName = t.Literal[
-    "codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi", "opencode"
+    "codex",
+    "claude",
+    "cursor-cli",
+    "cursor-ide",
+    "gemini",
+    "antigravity-cli",
+    "antigravity-ide",
+    "grok",
+    "pi",
+    "opencode",
 ]
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
@@ -9081,6 +9090,243 @@ def _build_opencode_db(
         conn.commit()
     finally:
         conn.close()
+
+
+def _protobuf_field(text: str) -> bytes:
+    """Encode one length-delimited protobuf string field for tests."""
+    raw = text.encode("utf-8")
+    length = len(raw)
+    varint = bytearray()
+    while True:
+        to_write = length & 0x7F
+        length >>= 7
+        if length:
+            varint.append(to_write | 0x80)
+            continue
+        varint.append(to_write)
+        break
+    return b"\x0a" + bytes(varint) + raw
+
+
+def _build_antigravity_steps_db(
+    db_path: pathlib.Path,
+    *,
+    text: str,
+) -> None:
+    """Build a minimal Antigravity CLI conversation database."""
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute(
+            "CREATE TABLE steps (idx INTEGER PRIMARY KEY, step_payload BLOB, step_format INTEGER)",
+        )
+        conn.execute(
+            "INSERT INTO steps VALUES (?, ?, ?)",
+            (1, _protobuf_field(text), 1),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+class AntigravityHistoryCase(t.NamedTuple):
+    """Parametrized case for Antigravity CLI prompt-history entries."""
+
+    test_id: str
+    entry: dict[str, object]
+    query_term: str
+    expected_text: str
+    expected_timestamp: str
+    expected_session_id: str | None
+    expected_workspace: str
+
+
+ANTIGRAVITY_HISTORY_CASES: tuple[AntigravityHistoryCase, ...] = (
+    AntigravityHistoryCase(
+        test_id="display-with-conversation",
+        entry={
+            "display": "ship the antigravity cli adapter",
+            "timestamp": 1780142400000,
+            "type": "prompt",
+            "workspace": "/workspace/demo",
+            "conversationId": "5cd92cd1-6f86-42de-8f7e-81ebb47f36dd",
+        },
+        query_term="adapter",
+        expected_text="ship the antigravity cli adapter",
+        expected_timestamp="2026-05-30T12:00:00Z",
+        expected_session_id="5cd92cd1-6f86-42de-8f7e-81ebb47f36dd",
+        expected_workspace="/workspace/demo",
+    ),
+    AntigravityHistoryCase(
+        test_id="display-without-conversation",
+        entry={
+            "display": "search antigravity prompt recall",
+            "timestamp": 1780142460000,
+            "workspace": "/workspace/demo",
+        },
+        query_term="recall",
+        expected_text="search antigravity prompt recall",
+        expected_timestamp="2026-05-30T12:01:00Z",
+        expected_session_id=None,
+        expected_workspace="/workspace/demo",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    AntigravityHistoryCase._fields,
+    ANTIGRAVITY_HISTORY_CASES,
+    ids=[case.test_id for case in ANTIGRAVITY_HISTORY_CASES],
+)
+def test_search_antigravity_cli_history(
+    test_id: str,
+    entry: dict[str, object],
+    query_term: str,
+    expected_text: str,
+    expected_timestamp: str,
+    expected_session_id: str | None,
+    expected_workspace: str,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Antigravity CLI ``history.jsonl`` is searched as prompt history."""
+    _ = test_id
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    history_path = home / ".gemini" / "antigravity-cli" / "history.jsonl"
+    write_jsonl(history_path, [entry])
+
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    agents: tuple[AgentName, ...] = ("antigravity-cli",)
+    query = t.cast("t.Any", agentgrep).SearchQuery(
+        terms=(query_term,),
+        scope="all",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=agents,
+        limit=None,
+    )
+
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, agents, backends)
+    records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
+
+    assert len(records) == 1
+    record = records[0]
+    assert record.kind == "prompt"
+    assert record.agent == "antigravity-cli"
+    assert record.store == "antigravity-cli.history"
+    assert record.adapter_id == "antigravity_cli.history_jsonl.v1"
+    assert record.role == "user"
+    assert record.text == expected_text
+    assert record.timestamp == expected_timestamp
+    assert record.session_id == expected_session_id
+    assert record.conversation_id == expected_session_id
+    assert record.metadata == {"workspace": expected_workspace, "type": entry.get("type", "")}
+
+
+class AntigravityProtobufCase(t.NamedTuple):
+    """Parametrized case for inspectable Antigravity protobuf transcript stores."""
+
+    test_id: str
+    agent: AgentName
+    relative_path: pathlib.Path
+    store: str
+    adapter_id: str
+    sqlite_steps: bool
+
+
+ANTIGRAVITY_PROTOBUF_CASES: tuple[AntigravityProtobufCase, ...] = (
+    AntigravityProtobufCase(
+        test_id="cli-conversation-db",
+        agent="antigravity-cli",
+        relative_path=pathlib.Path(".gemini/antigravity-cli/conversations/conv-1.db"),
+        store="antigravity-cli.conversations",
+        adapter_id="antigravity_cli.conversations_sqlite_protobuf.v1",
+        sqlite_steps=True,
+    ),
+    AntigravityProtobufCase(
+        test_id="cli-implicit-pb",
+        agent="antigravity-cli",
+        relative_path=pathlib.Path(".gemini/antigravity-cli/implicit/implicit-1.pb"),
+        store="antigravity-cli.implicit",
+        adapter_id="antigravity_cli.implicit_protobuf.v1",
+        sqlite_steps=False,
+    ),
+    AntigravityProtobufCase(
+        test_id="ide-conversation-pb",
+        agent="antigravity-ide",
+        relative_path=pathlib.Path(".gemini/antigravity/conversations/ide-1.pb"),
+        store="antigravity-ide.conversations",
+        adapter_id="antigravity_ide.conversations_protobuf.v1",
+        sqlite_steps=False,
+    ),
+    AntigravityProtobufCase(
+        test_id="ide-implicit-pb",
+        agent="antigravity-ide",
+        relative_path=pathlib.Path(".gemini/antigravity/implicit/implicit-1.pb"),
+        store="antigravity-ide.implicit",
+        adapter_id="antigravity_ide.implicit_protobuf.v1",
+        sqlite_steps=False,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    AntigravityProtobufCase._fields,
+    ANTIGRAVITY_PROTOBUF_CASES,
+    ids=[case.test_id for case in ANTIGRAVITY_PROTOBUF_CASES],
+)
+def test_antigravity_protobuf_sources_are_inspectable(
+    test_id: str,
+    agent: AgentName,
+    relative_path: pathlib.Path,
+    store: str,
+    adapter_id: str,
+    sqlite_steps: bool,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Opaque Antigravity transcript stores stay opt-in but expose readable text."""
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    source_path = home / relative_path
+    text = f"inspectable antigravity transcript text from {test_id}"
+    if sqlite_steps:
+        _build_antigravity_steps_db(source_path, text=text)
+    else:
+        source_path.parent.mkdir(parents=True, exist_ok=True)
+        _ = source_path.write_bytes(_protobuf_field(text))
+
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    agents: tuple[AgentName, ...] = (agent,)
+    default_sources = t.cast("t.Any", agentgrep).discover_sources(home, agents, backends)
+    inventory_sources = t.cast("t.Any", agentgrep).discover_sources(
+        home,
+        agents,
+        backends,
+        include_non_default=True,
+    )
+
+    assert source_path not in {source.path for source in default_sources}
+    source = next(source for source in inventory_sources if source.path == source_path)
+    assert source.store == store
+    assert source.adapter_id == adapter_id
+    assert source.coverage.value == "inspectable"
+
+    records = list(t.cast("t.Any", agentgrep).iter_source_records(source))
+
+    assert len(records) == 1
+    record = records[0]
+    assert record.agent == agent
+    assert record.store == store
+    assert record.adapter_id == adapter_id
+    assert record.kind == "history"
+    assert record.text == text
+    assert record.session_id == source_path.stem
+    assert record.conversation_id == source_path.stem
 
 
 def _parse_opencode_records(

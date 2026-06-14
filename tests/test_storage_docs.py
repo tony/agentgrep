@@ -143,6 +143,8 @@ def test_storage_coverage_grid_summarizes_catalog(tmp_path: pathlib.Path) -> Non
             cursor-cli
             cursor-ide
             gemini
+            antigravity-cli
+            antigravity-ide
             grok
             pi
             opencode
@@ -160,6 +162,8 @@ def test_storage_coverage_grid_summarizes_catalog(tmp_path: pathlib.Path) -> Non
         "cursor-cli",
         "cursor-ide",
         "gemini",
+        "antigravity-cli",
+        "antigravity-ide",
         "grok",
         "pi",
         "opencode",
@@ -188,8 +192,12 @@ def test_storage_coverage_grid_summarizes_catalog(tmp_path: pathlib.Path) -> Non
     assert "Runtime / cache / private" in html
     assert "codex.history" in html
     assert "claude.history" in html
+    assert "antigravity-cli.history" in html
+    assert "antigravity-ide.conversations" in html
     assert 'href="claude/#storage-store-claude-history"' in html
     assert 'href="codex/#storage-store-codex-history"' in html
+    assert 'href="antigravity-cli/#storage-store-antigravity-cli-history"' in html
+    assert 'href="antigravity-ide/#storage-store-antigravity-ide-conversations"' in html
     assert 'href="#storage-store-claude-history"' not in html
     assert 'href="#storage-store-codex-history"' not in html
     assert '<table class="gp-sphinx-storage__table' not in html

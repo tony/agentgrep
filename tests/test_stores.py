@@ -30,11 +30,30 @@ KNOWN_AGENTS: tuple[AgentName, ...] = (
     "cursor-ide",
     "codex",
     "gemini",
+    "antigravity-cli",
+    "antigravity-ide",
     "grok",
     "pi",
     "opencode",
 )
 PATH_TOKEN_RE = re.compile(r"\$\{(?:HOME|[A-Z][A-Z0-9_]*)(?:\s+or\s+[^}]+)?\}")
+
+
+class CatalogPathPatternCase(t.NamedTuple):
+    """Expected path pattern for one catalog store."""
+
+    test_id: str
+    store_id: str
+    expected_path_pattern: str
+
+
+CATALOG_PATH_PATTERN_CASES: tuple[CatalogPathPatternCase, ...] = (
+    CatalogPathPatternCase(
+        test_id="antigravity-cli-log-directory",
+        store_id="antigravity-cli.log",
+        expected_path_pattern="${HOME}/.gemini/antigravity-cli/log/",
+    ),
+)
 
 
 def test_catalog_has_known_metadata() -> None:
@@ -75,6 +94,21 @@ def test_path_patterns_use_token_form() -> None:
         )
         assert "/home/" not in store.path_pattern, store.store_id
         assert "/Users/" not in store.path_pattern, store.store_id
+
+
+@pytest.mark.parametrize(
+    CatalogPathPatternCase._fields,
+    CATALOG_PATH_PATTERN_CASES,
+    ids=[case.test_id for case in CATALOG_PATH_PATTERN_CASES],
+)
+def test_catalog_path_patterns_match_observed_layout(
+    test_id: str,
+    store_id: str,
+    expected_path_pattern: str,
+) -> None:
+    del test_id
+
+    assert CATALOG.by_id(store_id).path_pattern == expected_path_pattern
 
 
 def test_primary_chat_stores_have_upstream_or_sample() -> None:
@@ -291,6 +325,11 @@ def test_runtime_adapter_ids_match_catalogue_discovery() -> None:
     assert "cursor_cli.transcripts_jsonl.v1" in runtime_adapter_ids
     assert "gemini.tmp_chats_jsonl.v1" in runtime_adapter_ids
     assert "gemini.tmp_logs_json.v1" in runtime_adapter_ids
+    assert "antigravity_cli.history_jsonl.v1" in runtime_adapter_ids
+    assert "antigravity_cli.conversations_sqlite_protobuf.v1" in runtime_adapter_ids
+    assert "antigravity_cli.implicit_protobuf.v1" in runtime_adapter_ids
+    assert "antigravity_ide.conversations_protobuf.v1" in runtime_adapter_ids
+    assert "antigravity_ide.implicit_protobuf.v1" in runtime_adapter_ids
     assert "grok.prompt_history_jsonl.v1" in runtime_adapter_ids
     assert "grok.sessions_jsonl.v1" in runtime_adapter_ids
     assert "grok.session_search_sqlite.v1" in runtime_adapter_ids
@@ -869,6 +908,7 @@ PRIMARY_FIXTURES: tuple[tuple[str, str], ...] = (
     ("cursor-cli.transcripts", "example.jsonl"),
     ("cursor-cli.plans", "example.plan.md"),
     ("cursor-cli.prompt_history", "prompt_history.json"),
+    ("antigravity-cli.history", "history.jsonl"),
     ("grok.prompt_history", "prompt_history.jsonl"),
     ("grok.sessions", "chat_history.jsonl"),
     ("pi.sessions", "example.jsonl"),

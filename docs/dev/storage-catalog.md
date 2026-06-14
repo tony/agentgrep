@@ -258,8 +258,9 @@ hard-deletes expired sessions via `fs.unlink()` — there is no
 [Antigravity IDE](https://github.com/google-gemini/gemini-cli/blob/77e65c0d/packages/core/src/ide/detect-ide.ts),
 a separate Google product — Gemini CLI only detects Antigravity as
 an IDE launcher and does not read or write the protobuf
-conversation files. Both stores are out of scope for the Gemini
-adapters.
+conversation files. They are documented as the separate
+{doc}`/backends/antigravity-ide` and {doc}`/backends/antigravity-cli`
+backends, not as Gemini adapters.
 
 The `project_hash` is `sha256(absolute_project_root)`. agentgrep
 exposes a Python mirror via
