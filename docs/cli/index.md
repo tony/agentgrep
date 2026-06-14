@@ -46,6 +46,12 @@ Ranked, deduped search grouped by session — best matches first.
 Enumerate on-disk stores with fd-shaped flag grammar.
 :::
 
+:::{grid-item-card} agentgrep insights
+:link: cli-insights
+:link-type: ref
+Local activity reports with an opt-in ML, embeddings, index, and LLM ladder.
+:::
+
 :::{grid-item-card} agentgrep ui
 :link: tui
 :link-type: ref
@@ -154,5 +160,6 @@ $ agentgrep
 grep
 search
 find
+insights
 reference
 ```
