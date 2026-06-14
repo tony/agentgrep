@@ -316,9 +316,10 @@ class ListSourcesResponse(AgentGrepModel):
 class FilterSourcesRequest(AgentGrepModel):
     """Validated filter-sources request payload."""
 
-    pattern: str = Field(min_length=1)
+    pattern: str | None = Field(default=None, min_length=1)
     agent: AgentSelector = "all"
     limit: int | None = Field(default=50, ge=1)
+    cursor: str | None = None
 
 
 class DiscoverySummaryRequest(AgentGrepModel):

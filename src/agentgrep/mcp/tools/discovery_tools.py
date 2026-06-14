@@ -160,12 +160,16 @@ def _list_sources_sync(request: ListSourcesRequest) -> ListSourcesResponse:
 
 
 def _filter_sources_sync(request: FilterSourcesRequest) -> FindToolResponse:
-    """Run the find pipeline with the requested pattern."""
+    """Run the find pipeline with the requested pattern or cursor."""
+    if request.cursor is None and request.pattern is None:
+        msg = "pattern is required unless cursor is provided"
+        raise ToolError(msg)
     return _find_sync(
         FindRequestModel(
             pattern=request.pattern,
             agent=request.agent,
             limit=request.limit,
+            cursor=request.cursor,
         ),
     )
 
@@ -288,9 +292,13 @@ def register(mcp: FastMCP) -> None:
     )
     async def filter_sources_tool(
         pattern: t.Annotated[
-            str,
-            Field(min_length=1, description="Required substring pattern."),
-        ],
+            str | None,
+            Field(
+                default=None,
+                min_length=1,
+                description="Required substring pattern unless cursor is provided.",
+            ),
+        ] = None,
         agent: t.Annotated[
             AgentSelector,
             Field(description="Limit discovery to one agent or scan every agent."),
@@ -299,8 +307,20 @@ def register(mcp: FastMCP) -> None:
             int | None,
             Field(default=50, ge=1, description="Maximum number of sources to return."),
         ] = 50,
+        cursor: t.Annotated[
+            str | None,
+            Field(
+                default=None,
+                description="Opaque page cursor returned by a previous filter_sources response.",
+            ),
+        ] = None,
     ) -> FindToolResponse:
-        request = FilterSourcesRequest(pattern=pattern, agent=agent, limit=limit)
+        request = FilterSourcesRequest(
+            pattern=pattern,
+            agent=agent,
+            limit=limit,
+            cursor=cursor,
+        )
         return await asyncio.to_thread(_filter_sources_sync, request)
 
     _ = filter_sources_tool

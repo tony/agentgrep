@@ -492,6 +492,32 @@ async def test_mcp_search_cursor_rejects_empty_terms(
     assert "non-empty list" in error_message
 
 
+async def test_mcp_filter_sources_cursor_returns_next_page(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``filter_sources`` accepts its own cursor for bounded pages."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    write_mcp_find_fixture(home)
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        first = await client.call_tool(
+            "filter_sources",
+            {"pattern": "codex", "agent": "codex", "limit": 1},
+        )
+        first_data = tool_payload(first)
+        cursor = first_data["page"]["next_cursor"]
+        second = await client.call_tool("filter_sources", {"cursor": cursor})
+
+    second_data = tool_payload(second)
+    assert first_data["results"][0]["ref"] != second_data["results"][0]["ref"]
+    assert second_data["request"]["pattern"] == "codex"
+    assert second_data["page"]["next_cursor"] is None
+    assert second_data["status"] == {"state": "complete", "reason": None}
+
+
 async def test_mcp_inspect_result_uses_opaque_ref(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

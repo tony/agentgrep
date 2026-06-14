@@ -281,13 +281,14 @@ t.cast(t.Any, list_sources).__fastmcp__ = types.SimpleNamespace(
 
 async def filter_sources(
     pattern: t.Annotated[
-        str,
+        str | None,
         Field(
+            default=None,
             min_length=1,
-            description="Required substring pattern.",
+            description="Required substring pattern unless cursor is provided.",
             examples=["state", ".jsonl"],
         ),
-    ],
+    ] = None,
     agent: t.Annotated[
         AgentSelector,
         Field(description="Limit discovery to one agent or scan every agent."),
@@ -296,6 +297,13 @@ async def filter_sources(
         int | None,
         Field(default=50, ge=1, description="Maximum number of sources to return."),
     ] = 50,
+    cursor: t.Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Opaque page cursor returned by a previous filter_sources response.",
+        ),
+    ] = None,
 ) -> FindToolResponse:
     """Filter discovered sources by required substring pattern."""
     raise NotImplementedError(DOCS_ONLY_MESSAGE)
