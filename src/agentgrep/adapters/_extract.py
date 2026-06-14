@@ -290,8 +290,20 @@ def flatten_summary_bullets(value: object) -> str | None:
     return None
 
 
-def build_search_record(source: SourceHandle, candidate: MessageCandidate) -> SearchRecord:
-    """Convert a parsed candidate into a normalized search record."""
+def build_search_record(
+    source: SourceHandle,
+    candidate: MessageCandidate,
+    *,
+    human_typed: bool = True,
+) -> SearchRecord:
+    """Convert a parsed candidate into a normalized search record.
+
+    ``human_typed`` distinguishes a turn the user actually typed from a
+    tool result or sidechain that an adapter records under a user role
+    (Claude Code stores ``tool_result`` blocks as ``role=user``). Only the
+    non-human case sets ``metadata["human_typed"]``, so the common record's
+    metadata stays empty and downstream consumers can opt in.
+    """
     role = candidate.role.casefold() if candidate.role is not None else None
     kind: t.Literal["prompt", "history"] = "prompt" if role in USER_ROLES else "history"
     return SearchRecord(
@@ -308,4 +320,5 @@ def build_search_record(source: SourceHandle, candidate: MessageCandidate) -> Se
         session_id=candidate.session_id,
         conversation_id=candidate.conversation_id,
         origin=candidate.origin,
+        metadata={} if human_typed else {"human_typed": False},
     )
