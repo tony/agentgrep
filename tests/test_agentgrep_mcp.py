@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import pathlib
+import re
 import typing as t
 
 import pytest
@@ -68,11 +69,12 @@ class McpResultShapeCase(t.NamedTuple):
     expected_request: dict[str, t.Any]
 
 
-class McpInstructionAgentCase(t.NamedTuple):
-    """Parametrized case for MCP instruction agent-list tokens."""
+class AgentProductNameCase(t.NamedTuple):
+    """Parametrized case mapping a supported backend to its product name."""
 
     test_id: str
-    expected_token: str
+    agent: agentgrep.AgentName
+    product_name: str
 
 
 RESULT_SHAPE_CASES = [
@@ -102,15 +104,27 @@ RESULT_SHAPE_CASES = [
 ]
 
 
-MCP_INSTRUCTION_AGENT_CASES: tuple[McpInstructionAgentCase, ...] = (
-    McpInstructionAgentCase(
-        test_id="header-mentions-antigravity",
-        expected_token="Antigravity",
-    ),
-    McpInstructionAgentCase(
-        test_id="scope-example-mentions-antigravity",
-        expected_token="Claude/Codex/Cursor/Gemini/Antigravity/Grok/Pi/OpenCode",
-    ),
+# Product-level display names the MCP handshake advertises for each supported
+# backend. Split CLI/IDE backends share one product name because the
+# instructions name the product, not each slug. Keyed by AgentName so adding a
+# backend forces an entry here and a matching mention in the handshake prose.
+AGENT_PRODUCT_NAMES: dict[agentgrep.AgentName, str] = {
+    "claude": "Claude",
+    "codex": "Codex",
+    "cursor-cli": "Cursor",
+    "cursor-ide": "Cursor",
+    "gemini": "Gemini",
+    "antigravity-cli": "Antigravity",
+    "antigravity-ide": "Antigravity",
+    "grok": "Grok",
+    "pi": "Pi",
+    "opencode": "OpenCode",
+}
+
+
+AGENT_PRODUCT_NAME_CASES: tuple[AgentProductNameCase, ...] = tuple(
+    AgentProductNameCase(test_id=agent, agent=agent, product_name=product)
+    for agent, product in sorted(AGENT_PRODUCT_NAMES.items())
 )
 
 
@@ -867,21 +881,27 @@ def test_mcp_instructions_carry_every_segment_header() -> None:
 
 
 @pytest.mark.parametrize(
-    McpInstructionAgentCase._fields,
-    MCP_INSTRUCTION_AGENT_CASES,
-    ids=[case.test_id for case in MCP_INSTRUCTION_AGENT_CASES],
+    AgentProductNameCase._fields,
+    AGENT_PRODUCT_NAME_CASES,
+    ids=[case.test_id for case in AGENT_PRODUCT_NAME_CASES],
 )
-def test_mcp_instructions_mention_antigravity(
+def test_mcp_instructions_name_every_supported_agent(
     test_id: str,
-    expected_token: str,
+    agent: agentgrep.AgentName,
+    product_name: str,
 ) -> None:
-    """MCP handshake instructions mention Antigravity routing examples."""
+    """Handshake instructions name the product for every supported backend."""
     del test_id
 
     from agentgrep.mcp.instructions import _build_instructions
 
     rendered = _build_instructions()
-    assert expected_token in rendered
+    assert re.search(rf"\b{re.escape(product_name)}\b", rendered), f"{agent}: {product_name}"
+
+
+def test_agent_product_name_map_tracks_agent_name_literal() -> None:
+    """Every AgentName slug maps to a product the handshake test can assert."""
+    assert set(AGENT_PRODUCT_NAMES) == set(t.get_args(agentgrep.AgentName))
 
 
 async def test_mcp_list_stores_returns_catalog_entries() -> None:
