@@ -188,6 +188,7 @@ class SearchQueryFactory(t.Protocol):
         case_sensitive: bool,
         agents: tuple[str, ...],
         limit: int | None,
+        dedupe: bool = True,
     ) -> object: ...
 
 

@@ -156,6 +156,13 @@ def build_activity(
     records_with_session_identity = 0
 
     for record in records:
+        # The adapter (Phase 0) tags tool output and agent replies with
+        # ``human_typed=False``. Volume stats (tokens, work areas, timeline)
+        # still count every turn, but "repeated instructions" and "open
+        # threads" are about what the *user* asked, so they skip non-human
+        # turns to avoid surfacing tool output as recurring instructions.
+        human_typed = record.metadata.get("human_typed", True) is not False
+
         tokens = _tokenize(record.text)
         token_counter.update(tokens)
 
@@ -183,11 +190,11 @@ def build_activity(
             metadata_fields[f"metadata.{meta_key}"] += 1
 
         instruction = _normalize_instruction(record.text)
-        if instruction:
+        if instruction and human_typed:
             instruction_counter[instruction] += 1
 
         stripped = record.text.strip()
-        if stripped.endswith("?") and len(open_threads) < _MAX_OPEN_THREADS * 4:
+        if human_typed and stripped.endswith("?") and len(open_threads) < _MAX_OPEN_THREADS * 4:
             open_threads.append(
                 InsightsOpenThread(
                     title=_snippet(record.text),

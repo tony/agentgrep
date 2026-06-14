@@ -21,6 +21,7 @@ if t.TYPE_CHECKING:
         InsightsModelsArgs,
         InsightsReportArgs,
         InsightsSetupArgs,
+        InsightsSkillsArgs,
     )
     from agentgrep.insights.model import InsightsLevelStatus, InsightsReport
 
@@ -32,6 +33,7 @@ __all__ = [
     "run_insights_models_command",
     "run_insights_report_command",
     "run_insights_setup_command",
+    "run_insights_skills_command",
 ]
 
 
@@ -98,6 +100,58 @@ def _make_progress(*, human: bool, progress_mode: str) -> ConsoleInsightsProgres
     if not enabled:
         return None
     return ConsoleInsightsProgress(enabled=True)
+
+
+def _parse_when(value: str | None, *, end_of_day: bool = False) -> str | None:
+    """Parse a ``--since``/``--until`` value into an ISO comparison bound.
+
+    Accepts a relative duration (``30d``, ``2w``, ``6m``, ``1y``) or an
+    absolute ``YYYY-MM-DD`` date. ISO timestamps compare lexically, so the
+    returned string is used directly in string comparisons.
+    """
+    if not value:
+        return None
+    import datetime
+    import re
+
+    text = value.strip()
+    match = re.fullmatch(r"(\d+)([dwmy])", text.lower())
+    if match:
+        scale = {"d": 1, "w": 7, "m": 30, "y": 365}[match.group(2)] * int(match.group(1))
+        moment = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=scale)
+        return moment.strftime("%Y-%m-%dT%H:%M:%S")
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        return text + ("T23:59:59" if end_of_day else "T00:00:00")
+    return text
+
+
+def _apply_window(records: t.Any, *, since: str | None, until: str | None) -> t.Any:
+    """Filter records to a time window, keeping whole conversations.
+
+    Conversation replies carry no timestamp, so a conversation is kept when
+    *any* of its records falls in the window. With no timestamps present at
+    all, the records are returned unchanged.
+    """
+    lower = _parse_when(since)
+    upper = _parse_when(until, end_of_day=True)
+    if lower is None and upper is None:
+        return records
+
+    def in_window(timestamp: str | None) -> bool:
+        return bool(
+            timestamp
+            and (lower is None or timestamp >= lower)
+            and (upper is None or timestamp <= upper)
+        )
+
+    def key(record: t.Any) -> str:
+        return record.conversation_id or record.session_id or str(record.path)
+
+    has_timestamps = any(r.timestamp for r in records)
+    if not has_timestamps:
+        return records
+    in_window_conversations = {key(r) for r in records if in_window(r.timestamp)}
+    return [r for r in records if key(r) in in_window_conversations or in_window(r.timestamp)]
 
 
 # ---------------------------------------------------------------------------
@@ -189,9 +243,62 @@ def _render_enrichment_detail(enrichment: t.Any) -> list[str]:
         lines.extend(
             f"    hit: {(hit.get('snippet') or '')[:70]}" for hit in data.get("hits", [])[:5]
         )
+    elif enrichment.level == "graph":
+        lines.extend(_render_graph_detail(data))
     elif enrichment.level == "llm" and data.get("summary"):
         lines.append("")
         lines.extend(f"    {para}" for para in str(data["summary"]).splitlines())
+    return lines
+
+
+def _render_graph_detail(data: dict[str, t.Any]) -> list[str]:
+    """Render the graph engine's network + workflow sections."""
+    lines: list[str] = []
+    store = data.get("store", {})
+    nodes = store.get("nodes", {})
+    if nodes:
+        lines.append(
+            f"    network: {nodes.get('prompt', 0)} prompts, {nodes.get('reply', 0)} replies, "
+            f"{nodes.get('exchange', 0)} exchanges, {nodes.get('conversation', 0)} conversations, "
+            f"{store.get('edges', 0)} edges"
+        )
+        lines.append(f"    store: {store.get('path')}")
+    similar = data.get("similar_prompts", [])
+    if similar:
+        lines.append("    similar prompts (recurring asks, clustered):")
+        lines.extend(
+            f"      [{c['size']}x across {c['conversations']} convos] {c['example']}"
+            for c in similar[:6]
+        )
+    workflows = data.get("recurring_workflows", [])
+    if workflows:
+        lines.append("    recurring workflows / playbooks (ranked by quality, not frequency):")
+        lines.extend(
+            f"      [score {w.get('score', 0)}, {w['support']}x] {w['example']}"
+            for w in workflows[:6]
+        )
+    skills = data.get("skill_suggestions", [])
+    if skills:
+        lines.append("    suggested Skills (to reduce repetition):")
+        for skill in skills[:8]:
+            lines.append(f"      • {skill['name']}  ({skill['type']})")
+            lines.append(f"          why: {skill['evidence']}")
+            lines.append(f"          → {skill['rationale']}")
+    recurring = data.get("recurring_conversations", [])
+    if recurring:
+        lines.append(
+            f"    similar/recurring conversations: {len(recurring)} cluster(s), "
+            f"largest repeated {recurring[0]['size']}x"
+        )
+    forgotten = data.get("forgotten_similar", [])
+    if forgotten:
+        lines.append("    forgotten-but-similar (nearest past conversations to the latest):")
+        lines.extend(
+            f"      {item['similarity']:.2f}  {item['conversation'][:48]}" for item in forgotten[:5]
+        )
+    patterns = data.get("transformation_patterns", [])
+    if patterns:
+        lines.append(f"    transformation patterns: {len(patterns)} recurring prompt→reply type(s)")
     return lines
 
 
@@ -282,22 +389,27 @@ def run_insights_report_command(args: InsightsReportArgs) -> int:
             "[insights] refusing to download without --yes in a non-interactive shell\n"
         )
 
+    # The graph level needs role-tagged replies and every turn — those only
+    # appear under conversation scope without session dedup.
+    scope = "conversations" if args.requested_level == "graph" else args.scope
+    dedupe = args.requested_level != "graph"
     query = agentgrep.SearchQuery(
         terms=(),
-        scope=args.scope,
+        scope=scope,
         any_term=False,
         regex=False,
         case_sensitive=False,
         agents=args.agents,
         limit=args.limit,
-        dedupe=True,
+        dedupe=dedupe,
     )
     if progress is not None:
-        progress.phase("collect", detail=f"scope={args.scope}")
+        progress.phase("collect", detail=f"scope={scope}")
     records = agentgrep.run_search_query(pathlib.Path.home(), query)
+    records = _apply_window(records, since=args.since, until=args.until)
 
     request = ReportRequest(
-        scope=args.scope,
+        scope=scope,
         requested_level=args.requested_level,
         record_limit=args.limit,
         model=args.model,
@@ -305,12 +417,170 @@ def run_insights_report_command(args: InsightsReportArgs) -> int:
         index_backend=args.index_backend,
         allow_download=allow_download,
         include_text=args.include_text,
+        conversation_summaries=args.conversation_summaries,
+        graph_vector_backend=args.graph_vector_backend,
     )
     report = insights.build_report(records, request, progress=progress)
     if progress is not None:
         progress.phase("render", detail=args.output_format)
     _emit_report(report, args.output_format)
     return 0 if report.records_analyzed > 0 else 1
+
+
+def _graph_skill_suggestions(report: InsightsReport) -> list[dict[str, t.Any]]:
+    """Extract the graph enrichment's ``skill_suggestions`` from a report."""
+    for enrichment in report.enrichments:
+        if enrichment.level == "graph":
+            raw = enrichment.data.get("skill_suggestions", [])
+            return [s for s in raw if isinstance(s, dict)]
+    return []
+
+
+def _build_skill_namer(args: InsightsSkillsArgs) -> t.Any:
+    """Return a bounded LLM ``complete`` callable for naming, or ``None``.
+
+    Resolves the requested backend without provisioning models. Any
+    unavailability (backend down, dependency missing, model not installed)
+    returns ``None`` so naming falls back to the deterministic path.
+    """
+    import importlib
+
+    from agentgrep.insights import skills as skills_mod
+
+    backend = args.llm_backend
+    if backend == "ollama":
+        import os
+
+        endpoint = os.environ.get("AGENTGREP_OLLAMA_URL", "http://127.0.0.1:11434")
+        try:
+            if not skills_mod.ollama_reachable(
+                endpoint=endpoint, import_module=importlib.import_module
+            ):
+                sys.stderr.write(
+                    f"[insights] Ollama not reachable at {endpoint}; using deterministic names\n"
+                )
+                return None
+            return skills_mod.build_ollama_complete(
+                model=args.model or "llama3.2",
+                endpoint=endpoint,
+                import_module=importlib.import_module,
+            )
+        except ImportError:
+            sys.stderr.write("[insights] httpx not installed; using deterministic names\n")
+            return None
+    if backend == "litert-lm":
+        from agentgrep.insights import models as models_mod
+
+        spec = models_mod.resolve_llm_model(args.model or "gemma-4-e2b", "litert-lm")
+        if spec is None or spec.artifact_filename is None:
+            sys.stderr.write("[insights] no curated LiteRT-LM model; using deterministic names\n")
+            return None
+        if not models_mod.is_installed(spec):
+            sys.stderr.write(
+                f"[insights] LiteRT-LM model {spec.model_id} is not provisioned; "
+                "using deterministic names\n"
+            )
+            return None
+        model_path = models_mod.model_cache_path(spec) / spec.artifact_filename
+        try:
+            return skills_mod.build_litert_complete(
+                model_path=str(model_path), import_module=importlib.import_module
+            )
+        except ImportError:
+            sys.stderr.write("[insights] litert-lm not installed; using deterministic names\n")
+            return None
+    sys.stderr.write(f"[insights] unknown LLM backend {backend!r}; using deterministic names\n")
+    return None
+
+
+def _emit_skill_drafts(drafts: list[t.Any], *, output_format: str, write_dir: str | None) -> int:
+    """Print or write the rendered SKILL.md drafts; return a process exit code."""
+    if write_dir is not None:
+        import pathlib
+
+        base = pathlib.Path(write_dir).expanduser()
+        written: list[str] = []
+        for draft in drafts:
+            target = base / draft.name / "SKILL.md"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(draft.markdown, encoding="utf-8")
+            written.append(str(target))
+        if output_format == "json":
+            print(json.dumps({"written": written}, indent=2))
+        else:
+            print(f"Wrote {len(written)} SKILL.md file(s) under {base}:")
+            for path in written:
+                print(f"  {path}")
+        return 0
+
+    if output_format == "json":
+        payload = [
+            {
+                "name": draft.name,
+                "description": draft.description,
+                "source": draft.source,
+                "markdown": draft.markdown,
+            }
+            for draft in drafts
+        ]
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    for index, draft in enumerate(drafts):
+        if index:
+            print("\n" + "─" * 72 + "\n")
+        print(draft.markdown.rstrip())
+    return 0
+
+
+def run_insights_skills_command(args: InsightsSkillsArgs) -> int:
+    """Draft SKILL.md files from the graph engine's recurring-request suggestions."""
+    import pathlib
+
+    import agentgrep
+    from agentgrep import insights
+    from agentgrep.insights import skills as skills_mod
+    from agentgrep.insights.model import ReportRequest
+
+    human = args.output_format in ("text", "markdown")
+    progress = _make_progress(human=human, progress_mode=args.progress_mode)
+    interactive = bool(getattr(sys.stdin, "isatty", lambda: False)())
+    allow_download = args.allow_download and (args.yes or interactive)
+
+    query = agentgrep.SearchQuery(
+        terms=(),
+        scope="conversations",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=args.agents,
+        limit=args.limit,
+        dedupe=False,
+    )
+    if progress is not None:
+        progress.phase("collect", detail="scope=conversations")
+    records = agentgrep.run_search_query(pathlib.Path.home(), query)
+    records = _apply_window(records, since=args.since, until=args.until)
+
+    request = ReportRequest(
+        scope="conversations",
+        requested_level="graph",
+        record_limit=args.limit,
+        model=args.model,
+        allow_download=allow_download,
+    )
+    report = insights.build_report(records, request, progress=progress)
+    suggestions = _graph_skill_suggestions(report)
+    if not suggestions:
+        sys.stderr.write(
+            "[insights] no recurring-request skill suggestions found "
+            "(graph level may be unavailable — run `agentgrep insights levels`)\n"
+        )
+        return 1
+
+    complete = _build_skill_namer(args) if args.use_llm else None
+    drafts = [skills_mod.draft_skill(suggestion, complete=complete) for suggestion in suggestions]
+    return _emit_skill_drafts(drafts, output_format=args.output_format, write_dir=args.write_dir)
 
 
 # ---------------------------------------------------------------------------

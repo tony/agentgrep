@@ -279,6 +279,7 @@ async def test_mcp_lists_tools_resources_prompts_and_templates() -> None:
         "inspect_result",
         "validate_query",
         "recent_sessions",
+        "insights_skills",
     }
     assert any(str(resource.uri) == "agentgrep://capabilities" for resource in resources)
     assert any(str(resource.uri) == "agentgrep://sources" for resource in resources)
@@ -1497,3 +1498,63 @@ async def test_mcp_capabilities_advertises_new_resources() -> None:
         "agentgrep://store-roles",
         "agentgrep://store-formats",
     } <= advertised
+
+
+async def test_mcp_insights_skills_empty(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """insights_skills reports status='empty' when there are no records."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(agentgrep, "run_search_query", lambda home, query, **kwargs: [])
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        result = await client.call_tool("insights_skills", {"agent": "all", "limit": 100})
+
+    data = t.cast("t.Any", result.data)
+    assert data.status == "empty"
+    assert data.records_analyzed == 0
+
+
+async def test_mcp_insights_skills_returns_graph_sections(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """insights_skills surfaces the graph level's skill suggestions."""
+    import types as _types
+
+    import agentgrep.insights
+
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="claude",
+        store="proj",
+        adapter_id="a",
+        path=pathlib.Path("/x/f.jsonl"),
+        text="commit and continue",
+    )
+    monkeypatch.setattr(agentgrep, "run_search_query", lambda home, query, **kwargs: [record])
+
+    graph_enrichment = _types.SimpleNamespace(
+        level="graph",
+        data={
+            "skill_suggestions": [{"type": "template", "name": "commit-continue"}],
+            "similar_prompts": [{"size": 3, "example": "commit and continue"}],
+            "recurring_conversations": [],
+            "forgotten_similar": [{"conversation": "c1", "similarity": 0.5}],
+        },
+    )
+    fake_report = _types.SimpleNamespace(
+        enrichments=[graph_enrichment], records_analyzed=1, diagnostics=[]
+    )
+    monkeypatch.setattr(agentgrep.insights, "build_report", lambda *a, **k: fake_report)
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        result = await client.call_tool("insights_skills", {"agent": "claude"})
+
+    data = t.cast("t.Any", result.data)
+    assert data.status == "ok"
+    assert data.skill_suggestions[0]["name"] == "commit-continue"
+    assert data.forgotten_similar[0]["conversation"] == "c1"

@@ -13,7 +13,7 @@ import typing as t
 
 from agentgrep.insights import models as models_mod
 from agentgrep.insights.activity import _record_ref
-from agentgrep.insights.loader import BackendConfigurationError
+from agentgrep.insights.loader import BackendConfigurationError, default_import_module
 from agentgrep.insights.model import InsightsEnrichment
 
 if t.TYPE_CHECKING:
@@ -21,6 +21,7 @@ if t.TYPE_CHECKING:
 
     from agentgrep import SearchRecord
     from agentgrep.insights.enrichers import EnricherContext
+    from agentgrep.insights.loader import ImportModule
     from agentgrep.insights.models import EmbeddingModelSpec
 
 _DUP_THRESHOLD = 0.93
@@ -69,6 +70,53 @@ def _load_model(ctx: EnricherContext, spec: EmbeddingModelSpec, local_path: path
     return model2vec.StaticModel.from_pretrained(str(local_path))
 
 
+class LoadedEmbedder(t.NamedTuple):
+    """A loaded embedding model with its spec, local path, and resolved device."""
+
+    model: t.Any
+    spec: EmbeddingModelSpec
+    local_path: pathlib.Path
+    device: str
+
+
+def _resolved_device(model: t.Any) -> str:
+    """Return the device the model loaded onto (GPU/MPS/CPU), best-effort.
+
+    ``SentenceTransformer`` auto-selects a device; recording it keeps graph
+    reports reproducible about where the embeddings were computed.
+    """
+    device = getattr(model, "device", None)
+    return str(device) if device is not None else "cpu"
+
+
+def load_embedder(ctx: EnricherContext) -> LoadedEmbedder:
+    """Resolve, provision, and load the embedding model once.
+
+    Reused by the index and graph levels so a single model load serves
+    multiple ``encode_texts`` passes over different node granularities.
+    """
+    spec = _select_spec(ctx)
+    local_path = _ensure_local_model(ctx, spec)
+    if ctx.progress is not None:
+        ctx.progress.phase("load model", detail=spec.model_id)
+    model = _load_model(ctx, spec, local_path)
+    return LoadedEmbedder(
+        model=model, spec=spec, local_path=local_path, device=_resolved_device(model)
+    )
+
+
+def encode_texts(ctx: EnricherContext, embedder: LoadedEmbedder, texts: list[str]) -> t.Any:
+    """Return a row-normalized float32 matrix for ``texts`` (shape ``(N, dim)``)."""
+    numpy = ctx.modules["numpy"]
+    if not texts:
+        return numpy.zeros((0, embedder.spec.dimensions), dtype=numpy.float32)
+    raw = embedder.model.encode(texts)
+    matrix = numpy.asarray(raw, dtype=numpy.float32).reshape(len(texts), -1)
+    norms = numpy.linalg.norm(matrix, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    return matrix / norms
+
+
 class EmbeddingResult(t.NamedTuple):
     """Embeddings plus the records and provenance they came from."""
 
@@ -85,28 +133,14 @@ def embed_records(ctx: EnricherContext) -> EmbeddingResult:
     Reused by the index level so vector indexing shares one embedding
     pass.
     """
-    numpy = ctx.modules["numpy"]
-    spec = _select_spec(ctx)
-    local_path = _ensure_local_model(ctx, spec)
-
-    if ctx.progress is not None:
-        ctx.progress.phase("load model", detail=spec.model_id)
-    model = _load_model(ctx, spec, local_path)
+    embedder = load_embedder(ctx)
+    spec, local_path = embedder.spec, embedder.local_path
 
     records = tuple(r for r in ctx.records if r.text and r.text.strip())
     texts = [r.text for r in records]
     if ctx.progress is not None:
         ctx.progress.phase("embed", detail=f"{len(texts)} records")
-    raw = model.encode(texts) if texts else []
-    matrix = (
-        numpy.asarray(raw, dtype=numpy.float32).reshape(len(texts), -1)
-        if texts
-        else (numpy.zeros((0, spec.dimensions), dtype=numpy.float32))
-    )
-    if matrix.shape[0]:
-        norms = numpy.linalg.norm(matrix, axis=1, keepdims=True)
-        norms[norms == 0] = 1.0
-        matrix = matrix / norms
+    matrix = encode_texts(ctx, embedder, texts)
 
     provenance = {
         "backend": spec.runtime,
@@ -136,6 +170,117 @@ def _greedy_clusters(numpy: t.Any, matrix: t.Any, threshold: float) -> list[list
         clusters.append(members)
     clusters.sort(key=len, reverse=True)
     return clusters
+
+
+def _cluster_embeddings(
+    numpy: t.Any,
+    matrix: t.Any,
+    threshold: float,
+    *,
+    import_module: ImportModule | None = None,
+    min_cluster_size: int = 2,
+) -> list[list[int]]:
+    """Cluster row-normalized vectors, preferring HDBSCAN over greedy cosine.
+
+    Density-based HDBSCAN finds tighter, variable-shaped archetypes than the
+    single global cosine threshold of :func:`_greedy_clusters`, and abstains on
+    outliers instead of forcing them into a cluster. Outliers (HDBSCAN label
+    ``-1``) are returned as singleton clusters so the result is a full
+    partition of every row — the same contract as :func:`_greedy_clusters`,
+    which downstream archetype labelling and workflow mining rely on.
+
+    Falls back to the greedy pass when scikit-learn is not installed or
+    HDBSCAN rejects the input (e.g. an unsupported metric on an older build).
+
+    Parameters
+    ----------
+    numpy : module
+        The resolved numpy module (used only by the greedy fallback).
+    matrix : numpy.ndarray
+        Row-normalized float32 vectors, shape ``(N, dim)``.
+    threshold : float
+        Cosine threshold handed to the greedy fallback.
+    import_module : ImportModule, optional
+        Injectable importer; defaults to :func:`importlib.import_module`.
+    min_cluster_size : int
+        Smallest archetype HDBSCAN will report (default 2).
+
+    Returns
+    -------
+    list[list[int]]
+        Member-index lists: real clusters first (largest first), then one
+        singleton list per outlier row.
+    """
+    count = int(matrix.shape[0])
+    if count < 2:
+        return [[index] for index in range(count)]
+    importer = import_module or default_import_module()
+    try:
+        sklearn_cluster = importer("sklearn.cluster")
+    except ImportError:
+        return _greedy_clusters(numpy, matrix, threshold)
+    try:
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=FutureWarning)
+            labels = sklearn_cluster.HDBSCAN(
+                min_cluster_size=min_cluster_size,
+                metric="cosine",
+                # "leaf" selects the most fine-grained clusters; the default
+                # "eom" over-merges into broad groups on static-embedding
+                # geometry, which blurs the "similar prompts" archetypes.
+                cluster_selection_method="leaf",
+            ).fit_predict(matrix)
+    except ValueError, TypeError:
+        # Degenerate input or a build without the cosine metric — stay useful.
+        return _greedy_clusters(numpy, matrix, threshold)
+    grouped: dict[int, list[int]] = {}
+    singletons: list[list[int]] = []
+    for index, raw_label in enumerate(labels):
+        label = int(raw_label)
+        if label < 0:
+            singletons.append([index])
+        else:
+            grouped.setdefault(label, []).append(index)
+    clusters: list[list[int]] = []
+    for members in grouped.values():
+        clusters.extend(_split_incohesive(numpy, matrix, members, threshold))
+    clusters.extend(singletons)
+    # Multi-member clusters first (largest first), then singletons.
+    clusters.sort(key=lambda members: (len(members) >= 2, len(members)), reverse=True)
+    return clusters
+
+
+def _split_incohesive(
+    numpy: t.Any,
+    matrix: t.Any,
+    members: list[int],
+    threshold: float,
+) -> list[list[int]]:
+    """Enforce a cosine-cohesion floor on one HDBSCAN cluster.
+
+    Density clustering on weak (static) embeddings can merge unrelated members.
+    Members whose cosine to the cluster centroid is below ``threshold`` are
+    demoted to singletons, so a returned multi-member cluster is at least as
+    cohesive as a greedy-threshold cluster. Returns the kept cluster (if it
+    still has 2+ members) followed by one singleton per demoted member.
+    """
+    if len(members) < 2:
+        return [members]
+    rows = matrix[members]
+    centroid = rows.mean(axis=0)
+    centroid = centroid / (float(numpy.linalg.norm(centroid)) or 1.0)
+    sims = rows @ centroid
+    kept = [member for member, sim in zip(members, sims, strict=True) if float(sim) >= threshold]
+    demoted = [member for member, sim in zip(members, sims, strict=True) if float(sim) < threshold]
+    result: list[list[int]] = []
+    if len(kept) >= 2:
+        result.append(kept)
+    else:
+        demoted = members  # whole cluster failed cohesion -> all singletons
+    result.extend([member] for member in demoted)
+    return result
 
 
 def build_embeddings(ctx: EnricherContext) -> InsightsEnrichment:

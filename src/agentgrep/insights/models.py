@@ -40,9 +40,9 @@ if t.TYPE_CHECKING:
     from agentgrep.insights.loader import ImportModule
     from agentgrep.insights.progress import InsightsProgress
 
-ModelKind = t.Literal["embeddings", "llm"]
+ModelKind = t.Literal["embeddings", "llm", "reranker"]
 EmbeddingRuntime = t.Literal["sentence-transformers", "model2vec"]
-LLMBackend = t.Literal["litert-lm", "llama-cpp", "ollama"]
+LLMBackend = t.Literal["litert-lm", "llama-cpp", "ollama", "transformers"]
 
 _HF_BASE = "https://huggingface.co"
 _MANIFEST_NAME = "agentgrep-manifest.json"
@@ -86,6 +86,8 @@ class LLMModelSpec:
     local_id: str
     notes: str
     revision: str = "main"
+    quantization: t.Literal["none", "4bit"] = "none"
+    trust_remote_code: bool = False
 
     kind: t.ClassVar[ModelKind] = "llm"
 
@@ -95,10 +97,47 @@ class LLMModelSpec:
         return (self.artifact_filename,) if self.artifact_filename else ()
 
 
-ModelSpec = EmbeddingModelSpec | LLMModelSpec
+@dataclass(frozen=True, slots=True)
+class RerankerModelSpec:
+    """A curated cross-encoder reranker and how to fetch it locally.
+
+    A reranker joint-encodes a text pair and scores its relatedness — an
+    orthogonal signal to the static embedding geometry, used to split
+    over-merged archetype clusters. Fetched as a multi-file Hugging Face
+    snapshot, like a ``sentence-transformers`` embedding model.
+    """
+
+    model_id: str
+    repo_id: str
+    license: str
+    source_url: str
+    local_id: str
+    notes: str
+    revision: str = "main"
+    files: tuple[str, ...] = ()
+
+    backend: t.ClassVar[str] = "sentence-transformers"
+    kind: t.ClassVar[ModelKind] = "reranker"
+
+
+ModelSpec = EmbeddingModelSpec | LLMModelSpec | RerankerModelSpec
 
 
 _CURATED_EMBEDDINGS: tuple[EmbeddingModelSpec, ...] = (
+    # First sentence-transformers spec = the deterministic default when the
+    # ``insights-graph-st`` runtime is installed. gte-small leads on short-text
+    # clustering/similarity per its size and needs no query prefix (unlike
+    # e5/bge), so it suits the symmetric prompt-to-prompt archetype task.
+    EmbeddingModelSpec(
+        model_id="gte-small",
+        runtime="sentence-transformers",
+        repo_id="thenlper/gte-small",
+        license="MIT",
+        source_url="https://huggingface.co/thenlper/gte-small",
+        local_id="gte-small",
+        dimensions=384,
+        notes="Default ST graph embedder; 384-dim, strong short-text similarity, no prefix.",
+    ),
     EmbeddingModelSpec(
         model_id="all-MiniLM-L6-v2",
         runtime="sentence-transformers",
@@ -107,7 +146,17 @@ _CURATED_EMBEDDINGS: tuple[EmbeddingModelSpec, ...] = (
         source_url="https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2",
         local_id="minilm-l6-v2",
         dimensions=384,
-        notes="Fast 384-dim general-purpose sentence embedding model.",
+        notes="Fast 384-dim general-purpose sentence embedding model (override via --model).",
+    ),
+    EmbeddingModelSpec(
+        model_id="all-mpnet-base-v2",
+        runtime="sentence-transformers",
+        repo_id="sentence-transformers/all-mpnet-base-v2",
+        license="Apache-2.0",
+        source_url="https://huggingface.co/sentence-transformers/all-mpnet-base-v2",
+        local_id="mpnet-base-v2",
+        dimensions=768,
+        notes="Highest-quality 768-dim 'all-' model; slower on CPU (override via --model).",
     ),
     EmbeddingModelSpec(
         model_id="potion-base-8M",
@@ -123,6 +172,53 @@ _CURATED_EMBEDDINGS: tuple[EmbeddingModelSpec, ...] = (
 )
 
 _CURATED_LLMS: tuple[LLMModelSpec, ...] = (
+    LLMModelSpec(
+        model_id="gemma-3-1b-it",
+        backend="transformers",
+        repo_id="google/gemma-3-1b-it",
+        artifact_filename=None,
+        license="Gemma",
+        source_url="https://huggingface.co/google/gemma-3-1b-it",
+        local_id="gemma-3-1b-it",
+        notes="Instruction-tuned Gemma 3 1B on GPU via transformers/CUDA "
+        "(agentgrep[insights-llm-transformers]); gated repo, needs HF_TOKEN + accepted license.",
+    ),
+    LLMModelSpec(
+        model_id="phi-4-mini-instruct",
+        backend="transformers",
+        repo_id="microsoft/Phi-4-mini-instruct",
+        artifact_filename=None,
+        license="MIT",
+        source_url="https://huggingface.co/microsoft/Phi-4-mini-instruct",
+        local_id="phi-4-mini-instruct",
+        quantization="4bit",
+        notes="Microsoft Phi-4-mini (3.8B, MIT, non-gated). Loaded via the native "
+        "transformers phi3 architecture (no remote code), 4-bit-quantized to fit a "
+        "4 GB GPU; needs agentgrep[insights-llm-transformers-quant].",
+    ),
+    LLMModelSpec(
+        model_id="smollm2-1.7b-instruct",
+        backend="transformers",
+        repo_id="HuggingFaceTB/SmolLM2-1.7B-Instruct",
+        artifact_filename=None,
+        license="Apache-2.0",
+        source_url="https://huggingface.co/HuggingFaceTB/SmolLM2-1.7B-Instruct",
+        local_id="smollm2-1.7b-instruct",
+        notes="HuggingFace SmolLM2 1.7B (Apache-2.0, non-gated). Runs fp16 with no "
+        "quant library — the token-free default that works without bitsandbytes.",
+    ),
+    LLMModelSpec(
+        model_id="granite-3.3-2b-instruct",
+        backend="transformers",
+        repo_id="ibm-granite/granite-3.3-2b-instruct",
+        artifact_filename=None,
+        license="Apache-2.0",
+        source_url="https://huggingface.co/ibm-granite/granite-3.3-2b-instruct",
+        local_id="granite-3.3-2b-instruct",
+        quantization="4bit",
+        notes="IBM Granite 3.3 2B (Apache-2.0, non-gated). 2.5B params 4-bit-quantized "
+        "to fit a 4 GB GPU; needs agentgrep[insights-llm-transformers-quant].",
+    ),
     LLMModelSpec(
         model_id="gemma-4-e2b",
         backend="litert-lm",
@@ -156,6 +252,28 @@ _CURATED_LLMS: tuple[LLMModelSpec, ...] = (
 )
 
 
+# Ordered transformers fallback chain used when no ``--model`` is given. Phi and
+# Granite need a 4-bit quant library to fit a 4 GB GPU; SmolLM2 runs fp16 with
+# none, so it sits between them as the quant-free safety net.
+_DEFAULT_TRANSFORMERS_CHAIN: tuple[str, ...] = (
+    "phi-4-mini-instruct",
+    "smollm2-1.7b-instruct",
+    "granite-3.3-2b-instruct",
+)
+
+
+_CURATED_RERANKERS: tuple[RerankerModelSpec, ...] = (
+    RerankerModelSpec(
+        model_id="cross-encoder/quora-distilroberta-base",
+        repo_id="cross-encoder/quora-distilroberta-base",
+        license="Apache-2.0",
+        source_url="https://huggingface.co/cross-encoder/quora-distilroberta-base",
+        local_id="quora-distilroberta-base",
+        notes="Duplicate-question cross-encoder; symmetric 0-1 score, purifies archetype clusters.",
+    ),
+)
+
+
 @dataclass(frozen=True, slots=True)
 class InstallResult:
     """Outcome of an :func:`install_model` call."""
@@ -181,10 +299,25 @@ def list_llm_models(backend: str | None = None) -> tuple[LLMModelSpec, ...]:
 
 
 def list_models(kind: ModelKind) -> tuple[ModelSpec, ...]:
-    """Return curated models for ``kind`` (``embeddings`` or ``llm``)."""
+    """Return curated models for ``kind`` (``embeddings``, ``llm``, ``reranker``)."""
     if kind == "embeddings":
         return _CURATED_EMBEDDINGS
+    if kind == "reranker":
+        return _CURATED_RERANKERS
     return _CURATED_LLMS
+
+
+def resolve_reranker_model(model_id: str) -> RerankerModelSpec | None:
+    """Return the reranker spec matching ``model_id`` (by id or local id)."""
+    for spec in _CURATED_RERANKERS:
+        if model_id in (spec.model_id, spec.local_id):
+            return spec
+    return None
+
+
+def preferred_reranker_model() -> RerankerModelSpec | None:
+    """Return the default curated cross-encoder reranker, if any."""
+    return _CURATED_RERANKERS[0] if _CURATED_RERANKERS else None
 
 
 def resolve_embedding_model(model_id: str) -> EmbeddingModelSpec | None:
@@ -203,6 +336,20 @@ def resolve_llm_model(model_id: str, backend: str | None = None) -> LLMModelSpec
         ):
             return spec
     return None
+
+
+def default_transformers_chain() -> tuple[LLMModelSpec, ...]:
+    """Return the ordered non-gated transformers fallback specs.
+
+    Resolves :data:`_DEFAULT_TRANSFORMERS_CHAIN` to curated specs in order,
+    skipping any id that no longer resolves. The caller tries each in turn and
+    keeps the first that loads, so a missing 4-bit quant library simply drops
+    the quantized candidates and the fp16 SmolLM2 default serves instead.
+    """
+    resolved = (
+        resolve_llm_model(model_id, "transformers") for model_id in _DEFAULT_TRANSFORMERS_CHAIN
+    )
+    return tuple(spec for spec in resolved if spec is not None)
 
 
 def preferred_embedding_model(runtime: EmbeddingRuntime) -> EmbeddingModelSpec | None:
@@ -308,7 +455,7 @@ def _write_manifest(
 
 
 def _snapshot_files(
-    spec: EmbeddingModelSpec,
+    spec: EmbeddingModelSpec | RerankerModelSpec | LLMModelSpec,
     target_dir: pathlib.Path,
     *,
     import_module: ImportModule | None,
@@ -397,7 +544,14 @@ def install_model(
     cache_mod.ensure_dir(target_dir)
     token = os.environ.get("HF_TOKEN")
 
-    if not spec.files and isinstance(spec, EmbeddingModelSpec):
+    # Multi-file snapshot for embedding/reranker models and transformers LLMs
+    # (a model dir of config.json + safetensors + tokenizer); single-file
+    # artifacts (litert .litertlm, llama.cpp .gguf) take the urllib path below.
+    needs_snapshot = not spec.files and (
+        isinstance(spec, EmbeddingModelSpec | RerankerModelSpec)
+        or (isinstance(spec, LLMModelSpec) and spec.backend == "transformers")
+    )
+    if needs_snapshot:
         files, total = _snapshot_files(spec, target_dir, import_module=import_module)
     else:
         total = 0

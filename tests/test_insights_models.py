@@ -41,6 +41,28 @@ def test_registry_lists_and_resolves() -> None:
     assert models_mod.resolve_embedding_model("nope") is None
 
 
+def test_default_transformers_chain_is_ordered_and_non_gated() -> None:
+    """The default chain is Phi-4-mini → SmolLM2 → Granite with the right load modes."""
+    chain = models_mod.default_transformers_chain()
+    assert [spec.model_id for spec in chain] == [
+        "phi-4-mini-instruct",
+        "smollm2-1.7b-instruct",
+        "granite-3.3-2b-instruct",
+    ]
+    assert all(spec.backend == "transformers" for spec in chain)
+
+    phi, smol, granite = chain
+    # Phi needs 4-bit quant to fit, but loads via the native phi3 architecture
+    # (no remote code); SmolLM2 is the fp16, quant-free safety net between them.
+    assert (phi.quantization, phi.trust_remote_code, phi.license) == ("4bit", False, "MIT")
+    assert (smol.quantization, smol.trust_remote_code) == ("none", False)
+    assert (granite.quantization, granite.license) == ("4bit", "Apache-2.0")
+
+    # gemma stays curated but gated, and is intentionally absent from the chain.
+    assert _llm_spec("gemma-3-1b-it", "transformers").quantization == "none"
+    assert "gemma-3-1b-it" not in {spec.model_id for spec in chain}
+
+
 def test_cache_path_layout(tmp_path: pathlib.Path) -> None:
     """Cache paths are scoped by kind/backend/local_id."""
     path = models_mod.model_cache_path(_embedding_spec("potion-base-8M"), tmp_path)
