@@ -50,7 +50,7 @@ and, where relevant, the installed embedding model.
 | `ml` | `agentgrep[insights-ml]` | TF-IDF + KMeans topic clusters |
 | `embeddings` | `agentgrep[insights-embeddings]` | semantic clusters, near-duplicate detection |
 | `index` | `agentgrep[insights-index]` | persistent tantivy + sqlite-vec hybrid index |
-| `llm` | `agentgrep[insights-llm]` | local Ollama narrative summary |
+| `llm` | `agentgrep[insights-llm]` or `agentgrep[insights-llm-litert]` | local narrative summary via Ollama or an in-process LiteRT-LM model |
 
 List the rungs and what is installed:
 
@@ -77,11 +77,24 @@ defaults to `tantivy` + `sqlite-vec`; pass `--index-backend lancedb` after
 installing `agentgrep[insights-index-lancedb]` for the single-store
 alternative.
 
-Stream a grounded local-LLM summary (shown as `text` because it requires a
-running Ollama daemon):
+Stream a grounded local-LLM summary. Two runtimes are wired: Ollama over
+local HTTP, and an in-process LiteRT-LM model (e.g. a Gemma `.litertlm`
+artifact). Both examples are shown as `text` because they need a daemon or
+a multi-gigabyte model that cannot run as a documentation test:
 
 ```text
 $ agentgrep insights report --level llm --backend ollama --model llama3.2
+```
+
+```text
+$ agentgrep insights report --level llm --backend litert-lm --model gemma-4-e2b
+```
+
+The LiteRT-LM artifact downloads on demand with `--auto-download-models`,
+or ahead of time:
+
+```text
+$ agentgrep insights models install gemma-4-e2b --level llm --backend litert-lm --yes
 ```
 
 The summary is grounded in compact facts — counts, top terms, timeline,
