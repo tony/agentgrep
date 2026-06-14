@@ -24,6 +24,18 @@ _DEFERRED_MODULES: tuple[str, ...] = (
     "agentgrep.query.compile",
     "agentgrep.query.ast",
     "agentgrep.events",
+    # Insights stays lazy: importing agentgrep must not load the insights
+    # package or any optional enrichment backend (ADR 0005 § Dependency Levels).
+    "agentgrep.insights",
+    "sklearn",
+    "torch",
+    "sentence_transformers",
+    "model2vec",
+    "tantivy",
+    "sqlite_vec",
+    "httpx",
+    "jinja2",
+    "huggingface_hub",
 )
 
 
