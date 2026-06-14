@@ -28,7 +28,16 @@ if t.TYPE_CHECKING:
     import collections.abc as cabc
 
 AgentName = t.Literal[
-    "codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi", "opencode"
+    "codex",
+    "claude",
+    "cursor-cli",
+    "cursor-ide",
+    "gemini",
+    "antigravity-cli",
+    "antigravity-ide",
+    "grok",
+    "pi",
+    "opencode",
 ]
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
@@ -9083,11 +9092,6 @@ def _build_opencode_db(
         conn.close()
 
 
-def _antigravity_agent(agent: str) -> tuple[AgentName, ...]:
-    """Return an Antigravity agent tuple before the runtime literal is extended."""
-    return t.cast("tuple[AgentName, ...]", (agent,))
-
-
 def _protobuf_field(text: str) -> bytes:
     """Encode one length-delimited protobuf string field for tests."""
     raw = text.encode("utf-8")
@@ -9132,6 +9136,7 @@ class AntigravityHistoryCase(t.NamedTuple):
     entry: dict[str, object]
     query_term: str
     expected_text: str
+    expected_timestamp: str
     expected_session_id: str | None
     expected_workspace: str
 
@@ -9148,6 +9153,7 @@ ANTIGRAVITY_HISTORY_CASES: tuple[AntigravityHistoryCase, ...] = (
         },
         query_term="adapter",
         expected_text="ship the antigravity cli adapter",
+        expected_timestamp="2026-05-30T12:00:00Z",
         expected_session_id="5cd92cd1-6f86-42de-8f7e-81ebb47f36dd",
         expected_workspace="/workspace/demo",
     ),
@@ -9160,13 +9166,13 @@ ANTIGRAVITY_HISTORY_CASES: tuple[AntigravityHistoryCase, ...] = (
         },
         query_term="recall",
         expected_text="search antigravity prompt recall",
+        expected_timestamp="2026-05-30T12:01:00Z",
         expected_session_id=None,
         expected_workspace="/workspace/demo",
     ),
 )
 
 
-@pytest.mark.xfail(strict=True, reason="issue #66: Antigravity CLI history is not wired yet")
 @pytest.mark.parametrize(
     AntigravityHistoryCase._fields,
     ANTIGRAVITY_HISTORY_CASES,
@@ -9177,6 +9183,7 @@ def test_search_antigravity_cli_history(
     entry: dict[str, object],
     query_term: str,
     expected_text: str,
+    expected_timestamp: str,
     expected_session_id: str | None,
     expected_workspace: str,
     tmp_path: pathlib.Path,
@@ -9191,7 +9198,7 @@ def test_search_antigravity_cli_history(
     write_jsonl(history_path, [entry])
 
     backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
-    agents = _antigravity_agent("antigravity-cli")
+    agents: tuple[AgentName, ...] = ("antigravity-cli",)
     query = t.cast("t.Any", agentgrep).SearchQuery(
         terms=(query_term,),
         scope="all",
@@ -9213,7 +9220,7 @@ def test_search_antigravity_cli_history(
     assert record.adapter_id == "antigravity_cli.history_jsonl.v1"
     assert record.role == "user"
     assert record.text == expected_text
-    assert record.timestamp == "2026-05-30T12:00:00Z"
+    assert record.timestamp == expected_timestamp
     assert record.session_id == expected_session_id
     assert record.conversation_id == expected_session_id
     assert record.metadata == {"workspace": expected_workspace, "type": entry.get("type", "")}
@@ -9223,7 +9230,7 @@ class AntigravityProtobufCase(t.NamedTuple):
     """Parametrized case for inspectable Antigravity protobuf transcript stores."""
 
     test_id: str
-    agent: str
+    agent: AgentName
     relative_path: pathlib.Path
     store: str
     adapter_id: str
@@ -9266,7 +9273,6 @@ ANTIGRAVITY_PROTOBUF_CASES: tuple[AntigravityProtobufCase, ...] = (
 )
 
 
-@pytest.mark.xfail(strict=True, reason="issue #66: Antigravity protobuf stores are not wired yet")
 @pytest.mark.parametrize(
     AntigravityProtobufCase._fields,
     ANTIGRAVITY_PROTOBUF_CASES,
@@ -9274,7 +9280,7 @@ ANTIGRAVITY_PROTOBUF_CASES: tuple[AntigravityProtobufCase, ...] = (
 )
 def test_antigravity_protobuf_sources_are_inspectable(
     test_id: str,
-    agent: str,
+    agent: AgentName,
     relative_path: pathlib.Path,
     store: str,
     adapter_id: str,
@@ -9295,7 +9301,7 @@ def test_antigravity_protobuf_sources_are_inspectable(
         _ = source_path.write_bytes(_protobuf_field(text))
 
     backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
-    agents = _antigravity_agent(agent)
+    agents: tuple[AgentName, ...] = (agent,)
     default_sources = t.cast("t.Any", agentgrep).discover_sources(home, agents, backends)
     inventory_sources = t.cast("t.Any", agentgrep).discover_sources(
         home,

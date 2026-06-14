@@ -45,6 +45,7 @@ RAW_TEXT_PREFILTER_ADAPTERS: frozenset[str] = frozenset(
     {
         "codex.sessions_jsonl.v1",
         "codex.history_jsonl.v1",
+        "antigravity_cli.history_jsonl.v1",
         "claude.projects_jsonl.v1",
         "grok.prompt_history_jsonl.v1",
         "grok.sessions_jsonl.v1",
@@ -56,6 +57,7 @@ RAW_TEXT_PREFILTER_ADAPTERS: frozenset[str] = frozenset(
 APPEND_ONLY_JSONL_ADAPTERS: frozenset[str] = frozenset(
     {
         "codex.history_jsonl.v1",
+        "antigravity_cli.history_jsonl.v1",
         "claude.projects_jsonl.v1",
         "grok.prompt_history_jsonl.v1",
         "grok.sessions_jsonl.v1",

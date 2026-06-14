@@ -30,6 +30,8 @@ KNOWN_AGENTS: tuple[AgentName, ...] = (
     "cursor-ide",
     "codex",
     "gemini",
+    "antigravity-cli",
+    "antigravity-ide",
     "grok",
     "pi",
     "opencode",
@@ -291,6 +293,11 @@ def test_runtime_adapter_ids_match_catalogue_discovery() -> None:
     assert "cursor_cli.transcripts_jsonl.v1" in runtime_adapter_ids
     assert "gemini.tmp_chats_jsonl.v1" in runtime_adapter_ids
     assert "gemini.tmp_logs_json.v1" in runtime_adapter_ids
+    assert "antigravity_cli.history_jsonl.v1" in runtime_adapter_ids
+    assert "antigravity_cli.conversations_sqlite_protobuf.v1" in runtime_adapter_ids
+    assert "antigravity_cli.implicit_protobuf.v1" in runtime_adapter_ids
+    assert "antigravity_ide.conversations_protobuf.v1" in runtime_adapter_ids
+    assert "antigravity_ide.implicit_protobuf.v1" in runtime_adapter_ids
     assert "grok.prompt_history_jsonl.v1" in runtime_adapter_ids
     assert "grok.sessions_jsonl.v1" in runtime_adapter_ids
     assert "grok.session_search_sqlite.v1" in runtime_adapter_ids
@@ -869,6 +876,7 @@ PRIMARY_FIXTURES: tuple[tuple[str, str], ...] = (
     ("cursor-cli.transcripts", "example.jsonl"),
     ("cursor-cli.plans", "example.plan.md"),
     ("cursor-cli.prompt_history", "prompt_history.json"),
+    ("antigravity-cli.history", "history.jsonl"),
     ("grok.prompt_history", "prompt_history.jsonl"),
     ("grok.sessions", "chat_history.jsonl"),
     ("pi.sessions", "example.jsonl"),

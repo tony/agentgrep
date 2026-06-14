@@ -30,7 +30,16 @@ class SearchRecordModel(AgentGrepModel):
     ref: str
     kind: t.Literal["prompt", "history"]
     agent: t.Literal[
-        "codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi", "opencode"
+        "codex",
+        "claude",
+        "cursor-cli",
+        "cursor-ide",
+        "gemini",
+        "antigravity-cli",
+        "antigravity-ide",
+        "grok",
+        "pi",
+        "opencode",
     ]
     store: str
     adapter_id: str
@@ -61,7 +70,16 @@ class FindRecordModel(AgentGrepModel):
     ref: str
     kind: t.Literal["find"]
     agent: t.Literal[
-        "codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi", "opencode"
+        "codex",
+        "claude",
+        "cursor-cli",
+        "cursor-ide",
+        "gemini",
+        "antigravity-cli",
+        "antigravity-ide",
+        "grok",
+        "pi",
+        "opencode",
     ]
     store: str
     adapter_id: str
@@ -99,7 +117,16 @@ class SourceRecordModel(AgentGrepModel):
 
     schema_version: str = agentgrep.SCHEMA_VERSION
     agent: t.Literal[
-        "codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi", "opencode"
+        "codex",
+        "claude",
+        "cursor-cli",
+        "cursor-ide",
+        "gemini",
+        "antigravity-cli",
+        "antigravity-ide",
+        "grok",
+        "pi",
+        "opencode",
     ]
     store: str
     adapter_id: str
@@ -230,7 +257,18 @@ class CapabilitiesModel(AgentGrepModel):
     version: str = SERVER_VERSION
     read_only: bool = True
     agents: list[
-        t.Literal["codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi", "opencode"]
+        t.Literal[
+            "codex",
+            "claude",
+            "cursor-cli",
+            "cursor-ide",
+            "gemini",
+            "antigravity-cli",
+            "antigravity-ide",
+            "grok",
+            "pi",
+            "opencode",
+        ]
     ]
     search_scopes: list[SearchScopeName]
     adapters: list[str]
@@ -249,7 +287,16 @@ class StoreDescriptorModel(AgentGrepModel):
     schema_version: str = agentgrep.SCHEMA_VERSION
     kind: t.Literal["store"] = "store"
     agent: t.Literal[
-        "codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi", "opencode"
+        "codex",
+        "claude",
+        "cursor-cli",
+        "cursor-ide",
+        "gemini",
+        "antigravity-cli",
+        "antigravity-ide",
+        "grok",
+        "pi",
+        "opencode",
     ]
     store_id: str
     role: str

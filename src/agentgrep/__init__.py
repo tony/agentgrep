@@ -88,7 +88,16 @@ else:
     PrivatePathBase = type(pathlib.Path())
 
 AgentName = t.Literal[
-    "codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi", "opencode"
+    "codex",
+    "claude",
+    "cursor-cli",
+    "cursor-ide",
+    "gemini",
+    "antigravity-cli",
+    "antigravity-ide",
+    "grok",
+    "pi",
+    "opencode",
 ]
 OutputMode = t.Literal["text", "json", "ndjson", "ui"]
 ProgressMode = t.Literal["auto", "always", "never"]
@@ -112,6 +121,8 @@ AGENT_CHOICES: tuple[AgentName, ...] = (
     "cursor-cli",
     "cursor-ide",
     "gemini",
+    "antigravity-cli",
+    "antigravity-ide",
     "grok",
     "pi",
     "opencode",
@@ -130,6 +141,14 @@ OFFICIAL_CURSOR_STATE_PATHS: tuple[pathlib.Path, ...] = (
 ITER_SOURCE_RECORD_ADAPTERS: frozenset[str] = frozenset(
     {
         "claude.history_jsonl.v1",
+        "antigravity_cli.brain_text.v1",
+        "antigravity_cli.conversations_sqlite_protobuf.v1",
+        "antigravity_cli.history_jsonl.v1",
+        "antigravity_cli.implicit_protobuf.v1",
+        "antigravity_ide.brain_text.v1",
+        "antigravity_ide.conversations_protobuf.v1",
+        "antigravity_ide.implicit_protobuf.v1",
+        "antigravity_ide.skills_text.v1",
         "claude.app_state_json_summary.v1",
         "claude.commands_text.v1",
         "claude.file_metadata_summary.v1",
@@ -2414,6 +2433,26 @@ def discover_sources(
                     store_roles=store_roles,
                 ),
             )
+        elif agent == "antigravity-cli":
+            discovered.extend(
+                discover_antigravity_cli_sources(
+                    home,
+                    backends,
+                    include_non_default=include_non_default,
+                    version_detail=version_detail,
+                    store_roles=store_roles,
+                ),
+            )
+        elif agent == "antigravity-ide":
+            discovered.extend(
+                discover_antigravity_ide_sources(
+                    home,
+                    backends,
+                    include_non_default=include_non_default,
+                    version_detail=version_detail,
+                    store_roles=store_roles,
+                ),
+            )
         elif agent == "grok":
             discovered.extend(
                 discover_grok_sources(
@@ -3388,6 +3427,52 @@ def discover_gemini_sources(
     )
 
 
+def discover_antigravity_cli_sources(
+    home: pathlib.Path,
+    backends: BackendSelection,
+    *,
+    include_non_default: bool = False,
+    version_detail: DiscoveryVersionDetail = "shape",
+    store_roles: DiscoveryStoreRoles = None,
+) -> list[SourceHandle]:
+    """Discover Google Antigravity CLI stores under ``~/.gemini``."""
+    base = home / ".gemini" / "antigravity-cli"
+    if not base.exists():
+        return []
+    return discover_from_catalog(
+        home,
+        "antigravity-cli",
+        base,
+        backends,
+        include_non_default=include_non_default,
+        version_detail=version_detail,
+        store_roles=store_roles,
+    )
+
+
+def discover_antigravity_ide_sources(
+    home: pathlib.Path,
+    backends: BackendSelection,
+    *,
+    include_non_default: bool = False,
+    version_detail: DiscoveryVersionDetail = "shape",
+    store_roles: DiscoveryStoreRoles = None,
+) -> list[SourceHandle]:
+    """Discover Google Antigravity IDE stores under ``~/.gemini``."""
+    base = home / ".gemini" / "antigravity"
+    if not base.exists():
+        return []
+    return discover_from_catalog(
+        home,
+        "antigravity-ide",
+        base,
+        backends,
+        include_non_default=include_non_default,
+        version_detail=version_detail,
+        store_roles=store_roles,
+    )
+
+
 def discover_grok_sources(
     home: pathlib.Path,
     backends: BackendSelection,
@@ -4013,6 +4098,23 @@ def iter_source_records(
     if source.adapter_id == "claude.history_jsonl.v1":
         yield from parse_claude_history_file(source)
         return
+    if source.adapter_id == "antigravity_cli.history_jsonl.v1":
+        yield from parse_antigravity_cli_history_file(
+            source,
+            raw_skip_line=raw_skip_line,
+            reverse=reverse,
+        )
+        return
+    if source.adapter_id == "antigravity_cli.conversations_sqlite_protobuf.v1":
+        yield from parse_antigravity_cli_conversation_db(source)
+        return
+    if source.adapter_id in {
+        "antigravity_cli.implicit_protobuf.v1",
+        "antigravity_ide.conversations_protobuf.v1",
+        "antigravity_ide.implicit_protobuf.v1",
+    }:
+        yield from parse_antigravity_protobuf_file(source)
+        return
     if source.adapter_id == "claude.projects_jsonl.v1":
         yield from parse_claude_project_file(
             source,
@@ -4062,6 +4164,9 @@ def iter_source_records(
         "codex.project_skill_text.v1",
         "codex.rules_text.v1",
         "codex.skills_text.v1",
+        "antigravity_cli.brain_text.v1",
+        "antigravity_ide.brain_text.v1",
+        "antigravity_ide.skills_text.v1",
     }:
         yield from parse_text_store_file(source)
         return
@@ -4751,6 +4856,50 @@ def parse_claude_history_file(
             session_id=session_id,
             conversation_id=session_id,
             metadata={"project": as_optional_str(mapping.get("project")) or ""},
+        )
+
+
+def parse_antigravity_cli_history_file(
+    source: SourceHandle,
+    *,
+    raw_skip_line: RawJsonlSkipLine | None = None,
+    reverse: bool = False,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse Antigravity CLI's ``history.jsonl`` prompt recall log."""
+    events = (
+        _iter_jsonl(
+            source.path,
+            skip_line=raw_skip_line,
+            skip_line_mode="line",
+            reverse=reverse,
+        )
+        if raw_skip_line is not None
+        else _iter_jsonl(source.path, reverse=reverse)
+    )
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        mapping = t.cast("dict[str, object]", event)
+        display = as_optional_str(mapping.get("display"))
+        if not display:
+            continue
+        session_id = as_optional_str(mapping.get("conversationId"))
+        yield SearchRecord(
+            kind="prompt",
+            agent=source.agent,
+            store=source.store,
+            adapter_id=source.adapter_id,
+            path=source.path,
+            text=display,
+            title="Antigravity CLI prompt history",
+            role="user",
+            timestamp=_unix_millis_to_isoformat(mapping.get("timestamp")),
+            session_id=session_id,
+            conversation_id=session_id,
+            metadata={
+                "workspace": as_optional_str(mapping.get("workspace")) or "",
+                "type": as_optional_str(mapping.get("type")) or "",
+            },
         )
 
 
@@ -5935,6 +6084,9 @@ hashes are stored as raw bytes, so they fail the UTF-8 gate before this
 length check ever applies.
 """
 
+_ANTIGRAVITY_PROTOBUF_MIN_TEXT = 16
+"""Shortest decoded protobuf run treated as Antigravity transcript text."""
+
 
 def _read_varint(data: bytes, start: int) -> tuple[int | None, int]:
     """Decode a base-128 varint.
@@ -6058,6 +6210,91 @@ def iter_protobuf_text_fields(
             index += 8
         else:
             return
+
+
+def parse_antigravity_cli_conversation_db(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Best-effort parse of an Antigravity CLI conversation SQLite database."""
+    session_id = source.path.stem
+    timestamp = isoformat_from_mtime_ns(source.mtime_ns)
+    connection = open_readonly_sqlite(source.path)
+    try:
+        if "steps" not in sqlite_table_names(connection):
+            return
+        rows = t.cast(
+            "cabc.Iterable[tuple[object, object, object]]",
+            connection.execute("SELECT idx, step_payload, step_format FROM steps ORDER BY idx"),
+        )
+        seen: set[str] = set()
+        for idx, payload, step_format in rows:
+            if not isinstance(payload, (bytes, bytearray)):
+                continue
+            for text in iter_protobuf_text_fields(
+                bytes(payload),
+                min_length=_ANTIGRAVITY_PROTOBUF_MIN_TEXT,
+            ):
+                normalized = text.strip()
+                if len(normalized) < _ANTIGRAVITY_PROTOBUF_MIN_TEXT or normalized in seen:
+                    continue
+                seen.add(normalized)
+                yield SearchRecord(
+                    kind="history",
+                    agent=source.agent,
+                    store=source.store,
+                    adapter_id=source.adapter_id,
+                    path=source.path,
+                    text=normalized,
+                    title="Antigravity CLI conversation",
+                    role=None,
+                    timestamp=timestamp,
+                    session_id=session_id,
+                    conversation_id=session_id,
+                    metadata={
+                        "step_index": idx,
+                        "step_format": step_format,
+                    },
+                )
+    except sqlite3.DatabaseError:
+        return
+    finally:
+        connection.close()
+
+
+def parse_antigravity_protobuf_file(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Best-effort parse of an Antigravity protobuf transcript file."""
+    try:
+        payload = source.path.read_bytes()
+    except OSError:
+        return
+    session_id = source.path.stem
+    timestamp = isoformat_from_mtime_ns(source.mtime_ns)
+    title = (
+        "Antigravity CLI transcript"
+        if source.agent == "antigravity-cli"
+        else "Antigravity IDE transcript"
+    )
+    seen: set[str] = set()
+    for text in iter_protobuf_text_fields(payload, min_length=_ANTIGRAVITY_PROTOBUF_MIN_TEXT):
+        normalized = text.strip()
+        if len(normalized) < _ANTIGRAVITY_PROTOBUF_MIN_TEXT or normalized in seen:
+            continue
+        seen.add(normalized)
+        yield SearchRecord(
+            kind="history",
+            agent=source.agent,
+            store=source.store,
+            adapter_id=source.adapter_id,
+            path=source.path,
+            text=normalized,
+            title=title,
+            role=None,
+            timestamp=timestamp,
+            session_id=session_id,
+            conversation_id=session_id,
+        )
 
 
 def parse_cursor_cli_chats_db(

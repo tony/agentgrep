@@ -14,10 +14,29 @@ import pathlib
 import typing as t
 
 AgentName = t.Literal[
-    "codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi", "opencode"
+    "codex",
+    "claude",
+    "cursor-cli",
+    "cursor-ide",
+    "gemini",
+    "antigravity-cli",
+    "antigravity-ide",
+    "grok",
+    "pi",
+    "opencode",
 ]
 AgentSelector = t.Literal[
-    "codex", "claude", "cursor-cli", "cursor-ide", "gemini", "grok", "pi", "opencode", "all"
+    "codex",
+    "claude",
+    "cursor-cli",
+    "cursor-ide",
+    "gemini",
+    "antigravity-cli",
+    "antigravity-ide",
+    "grok",
+    "pi",
+    "opencode",
+    "all",
 ]
 SearchScopeName = t.Literal["prompts", "conversations", "all"]
 
@@ -48,6 +67,14 @@ KNOWN_ADAPTERS: tuple[str, ...] = (
     "codex.project_skill_text.v1",
     "codex.rules_text.v1",
     "codex.skills_text.v1",
+    "antigravity_cli.brain_text.v1",
+    "antigravity_cli.conversations_sqlite_protobuf.v1",
+    "antigravity_cli.history_jsonl.v1",
+    "antigravity_cli.implicit_protobuf.v1",
+    "antigravity_ide.brain_text.v1",
+    "antigravity_ide.conversations_protobuf.v1",
+    "antigravity_ide.implicit_protobuf.v1",
+    "antigravity_ide.skills_text.v1",
     "claude.history_jsonl.v1",
     "claude.projects_jsonl.v1",
     "claude.projects_memory_text.v1",
