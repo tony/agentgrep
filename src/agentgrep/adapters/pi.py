@@ -13,6 +13,7 @@ from agentgrep.adapters._common import (
 )
 from agentgrep.adapters._extract import (
     build_search_record,
+    candidate_is_human_typed,
     flatten_content_value,
 )
 from agentgrep.adapters._registry import AnyParserSpec, ParserSpec, StreamParserSpec
@@ -167,7 +168,11 @@ def parse_pi_session_file(
                 session_origin,
             )
             if candidate is not None:
-                yield build_search_record(source, candidate)
+                yield build_search_record(
+                    source,
+                    candidate,
+                    human_typed=candidate_is_human_typed(candidate),
+                )
             continue
         text = _pi_entry_text(entry_type, mapping)
         if not text:
