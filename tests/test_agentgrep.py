@@ -10282,6 +10282,10 @@ def test_search_cursor_cli_transcript_assistant_text(
     roles = {r.role for r in records if r.agent == "cursor-cli"}
     assert "user" in roles
     assert "assistant" in roles
+    by_role = {r.role: r for r in records if r.agent == "cursor-cli"}
+    # The user prompt is human-typed (untagged); the assistant turn is tagged.
+    assert by_role["user"].metadata.get("human_typed", True) is not False
+    assert by_role["assistant"].metadata.get("human_typed") is False
 
 
 def test_search_cursor_cli_transcript_ignores_tool_use_blocks(

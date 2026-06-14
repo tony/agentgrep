@@ -435,7 +435,9 @@ def parse_codex_legacy_session_file(
         )
         if candidate is None:
             continue
-        yield build_search_record(source, candidate)
+        yield build_search_record(
+            source, candidate, human_typed=codex_event_is_human_authored(item)
+        )
 
 
 def parse_codex_history_file(
@@ -1103,7 +1105,9 @@ def parse_cursor_cli_transcript(
             if key in seen:
                 continue
             seen.add(key)
-            yield build_search_record(source, candidate)
+            yield build_search_record(
+                source, candidate, human_typed=candidate_is_human_typed(candidate)
+            )
 
 
 def _gemini_thoughts_text(thoughts: object) -> str:
@@ -1222,7 +1226,9 @@ def parse_gemini_chat_file(
         candidate = _gemini_message_record_to_candidate(mapping, session_id)
         if candidate is None:
             continue
-        yield build_search_record(source, candidate)
+        yield build_search_record(
+            source, candidate, human_typed=candidate_is_human_typed(candidate)
+        )
 
 
 def parse_gemini_chat_legacy_file(
@@ -1252,7 +1258,9 @@ def parse_gemini_chat_legacy_file(
         candidate = _gemini_message_record_to_candidate(mapping, session_id)
         if candidate is None:
             continue
-        yield build_search_record(source, candidate)
+        yield build_search_record(
+            source, candidate, human_typed=candidate_is_human_typed(candidate)
+        )
 
 
 def parse_gemini_logs_file(
@@ -1533,7 +1541,9 @@ def parse_pi_session_file(
                 conversation_id,
             )
             if candidate is not None:
-                yield build_search_record(source, candidate)
+                yield build_search_record(
+                    source, candidate, human_typed=candidate_is_human_typed(candidate)
+                )
             continue
         text = _pi_entry_text(entry_type, mapping)
         if not text:
@@ -2085,6 +2095,13 @@ def parse_opencode_db(
             )
             session_id = as_optional_str(session_id_raw)
             directory = as_optional_str(directory_raw)
+            metadata: dict[str, object] = {}
+            if directory:
+                metadata["directory"] = directory
+            # ``kind == "history"`` means a non-user role (assistant/tool output),
+            # so tag it the same way build_search_record tags non-human turns.
+            if kind == "history":
+                metadata["human_typed"] = False
             yield SearchRecord(
                 kind=kind,
                 agent=source.agent,
@@ -2098,7 +2115,7 @@ def parse_opencode_db(
                 model=as_optional_str(message_data.get("modelID")),
                 session_id=session_id,
                 conversation_id=session_id,
-                metadata={"directory": directory} if directory else {},
+                metadata=metadata,
             )
     except sqlite3.DatabaseError:
         return
@@ -2382,7 +2399,9 @@ def parse_cursor_state_db(
                     if entry_key in seen:
                         continue
                     seen.add(entry_key)
-                    yield build_search_record(source, candidate)
+                    yield build_search_record(
+                        source, candidate, human_typed=candidate_is_human_typed(candidate)
+                    )
     except sqlite3.DatabaseError:
         return
     finally:
@@ -2612,6 +2631,15 @@ def flatten_summary_bullets(value: object) -> str | None:
         decoded = decode_sqlite_value(value)
         return flatten_summary_bullets(decoded)
     return None
+
+
+def candidate_is_human_typed(candidate: MessageCandidate) -> bool:
+    """Return whether a role-keyed candidate is a user-typed turn.
+
+    Adapters whose store separates turns by role (Gemini, Cursor, Pi, ...)
+    use this: a non-user role is assistant or tool output, not a typed prompt.
+    """
+    return (candidate.role or "").casefold() in USER_ROLES
 
 
 def build_search_record(
