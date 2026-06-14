@@ -131,7 +131,7 @@ _CURATED_LLMS: tuple[LLMModelSpec, ...] = (
         license="Gemma",
         source_url="https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm",
         local_id="gemma4-e2b",
-        notes="LiteRT-LM Gemma 4 E2B; fetch-only registry parity in this MVP.",
+        notes="LiteRT-LM Gemma 4 E2B; runs in-process via agentgrep[insights-llm-litert].",
     ),
     LLMModelSpec(
         model_id="phi-4-mini-gguf",
