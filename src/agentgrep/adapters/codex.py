@@ -288,7 +288,11 @@ def parse_codex_legacy_session_file(
         )
         if candidate is None:
             continue
-        yield build_search_record(source, candidate)
+        yield build_search_record(
+            source,
+            candidate,
+            human_typed=codex_event_is_human_authored(item),
+        )
 
 
 def parse_codex_history_file(
