@@ -85,6 +85,9 @@ insights-index-lancedb = [
 insights-llm = [
     { name = "httpx" },
 ]
+insights-llm-litert = [
+    { name = "litert-lm-api" },
+]
 insights-ml = [
     { name = "scikit-learn" },
 ]
@@ -135,6 +138,7 @@ requires-dist = [
     { name = "jinja2", marker = "extra == 'insights-all'", specifier = ">=3.1" },
     { name = "jinja2", marker = "extra == 'insights-html'", specifier = ">=3.1" },
     { name = "lancedb", marker = "extra == 'insights-index-lancedb'", specifier = ">=0.33" },
+    { name = "litert-lm-api", marker = "extra == 'insights-llm-litert'", specifier = ">=0.13" },
     { name = "model2vec", marker = "extra == 'insights-all'", specifier = ">=0.8" },
     { name = "model2vec", marker = "extra == 'insights-embeddings'", specifier = ">=0.8" },
     { name = "numpy", marker = "extra == 'insights-all'", specifier = ">=1.24" },
@@ -155,7 +159,7 @@ requires-dist = [
     { name = "tantivy", marker = "extra == 'insights-index'", specifier = ">=0.26" },
     { name = "textual", specifier = ">=3.2.0" },
 ]
-provides-extras = ["speedups", "insights-html", "insights-ml", "insights-embeddings", "insights-embeddings-st", "insights-index", "insights-index-lancedb", "insights-llm", "insights-all"]
+provides-extras = ["speedups", "insights-html", "insights-ml", "insights-embeddings", "insights-embeddings-st", "insights-index", "insights-index-lancedb", "insights-llm", "insights-llm-litert", "insights-all"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1109,6 +1113,17 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/2e/c9/06ea13676ef354f0af6169587ae292d3e2406e212876a413bf9eece4eb23/linkify_it_py-2.1.0.tar.gz", hash = "sha256:43360231720999c10e9328dc3691160e27a718e280673d444c38d7d3aaa3b98b", size = 29158, upload-time = "2026-03-01T07:48:47.683Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b4/de/88b3be5c31b22333b3ca2f6ff1de4e863d8fe45aaea7485f591970ec1d3e/linkify_it_py-2.1.0-py3-none-any.whl", hash = "sha256:0d252c1594ecba2ecedc444053db5d3a9b7ec1b0dd929c8f1d74dce89f86c05e", size = 19878, upload-time = "2026-03-01T07:48:46.098Z" },
+]
+
+[[package]]
+name = "litert-lm-api"
+version = "0.13.1"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/58/ae/5d1e2862d14ad1b08bdbc3392574dde37b98a06f4efb5181d946766ec81c/litert_lm_api-0.13.1-py3-none-macosx_12_0_arm64.whl", hash = "sha256:4a1bb68dbf5a60af9ac5fe03331968a7b4e91779e721cb531e6b41e71f2a2d77", size = 20352139, upload-time = "2026-06-03T16:07:00.625Z" },
+    { url = "https://files.pythonhosted.org/packages/12/a7/c23db30dc19ad07a188eeeab48fd8d676554e8647dac6e9dbf62be0f82f1/litert_lm_api-0.13.1-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:4092c4f7ad75fb23d83bc5b00a9aa6896a19d75f148515efeef0d079ba22ef74", size = 42542393, upload-time = "2026-06-03T16:07:05.619Z" },
+    { url = "https://files.pythonhosted.org/packages/36/27/bb0c2e084d59938bc12f960db50e7e8e056337ed286f31468aaa39bc9d9a/litert_lm_api-0.13.1-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:b981d55e057be9664f30670d5c1faa6e738ad516a2617dbdac10dc6b5b409cca", size = 44865394, upload-time = "2026-06-03T16:07:15.086Z" },
+    { url = "https://files.pythonhosted.org/packages/8e/0f/8edfe4800c95e230928529e5c6f305646ce3b7f497bad745a54a8127a52e/litert_lm_api-0.13.1-py3-none-win_amd64.whl", hash = "sha256:e2d6b03a9e38e17bebea9a74cc8a68553a05a5fee13a5b353be42209962ac9be", size = 26203707, upload-time = "2026-06-03T16:07:09.705Z" },
 ]
 
 [[package]]

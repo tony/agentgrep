@@ -124,6 +124,12 @@ _BACKENDS: dict[InsightsLevel, tuple[BackendSpec, ...]] = {
             setup_command="uv pip install 'agentgrep[insights-llm]'",
             builder="build_llm",
         ),
+        BackendSpec(
+            name="litert-lm",
+            modules=("litert_lm",),
+            setup_command="uv pip install 'agentgrep[insights-llm-litert]'",
+            builder="build_llm",
+        ),
     ),
 }
 
@@ -138,6 +144,9 @@ def _ordered_backends(level: InsightsLevel, request: ReportRequest) -> tuple[Bac
     backends = _BACKENDS.get(level, ())
     if level == "index" and request.index_backend == "lancedb":
         return tuple(sorted(backends, key=lambda b: 0 if b.name == "lancedb" else 1))
+    if level == "llm" and request.llm_backend not in ("auto", ""):
+        preferred = request.llm_backend
+        return tuple(sorted(backends, key=lambda b: 0 if b.name == preferred else 1))
     return backends
 
 

@@ -336,3 +336,66 @@ def test_llm_enricher_streams_grounded_summary() -> None:
     assert enrichment.provenance is not None
     assert enrichment.provenance["backend"] == "ollama"
     assert progress.deltas == ["Worked on ", "indexing."]
+
+
+def _fake_litert_lm() -> t.Any:
+    """Return a fake litert_lm whose conversation yields cumulative chunks."""
+
+    class _Conversation:
+        def send_message_async(self, _prompt: str) -> t.Iterator[dict[str, str]]:
+            for text in ("Worked on ", "Worked on indexing."):
+                yield {"role": "model", "content": text}
+
+    class _Engine:
+        def __init__(self, _path: str, **_kwargs: object) -> None:
+            pass
+
+        def create_conversation(self) -> _Conversation:
+            return _Conversation()
+
+        def close(self) -> None:
+            pass
+
+    return types.SimpleNamespace(
+        Engine=_Engine,
+        Backend=types.SimpleNamespace(CPU=object()),
+        LogSeverity=types.SimpleNamespace(ERROR=object()),
+        set_min_log_severity=lambda _severity: None,
+    )
+
+
+def test_llm_enricher_litert_streams_from_local_model(tmp_path: pathlib.Path) -> None:
+    """The litert-lm backend loads a provisioned model and streams a summary."""
+    spec = models_mod.resolve_llm_model("gemma-4-e2b", "litert-lm")
+    assert spec is not None
+    target = models_mod.model_cache_path(spec, tmp_path)
+    target.mkdir(parents=True, exist_ok=True)
+    (target / "agentgrep-manifest.json").write_text("{}", encoding="utf-8")
+
+    progress = _RecordingProgress()
+    report = build_report(
+        _RECORDS,
+        ReportRequest(requested_level="llm", llm_backend="litert-lm", model="gemma-4-e2b"),
+        import_module=_importer({"litert_lm": _fake_litert_lm()}),
+        progress=progress,
+        model_cache=tmp_path,
+    )
+    enrichment = report.enrichments[0]
+    assert enrichment.status == "ok"
+    assert enrichment.backend == "litert-lm"
+    assert enrichment.data["summary"] == "Worked on indexing."
+    assert progress.deltas == ["Worked on ", "indexing."]
+
+
+def test_llm_enricher_litert_errors_when_model_not_provisioned(tmp_path: pathlib.Path) -> None:
+    """An unprovisioned litert model yields an error enrichment with an install hint."""
+    report = build_report(
+        _RECORDS,
+        ReportRequest(requested_level="llm", llm_backend="litert-lm", model="gemma-4-e2b"),
+        import_module=_importer({"litert_lm": _fake_litert_lm()}),
+        model_cache=tmp_path,
+    )
+    enrichment = report.enrichments[0]
+    assert enrichment.status == "error"
+    setup = next(d.setup_command for d in report.diagnostics if d.setup_command)
+    assert "models install" in setup
