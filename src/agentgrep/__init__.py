@@ -3917,6 +3917,14 @@ def direct_source_matches(
     if active_control.answer_now_requested():
         return False
     try:
+        if query.compiled is not None and query.compiled.record_predicate is not None:
+            # A compiled boolean/field query carries its own record
+            # predicate; the flat-term text prefilter ANDs the terms and
+            # would wrongly drop OR/NOT matches. Field-level source pruning
+            # already ran via the compiled source_predicate during planning,
+            # so admit and let the record matcher decide.
+            matched = True
+            return matched
         if source.adapter_id == "claude.history_jsonl.v1":
             # Claude history expands sibling paste-cache files into record
             # text, so a query term can match content that no grep over

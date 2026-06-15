@@ -628,6 +628,12 @@ def _raw_text_skip_line_for_terms(
     """Return a raw JSONL line skip predicate for literal query terms."""
     if not terms:
         return lambda _raw_line: False
+    if query.compiled is not None and query.compiled.record_predicate is not None:
+        # A compiled boolean/field query evaluates terms with full
+        # AND/OR/NOT structure in its record predicate; a flat-term line
+        # skip would wrongly drop OR branches and NOT matches. Never skip;
+        # the record matcher is the source of truth.
+        return lambda _raw_line: False
     if query.regex:
         return lambda raw_line: (
             "\\" not in raw_line
