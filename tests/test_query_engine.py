@@ -1056,6 +1056,31 @@ QUERY_PASSES_THROUGH_CASES: tuple[QueryPassesThroughCase, ...] = (
         argv=("search", "agent:codex", "bliss"),
         expect_compiled=True,
     ),
+    QueryPassesThroughCase(
+        test_id="search-bare-or-engages",
+        argv=("search", "ruff", "OR", "uv"),
+        expect_compiled=True,
+    ),
+    QueryPassesThroughCase(
+        test_id="search-bare-not-engages",
+        argv=("search", "NOT", "tmux"),
+        expect_compiled=True,
+    ),
+    QueryPassesThroughCase(
+        test_id="search-plain-terms-legacy-path",
+        argv=("search", "ruff", "uv", "tmux"),
+        expect_compiled=False,
+    ),
+    QueryPassesThroughCase(
+        test_id="search-lowercase-or-stays-literal",
+        argv=("search", "ruff", "or", "uv"),
+        expect_compiled=False,
+    ),
+    QueryPassesThroughCase(
+        test_id="grep-bare-or-engages",
+        argv=("grep", "ruff", "OR", "uv"),
+        expect_compiled=True,
+    ),
 )
 
 
@@ -1080,6 +1105,84 @@ def test_cli_parsing_routes_query_syntax_to_compiled(
         assert compiled.is_pure_text is False
     else:
         assert compiled is None
+
+
+def test_plain_terms_do_not_import_query_module(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Plain bare-term parsing must not import the heavy query module.
+
+    The CLI gate decides whether to engage the parser with a cheap
+    pure-Python heuristic so ``agentgrep search ruff uv tmux`` keeps the
+    cold-start budget. Dropping the cached module and re-parsing proves
+    the fast path never triggers the import.
+    """
+    import sys
+
+    monkeypatch.delitem(sys.modules, "agentgrep.query", raising=False)
+    monkeypatch.delitem(sys.modules, "agentgrep.query.compile", raising=False)
+    monkeypatch.delitem(sys.modules, "agentgrep.query.parser", raising=False)
+
+    args = agentgrep.parse_args(["search", "ruff", "uv", "tmux"])
+
+    assert args is not None
+    assert "agentgrep.query" not in sys.modules
+
+
+def test_cli_query_field_names_mirror_the_registry() -> None:
+    """The CLI gate's hardcoded field names must not drift from the registry.
+
+    ``cli.parser`` hardcodes the queryable field names so the cold-start
+    gate never imports the query module. This guard fails if a field or
+    alias is added to the registry without updating that mirror.
+    """
+    from agentgrep.cli import parser as cli_parser
+
+    registry = default_registry()
+    expected = {name for spec in registry.specs for name in (spec.name, *spec.aliases)}
+    assert expected == cli_parser._QUERY_FIELD_NAMES
+
+
+class PureTextResidualCase(t.NamedTuple):
+    """Parametrized case: query syntax that collapses to clean residual terms."""
+
+    test_id: str
+    argv: tuple[str, ...]
+    expected_terms: tuple[str, ...]
+
+
+PURE_TEXT_RESIDUAL_CASES: tuple[PureTextResidualCase, ...] = (
+    PureTextResidualCase(
+        test_id="leading-quote-phrase-unquoted",
+        argv=("search", '"deploy v1"'),
+        expected_terms=("deploy v1",),
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    PURE_TEXT_RESIDUAL_CASES,
+    ids=[c.test_id for c in PURE_TEXT_RESIDUAL_CASES],
+)
+def test_pure_text_query_syntax_extracts_clean_terms(
+    case: PureTextResidualCase,
+) -> None:
+    """A parsed query that is pure text routes clean residual terms, no predicate.
+
+    Phrases engage the parser (leading quote) but compile to pure text,
+    so ``compiled`` stays ``None`` and the unquoted, whitespace-collapsed
+    phrase flows to the legacy fast path as a single term.
+    """
+    args = agentgrep.parse_args(list(case.argv))
+    assert args is not None
+    terms = t.cast("tuple[str, ...]", t.cast("t.Any", args).terms)
+    compiled = t.cast(
+        "agentgrep.CompiledQuery | None",
+        t.cast("t.Any", args).compiled,
+    )
+    assert terms == case.expected_terms
+    assert compiled is None
 
 
 class MangledFieldPredicateCase(t.NamedTuple):

@@ -650,6 +650,72 @@ def _effective_search_scope(
     return "prompts"
 
 
+# Boolean keywords that engage the query parser when typed standalone and
+# uppercase. Lowercase ``or``/``and``/``not`` stay literal search terms — the
+# tokenizer treats them as terms, so the gate must agree.
+_BOOLEAN_KEYWORDS: frozenset[str] = frozenset({"AND", "OR", "NOT"})
+
+# Queryable field names, mirrored from ``agentgrep.query.default_registry``.
+# Hardcoded here on purpose: the cold-start gate runs on every invocation and
+# must not import the query module to decide whether to engage the parser.
+# ``test_cli_query_field_names_mirror_the_registry`` fails if this drifts.
+_QUERY_FIELD_NAMES: frozenset[str] = frozenset(
+    {
+        "agent",
+        "store",
+        "adapter_id",
+        "adapter",
+        "path",
+        "mtime",
+        "scope",
+        "timestamp",
+        "date",
+        "model",
+        "role",
+        "text",
+    },
+)
+
+# A field predicate is a known field name, not preceded by an identifier char
+# (so ``myagent:`` does not match) and followed by ``:``. Restricting to known
+# fields keeps URLs like ``https://host`` and path values from spuriously
+# engaging the parser.
+_FIELD_PREDICATE_RE = re.compile(
+    r"(?<![A-Za-z0-9_])(?:" + "|".join(sorted(_QUERY_FIELD_NAMES, key=len, reverse=True)) + r"):",
+)
+
+
+def _query_syntax_present(positionals: cabc.Sequence[str]) -> bool:
+    """Return whether positionals carry query-language syntax.
+
+    Cheap, dependency-free heuristic so plain bare-term queries
+    (``ruff uv tmux``) keep the legacy fast path and never import the
+    query module. Engages the parser when a positional carries a known
+    field predicate, a standalone uppercase boolean keyword, or a
+    leading quote (an intended phrase).
+
+    Parameters
+    ----------
+    positionals : collections.abc.Sequence[str]
+        Raw positional arguments for the subcommand.
+
+    Returns
+    -------
+    bool
+        ``True`` when the parser should be engaged.
+    """
+    for token in positionals:
+        if not token:
+            continue
+        if token[:1] in {'"', "'"}:
+            return True
+        if _FIELD_PREDICATE_RE.search(token):
+            return True
+        if any(word in _BOOLEAN_KEYWORDS for word in token.split()):
+            return True
+    return False
+
+
 def _maybe_compile_query(
     positionals: cabc.Sequence[str],
     *,
@@ -676,7 +742,7 @@ def _maybe_compile_query(
     user sees an argparse-shaped message instead of a Python
     traceback.
     """
-    if not any(":" in token for token in positionals):
+    if not _query_syntax_present(positionals):
         return None, tuple(positionals), set()
     from agentgrep.query import (
         QueryCompileError,
@@ -709,6 +775,12 @@ def _maybe_compile_query(
         with configured_color_environment(color_mode):
             subparser.error(f"invalid query: {exc}")
     _ = bundle  # kept available for future per-bundle checks
+    if compiled.is_pure_text:
+        # A parsed query that collapses to bare terms (a phrase, or a
+        # parenthesized AND of terms) needs no source/record predicate.
+        # Return the extracted, unquoted terms so the engine's legacy
+        # fast path — and its source-scan cache — stay in play.
+        return None, compiled.text_terms, used_fields
     return compiled, compiled.text_terms, used_fields
 
 
@@ -825,11 +897,7 @@ def parse_args(
         subparser=bundle.find_parser,
         explicit_flags=_find_explicit_flags(namespace),
     )
-    pattern: str | None = (
-        (" ".join(find_residual) if find_residual else None)
-        if find_compiled is not None
-        else raw_pattern
-    )
+    pattern: str | None = " ".join(find_residual) if find_residual else None
     if t.cast("bool", namespace.find_glob):
         pattern_mode: FindPatternMode = "glob"
     elif t.cast("bool", namespace.find_fixed):
@@ -906,9 +974,7 @@ def _build_grep_args(
         subparser=bundle.grep_parser,
         explicit_flags=_grep_explicit_flags(namespace),
     )
-    patterns_list: list[str] = (
-        list(residual_patterns) if grep_compiled is not None else patterns_list_raw
-    )
+    patterns_list: list[str] = list(residual_patterns)
     if any(not pattern for pattern in patterns_list):
         with configured_color_environment(color_mode):
             bundle.grep_parser.error("pattern cannot be empty")
@@ -1016,9 +1082,7 @@ def _build_search_args(
         subparser=bundle.search_parser,
         explicit_flags=_search_explicit_flags(namespace),
     )
-    final_terms: tuple[str, ...] = (
-        residual_terms if search_compiled is not None else tuple(terms_list)
-    )
+    final_terms: tuple[str, ...] = residual_terms
     case_sensitive = t.cast("bool", namespace.case_sensitive)
 
     return SearchArgs(

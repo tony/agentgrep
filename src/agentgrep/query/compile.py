@@ -32,6 +32,7 @@ import datetime as dt
 import fnmatch
 import os
 import pathlib
+import re
 import typing as t
 
 import agentgrep
@@ -288,7 +289,7 @@ def build_query_from_input(
             query=_rebuild(base_query, terms=(), compiled=None),
             error=None,
         )
-    if ":" not in stripped:
+    if not _has_query_syntax(stripped, registry):
         terms = tuple(stripped.split())
         return QueryBuildResult(
             query=_rebuild(base_query, terms=terms, compiled=None),
@@ -302,10 +303,53 @@ def build_query_from_input(
         compiled = compile_query(ast, registry)
     except QueryCompileError as exc:
         return QueryBuildResult(query=None, error=str(exc))
+    # A pure-text result (phrase, or parenthesized AND of terms) needs no
+    # predicate; route the extracted terms through the fast path so the
+    # search box stays as cacheable as a bare-term query.
+    result_compiled = None if compiled.is_pure_text else compiled
     return QueryBuildResult(
-        query=_rebuild(base_query, terms=compiled.text_terms, compiled=compiled),
+        query=_rebuild(
+            base_query,
+            terms=compiled.text_terms,
+            compiled=result_compiled,
+        ),
         error=None,
     )
+
+
+_BOOLEAN_KEYWORDS: frozenset[str] = frozenset({"AND", "OR", "NOT"})
+_IDENT_COLON_RE = re.compile(r"(?<![A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*):")
+
+
+def _has_query_syntax(text: str, registry: FieldRegistry) -> bool:
+    """Return whether ``text`` carries query-language syntax.
+
+    Mirrors the CLI gate (:func:`agentgrep.cli.parser._query_syntax_present`)
+    but derives the queryable field names from ``registry`` rather than a
+    hardcoded mirror — the query module is already imported on this path,
+    so there is no cold-start cost. Engages on a known field predicate, a
+    standalone uppercase boolean keyword, or a leading quote.
+
+    Parameters
+    ----------
+    text : str
+        The (already stripped) search-box input.
+    registry : FieldRegistry
+        Registry whose field names and aliases count as predicates.
+
+    Returns
+    -------
+    bool
+        ``True`` when the parser should be engaged.
+    """
+    if not text:
+        return False
+    if text[:1] in {'"', "'"}:
+        return True
+    if any(word in _BOOLEAN_KEYWORDS for word in text.split()):
+        return True
+    field_names = {name for spec in registry.specs for name in (spec.name, *spec.aliases)}
+    return any(match.group(1) in field_names for match in _IDENT_COLON_RE.finditer(text))
 
 
 def _rebuild(
