@@ -1988,6 +1988,43 @@ async def test_streaming_ui_app_enum_dropdown_opens_and_closes(
         assert dropdown.display is False
 
 
+async def test_streaming_ui_app_filter_dropdown_and_query_aware(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The filter box gets a keyword-first dropdown and a query-aware matcher."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        filter_input = app.screen.query_one("#filter")
+        dropdown = app.screen.query_one("#filter-dropdown")
+        app._filter_vocabulary.update({"AGENTS.md"})
+
+        # Lowercase "agent" weights the field keyword ahead of the file term.
+        filter_input.value = "agent"
+        filter_input.cursor_position = len("agent")
+        await pilot.pause()
+        assert dropdown.display is True
+        assert app._filter_dropdown_values[0] == "agent:"
+
+        # A field token lists the enum values.
+        filter_input.value = "scope:"
+        filter_input.cursor_position = len("scope:")
+        await pilot.pause()
+        assert app._filter_dropdown_values == ("prompts", "conversations", "all")
+
+        # The filter executes the query language: a predicate compiles to a
+        # matcher; empty/whitespace yields no matcher (all records pass).
+        assert app._build_filter_matcher("agent:codex") is not None
+        assert app._build_filter_matcher("   ") is None
+
+        # Bare text still hides the dropdown.
+        filter_input.value = "zzznomatch"
+        filter_input.cursor_position = len("zzznomatch")
+        await pilot.pause()
+        assert dropdown.display is False
+
+
 async def test_empty_query_focuses_search_input_and_marks_search_done(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

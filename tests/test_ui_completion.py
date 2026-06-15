@@ -17,7 +17,9 @@ from agentgrep.ui.completion import (
     FilterSuggester,
     QuerySuggester,
     apply_enum_choice,
+    apply_word_choice,
     enum_value_candidates,
+    filter_completion_candidates,
 )
 
 
@@ -66,28 +68,86 @@ class FilterCase(t.NamedTuple):
     expected: str | None
 
 
+FILTER_VOCABULARY = ("AGENTS.md", "CLAUDE.md", "ruff", "rust", "tmux", "uv")
+
 FILTER_CASES: tuple[FilterCase, ...] = (
-    FilterCase(test_id="completes-from-vocabulary", value="ru", expected="ruff"),
+    FilterCase(test_id="completes-record-term", value="ru", expected="ruff"),
     FilterCase(test_id="completes-trailing-token", value="uv ru", expected="uv ruff"),
-    FilterCase(test_id="no-vocabulary-match", value="zzz", expected=None),
+    # Keywords are weighted ahead of record terms: lowercase "agent"
+    # completes the field keyword, not the AGENTS.md file term.
+    FilterCase(test_id="lowercase-keyword-wins", value="agent", expected="agent:"),
+    FilterCase(test_id="keyword-from-prefix", value="age", expected="agent:"),
+    # File terms match case-sensitively: uppercase AGENT completes AGENTS.md.
+    FilterCase(test_id="uppercase-file-term-case-sensitive", value="AGENT", expected="AGENTS.md"),
+    FilterCase(test_id="enum-value-in-filter", value="agent:cu", expected="agent:cursor-cli"),
+    FilterCase(test_id="no-match", value="zzz", expected=None),
     FilterCase(test_id="empty-suggests-nothing", value="", expected=None),
 )
 
 
 @pytest.mark.parametrize("case", FILTER_CASES, ids=[c.test_id for c in FILTER_CASES])
 async def test_filter_suggester(case: FilterCase) -> None:
-    """The filter suggester completes the trailing token from its vocabulary."""
-    suggester = FilterSuggester(["ruff", "rust", "tmux", "uv"])
+    """The filter suggester weights keywords first, matches terms case-sensitively."""
+    suggester = FilterSuggester(default_registry(), FILTER_VOCABULARY)
     result = await suggester.get_suggestion(case.value)
     assert result == case.expected
 
 
 async def test_filter_suggester_vocabulary_is_updatable() -> None:
     """The filter vocabulary can be refreshed as records stream in."""
-    suggester = FilterSuggester([])
-    assert await suggester.get_suggestion("ali") is None
-    suggester.set_vocabulary(["alignment", "alpha"])
-    assert await suggester.get_suggestion("ali") == "alignment"
+    suggester = FilterSuggester(default_registry(), [])
+    assert await suggester.get_suggestion("xyl") is None
+    suggester.set_vocabulary(["xylophone", "xylem"])
+    assert await suggester.get_suggestion("xyl") == "xylem"
+
+
+class FilterCandidatesCase(t.NamedTuple):
+    """One filter input and the expected ordered dropdown candidates."""
+
+    test_id: str
+    value: str
+    expected: tuple[str, ...] | None
+
+
+FILTER_CANDIDATES_CASES: tuple[FilterCandidatesCase, ...] = (
+    FilterCandidatesCase(
+        test_id="keyword-then-case-sensitive-term",
+        value="agent",
+        expected=("agent:", "agentic_notes"),
+    ),
+    FilterCandidatesCase(
+        test_id="uppercase-only-file-term",
+        value="AGENT",
+        expected=("AGENTS.md",),
+    ),
+    FilterCandidatesCase(
+        test_id="enum-values-for-field-token",
+        value="agent:cu",
+        expected=("cursor-cli", "cursor-ide"),
+    ),
+    FilterCandidatesCase(
+        test_id="no-candidates",
+        value="zzz",
+        expected=None,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    FILTER_CANDIDATES_CASES,
+    ids=[c.test_id for c in FILTER_CANDIDATES_CASES],
+)
+def test_filter_completion_candidates(case: FilterCandidatesCase) -> None:
+    """Dropdown candidates list keywords before case-sensitive record terms."""
+    vocab = ("AGENTS.md", "agentic_notes", "ruff")
+    assert filter_completion_candidates(case.value, default_registry(), vocab) == case.expected
+
+
+def test_apply_word_choice_replaces_trailing_token() -> None:
+    """Choosing a keyword or term rewrites the trailing whitespace token."""
+    assert apply_word_choice("ruff age", "agent:") == "ruff agent:"
+    assert apply_word_choice("AGENT", "AGENTS.md") == "AGENTS.md"
 
 
 class EnumDropdownCase(t.NamedTuple):

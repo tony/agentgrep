@@ -49,10 +49,8 @@ from agentgrep import (
     TextualMessageModule,
     TextualOptionListInternalsModule,
     TextualWidgetsModule,
-    build_search_haystack,
     cached_haystack,
     clear_haystack_cache,
-    compute_filter_matches,
     detect_content_format,
     find_first_match_line,
     format_compact_path,
@@ -67,7 +65,9 @@ from agentgrep.ui.completion import (
     FilterSuggester,
     QuerySuggester,
     apply_enum_choice,
+    apply_word_choice,
     enum_value_candidates,
+    filter_completion_candidates,
 )
 
 
@@ -966,6 +966,14 @@ def build_streaming_ui_app(
             value = str(getattr(self, "value", ""))
             stop = getattr(event, "stop", None)
             if key == "down":
+                dropdown = getattr(self.app, "_filter_dropdown", None)
+                if dropdown is not None and dropdown.display and dropdown.option_count:
+                    # An open completion picker captures Down: jump into it.
+                    if callable(stop):
+                        stop()
+                    dropdown.focus()
+                    dropdown.highlighted = 0
+                    return
                 if value and cursor < len(value):
                     self.cursor_position = len(value)
                     if callable(stop):
@@ -1086,15 +1094,24 @@ def build_streaming_ui_app(
             """Footer-binding fallback (``_on_key`` handles the real release)."""
             self.app.action_focus_next()
 
-    class EnumDropdown(option_list_type):  # ty: ignore[unsupported-base]
-        """Floating value picker for enum field predicates (``agent:``/``scope:``).
+    class CompletionDropdown(option_list_type):  # ty: ignore[unsupported-base]
+        """Floating completion picker shared by the search and filter inputs.
 
         A plain ``OptionList`` shown over the results via ``overlay: screen``
         and toggled with ``display`` — the same lag-free mechanism Textual's
         own ``Select`` uses, so re-population on each keystroke never mounts a
         new widget. Enter fires ``OptionList.OptionSelected`` (handled by the
-        app); Escape and up-at-top return focus to the search bar.
+        app); Escape and up-at-top return focus to ``target_input_id``.
         """
+
+        def __init__(
+            self,
+            *,
+            id: str | None = None,  # noqa: A002 -- forwarded to Textual's ``id`` kwarg
+            target_input_id: str = "search",
+        ) -> None:
+            super().__init__(id=id)
+            self._target_input_id = target_input_id
 
         async def _on_key(self, event: object) -> None:
             key = str(getattr(event, "key", ""))
@@ -1103,8 +1120,8 @@ def build_streaming_ui_app(
                 if callable(stop):
                     stop()
                 self.display = False
-                search = self.app.query_one("#search")
-                search.focus()
+                with contextlib.suppress(Exception):
+                    self.app.query_one(f"#{self._target_input_id}").focus()
                 return
             await super()._on_key(event)
 
@@ -1118,11 +1135,11 @@ def build_streaming_ui_app(
         #search {
             height: 3;
         }
-        #enum-dropdown {
-            /* Float over the results just below the search bar, like Select's
-               popup — no layout space, toggled via .display so re-populating
-               per keystroke never remounts. The x offset is set at runtime to
-               the input's cursor column; ``constrain: inside inside`` shifts it
+        #enum-dropdown, #filter-dropdown {
+            /* Float over the results just below the input, like Select's popup
+               — no layout space, toggled via .display so re-populating per
+               keystroke never remounts. The x offset is set at runtime to the
+               input's cursor column; ``constrain: inside inside`` shifts it
                back on-screen when the cursor is near the right edge. */
             overlay: screen;
             constrain: inside inside;
@@ -1305,7 +1322,6 @@ def build_streaming_ui_app(
             self.initial_search_text: str | None = initial_search_text
             self.all_records = []
             self.filtered_records = []
-            self._filter_text = ""
             self._progress: StreamingSearchProgress | None = None
             self._search_done = False
             self._started_at: float | None = None
@@ -1332,10 +1348,15 @@ def build_streaming_ui_app(
             # (registry-backed); the filter suggester's vocabulary refreshes
             # from loaded records as the search finishes.
             self._query_suggester = QuerySuggester(default_registry())
-            self._filter_suggester = FilterSuggester([])
+            self._filter_suggester = FilterSuggester(default_registry(), [])
             self._filter_vocabulary: set[str] = set()
             self._enum_dropdown: t.Any = None
             self._enum_values: tuple[str, ...] = ()
+            self._filter_dropdown: t.Any = None
+            self._filter_dropdown_values: tuple[str, ...] = ()
+            # Compiled record matcher for the current (query-aware) filter
+            # text; ``None`` means no active filter (all records pass).
+            self._filter_matcher: t.Any = None
             self._resize_debounce_timer: object | None = None
             self._current_detail_record: SearchRecord | None = None
             self._detail_scroll: t.Any = None
@@ -1391,7 +1412,7 @@ def build_streaming_ui_app(
             # Enum-value picker for field predicates; floats over the body
             # just below the search bar and stays hidden until an enum
             # field token (agent:/scope:) is typed.
-            yield EnumDropdown(id="enum-dropdown")
+            yield CompletionDropdown(id="enum-dropdown", target_input_id="search")
             # Decide the responsive split up-front (terminal width is known
             # at compose time) so narrow terminals are born stacked with the
             # detail collapsed — applying the class in on_mount instead would
@@ -1411,6 +1432,12 @@ def build_streaming_ui_app(
                         placeholder="Filter loaded results",
                         id="filter",
                         suggester=self._filter_suggester,
+                    )
+                    # Keyword/term picker for the query-aware filter; floats
+                    # over the results just below the filter input.
+                    yield CompletionDropdown(
+                        id="filter-dropdown",
+                        target_input_id="filter",
                     )
                     yield SearchResultsList(id="results")
                 with vertical(id="detail-column", classes=detail_classes):
@@ -1468,6 +1495,8 @@ def build_streaming_ui_app(
             )
             self._enum_dropdown = t.cast("t.Any", streaming.query_one("#enum-dropdown"))
             self._enum_dropdown.display = False
+            self._filter_dropdown = t.cast("t.Any", streaming.query_one("#filter-dropdown"))
+            self._filter_dropdown.display = False
             # Steady (non-blinking) input cursors. A blinking cursor keeps
             # toggling its inverted-block glyph even when the terminal loses
             # focus — Textual can't tell the tmux pane went inactive without
@@ -1616,60 +1645,105 @@ def build_streaming_ui_app(
                 )
 
         def on_input_changed(self, event: object) -> None:
-            """Refresh the enum-value dropdown as the search bar value changes."""
+            """Refresh the relevant completion dropdown as an input value changes."""
             source = getattr(event, "input", None)
-            if getattr(source, "id", None) != "search":
-                return
-            self._update_enum_dropdown(str(getattr(event, "value", "")))
+            input_id = getattr(source, "id", None)
+            value = str(getattr(event, "value", ""))
+            if input_id == "search":
+                self._update_enum_dropdown(value)
+            elif input_id == "filter":
+                self._update_filter_dropdown(value)
 
         def _update_enum_dropdown(self, value: str) -> None:
-            """Populate and show/hide the enum dropdown for the current token."""
-            dropdown = self._enum_dropdown
+            """Populate and show/hide the search bar's enum dropdown."""
+            candidates = enum_value_candidates(value, default_registry())
+            values = () if candidates is None else candidates[1]
+            self._enum_values = values
+            self._populate_dropdown(self._enum_dropdown, self._search_input, values)
+
+        def _update_filter_dropdown(self, value: str) -> None:
+            """Populate and show/hide the filter box's keyword/term dropdown."""
+            candidates = filter_completion_candidates(
+                value,
+                default_registry(),
+                self._filter_vocabulary,
+            )
+            values = () if candidates is None else candidates
+            self._filter_dropdown_values = values
+            self._populate_dropdown(self._filter_dropdown, self._filter_input, values)
+
+        def _populate_dropdown(
+            self,
+            dropdown: t.Any,
+            target_input: t.Any,
+            values: tuple[str, ...],
+        ) -> None:
+            """Fill ``dropdown`` with ``values`` anchored to ``target_input``'s cursor."""
             if dropdown is None:
                 return
-            candidates = enum_value_candidates(value, default_registry())
-            if candidates is None:
-                self._enum_values = ()
+            if not values:
                 dropdown.display = False
                 return
-            _field, values = candidates
-            self._enum_values = values
             dropdown.clear_options()
             dropdown.add_options(list(values))
-            self._align_enum_dropdown_to_cursor()
+            self._align_dropdown_to_cursor(dropdown, target_input)
             dropdown.display = True
             dropdown.highlighted = 0
 
-        def _align_enum_dropdown_to_cursor(self) -> None:
-            """Offset the dropdown so its content sits under the input cursor.
+        def _align_dropdown_to_cursor(self, dropdown: t.Any, target_input: t.Any) -> None:
+            """Offset ``dropdown`` so its content sits under ``target_input``'s cursor.
 
-            The overlay's natural slot is at the left edge just below the
-            search bar; shifting its x offset by the cursor's screen column
-            (less the 1-cell border) anchors the value list to where the user
-            is typing. ``constrain: inside inside`` keeps it on-screen.
+            The overlay's natural slot is at the left edge just below its
+            input; shifting its x offset by the cursor's screen column (less
+            the 1-cell border) anchors the list to where the user is typing.
+            ``constrain: inside inside`` keeps it on-screen.
             """
-            search = self._search_input
-            dropdown = self._enum_dropdown
-            if search is None or dropdown is None:
+            if target_input is None or dropdown is None:
                 return
-            cursor_x = int(t.cast("t.Any", search).cursor_screen_offset.x)
+            cursor_x = int(t.cast("t.Any", target_input).cursor_screen_offset.x)
             dropdown.styles.offset = (max(cursor_x - 1, 0), 0)
 
         def on_option_list_option_selected(self, event: object) -> None:
-            """Accept an enum-dropdown choice into the search bar."""
-            if getattr(event, "option_list", None) is not self._enum_dropdown:
-                return
+            """Accept a completion-dropdown choice into the originating input."""
+            option_list = getattr(event, "option_list", None)
             index = int(getattr(event, "option_index", 0) or 0)
-            if not (0 <= index < len(self._enum_values)):
+            if option_list is self._enum_dropdown:
+                self._accept_dropdown_choice(
+                    self._search_input,
+                    self._enum_dropdown,
+                    self._enum_values,
+                    index,
+                )
+            elif option_list is self._filter_dropdown:
+                self._accept_dropdown_choice(
+                    self._filter_input,
+                    self._filter_dropdown,
+                    self._filter_dropdown_values,
+                    index,
+                )
+
+        def _accept_dropdown_choice(
+            self,
+            target_input: t.Any,
+            dropdown: t.Any,
+            values: tuple[str, ...],
+            index: int,
+        ) -> None:
+            """Insert the chosen completion into ``target_input`` and close ``dropdown``."""
+            if target_input is None or not (0 <= index < len(values)):
                 return
-            search = self._search_input
-            if search is None:
-                return
-            new_value = apply_enum_choice(str(search.value), self._enum_values[index])
-            search.value = new_value
-            search.cursor_position = len(new_value)
-            self._enum_dropdown.display = False
-            search.focus()
+            text = str(target_input.value)
+            trailing_token = text.rpartition(" ")[2]
+            # field:partial token -> replace the value after the colon; a bare
+            # token -> replace the whole token with the chosen keyword/term.
+            if ":" in trailing_token:
+                new_value = apply_enum_choice(text, values[index])
+            else:
+                new_value = apply_word_choice(text, values[index])
+            target_input.value = new_value
+            target_input.cursor_position = len(new_value)
+            dropdown.display = False
+            target_input.focus()
 
         def _run_search(self) -> None:
             progress = self._progress
@@ -2029,17 +2103,61 @@ def build_streaming_ui_app(
         def on_filter_requested(self, message: FilterRequested) -> None:
             """Spawn a worker to recompute the filter; exclusive cancels any in-flight one."""
             text = message.payload.text
-            self._filter_text = text.strip().casefold()
+            matcher = self._build_filter_matcher(text)
+            # Streaming records use the same matcher so a live search keeps the
+            # filtered list query-aware as records arrive.
+            self._filter_matcher = matcher
             streaming = t.cast("StreamingAppLike", t.cast("object", self))
             streaming.run_worker(
-                lambda captured_text=text: self._run_filter_worker(captured_text),
+                lambda captured_text=text, captured_matcher=matcher: self._run_filter_worker(
+                    captured_text,
+                    captured_matcher,
+                ),
                 name="filter",
                 group="filter",
                 thread=True,
                 exclusive=True,
             )
 
-        def _run_filter_worker(self, text: str) -> None:
+        def _build_filter_matcher(self, text: str) -> t.Any:
+            """Compile a record matcher for the filter text, or ``None`` if empty.
+
+            The filter accepts the same query language as search, applied
+            in-memory to the loaded results: field predicates, booleans, and
+            phrases all work. A partial or malformed query (e.g. ``agent:``
+            mid-type) falls back to a literal substring match so the filter
+            stays usable while typing.
+            """
+            from agentgrep._engine.matching import compile_record_matcher
+            from agentgrep.query import build_query_from_input, default_registry
+
+            stripped = text.strip()
+            if not stripped:
+                return None
+            base = SearchQuery(
+                terms=(),
+                scope="all",
+                any_term=False,
+                regex=False,
+                case_sensitive=False,
+                agents=self.query.agents,
+                limit=None,
+            )
+            result = build_query_from_input(stripped, base, default_registry())
+            query = result.query
+            if query is None:
+                query = SearchQuery(
+                    terms=tuple(stripped.split()),
+                    scope="all",
+                    any_term=False,
+                    regex=False,
+                    case_sensitive=False,
+                    agents=self.query.agents,
+                    limit=None,
+                )
+            return compile_record_matcher(query)
+
+        def _run_filter_worker(self, text: str, matcher: t.Any) -> None:
             """Compute the filtered list on a background thread; post a ``FilterCompleted``.
 
             Runs in a worker thread; safe to scan ``self.all_records`` since
@@ -2047,7 +2165,10 @@ def build_streaming_ui_app(
             against stale results by comparing the captured text against the
             current input value in :meth:`on_filter_completed`.
             """
-            matching = compute_filter_matches(self.all_records, text)
+            if matcher is None:
+                matching: tuple[SearchRecord, ...] = tuple(self.all_records)
+            else:
+                matching = tuple(record for record in self.all_records if matcher.matches(record))
             streaming = t.cast("StreamingAppLike", t.cast("object", self))
             streaming.post_message(
                 FilterCompleted(
@@ -2092,9 +2213,10 @@ def build_streaming_ui_app(
             ``set_records`` rebuilds the list and Textual re-emits the
             highlight for the same row that's already in the detail pane.
             """
-            if getattr(event, "option_list", None) is self._enum_dropdown:
-                # The enum picker is a separate OptionList; its highlights
-                # must not drive the results detail pane.
+            option_list = getattr(event, "option_list", None)
+            if option_list is self._enum_dropdown or option_list is self._filter_dropdown:
+                # The completion dropdowns are separate OptionLists; their
+                # highlights must not drive the results detail pane.
                 return
             option_index = getattr(event, "option_index", None)
             if option_index is None:
@@ -2558,9 +2680,10 @@ def build_streaming_ui_app(
                 self.control.request_answer_now()
 
         def _matches_filter(self, record: SearchRecord) -> bool:
-            if not self._filter_text:
+            matcher = self._filter_matcher
+            if matcher is None:
                 return True
-            return self._filter_text in build_search_haystack(record).casefold()
+            return bool(matcher.matches(record))
 
     return AgentGrepApp(
         home=home,
