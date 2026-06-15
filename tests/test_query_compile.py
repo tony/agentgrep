@@ -32,6 +32,7 @@ from agentgrep.query import (
     OrNode,
     QueryNode,
     TermNode,
+    build_query_from_input,
     compile_query,
     default_registry,
     parse_query,
@@ -852,3 +853,80 @@ def test_text_field_terms_show_up_in_text_terms() -> None:
 
 
 _ = (AndNode, FieldRangeNode, NotNode, OrNode)  # used in case data; keep imports live
+
+
+class ScopeWidenCase(t.NamedTuple):
+    """One build-query input and the discovery scope it should resolve to."""
+
+    test_id: str
+    query: str
+    base_scope: agentgrep.SearchScope
+    expected_scope: agentgrep.SearchScope
+
+
+SCOPE_WIDEN_CASES: tuple[ScopeWidenCase, ...] = (
+    ScopeWidenCase(
+        test_id="scope-conversations-widens-discovery",
+        query="scope:conversations",
+        base_scope="prompts",
+        expected_scope="all",
+    ),
+    ScopeWidenCase(
+        test_id="scope-all-widens-discovery",
+        query="scope:all",
+        base_scope="prompts",
+        expected_scope="all",
+    ),
+    ScopeWidenCase(
+        test_id="scope-prompts-widens-from-conversations",
+        query="scope:prompts",
+        base_scope="conversations",
+        expected_scope="all",
+    ),
+    ScopeWidenCase(
+        test_id="negated-scope-widens",
+        query="-scope:prompts",
+        base_scope="prompts",
+        expected_scope="all",
+    ),
+    ScopeWidenCase(
+        test_id="no-scope-predicate-keeps-base",
+        query="bliss",
+        base_scope="prompts",
+        expected_scope="prompts",
+    ),
+    ScopeWidenCase(
+        test_id="other-field-keeps-base-scope",
+        query="agent:codex bliss",
+        base_scope="conversations",
+        expected_scope="conversations",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    SCOPE_WIDEN_CASES,
+    ids=[c.test_id for c in SCOPE_WIDEN_CASES],
+)
+def test_build_query_from_input_widens_discovery_scope_for_scope_predicate(
+    case: ScopeWidenCase,
+) -> None:
+    """A ``scope:`` predicate widens the coarse discovery scope to ``all``.
+
+    The scope predicate filters records, but discovery decides which stores
+    are opened; without widening, ``scope:conversations`` against a
+    prompts-scoped box would open no conversation stores and match nothing.
+    """
+    base = agentgrep.SearchQuery(
+        terms=(),
+        scope=case.base_scope,
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=agentgrep.AGENT_CHOICES,
+        limit=None,
+    )
+    result = build_query_from_input(case.query, base, default_registry())
+    assert result.query is not None
+    assert result.query.scope == case.expected_scope

@@ -312,11 +312,19 @@ def build_query_from_input(
     # predicate; route the extracted terms through the fast path so the
     # search box stays as cacheable as a bare-term query.
     result_compiled = None if compiled.is_pure_text else compiled
+    # A ``scope:`` predicate filters records, but the coarse discovery scope
+    # decides which stores are opened at all. Widen discovery to "all" when
+    # the query references scope so the record-level filter has both prompt
+    # and conversation sources to act on — otherwise ``scope:conversations``
+    # against a prompts-scoped box would open no conversation stores and
+    # match nothing. Mirrors the CLI's ``_effective_search_scope``.
+    scope = "all" if "scope" in fields_in_ast(ast) else base_query.scope
     return QueryBuildResult(
         query=_rebuild(
             base_query,
             terms=compiled.text_terms,
             compiled=result_compiled,
+            scope=scope,
         ),
         error=None,
     )
@@ -362,11 +370,16 @@ def _rebuild(
     *,
     terms: tuple[str, ...],
     compiled: CompiledQuery | None,
+    scope: agentgrep.SearchScope | None = None,
 ) -> agentgrep.SearchQuery:
-    """Clone ``base`` with new ``terms`` / ``compiled``; carry the rest forward."""
+    """Clone ``base`` with new ``terms`` / ``compiled``; carry the rest forward.
+
+    ``scope`` overrides the discovery scope when a ``scope:`` predicate
+    widened it; ``None`` keeps ``base.scope``.
+    """
     return agentgrep.SearchQuery(
         terms=terms,
-        scope=base.scope,
+        scope=base.scope if scope is None else scope,
         any_term=base.any_term,
         regex=base.regex,
         case_sensitive=base.case_sensitive,
