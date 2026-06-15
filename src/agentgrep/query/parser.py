@@ -40,6 +40,7 @@ from agentgrep.query.ast import (
     AndNode,
     FieldCmpNode,
     FieldEqNode,
+    FieldExistsNode,
     FieldRangeNode,
     NotNode,
     OrNode,
@@ -181,7 +182,12 @@ def tokenize(query: str) -> tuple[Token, ...]:
             continue
         if char in {'"', "'"}:
             value, end = _read_quoted(query, pos)
-            tokens.append(Token(kind="term", value=value, start=pos))
+            # Collapse internal whitespace so phrase matching is a single
+            # casefolded substring (``"deploy   v1"`` matches ``deploy v1``).
+            value = " ".join(value.split())
+            tokens.append(
+                Token(kind="term", value=value, start=pos, is_phrase=True),
+            )
             pos = end
             primary_position = True
             continue
@@ -382,7 +388,7 @@ class _Parser:
             return self.parse_field_expr()
         if current.kind == "term":
             _ = self.advance()
-            return TermNode(value=current.value)
+            return TermNode(value=current.value, is_phrase=current.is_phrase)
         message = f"unexpected token {current.kind} ({current.value!r})"
         raise QueryParseError(message, position=current.start)
 
@@ -414,6 +420,10 @@ class _Parser:
             return self._parse_range(spec.name)
         if current.kind == "term":
             value_token = self.advance()
+            if value_token.value == "*":
+                # ``field:*`` is field-exists; ``field:gpt*`` (value not
+                # exactly ``*``) stays a wildcard FieldEqNode.
+                return FieldExistsNode(field=spec.name)
             return FieldEqNode(field=spec.name, value=value_token.value)
         message = (
             f"expected value, comparison, or range after {spec.name}:; "

@@ -1157,6 +1157,11 @@ PURE_TEXT_RESIDUAL_CASES: tuple[PureTextResidualCase, ...] = (
         argv=("search", '"deploy v1"'),
         expected_terms=("deploy v1",),
     ),
+    PureTextResidualCase(
+        test_id="phrase-collapses-internal-whitespace",
+        argv=("search", '"deploy    v1"'),
+        expected_terms=("deploy v1",),
+    ),
 )
 
 

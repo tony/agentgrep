@@ -21,6 +21,7 @@ from agentgrep.query import (
     AndNode,
     FieldCmpNode,
     FieldEqNode,
+    FieldExistsNode,
     FieldRangeNode,
     NotNode,
     OrNode,
@@ -41,6 +42,7 @@ class TokenizerCase(t.NamedTuple):
     query: str
     expected_kinds: tuple[str, ...]
     expected_values: tuple[str, ...]
+    expected_is_phrase: tuple[bool, ...] = ()
 
 
 TOKENIZER_CASES: tuple[TokenizerCase, ...] = (
@@ -67,6 +69,12 @@ TOKENIZER_CASES: tuple[TokenizerCase, ...] = (
         query="path:~/.codex",
         expected_kinds=("ident", "colon", "term", "eof"),
         expected_values=("path", ":", "~/.codex", ""),
+    ),
+    TokenizerCase(
+        test_id="field-exists-star",
+        query="model:*",
+        expected_kinds=("ident", "colon", "term", "eof"),
+        expected_values=("model", ":", "*", ""),
     ),
     TokenizerCase(
         test_id="field-comparison-gt",
@@ -207,6 +215,21 @@ TOKENIZER_CASES: tuple[TokenizerCase, ...] = (
         query='"deploy v1.2.3"',
         expected_kinds=("term", "eof"),
         expected_values=("deploy v1.2.3", ""),
+        expected_is_phrase=(True, False),
+    ),
+    TokenizerCase(
+        test_id="phrase-collapses-internal-whitespace",
+        query='"deploy    v1"',
+        expected_kinds=("term", "eof"),
+        expected_values=("deploy v1", ""),
+        expected_is_phrase=(True, False),
+    ),
+    TokenizerCase(
+        test_id="bare-term-is-not-a-phrase",
+        query="deploy",
+        expected_kinds=("term", "eof"),
+        expected_values=("deploy", ""),
+        expected_is_phrase=(False, False),
     ),
     TokenizerCase(
         test_id="quoted-string-with-escape",
@@ -277,6 +300,9 @@ def test_tokenize_produces_expected_stream(case: TokenizerCase) -> None:
     actual_values = tuple(token.value for token in tokens)
     assert actual_kinds == case.expected_kinds
     assert actual_values == case.expected_values
+    if case.expected_is_phrase:
+        actual_is_phrase = tuple(token.is_phrase for token in tokens)
+        assert actual_is_phrase == case.expected_is_phrase
 
 
 class TokenizerErrorCase(t.NamedTuple):
@@ -349,7 +375,52 @@ def _eq(field: str, value: str) -> FieldEqNode:
     return FieldEqNode(field=field, value=value)
 
 
+def _phrase(value: str) -> TermNode:
+    """Concise constructor for a phrase `TermNode` (is_phrase=True)."""
+    return TermNode(value=value, is_phrase=True)
+
+
+def _exists(field: str) -> FieldExistsNode:
+    """Concise constructor for a `FieldExistsNode` (`field:*`)."""
+    return FieldExistsNode(field=field)
+
+
 PARSER_CASES: tuple[ParserCase, ...] = (
+    ParserCase(
+        test_id="quoted-phrase",
+        query='"deploy v1"',
+        expected=_phrase("deploy v1"),
+    ),
+    ParserCase(
+        test_id="field-exists",
+        query="model:*",
+        expected=_exists("model"),
+    ),
+    ParserCase(
+        test_id="negated-field-exists-sigil",
+        query="-model:*",
+        expected=NotNode(child=_exists("model")),
+    ),
+    ParserCase(
+        test_id="negated-field-exists-keyword",
+        query="NOT timestamp:*",
+        expected=NotNode(child=_exists("timestamp")),
+    ),
+    ParserCase(
+        test_id="wildcard-value-is-not-field-exists",
+        query="model:gpt*",
+        expected=_eq("model", "gpt*"),
+    ),
+    ParserCase(
+        test_id="phrase-and-bare-term",
+        query='"deploy v1" bliss',
+        expected=AndNode(children=(_phrase("deploy v1"), _term("bliss"))),
+    ),
+    ParserCase(
+        test_id="quoted-field-value-is-not-a-phrase",
+        query='text:"deploy v1"',
+        expected=_eq("text", "deploy v1"),
+    ),
     ParserCase(
         test_id="bare-term",
         query="bliss",
