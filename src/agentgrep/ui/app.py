@@ -63,7 +63,12 @@ from agentgrep import (
     truncate_lines,
 )
 from agentgrep.query import default_registry
-from agentgrep.ui.completion import FilterSuggester, QuerySuggester
+from agentgrep.ui.completion import (
+    FilterSuggester,
+    QuerySuggester,
+    apply_enum_choice,
+    enum_value_candidates,
+)
 
 
 def scroll_percent(scroll_y: float, max_scroll_y: float) -> int:
@@ -1049,6 +1054,14 @@ def build_streaming_ui_app(
             value = str(getattr(self, "value", ""))
             stop = getattr(event, "stop", None)
             if key == "down":
+                dropdown = getattr(self.app, "_enum_dropdown", None)
+                if dropdown is not None and dropdown.display and dropdown.option_count:
+                    # An open enum picker captures Down: jump into it.
+                    if callable(stop):
+                        stop()
+                    dropdown.focus()
+                    dropdown.highlighted = 0
+                    return
                 if value and cursor < len(value):
                     self.cursor_position = len(value)
                     if callable(stop):
@@ -1073,6 +1086,28 @@ def build_streaming_ui_app(
             """Footer-binding fallback (``_on_key`` handles the real release)."""
             self.app.action_focus_next()
 
+    class EnumDropdown(option_list_type):  # ty: ignore[unsupported-base]
+        """Floating value picker for enum field predicates (``agent:``/``scope:``).
+
+        A plain ``OptionList`` shown over the results via ``overlay: screen``
+        and toggled with ``display`` — the same lag-free mechanism Textual's
+        own ``Select`` uses, so re-population on each keystroke never mounts a
+        new widget. Enter fires ``OptionList.OptionSelected`` (handled by the
+        app); Escape and up-at-top return focus to the search bar.
+        """
+
+        async def _on_key(self, event: object) -> None:
+            key = str(getattr(event, "key", ""))
+            stop = getattr(event, "stop", None)
+            if key == "escape" or (key == "up" and int(getattr(self, "highlighted", 0) or 0) == 0):
+                if callable(stop):
+                    stop()
+                self.display = False
+                search = self.app.query_one("#search")
+                search.focus()
+                return
+            await super()._on_key(event)
+
     class AgentGrepApp(app_type):  # ty: ignore[unsupported-base]
         """Streaming read-only explorer for normalized search records."""
 
@@ -1082,6 +1117,19 @@ def build_streaming_ui_app(
         }
         #search {
             height: 3;
+        }
+        #enum-dropdown {
+            /* Float over the results just below the search bar, like Select's
+               popup — no layout space, toggled via .display so re-populating
+               per keystroke never remounts. */
+            overlay: screen;
+            constrain: none inside;
+            display: none;
+            width: 32;
+            max-height: 10;
+            offset: 2 0;
+            border: tall $accent;
+            background: $surface;
         }
         #body {
             height: 1fr;
@@ -1285,6 +1333,8 @@ def build_streaming_ui_app(
             self._query_suggester = QuerySuggester(default_registry())
             self._filter_suggester = FilterSuggester([])
             self._filter_vocabulary: set[str] = set()
+            self._enum_dropdown: t.Any = None
+            self._enum_values: tuple[str, ...] = ()
             self._resize_debounce_timer: object | None = None
             self._current_detail_record: SearchRecord | None = None
             self._detail_scroll: t.Any = None
@@ -1337,6 +1387,10 @@ def build_streaming_ui_app(
                 id="search",
                 suggester=self._query_suggester,
             )
+            # Enum-value picker for field predicates; floats over the body
+            # just below the search bar and stays hidden until an enum
+            # field token (agent:/scope:) is typed.
+            yield EnumDropdown(id="enum-dropdown")
             # Decide the responsive split up-front (terminal width is known
             # at compose time) so narrow terminals are born stacked with the
             # detail collapsed — applying the class in on_mount instead would
@@ -1411,6 +1465,8 @@ def build_streaming_ui_app(
                 "SearchInput",
                 streaming.query_one("#search"),
             )
+            self._enum_dropdown = t.cast("t.Any", streaming.query_one("#enum-dropdown"))
+            self._enum_dropdown.display = False
             # Steady (non-blinking) input cursors. A blinking cursor keeps
             # toggling its inverted-block glyph even when the terminal loses
             # focus — Textual can't tell the tmux pane went inactive without
@@ -1557,6 +1613,46 @@ def build_streaming_ui_app(
                     event.elapsed,
                     str(event.error) if event.error else None,
                 )
+
+        def on_input_changed(self, event: object) -> None:
+            """Refresh the enum-value dropdown as the search bar value changes."""
+            source = getattr(event, "input", None)
+            if getattr(source, "id", None) != "search":
+                return
+            self._update_enum_dropdown(str(getattr(event, "value", "")))
+
+        def _update_enum_dropdown(self, value: str) -> None:
+            """Populate and show/hide the enum dropdown for the current token."""
+            dropdown = self._enum_dropdown
+            if dropdown is None:
+                return
+            candidates = enum_value_candidates(value, default_registry())
+            if candidates is None:
+                self._enum_values = ()
+                dropdown.display = False
+                return
+            _field, values = candidates
+            self._enum_values = values
+            dropdown.clear_options()
+            dropdown.add_options(list(values))
+            dropdown.display = True
+            dropdown.highlighted = 0
+
+        def on_option_list_option_selected(self, event: object) -> None:
+            """Accept an enum-dropdown choice into the search bar."""
+            if getattr(event, "option_list", None) is not self._enum_dropdown:
+                return
+            index = int(getattr(event, "option_index", 0) or 0)
+            if not (0 <= index < len(self._enum_values)):
+                return
+            search = self._search_input
+            if search is None:
+                return
+            new_value = apply_enum_choice(str(search.value), self._enum_values[index])
+            search.value = new_value
+            search.cursor_position = len(new_value)
+            self._enum_dropdown.display = False
+            search.focus()
 
         def _run_search(self) -> None:
             progress = self._progress
@@ -1979,6 +2075,10 @@ def build_streaming_ui_app(
             ``set_records`` rebuilds the list and Textual re-emits the
             highlight for the same row that's already in the detail pane.
             """
+            if getattr(event, "option_list", None) is self._enum_dropdown:
+                # The enum picker is a separate OptionList; its highlights
+                # must not drive the results detail pane.
+                return
             option_index = getattr(event, "option_index", None)
             if option_index is None:
                 self._refresh_results_status_right()

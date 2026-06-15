@@ -13,7 +13,12 @@ import typing as t
 import pytest
 
 from agentgrep.query import default_registry
-from agentgrep.ui.completion import FilterSuggester, QuerySuggester
+from agentgrep.ui.completion import (
+    FilterSuggester,
+    QuerySuggester,
+    apply_enum_choice,
+    enum_value_candidates,
+)
 
 
 class QueryCase(t.NamedTuple):
@@ -83,3 +88,72 @@ async def test_filter_suggester_vocabulary_is_updatable() -> None:
     assert await suggester.get_suggestion("ali") is None
     suggester.set_vocabulary(["alignment", "alpha"])
     assert await suggester.get_suggestion("ali") == "alignment"
+
+
+class EnumDropdownCase(t.NamedTuple):
+    """One search input and the expected (field, candidates) for the dropdown."""
+
+    test_id: str
+    value: str
+    expected: tuple[str, tuple[str, ...]] | None
+
+
+ENUM_DROPDOWN_CASES: tuple[EnumDropdownCase, ...] = (
+    EnumDropdownCase(
+        test_id="empty-partial-lists-all-scope-values",
+        value="scope:",
+        expected=("scope", ("prompts", "conversations", "all")),
+    ),
+    EnumDropdownCase(
+        test_id="partial-filters-agents",
+        value="agent:cu",
+        expected=("agent", ("cursor-cli", "cursor-ide")),
+    ),
+    EnumDropdownCase(
+        test_id="trailing-token-after-term",
+        value="ruff agent:co",
+        expected=("agent", ("codex",)),
+    ),
+    EnumDropdownCase(
+        test_id="non-enum-field-has-no-dropdown",
+        value="model:gpt",
+        expected=None,
+    ),
+    EnumDropdownCase(
+        test_id="bare-token-has-no-dropdown",
+        value="age",
+        expected=None,
+    ),
+    EnumDropdownCase(
+        test_id="no-enum-match-has-no-dropdown",
+        value="agent:zzz",
+        expected=None,
+    ),
+    EnumDropdownCase(
+        test_id="fully-typed-single-value-has-no-dropdown",
+        value="agent:codex",
+        expected=None,
+    ),
+    EnumDropdownCase(
+        test_id="partial-matching-multiple-still-shows",
+        value="agent:cursor",
+        expected=("agent", ("cursor-cli", "cursor-ide")),
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    ENUM_DROPDOWN_CASES,
+    ids=[c.test_id for c in ENUM_DROPDOWN_CASES],
+)
+def test_enum_value_candidates(case: EnumDropdownCase) -> None:
+    """The dropdown candidate function resolves enum field values."""
+    assert enum_value_candidates(case.value, default_registry()) == case.expected
+
+
+def test_apply_enum_choice_replaces_trailing_value() -> None:
+    """Choosing a dropdown value rewrites the trailing field token."""
+    assert apply_enum_choice("ruff agent:cu", "cursor-cli") == "ruff agent:cursor-cli"
+    assert apply_enum_choice("scope:", "conversations") == "scope:conversations"
+    assert apply_enum_choice("plain text", "x") == "plain text"

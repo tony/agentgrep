@@ -37,6 +37,63 @@ def _trailing_token(value: str) -> tuple[str, str]:
     return head + sep, last
 
 
+def enum_value_candidates(
+    text: str,
+    registry: FieldRegistry,
+) -> tuple[str, tuple[str, ...]] | None:
+    """Return enum-value candidates for a trailing ``field:partial`` token.
+
+    Used by the search bar's dropdown: when the trailing token selects an
+    enum field (``agent:``, ``scope:``), return the field's canonical name
+    and the enum values matching the partial. Returns ``None`` when the
+    trailing token is not an enum field predicate or nothing matches.
+
+    Parameters
+    ----------
+    text : str
+        Current search-bar value.
+    registry : FieldRegistry
+        Registry whose enum fields seed the candidates.
+
+    Returns
+    -------
+    tuple[str, tuple[str, ...]] or None
+        ``(field_name, matching_values)`` or ``None``.
+    """
+    if not text:
+        return None
+    _prefix, last = _trailing_token(text)
+    if ":" not in last:
+        return None
+    field, _, partial = last.partition(":")
+    spec = registry.get(field)
+    if spec is None or not spec.enum_values:
+        return None
+    partial_cf = partial.casefold()
+    matches = tuple(value for value in spec.enum_values if value.casefold().startswith(partial_cf))
+    if not matches:
+        return None
+    # Nothing left to pick once the value is fully typed (the sole match
+    # equals the partial) — don't reopen a redundant one-item dropdown.
+    if len(matches) == 1 and matches[0].casefold() == partial_cf:
+        return None
+    return (spec.name, matches)
+
+
+def apply_enum_choice(text: str, value: str) -> str:
+    """Replace the trailing ``field:partial`` token's value with ``value``.
+
+    Returns the rewritten search string, e.g. ``("ruff agent:cu", "cursor-cli")``
+    -> ``"ruff agent:cursor-cli"``. If the trailing token has no colon the
+    text is returned unchanged.
+    """
+    prefix, last = _trailing_token(text)
+    field, sep, _partial = last.partition(":")
+    if not sep:
+        return text
+    return f"{prefix}{field}:{value}"
+
+
 class QuerySuggester(Suggester):
     """Complete query field names and enum values for the search bar."""
 

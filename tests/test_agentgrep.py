@@ -1949,6 +1949,35 @@ async def test_streaming_ui_app_wires_inline_completion(
         assert suggestion == "agent:"
 
 
+async def test_streaming_ui_app_enum_dropdown_opens_and_closes(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Typing an enum field predicate opens the value dropdown; other text hides it."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        search = app.screen.query_one("#search")
+        dropdown = app.screen.query_one("#enum-dropdown")
+
+        # An enum field token opens the dropdown with one option per value.
+        search.value = "scope:"
+        await pilot.pause()
+        assert dropdown.display is True
+        assert dropdown.option_count == 3  # prompts, conversations, all
+
+        # A partial filters the values.
+        search.value = "agent:cu"
+        await pilot.pause()
+        assert dropdown.display is True
+        assert dropdown.option_count == 2  # cursor-cli, cursor-ide
+
+        # Non-enum / bare text hides it.
+        search.value = "ruff"
+        await pilot.pause()
+        assert dropdown.display is False
+
+
 async def test_empty_query_focuses_search_input_and_marks_search_done(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
