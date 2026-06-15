@@ -1121,13 +1121,14 @@ def build_streaming_ui_app(
         #enum-dropdown {
             /* Float over the results just below the search bar, like Select's
                popup — no layout space, toggled via .display so re-populating
-               per keystroke never remounts. */
+               per keystroke never remounts. The x offset is set at runtime to
+               the input's cursor column; ``constrain: inside inside`` shifts it
+               back on-screen when the cursor is near the right edge. */
             overlay: screen;
-            constrain: none inside;
+            constrain: inside inside;
             display: none;
             width: 32;
             max-height: 10;
-            offset: 2 0;
             border: tall $accent;
             background: $surface;
         }
@@ -1635,8 +1636,24 @@ def build_streaming_ui_app(
             self._enum_values = values
             dropdown.clear_options()
             dropdown.add_options(list(values))
+            self._align_enum_dropdown_to_cursor()
             dropdown.display = True
             dropdown.highlighted = 0
+
+        def _align_enum_dropdown_to_cursor(self) -> None:
+            """Offset the dropdown so its content sits under the input cursor.
+
+            The overlay's natural slot is at the left edge just below the
+            search bar; shifting its x offset by the cursor's screen column
+            (less the 1-cell border) anchors the value list to where the user
+            is typing. ``constrain: inside inside`` keeps it on-screen.
+            """
+            search = self._search_input
+            dropdown = self._enum_dropdown
+            if search is None or dropdown is None:
+                return
+            cursor_x = int(t.cast("t.Any", search).cursor_screen_offset.x)
+            dropdown.styles.offset = (max(cursor_x - 1, 0), 0)
 
         def on_option_list_option_selected(self, event: object) -> None:
             """Accept an enum-dropdown choice into the search bar."""

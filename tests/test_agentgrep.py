@@ -1972,6 +1972,16 @@ async def test_streaming_ui_app_enum_dropdown_opens_and_closes(
         assert dropdown.display is True
         assert dropdown.option_count == 2  # cursor-cli, cursor-ide
 
+        # The dropdown tracks the input cursor: a long prefix pushes it right.
+        search.value = "ruff codex review notes scope:"
+        search.cursor_position = len(search.value)
+        await pilot.pause()
+        assert dropdown.display is True
+        # Left edge is anchored near the cursor column, not pinned at 0.
+        cursor_x = search.cursor_screen_offset.x
+        assert abs(dropdown.region.x - (cursor_x - 1)) <= 1
+        assert dropdown.region.x > 10
+
         # Non-enum / bare text hides it.
         search.value = "ruff"
         await pilot.pause()
