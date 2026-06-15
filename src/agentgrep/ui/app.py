@@ -1501,8 +1501,13 @@ def build_streaming_ui_app(
             # toggling its inverted-block glyph even when the terminal loses
             # focus — Textual can't tell the tmux pane went inactive without
             # focus-events — so the cursor flickers in the background pane.
+            # ``select_on_focus=False`` keeps the cursor where it is when focus
+            # returns (e.g. after accepting a dropdown choice) instead of
+            # selecting the whole query.
             for _input in (self._filter_input, self._search_input):
-                t.cast("t.Any", _input).cursor_blink = False
+                typed_input = t.cast("t.Any", _input)
+                typed_input.cursor_blink = False
+                typed_input.select_on_focus = False
             self._progress = self._make_gated_progress()
             self._apply_responsive_layout()
             if self.query.terms:

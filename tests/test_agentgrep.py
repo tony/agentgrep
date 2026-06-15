@@ -2025,6 +2025,28 @@ async def test_streaming_ui_app_filter_dropdown_and_query_aware(
         assert dropdown.display is False
 
 
+async def test_dropdown_accept_leaves_cursor_at_end_without_selecting(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Accepting a dropdown choice places the cursor at the end, not select-all."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        search = app.screen.query_one("#search")
+        search.value = "agent:co"
+        search.cursor_position = len("agent:co")
+        await pilot.pause()
+        assert app._enum_values == ("codex",)
+
+        app._accept_dropdown_choice(search, app._enum_dropdown, app._enum_values, 0)
+        await pilot.pause()
+
+        assert search.value == "agent:codex"
+        assert search.cursor_position == len("agent:codex")
+        assert search.selection.is_empty
+
+
 async def test_empty_query_focuses_search_input_and_marks_search_done(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
