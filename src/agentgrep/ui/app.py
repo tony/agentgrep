@@ -965,9 +965,18 @@ def build_streaming_ui_app(
             cursor = int(getattr(self, "cursor_position", 0))
             value = str(getattr(self, "value", ""))
             stop = getattr(event, "stop", None)
+            dropdown = t.cast("t.Any", getattr(self.app, "_filter_dropdown", None))
+            dropdown_open = dropdown is not None and bool(dropdown.display)
+            if dropdown_open and key in {"escape", "ctrl+c"}:
+                # Dismiss the dropdown, keep editing — don't quit.
+                if callable(stop):
+                    stop()
+                dropdown.display = False
+                return
+            if dropdown_open and key == "enter":
+                dropdown.display = False
             if key == "down":
-                dropdown = getattr(self.app, "_filter_dropdown", None)
-                if dropdown is not None and dropdown.display and dropdown.option_count:
+                if dropdown_open and dropdown.option_count:
                     # An open completion picker captures Down: jump into it.
                     if callable(stop):
                         stop()
@@ -1061,9 +1070,20 @@ def build_streaming_ui_app(
             cursor = int(getattr(self, "cursor_position", 0))
             value = str(getattr(self, "value", ""))
             stop = getattr(event, "stop", None)
+            dropdown = t.cast("t.Any", getattr(self.app, "_enum_dropdown", None))
+            dropdown_open = dropdown is not None and bool(dropdown.display)
+            if dropdown_open and key in {"escape", "ctrl+c"}:
+                # Dismiss the dropdown, keep editing — don't quit or stop search.
+                if callable(stop):
+                    stop()
+                dropdown.display = False
+                return
+            if dropdown_open and key == "enter":
+                # Enter without navigating into the dropdown closes it and lets
+                # the normal submit proceed (no auto-accept).
+                dropdown.display = False
             if key == "down":
-                dropdown = getattr(self.app, "_enum_dropdown", None)
-                if dropdown is not None and dropdown.display and dropdown.option_count:
+                if dropdown_open and dropdown.option_count:
                     # An open enum picker captures Down: jump into it.
                     if callable(stop):
                         stop()
@@ -1116,7 +1136,10 @@ def build_streaming_ui_app(
         async def _on_key(self, event: object) -> None:
             key = str(getattr(event, "key", ""))
             stop = getattr(event, "stop", None)
-            if key == "escape" or (key == "up" and int(getattr(self, "highlighted", 0) or 0) == 0):
+            dismiss = key in {"escape", "ctrl+c"} or (
+                key == "up" and int(getattr(self, "highlighted", 0) or 0) == 0
+            )
+            if dismiss:
                 if callable(stop):
                     stop()
                 self.display = False

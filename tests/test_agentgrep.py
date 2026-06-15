@@ -2047,6 +2047,54 @@ async def test_dropdown_accept_leaves_cursor_at_end_without_selecting(
         assert search.selection.is_empty
 
 
+async def test_dropdown_dismissal_keys_close_without_accepting(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Esc, Enter, and Ctrl+C dismiss an open dropdown without auto-accepting."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        search = app.screen.query_one("#search")
+        dropdown = app.screen.query_one("#enum-dropdown")
+        search.focus()
+        await pilot.pause()
+
+        # Each block uses a distinct value so the reactive fires Changed and
+        # the dropdown reopens.
+        #
+        # Esc dismisses and keeps focus in the input (still editing).
+        search.value = "agent:"
+        search.cursor_position = len(search.value)
+        await pilot.pause()
+        assert dropdown.display is True
+        await pilot.press("escape")
+        await pilot.pause()
+        assert dropdown.display is False
+        assert app.focused is search
+
+        # Enter closes the dropdown without accepting a value.
+        search.value = "scope:"
+        search.cursor_position = len(search.value)
+        await pilot.pause()
+        assert dropdown.display is True
+        await pilot.press("enter")
+        await pilot.pause()
+        assert dropdown.display is False
+        assert search.value == "scope:"
+
+        # Ctrl+C dismisses the dropdown instead of quitting the app.
+        search.value = "agent:cu"
+        search.cursor_position = len(search.value)
+        await pilot.pause()
+        assert dropdown.display is True
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+        assert dropdown.display is False
+        # The app is still running (Ctrl+C was consumed by the dropdown).
+        assert app.screen.query_one("#search") is search
+
+
 async def test_empty_query_focuses_search_input_and_marks_search_done(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
