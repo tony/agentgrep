@@ -14,12 +14,11 @@ import pytest
 
 from agentgrep.query import default_registry
 from agentgrep.ui.completion import (
-    FilterSuggester,
     QuerySuggester,
     apply_enum_choice,
     apply_word_choice,
     enum_value_candidates,
-    filter_completion_candidates,
+    keyword_completion_candidates,
 )
 
 
@@ -60,74 +59,50 @@ async def test_query_suggester(case: QueryCase) -> None:
     assert result == case.expected
 
 
-class FilterCase(t.NamedTuple):
-    """One filter-box completion input and its expected suggestion."""
-
-    test_id: str
-    value: str
-    expected: str | None
-
-
-FILTER_VOCABULARY = ("AGENTS.md", "CLAUDE.md", "ruff", "rust", "tmux", "uv")
-
-FILTER_CASES: tuple[FilterCase, ...] = (
-    FilterCase(test_id="completes-record-term", value="ru", expected="ruff"),
-    FilterCase(test_id="completes-trailing-token", value="uv ru", expected="uv ruff"),
-    # Keywords are weighted ahead of record terms: lowercase "agent"
-    # completes the field keyword, not the AGENTS.md file term.
-    FilterCase(test_id="lowercase-keyword-wins", value="agent", expected="agent:"),
-    FilterCase(test_id="keyword-from-prefix", value="age", expected="agent:"),
-    # File terms match case-sensitively: uppercase AGENT completes AGENTS.md.
-    FilterCase(test_id="uppercase-file-term-case-sensitive", value="AGENT", expected="AGENTS.md"),
-    FilterCase(test_id="enum-value-in-filter", value="agent:cu", expected="agent:cursor-cli"),
-    FilterCase(test_id="no-match", value="zzz", expected=None),
-    FilterCase(test_id="empty-suggests-nothing", value="", expected=None),
-)
-
-
-@pytest.mark.parametrize("case", FILTER_CASES, ids=[c.test_id for c in FILTER_CASES])
-async def test_filter_suggester(case: FilterCase) -> None:
-    """The filter suggester weights keywords first, matches terms case-sensitively."""
-    suggester = FilterSuggester(default_registry(), FILTER_VOCABULARY)
-    result = await suggester.get_suggestion(case.value)
-    assert result == case.expected
-
-
-async def test_filter_suggester_vocabulary_is_updatable() -> None:
-    """The filter vocabulary can be refreshed as records stream in."""
-    suggester = FilterSuggester(default_registry(), [])
-    assert await suggester.get_suggestion("xyl") is None
-    suggester.set_vocabulary(["xylophone", "xylem"])
-    assert await suggester.get_suggestion("xyl") == "xylem"
-
-
-class FilterCandidatesCase(t.NamedTuple):
-    """One filter input and the expected ordered dropdown candidates."""
+class KeywordCandidatesCase(t.NamedTuple):
+    """One input and the expected ordered dropdown candidates."""
 
     test_id: str
     value: str
     expected: tuple[str, ...] | None
 
 
-FILTER_CANDIDATES_CASES: tuple[FilterCandidatesCase, ...] = (
-    FilterCandidatesCase(
-        test_id="keyword-then-case-sensitive-term",
-        value="agent",
-        expected=("agent:", "agentic_notes"),
+KEYWORD_CANDIDATES_CASES: tuple[KeywordCandidatesCase, ...] = (
+    # Bare token -> field-name keywords (names + aliases), sorted; never
+    # record vocabulary.
+    KeywordCandidatesCase(
+        test_id="prefix-lists-field-keywords",
+        value="a",
+        expected=("adapter:", "adapter_id:", "agent:"),
     ),
-    FilterCandidatesCase(
-        test_id="uppercase-only-file-term",
-        value="AGENT",
-        expected=("AGENTS.md",),
+    KeywordCandidatesCase(
+        test_id="narrower-prefix",
+        value="age",
+        expected=("agent:",),
     ),
-    FilterCandidatesCase(
+    KeywordCandidatesCase(
         test_id="enum-values-for-field-token",
         value="agent:cu",
         expected=("cursor-cli", "cursor-ide"),
     ),
-    FilterCandidatesCase(
-        test_id="no-candidates",
+    KeywordCandidatesCase(
+        test_id="all-scope-values",
+        value="scope:",
+        expected=("prompts", "conversations", "all"),
+    ),
+    KeywordCandidatesCase(
+        test_id="non-keyword-prefix-has-none",
         value="zzz",
+        expected=None,
+    ),
+    KeywordCandidatesCase(
+        test_id="non-enum-field-token-has-none",
+        value="model:gpt",
+        expected=None,
+    ),
+    KeywordCandidatesCase(
+        test_id="empty-has-none",
+        value="",
         expected=None,
     ),
 )
@@ -135,19 +110,18 @@ FILTER_CANDIDATES_CASES: tuple[FilterCandidatesCase, ...] = (
 
 @pytest.mark.parametrize(
     "case",
-    FILTER_CANDIDATES_CASES,
-    ids=[c.test_id for c in FILTER_CANDIDATES_CASES],
+    KEYWORD_CANDIDATES_CASES,
+    ids=[c.test_id for c in KEYWORD_CANDIDATES_CASES],
 )
-def test_filter_completion_candidates(case: FilterCandidatesCase) -> None:
-    """Dropdown candidates list keywords before case-sensitive record terms."""
-    vocab = ("AGENTS.md", "agentic_notes", "ruff")
-    assert filter_completion_candidates(case.value, default_registry(), vocab) == case.expected
+def test_keyword_completion_candidates(case: KeywordCandidatesCase) -> None:
+    """Dropdown candidates are query-language keywords only — never record terms."""
+    assert keyword_completion_candidates(case.value, default_registry()) == case.expected
 
 
 def test_apply_word_choice_replaces_trailing_token() -> None:
-    """Choosing a keyword or term rewrites the trailing whitespace token."""
+    """Choosing a keyword rewrites the trailing whitespace token."""
     assert apply_word_choice("ruff age", "agent:") == "ruff agent:"
-    assert apply_word_choice("AGENT", "AGENTS.md") == "AGENTS.md"
+    assert apply_word_choice("deploy sco", "scope:") == "deploy scope:"
 
 
 class EnumDropdownCase(t.NamedTuple):

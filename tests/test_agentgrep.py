@@ -1992,15 +1992,14 @@ async def test_streaming_ui_app_filter_dropdown_and_query_aware(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The filter box gets a keyword-first dropdown and a query-aware matcher."""
+    """The filter box gets a keyword dropdown and a query-aware matcher."""
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
         filter_input = app.screen.query_one("#filter")
         dropdown = app.screen.query_one("#filter-dropdown")
-        app._filter_vocabulary.update({"AGENTS.md"})
 
-        # Lowercase "agent" weights the field keyword ahead of the file term.
+        # A bare token lists field-name keywords (no record vocabulary).
         filter_input.value = "agent"
         filter_input.cursor_position = len("agent")
         await pilot.pause()
@@ -2018,32 +2017,11 @@ async def test_streaming_ui_app_filter_dropdown_and_query_aware(
         assert app._build_filter_matcher("agent:codex") is not None
         assert app._build_filter_matcher("   ") is None
 
-        # Bare text still hides the dropdown.
+        # A free-text term that isn't a keyword shows no dropdown.
         filter_input.value = "zzznomatch"
         filter_input.cursor_position = len("zzznomatch")
         await pilot.pause()
         assert dropdown.display is False
-
-
-async def test_filter_dropdown_renders_markup_like_terms_safely(
-    tmp_path: pathlib.Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A vocabulary term with Rich-markup characters must not crash the dropdown."""
-    app = _build_empty_ui_app(tmp_path, monkeypatch)
-    async with app.run_test(size=(120, 30)) as pilot:
-        await pilot.pause()
-        filter_input = app.screen.query_one("#filter")
-        dropdown = app.screen.query_one("#filter-dropdown")
-        # Mimics a term extracted from a record that mentions Rich markup.
-        app._filter_vocabulary.update({"magenta]chat[/"})
-
-        filter_input.value = "magenta"
-        filter_input.cursor_position = len("magenta")
-        await pilot.pause()
-
-        assert dropdown.display is True
-        assert dropdown.option_count >= 1
 
 
 async def test_dropdown_accept_leaves_cursor_at_end_without_selecting(

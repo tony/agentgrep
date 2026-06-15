@@ -1,27 +1,21 @@
-"""Inline-completion suggesters for the Textual explorer.
+"""Inline-completion for the Textual explorer's query inputs.
 
-Two :class:`textual.suggester.Suggester` implementations back the inline
-ghost-text completion in :mod:`agentgrep.ui.app`:
+Completion is registry-driven and offers **query-language keywords only** —
+field names and aliases (``age`` -> ``agent:``) and enum values
+(``agent:co`` -> ``agent:codex``). It deliberately does not complete from
+record text, which would surface arbitrary tokens and IDs.
 
-- :class:`QuerySuggester` completes the search bar's trailing token —
-  field names and aliases (``age`` -> ``agent:``) and enum values
-  (``agent:co`` -> ``agent:codex``) — from the query field registry,
-  matched case-insensitively.
-- :class:`FilterSuggester` completes the query-aware filter box: field
-  keywords (``agent:``) and enum values first, then record-vocabulary
-  terms, matched **case-sensitively** so ``agent`` completes the keyword
-  while ``AGENT`` completes a file term like ``AGENTS.md``.
-
-Both run with ``case_sensitive=True`` so :meth:`get_suggestion` receives
-the user's raw value, and they return ``value + tail`` (the typed value
-plus only the missing characters). That guarantees the suggestion starts
-with the value, which is what Textual's ``Input`` requires to render the
-ghost text.
+:class:`QuerySuggester` backs the inline ghost text on both the search bar
+and the (query-aware) filter box; :func:`keyword_completion_candidates`
+backs the dropdown list. The suggester runs with ``case_sensitive=True`` so
+:meth:`get_suggestion` receives the user's raw value and returns
+``value + tail`` (the typed value plus only the missing characters), which
+is what Textual's ``Input`` requires to render the ghost text; matching is
+case-insensitive internally.
 """
 
 from __future__ import annotations
 
-import collections.abc as cabc
 import typing as t
 
 from textual.suggester import Suggester
@@ -100,8 +94,8 @@ def apply_enum_choice(text: str, value: str) -> str:
 def apply_word_choice(text: str, word: str) -> str:
     """Replace the trailing whitespace token with ``word``.
 
-    Used by the filter dropdown for keyword (``agent:``) and record-term
-    completions: ``("ruff age", "agent:")`` -> ``"ruff agent:"``.
+    Used by the dropdown for field-keyword completions:
+    ``("ruff age", "agent:")`` -> ``"ruff agent:"``.
     """
     prefix, _last = _trailing_token(text)
     return f"{prefix}{word}"
@@ -112,28 +106,24 @@ def _field_keyword_names(registry: FieldRegistry) -> tuple[str, ...]:
     return tuple(sorted({name for spec in registry.specs for name in (spec.name, *spec.aliases)}))
 
 
-def filter_completion_candidates(
+def keyword_completion_candidates(
     text: str,
     registry: FieldRegistry,
-    vocabulary: cabc.Iterable[str],
     *,
     limit: int = 12,
 ) -> tuple[str, ...] | None:
-    """Ordered completion candidates for the query-aware filter box.
+    """Return query-language keyword candidates for the dropdown.
 
-    The filter accepts the same query language as search, so its completion
-    weights query field keywords ahead of record terms:
+    Both the search bar and the (query-aware) filter box use this:
 
     - a ``field:partial`` trailing token yields the field's enum values
       (e.g. ``agent:cu`` -> ``cursor-cli``, ``cursor-ide``);
     - a bare token yields matching field keywords rendered with a trailing
-      colon (``age`` -> ``agent:``) first, then record-vocabulary words.
+      colon (``a`` -> ``adapter:``, ``adapter_id:``, ``agent:``).
 
-    Keyword and vocabulary matching is **case-sensitive** so lowercase
-    ``agent`` completes the ``agent:`` keyword while ``AGENT`` completes a
-    file term like ``AGENTS.md`` rather than producing mixed-case garbage.
-
-    Returns ``None`` when there is nothing to offer.
+    Matching is case-insensitive. No record-vocabulary terms are offered —
+    completion is limited to the query language. Returns ``None`` when there
+    is nothing to offer.
     """
     if not text:
         return None
@@ -143,19 +133,11 @@ def filter_completion_candidates(
     if ":" in last:
         enum = enum_value_candidates(text, registry)
         return None if enum is None else enum[1]
-    keywords = [f"{name}:" for name in _field_keyword_names(registry) if name.startswith(last)]
-    keyword_set = set(keywords)
-    vocab = [
-        word
-        for word in sorted(vocabulary)
-        if word.startswith(last) and word != last and f"{word}:" not in keyword_set
-    ]
-    combined = tuple(dict.fromkeys([*keywords, *vocab]))
-    if not combined:
-        return None
-    if len(combined) == 1 and combined[0] == last:
-        return None
-    return combined[:limit]
+    last_cf = last.casefold()
+    keywords = tuple(
+        f"{name}:" for name in _field_keyword_names(registry) if name.casefold().startswith(last_cf)
+    )
+    return keywords[:limit] if keywords else None
 
 
 class QuerySuggester(Suggester):
@@ -209,59 +191,3 @@ class QuerySuggester(Suggester):
             if name.casefold().startswith(last_cf):
                 return value + name[len(last) :] + ":"
         return None
-
-
-class FilterSuggester(Suggester):
-    """Complete the query-aware filter box: field keywords then record terms.
-
-    The filter accepts the same query language as search, so completion
-    weights field keywords (``agent:``) and enum values ahead of record
-    vocabulary, all matched case-sensitively (see
-    :func:`filter_completion_candidates`).
-    """
-
-    def __init__(
-        self,
-        registry: FieldRegistry,
-        vocabulary: cabc.Iterable[str],
-    ) -> None:
-        """Build a suggester from a registry and an initial vocabulary.
-
-        Parameters
-        ----------
-        registry : FieldRegistry
-            Registry seeding field-keyword and enum-value completions.
-        vocabulary : collections.abc.Iterable[str]
-            Record terms; refreshed via :meth:`set_vocabulary` as records
-            load.
-        """
-        # The vocabulary mutates as records stream in, so caching would
-        # serve stale suggestions; disable it.
-        super().__init__(use_cache=False, case_sensitive=True)
-        self._registry = registry
-        self._vocabulary: tuple[str, ...] = tuple(sorted(set(vocabulary)))
-
-    def set_vocabulary(self, vocabulary: cabc.Iterable[str]) -> None:
-        """Replace the completion vocabulary (e.g. after records load)."""
-        self._vocabulary = tuple(sorted(set(vocabulary)))
-
-    async def get_suggestion(self, value: str) -> str | None:
-        """Return the top completion for ``value``'s trailing token, or ``None``."""
-        if not value:
-            return None
-        _prefix, last = _trailing_token(value)
-        if not last:
-            return None
-        if ":" in last:
-            enum = enum_value_candidates(value, self._registry)
-            if enum is None:
-                return None
-            _field, _, partial = last.partition(":")
-            return value + enum[1][0][len(partial) :]
-        candidates = filter_completion_candidates(value, self._registry, self._vocabulary)
-        if candidates is None:
-            return None
-        first = candidates[0]
-        if not first.startswith(last):
-            return None
-        return value + first[len(last) :]

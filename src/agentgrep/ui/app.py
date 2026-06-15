@@ -63,12 +63,10 @@ from agentgrep import (
 )
 from agentgrep.query import default_registry
 from agentgrep.ui.completion import (
-    FilterSuggester,
     QuerySuggester,
     apply_enum_choice,
     apply_word_choice,
-    enum_value_candidates,
-    filter_completion_candidates,
+    keyword_completion_candidates,
 )
 
 
@@ -1372,12 +1370,9 @@ def build_streaming_ui_app(
             self._detail_statusline: StaticLike | None = None
             self._filter_input: FilterInput | None = None
             self._search_input: SearchInput | None = None
-            # Inline-completion suggesters: the query suggester is static
-            # (registry-backed); the filter suggester's vocabulary refreshes
-            # from loaded records as the search finishes.
-            self._query_suggester = QuerySuggester(default_registry())
-            self._filter_suggester = FilterSuggester(default_registry(), [])
-            self._filter_vocabulary: set[str] = set()
+            # One registry-backed suggester drives the inline ghost text on
+            # both inputs; completion offers query-language keywords only.
+            self._completion_suggester = QuerySuggester(default_registry())
             self._enum_dropdown: t.Any = None
             self._enum_values: tuple[str, ...] = ()
             self._filter_dropdown: t.Any = None
@@ -1438,7 +1433,7 @@ def build_streaming_ui_app(
                 value=initial_search,
                 placeholder="Search prompts",
                 id="search",
-                suggester=self._query_suggester,
+                suggester=self._completion_suggester,
             )
             # Enum-value picker for field predicates; floats over the body
             # just below the search bar and stays hidden until an enum
@@ -1462,7 +1457,7 @@ def build_streaming_ui_app(
                     yield FilterInput(
                         placeholder="Filter loaded results",
                         id="filter",
-                        suggester=self._filter_suggester,
+                        suggester=self._completion_suggester,
                     )
                     # Keyword/term picker for the query-aware filter; floats
                     # over the results just below the filter input.
@@ -1686,25 +1681,19 @@ def build_streaming_ui_app(
             input_id = getattr(source, "id", None)
             value = str(getattr(event, "value", ""))
             if input_id == "search":
-                self._update_enum_dropdown(value)
+                self._update_search_dropdown(value)
             elif input_id == "filter":
                 self._update_filter_dropdown(value)
 
-        def _update_enum_dropdown(self, value: str) -> None:
-            """Populate and show/hide the search bar's enum dropdown."""
-            candidates = enum_value_candidates(value, default_registry())
-            values = () if candidates is None else candidates[1]
+        def _update_search_dropdown(self, value: str) -> None:
+            """Populate and show/hide the search bar's keyword dropdown."""
+            values = keyword_completion_candidates(value, default_registry()) or ()
             self._enum_values = values
             self._populate_dropdown(self._enum_dropdown, self._search_input, values)
 
         def _update_filter_dropdown(self, value: str) -> None:
-            """Populate and show/hide the filter box's keyword/term dropdown."""
-            candidates = filter_completion_candidates(
-                value,
-                default_registry(),
-                self._filter_vocabulary,
-            )
-            values = () if candidates is None else candidates
+            """Populate and show/hide the filter box's keyword dropdown."""
+            values = keyword_completion_candidates(value, default_registry()) or ()
             self._filter_dropdown_values = values
             self._populate_dropdown(self._filter_dropdown, self._filter_input, values)
 
@@ -1855,36 +1844,6 @@ def build_streaming_ui_app(
             )
 
         _APPLY_CHUNK_SIZE: t.ClassVar[int] = 200
-        _FILTER_VOCAB_CAP: t.ClassVar[int] = 4000
-
-        def _extend_filter_vocabulary(
-            self,
-            records: cabc.Sequence[SearchRecord],
-        ) -> None:
-            """Grow the filter-box completion vocabulary from record text.
-
-            Bounded by :attr:`_FILTER_VOCAB_CAP` so a long streaming search
-            can't grow it without limit; once full, later batches are
-            ignored. Surrounding punctuation is stripped and very short or
-            non-word tokens are skipped to keep completions useful.
-            """
-            if len(self._filter_vocabulary) >= self._FILTER_VOCAB_CAP:
-                return
-            changed = False
-            for record in records:
-                for token in record.text.split():
-                    word = token.strip("\"'`.,;:!?()[]{}<>*|=#")
-                    if len(word) < 3 or not word[:1].isalnum():
-                        continue
-                    if word not in self._filter_vocabulary:
-                        self._filter_vocabulary.add(word)
-                        changed = True
-                        if len(self._filter_vocabulary) >= self._FILTER_VOCAB_CAP:
-                            break
-                if len(self._filter_vocabulary) >= self._FILTER_VOCAB_CAP:
-                    break
-            if changed:
-                self._filter_suggester.set_vocabulary(self._filter_vocabulary)
 
         async def _apply_records_batch(
             self,
@@ -1903,7 +1862,6 @@ def build_streaming_ui_app(
             UI for the duration of a single apply.
             """
             self.all_records.extend(records)
-            self._extend_filter_vocabulary(records)
             matching = [record for record in records if self._matches_filter(record)]
             if matching and self._results is not None:
                 results = self._results
