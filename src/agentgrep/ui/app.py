@@ -1131,7 +1131,11 @@ def build_streaming_ui_app(
             id: str | None = None,  # noqa: A002 -- forwarded to Textual's ``id`` kwarg
             target_input_id: str = "search",
         ) -> None:
-            super().__init__(id=id)
+            # Completion candidates are literal record terms / field names that
+            # may contain Rich-markup characters (e.g. a term like ``[magenta]``
+            # extracted from a record); render them as plain text so the option
+            # list never tries to parse them as markup.
+            super().__init__(id=id, markup=False)
             self._target_input_id = target_input_id
 
         async def _on_key(self, event: object) -> None:
