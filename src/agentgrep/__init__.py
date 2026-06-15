@@ -264,6 +264,15 @@ CLI_DESCRIPTION = build_description(
     """,
     (
         (
+            "search",
+            (
+                "agentgrep search streaming parser",
+                "agentgrep search 'ruff OR uv'",
+                "agentgrep search 'agent:codex migration'",
+                "agentgrep search '\"exact phrase\"'",
+            ),
+        ),
+        (
             "grep",
             (
                 "agentgrep grep bliss",
@@ -323,6 +332,11 @@ SEARCH_DESCRIPTION = build_description(
     """
     Smart search with relevance ranking, deduplication, and session grouping.
     Uses rapidfuzz for scoring — results sorted by match quality.
+
+    Terms accept a query language: bare terms are AND-combined substrings;
+    compose with OR / NOT / ( ); quote "exact phrases"; filter by field
+    (agent:, model:, role:, timestamp:, path:, scope:). field:* tests
+    presence and field:glob* matches wildcards.
     """,
     (
         (
@@ -332,6 +346,17 @@ SEARCH_DESCRIPTION = build_description(
                 "agentgrep search --threshold 70 migration",
                 "agentgrep search --no-rank --no-group caching",
                 "agentgrep search bliss --json",
+            ),
+        ),
+        (
+            "query language",
+            (
+                "agentgrep search 'ruff OR uv'",
+                "agentgrep search 'agent:codex migration'",
+                "agentgrep search '\"exact phrase\"'",
+                "agentgrep search 'timestamp:>2026-01-01 release'",
+                "agentgrep search 'model:gpt* caching'",
+                "agentgrep search 'deploy -agent:cursor-cli'",
             ),
         ),
     ),
@@ -344,6 +369,10 @@ GREP_DESCRIPTION = build_description(
     ``--no-dedupe`` for the raw rg view, ``-F`` for literal pattern
     matching, ``-i`` / ``-s`` to override case, ``--json`` for an
     rg-style event stream.
+
+    Patterns accept the same query language as ``search`` (field
+    predicates, OR / NOT, "phrases"), but grep needs at least one text
+    pattern to drive line-level matching.
     """,
     (
         (
@@ -354,6 +383,14 @@ GREP_DESCRIPTION = build_description(
                 "agentgrep grep -F --scope conversations TODO",
                 "agentgrep grep --json design",
                 "agentgrep grep --vimgrep --no-dedupe foo",
+            ),
+        ),
+        (
+            "query language",
+            (
+                "agentgrep grep 'agent:codex deploy'",
+                "agentgrep grep 'role:user TODO'",
+                "agentgrep grep 'fixme OR todo'",
             ),
         ),
     ),

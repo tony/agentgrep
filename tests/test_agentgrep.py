@@ -344,6 +344,18 @@ def test_help_examples_are_present_for_help_flags() -> None:
     assert "agentgrep find cursor-cli --json" in find_help.stdout
 
 
+def test_query_language_examples_present_in_search_and_grep_help() -> None:
+    """search/grep help advertises the query language so it is discoverable."""
+    search_help = run_agentgrep_cli("search", "--help")
+    grep_help = run_agentgrep_cli("grep", "--help")
+
+    assert search_help.returncode == 0
+    assert grep_help.returncode == 0
+    assert "query language examples:" in search_help.stdout
+    assert "agent:codex" in search_help.stdout
+    assert "query language examples:" in grep_help.stdout
+
+
 def test_build_docs_parser_returns_root_parser() -> None:
     """Adapter for ``sphinx-autodoc-argparse`` exposes the root parser."""
     agentgrep = load_agentgrep_module()
