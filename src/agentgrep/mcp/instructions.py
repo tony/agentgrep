@@ -36,9 +36,18 @@ _INSTR_SEARCH_VS_DISCOVERY = (
 
 _INSTR_DEFAULTS = (
     "Defaults: results are newest-first and deduplicated by session. "
-    "search uses substring AND-matching across all terms and scope='prompts'. "
+    "search AND-matches bare terms as substrings and scope='prompts'. "
     "Read status, stats, and page.next_cursor on search/find responses; pass "
     "the cursor back for the next page."
+)
+
+_INSTR_QUERY = (
+    "Query language: search terms also accept field predicates (agent:codex, "
+    "model:gpt*, role:user, timestamp:>2026-01-01, path:..., scope:...), boolean "
+    'OR / NOT / ( ), quoted "phrases", field:* (present) and field:glob* '
+    "(wildcard). Bare terms stay literal substrings. Read the "
+    "agentgrep://query-language resource for the field and operator catalog, or "
+    "dry-run a query string with validate_query(query=...) before searching."
 )
 
 _INSTR_RESULT_LOOP = (
@@ -50,7 +59,8 @@ _INSTR_RESULT_LOOP = (
 
 _INSTR_RESOURCES = (
     "Resources: agentgrep://capabilities (server info), agentgrep://sources "
-    "(discovered stores), agentgrep://sources/{agent} (per-agent)."
+    "(discovered stores), agentgrep://sources/{agent} (per-agent), "
+    "agentgrep://query-language (field and operator catalog)."
 )
 
 _INSTR_PRIVACY = (
@@ -65,6 +75,7 @@ _BASE_INSTRUCTIONS = "\n\n".join(
         _INSTR_SCOPE,
         _INSTR_SEARCH_VS_DISCOVERY,
         _INSTR_DEFAULTS,
+        _INSTR_QUERY,
         _INSTR_RESULT_LOOP,
         _INSTR_RESOURCES,
         _INSTR_PRIVACY,
