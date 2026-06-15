@@ -2047,6 +2047,30 @@ async def test_dropdown_accept_leaves_cursor_at_end_without_selecting(
         assert search.selection.is_empty
 
 
+async def test_detail_pane_highlights_filter_terms_distinctly(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Filter terms are highlighted in the detail body in a distinct style."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app._filter_terms = ("mobx",)
+        body = "use biome and mobx here"
+        renderable, _ = app._build_detail_body(body, ("biome",))
+
+        spans = [(s.start, s.end, str(s.style)) for s in renderable.spans]
+        biome = body.index("biome")
+        mobx = body.index("mobx")
+        # Search term keeps the yellow highlight; filter term gets its own.
+        assert any(
+            s == biome and e == biome + len("biome") and "yellow" in style for s, e, style in spans
+        )
+        assert any(
+            s == mobx and e == mobx + len("mobx") and "cyan" in style for s, e, style in spans
+        )
+
+
 async def test_dropdown_dismissal_keys_close_without_accepting(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

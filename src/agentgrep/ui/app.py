@@ -18,6 +18,7 @@ import contextlib
 import importlib
 import json
 import pathlib
+import re
 import time
 import typing as t
 from collections import abc as cabc
@@ -1393,17 +1394,20 @@ def build_streaming_ui_app(
             self._stacked: bool = False
             self._detail_opened: bool = False
             self._pending_autohighlights: int = 0
+            # Literal terms of the active filter, highlighted in the detail
+            # pane in a distinct color from the search-query terms.
+            self._filter_terms: tuple[str, ...] = ()
             # LRU caches for detail-pane work. Keyed by
-            # ``(id(record), query.terms, case_sensitive, regex)`` — the
-            # tuple of attributes that determines the rendered body and
-            # the highlighted match line. Bounded so a long browsing
-            # session can't grow them without limit.
+            # ``(id(record), query.terms, case_sensitive, regex, filter.terms)``
+            # — the attributes that determine the rendered body and the
+            # highlighted match line. Bounded so a long browsing session
+            # can't grow them without limit.
             self._detail_body_cache: collections.OrderedDict[
-                tuple[int, tuple[str, ...], bool, bool],
+                tuple[int, tuple[str, ...], bool, bool, tuple[str, ...]],
                 tuple[object, str],
             ] = collections.OrderedDict()
             self._first_match_cache: collections.OrderedDict[
-                tuple[int, tuple[str, ...], bool, bool],
+                tuple[int, tuple[str, ...], bool, bool, tuple[str, ...]],
                 int | None,
             ] = collections.OrderedDict()
 
@@ -2135,6 +2139,9 @@ def build_streaming_ui_app(
             # Streaming records use the same matcher so a live search keeps the
             # filtered list query-aware as records arrive.
             self._filter_matcher = matcher
+            # The filter's literal terms get highlighted in the detail pane in
+            # a distinct color from the search-query terms.
+            self._filter_terms = tuple(matcher.query.terms) if matcher is not None else ()
             streaming = t.cast("StreamingAppLike", t.cast("object", self))
             streaming.run_worker(
                 lambda captured_text=text, captured_matcher=matcher: self._run_filter_worker(
@@ -2440,12 +2447,13 @@ def build_streaming_ui_app(
         def _detail_cache_key(
             self,
             query_terms: cabc.Sequence[str],
-        ) -> tuple[int, tuple[str, ...], bool, bool] | None:
-            """Compose the LRU key for the current record + query.
+        ) -> tuple[int, tuple[str, ...], bool, bool, tuple[str, ...]] | None:
+            """Compose the LRU key for the current record + query + filter.
 
             Returns ``None`` when there is no current record (e.g. detail
             pane invoked before a record is highlighted) so callers know
-            to skip the cache entirely.
+            to skip the cache entirely. The filter terms are part of the key
+            so changing the filter re-renders the filter-term highlights.
             """
             record = self._current_detail_record
             if record is None:
@@ -2455,7 +2463,26 @@ def build_streaming_ui_app(
                 tuple(query_terms),
                 self.query.case_sensitive,
                 self.query.regex,
+                self._filter_terms,
             )
+
+        _FILTER_HIGHLIGHT_STYLE: t.ClassVar[str] = "bold black on cyan"
+
+        def _apply_filter_highlight(self, text: t.Any) -> None:
+            """Overlay the filter's literal terms onto ``text`` in a distinct color.
+
+            Applied after the (yellow) search-term highlight so filter matches
+            stand out separately. Filter matching is case-insensitive, so the
+            highlight is too; field predicates contribute no literal terms.
+            """
+            for term in self._filter_terms:
+                if not term:
+                    continue
+                try:
+                    compiled = re.compile(re.escape(term), re.IGNORECASE)
+                except re.error:
+                    continue
+                text.highlight_regex(compiled, style=self._FILTER_HIGHLIGHT_STYLE)
 
         def _build_detail_body(
             self,
@@ -2509,15 +2536,14 @@ def build_streaming_ui_app(
                     body_text,
                 )
             else:
-                result = (
-                    highlight_matches(
-                        body_text,
-                        query_terms,
-                        case_sensitive=self.query.case_sensitive,
-                        regex=self.query.regex,
-                    ),
+                highlighted = highlight_matches(
                     body_text,
+                    query_terms,
+                    case_sensitive=self.query.case_sensitive,
+                    regex=self.query.regex,
                 )
+                self._apply_filter_highlight(highlighted)
+                result = (highlighted, body_text)
             if cache_key is not None:
                 self._detail_body_cache[cache_key] = result
                 self._detail_body_cache.move_to_end(cache_key)
