@@ -62,6 +62,8 @@ from agentgrep import (
     run_search_query,
     truncate_lines,
 )
+from agentgrep.query import default_registry
+from agentgrep.ui.completion import FilterSuggester, QuerySuggester
 
 
 def scroll_percent(scroll_y: float, max_scroll_y: float) -> int:
@@ -935,8 +937,9 @@ def build_streaming_ui_app(
             *,
             placeholder: str = "",
             id: str | None = None,  # noqa: A002 -- forwarded to Textual's ``id`` kwarg
+            suggester: object | None = None,
         ) -> None:
-            super().__init__(placeholder=placeholder, id=id)
+            super().__init__(placeholder=placeholder, id=id, suggester=suggester)
             self._debounce_timer: object | None = None
 
         def _watch_value(self, value: str) -> None:
@@ -1020,8 +1023,14 @@ def build_streaming_ui_app(
             value: str = "",
             placeholder: str = "",
             id: str | None = None,  # noqa: A002 -- forwarded to Textual's ``id`` kwarg
+            suggester: object | None = None,
         ) -> None:
-            super().__init__(value=value, placeholder=placeholder, id=id)
+            super().__init__(
+                value=value,
+                placeholder=placeholder,
+                id=id,
+                suggester=suggester,
+            )
 
         def on_input_submitted(self, event: object) -> None:
             """Enter pressed — dispatch a :class:`SearchRequested` for the current value."""
@@ -1270,6 +1279,12 @@ def build_streaming_ui_app(
             self._detail_statusline: StaticLike | None = None
             self._filter_input: FilterInput | None = None
             self._search_input: SearchInput | None = None
+            # Inline-completion suggesters: the query suggester is static
+            # (registry-backed); the filter suggester's vocabulary refreshes
+            # from loaded records as the search finishes.
+            self._query_suggester = QuerySuggester(default_registry())
+            self._filter_suggester = FilterSuggester([])
+            self._filter_vocabulary: set[str] = set()
             self._resize_debounce_timer: object | None = None
             self._current_detail_record: SearchRecord | None = None
             self._detail_scroll: t.Any = None
@@ -1320,6 +1335,7 @@ def build_streaming_ui_app(
                 value=initial_search,
                 placeholder="Search prompts",
                 id="search",
+                suggester=self._query_suggester,
             )
             # Decide the responsive split up-front (terminal width is known
             # at compose time) so narrow terminals are born stacked with the
@@ -1336,7 +1352,11 @@ def build_streaming_ui_app(
                         yield MeterWidget(id="status-meter")
                         yield static_type("", id="status-right")
                     yield static_type("", id="status-detail")
-                    yield FilterInput(placeholder="Filter loaded results", id="filter")
+                    yield FilterInput(
+                        placeholder="Filter loaded results",
+                        id="filter",
+                        suggester=self._filter_suggester,
+                    )
                     yield SearchResultsList(id="results")
                 with vertical(id="detail-column", classes=detail_classes):
                     with DetailScroll(id="detail-scroll"):
@@ -1612,6 +1632,36 @@ def build_streaming_ui_app(
             )
 
         _APPLY_CHUNK_SIZE: t.ClassVar[int] = 200
+        _FILTER_VOCAB_CAP: t.ClassVar[int] = 4000
+
+        def _extend_filter_vocabulary(
+            self,
+            records: cabc.Sequence[SearchRecord],
+        ) -> None:
+            """Grow the filter-box completion vocabulary from record text.
+
+            Bounded by :attr:`_FILTER_VOCAB_CAP` so a long streaming search
+            can't grow it without limit; once full, later batches are
+            ignored. Surrounding punctuation is stripped and very short or
+            non-word tokens are skipped to keep completions useful.
+            """
+            if len(self._filter_vocabulary) >= self._FILTER_VOCAB_CAP:
+                return
+            changed = False
+            for record in records:
+                for token in record.text.split():
+                    word = token.strip("\"'`.,;:!?()[]{}<>*|=#")
+                    if len(word) < 3 or not word[:1].isalnum():
+                        continue
+                    if word not in self._filter_vocabulary:
+                        self._filter_vocabulary.add(word)
+                        changed = True
+                        if len(self._filter_vocabulary) >= self._FILTER_VOCAB_CAP:
+                            break
+                if len(self._filter_vocabulary) >= self._FILTER_VOCAB_CAP:
+                    break
+            if changed:
+                self._filter_suggester.set_vocabulary(self._filter_vocabulary)
 
         async def _apply_records_batch(
             self,
@@ -1630,6 +1680,7 @@ def build_streaming_ui_app(
             UI for the duration of a single apply.
             """
             self.all_records.extend(records)
+            self._extend_filter_vocabulary(records)
             matching = [record for record in records if self._matches_filter(record)]
             if matching and self._results is not None:
                 results = self._results

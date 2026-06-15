@@ -1932,6 +1932,23 @@ async def test_streaming_ui_app_mounts_cleanly(
         assert {"search", "filter", "detail-scroll"}.issubset(focus_chain_ids)
 
 
+async def test_streaming_ui_app_wires_inline_completion(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The search and filter inputs carry working inline-completion suggesters."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        search = app.screen.query_one("#search")
+        filter_input = app.screen.query_one("#filter")
+        assert search.suggester is not None
+        assert filter_input.suggester is not None
+        # The query suggester completes a bare field-name prefix.
+        suggestion = await search.suggester.get_suggestion("age")
+        assert suggestion == "agent:"
+
+
 async def test_empty_query_focuses_search_input_and_marks_search_done(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
