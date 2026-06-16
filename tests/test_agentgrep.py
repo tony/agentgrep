@@ -356,6 +356,43 @@ def test_query_language_examples_present_in_search_and_grep_help() -> None:
     assert "query language examples:" in grep_help.stdout
 
 
+def test_bare_search_prints_help() -> None:
+    """``agentgrep search`` with no terms shows help+examples, not a full-store dump."""
+    completed = run_agentgrep_cli("search")
+
+    assert completed.returncode == 0
+    assert "examples:" in completed.stdout
+    assert "query language examples:" in completed.stdout
+    assert "agentgrep search 'ruff OR uv'" in completed.stdout
+
+
+def test_parse_args_bare_search_returns_none_and_prints_help(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``parse_args(["search"])`` prints the search help and returns None."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+
+    args = agentgrep.parse_args(["search"])
+
+    assert args is None
+    captured = capsys.readouterr().out
+    assert "examples:" in captured
+    assert "agentgrep search 'ruff OR uv'" in captured
+
+
+def test_parse_args_bare_search_with_ui_does_not_print_help(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``agentgrep search --ui`` keeps launching the explorer; no help banner."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+
+    args = agentgrep.parse_args(["search", "--ui"])
+
+    assert isinstance(args, agentgrep.SearchArgs)
+    captured = capsys.readouterr().out
+    assert "examples:" not in captured
+
+
 def test_build_docs_parser_returns_root_parser() -> None:
     """Adapter for ``sphinx-autodoc-argparse`` exposes the root parser."""
     agentgrep = load_agentgrep_module()

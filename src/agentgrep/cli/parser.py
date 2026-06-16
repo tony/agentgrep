@@ -875,6 +875,14 @@ def parse_args(
         )
 
     if command == "search":
+        # Bare `agentgrep search` (no terms) would otherwise rank every
+        # record; show the subcommand help+examples instead, the way
+        # bare `agentgrep` shows root help. `--ui` keeps launching the
+        # explorer with an empty seed query.
+        if not t.cast("list[str]", namespace.terms) and not t.cast("bool", namespace.ui):
+            with configured_color_environment(color_mode):
+                bundle.search_parser.print_help()
+            return None
         return _build_search_args(
             namespace,
             agents=agents,
