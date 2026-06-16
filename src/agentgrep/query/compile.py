@@ -32,6 +32,7 @@ import datetime as dt
 import fnmatch
 import os
 import pathlib
+import re
 import typing as t
 
 import agentgrep
@@ -39,6 +40,7 @@ from agentgrep.query.ast import (
     AndNode,
     FieldCmpNode,
     FieldEqNode,
+    FieldExistsNode,
     FieldRangeNode,
     NotNode,
     OrNode,
@@ -163,6 +165,10 @@ def _validate_ast(node: QueryNode, registry: FieldRegistry) -> None:
     direct callers (tests, library consumers) still see the same
     errors at call time.
     """
+    if isinstance(node, FieldExistsNode):
+        # Field-exists is valid for any registered field; the parser
+        # already rejected unknown field names.
+        return
     if isinstance(node, FieldEqNode):
         _validate_field_value(node.field, node.value, registry)
         return
@@ -288,7 +294,7 @@ def build_query_from_input(
             query=_rebuild(base_query, terms=(), compiled=None),
             error=None,
         )
-    if ":" not in stripped:
+    if not _has_query_syntax(stripped, registry):
         terms = tuple(stripped.split())
         return QueryBuildResult(
             query=_rebuild(base_query, terms=terms, compiled=None),
@@ -302,10 +308,61 @@ def build_query_from_input(
         compiled = compile_query(ast, registry)
     except QueryCompileError as exc:
         return QueryBuildResult(query=None, error=str(exc))
+    # A pure-text result (phrase, or parenthesized AND of terms) needs no
+    # predicate; route the extracted terms through the fast path so the
+    # search box stays as cacheable as a bare-term query.
+    result_compiled = None if compiled.is_pure_text else compiled
+    # A ``scope:`` predicate filters records, but the coarse discovery scope
+    # decides which stores are opened at all. Widen discovery to "all" when
+    # the query references scope so the record-level filter has both prompt
+    # and conversation sources to act on — otherwise ``scope:conversations``
+    # against a prompts-scoped box would open no conversation stores and
+    # match nothing. Mirrors the CLI's ``_effective_search_scope``.
+    scope = "all" if "scope" in fields_in_ast(ast) else base_query.scope
     return QueryBuildResult(
-        query=_rebuild(base_query, terms=compiled.text_terms, compiled=compiled),
+        query=_rebuild(
+            base_query,
+            terms=compiled.text_terms,
+            compiled=result_compiled,
+            scope=scope,
+        ),
         error=None,
     )
+
+
+_BOOLEAN_KEYWORDS: frozenset[str] = frozenset({"AND", "OR", "NOT"})
+_IDENT_COLON_RE = re.compile(r"(?<![A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*):")
+
+
+def _has_query_syntax(text: str, registry: FieldRegistry) -> bool:
+    """Return whether ``text`` carries query-language syntax.
+
+    Mirrors the CLI gate (:func:`agentgrep.cli.parser._query_syntax_present`)
+    but derives the queryable field names from ``registry`` rather than a
+    hardcoded mirror — the query module is already imported on this path,
+    so there is no cold-start cost. Engages on a known field predicate, a
+    standalone uppercase boolean keyword, or a leading quote.
+
+    Parameters
+    ----------
+    text : str
+        The (already stripped) search-box input.
+    registry : FieldRegistry
+        Registry whose field names and aliases count as predicates.
+
+    Returns
+    -------
+    bool
+        ``True`` when the parser should be engaged.
+    """
+    if not text:
+        return False
+    if text[:1] in {'"', "'"}:
+        return True
+    if any(word in _BOOLEAN_KEYWORDS for word in text.split()):
+        return True
+    field_names = {name for spec in registry.specs for name in (spec.name, *spec.aliases)}
+    return any(match.group(1) in field_names for match in _IDENT_COLON_RE.finditer(text))
 
 
 def _rebuild(
@@ -313,11 +370,16 @@ def _rebuild(
     *,
     terms: tuple[str, ...],
     compiled: CompiledQuery | None,
+    scope: agentgrep.SearchScope | None = None,
 ) -> agentgrep.SearchQuery:
-    """Clone ``base`` with new ``terms`` / ``compiled``; carry the rest forward."""
+    """Clone ``base`` with new ``terms`` / ``compiled``; carry the rest forward.
+
+    ``scope`` overrides the discovery scope when a ``scope:`` predicate
+    widened it; ``None`` keeps ``base.scope``.
+    """
     return agentgrep.SearchQuery(
         terms=terms,
-        scope=base.scope,
+        scope=base.scope if scope is None else scope,
         any_term=base.any_term,
         regex=base.regex,
         case_sensitive=base.case_sensitive,
@@ -338,7 +400,7 @@ def fields_in_ast(node: QueryNode) -> set[str]:
     intersect or override. Bare positional terms don't appear in
     the result (they have no field name).
     """
-    if isinstance(node, FieldEqNode | FieldCmpNode | FieldRangeNode):
+    if isinstance(node, FieldEqNode | FieldCmpNode | FieldRangeNode | FieldExistsNode):
         return {node.field}
     if isinstance(node, NotNode):
         return fields_in_ast(node.child)
@@ -464,6 +526,15 @@ def _evaluate_source(
     """
     if isinstance(node, TermNode):
         return "U"
+    if isinstance(node, FieldExistsNode):
+        spec = registry.get(node.field)
+        if spec is None or spec.layer == "record":
+            return "U"
+        # mtime existence is unknown when the stat failed (mtime_ns<=0);
+        # otherwise the source carries the field by construction.
+        if spec.name == "mtime":
+            return "U" if source.mtime_ns <= 0 else "T"
+        return "T"
     if isinstance(node, FieldEqNode | FieldCmpNode | FieldRangeNode):
         spec = registry.get(node.field)
         if spec is None or spec.layer == "record":
@@ -515,6 +586,8 @@ def _evaluate_record(
     """
     if isinstance(node, TermNode):
         return _text_matches(record, node.value)
+    if isinstance(node, FieldExistsNode):
+        return _field_exists_on_record(node.field, record)
     if isinstance(node, FieldEqNode):
         spec = registry.get(node.field)
         if spec is None:
@@ -539,6 +612,28 @@ def _evaluate_record(
     return False
 
 
+def _field_exists_on_record(field: str, record: agentgrep.SearchRecord) -> bool:
+    """Return whether ``field`` is present and non-empty on ``record``.
+
+    Source-derived identity fields (``agent``/``store``/``adapter_id``)
+    and the always-derivable ``scope`` are always present. Nullable
+    record fields count as absent when ``None`` or empty.
+    """
+    if field in {"agent", "store", "adapter_id", "scope"}:
+        return True
+    if field == "path":
+        return bool(str(record.path))
+    if field == "model":
+        return bool(record.model)
+    if field == "role":
+        return bool(record.role)
+    if field == "timestamp":
+        return bool(record.timestamp)
+    if field == "text":
+        return bool(record.text)
+    return False
+
+
 def _field_matches_source(
     node: FieldEqNode | FieldCmpNode | FieldRangeNode,
     source: agentgrep.SourceHandle,
@@ -549,9 +644,9 @@ def _field_matches_source(
     if spec.name == "agent":
         return _enum_eq(source.agent, _eq_value(node), spec)
     if spec.name == "store":
-        return _string_substring(source.store, _eq_value(node))
+        return _string_match(source.store, _eq_value(node))
     if spec.name == "adapter_id":
-        return _string_substring(source.adapter_id, _eq_value(node))
+        return _string_match(source.adapter_id, _eq_value(node))
     if spec.name == "path":
         return _path_match(str(source.path), _path_pattern_for(node, path_patterns))
     if spec.name == "mtime":
@@ -583,10 +678,14 @@ def _field_matches_record(
             _record_timestamp_as_datetime(record.timestamp),
         )
     if spec.name == "model":
-        return record.model is not None and node.value in record.model
+        return record.model is not None and _string_match(record.model, node.value)
     if spec.name == "role":
-        return record.role is not None and node.value in record.role
+        return record.role is not None and _string_match(record.role, node.value)
     if spec.name == "text":
+        # A wildcard text value matches the record text only (anchored
+        # glob); a plain value keeps the multi-surface substring match.
+        if _is_wildcard(node.value):
+            return _string_match(record.text, node.value)
         return _text_matches(record, node.value)
     return False
 
@@ -606,9 +705,9 @@ def _field_matches_record_via_source(
     if spec.name == "agent":
         return record.agent == node.value
     if spec.name == "store":
-        return node.value in record.store
+        return _string_match(record.store, node.value)
     if spec.name == "adapter_id":
-        return node.value in record.adapter_id
+        return _string_match(record.adapter_id, node.value)
     if spec.name == "path":
         return _path_match(str(record.path), _path_pattern_for(node, path_patterns))
     return False
@@ -738,8 +837,26 @@ def _enum_eq(actual: str, expected: str, spec: FieldSpec) -> bool:
     return actual == expected
 
 
-def _string_substring(haystack: str, needle: str) -> bool:
-    """Case-insensitive substring match used by ``store``/``adapter_id``."""
+def _is_wildcard(value: str) -> bool:
+    """Return whether a string-field value carries a glob wildcard.
+
+    Only ``*`` and ``?`` count; ``[...]`` classes stay path-only so a
+    literal ``model:gpt[4]`` is not surprisingly reinterpreted.
+    """
+    return "*" in value or "?" in value
+
+
+def _string_match(haystack: str, needle: str) -> bool:
+    """Case-insensitive match for text/string fields.
+
+    A wildcard value (``*`` / ``?``) matches by anchored glob — ``gpt*``
+    means "starts with gpt"; users wanting substring write ``*gpt*``.
+    A plain value keeps the historical casefolded substring match.
+    ``fnmatchcase`` on pre-casefolded inputs keeps the result identical
+    across platforms (``fnmatch`` would apply OS-specific normcase).
+    """
+    if _is_wildcard(needle):
+        return fnmatch.fnmatchcase(haystack.casefold(), needle.casefold())
     return needle.casefold() in haystack.casefold()
 
 

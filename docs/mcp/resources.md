@@ -42,6 +42,21 @@ discovery by agent.
 
 Read `agentgrep://catalog` for the canonical catalog of every store agentgrep knows about — role, format, upstream reference, and schema notes per entry.
 
+## Query language
+
+```{fastmcp-resource} agentgrep_query_language
+```
+
+Read `agentgrep://query-language` for the field and operator catalog the
+{tool}`search` tool accepts: every queryable field with its kind, layer,
+aliases, and enum values, plus the boolean / phrase / wildcard / range
+operators with copy-pasteable examples. The catalog is generated from the
+same registry the compiler uses, so it never drifts from what the tools
+actually accept. {tool}`search` honors this query language inline; call
+{tool}`validate_query` to dry-run a query's syntax (parse + compile) without
+running a search. See {ref}`library-query-language` for the full prose
+reference.
+
 ## Store roles
 
 ```{fastmcp-resource} agentgrep_store_roles

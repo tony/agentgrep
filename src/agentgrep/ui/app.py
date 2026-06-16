@@ -18,6 +18,7 @@ import contextlib
 import importlib
 import json
 import pathlib
+import re
 import time
 import typing as t
 from collections import abc as cabc
@@ -49,10 +50,8 @@ from agentgrep import (
     TextualMessageModule,
     TextualOptionListInternalsModule,
     TextualWidgetsModule,
-    build_search_haystack,
     cached_haystack,
     clear_haystack_cache,
-    compute_filter_matches,
     detect_content_format,
     find_first_match_line,
     format_compact_path,
@@ -62,6 +61,14 @@ from agentgrep import (
     run_search_query,
     truncate_lines,
 )
+from agentgrep.query import default_registry
+from agentgrep.ui.completion import (
+    QuerySuggester,
+    apply_enum_choice,
+    apply_word_choice,
+    keyword_completion_candidates,
+)
+from agentgrep.ui.highlighter import QueryHighlighter
 
 
 def scroll_percent(scroll_y: float, max_scroll_y: float) -> int:
@@ -935,8 +942,15 @@ def build_streaming_ui_app(
             *,
             placeholder: str = "",
             id: str | None = None,  # noqa: A002 -- forwarded to Textual's ``id`` kwarg
+            suggester: object | None = None,
+            highlighter: object | None = None,
         ) -> None:
-            super().__init__(placeholder=placeholder, id=id)
+            super().__init__(
+                placeholder=placeholder,
+                id=id,
+                suggester=suggester,
+                highlighter=highlighter,
+            )
             self._debounce_timer: object | None = None
 
         def _watch_value(self, value: str) -> None:
@@ -957,7 +971,24 @@ def build_streaming_ui_app(
             cursor = int(getattr(self, "cursor_position", 0))
             value = str(getattr(self, "value", ""))
             stop = getattr(event, "stop", None)
+            dropdown = t.cast("t.Any", getattr(self.app, "_filter_dropdown", None))
+            dropdown_open = dropdown is not None and bool(dropdown.display)
+            if dropdown_open and key in {"escape", "ctrl+c"}:
+                # Dismiss the dropdown, keep editing — don't quit.
+                if callable(stop):
+                    stop()
+                dropdown.display = False
+                return
+            if dropdown_open and key == "enter":
+                dropdown.display = False
             if key == "down":
+                if dropdown_open and dropdown.option_count:
+                    # An open completion picker captures Down: jump into it.
+                    if callable(stop):
+                        stop()
+                    dropdown.focus()
+                    dropdown.highlighted = 0
+                    return
                 if value and cursor < len(value):
                     self.cursor_position = len(value)
                     if callable(stop):
@@ -1020,8 +1051,16 @@ def build_streaming_ui_app(
             value: str = "",
             placeholder: str = "",
             id: str | None = None,  # noqa: A002 -- forwarded to Textual's ``id`` kwarg
+            suggester: object | None = None,
+            highlighter: object | None = None,
         ) -> None:
-            super().__init__(value=value, placeholder=placeholder, id=id)
+            super().__init__(
+                value=value,
+                placeholder=placeholder,
+                id=id,
+                suggester=suggester,
+                highlighter=highlighter,
+            )
 
         def on_input_submitted(self, event: object) -> None:
             """Enter pressed — dispatch a :class:`SearchRequested` for the current value."""
@@ -1039,7 +1078,26 @@ def build_streaming_ui_app(
             cursor = int(getattr(self, "cursor_position", 0))
             value = str(getattr(self, "value", ""))
             stop = getattr(event, "stop", None)
+            dropdown = t.cast("t.Any", getattr(self.app, "_enum_dropdown", None))
+            dropdown_open = dropdown is not None and bool(dropdown.display)
+            if dropdown_open and key in {"escape", "ctrl+c"}:
+                # Dismiss the dropdown, keep editing — don't quit or stop search.
+                if callable(stop):
+                    stop()
+                dropdown.display = False
+                return
+            if dropdown_open and key == "enter":
+                # Enter without navigating into the dropdown closes it and lets
+                # the normal submit proceed (no auto-accept).
+                dropdown.display = False
             if key == "down":
+                if dropdown_open and dropdown.option_count:
+                    # An open enum picker captures Down: jump into it.
+                    if callable(stop):
+                        stop()
+                    dropdown.focus()
+                    dropdown.highlighted = 0
+                    return
                 if value and cursor < len(value):
                     self.cursor_position = len(value)
                     if callable(stop):
@@ -1064,6 +1122,44 @@ def build_streaming_ui_app(
             """Footer-binding fallback (``_on_key`` handles the real release)."""
             self.app.action_focus_next()
 
+    class CompletionDropdown(option_list_type):  # ty: ignore[unsupported-base]
+        """Floating completion picker shared by the search and filter inputs.
+
+        A plain ``OptionList`` shown over the results via ``overlay: screen``
+        and toggled with ``display`` — the same lag-free mechanism Textual's
+        own ``Select`` uses, so re-population on each keystroke never mounts a
+        new widget. Enter fires ``OptionList.OptionSelected`` (handled by the
+        app); Escape and up-at-top return focus to ``target_input_id``.
+        """
+
+        def __init__(
+            self,
+            *,
+            id: str | None = None,  # noqa: A002 -- forwarded to Textual's ``id`` kwarg
+            target_input_id: str = "search",
+        ) -> None:
+            # Completion candidates are literal record terms / field names that
+            # may contain Rich-markup characters (e.g. a term like ``[magenta]``
+            # extracted from a record); render them as plain text so the option
+            # list never tries to parse them as markup.
+            super().__init__(id=id, markup=False)
+            self._target_input_id = target_input_id
+
+        async def _on_key(self, event: object) -> None:
+            key = str(getattr(event, "key", ""))
+            stop = getattr(event, "stop", None)
+            dismiss = key in {"escape", "ctrl+c"} or (
+                key == "up" and int(getattr(self, "highlighted", 0) or 0) == 0
+            )
+            if dismiss:
+                if callable(stop):
+                    stop()
+                self.display = False
+                with contextlib.suppress(Exception):
+                    self.app.query_one(f"#{self._target_input_id}").focus()
+                return
+            await super()._on_key(event)
+
     class AgentGrepApp(app_type):  # ty: ignore[unsupported-base]
         """Streaming read-only explorer for normalized search records."""
 
@@ -1073,6 +1169,20 @@ def build_streaming_ui_app(
         }
         #search {
             height: 3;
+        }
+        #enum-dropdown, #filter-dropdown {
+            /* Float over the results just below the input, like Select's popup
+               — no layout space, toggled via .display so re-populating per
+               keystroke never remounts. The x offset is set at runtime to the
+               input's cursor column; ``constrain: inside inside`` shifts it
+               back on-screen when the cursor is near the right edge. */
+            overlay: screen;
+            constrain: inside inside;
+            display: none;
+            width: 32;
+            max-height: 10;
+            border: tall $accent;
+            background: $surface;
         }
         #body {
             height: 1fr;
@@ -1247,7 +1357,6 @@ def build_streaming_ui_app(
             self.initial_search_text: str | None = initial_search_text
             self.all_records = []
             self.filtered_records = []
-            self._filter_text = ""
             self._progress: StreamingSearchProgress | None = None
             self._search_done = False
             self._started_at: float | None = None
@@ -1270,6 +1379,18 @@ def build_streaming_ui_app(
             self._detail_statusline: StaticLike | None = None
             self._filter_input: FilterInput | None = None
             self._search_input: SearchInput | None = None
+            # One registry-backed suggester drives the inline ghost text on
+            # both inputs; completion offers query-language keywords only.
+            self._completion_suggester = QuerySuggester(default_registry())
+            # One highlighter syntax-colors the typed query on both inputs.
+            self._query_highlighter = QueryHighlighter()
+            self._enum_dropdown: t.Any = None
+            self._enum_values: tuple[str, ...] = ()
+            self._filter_dropdown: t.Any = None
+            self._filter_dropdown_values: tuple[str, ...] = ()
+            # Compiled record matcher for the current (query-aware) filter
+            # text; ``None`` means no active filter (all records pass).
+            self._filter_matcher: t.Any = None
             self._resize_debounce_timer: object | None = None
             self._current_detail_record: SearchRecord | None = None
             self._detail_scroll: t.Any = None
@@ -1283,17 +1404,20 @@ def build_streaming_ui_app(
             self._stacked: bool = False
             self._detail_opened: bool = False
             self._pending_autohighlights: int = 0
+            # Literal terms of the active filter, highlighted in the detail
+            # pane in a distinct color from the search-query terms.
+            self._filter_terms: tuple[str, ...] = ()
             # LRU caches for detail-pane work. Keyed by
-            # ``(id(record), query.terms, case_sensitive, regex)`` — the
-            # tuple of attributes that determines the rendered body and
-            # the highlighted match line. Bounded so a long browsing
-            # session can't grow them without limit.
+            # ``(id(record), query.terms, case_sensitive, regex, filter.terms)``
+            # — the attributes that determine the rendered body and the
+            # highlighted match line. Bounded so a long browsing session
+            # can't grow them without limit.
             self._detail_body_cache: collections.OrderedDict[
-                tuple[int, tuple[str, ...], bool, bool],
+                tuple[int, tuple[str, ...], bool, bool, tuple[str, ...]],
                 tuple[object, str],
             ] = collections.OrderedDict()
             self._first_match_cache: collections.OrderedDict[
-                tuple[int, tuple[str, ...], bool, bool],
+                tuple[int, tuple[str, ...], bool, bool, tuple[str, ...]],
                 int | None,
             ] = collections.OrderedDict()
 
@@ -1320,7 +1444,13 @@ def build_streaming_ui_app(
                 value=initial_search,
                 placeholder="Search prompts",
                 id="search",
+                suggester=self._completion_suggester,
+                highlighter=self._query_highlighter,
             )
+            # Enum-value picker for field predicates; floats over the body
+            # just below the search bar and stays hidden until an enum
+            # field token (agent:/scope:) is typed.
+            yield CompletionDropdown(id="enum-dropdown", target_input_id="search")
             # Decide the responsive split up-front (terminal width is known
             # at compose time) so narrow terminals are born stacked with the
             # detail collapsed — applying the class in on_mount instead would
@@ -1336,7 +1466,18 @@ def build_streaming_ui_app(
                         yield MeterWidget(id="status-meter")
                         yield static_type("", id="status-right")
                     yield static_type("", id="status-detail")
-                    yield FilterInput(placeholder="Filter loaded results", id="filter")
+                    yield FilterInput(
+                        placeholder="Filter loaded results",
+                        id="filter",
+                        suggester=self._completion_suggester,
+                        highlighter=self._query_highlighter,
+                    )
+                    # Keyword/term picker for the query-aware filter; floats
+                    # over the results just below the filter input.
+                    yield CompletionDropdown(
+                        id="filter-dropdown",
+                        target_input_id="filter",
+                    )
                     yield SearchResultsList(id="results")
                 with vertical(id="detail-column", classes=detail_classes):
                     with DetailScroll(id="detail-scroll"):
@@ -1391,12 +1532,21 @@ def build_streaming_ui_app(
                 "SearchInput",
                 streaming.query_one("#search"),
             )
+            self._enum_dropdown = t.cast("t.Any", streaming.query_one("#enum-dropdown"))
+            self._enum_dropdown.display = False
+            self._filter_dropdown = t.cast("t.Any", streaming.query_one("#filter-dropdown"))
+            self._filter_dropdown.display = False
             # Steady (non-blinking) input cursors. A blinking cursor keeps
             # toggling its inverted-block glyph even when the terminal loses
             # focus — Textual can't tell the tmux pane went inactive without
             # focus-events — so the cursor flickers in the background pane.
+            # ``select_on_focus=False`` keeps the cursor where it is when focus
+            # returns (e.g. after accepting a dropdown choice) instead of
+            # selecting the whole query.
             for _input in (self._filter_input, self._search_input):
-                t.cast("t.Any", _input).cursor_blink = False
+                typed_input = t.cast("t.Any", _input)
+                typed_input.cursor_blink = False
+                typed_input.select_on_focus = False
             self._progress = self._make_gated_progress()
             self._apply_responsive_layout()
             if self.query.terms:
@@ -1537,6 +1687,101 @@ def build_streaming_ui_app(
                     event.elapsed,
                     str(event.error) if event.error else None,
                 )
+
+        def on_input_changed(self, event: object) -> None:
+            """Refresh the relevant completion dropdown as an input value changes."""
+            source = getattr(event, "input", None)
+            input_id = getattr(source, "id", None)
+            value = str(getattr(event, "value", ""))
+            if input_id == "search":
+                self._update_search_dropdown(value)
+            elif input_id == "filter":
+                self._update_filter_dropdown(value)
+
+        def _update_search_dropdown(self, value: str) -> None:
+            """Populate and show/hide the search bar's keyword dropdown."""
+            values = keyword_completion_candidates(value, default_registry()) or ()
+            self._enum_values = values
+            self._populate_dropdown(self._enum_dropdown, self._search_input, values)
+
+        def _update_filter_dropdown(self, value: str) -> None:
+            """Populate and show/hide the filter box's keyword dropdown."""
+            values = keyword_completion_candidates(value, default_registry()) or ()
+            self._filter_dropdown_values = values
+            self._populate_dropdown(self._filter_dropdown, self._filter_input, values)
+
+        def _populate_dropdown(
+            self,
+            dropdown: t.Any,
+            target_input: t.Any,
+            values: tuple[str, ...],
+        ) -> None:
+            """Fill ``dropdown`` with ``values`` anchored to ``target_input``'s cursor."""
+            if dropdown is None:
+                return
+            if not values:
+                dropdown.display = False
+                return
+            dropdown.clear_options()
+            dropdown.add_options(list(values))
+            self._align_dropdown_to_cursor(dropdown, target_input)
+            dropdown.display = True
+            dropdown.highlighted = 0
+
+        def _align_dropdown_to_cursor(self, dropdown: t.Any, target_input: t.Any) -> None:
+            """Offset ``dropdown`` so its content sits under ``target_input``'s cursor.
+
+            The overlay's natural slot is at the left edge just below its
+            input; shifting its x offset by the cursor's screen column (less
+            the 1-cell border) anchors the list to where the user is typing.
+            ``constrain: inside inside`` keeps it on-screen.
+            """
+            if target_input is None or dropdown is None:
+                return
+            cursor_x = int(t.cast("t.Any", target_input).cursor_screen_offset.x)
+            dropdown.styles.offset = (max(cursor_x - 1, 0), 0)
+
+        def on_option_list_option_selected(self, event: object) -> None:
+            """Accept a completion-dropdown choice into the originating input."""
+            option_list = getattr(event, "option_list", None)
+            index = int(getattr(event, "option_index", 0) or 0)
+            if option_list is self._enum_dropdown:
+                self._accept_dropdown_choice(
+                    self._search_input,
+                    self._enum_dropdown,
+                    self._enum_values,
+                    index,
+                )
+            elif option_list is self._filter_dropdown:
+                self._accept_dropdown_choice(
+                    self._filter_input,
+                    self._filter_dropdown,
+                    self._filter_dropdown_values,
+                    index,
+                )
+
+        def _accept_dropdown_choice(
+            self,
+            target_input: t.Any,
+            dropdown: t.Any,
+            values: tuple[str, ...],
+            index: int,
+        ) -> None:
+            """Insert the chosen completion into ``target_input`` and close ``dropdown``."""
+            if target_input is None or not (0 <= index < len(values)):
+                return
+            text = str(target_input.value)
+            trailing_token = text.rpartition(" ")[2]
+            # field:partial token -> replace the value after the colon; a bare
+            # token -> replace the whole token with the chosen keyword/term.
+            if ":" in trailing_token:
+                new_value = apply_enum_choice(text, values[index])
+            else:
+                new_value = apply_word_choice(text, values[index])
+            target_input.value = new_value
+            target_input.cursor_position = len(new_value)
+            dropdown.display = False
+            target_input.focus()
 
         def _run_search(self) -> None:
             progress = self._progress
@@ -1865,17 +2110,64 @@ def build_streaming_ui_app(
         def on_filter_requested(self, message: FilterRequested) -> None:
             """Spawn a worker to recompute the filter; exclusive cancels any in-flight one."""
             text = message.payload.text
-            self._filter_text = text.strip().casefold()
+            matcher = self._build_filter_matcher(text)
+            # Streaming records use the same matcher so a live search keeps the
+            # filtered list query-aware as records arrive.
+            self._filter_matcher = matcher
+            # The filter's literal terms get highlighted in the detail pane in
+            # a distinct color from the search-query terms.
+            self._filter_terms = tuple(matcher.query.terms) if matcher is not None else ()
             streaming = t.cast("StreamingAppLike", t.cast("object", self))
             streaming.run_worker(
-                lambda captured_text=text: self._run_filter_worker(captured_text),
+                lambda captured_text=text, captured_matcher=matcher: self._run_filter_worker(
+                    captured_text,
+                    captured_matcher,
+                ),
                 name="filter",
                 group="filter",
                 thread=True,
                 exclusive=True,
             )
 
-        def _run_filter_worker(self, text: str) -> None:
+        def _build_filter_matcher(self, text: str) -> t.Any:
+            """Compile a record matcher for the filter text, or ``None`` if empty.
+
+            The filter accepts the same query language as search, applied
+            in-memory to the loaded results: field predicates, booleans, and
+            phrases all work. A partial or malformed query (e.g. ``agent:``
+            mid-type) falls back to a literal substring match so the filter
+            stays usable while typing.
+            """
+            from agentgrep._engine.matching import compile_record_matcher
+            from agentgrep.query import build_query_from_input, default_registry
+
+            stripped = text.strip()
+            if not stripped:
+                return None
+            base = SearchQuery(
+                terms=(),
+                scope="all",
+                any_term=False,
+                regex=False,
+                case_sensitive=False,
+                agents=self.query.agents,
+                limit=None,
+            )
+            result = build_query_from_input(stripped, base, default_registry())
+            query = result.query
+            if query is None:
+                query = SearchQuery(
+                    terms=tuple(stripped.split()),
+                    scope="all",
+                    any_term=False,
+                    regex=False,
+                    case_sensitive=False,
+                    agents=self.query.agents,
+                    limit=None,
+                )
+            return compile_record_matcher(query)
+
+        def _run_filter_worker(self, text: str, matcher: t.Any) -> None:
             """Compute the filtered list on a background thread; post a ``FilterCompleted``.
 
             Runs in a worker thread; safe to scan ``self.all_records`` since
@@ -1883,7 +2175,10 @@ def build_streaming_ui_app(
             against stale results by comparing the captured text against the
             current input value in :meth:`on_filter_completed`.
             """
-            matching = compute_filter_matches(self.all_records, text)
+            if matcher is None:
+                matching: tuple[SearchRecord, ...] = tuple(self.all_records)
+            else:
+                matching = tuple(record for record in self.all_records if matcher.matches(record))
             streaming = t.cast("StreamingAppLike", t.cast("object", self))
             streaming.post_message(
                 FilterCompleted(
@@ -1928,6 +2223,11 @@ def build_streaming_ui_app(
             ``set_records`` rebuilds the list and Textual re-emits the
             highlight for the same row that's already in the detail pane.
             """
+            option_list = getattr(event, "option_list", None)
+            if option_list is self._enum_dropdown or option_list is self._filter_dropdown:
+                # The completion dropdowns are separate OptionLists; their
+                # highlights must not drive the results detail pane.
+                return
             option_index = getattr(event, "option_index", None)
             if option_index is None:
                 self._refresh_results_status_right()
@@ -2122,12 +2422,13 @@ def build_streaming_ui_app(
         def _detail_cache_key(
             self,
             query_terms: cabc.Sequence[str],
-        ) -> tuple[int, tuple[str, ...], bool, bool] | None:
-            """Compose the LRU key for the current record + query.
+        ) -> tuple[int, tuple[str, ...], bool, bool, tuple[str, ...]] | None:
+            """Compose the LRU key for the current record + query + filter.
 
             Returns ``None`` when there is no current record (e.g. detail
             pane invoked before a record is highlighted) so callers know
-            to skip the cache entirely.
+            to skip the cache entirely. The filter terms are part of the key
+            so changing the filter re-renders the filter-term highlights.
             """
             record = self._current_detail_record
             if record is None:
@@ -2137,7 +2438,26 @@ def build_streaming_ui_app(
                 tuple(query_terms),
                 self.query.case_sensitive,
                 self.query.regex,
+                self._filter_terms,
             )
+
+        _FILTER_HIGHLIGHT_STYLE: t.ClassVar[str] = "bold black on cyan"
+
+        def _apply_filter_highlight(self, text: t.Any) -> None:
+            """Overlay the filter's literal terms onto ``text`` in a distinct color.
+
+            Applied after the (yellow) search-term highlight so filter matches
+            stand out separately. Filter matching is case-insensitive, so the
+            highlight is too; field predicates contribute no literal terms.
+            """
+            for term in self._filter_terms:
+                if not term:
+                    continue
+                try:
+                    compiled = re.compile(re.escape(term), re.IGNORECASE)
+                except re.error:
+                    continue
+                text.highlight_regex(compiled, style=self._FILTER_HIGHLIGHT_STYLE)
 
         def _build_detail_body(
             self,
@@ -2191,15 +2511,14 @@ def build_streaming_ui_app(
                     body_text,
                 )
             else:
-                result = (
-                    highlight_matches(
-                        body_text,
-                        query_terms,
-                        case_sensitive=self.query.case_sensitive,
-                        regex=self.query.regex,
-                    ),
+                highlighted = highlight_matches(
                     body_text,
+                    query_terms,
+                    case_sensitive=self.query.case_sensitive,
+                    regex=self.query.regex,
                 )
+                self._apply_filter_highlight(highlighted)
+                result = (highlighted, body_text)
             if cache_key is not None:
                 self._detail_body_cache[cache_key] = result
                 self._detail_body_cache.move_to_end(cache_key)
@@ -2390,9 +2709,10 @@ def build_streaming_ui_app(
                 self.control.request_answer_now()
 
         def _matches_filter(self, record: SearchRecord) -> bool:
-            if not self._filter_text:
+            matcher = self._filter_matcher
+            if matcher is None:
                 return True
-            return self._filter_text in build_search_haystack(record).casefold()
+            return bool(matcher.matches(record))
 
     return AgentGrepApp(
         home=home,

@@ -324,7 +324,23 @@ def build_physical_search_plan(
             else:
                 eager_sources.append(source)
         planned_sources = eager_sources
-        if planned_sources:
+        compiled_record_predicate = (
+            query.compiled is not None and query.compiled.record_predicate is not None
+        )
+        if planned_sources and compiled_record_predicate:
+            # A compiled boolean/field query matches via its record
+            # predicate; a flat-term root grep prefilter ANDs the terms and
+            # would drop OR/NOT matches. Field-level pruning already ran via
+            # the compiled source_predicate, so keep these sources and let
+            # the record matcher decide.
+            decisions.append(
+                PlannerDecision(
+                    name="root_prefilter_skipped",
+                    source_count=len(planned_sources),
+                    detail="compiled_record_predicate",
+                ),
+            )
+        elif planned_sources:
             planned_sources = agentgrep.prefilter_sources_by_root(
                 query,
                 planned_sources,

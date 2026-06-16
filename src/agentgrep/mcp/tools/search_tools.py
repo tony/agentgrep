@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import collections.abc as cabc
 import datetime
 import pathlib
 import time
@@ -33,10 +34,12 @@ from agentgrep.mcp.models import (
     SearchToolResponse,
     SourceRecordModel,
 )
+from agentgrep.query.help import query_language_summary
 
 if t.TYPE_CHECKING:
     from fastmcp import FastMCP
 
+    from agentgrep import SearchQuery
     from agentgrep._engine.runtime import SearchRuntime
 
 
@@ -83,6 +86,30 @@ def _request_from_cursor(request: SearchRequestModel) -> tuple[SearchRequestMode
     )
 
 
+def _compile_request_query(
+    base_query: SearchQuery,
+    terms: cabc.Sequence[str],
+) -> SearchQuery:
+    """Apply the query language to a search request's terms.
+
+    Joins the request terms and routes them through
+    :func:`agentgrep.query.build_query_from_input` so MCP clients get the
+    same field predicates, booleans, phrases, and wildcards as the CLI.
+    Bare terms stay literal substrings; a malformed query raises a
+    :class:`ToolError` with the parse/compile message.
+    """
+    from agentgrep.query import build_query_from_input, default_registry
+
+    joined = " ".join(terms).strip()
+    if not joined:
+        return base_query
+    result = build_query_from_input(joined, base_query, default_registry())
+    if result.query is None:
+        message = f"invalid query: {result.error}"
+        raise ToolError(message)
+    return result.query
+
+
 async def _search_async(
     request: SearchRequestModel,
     *,
@@ -92,15 +119,19 @@ async def _search_async(
     effective_request, offset = _request_from_cursor(request)
     page_limit = effective_request.limit
     query_limit = None if page_limit is None else offset + page_limit + 1
-    query = agentgrep.SearchQuery(
-        terms=tuple(effective_request.terms),
-        scope=effective_request.scope,
-        any_term=False,
-        regex=False,
-        case_sensitive=effective_request.case_sensitive,
-        agents=normalize_agent_selection(effective_request.agent),
-        limit=query_limit,
+    base_query = t.cast(
+        "SearchQuery",
+        agentgrep.SearchQuery(
+            terms=tuple(effective_request.terms),
+            scope=effective_request.scope,
+            any_term=False,
+            regex=False,
+            case_sensitive=effective_request.case_sensitive,
+            agents=normalize_agent_selection(effective_request.agent),
+            limit=query_limit,
+        ),
     )
+    query = _compile_request_query(base_query, effective_request.terms)
     records: list[SearchRecordLike] = []
     source_count = 0
     searched = 0
@@ -192,14 +223,18 @@ def register(mcp: FastMCP, *, runtime: SearchRuntime | None = None) -> None:
     @mcp.tool(
         name="search",
         tags=READONLY_TAGS | {"search"},
-        description=("Search normalized prompts by default; opt into conversations with scope."),
+        description=(
+            "Search normalized prompts by default; opt into conversations with "
+            "scope. Terms accept agentgrep's query language (field predicates, "
+            "booleans, phrases, and wildcards); see agentgrep://query-language."
+        ),
     )
     async def search_tool(
         terms: t.Annotated[
             list[str] | None,
             Field(
                 default=None,
-                description="One or more literal search terms (AND-matched).",
+                description=f"Search terms. {query_language_summary()}",
             ),
         ] = None,
         agent: t.Annotated[

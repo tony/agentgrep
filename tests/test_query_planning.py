@@ -201,6 +201,41 @@ def test_plan_search_sources_delegates_to_physical_plan(
     assert [task.strategy for task in plan.tasks] == ["root_full_scan"]
 
 
+def test_compiled_record_predicate_skips_root_grep_prefilter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A compiled boolean/field query bypasses the flat-term root prefilter.
+
+    The flat-term root grep ANDs the query terms, so an OR/NOT query whose
+    matching file lacks one term would be dropped before the record matcher
+    runs. With a compiled record predicate the prefilter must be skipped and
+    the source kept; the record matcher is the source of truth.
+    """
+
+    def grep_root_paths(*_args: object, **_kwargs: object) -> set[pathlib.Path]:
+        message = "root prefilter must not run for compiled record queries"
+        raise AssertionError(message)
+
+    monkeypatch.setattr(agentgrep, "grep_root_paths", grep_root_paths)
+    root = pathlib.Path("/tmp/project")
+    source = _source(
+        agent="codex",
+        path="/tmp/project/a.jsonl",
+        search_root=root,
+        mtime_ns=2,
+    )
+    query = _query(compiled=_compiled_query())
+    backends = agentgrep.BackendSelection(find_tool=None, grep_tool="rg", json_tool=None)
+
+    plan = build_physical_search_plan(query, (source,), backends)
+
+    assert [task.source for task in plan.tasks] == [source]
+    assert any(
+        decision.name == "root_prefilter_skipped" and decision.detail == "compiled_record_predicate"
+        for decision in plan.decisions
+    )
+
+
 def test_bounded_text_append_only_jsonl_root_source_uses_lazy_admission(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

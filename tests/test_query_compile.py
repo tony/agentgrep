@@ -32,6 +32,7 @@ from agentgrep.query import (
     OrNode,
     QueryNode,
     TermNode,
+    build_query_from_input,
     compile_query,
     default_registry,
     parse_query,
@@ -147,6 +148,12 @@ PURE_TEXT_CASES: tuple[PureTextFastPathCase, ...] = (
         expected_pure=False,
         expected_terms=("bliss", "codex"),
     ),
+    PureTextFastPathCase(
+        test_id="phrase-only-is-pure",
+        query='"deploy v1"',
+        expected_pure=True,
+        expected_terms=("deploy v1",),
+    ),
 )
 
 
@@ -260,6 +267,42 @@ SOURCE_PREDICATE_CASES: tuple[SourcePredicateCase, ...] = (
         test_id="unknown-mtime-passes-through-as-U",
         query="mtime:>2026-01-01",
         source_kwargs={"mtime_ns": 0},
+        expected_passes=True,
+    ),
+    SourcePredicateCase(
+        test_id="agent-exists-always-passes",
+        query="agent:*",
+        source_kwargs={"agent": "codex"},
+        expected_passes=True,
+    ),
+    SourcePredicateCase(
+        test_id="negated-store-exists-prunes",
+        query="-store:*",
+        source_kwargs={"store": "sessions"},
+        expected_passes=False,
+    ),
+    SourcePredicateCase(
+        test_id="negated-unknown-mtime-exists-passes",
+        query="-mtime:*",
+        source_kwargs={"mtime_ns": 0},
+        expected_passes=True,
+    ),
+    SourcePredicateCase(
+        test_id="store-wildcard-passes",
+        query="store:codex*",
+        source_kwargs={"store": "codex.sessions"},
+        expected_passes=True,
+    ),
+    SourcePredicateCase(
+        test_id="store-wildcard-prunes",
+        query="store:claude*",
+        source_kwargs={"store": "codex.sessions"},
+        expected_passes=False,
+    ),
+    SourcePredicateCase(
+        test_id="store-literal-substring-passes",
+        query="store:sessions",
+        source_kwargs={"store": "codex.sessions"},
         expected_passes=True,
     ),
 )
@@ -499,6 +542,78 @@ RECORD_PREDICATE_CASES: tuple[RecordPredicateCase, ...] = (
         record_kwargs={"timestamp": None},
         expected_matches=False,
     ),
+    RecordPredicateCase(
+        test_id="phrase-substring-in-order-matches",
+        query='agent:codex "bliss prompt"',
+        record_kwargs={"agent": "codex", "text": "the bliss prompt content"},
+        expected_matches=True,
+    ),
+    RecordPredicateCase(
+        test_id="phrase-words-out-of-order-misses",
+        query='agent:codex "prompt bliss"',
+        record_kwargs={"agent": "codex", "text": "the bliss prompt content"},
+        expected_matches=False,
+    ),
+    RecordPredicateCase(
+        test_id="field-exists-model-present-matches",
+        query="model:* bliss",
+        record_kwargs={"model": "gpt-4", "text": "bliss"},
+        expected_matches=True,
+    ),
+    RecordPredicateCase(
+        test_id="field-exists-model-null-misses",
+        query="model:* bliss",
+        record_kwargs={"model": None, "text": "bliss"},
+        expected_matches=False,
+    ),
+    RecordPredicateCase(
+        test_id="negated-field-exists-model-null-matches",
+        query="-model:* bliss",
+        record_kwargs={"model": None, "text": "bliss"},
+        expected_matches=True,
+    ),
+    RecordPredicateCase(
+        test_id="field-exists-empty-role-counts-as-absent",
+        query="role:* bliss",
+        record_kwargs={"role": "", "text": "bliss"},
+        expected_matches=False,
+    ),
+    RecordPredicateCase(
+        test_id="model-wildcard-prefix-matches",
+        query="model:gpt* bliss",
+        record_kwargs={"model": "gpt-4", "text": "bliss"},
+        expected_matches=True,
+    ),
+    RecordPredicateCase(
+        test_id="model-wildcard-no-match",
+        query="model:gpt* bliss",
+        record_kwargs={"model": "claude-3-sonnet", "text": "bliss"},
+        expected_matches=False,
+    ),
+    RecordPredicateCase(
+        test_id="model-wildcard-is-case-insensitive",
+        query="model:GPT* bliss",
+        record_kwargs={"model": "gpt-4", "text": "bliss"},
+        expected_matches=True,
+    ),
+    RecordPredicateCase(
+        test_id="role-wildcard-question-mark",
+        query="role:assist?nt bliss",
+        record_kwargs={"role": "assistant", "text": "bliss"},
+        expected_matches=True,
+    ),
+    RecordPredicateCase(
+        test_id="model-literal-substring-still-works",
+        query="model:gpt bliss",
+        record_kwargs={"model": "gpt-4", "text": "bliss"},
+        expected_matches=True,
+    ),
+    RecordPredicateCase(
+        test_id="text-field-wildcard-prefix-anchored",
+        query="text:bliss* agent:codex",
+        record_kwargs={"text": "bliss here", "agent": "codex"},
+        expected_matches=True,
+    ),
 )
 
 
@@ -584,6 +699,11 @@ ENUM_VALIDATION_CASES: tuple[EnumValidationCase, ...] = (
         test_id="scope-near-miss",
         query="scope:prompt bliss",
         expected_fragment="invalid scope value 'prompt'",
+    ),
+    EnumValidationCase(
+        test_id="enum-wildcard-not-supported",
+        query="agent:co* bliss",
+        expected_fragment="invalid agent value 'co*'",
     ),
 )
 
@@ -733,3 +853,80 @@ def test_text_field_terms_show_up_in_text_terms() -> None:
 
 
 _ = (AndNode, FieldRangeNode, NotNode, OrNode)  # used in case data; keep imports live
+
+
+class ScopeWidenCase(t.NamedTuple):
+    """One build-query input and the discovery scope it should resolve to."""
+
+    test_id: str
+    query: str
+    base_scope: agentgrep.SearchScope
+    expected_scope: agentgrep.SearchScope
+
+
+SCOPE_WIDEN_CASES: tuple[ScopeWidenCase, ...] = (
+    ScopeWidenCase(
+        test_id="scope-conversations-widens-discovery",
+        query="scope:conversations",
+        base_scope="prompts",
+        expected_scope="all",
+    ),
+    ScopeWidenCase(
+        test_id="scope-all-widens-discovery",
+        query="scope:all",
+        base_scope="prompts",
+        expected_scope="all",
+    ),
+    ScopeWidenCase(
+        test_id="scope-prompts-widens-from-conversations",
+        query="scope:prompts",
+        base_scope="conversations",
+        expected_scope="all",
+    ),
+    ScopeWidenCase(
+        test_id="negated-scope-widens",
+        query="-scope:prompts",
+        base_scope="prompts",
+        expected_scope="all",
+    ),
+    ScopeWidenCase(
+        test_id="no-scope-predicate-keeps-base",
+        query="bliss",
+        base_scope="prompts",
+        expected_scope="prompts",
+    ),
+    ScopeWidenCase(
+        test_id="other-field-keeps-base-scope",
+        query="agent:codex bliss",
+        base_scope="conversations",
+        expected_scope="conversations",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    SCOPE_WIDEN_CASES,
+    ids=[c.test_id for c in SCOPE_WIDEN_CASES],
+)
+def test_build_query_from_input_widens_discovery_scope_for_scope_predicate(
+    case: ScopeWidenCase,
+) -> None:
+    """A ``scope:`` predicate widens the coarse discovery scope to ``all``.
+
+    The scope predicate filters records, but discovery decides which stores
+    are opened; without widening, ``scope:conversations`` against a
+    prompts-scoped box would open no conversation stores and match nothing.
+    """
+    base = agentgrep.SearchQuery(
+        terms=(),
+        scope=case.base_scope,
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=agentgrep.AGENT_CHOICES,
+        limit=None,
+    )
+    result = build_query_from_input(case.query, base, default_registry())
+    assert result.query is not None
+    assert result.query.scope == case.expected_scope

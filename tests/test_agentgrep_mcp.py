@@ -335,6 +335,78 @@ async def test_mcp_search_tool_returns_full_prompt(
     assert data.results[0].text == "serenity and bliss live here"
 
 
+def _codex_user_session(session_id: str, text: str) -> list[dict[str, object]]:
+    """Build a one-message codex session payload for query-language tests."""
+    return [
+        {
+            "type": "session_meta",
+            "payload": {"id": session_id, "model_provider": "openai"},
+        },
+        {
+            "timestamp": "2026-01-01T00:00:00Z",
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": text}],
+            },
+        },
+    ]
+
+
+async def test_mcp_search_honors_query_language(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The MCP search tool compiles boolean and field-predicate syntax.
+
+    A bare-substring AND of ``zzznope OR alpha`` would match nothing;
+    honoring the query language turns it into a union that finds the
+    record. The ``agent:`` predicate prunes by source.
+    """
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    write_jsonl(
+        home / ".codex" / "sessions" / "2026" / "01" / "01" / "rollout.jsonl",
+        _codex_user_session("session-1", "alpha content here"),
+    )
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        union = await client.call_tool(
+            "search",
+            {"terms": ["zzznope", "OR", "alpha"], "scope": "prompts", "limit": 5},
+        )
+        wrong_agent = await client.call_tool(
+            "search",
+            {"terms": ["agent:claude", "alpha"], "scope": "prompts", "limit": 5},
+        )
+
+    union_data = t.cast("SearchToolDataLike", union.data)
+    wrong_agent_data = t.cast("SearchToolDataLike", wrong_agent.data)
+    assert len(union_data.results) == 1
+    assert union_data.results[0].text == "alpha content here"
+    assert len(wrong_agent_data.results) == 0
+
+
+async def test_mcp_search_rejects_invalid_query() -> None:
+    """A malformed query predicate raises a ToolError with the reason."""
+    from fastmcp.exceptions import ToolError
+
+    agentgrep_mcp = load_agentgrep_mcp_module()
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        try:
+            _ = await client.call_tool("search", {"terms": ["agent:nope"]})
+        except ToolError as exc:
+            error_message = str(exc)
+        else:
+            error_message = ""
+
+    assert "invalid query" in error_message
+    assert "agent" in error_message
+
+
 async def test_mcp_search_tool_sorts_records_across_sources(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1101,6 +1173,56 @@ async def test_mcp_validate_query_substring_match() -> None:
     data = tool_payload(result)
     assert data["regex_valid"] is True
     assert data["matches"] is True
+
+
+async def test_mcp_validate_query_validates_query_language() -> None:
+    """``validate_query`` reports query-language parse/compile validity."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        good = await client.call_tool(
+            "validate_query",
+            {"query": "agent:codex OR model:gpt*"},
+        )
+        bad = await client.call_tool(
+            "validate_query",
+            {"query": "agent:nope"},
+        )
+
+    good_data = tool_payload(good)
+    bad_data = tool_payload(bad)
+    assert good_data["query_valid"] is True
+    assert good_data["error_message"] is None
+    assert bad_data["query_valid"] is False
+    assert "agent" in (bad_data["error_message"] or "")
+
+
+async def test_mcp_query_language_resource_lists_every_field() -> None:
+    """The query-language resource lists each registry field and operators."""
+    from agentgrep.query import default_registry
+
+    agentgrep_mcp = load_agentgrep_mcp_module()
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        contents = await client.read_resource("agentgrep://query-language")
+
+    payload = t.cast("dict[str, t.Any]", json.loads(extract_resource_text(contents)))
+    field_names = {field["name"] for field in payload["fields"]}
+    assert field_names == set(default_registry().known_names())
+    assert any(op["syntax"] == "field:*" for op in payload["operators"])
+    assert payload["summary"]
+
+
+async def test_mcp_search_tool_description_mentions_query_language() -> None:
+    """The search tool advertises the query language in its schema."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        tools = t.cast("list[ToolLike]", await client.list_tools())
+
+    search = next(tool for tool in tools if tool.name == "search")
+    description = t.cast("str | None", t.cast("t.Any", search).description)
+    assert "query language" in (description or "")
 
 
 async def test_mcp_recent_sessions_filters_by_mtime(

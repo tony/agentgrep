@@ -68,6 +68,12 @@ class Token(pydantic.BaseModel):
     kind: TokenKind
     value: str
     start: int
+    is_phrase: bool = False
+    """Whether a ``term`` token came from a quoted phrase.
+
+    Set by the tokenizer for quoted values so the parser can mark the
+    resulting :class:`TermNode`. Ignored for non-``term`` kinds.
+    """
 
 
 class _BaseNode(pydantic.BaseModel):
@@ -94,6 +100,14 @@ class TermNode(_BaseNode):
 
     kind: t.Literal["term"] = "term"
     value: str
+    is_phrase: bool = False
+    """Whether this term came from a quoted phrase (`"exact words"`).
+
+    A phrase matches as a single casefolded substring with collapsed
+    internal whitespace. It rides the same text-matching path as a bare
+    term, so this flag is informational for callers (e.g. UI highlight)
+    rather than a separate matching mode.
+    """
 
 
 class FieldEqNode(_BaseNode):
@@ -140,6 +154,19 @@ class FieldRangeNode(_BaseNode):
     inclusive_hi: bool
 
 
+class FieldExistsNode(_BaseNode):
+    """A ``field:*`` predicate — true when the field has a value.
+
+    Matches records or sources whose ``field`` is present and
+    non-empty (an empty string counts as absent). Negation rides the
+    standard ``NOT`` / ``-`` forms, so ``-model:*`` parses to
+    ``NotNode(FieldExistsNode(field="model"))``.
+    """
+
+    kind: t.Literal["field_exists"] = "field_exists"
+    field: str
+
+
 class NotNode(_BaseNode):
     """Boolean negation of a child node.
 
@@ -177,7 +204,14 @@ class OrNode(_BaseNode):
 
 
 QueryNode = t.Annotated[
-    TermNode | FieldEqNode | FieldCmpNode | FieldRangeNode | NotNode | AndNode | OrNode,
+    TermNode
+    | FieldEqNode
+    | FieldCmpNode
+    | FieldRangeNode
+    | FieldExistsNode
+    | NotNode
+    | AndNode
+    | OrNode,
     pydantic.Field(discriminator="kind"),
 ]
 """Discriminated union of every AST node :func:`parse_query` may emit.

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import typing as t
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 from agentgrep.mcp._library import (
     SERVER_VERSION,
@@ -390,19 +390,38 @@ class DiscoverySummaryResponse(AgentGrepModel):
 
 
 class ValidateQueryRequest(AgentGrepModel):
-    """Validated validate-query request payload."""
+    """Validated validate-query request payload.
 
-    terms: list[str] = Field(min_length=1)
+    Supply ``terms`` to dry-run literal/regex matching against
+    ``sample_text``, ``query`` to validate query-language syntax, or both.
+    """
+
+    terms: list[str] | None = None
+    query: str | None = None
     case_sensitive: bool = False
-    sample_text: str
+    sample_text: str = ""
+
+    @model_validator(mode="after")
+    def _require_terms_or_query(self) -> ValidateQueryRequest:
+        """Require at least one of ``terms`` or ``query``."""
+        if not self.terms and self.query is None:
+            message = "provide terms, query, or both"
+            raise ValueError(message)
+        return self
 
 
 class ValidateQueryResponse(AgentGrepModel):
-    """Result of a dry-run query validation."""
+    """Result of a dry-run query validation.
+
+    ``matches`` / ``regex_valid`` describe the literal/regex dry-run over
+    ``terms``; ``query_valid`` describes query-language parse + compile and
+    is ``None`` when no ``query`` was supplied.
+    """
 
     schema_version: str = agentgrep.SCHEMA_VERSION
     matches: bool
     regex_valid: bool
+    query_valid: bool | None = None
     error_message: str | None = None
 
 

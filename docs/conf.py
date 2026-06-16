@@ -40,6 +40,7 @@ conf = merge_sphinx_config(
         "sphinx_autodoc_fastmcp",
         "docs._ext.storages",
         "docs._ext.widgets",
+        "docs._ext.lexers",
     ],
     intersphinx_mapping={
         "python": ("https://docs.python.org/3/", None),

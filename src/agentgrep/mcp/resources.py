@@ -161,6 +161,48 @@ def register_resources(mcp: FastMCP) -> None:
     _ = catalog_resource
 
     @mcp.resource(
+        "agentgrep://query-language",
+        name="agentgrep_query_language",
+        description="Query-language field and operator catalog for search terms.",
+        mime_type="application/json",
+        tags=READONLY_TAGS | {"query"},
+        annotations=RESOURCE_ANNOTATIONS,
+    )
+    def query_language_resource() -> str:
+        from agentgrep.query.help import (
+            query_language_fields,
+            query_language_operators,
+            query_language_summary,
+        )
+
+        payload = {
+            "summary": query_language_summary(),
+            "fields": [
+                {
+                    "name": field.name,
+                    "kind": field.kind,
+                    "layer": field.layer,
+                    "aliases": list(field.aliases),
+                    "enum_values": list(field.enum_values),
+                    "supports_comparison": field.supports_comparison,
+                    "supports_range": field.supports_range,
+                }
+                for field in query_language_fields()
+            ],
+            "operators": [
+                {
+                    "syntax": operator.syntax,
+                    "description": operator.description,
+                    "example": operator.example,
+                }
+                for operator in query_language_operators()
+            ],
+        }
+        return json.dumps(payload, indent=2)
+
+    _ = query_language_resource
+
+    @mcp.resource(
         "agentgrep://store-roles",
         name="agentgrep_store_roles",
         description="StoreRole enum members with one-line descriptions.",

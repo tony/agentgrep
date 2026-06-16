@@ -344,6 +344,167 @@ def test_help_examples_are_present_for_help_flags() -> None:
     assert "agentgrep find cursor-cli --json" in find_help.stdout
 
 
+def test_query_language_examples_present_in_search_and_grep_help() -> None:
+    """search/grep help advertises the query language so it is discoverable."""
+    search_help = run_agentgrep_cli("search", "--help")
+    grep_help = run_agentgrep_cli("grep", "--help")
+
+    assert search_help.returncode == 0
+    assert grep_help.returncode == 0
+    assert "query language examples:" in search_help.stdout
+    assert "agent:codex" in search_help.stdout
+    assert "query language examples:" in grep_help.stdout
+
+
+def test_bare_search_prints_help() -> None:
+    """``agentgrep search`` with no terms shows help+examples, not a full-store dump."""
+    completed = run_agentgrep_cli("search")
+
+    assert completed.returncode == 0
+    assert "examples:" in completed.stdout
+    assert "query language examples:" in completed.stdout
+    assert "agentgrep search 'ruff OR uv'" in completed.stdout
+
+
+def test_parse_args_bare_search_returns_none_and_prints_help(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``parse_args(["search"])`` prints the search help and returns None."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+
+    args = agentgrep.parse_args(["search"])
+
+    assert args is None
+    captured = capsys.readouterr().out
+    assert "examples:" in captured
+    assert "agentgrep search 'ruff OR uv'" in captured
+
+
+def test_parse_args_bare_search_with_ui_does_not_print_help(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``agentgrep search --ui`` keeps launching the explorer; no help banner."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+
+    args = agentgrep.parse_args(["search", "--ui"])
+
+    assert isinstance(args, agentgrep.SearchArgs)
+    captured = capsys.readouterr().out
+    assert "examples:" not in captured
+
+
+def test_colorize_inline_code_strips_backticks_without_theme() -> None:
+    """RST ``code`` spans lose their backticks even with no theme bound."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+
+    out = agentgrep.AgentGrepHelpFormatter._colorize_inline_code(
+        "pick ``search`` or ``grep``",
+        theme=None,
+    )
+
+    assert out == "pick search or grep"
+    assert "`" not in out
+
+
+def test_colorize_inline_code_colors_with_theme() -> None:
+    """With a theme, ``code`` spans are colored and the backticks removed."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    theme = agentgrep.AnsiHelpTheme.default()
+
+    out = agentgrep.AgentGrepHelpFormatter._colorize_inline_code(
+        "pick ``search``",
+        theme=theme,
+    )
+
+    assert "``" not in out
+    assert f"{theme.inline_code}search{theme.reset}" in out
+
+
+def test_help_has_no_literal_double_backticks() -> None:
+    """Help output strips RST inline-code backticks on every surface."""
+    for argv in (["--help"], ["grep", "--help"], ["search", "--help"]):
+        completed = run_agentgrep_cli(*argv)
+        assert completed.returncode == 0
+        assert "``" not in completed.stdout
+
+
+def test_help_colorizes_query_language_tokens() -> None:
+    """Forced-color search help highlights query tokens down to their parts."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    theme = agentgrep.AnsiHelpTheme.default()
+    completed = run_agentgrep_cli(
+        "--color",
+        "always",
+        "search",
+        "--help",
+        env={"FORCE_COLOR": "1", "NO_COLOR": ""},
+    )
+
+    assert completed.returncode == 0
+    out = completed.stdout
+    # The bare boolean OR in `agentgrep search 'ruff OR uv'` is keyword-colored.
+    assert f"{theme.query_keyword}OR{theme.reset}" in out
+    # `model:gpt*` splits into field / colon / value / wildcard spans.
+    assert f"{theme.query_field}model{theme.reset}" in out
+    assert f"{theme.query_punct}:{theme.reset}" in out
+    assert f"{theme.query_wildcard}*{theme.reset}" in out
+    # Inline-code in the description renders with the inline_code color.
+    assert theme.inline_code in out
+
+
+def test_colorize_query_argument_splits_field_colon_value_wildcard() -> None:
+    """A quoted `field:value*` arg is colored field / colon / value / wildcard."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    theme = agentgrep.AnsiHelpTheme.default()
+
+    out = agentgrep.AgentGrepHelpFormatter._colorize_query_argument(
+        "'model:gpt*'",
+        theme=theme,
+    )
+
+    assert out.startswith("'") and out.endswith("'")  # outer shell quotes stay plain
+    assert f"{theme.query_field}model{theme.reset}" in out
+    assert f"{theme.query_punct}:{theme.reset}" in out
+    assert f"{theme.query_value}gpt{theme.reset}" in out
+    assert f"{theme.query_wildcard}*{theme.reset}" in out
+
+
+def test_colorize_query_expression_comparison_and_negation() -> None:
+    """Comparison ops use the operator color; the `-` sigil uses the negation color."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    theme = agentgrep.AnsiHelpTheme.default()
+
+    ts = agentgrep.AgentGrepHelpFormatter._colorize_query_expression(
+        "timestamp:>2026-01-01",
+        theme=theme,
+    )
+    assert f"{theme.query_field}timestamp{theme.reset}" in ts
+    assert f"{theme.query_punct}:{theme.reset}" in ts
+    assert f"{theme.query_operator}>{theme.reset}" in ts
+    assert f"{theme.query_value}2026-01-01{theme.reset}" in ts
+
+    neg = agentgrep.AgentGrepHelpFormatter._colorize_query_expression(
+        "-agent:cursor-cli",
+        theme=theme,
+    )
+    assert neg.startswith(f"{theme.query_negation}-{theme.reset}")
+    assert f"{theme.query_field}agent{theme.reset}" in neg
+
+
+def test_colorize_query_argument_keyword_and_bare_term() -> None:
+    """Boolean keywords are keyword-colored; bare terms get the value color."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    theme = agentgrep.AnsiHelpTheme.default()
+
+    out = agentgrep.AgentGrepHelpFormatter._colorize_query_argument(
+        "'ruff OR uv'",
+        theme=theme,
+    )
+    assert f"{theme.query_keyword}OR{theme.reset}" in out
+    assert f"{theme.query_value}ruff{theme.reset}" in out
+    assert f"{theme.query_value}uv{theme.reset}" in out
+
+
 def test_build_docs_parser_returns_root_parser() -> None:
     """Adapter for ``sphinx-autodoc-argparse`` exposes the root parser."""
     agentgrep = load_agentgrep_module()
@@ -1920,6 +2081,192 @@ async def test_streaming_ui_app_mounts_cleanly(
         assert {"search", "filter", "detail-scroll"}.issubset(focus_chain_ids)
 
 
+async def test_streaming_ui_app_wires_inline_completion(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The search and filter inputs carry working inline-completion suggesters."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        search = app.screen.query_one("#search")
+        filter_input = app.screen.query_one("#filter")
+        assert search.suggester is not None
+        assert filter_input.suggester is not None
+        # The query suggester completes a bare field-name prefix.
+        suggestion = await search.suggester.get_suggestion("age")
+        assert suggestion == "agent:"
+
+
+async def test_streaming_ui_app_enum_dropdown_opens_and_closes(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Typing an enum field predicate opens the value dropdown; other text hides it."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        search = app.screen.query_one("#search")
+        dropdown = app.screen.query_one("#enum-dropdown")
+
+        # An enum field token opens the dropdown with one option per value.
+        search.value = "scope:"
+        await pilot.pause()
+        assert dropdown.display is True
+        assert dropdown.option_count == 3  # prompts, conversations, all
+
+        # A partial filters the values.
+        search.value = "agent:cu"
+        await pilot.pause()
+        assert dropdown.display is True
+        assert dropdown.option_count == 2  # cursor-cli, cursor-ide
+
+        # The dropdown tracks the input cursor: a long prefix pushes it right.
+        search.value = "ruff codex review notes scope:"
+        search.cursor_position = len(search.value)
+        await pilot.pause()
+        assert dropdown.display is True
+        # Left edge is anchored near the cursor column, not pinned at 0.
+        cursor_x = search.cursor_screen_offset.x
+        assert abs(dropdown.region.x - (cursor_x - 1)) <= 1
+        assert dropdown.region.x > 10
+
+        # Non-enum / bare text hides it.
+        search.value = "ruff"
+        await pilot.pause()
+        assert dropdown.display is False
+
+
+async def test_streaming_ui_app_filter_dropdown_and_query_aware(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The filter box gets a keyword dropdown and a query-aware matcher."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        filter_input = app.screen.query_one("#filter")
+        dropdown = app.screen.query_one("#filter-dropdown")
+
+        # A bare token lists field-name keywords (no record vocabulary).
+        filter_input.value = "agent"
+        filter_input.cursor_position = len("agent")
+        await pilot.pause()
+        assert dropdown.display is True
+        assert app._filter_dropdown_values[0] == "agent:"
+
+        # A field token lists the enum values.
+        filter_input.value = "scope:"
+        filter_input.cursor_position = len("scope:")
+        await pilot.pause()
+        assert app._filter_dropdown_values == ("prompts", "conversations", "all")
+
+        # The filter executes the query language: a predicate compiles to a
+        # matcher; empty/whitespace yields no matcher (all records pass).
+        assert app._build_filter_matcher("agent:codex") is not None
+        assert app._build_filter_matcher("   ") is None
+
+        # A free-text term that isn't a keyword shows no dropdown.
+        filter_input.value = "zzznomatch"
+        filter_input.cursor_position = len("zzznomatch")
+        await pilot.pause()
+        assert dropdown.display is False
+
+
+async def test_dropdown_accept_leaves_cursor_at_end_without_selecting(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Accepting a dropdown choice places the cursor at the end, not select-all."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        search = app.screen.query_one("#search")
+        search.value = "agent:co"
+        search.cursor_position = len("agent:co")
+        await pilot.pause()
+        assert app._enum_values == ("codex",)
+
+        app._accept_dropdown_choice(search, app._enum_dropdown, app._enum_values, 0)
+        await pilot.pause()
+
+        assert search.value == "agent:codex"
+        assert search.cursor_position == len("agent:codex")
+        assert search.selection.is_empty
+
+
+async def test_detail_pane_highlights_filter_terms_distinctly(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Filter terms are highlighted in the detail body in a distinct style."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app._filter_terms = ("mobx",)
+        body = "use biome and mobx here"
+        renderable, _ = app._build_detail_body(body, ("biome",))
+
+        spans = [(s.start, s.end, str(s.style)) for s in renderable.spans]
+        biome = body.index("biome")
+        mobx = body.index("mobx")
+        # Search term keeps the yellow highlight; filter term gets its own.
+        assert any(
+            s == biome and e == biome + len("biome") and "yellow" in style for s, e, style in spans
+        )
+        assert any(
+            s == mobx and e == mobx + len("mobx") and "cyan" in style for s, e, style in spans
+        )
+
+
+async def test_dropdown_dismissal_keys_close_without_accepting(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Esc, Enter, and Ctrl+C dismiss an open dropdown without auto-accepting."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        search = app.screen.query_one("#search")
+        dropdown = app.screen.query_one("#enum-dropdown")
+        search.focus()
+        await pilot.pause()
+
+        # Each block uses a distinct value so the reactive fires Changed and
+        # the dropdown reopens.
+        #
+        # Esc dismisses and keeps focus in the input (still editing).
+        search.value = "agent:"
+        search.cursor_position = len(search.value)
+        await pilot.pause()
+        assert dropdown.display is True
+        await pilot.press("escape")
+        await pilot.pause()
+        assert dropdown.display is False
+        assert app.focused is search
+
+        # Enter closes the dropdown without accepting a value.
+        search.value = "scope:"
+        search.cursor_position = len(search.value)
+        await pilot.pause()
+        assert dropdown.display is True
+        await pilot.press("enter")
+        await pilot.pause()
+        assert dropdown.display is False
+        assert search.value == "scope:"
+
+        # Ctrl+C dismisses the dropdown instead of quitting the app.
+        search.value = "agent:cu"
+        search.cursor_position = len(search.value)
+        await pilot.pause()
+        assert dropdown.display is True
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+        assert dropdown.display is False
+        # The app is still running (Ctrl+C was consumed by the dropdown).
+        assert app.screen.query_one("#search") is search
+
+
 async def test_empty_query_focuses_search_input_and_marks_search_done(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1931,6 +2278,22 @@ async def test_empty_query_focuses_search_input_and_marks_search_done(
         assert app.focused is not None
         assert app.focused.id == "search"
         assert app._search_done is True
+
+
+async def test_search_and_filter_inputs_carry_query_highlighter(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both query inputs are wired with the Rich query-syntax highlighter."""
+    from agentgrep.ui.highlighter import QueryHighlighter
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        search = app.screen.query_one("#search")
+        filter_input = app.screen.query_one("#filter")
+        assert isinstance(search.highlighter, QueryHighlighter)
+        assert isinstance(filter_input.highlighter, QueryHighlighter)
 
 
 def test_streaming_ui_app_passes_runtime_to_search_worker(
