@@ -68,6 +68,7 @@ from agentgrep.ui.completion import (
     apply_word_choice,
     keyword_completion_candidates,
 )
+from agentgrep.ui.highlighter import QueryHighlighter
 
 
 def scroll_percent(scroll_y: float, max_scroll_y: float) -> int:
@@ -942,8 +943,14 @@ def build_streaming_ui_app(
             placeholder: str = "",
             id: str | None = None,  # noqa: A002 -- forwarded to Textual's ``id`` kwarg
             suggester: object | None = None,
+            highlighter: object | None = None,
         ) -> None:
-            super().__init__(placeholder=placeholder, id=id, suggester=suggester)
+            super().__init__(
+                placeholder=placeholder,
+                id=id,
+                suggester=suggester,
+                highlighter=highlighter,
+            )
             self._debounce_timer: object | None = None
 
         def _watch_value(self, value: str) -> None:
@@ -1045,12 +1052,14 @@ def build_streaming_ui_app(
             placeholder: str = "",
             id: str | None = None,  # noqa: A002 -- forwarded to Textual's ``id`` kwarg
             suggester: object | None = None,
+            highlighter: object | None = None,
         ) -> None:
             super().__init__(
                 value=value,
                 placeholder=placeholder,
                 id=id,
                 suggester=suggester,
+                highlighter=highlighter,
             )
 
         def on_input_submitted(self, event: object) -> None:
@@ -1373,6 +1382,8 @@ def build_streaming_ui_app(
             # One registry-backed suggester drives the inline ghost text on
             # both inputs; completion offers query-language keywords only.
             self._completion_suggester = QuerySuggester(default_registry())
+            # One highlighter syntax-colors the typed query on both inputs.
+            self._query_highlighter = QueryHighlighter()
             self._enum_dropdown: t.Any = None
             self._enum_values: tuple[str, ...] = ()
             self._filter_dropdown: t.Any = None
@@ -1434,6 +1445,7 @@ def build_streaming_ui_app(
                 placeholder="Search prompts",
                 id="search",
                 suggester=self._completion_suggester,
+                highlighter=self._query_highlighter,
             )
             # Enum-value picker for field predicates; floats over the body
             # just below the search bar and stays hidden until an enum
@@ -1458,6 +1470,7 @@ def build_streaming_ui_app(
                         placeholder="Filter loaded results",
                         id="filter",
                         suggester=self._completion_suggester,
+                        highlighter=self._query_highlighter,
                     )
                     # Keyword/term picker for the query-aware filter; floats
                     # over the results just below the filter input.

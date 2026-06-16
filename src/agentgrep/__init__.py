@@ -267,6 +267,77 @@ QUERY_TOKEN_RE = re.compile(
 # RST inline-code span (``code``) used in help intro prose.
 INLINE_CODE_RE = re.compile(r"``([^`]+)``")
 
+# Semantic roles emitted by :func:`highlight_query_spans`. The query-language
+# grammar is lexed once here and shared by every highlighter — the CLI ANSI
+# help (this module), the Textual TUI (``agentgrep.ui.highlighter``), and the
+# Sphinx/MyST docs (``agentgrep.query.pygments_lexer``) — so the surfaces never
+# drift. Each consumer maps these role strings to its own styling.
+QUERY_HIGHLIGHT_ROLES: frozenset[str] = frozenset(
+    {
+        "whitespace",
+        "field",
+        "keyword",
+        "negation",
+        "operator",
+        "punct",
+        "wildcard",
+        "date",
+        "phrase",
+        "value",
+    },
+)
+# QUERY_TOKEN_RE group name -> semantic role. ``OP`` is special-cased (``:`` is
+# punctuation, every other operator is a comparison/range operator).
+_QUERY_TOKEN_GROUP_ROLES: dict[str, str] = {
+    "SPACE": "whitespace",
+    "PHRASE": "phrase",
+    "BOOL": "keyword",
+    "FIELD": "field",
+    "DATE": "date",
+    "SIGN": "negation",
+    "PUNCT": "punct",
+    "WILD": "wildcard",
+    "WORD": "value",
+    "MISC": "value",
+}
+
+
+def highlight_query_spans(query: str) -> list[tuple[int, str, str]]:
+    """Lex a query string into contiguous ``(start, role, text)`` spans.
+
+    The single source of truth for query-language syntax highlighting. The
+    returned spans cover ``query`` end to end (including whitespace), in order,
+    so a consumer can rebuild the string or stylize by offset. ``role`` is one
+    of :data:`QUERY_HIGHLIGHT_ROLES`.
+
+    Parameters
+    ----------
+    query : str
+        The query expression (no surrounding shell quotes).
+
+    Returns
+    -------
+    list[tuple[int, str, str]]
+        ``(start_offset, role, text)`` spans in source order.
+
+    Examples
+    --------
+    >>> highlight_query_spans("agent:codex")
+    [(0, 'field', 'agent'), (5, 'punct', ':'), (6, 'value', 'codex')]
+    >>> [role for _, role, _ in highlight_query_spans("ruff OR uv")]
+    ['value', 'whitespace', 'keyword', 'whitespace', 'value']
+    """
+    spans: list[tuple[int, str, str]] = []
+    for match in QUERY_TOKEN_RE.finditer(query):
+        group = match.lastgroup or "MISC"
+        text = match.group()
+        if group == "OP":
+            role = "punct" if text == ":" else "operator"
+        else:
+            role = _QUERY_TOKEN_GROUP_ROLES.get(group, "value")
+        spans.append((match.start(), role, text))
+    return spans
+
 
 def build_description(
     intro: str,
@@ -1229,35 +1300,30 @@ class AgentGrepHelpFormatter(argparse.RawDescriptionHelpFormatter):
 
     @classmethod
     def _colorize_query_expression(cls, query: str, *, theme: HelpTheme) -> str:
-        """Syntax-highlight a query expression with :data:`QUERY_TOKEN_RE`.
+        """Syntax-highlight a query expression via :func:`highlight_query_spans`.
 
-        Maps each lexed span to a theme color: field name, ``:`` and brackets
-        (punctuation), comparison operators, boolean keywords, the ``-`` / ``+``
-        negation sigil, ``*`` / ``?`` wildcards, and everything else (values,
-        bare terms, dates, phrase text) to the single value color.
+        Maps each shared span role to a theme color. Design A collapses
+        ``date`` into the single value hue and renders a ``phrase`` with dim
+        delimiters around value-colored text.
         """
+        role_color = {
+            "field": theme.query_field,
+            "keyword": theme.query_keyword,
+            "negation": theme.query_negation,
+            "wildcard": theme.query_wildcard,
+            "punct": theme.query_punct,
+            "operator": theme.query_operator,
+            "value": theme.query_value,
+            "date": theme.query_value,
+        }
         out: list[str] = []
-        for match in QUERY_TOKEN_RE.finditer(query):
-            kind = match.lastgroup
-            token = match.group()
-            if kind == "SPACE":
-                out.append(token)
-            elif kind == "FIELD":
-                out.append(f"{theme.query_field}{token}{theme.reset}")
-            elif kind == "BOOL":
-                out.append(f"{theme.query_keyword}{token}{theme.reset}")
-            elif kind == "SIGN":
-                out.append(f"{theme.query_negation}{token}{theme.reset}")
-            elif kind == "WILD":
-                out.append(f"{theme.query_wildcard}{token}{theme.reset}")
-            elif kind == "PUNCT" or (kind == "OP" and token == ":"):
-                out.append(f"{theme.query_punct}{token}{theme.reset}")
-            elif kind == "OP":
-                out.append(f"{theme.query_operator}{token}{theme.reset}")
-            elif kind == "PHRASE":
-                out.append(cls._colorize_query_phrase(token, theme=theme))
-            else:  # DATE, WORD, MISC — Design A uses one value hue for all.
-                out.append(f"{theme.query_value}{token}{theme.reset}")
+        for _start, role, text in highlight_query_spans(query):
+            if role == "whitespace":
+                out.append(text)
+            elif role == "phrase":
+                out.append(cls._colorize_query_phrase(text, theme=theme))
+            else:
+                out.append(f"{role_color.get(role, theme.query_value)}{text}{theme.reset}")
         return "".join(out)
 
     @staticmethod

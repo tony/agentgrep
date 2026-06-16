@@ -2280,6 +2280,22 @@ async def test_empty_query_focuses_search_input_and_marks_search_done(
         assert app._search_done is True
 
 
+async def test_search_and_filter_inputs_carry_query_highlighter(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both query inputs are wired with the Rich query-syntax highlighter."""
+    from agentgrep.ui.highlighter import QueryHighlighter
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        search = app.screen.query_one("#search")
+        filter_input = app.screen.query_one("#filter")
+        assert isinstance(search.highlighter, QueryHighlighter)
+        assert isinstance(filter_input.highlighter, QueryHighlighter)
+
+
 def test_streaming_ui_app_passes_runtime_to_search_worker(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
