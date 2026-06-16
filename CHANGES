@@ -36,11 +36,21 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a23 (Yet to be released)
+## agentgrep 0.1.0a24 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a23 (2026-06-15)
+
+agentgrep 0.1.0a23 brings a Lucene-style query language to `search`, `grep`,
+and `find` — boolean composition, quoted phrases, field-existence and wildcard
+predicates, and date comparisons and ranges — and makes it work the same over
+MCP and in the interactive TUI. The TUI gains live query completion on its
+search and filter inputs, query examples are syntax-highlighted across the CLI
+help, the TUI, and the documentation from one shared grammar, and bare
+`agentgrep search` now prints its help instead of ranking every record.
 
 ### What's new
 
