@@ -53,10 +53,10 @@ pytest-documentation = "pytest_documentation.plugin"
 [dependency-groups]
 dev = [
   # Docs
-  "gp-sphinx==0.0.1a30",
-  "sphinx-autodoc-api-style==0.0.1a30",
-  "sphinx-autodoc-argparse==0.0.1a30",
-  "sphinx-autodoc-fastmcp==0.0.1a30",
+  "gp-sphinx==0.0.1a31",
+  "sphinx-autodoc-api-style==0.0.1a31",
+  "sphinx-autodoc-argparse==0.0.1a31",
+  "sphinx-autodoc-fastmcp==0.0.1a31",
   "sphinx-autobuild",
   # Testing
   "pytest",
@@ -81,10 +81,10 @@ dev = [
   "typer>=0.12",
 ]
 docs = [
-  "gp-sphinx==0.0.1a30",
-  "sphinx-autodoc-api-style==0.0.1a30",
-  "sphinx-autodoc-argparse==0.0.1a30",
-  "sphinx-autodoc-fastmcp==0.0.1a30",
+  "gp-sphinx==0.0.1a31",
+  "sphinx-autodoc-api-style==0.0.1a31",
+  "sphinx-autodoc-argparse==0.0.1a31",
+  "sphinx-autodoc-fastmcp==0.0.1a31",
   "sphinx-autobuild",
 ]
 
