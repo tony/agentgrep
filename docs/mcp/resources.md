@@ -42,8 +42,6 @@ discovery by agent.
 
 Read `agentgrep://catalog` for the canonical catalog of every store agentgrep knows about — role, format, upstream reference, and schema notes per entry.
 
-(mcp-resource-query-language)=
-
 ## Query language
 
 ```{fastmcp-resource} agentgrep_query_language

@@ -2,11 +2,11 @@
 
 # Query language
 
-`agentgrep search`, `agentgrep grep`, and `agentgrep find` accept a
-Lucene-style query language for inline field predicates, boolean
-composition, and date ranges. The same syntax works across all three
-subcommands; each interprets the predicates against its natural
-record shape.
+{argparse:subcommand}`agentgrep search`, {argparse:subcommand}`agentgrep grep`,
+and {argparse:subcommand}`agentgrep find` accept a Lucene-style query language
+for inline field predicates, boolean composition, and date ranges. The same
+syntax works across all three subcommands; each interprets the predicates
+against its natural record shape.
 
 The query language is **opt-in**: a bare positional like
 `agentgrep grep bliss` keeps the legacy fast path with zero
@@ -92,8 +92,8 @@ caught immediately rather than silently matching nothing.
 Every queryable field, alias, and operator is also reflected
 programmatically by `agentgrep.query.help` (`query_language_fields`,
 `query_language_operators`), which backs the MCP tool descriptions and
-the {ref}`agentgrep://query-language <mcp-resource-query-language>`
-resource — the same vocabulary, never out of sync.
+the {resource}`agentgrep_query_language` resource — the same vocabulary,
+never out of sync.
 
 ## Phrases
 
