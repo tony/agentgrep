@@ -81,8 +81,8 @@ predicate has admitted the source.
 |---|---|---|
 | `scope` | enum | One of `prompts`, `conversations`, `all` |
 | `timestamp` | date | Record timestamp; supports comparison + range; alias `date` |
-| `model` | string | Substring, or `*` / `?` wildcard, against `record.model` |
-| `role` | string | Substring or `*` / `?` wildcard against `record.role` |
+| `model` | string | Substring, or `*` / `?` wildcard, against `record.model` (conversation records only) |
+| `role` | string | Substring or `*` / `?` wildcard against `record.role` (prompt records are always `user`) |
 | `text` | string | Substring or `*` / `?` wildcard (against record text); implicit field for bare positional terms |
 
 Unknown field names error at parse time with a clean message listing
