@@ -104,6 +104,26 @@ description = "Profiling: engine-only all-agent prompt-source enumeration, sanit
 command = "{venv}/bin/python scripts/profile_engine.py find-prompts --agent all --limit 500 --format json"
 default_query = ""
 
+[bench.profile-engine-search-all-prompts-query-limit-500]
+description = "Profiling: engine-only all-agent prompt search with a query-language predicate, sanitized JSON profile, limit 500"
+command = "{venv}/bin/python scripts/profile_engine.py search-prompts --agent all --limit 500 --format json --query-language {query}"
+default_query = "agent:codex deploy"
+
+[bench.profile-engine-search-all-conversations-query-limit-500]
+description = "Profiling: engine-only all-agent conversation search with a query-language predicate, sanitized JSON profile, limit 500"
+command = "{venv}/bin/python scripts/profile_engine.py search-conversations --agent all --limit 500 --format json --query-language {query}"
+default_query = "(agent:codex OR agent:claude) model:* deploy"
+
+[bench.profile-engine-grep-all-prompts-query-max-count-500]
+description = "Profiling: engine-only all-agent prompt grep with a query-language predicate, sanitized JSON profile, max-count 500"
+command = "{venv}/bin/python scripts/profile_engine.py grep-prompts --agent all --max-count 500 --format json --query-language {query}"
+default_query = "(agent:codex OR agent:cursor-cli) deploy"
+
+[bench.profile-engine-grep-all-conversations-query-max-count-500]
+description = "Profiling: engine-only all-agent conversation grep with a query-language predicate, sanitized JSON profile, max-count 500"
+command = "{venv}/bin/python scripts/profile_engine.py grep-conversations --agent all --max-count 500 --format json --query-language {query}"
+default_query = "timestamp:[2026-01 TO 2026-12] model:* bliss"
+
 [bench.profile-engine-search-cursor-ide-prompts-limit-500]
 description = "Profiling: engine-only Cursor IDE SQLite prompt search, sanitized JSON profile, limit 500"
 command = "{venv}/bin/python scripts/profile_engine.py search-prompts --agent cursor-ide --limit 500 --format json {query}"

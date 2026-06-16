@@ -680,3 +680,86 @@ def test_profile_rejects_conflicting_limit_aliases() -> None:
 
     with pytest.raises(ValueError, match="--limit and --max-count disagree"):
         _ = profile_engine._resolve_result_limit(args)
+
+
+class QueryLanguageBuildCase(t.NamedTuple):
+    """One profiler query and whether ``--query-language`` compiles a predicate."""
+
+    test_id: str
+    component: str
+    terms: tuple[str, ...]
+    query_language: bool
+    expects_compiled: bool
+
+
+QUERY_LANGUAGE_BUILD_CASES: tuple[QueryLanguageBuildCase, ...] = (
+    QueryLanguageBuildCase(
+        test_id="field-predicate-compiles",
+        component="search-prompts",
+        terms=("agent:codex", "deploy"),
+        query_language=True,
+        expects_compiled=True,
+    ),
+    QueryLanguageBuildCase(
+        test_id="boolean-compiles",
+        component="grep-conversations",
+        terms=("ruff", "OR", "uv"),
+        query_language=True,
+        expects_compiled=True,
+    ),
+    QueryLanguageBuildCase(
+        test_id="bare-terms-stay-uncompiled",
+        component="search-prompts",
+        terms=("deploy", "release"),
+        query_language=True,
+        expects_compiled=False,
+    ),
+    QueryLanguageBuildCase(
+        test_id="flag-off-never-compiles",
+        component="search-prompts",
+        terms=("agent:codex", "deploy"),
+        query_language=False,
+        expects_compiled=False,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    QUERY_LANGUAGE_BUILD_CASES,
+    ids=[c.test_id for c in QUERY_LANGUAGE_BUILD_CASES],
+)
+def test_query_language_build_attaches_compiled(case: QueryLanguageBuildCase) -> None:
+    """``--query-language`` compiles field/boolean queries into the SearchQuery."""
+    parser = profile_engine._build_parser()
+    argv = [case.component, *case.terms, "--agent", "all", "--limit", "5"]
+    if case.query_language:
+        argv.append("--query-language")
+    args = parser.parse_args(argv)
+    spec = profile_engine._resolve_component_specs(args)[0]
+    limit = profile_engine._resolve_result_limit(args)
+    query, _scope = profile_engine._build_search_query(args, spec, agents=args.agent, limit=limit)
+    assert (query.compiled is not None) is case.expects_compiled
+
+
+def test_query_language_rejected_for_find_profiler(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--query-language`` errors for the find profiler (no compiled query support)."""
+    with pytest.raises(SystemExit) as exc_info:
+        profile_engine.main(
+            [
+                "find-prompts",
+                "agent:codex",
+                "--agent",
+                "all",
+                "--limit",
+                "1",
+                "--format",
+                "json",
+                "--query-language",
+            ],
+        )
+
+    assert exc_info.value.code == 2
+    assert "query-language" in capsys.readouterr().err

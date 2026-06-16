@@ -184,6 +184,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Search with case-sensitive matching",
     )
+    parser.add_argument(
+        "--query-language",
+        action="store_true",
+        help="Compile the terms as a query-language expression (field predicates, booleans)",
+    )
     output_group = parser.add_mutually_exclusive_group()
     parser.set_defaults(output_format="rich")
     output_group.add_argument(
@@ -250,6 +255,44 @@ def _resolve_component_specs(args: argparse.Namespace) -> tuple[ProfileRunSpec, 
     return (PROFILE_COMPONENTS[t.cast("ProfileComponent", component)],)
 
 
+def _build_search_query(
+    args: argparse.Namespace,
+    spec: ProfileRunSpec,
+    *,
+    agents: tuple[agentgrep.AgentName, ...],
+    limit: int | None,
+) -> tuple[agentgrep.SearchQuery, agentgrep.SearchScope]:
+    """Build the search/grep ``SearchQuery``, compiling query-language input.
+
+    With ``--query-language`` the joined terms are parsed and compiled so the
+    query carries its source/record predicates; otherwise the legacy bare-term
+    query is returned unchanged. Returns ``(query, scope)``.
+    """
+    scope = spec.scope if spec.scope is not None else t.cast("agentgrep.SearchScope", args.scope)
+    query = agentgrep.SearchQuery(
+        terms=tuple(t.cast("list[str]", args.terms)),
+        scope=scope,
+        any_term=bool(args.any_term),
+        regex=bool(args.regex),
+        case_sensitive=bool(args.case_sensitive),
+        agents=agents,
+        limit=limit,
+        dedupe=True,
+        match_surface=spec.match_surface,
+    )
+    if bool(args.query_language):
+        from agentgrep.query import compile_query, default_registry, parse_query
+
+        registry = default_registry()
+        compiled = compile_query(parse_query(" ".join(query.terms), registry), registry)
+        query = dataclasses.replace(
+            query,
+            terms=compiled.text_terms,
+            compiled=None if compiled.is_pure_text else compiled,
+        )
+    return query, scope
+
+
 def _run_spec(
     args: argparse.Namespace,
     spec: ProfileRunSpec,
@@ -272,20 +315,7 @@ def _run_spec(
         payload = profiled_find.to_payload()
         payload["type_filter"] = type_filter
     else:
-        scope = (
-            spec.scope if spec.scope is not None else t.cast("agentgrep.SearchScope", args.scope)
-        )
-        query = agentgrep.SearchQuery(
-            terms=tuple(t.cast("list[str]", args.terms)),
-            scope=scope,
-            any_term=bool(args.any_term),
-            regex=bool(args.regex),
-            case_sensitive=bool(args.case_sensitive),
-            agents=agents,
-            limit=limit,
-            dedupe=True,
-            match_surface=spec.match_surface,
-        )
+        query, scope = _build_search_query(args, spec, agents=agents, limit=limit)
         profiled_search = profile_search_query(home, query)
         payload = profiled_search.to_payload()
         payload["scope"] = scope
@@ -308,6 +338,9 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
     agents = t.cast("tuple[agentgrep.AgentName, ...]", args.agent)
     limit = _resolve_result_limit(args)
     specs = _resolve_component_specs(args)
+    if bool(args.query_language) and any(spec.command == "find" for spec in specs):
+        msg = "--query-language is unsupported for the find profiler (no compiled-query support)"
+        raise ValueError(msg)
     if len(specs) == 1:
         return _run_spec(args, specs[0], home=home, agents=agents, limit=limit)
     runs = [_run_spec(args, spec, home=home, agents=agents, limit=limit) for spec in specs]
