@@ -232,6 +232,16 @@ OPTIONS_FLAG_ONLY: frozenset[str] = frozenset(
 )
 ANSI_CSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
+# Query-language tokens highlighted inside help example lines. Detected by
+# shape — uppercase boolean keyword or a ``field:`` predicate — so the help
+# formatter never imports the query module (cold-start) and never couples to
+# the registry. Quotes are stripped before the boolean check so quoted forms
+# (``'fixme OR todo'``) still match.
+QUERY_BOOLEAN_KEYWORDS: frozenset[str] = frozenset({"AND", "OR", "NOT"})
+QUERY_FIELD_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9_])[A-Za-z_][A-Za-z0-9_]*:")
+# RST inline-code span (``code``) used in help intro prose.
+INLINE_CODE_RE = re.compile(r"``([^`]+)``")
+
 
 def build_description(
     intro: str,
@@ -798,10 +808,21 @@ class HelpTheme(t.Protocol):
     short_option: str
     prog: str
     action: str
+    inline_code: str
+    query_keyword: str
+    query_field: str
+    query_punct: str
+    query_value: str
+    query_wildcard: str
 
 
 class AnsiHelpTheme(t.NamedTuple):
-    """ANSI theme values for syntax-colored help examples."""
+    """ANSI theme values for syntax-colored help examples.
+
+    The ``query_*`` entries syntax-highlight a query predicate down to its
+    parts so ``model:gpt*`` reads as field / ``:`` / value / wildcard, each
+    in its own color.
+    """
 
     heading: str
     reset: str
@@ -810,6 +831,12 @@ class AnsiHelpTheme(t.NamedTuple):
     short_option: str
     prog: str
     action: str
+    inline_code: str
+    query_keyword: str
+    query_field: str
+    query_punct: str
+    query_value: str
+    query_wildcard: str
 
     @classmethod
     def default(cls) -> AnsiHelpTheme:
@@ -822,6 +849,12 @@ class AnsiHelpTheme(t.NamedTuple):
             short_option="\x1b[32m",
             prog="\x1b[1;35m",
             action="\x1b[36m",
+            inline_code="\x1b[1;34m",
+            query_keyword="\x1b[35m",
+            query_field="\x1b[1;36m",
+            query_punct="\x1b[33m",
+            query_value="\x1b[32m",
+            query_wildcard="\x1b[1;31m",
         )
 
 
@@ -971,7 +1004,7 @@ def create_themed_formatter(color_mode: ColorMode) -> type[AgentGrepHelpFormatte
     class ThemedAgentGrepHelpFormatter(AgentGrepHelpFormatter):
         """AgentGrepHelpFormatter with a configured theme."""
 
-        _theme: object | None
+        _agentgrep_help_theme: object | None
 
         def __init__(
             self,
@@ -989,22 +1022,38 @@ def create_themed_formatter(color_mode: ColorMode) -> type[AgentGrepHelpFormatte
                 width=width,
                 color=color,
             )
-            self._theme = theme
+            self._agentgrep_help_theme = theme
 
     return ThemedAgentGrepHelpFormatter
 
 
 class AgentGrepHelpFormatter(argparse.RawDescriptionHelpFormatter):
-    """Extend help output with syntax-colored example sections."""
+    """Extend help output with syntax-colored example sections.
 
-    _theme: object | None = None
+    The theme is held on ``_agentgrep_help_theme`` rather than ``_theme``
+    on purpose: Python 3.14's ``argparse.HelpFormatter`` owns ``_theme``
+    for its native usage/option coloring and re-sets it from
+    ``_get_formatter`` via ``_set_color`` after construction, so a binding
+    on ``_theme`` would be clobbered (and its namedtuple has no ``query``
+    field). Keeping our theme on a private name lets argparse color the
+    usage/options sections while we color the description's examples and
+    inline code with :class:`AnsiHelpTheme`.
+    """
+
+    _agentgrep_help_theme: object | None = None
 
     @t.override
     def _fill_text(self, text: str, width: int, indent: str) -> str:
-        """Colorize ``examples:`` blocks when a theme is available."""
-        theme = t.cast("HelpTheme | None", getattr(self, "_theme", None))
-        if not text or theme is None:
+        """Style ``examples:`` blocks and strip RST inline-code backticks.
+
+        Backtick stripping (an RST inline-code span renders as bare
+        ``search``) is unconditional so piped/no-color help never shows
+        literal double-backticks; coloring is applied only when a theme is
+        bound.
+        """
+        if not text:
             return super()._fill_text(text, width, indent)
+        theme = t.cast("HelpTheme | None", getattr(self, "_agentgrep_help_theme", None))
 
         lines = text.splitlines(keepends=True)
         formatted_lines: list[str] = []
@@ -1029,10 +1078,12 @@ class AgentGrepHelpFormatter(argparse.RawDescriptionHelpFormatter):
             )
 
             if is_section_heading or content_lower == "examples:":
-                formatted_content = f"{theme.heading}{content}{theme.reset}"
+                formatted_content = (
+                    f"{theme.heading}{content}{theme.reset}" if theme is not None else content
+                )
                 in_examples_block = True
                 expect_value = False
-            elif in_examples_block:
+            elif in_examples_block and theme is not None:
                 colored = self._colorize_example_line(
                     content,
                     theme=theme,
@@ -1040,13 +1091,27 @@ class AgentGrepHelpFormatter(argparse.RawDescriptionHelpFormatter):
                 )
                 expect_value = colored.expect_value
                 formatted_content = colored.text
+            elif in_examples_block:
+                formatted_content = content
             else:
-                formatted_content = stripped_line
+                formatted_content = self._colorize_inline_code(content, theme=theme)
 
             newline = "\n" if has_newline else ""
             formatted_lines.append(f"{indent}{leading}{formatted_content}{newline}")
 
         return "".join(formatted_lines)
+
+    @staticmethod
+    def _colorize_inline_code(content: str, *, theme: HelpTheme | None) -> str:
+        """Strip RST ``code`` backticks, coloring the span when a theme is bound."""
+
+        def _replace(match: re.Match[str]) -> str:
+            code = match.group(1)
+            if theme is None:
+                return code
+            return f"{theme.inline_code}{code}{theme.reset}"
+
+        return INLINE_CODE_RE.sub(_replace, content)
 
     class _ColorizedLine(t.NamedTuple):
         """Result of colorizing one example line."""
@@ -1061,7 +1126,7 @@ class AgentGrepHelpFormatter(argparse.RawDescriptionHelpFormatter):
         theme: HelpTheme,
         expect_value: bool,
     ) -> _ColorizedLine:
-        """Colorize program, subcommand, options, and option values."""
+        """Colorize program, subcommand, options, values, and query predicates."""
         parts: list[str] = []
         expecting_value = expect_value
         first_token = True
@@ -1074,33 +1139,98 @@ class AgentGrepHelpFormatter(argparse.RawDescriptionHelpFormatter):
                 continue
 
             if expecting_value:
-                color = theme.label
+                rendered = f"{theme.label}{token}{theme.reset}"
                 expecting_value = False
+            elif token.strip("'\"") in QUERY_BOOLEAN_KEYWORDS or QUERY_FIELD_TOKEN_RE.search(token):
+                # Query-language token (AND/OR/NOT or a field: predicate),
+                # checked before the option branches so the negation
+                # shorthand `-agent:codex` reads as query, not a short flag.
+                rendered = self._colorize_query_token(token, theme=theme)
             elif token.startswith("--"):
-                color = theme.long_option
+                rendered = f"{theme.long_option}{token}{theme.reset}"
                 expecting_value = (
                     token not in OPTIONS_FLAG_ONLY and token in OPTIONS_EXPECTING_VALUE
                 )
             elif token.startswith("-"):
-                color = theme.short_option
+                rendered = f"{theme.short_option}{token}{theme.reset}"
                 expecting_value = (
                     token not in OPTIONS_FLAG_ONLY and token in OPTIONS_EXPECTING_VALUE
                 )
             elif first_token:
-                color = theme.prog
+                rendered = f"{theme.prog}{token}{theme.reset}"
             elif not colored_subcommand:
-                color = theme.action
+                rendered = f"{theme.action}{token}{theme.reset}"
                 colored_subcommand = True
             else:
-                color = None
+                rendered = token
 
             first_token = False
-            if color is None:
-                parts.append(token)
-            else:
-                parts.append(f"{color}{token}{theme.reset}")
+            parts.append(rendered)
 
         return self._ColorizedLine("".join(parts), expecting_value)
+
+    @classmethod
+    def _colorize_query_token(cls, token: str, *, theme: HelpTheme) -> str:
+        """Syntax-highlight one query token down to its parts.
+
+        Splits a ``field:value`` predicate into field / ``:`` / value spans
+        (each its own color), colors a leading ``-`` / ``+`` negation sigil
+        and boolean keywords, and leaves any surrounding shell quotes plain.
+        """
+        lead = ""
+        while token[:1] in {"'", '"'}:
+            lead += token[0]
+            token = token[1:]
+        trail = ""
+        while token[-1:] in {"'", '"'}:
+            trail = token[-1] + trail
+            token = token[:-1]
+        if not token:
+            return f"{lead}{trail}"
+
+        sigil = ""
+        if token[:1] in {"-", "+"}:
+            sigil = f"{theme.query_punct}{token[0]}{theme.reset}"
+            token = token[1:]
+
+        if token in QUERY_BOOLEAN_KEYWORDS or token == "TO":
+            body = f"{theme.query_keyword}{token}{theme.reset}"
+        elif ":" in token:
+            field, _, value = token.partition(":")
+            field_span = f"{theme.query_field}{field}{theme.reset}" if field else ""
+            body = (
+                f"{field_span}{theme.query_punct}:{theme.reset}"
+                f"{cls._colorize_query_value(value, theme=theme)}"
+            )
+        else:
+            body = f"{theme.query_value}{token}{theme.reset}"
+
+        return f"{lead}{sigil}{body}{trail}"
+
+    @staticmethod
+    def _colorize_query_value(value: str, *, theme: HelpTheme) -> str:
+        """Color a predicate value: comparison/range punctuation, wildcards, text."""
+        if not value:
+            return ""
+        out: list[str] = []
+        for op in (">=", "<=", ">", "<"):
+            if value.startswith(op):
+                out.append(f"{theme.query_punct}{op}{theme.reset}")
+                value = value[len(op) :]
+                break
+        if value[:1] in {"[", "{"}:
+            out.append(f"{theme.query_punct}{value[0]}{theme.reset}")
+            value = value[1:]
+        trail = ""
+        if value[-1:] in {"]", "}"}:
+            trail = f"{theme.query_punct}{value[-1]}{theme.reset}"
+            value = value[:-1]
+        for run in re.finditer(r"[*?]+|[^*?]+", value):
+            chunk = run.group()
+            color = theme.query_wildcard if chunk[0] in "*?" else theme.query_value
+            out.append(f"{color}{chunk}{theme.reset}")
+        out.append(trail)
+        return "".join(out)
 
 
 class TextualContainersModule(t.Protocol):

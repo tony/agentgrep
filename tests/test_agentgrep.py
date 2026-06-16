@@ -393,6 +393,100 @@ def test_parse_args_bare_search_with_ui_does_not_print_help(
     assert "examples:" not in captured
 
 
+def test_colorize_inline_code_strips_backticks_without_theme() -> None:
+    """RST ``code`` spans lose their backticks even with no theme bound."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+
+    out = agentgrep.AgentGrepHelpFormatter._colorize_inline_code(
+        "pick ``search`` or ``grep``",
+        theme=None,
+    )
+
+    assert out == "pick search or grep"
+    assert "`" not in out
+
+
+def test_colorize_inline_code_colors_with_theme() -> None:
+    """With a theme, ``code`` spans are colored and the backticks removed."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    theme = agentgrep.AnsiHelpTheme.default()
+
+    out = agentgrep.AgentGrepHelpFormatter._colorize_inline_code(
+        "pick ``search``",
+        theme=theme,
+    )
+
+    assert "``" not in out
+    assert f"{theme.inline_code}search{theme.reset}" in out
+
+
+def test_help_has_no_literal_double_backticks() -> None:
+    """Help output strips RST inline-code backticks on every surface."""
+    for argv in (["--help"], ["grep", "--help"], ["search", "--help"]):
+        completed = run_agentgrep_cli(*argv)
+        assert completed.returncode == 0
+        assert "``" not in completed.stdout
+
+
+def test_help_colorizes_query_language_tokens() -> None:
+    """Forced-color search help highlights query tokens down to their parts."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    theme = agentgrep.AnsiHelpTheme.default()
+    completed = run_agentgrep_cli(
+        "--color",
+        "always",
+        "search",
+        "--help",
+        env={"FORCE_COLOR": "1", "NO_COLOR": ""},
+    )
+
+    assert completed.returncode == 0
+    out = completed.stdout
+    # The bare boolean OR in `agentgrep search 'ruff OR uv'` is keyword-colored.
+    assert f"{theme.query_keyword}OR{theme.reset}" in out
+    # `model:gpt*` splits into field / colon / value / wildcard spans.
+    assert f"{theme.query_field}model{theme.reset}" in out
+    assert f"{theme.query_punct}:{theme.reset}" in out
+    assert f"{theme.query_wildcard}*{theme.reset}" in out
+    # Inline-code in the description renders with the inline_code color.
+    assert theme.inline_code in out
+
+
+def test_colorize_query_token_splits_field_colon_value_wildcard() -> None:
+    """A `field:value*` token is colored field / colon / value / wildcard."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    theme = agentgrep.AnsiHelpTheme.default()
+
+    out = agentgrep.AgentGrepHelpFormatter._colorize_query_token("'model:gpt*", theme=theme)
+
+    assert out.startswith("'")  # surrounding quote stays plain
+    assert f"{theme.query_field}model{theme.reset}" in out
+    assert f"{theme.query_punct}:{theme.reset}" in out
+    assert f"{theme.query_value}gpt{theme.reset}" in out
+    assert f"{theme.query_wildcard}*{theme.reset}" in out
+
+
+def test_colorize_query_token_handles_comparison_and_negation() -> None:
+    """Comparison operators and the `-` negation sigil are punctuation-colored."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    theme = agentgrep.AnsiHelpTheme.default()
+
+    ts = agentgrep.AgentGrepHelpFormatter._colorize_query_token(
+        "timestamp:>2026-01-01",
+        theme=theme,
+    )
+    assert f"{theme.query_field}timestamp{theme.reset}" in ts
+    assert f"{theme.query_punct}>{theme.reset}" in ts
+    assert f"{theme.query_value}2026-01-01{theme.reset}" in ts
+
+    neg = agentgrep.AgentGrepHelpFormatter._colorize_query_token(
+        "-agent:cursor-cli",
+        theme=theme,
+    )
+    assert neg.startswith(f"{theme.query_punct}-{theme.reset}")
+    assert f"{theme.query_field}agent{theme.reset}" in neg
+
+
 def test_build_docs_parser_returns_root_parser() -> None:
     """Adapter for ``sphinx-autodoc-argparse`` exposes the root parser."""
     agentgrep = load_agentgrep_module()
