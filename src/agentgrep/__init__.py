@@ -218,6 +218,9 @@ OPTIONS_EXPECTING_VALUE: frozenset[str] = frozenset(
         "--limit",
         "--color",
         "--progress",
+        "--threshold",
+        "-t",
+        "-e",
     },
 )
 OPTIONS_FLAG_ONLY: frozenset[str] = frozenset(
@@ -232,13 +235,35 @@ OPTIONS_FLAG_ONLY: frozenset[str] = frozenset(
 )
 ANSI_CSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
-# Query-language tokens highlighted inside help example lines. Detected by
-# shape — uppercase boolean keyword or a ``field:`` predicate — so the help
-# formatter never imports the query module (cold-start) and never couples to
-# the registry. Quotes are stripped before the boolean check so quoted forms
-# (``'fixme OR todo'``) still match.
-QUERY_BOOLEAN_KEYWORDS: frozenset[str] = frozenset({"AND", "OR", "NOT"})
-QUERY_FIELD_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9_])[A-Za-z_][A-Za-z0-9_]*:")
+# Query-language highlighting inside help example lines. Detected by shape — a
+# standalone boolean keyword or a ``field:`` predicate — so the help formatter
+# never imports the query module (cold-start) and never couples to the
+# registry. Help examples are author-controlled, so a shape-only field test is
+# enough (a stray ``https:`` would only ever appear if someone wrote it).
+QUERY_BOOLEAN_KEYWORDS: frozenset[str] = frozenset({"AND", "OR", "NOT", "TO"})
+# Detection: a (possibly negated) field predicate, quotes already stripped.
+QUERY_FIELD_TOKEN_RE = re.compile(r"^[+-]?[A-Za-z_][A-Za-z0-9_.-]*:")
+# Shell-aware split that keeps a whole quoted argument together so a quoted
+# query (``'agent:codex migration'``) is highlighted as one expression.
+SHELL_TOKEN_RE = re.compile(r"""\s+|'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\S+""")
+# Query-expression lexer: one pass over the unquoted query body. Order matters
+# (longest / most specific alternatives first).
+QUERY_TOKEN_RE = re.compile(
+    r"""
+      (?P<SPACE>\s+)
+    | (?P<PHRASE>"(?:\\.|[^"\\])*")
+    | (?P<BOOL>\b(?:AND|OR|NOT|TO)\b)
+    | (?P<FIELD>[A-Za-z_][\w.-]*)(?=\s*:)
+    | (?P<DATE>\b\d{4}-\d{2}-\d{2}(?:[Tt]\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:\d{2})?)?\b)
+    | (?P<SIGN>(?<![\w])[-+])
+    | (?P<OP>>=|<=|[!~^:><=])
+    | (?P<PUNCT>[\[\]\(\)\{\}])
+    | (?P<WILD>[*?])
+    | (?P<WORD>[^\s\[\]\(\)\{\}:"~^><=!*?+]+)
+    | (?P<MISC>.)
+    """,
+    re.VERBOSE,
+)
 # RST inline-code span (``code``) used in help intro prose.
 INLINE_CODE_RE = re.compile(r"``([^`]+)``")
 
@@ -810,18 +835,22 @@ class HelpTheme(t.Protocol):
     action: str
     inline_code: str
     query_keyword: str
+    query_operator: str
     query_field: str
     query_punct: str
     query_value: str
     query_wildcard: str
+    query_negation: str
 
 
 class AnsiHelpTheme(t.NamedTuple):
     """ANSI theme values for syntax-colored help examples.
 
     The ``query_*`` entries syntax-highlight a query predicate down to its
-    parts so ``model:gpt*`` reads as field / ``:`` / value / wildcard, each
-    in its own color.
+    parts so ``model:gpt*`` reads as field / ``:`` / value / wildcard, each in
+    its own color. They use a 256-color sub-palette kept off the basic-color
+    chrome above, so a predicate never shares a hue with a heading, option, or
+    subcommand on the same line. Shell quotes around a query render plain.
     """
 
     heading: str
@@ -833,10 +862,12 @@ class AnsiHelpTheme(t.NamedTuple):
     action: str
     inline_code: str
     query_keyword: str
+    query_operator: str
     query_field: str
     query_punct: str
     query_value: str
     query_wildcard: str
+    query_negation: str
 
     @classmethod
     def default(cls) -> AnsiHelpTheme:
@@ -850,11 +881,13 @@ class AnsiHelpTheme(t.NamedTuple):
             prog="\x1b[1;35m",
             action="\x1b[36m",
             inline_code="\x1b[1;34m",
-            query_keyword="\x1b[35m",
-            query_field="\x1b[1;36m",
-            query_punct="\x1b[33m",
-            query_value="\x1b[32m",
-            query_wildcard="\x1b[1;31m",
+            query_keyword="\x1b[1;38;5;215m",  # bold amber — AND / OR / NOT / TO
+            query_operator="\x1b[38;5;215m",  # amber — > >= < <=
+            query_field="\x1b[38;5;79m",  # teal
+            query_punct="\x1b[38;5;245m",  # dim grey — : ( ) [ ] { }
+            query_value="\x1b[38;5;252m",  # near-foreground — values + terms
+            query_wildcard="\x1b[1;38;5;222m",  # bold gold — * ?
+            query_negation="\x1b[1;38;5;204m",  # bold rose — leading - / +
         )
 
 
@@ -1126,13 +1159,20 @@ class AgentGrepHelpFormatter(argparse.RawDescriptionHelpFormatter):
         theme: HelpTheme,
         expect_value: bool,
     ) -> _ColorizedLine:
-        """Colorize program, subcommand, options, values, and query predicates."""
+        """Colorize program, subcommand, options, values, and query arguments.
+
+        Tokenizes shell-aware (a quoted argument stays one token), so a quoted
+        query like ``'agent:codex migration'`` is highlighted as one
+        expression. The first token is the program, the second the subcommand;
+        an option that takes a value colors the next token as a value; every
+        other positional is treated as a query argument.
+        """
         parts: list[str] = []
         expecting_value = expect_value
         first_token = True
         colored_subcommand = False
 
-        for match in re.finditer(r"\s+|\S+", content):
+        for match in SHELL_TOKEN_RE.finditer(content):
             token = match.group()
             if token.isspace():
                 parts.append(token)
@@ -1141,11 +1181,10 @@ class AgentGrepHelpFormatter(argparse.RawDescriptionHelpFormatter):
             if expecting_value:
                 rendered = f"{theme.label}{token}{theme.reset}"
                 expecting_value = False
-            elif token.strip("'\"") in QUERY_BOOLEAN_KEYWORDS or QUERY_FIELD_TOKEN_RE.search(token):
-                # Query-language token (AND/OR/NOT or a field: predicate),
-                # checked before the option branches so the negation
-                # shorthand `-agent:codex` reads as query, not a short flag.
-                rendered = self._colorize_query_token(token, theme=theme)
+            elif self._looks_like_query_argument(token):
+                # Checked before the option branches so the negation shorthand
+                # `-agent:codex` reads as a query predicate, not a short flag.
+                rendered = self._colorize_query_argument(token, theme=theme)
             elif token.startswith("--"):
                 rendered = f"{theme.long_option}{token}{theme.reset}"
                 expecting_value = (
@@ -1162,75 +1201,75 @@ class AgentGrepHelpFormatter(argparse.RawDescriptionHelpFormatter):
                 rendered = f"{theme.action}{token}{theme.reset}"
                 colored_subcommand = True
             else:
-                rendered = token
+                # Bare positional after the subcommand — a query term.
+                rendered = self._colorize_query_argument(token, theme=theme)
 
             first_token = False
             parts.append(rendered)
 
         return self._ColorizedLine("".join(parts), expecting_value)
 
-    @classmethod
-    def _colorize_query_token(cls, token: str, *, theme: HelpTheme) -> str:
-        """Syntax-highlight one query token down to its parts.
+    @staticmethod
+    def _looks_like_query_argument(token: str) -> bool:
+        """Return whether a post-subcommand token should be lexed as a query.
 
-        Splits a ``field:value`` predicate into field / ``:`` / value spans
-        (each its own color), colors a leading ``-`` / ``+`` negation sigil
-        and boolean keywords, and leaves any surrounding shell quotes plain.
+        A complete quoted argument or a (possibly negated) field predicate
+        qualifies; a bare flag (``-i`` / ``--json``) does not.
         """
-        lead = ""
-        while token[:1] in {"'", '"'}:
-            lead += token[0]
-            token = token[1:]
-        trail = ""
-        while token[-1:] in {"'", '"'}:
-            trail = token[-1] + trail
-            token = token[:-1]
-        if not token:
-            return f"{lead}{trail}"
+        if len(token) >= 2 and token[0] == token[-1] and token[0] in {"'", '"'}:
+            return True
+        return QUERY_FIELD_TOKEN_RE.match(token) is not None
 
-        sigil = ""
-        if token[:1] in {"-", "+"}:
-            sigil = f"{theme.query_punct}{token[0]}{theme.reset}"
-            token = token[1:]
+    @classmethod
+    def _colorize_query_argument(cls, token: str, *, theme: HelpTheme) -> str:
+        """Highlight one query argument, leaving any outer shell quotes plain."""
+        if len(token) >= 2 and token[0] == token[-1] and token[0] in {"'", '"'}:
+            return token[0] + cls._colorize_query_expression(token[1:-1], theme=theme) + token[-1]
+        return cls._colorize_query_expression(token, theme=theme)
 
-        if token in QUERY_BOOLEAN_KEYWORDS or token == "TO":
-            body = f"{theme.query_keyword}{token}{theme.reset}"
-        elif ":" in token:
-            field, _, value = token.partition(":")
-            field_span = f"{theme.query_field}{field}{theme.reset}" if field else ""
-            body = (
-                f"{field_span}{theme.query_punct}:{theme.reset}"
-                f"{cls._colorize_query_value(value, theme=theme)}"
-            )
-        else:
-            body = f"{theme.query_value}{token}{theme.reset}"
+    @classmethod
+    def _colorize_query_expression(cls, query: str, *, theme: HelpTheme) -> str:
+        """Syntax-highlight a query expression with :data:`QUERY_TOKEN_RE`.
 
-        return f"{lead}{sigil}{body}{trail}"
+        Maps each lexed span to a theme color: field name, ``:`` and brackets
+        (punctuation), comparison operators, boolean keywords, the ``-`` / ``+``
+        negation sigil, ``*`` / ``?`` wildcards, and everything else (values,
+        bare terms, dates, phrase text) to the single value color.
+        """
+        out: list[str] = []
+        for match in QUERY_TOKEN_RE.finditer(query):
+            kind = match.lastgroup
+            token = match.group()
+            if kind == "SPACE":
+                out.append(token)
+            elif kind == "FIELD":
+                out.append(f"{theme.query_field}{token}{theme.reset}")
+            elif kind == "BOOL":
+                out.append(f"{theme.query_keyword}{token}{theme.reset}")
+            elif kind == "SIGN":
+                out.append(f"{theme.query_negation}{token}{theme.reset}")
+            elif kind == "WILD":
+                out.append(f"{theme.query_wildcard}{token}{theme.reset}")
+            elif kind == "PUNCT" or (kind == "OP" and token == ":"):
+                out.append(f"{theme.query_punct}{token}{theme.reset}")
+            elif kind == "OP":
+                out.append(f"{theme.query_operator}{token}{theme.reset}")
+            elif kind == "PHRASE":
+                out.append(cls._colorize_query_phrase(token, theme=theme))
+            else:  # DATE, WORD, MISC — Design A uses one value hue for all.
+                out.append(f"{theme.query_value}{token}{theme.reset}")
+        return "".join(out)
 
     @staticmethod
-    def _colorize_query_value(value: str, *, theme: HelpTheme) -> str:
-        """Color a predicate value: comparison/range punctuation, wildcards, text."""
-        if not value:
-            return ""
-        out: list[str] = []
-        for op in (">=", "<=", ">", "<"):
-            if value.startswith(op):
-                out.append(f"{theme.query_punct}{op}{theme.reset}")
-                value = value[len(op) :]
-                break
-        if value[:1] in {"[", "{"}:
-            out.append(f"{theme.query_punct}{value[0]}{theme.reset}")
-            value = value[1:]
-        trail = ""
-        if value[-1:] in {"]", "}"}:
-            trail = f"{theme.query_punct}{value[-1]}{theme.reset}"
-            value = value[:-1]
-        for run in re.finditer(r"[*?]+|[^*?]+", value):
-            chunk = run.group()
-            color = theme.query_wildcard if chunk[0] in "*?" else theme.query_value
-            out.append(f"{color}{chunk}{theme.reset}")
-        out.append(trail)
-        return "".join(out)
+    def _colorize_query_phrase(token: str, *, theme: HelpTheme) -> str:
+        """Color a double-quoted phrase: dim ``"`` delimiters, value-colored text."""
+        if len(token) < 2:
+            return f"{theme.query_value}{token}{theme.reset}"
+        return (
+            f"{theme.query_punct}{token[0]}{theme.reset}"
+            f"{theme.query_value}{token[1:-1]}{theme.reset}"
+            f"{theme.query_punct}{token[-1]}{theme.reset}"
+        )
 
 
 class TextualContainersModule(t.Protocol):

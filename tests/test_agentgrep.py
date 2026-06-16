@@ -452,39 +452,57 @@ def test_help_colorizes_query_language_tokens() -> None:
     assert theme.inline_code in out
 
 
-def test_colorize_query_token_splits_field_colon_value_wildcard() -> None:
-    """A `field:value*` token is colored field / colon / value / wildcard."""
+def test_colorize_query_argument_splits_field_colon_value_wildcard() -> None:
+    """A quoted `field:value*` arg is colored field / colon / value / wildcard."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     theme = agentgrep.AnsiHelpTheme.default()
 
-    out = agentgrep.AgentGrepHelpFormatter._colorize_query_token("'model:gpt*", theme=theme)
+    out = agentgrep.AgentGrepHelpFormatter._colorize_query_argument(
+        "'model:gpt*'",
+        theme=theme,
+    )
 
-    assert out.startswith("'")  # surrounding quote stays plain
+    assert out.startswith("'") and out.endswith("'")  # outer shell quotes stay plain
     assert f"{theme.query_field}model{theme.reset}" in out
     assert f"{theme.query_punct}:{theme.reset}" in out
     assert f"{theme.query_value}gpt{theme.reset}" in out
     assert f"{theme.query_wildcard}*{theme.reset}" in out
 
 
-def test_colorize_query_token_handles_comparison_and_negation() -> None:
-    """Comparison operators and the `-` negation sigil are punctuation-colored."""
+def test_colorize_query_expression_comparison_and_negation() -> None:
+    """Comparison ops use the operator color; the `-` sigil uses the negation color."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     theme = agentgrep.AnsiHelpTheme.default()
 
-    ts = agentgrep.AgentGrepHelpFormatter._colorize_query_token(
+    ts = agentgrep.AgentGrepHelpFormatter._colorize_query_expression(
         "timestamp:>2026-01-01",
         theme=theme,
     )
     assert f"{theme.query_field}timestamp{theme.reset}" in ts
-    assert f"{theme.query_punct}>{theme.reset}" in ts
+    assert f"{theme.query_punct}:{theme.reset}" in ts
+    assert f"{theme.query_operator}>{theme.reset}" in ts
     assert f"{theme.query_value}2026-01-01{theme.reset}" in ts
 
-    neg = agentgrep.AgentGrepHelpFormatter._colorize_query_token(
+    neg = agentgrep.AgentGrepHelpFormatter._colorize_query_expression(
         "-agent:cursor-cli",
         theme=theme,
     )
-    assert neg.startswith(f"{theme.query_punct}-{theme.reset}")
+    assert neg.startswith(f"{theme.query_negation}-{theme.reset}")
     assert f"{theme.query_field}agent{theme.reset}" in neg
+
+
+def test_colorize_query_argument_keyword_and_bare_term() -> None:
+    """Boolean keywords are keyword-colored; bare terms get the value color."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    theme = agentgrep.AnsiHelpTheme.default()
+
+    out = agentgrep.AgentGrepHelpFormatter._colorize_query_argument(
+        "'ruff OR uv'",
+        theme=theme,
+    )
+    assert f"{theme.query_keyword}OR{theme.reset}" in out
+    assert f"{theme.query_value}ruff{theme.reset}" in out
+    assert f"{theme.query_value}uv{theme.reset}" in out
 
 
 def test_build_docs_parser_returns_root_parser() -> None:
