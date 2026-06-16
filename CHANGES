@@ -42,6 +42,56 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### What's new
+
+#### A query language for `search`, `grep`, and `find` (#70)
+
+All three commands accept a Lucene-style query language: combine terms with
+`AND` / `OR` / `NOT` (no field predicate required — `ruff OR uv` just works),
+quote `"exact phrases"`, and filter by field with `agent:`, `model:`, `role:`,
+`scope:`, `timestamp:`, `path:`, and more. Predicates support `field:*` (present
+and non-empty), `*` / `?` wildcards on text fields (`model:gpt*`), and date
+comparisons and ranges (`timestamp:>2026-01-01`, `timestamp:[2026-01 TO
+2026-03]`). Bare term lists keep the original fast path untouched. See
+{ref}`library-query-language`.
+
+#### Query language over MCP (#70)
+
+The MCP {tooliconl}`search` tool honors the same query language inline, the new
+`agentgrep://query-language` resource publishes the field and operator catalog
+(generated from the registry, so it never drifts from what the compiler
+accepts), and {tooliconl}`validate_query` dry-runs a query's syntax without
+running a search.
+
+#### Live query completion in the TUI (#70)
+
+The interactive explorer's search bar and the now query-aware filter box offer
+inline ghost-text completion plus a keyword dropdown for field names and enum
+values (`agent:co` → `agent:codex`). Completion is query-language only — no
+record text or IDs leak into the suggestions.
+
+#### Query syntax highlighting in the CLI, TUI, and docs (#70)
+
+Query examples are syntax-highlighted everywhere the language appears: the CLI
+`--help` examples (field, operator, value, and wildcard each in their own
+color), the TUI search and filter boxes as you type, and documentation code
+blocks via a new `agentgrep-query` Pygments lexer. All three share one grammar.
+
+#### `agentgrep search` shows help when run without terms (#70)
+
+Running `agentgrep search` with no terms now prints the subcommand's help and
+examples instead of ranking every stored record, mirroring bare `agentgrep`.
+`agentgrep search --ui` still opens the explorer.
+
+### Documentation
+
+#### Query-language reference and design rationale (#70)
+
+A refreshed {ref}`library-query-language` page documents the full grammar —
+phrases, field-exists, wildcards, dates, and the opt-in gate — and ADR 0007
+records how agentgrep's substring/regex matching model compares to Tantivy and
+why the query language stops where it does.
+
 ## agentgrep 0.1.0a22 (2026-06-14)
 
 agentgrep 0.1.0a22 adds Google Antigravity as two new backends:
