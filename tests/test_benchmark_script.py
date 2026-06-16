@@ -459,6 +459,18 @@ def test_committed_benchmarks_include_query_language_profile_entries() -> None:
             assert "limit 500" in bench.description.casefold()
 
 
+def test_committed_benchmarks_include_find_source_predicate_entry() -> None:
+    """A committed find bench exercises a source-level predicate (find honors it)."""
+    config = benchmark.load_config(
+        config_path=benchmark.DEFAULT_CONFIG,
+        local_path=_REPO_ROOT / "scripts" / "__missing_benchmark.local.toml",
+    )
+    bench = config.bench["find-query-language"]
+    assert "agentgrep find" in bench.command
+    field = bench.default_query.split(":", 1)[0]
+    assert field in {"agent", "store", "adapter", "adapter_id", "path", "mtime"}
+
+
 class ProfileEngineFormatCase(t.NamedTuple):
     """One profiler-command output-format validation expectation."""
 

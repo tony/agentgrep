@@ -25,6 +25,11 @@ description = "fd-shaped source enumeration"
 command = "{venv}/bin/agentgrep find --no-progress {query}"
 default_query = "libtmux"
 
+[bench.find-query-language]
+description = "Source-predicate find (agent: prune), fd-shaped enumeration"
+command = "{venv}/bin/agentgrep find --no-progress {query}"
+default_query = "agent:codex"
+
 [bench.search-limit-1]
 description = "search, limit 1"
 command = "{venv}/bin/agentgrep search --no-progress --limit 1 {query}"
