@@ -1374,6 +1374,57 @@ def test_loads_raises_json_decode_error_on_invalid(
         loads_impl(bad)
 
 
+class MessageCandidateCase(t.NamedTuple):
+    """One ``iter_message_candidates`` walk and its expected candidate roles."""
+
+    test_id: str
+    value: object
+    expected_roles: tuple[str, ...]
+
+
+_MESSAGE_CANDIDATE_CASES = (
+    MessageCandidateCase("message_dict", {"role": "user", "content": "hi"}, ("user",)),
+    MessageCandidateCase("roleless_with_content", {"content": "hi"}, ()),
+    MessageCandidateCase("role_without_text", {"role": "user"}, ()),
+    MessageCandidateCase(
+        "nested_message", {"a": {"role": "assistant", "text": "yo"}}, ("assistant",)
+    ),
+    MessageCandidateCase(
+        "list_of_messages",
+        [{"role": "user", "text": "a"}, {"role": "assistant", "text": "b"}],
+        ("user", "assistant"),
+    ),
+)
+
+
+@pytest.mark.parametrize("case", _MESSAGE_CANDIDATE_CASES, ids=lambda case: case.test_id)
+def test_iter_message_candidates_yields_expected_roles(case: MessageCandidateCase) -> None:
+    """Skipping text extraction for role-less nodes leaves the candidates unchanged."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    candidates = list(agentgrep.iter_message_candidates(case.value))
+    assert tuple(candidate.role for candidate in candidates) == case.expected_roles
+
+
+def test_iter_message_candidates_skips_text_extraction_without_role(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``extract_message_text`` runs only for nodes that carry a role."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    calls: list[object] = []
+    real = agentgrep.extract_message_text
+    monkeypatch.setattr(
+        agentgrep,
+        "extract_message_text",
+        lambda mapping: calls.append(mapping) or real(mapping),
+    )
+
+    list(agentgrep.iter_message_candidates({"content": "hi", "nested": {"x": "y"}}))
+    assert calls == []  # no role anywhere -> never extracted
+
+    list(agentgrep.iter_message_candidates({"role": "user", "content": "hi"}))
+    assert len(calls) == 1  # the single role-bearing node
+
+
 class ReverseJsonlCase(t.NamedTuple):
     """One reverse JSONL parsing shape."""
 

@@ -7252,8 +7252,10 @@ def candidate_from_mapping(
 ) -> MessageCandidate | None:
     """Extract one message candidate from a known message-like mapping."""
     role = extract_role(mapping)
+    if role is None:
+        return None
     text = extract_message_text(mapping)
-    if role is None or not text:
+    if not text:
         return None
     return MessageCandidate(
         role=role,
@@ -7276,7 +7278,9 @@ def iter_message_candidates(
     if isinstance(value, dict):
         mapping = t.cast("dict[str, object]", value)
         role = extract_role(mapping)
-        text = extract_message_text(mapping)
+        # Text extraction drives the recursive content flatten; it is only
+        # used when a role is present, so skip it for the many role-less nodes.
+        text = extract_message_text(mapping) if role is not None else None
         if role is not None and text:
             yield MessageCandidate(
                 role=role,
