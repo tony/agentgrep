@@ -51,6 +51,7 @@ dependencies = [
 dev = [
     { name = "click" },
     { name = "gp-sphinx" },
+    { name = "pygments" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-rerunfailures" },
@@ -67,6 +68,7 @@ dev = [
 ]
 docs = [
     { name = "gp-sphinx" },
+    { name = "pygments" },
     { name = "sphinx-autobuild" },
     { name = "sphinx-autodoc-api-style" },
     { name = "sphinx-autodoc-argparse" },
@@ -85,6 +87,7 @@ requires-dist = [
 dev = [
     { name = "click", specifier = ">=8.1" },
     { name = "gp-sphinx", specifier = "==0.0.1a31" },
+    { name = "pygments" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-rerunfailures", specifier = ">=16.2" },
@@ -101,6 +104,7 @@ dev = [
 ]
 docs = [
     { name = "gp-sphinx", specifier = "==0.0.1a31" },
+    { name = "pygments" },
     { name = "sphinx-autobuild" },
     { name = "sphinx-autodoc-api-style", specifier = "==0.0.1a31" },
     { name = "sphinx-autodoc-argparse", specifier = "==0.0.1a31" },

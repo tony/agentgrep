@@ -64,6 +64,10 @@ dev = [
   "pytest-rerunfailures>=16.2",
   "pytest-watcher",
   "syrupy>=5.1.0",
+  # The query Pygments lexer (agentgrep.query.pygments_lexer) imports pygments
+  # directly; it is docs/test-only (not a runtime dependency). Transitive via
+  # Sphinx, but pinned here so the lexer and its test stay importable.
+  "pygments",
   # Lint / typecheck
   "ruff",
   "ty>=0.0.35",
@@ -86,6 +90,9 @@ docs = [
   "sphinx-autodoc-argparse==0.0.1a31",
   "sphinx-autodoc-fastmcp==0.0.1a31",
   "sphinx-autobuild",
+  # docs/_ext/lexers.py registers agentgrep.query.pygments_lexer, which imports
+  # pygments directly (also transitive via Sphinx).
+  "pygments",
 ]
 
 [build-system]

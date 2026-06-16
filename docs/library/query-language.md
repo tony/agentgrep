@@ -40,6 +40,12 @@ phrase       := '"' TEXT '"'                  ; exact adjacent words
 term         := TERM
 ```
 
+A full query exercising most of the grammar:
+
+```agentgrep-query
+(agent:codex OR agent:cursor-cli) model:gpt* timestamp:>2026-01-01 NOT deploy
+```
+
 Implicit AND between bare terms is preserved: `agentgrep grep foo bar`
 matches records containing both `foo` and `bar`. Explicit `AND` /
 `OR` / `NOT` are case-insensitive and must be whole words.
@@ -97,7 +103,7 @@ substring with internal whitespace collapsed: `"deploy v1"` matches
 bare terms — no field machinery — and compose with the boolean
 operators like any other term:
 
-```
+```agentgrep-query
 "streaming parser" OR "stream reader"
 ```
 
@@ -111,7 +117,7 @@ double-quoted token reaches agentgrep intact.)
 `field:*` matches records or sources where the field is **present and
 non-empty**, regardless of value:
 
-```
+```agentgrep-query
 model:* ruff
 ```
 
@@ -119,7 +125,7 @@ Records that carry any model string and mention `ruff`. Negate for
 absence with `NOT field:*` (or `-field:*` inside a larger quoted
 query):
 
-```
+```agentgrep-query
 NOT model:* deploy
 ```
 
@@ -137,7 +143,7 @@ explicit wildcards (`model:*gpt*`) or drop the wildcard entirely
 behavior). A wildcard on `text` matches the record text only, while a
 plain `text:` value keeps its multi-surface substring match.
 
-```
+```agentgrep-query
 model:gpt*
 ```
 
