@@ -1425,6 +1425,41 @@ def test_iter_message_candidates_skips_text_extraction_without_role(
     assert len(calls) == 1  # the single role-bearing node
 
 
+class CodexNoiseLineCase(t.NamedTuple):
+    """One Codex JSONL line and whether it is a function-call-output record."""
+
+    test_id: str
+    line: str
+    expected: bool
+
+
+_CODEX_NOISE_CASES = (
+    CodexNoiseLineCase(
+        "compact_noise",
+        '{"type":"response_item","payload":{"type":"function_call_output","output":"x"}}',
+        True,
+    ),
+    CodexNoiseLineCase(
+        "spaced_noise",
+        '{"type": "response_item", "payload": {"type": "function_call_output", "output": "x"}}',
+        True,
+    ),
+    CodexNoiseLineCase(
+        "real_message",
+        '{"type":"response_item","payload":{"type":"message","role":"user","content":"hi"}}',
+        False,
+    ),
+    CodexNoiseLineCase("non_codex", '{"role":"assistant","text":"hello"}', False),
+)
+
+
+@pytest.mark.parametrize("case", _CODEX_NOISE_CASES, ids=lambda case: case.test_id)
+def test_is_codex_function_call_output_line(case: CodexNoiseLineCase) -> None:
+    """Noise detection tolerates JSON spacing without normalizing each line."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    assert agentgrep._is_codex_function_call_output_line(case.line) is case.expected
+
+
 class ReverseJsonlCase(t.NamedTuple):
     """One reverse JSONL parsing shape."""
 

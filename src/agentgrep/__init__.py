@@ -7235,11 +7235,15 @@ def _discard_rest_of_line(handle: t.BinaryIO, prefix: bytes) -> None:
 
 
 def _is_codex_function_call_output_line(line: str) -> bool:
-    """Return whether a Codex JSONL line is a tool output record."""
-    prefix = line[:512].replace(" ", "")
-    return (
-        '"type":"response_item"' in prefix and '"payload":{"type":"function_call_output"' in prefix
-    )
+    """Return whether a Codex JSONL line is a tool output record.
+
+    Tests the two distinctive quoted value tokens directly on the line
+    prefix. JSON never reformats string contents, so this matches the same
+    lines as a space-stripped key check — verified against the live store —
+    without allocating a normalized copy of every scanned line.
+    """
+    prefix = line[:512]
+    return '"response_item"' in prefix and '"function_call_output"' in prefix
 
 
 def candidate_from_mapping(
