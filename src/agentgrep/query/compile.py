@@ -412,6 +412,57 @@ def fields_in_ast(node: QueryNode) -> set[str]:
     return set()
 
 
+_FIND_BOOLEAN_TEXT_REASON = (
+    "find cannot evaluate OR / NOT over text terms; use search or grep, "
+    "or narrow with field predicates (agent:, path:, store:, mtime:)"
+)
+
+
+def find_unsupported_reason(
+    node: QueryNode,
+    registry: FieldRegistry,
+    *,
+    under_boolean: bool = False,
+) -> str | None:
+    """Return why ``find`` cannot faithfully evaluate ``node``, or ``None``.
+
+    ``find`` enumerates sources: it honors the source-level predicate plus a
+    flat text pattern against paths, but never reads records. So it cannot
+    evaluate record-level field predicates (``scope``/``timestamp``/``model``/
+    ``role``) or boolean (OR / NOT) composition over text terms — those would
+    be silently dropped or flattened into a literal pattern. Such a query gets
+    a reason string so the CLI can reject it instead of mis-searching.
+    Everything ``find`` can honor — source-level predicates in any shape, plus
+    bare conjoined text terms — returns ``None``.
+    """
+    if isinstance(node, TermNode):
+        return _FIND_BOOLEAN_TEXT_REASON if under_boolean else None
+    if isinstance(node, FieldEqNode | FieldCmpNode | FieldRangeNode | FieldExistsNode):
+        spec = registry.get(node.field)
+        if spec is None or spec.layer == "source":
+            return None
+        if spec.name == "text":
+            return _FIND_BOOLEAN_TEXT_REASON if under_boolean else None
+        return (
+            f"the {spec.name}: field filters records, which find does not read; use search or grep"
+        )
+    if isinstance(node, NotNode):
+        return find_unsupported_reason(node.child, registry, under_boolean=True)
+    if isinstance(node, AndNode):
+        for child in node.children:
+            reason = find_unsupported_reason(child, registry, under_boolean=under_boolean)
+            if reason is not None:
+                return reason
+        return None
+    if isinstance(node, OrNode):
+        for child in node.children:
+            reason = find_unsupported_reason(child, registry, under_boolean=True)
+            if reason is not None:
+                return reason
+        return None
+    return None
+
+
 def _is_pure_text(node: QueryNode) -> bool:
     """Return whether ``node`` contains only bare TermNodes under AND.
 

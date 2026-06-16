@@ -335,6 +335,52 @@ def test_find_without_pattern_lists_every_source(tmp_path: pathlib.Path) -> None
     assert "usage: agentgrep find" not in completed.stdout
 
 
+class FindRejectCase(t.NamedTuple):
+    """A find query that cannot be faithfully evaluated, and an error fragment."""
+
+    test_id: str
+    argv: tuple[str, ...]
+    fragment: str
+
+
+FIND_REJECT_CASES: tuple[FindRejectCase, ...] = (
+    FindRejectCase("boolean-or-text", ("find", "codex OR claude"), "OR / NOT over text"),
+    FindRejectCase("not-text", ("find", "NOT codex"), "OR / NOT over text"),
+    FindRejectCase("record-field-model", ("find", "model:gpt*"), "model: field filters records"),
+    FindRejectCase(
+        "record-field-scope",
+        ("find", "scope:conversations"),
+        "scope: field filters records",
+    ),
+)
+
+
+@pytest.mark.parametrize("case", FIND_REJECT_CASES, ids=[c.test_id for c in FIND_REJECT_CASES])
+def test_find_rejects_unevaluable_query(
+    case: FindRejectCase,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``find`` errors (exit 2) on queries it cannot honor, instead of mis-searching."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+
+    with pytest.raises(SystemExit) as exc_info:
+        agentgrep.parse_args(case.argv)
+
+    assert exc_info.value.code == 2
+    err = capsys.readouterr().err
+    assert case.fragment in err
+    assert "Traceback" not in err
+
+
+def test_find_allows_source_predicate_with_text() -> None:
+    """``find`` still accepts source-level predicates plus a flat text pattern."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+
+    parsed = agentgrep.parse_args(("find", "agent:codex bliss"))
+
+    assert isinstance(parsed, agentgrep.FindArgs)
+
+
 def test_help_examples_are_present_for_help_flags() -> None:
     root_help = run_agentgrep_cli("--help")
     find_help = run_agentgrep_cli("find", "--help")
