@@ -243,12 +243,13 @@ Records after 2026-01-01 mentioning "bliss". The timestamp filter
 runs at the record layer.
 
 ```console
-$ agentgrep grep 'timestamp:[2026-01 TO 2026-03] model:claude bliss'
+$ agentgrep grep 'scope:conversations timestamp:[2026-01 TO 2026-03] model:claude bliss'
 ```
 
-Records in Q1 2026 from any claude-* model that mention "bliss".
-Field predicates filter, but `grep` still needs a text term to match
-lines against.
+Q1 2026 conversation records from any claude-* model that mention
+"bliss". `model:` is conversation-scoped — prompt records carry no
+model — so a `scope:conversations` (or `scope:all`) predicate is
+required; `grep` still needs a text term to match lines against.
 
 ```console
 $ agentgrep grep 'scope:conversations pytest'
