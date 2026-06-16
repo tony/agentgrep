@@ -58,8 +58,8 @@ comparisons and ranges (`timestamp:>2026-01-01`, `timestamp:[2026-01 TO
 #### Query language over MCP (#70)
 
 The MCP {tooliconl}`search` tool honors the same query language inline, the new
-`agentgrep://query-language` resource publishes the field and operator catalog
-(generated from the registry, so it never drifts from what the compiler
+{resource}`agentgrep_query_language` resource publishes the field and operator
+catalog (generated from the registry, so it never drifts from what the compiler
 accepts), and {tooliconl}`validate_query` dry-runs a query's syntax without
 running a search.
 
