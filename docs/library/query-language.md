@@ -10,8 +10,15 @@ record shape.
 
 The query language is **opt-in**: a bare positional like
 `agentgrep grep bliss` keeps the legacy fast path with zero
-overhead. Detection is a single-character scan for `:` in the
-positional tokens — if absent, the query module is never loaded.
+overhead. A cheap, dependency-free scan engages the parser only when
+a positional carries query syntax — a **known field predicate**
+(`agent:`, `model:`, …), a **standalone uppercase boolean keyword**
+(`AND` / `OR` / `NOT`), or a **leading quote** (an intended phrase).
+Lowercase `and` / `or` and unquoted bare terms stay literal, and a
+plain term list never imports the query module. Restricting the field
+scan to registered names keeps incidental colons — URLs like
+`https://host`, values like `path/to/file` — from spuriously engaging
+the parser.
 
 ## Grammar
 
@@ -20,14 +27,16 @@ query        := disjunction
 disjunction  := conjunction ("OR" conjunction)*
 conjunction  := negation ("AND"? negation)*
 negation     := ("NOT" | "-" | "+")? primary
-primary      := group | field-expr | term
+primary      := group | field-expr | phrase | term
 group        := "(" disjunction ")"
 field-expr   := IDENT ":" field-value
-field-value  := comparison | range | exact-value
+field-value  := comparison | range | exists | exact-value
 comparison   := (">" | "<" | ">=" | "<=") TERM
 range        := "[" TERM "TO" TERM "]"        ; inclusive
               | "{" TERM "TO" TERM "}"        ; exclusive
-exact-value  := TERM
+exists       := "*"                           ; field present + non-empty
+exact-value  := TERM                          ; may carry * / ? wildcards
+phrase       := '"' TEXT '"'                  ; exact adjacent words
 term         := TERM
 ```
 
@@ -52,9 +61,9 @@ predicates prune sources before any file is opened.
 | Field | Kind | Notes |
 |---|---|---|
 | `agent` | enum | One of `codex`, `claude`, `cursor-cli`, `cursor-ide`, `gemini`, `antigravity-cli`, `antigravity-ide`, `grok`, `pi`, `opencode` |
-| `store` | string | Substring against the source's store name |
-| `adapter_id` | string | Substring; alias `adapter` |
-| `path` | path | Glob (with `*` / `?` / `[…]`) or substring |
+| `store` | string | Substring, or `*` / `?` wildcard, against the source's store name |
+| `adapter_id` | string | Substring or `*` / `?` wildcard; alias `adapter` |
+| `path` | path | Glob (with `*` / `?` / `[…]`, case-sensitive) or substring |
 | `mtime` | date | Source-file mtime; supports `>`/`<`/`>=`/`<=` and `[a TO b]` |
 
 ### Record-level fields
@@ -66,12 +75,77 @@ predicate has admitted the source.
 |---|---|---|
 | `scope` | enum | One of `prompts`, `conversations`, `all` |
 | `timestamp` | date | Record timestamp; supports comparison + range; alias `date` |
-| `model` | string | Substring against `record.model` |
-| `role` | string | Substring against `record.role` |
-| `text` | string | Substring; implicit field for bare positional terms |
+| `model` | string | Substring, or `*` / `?` wildcard, against `record.model` |
+| `role` | string | Substring or `*` / `?` wildcard against `record.role` |
+| `text` | string | Substring or `*` / `?` wildcard (against record text); implicit field for bare positional terms |
 
 Unknown field names error at parse time with a clean message listing
-the registered fields.
+the registered fields, so a mistyped predicate (`agnet:codex`) is
+caught immediately rather than silently matching nothing.
+
+Every queryable field, alias, and operator is also reflected
+programmatically by `agentgrep.query.help` (`query_language_fields`,
+`query_language_operators`), which backs the MCP tool descriptions and
+the {ref}`agentgrep://query-language <mcp-resource-query-language>`
+resource — the same vocabulary, never out of sync.
+
+## Phrases
+
+A double-quoted string matches its words as one contiguous, casefolded
+substring with internal whitespace collapsed: `"deploy v1"` matches
+`deploy v1` but not `deploy the v1`. Phrases ride the same fast path as
+bare terms — no field machinery — and compose with the boolean
+operators like any other term:
+
+```
+"streaming parser" OR "stream reader"
+```
+
+Because the parser engages on a leading quote, `agentgrep search
+'"exact phrase"'` enters phrase mode even with no field predicate
+present. (The shell strips the outer single quotes; the inner
+double-quoted token reaches agentgrep intact.)
+
+## Field-exists
+
+`field:*` matches records or sources where the field is **present and
+non-empty**, regardless of value:
+
+```
+model:* ruff
+```
+
+Records that carry any model string and mention `ruff`. Negate for
+absence with `NOT field:*` (or `-field:*` inside a larger quoted
+query):
+
+```
+NOT model:* deploy
+```
+
+Field-exists works on every field kind; it is the readable way to ask
+"was this attribute captured at all?".
+
+## Wildcards
+
+String and text fields (`store`, `adapter_id`, `model`, `role`,
+`text`) accept `*` and `?` glob wildcards. A wildcard value is matched
+as an **anchored, case-insensitive glob** — `model:gpt*` means "starts
+with `gpt`", not "contains `gpt`". For a substring match, wrap with
+explicit wildcards (`model:*gpt*`) or drop the wildcard entirely
+(`model:gpt`, which keeps the historical casefolded substring
+behavior). A wildcard on `text` matches the record text only, while a
+plain `text:` value keeps its multi-surface substring match.
+
+```
+model:gpt*
+```
+
+The `path` field also globs (`*` / `?` / `[…]`), but path globs are
+**case-sensitive** and anchored to the whole path. Enum fields
+(`agent`, `scope`) and date fields (`mtime`, `timestamp`) do not take
+wildcards — enums match by exact membership, dates by literal or
+range.
 
 ## Date literals
 
@@ -110,6 +184,27 @@ For boolean composition:
   back to record-only evaluation, same as OR-mixed.
 
 ## Examples
+
+```console
+$ agentgrep search 'ruff OR uv'
+```
+
+Ranked prompts mentioning either `ruff` or `uv`. A bare uppercase
+`OR` engages the query language without any field predicate.
+
+```console
+$ agentgrep search 'model:gpt* caching'
+```
+
+Prompts from any `gpt`-prefixed model that mention `caching`. The
+`model:gpt*` wildcard is an anchored, case-insensitive glob.
+
+```console
+$ agentgrep search 'model:* ruff'
+```
+
+Prompts that recorded any model and mention `ruff` — `model:*` tests
+presence, not a value.
 
 ```console
 $ agentgrep grep agent:codex bliss
@@ -188,9 +283,11 @@ flags don't yet have query-field counterparts.
 
 ## Performance
 
-When the positionals contain no `:`, the query module is never
-imported and zero work is added — the legacy fast path runs exactly
-as before. When the syntax is used:
+When no positional carries query syntax — no known field predicate, no
+standalone `AND` / `OR` / `NOT`, no leading quote — the query module is
+never imported and zero work is added; the legacy fast path runs
+exactly as before. The gate scan itself is a dependency-free string
+check. When the syntax is used:
 
 - **Parse + compile** is sub-millisecond for typical queries.
 - **Source pruning** is O(predicates) per `SourceHandle`. Pruning

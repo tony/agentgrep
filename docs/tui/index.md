@@ -80,6 +80,27 @@ render in the viewer's local timezone with offset
 (`YYYY-MM-DD HH:MM ±HHMM`), formatted via
 {func}`~agentgrep.format_timestamp_tig`.
 
+## Completion
+
+Both the search bar and the in-list filter offer
+{ref}`query-language <library-query-language>` completion as you type.
+The completion is **keyword-only** — field names and aliases (`age` →
+`agent:`) and enum values (`agent:co` → `agent:codex`); it never
+suggests text pulled from your records, so no prompt content or IDs
+leak into the dropdown.
+
+Two surfaces drive it:
+
+- **Inline ghost text** previews the single best completion of the
+  trailing token. Press `→` (right arrow) at the end of the input to
+  accept it.
+- A **keyword dropdown** lists every candidate (field keywords for a
+  bare token, enum values for a `field:` token). Press `↓` to step into
+  the list, `Enter` to accept the highlighted entry, and `Esc` or
+  `Ctrl-C` to dismiss it without changing your text. Accepting an entry
+  rewrites only the trailing token and leaves the cursor in place — the
+  rest of the query is untouched.
+
 ::::{grid} 1 1 2 2
 :gutter: 2
 
