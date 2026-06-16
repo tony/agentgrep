@@ -7269,12 +7269,17 @@ def candidate_from_mapping(
 
 
 def iter_message_candidates(
-    value: JSONValue | None,
+    value: object,
     *,
     fallback_title: str | None = None,
     fallback_conversation_id: str | None = None,
 ) -> cabc.Iterator[MessageCandidate]:
-    """Recursively walk a JSON value and yield message candidates."""
+    """Recursively walk a JSON value and yield message candidates.
+
+    ``value`` is typed ``object`` so the recursive descent into dict values
+    and list items needs no per-node ``cast`` — the ``isinstance`` guards
+    below narrow it, and scalars are ignored.
+    """
     if isinstance(value, dict):
         mapping = t.cast("dict[str, object]", value)
         role = extract_role(mapping)
@@ -7293,7 +7298,7 @@ def iter_message_candidates(
             )
         for nested in mapping.values():
             yield from iter_message_candidates(
-                t.cast("JSONValue | None", nested),
+                nested,
                 fallback_title=fallback_title,
                 fallback_conversation_id=fallback_conversation_id,
             )
@@ -7367,13 +7372,13 @@ def extract_message_text(mapping: dict[str, object]) -> str | None:
     """Extract message text from common content fields."""
     for key in ("content", "text", "message", "body", "prompt", "value", "parts"):
         if key in mapping:
-            flattened = flatten_content_value(t.cast("JSONValue | None", mapping[key]))
+            flattened = flatten_content_value(mapping[key])
             if flattened:
                 return flattened
     return None
 
 
-def flatten_content_value(value: JSONValue | None) -> str | None:
+def flatten_content_value(value: object) -> str | None:
     """Flatten a message content payload into text."""
     parts = list(iter_text_fragments(value))
     if not parts:
@@ -7382,7 +7387,7 @@ def flatten_content_value(value: JSONValue | None) -> str | None:
 
 
 def iter_text_fragments(
-    value: JSONValue | None,
+    value: object,
 ) -> cabc.Iterator[str]:
     """Yield text fragments from a nested content payload."""
     if isinstance(value, str):
@@ -7398,7 +7403,7 @@ def iter_text_fragments(
         mapping = t.cast("dict[str, object]", value)
         for key in ("text", "content", "message", "body", "prompt", "value", "parts"):
             if key in mapping:
-                yield from iter_text_fragments(t.cast("JSONValue | None", mapping[key]))
+                yield from iter_text_fragments(mapping[key])
 
 
 def extract_title(mapping: dict[str, object]) -> str | None:
