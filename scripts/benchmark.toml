@@ -158,3 +158,8 @@ default_query = ""
 description = "Cold-start CLI import + arg parse only"
 command = "{venv}/bin/agentgrep --help"
 default_query = ""
+
+[bench.import-time-query]
+description = "Query-module import cost (the stack the opt-in gate defers off the cold path)"
+command = "{venv}/bin/python -c \"import agentgrep.query\""
+default_query = ""

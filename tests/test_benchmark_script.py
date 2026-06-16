@@ -471,6 +471,17 @@ def test_committed_benchmarks_include_find_source_predicate_entry() -> None:
     assert field in {"agent", "store", "adapter", "adapter_id", "path", "mtime"}
 
 
+def test_committed_benchmarks_include_query_import_cost_entry() -> None:
+    """A committed import bench measures the query-module import the gate defers."""
+    config = benchmark.load_config(
+        config_path=benchmark.DEFAULT_CONFIG,
+        local_path=_REPO_ROOT / "scripts" / "__missing_benchmark.local.toml",
+    )
+    bench = config.bench["import-time-query"]
+    assert "-c" in shlex.split(bench.command)
+    assert "import agentgrep.query" in bench.command
+
+
 class ProfileEngineFormatCase(t.NamedTuple):
     """One profiler-command output-format validation expectation."""
 
