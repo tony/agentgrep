@@ -125,16 +125,6 @@ SEARCH_PARSE_CASES: tuple[SearchParseCase, ...] = (
         "prompts",
         True,
     ),
-    SearchParseCase(
-        "no-terms",
-        ("search",),
-        (),
-        0,
-        False,
-        False,
-        "prompts",
-        False,
-    ),
 )
 
 
@@ -163,6 +153,24 @@ def test_search_parse_args(
     assert parsed.no_rank == expected_no_rank
     assert parsed.scope == expected_scope
     assert parsed.case_sensitive == expected_case_sensitive
+
+
+def test_search_no_terms_prints_help_and_returns_none(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Bare ``agentgrep search`` shows help instead of ranking every record."""
+    parsed = agentgrep.parse_args(("search",))
+
+    assert parsed is None
+    assert "examples:" in capsys.readouterr().out
+
+
+def test_search_no_terms_with_ui_still_returns_args() -> None:
+    """``agentgrep search --ui`` keeps returning SearchArgs with empty terms."""
+    parsed = agentgrep.parse_args(("search", "--ui"))
+
+    assert isinstance(parsed, agentgrep.SearchArgs)
+    assert parsed.terms == ()
 
 
 def test_search_parse_limit() -> None:
