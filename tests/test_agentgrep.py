@@ -2296,6 +2296,27 @@ async def test_search_and_filter_inputs_carry_query_highlighter(
         assert isinstance(filter_input.highlighter, QueryHighlighter)
 
 
+def test_scope_predicate_widening_does_not_persist(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ``scope:`` predicate widens scope for its own search only; bare queries revert.
+
+    Regression: after ``scope:conversations bliss`` widened discovery to "all"
+    and that query became ``self.query``, a follow-up ``bliss`` (no ``scope:``)
+    used to inherit the widened "all" and keep scanning conversations.
+    """
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    assert app.query.scope == "prompts"
+
+    widened = app._build_search_query("scope:conversations bliss")
+    assert widened.scope == "all"
+    app.query = widened
+
+    reverted = app._build_search_query("bliss")
+    assert reverted.scope == "prompts"
+
+
 def test_streaming_ui_app_passes_runtime_to_search_worker(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

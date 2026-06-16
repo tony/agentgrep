@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import collections
 import contextlib
+import dataclasses
 import importlib
 import json
 import pathlib
@@ -1352,6 +1353,11 @@ def build_streaming_ui_app(
             super().__init__()
             self.home = home
             self.query = query
+            # The user's launch discovery scope. A ``scope:`` predicate
+            # widens the per-search scope to "all"; this stable base is what
+            # a search without a ``scope:`` predicate reverts to, so the
+            # widening never persists across searches.
+            self._user_scope = query.scope
             self.control = control
             self._runtime = SearchRuntime.with_source_scan_cache()
             self.initial_search_text: str | None = initial_search_text
@@ -1838,7 +1844,12 @@ def build_streaming_ui_app(
             """
             from agentgrep.query import build_query_from_input, default_registry
 
-            result = build_query_from_input(text, self.query, default_registry())
+            # Reset the base scope to the user's launch scope so a previous
+            # search's ``scope:``-widened "all" never feeds back as the base —
+            # otherwise a follow-up query with no ``scope:`` predicate would
+            # keep scanning conversations invisibly.
+            base = dataclasses.replace(self.query, scope=self._user_scope)
+            result = build_query_from_input(text, base, default_registry())
             if result.query is not None:
                 return result.query
             # Parse / compile error: degrade to legacy split so the
