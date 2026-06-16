@@ -615,11 +615,14 @@ def _evaluate_record(
 def _field_exists_on_record(field: str, record: agentgrep.SearchRecord) -> bool:
     """Return whether ``field`` is present and non-empty on ``record``.
 
-    Source-derived identity fields (``agent``/``store``/``adapter_id``)
-    and the always-derivable ``scope`` are always present. Nullable
-    record fields count as absent when ``None`` or empty.
+    Source-derived fields (``agent``/``store``/``adapter_id``/``mtime``) and
+    the always-derivable ``scope`` are always present at the record layer: a
+    record only reaches here from a source the ``source_predicate`` already
+    admitted, and that layer owns the real ``mtime`` decision (the record
+    carries no ``mtime_ns``). Nullable record fields count as absent when
+    ``None`` or empty.
     """
-    if field in {"agent", "store", "adapter_id", "scope"}:
+    if field in {"agent", "store", "adapter_id", "mtime", "scope"}:
         return True
     if field == "path":
         return bool(str(record.path))

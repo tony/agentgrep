@@ -614,6 +614,16 @@ RECORD_PREDICATE_CASES: tuple[RecordPredicateCase, ...] = (
         record_kwargs={"text": "bliss here", "agent": "codex"},
         expected_matches=True,
     ),
+    RecordPredicateCase(
+        # mtime is source-derived: a record reaching the record layer came
+        # from a source the source predicate admitted, so mtime:* holds here
+        # (the record carries no mtime_ns to decide otherwise). Before the
+        # fix this dropped every record.
+        test_id="field-exists-mtime-present-at-record-layer",
+        query="mtime:* bliss",
+        record_kwargs={"text": "bliss"},
+        expected_matches=True,
+    ),
 )
 
 
