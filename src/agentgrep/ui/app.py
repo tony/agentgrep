@@ -16,6 +16,7 @@ import asyncio
 import collections
 import contextlib
 import dataclasses
+import functools
 import importlib
 import json
 import pathlib
@@ -1330,6 +1331,13 @@ def build_streaming_ui_app(
         filtered_records: list[SearchRecord]
 
         _DETAIL_CACHE_MAX: t.ClassVar[int] = 1024
+        _DETAIL_ASYNC_BODY_THRESHOLD: t.ClassVar[int] = 20_000
+        """Body length (chars) above which an uncached detail builds off-thread.
+
+        Cache hits and small bodies build inline so cursor navigation stays
+        synchronous; only a large, uncached body — parse, pretty-print, and
+        syntax-highlight — is heavy enough to stall the event loop.
+        """
 
         # Statusline width (cells) below which the meter bar and the
         # elapsed "(32s)" suffix are dropped — percent and match count
@@ -2420,12 +2428,78 @@ def build_streaming_ui_app(
             header.append("\n")
             body_truncated = truncate_lines(record.text, DETAIL_BODY_MAX_LINES)
             query_terms = list(self.query.terms)
-            body_renderable, body_for_scroll = self._build_detail_body(
-                body_truncated,
+            if (
+                self._detail_body_is_cached(query_terms)
+                or len(body_truncated) <= self._DETAIL_ASYNC_BODY_THRESHOLD
+            ):
+                self._present_detail(
+                    record,
+                    header,
+                    self._build_detail_body(body_truncated, query_terms),
+                    query_terms,
+                )
+                return
+            # Large, uncached body: show the header now and build the heavy
+            # renderable off the UI thread. ``exclusive=True`` cancels a prior
+            # detail build, and ``_present_detail`` discards any result whose
+            # record is no longer the one on screen.
+            self._detail.update(_RichGroup(header))
+            streaming = t.cast("StreamingAppLike", t.cast("object", self))
+            streaming.run_worker(
+                functools.partial(
+                    self._build_detail_in_thread,
+                    record,
+                    header,
+                    body_truncated,
+                    query_terms,
+                ),
+                name="detail",
+                group="detail",
+                thread=True,
+                exclusive=True,
+            )
+
+        def _detail_body_is_cached(self, query_terms: cabc.Sequence[str]) -> bool:
+            """Return whether the detail body for the current record is memoized."""
+            cache_key = self._detail_cache_key(query_terms)
+            return cache_key is not None and cache_key in self._detail_body_cache
+
+        def _build_detail_in_thread(
+            self,
+            record: SearchRecord,
+            header: object,
+            body_truncated: str,
+            query_terms: cabc.Sequence[str],
+        ) -> None:
+            """Build the detail body off the UI thread, then apply it on the loop."""
+            body = self._build_detail_body(body_truncated, query_terms)
+            streaming = t.cast("StreamingAppLike", t.cast("object", self))
+            streaming.call_from_thread(
+                self._present_detail,
+                record,
+                header,
+                body,
                 query_terms,
             )
+
+        def _present_detail(
+            self,
+            record: SearchRecord,
+            header: object,
+            body: tuple[object, str],
+            query_terms: cabc.Sequence[str],
+        ) -> None:
+            """Render ``body`` into the detail pane unless ``record`` is superseded.
+
+            Runs on the event-loop thread (directly for inline builds, via
+            ``call_from_thread`` for off-thread builds); the identity check
+            drops a stale build whose record the cursor has already left.
+            """
+            if self._detail is None or self._current_detail_record is not record:
+                return
+            body_renderable, body_for_scroll = body
             self._detail.update(
-                _RichGroup(header, t.cast("t.Any", body_renderable)),
+                _RichGroup(t.cast("t.Any", header), t.cast("t.Any", body_renderable))
             )
             self._scroll_detail_to_first_match(body_for_scroll, query_terms)
             self._refresh_detail_statusline()

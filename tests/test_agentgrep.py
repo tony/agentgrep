@@ -2371,6 +2371,66 @@ async def test_detail_pane_highlights_filter_terms_distinctly(
         )
 
 
+def _ui_record(agentgrep: t.Any, path: pathlib.Path, text: str, session_id: str) -> t.Any:
+    """Build a minimal prompt :class:`SearchRecord` for detail-pane tests."""
+    return agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=path,
+        text=text,
+        session_id=session_id,
+    )
+
+
+async def test_large_detail_body_builds_off_thread(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A large, uncached detail body is built by a worker, not on the UI thread."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        big = "x" * (app._DETAIL_ASYNC_BODY_THRESHOLD + 1000)
+        record = _ui_record(agentgrep, tmp_path / "big.jsonl", big, "big")
+        terms = list(app.query.terms)
+
+        app.show_detail(record)
+        # show_detail returns immediately; the heavy body is deferred.
+        assert not app._detail_body_is_cached(terms)
+
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        # The worker built and applied the body off the UI thread.
+        assert app._detail_body_is_cached(terms)
+        assert len(list(app._detail.content.renderables)) == 2
+
+
+async def test_present_detail_discards_superseded_record(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A finished build whose record the cursor has left is not rendered."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        current = _ui_record(agentgrep, tmp_path / "cur.jsonl", "current body", "cur")
+        stale = _ui_record(agentgrep, tmp_path / "old.jsonl", "stale body", "old")
+        app._current_detail_record = current
+        updates: list[object] = []
+        monkeypatch.setattr(app._detail, "update", updates.append)
+
+        app._present_detail(stale, "HEADER", app._build_detail_body("stale body", ()), ())
+        assert updates == []  # superseded record is dropped
+
+        app._present_detail(current, "HEADER", app._build_detail_body("current body", ()), ())
+        assert len(updates) == 1  # current record is rendered
+
+
 async def test_dropdown_dismissal_keys_close_without_accepting(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
