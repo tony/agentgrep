@@ -62,6 +62,16 @@ from rich.markdown import Markdown as _RichMarkdown
 from rich.syntax import Syntax as _RichSyntax
 from rich.text import Text as _RichText
 
+# orjson is an optional JSON-decode accelerator (the ``speedups`` extra).
+# Pure-Python ``json`` stays the semantic source of truth — see ADR 0002 — so
+# ``_loads`` below behaves identically whether or not orjson is installed.
+try:
+    import orjson as _orjson
+except ImportError:
+    # Keep _orjson typed as the module so _loads resolves .loads /
+    # .JSONDecodeError; the runtime None check guards the absent case.
+    _orjson = None  # ty: ignore[invalid-assignment]
+
 from agentgrep.stores import (
     DiscoverySpec,
     PathKind,
@@ -6883,6 +6893,30 @@ def iter_jsonl(path: pathlib.Path) -> cabc.Iterator[JSONValue]:
     yield from _iter_jsonl(path)
 
 
+def _loads(text: str) -> object:
+    """Decode one JSON document, preferring orjson when it is installed.
+
+    Stdlib :func:`json.loads` is the semantic source of truth (ADR 0002);
+    orjson is a drop-in accelerator. orjson rejects a handful of inputs
+    stdlib accepts — ``NaN``, ``Infinity``, ``-Infinity`` (which Python's own
+    ``json.dumps`` emits) — so any orjson decode error falls back to
+    ``json.loads``, recovering the stdlib value or re-raising
+    :class:`json.JSONDecodeError` for genuinely invalid input.
+
+    Documented exemption (ADR 0002): orjson decodes integers beyond the
+    signed 64-bit range to ``float`` instead of raising, so for those inputs
+    the accelerated result is lossy relative to stdlib. Agent-history JSON
+    does not carry integers that large — timestamps, ids, and counts fit in
+    64 bits or are strings — so the divergence is unreachable in practice.
+    """
+    if _orjson is None:
+        return json.loads(text)
+    try:
+        return _orjson.loads(text)
+    except _orjson.JSONDecodeError:
+        return json.loads(text)
+
+
 class _PeriodicYield:
     """Release the GIL at most once per :data:`_JSONL_YIELD_INTERVAL_SECONDS`.
 
@@ -6954,7 +6988,7 @@ def _iter_jsonl(
                     continue
                 yield_now()
                 try:
-                    parsed = t.cast("object", json.loads(stripped))
+                    parsed = _loads(stripped)
                 except json.JSONDecodeError:
                     continue
                 if isinstance(parsed, (dict, list, str, int, float, bool)) or parsed is None:
@@ -7015,7 +7049,7 @@ def _decode_jsonl_raw_line(
     if not stripped:
         return _SKIPPED_JSONL_LINE
     try:
-        parsed = t.cast("object", json.loads(stripped))
+        parsed = _loads(stripped)
     except json.JSONDecodeError:
         return _SKIPPED_JSONL_LINE
     if isinstance(parsed, (dict, list, str, int, float, bool)) or parsed is None:
@@ -7063,7 +7097,7 @@ def _iter_jsonl_with_raw_prefix_skip(
                 if not stripped:
                     continue
                 try:
-                    parsed = t.cast("object", json.loads(stripped))
+                    parsed = _loads(stripped)
                 except json.JSONDecodeError:
                     continue
                 if isinstance(parsed, (dict, list, str, int, float, bool)) or parsed is None:
@@ -7091,7 +7125,7 @@ def _iter_jsonl_with_raw_line_skip(
                 if not stripped:
                     continue
                 try:
-                    parsed = t.cast("object", json.loads(stripped))
+                    parsed = _loads(stripped)
                 except json.JSONDecodeError:
                     continue
                 if isinstance(parsed, (dict, list, str, int, float, bool)) or parsed is None:
@@ -7154,10 +7188,7 @@ def _read_first_jsonl_header(
                         break
                     raw_line.extend(chunk)
                 try:
-                    parsed = t.cast(
-                        "object",
-                        json.loads(raw_line.decode("utf-8", errors="replace")),
-                    )
+                    parsed = _loads(raw_line.decode("utf-8", errors="replace"))
                 except json.JSONDecodeError:
                     return None
                 if isinstance(parsed, dict):
@@ -7442,7 +7473,7 @@ def parse_embedded_json(text: str) -> JSONValue | None:
     if not stripped or stripped[0] not in "[{":
         return None
     try:
-        parsed = t.cast("object", json.loads(stripped))
+        parsed = _loads(stripped)
     except json.JSONDecodeError:
         return None
     if isinstance(parsed, (dict, list, str, int, float, bool)) or parsed is None:

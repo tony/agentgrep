@@ -1308,6 +1308,72 @@ def test_periodic_yield_gates_on_wall_clock(
     assert set(sleep_calls) <= {0}
 
 
+@pytest.fixture(params=["accelerated", "stdlib"])
+def loads_impl(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> t.Callable[[str], object]:
+    """Yield ``_loads`` under both the orjson and forced-stdlib paths.
+
+    The ``stdlib`` param forces ``_orjson`` absent so the pure-Python
+    fallback runs even where orjson is installed; ``accelerated`` skips when
+    orjson is missing. Mirrors the shared-implementation fixture in ADR 0002.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    if request.param == "stdlib":
+        monkeypatch.setattr(agentgrep, "_orjson", None)
+    elif agentgrep._orjson is None:
+        pytest.skip("orjson accelerator is not installed")
+    return t.cast("t.Callable[[str], object]", agentgrep._loads)
+
+
+class LoadsCase(t.NamedTuple):
+    """One ``_loads`` decode input shared by both implementations."""
+
+    test_id: str
+    text: str
+
+
+_LOADS_CASES = (
+    LoadsCase("object", '{"a": 1, "b": [2, 3]}'),
+    LoadsCase("array", "[1, 2, 3]"),
+    LoadsCase("string_with_escape", '"hello \\u00e9 world"'),
+    LoadsCase("nested", '{"x": {"y": [true, false, null]}}'),
+    LoadsCase("unicode", '{"emoji": "\U0001f3af", "accent": "café"}'),
+    LoadsCase("float", '{"pi": 3.14159, "t": -273.15}'),
+    LoadsCase("scalar_int", "42"),
+    LoadsCase("scalar_null", "null"),
+    LoadsCase("large_int_within_64bit", "9007199254740993"),
+    # orjson rejects NaN/Infinity (stdlib json — and thus Python's json.dumps
+    # — accepts them); _loads falls back to stdlib so both paths agree.
+    LoadsCase("positive_infinity", "Infinity"),
+    LoadsCase("negative_infinity", "-Infinity"),
+)
+
+
+@pytest.mark.parametrize("case", _LOADS_CASES, ids=lambda case: case.test_id)
+def test_loads_matches_stdlib_json(
+    case: LoadsCase,
+    loads_impl: t.Callable[[str], object],
+) -> None:
+    """``_loads`` returns the same value as ``json.loads`` on both paths."""
+    assert loads_impl(case.text) == json.loads(case.text)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    ['{"a":}', "not json", "{unterminated", ""],
+    ids=["bad_value", "bare_word", "unterminated", "empty"],
+)
+def test_loads_raises_json_decode_error_on_invalid(
+    bad: str,
+    loads_impl: t.Callable[[str], object],
+) -> None:
+    """Invalid input raises ``json.JSONDecodeError`` regardless of backend."""
+    with pytest.raises(json.JSONDecodeError):
+        loads_impl(bad)
+
+
 class ReverseJsonlCase(t.NamedTuple):
     """One reverse JSONL parsing shape."""
 
@@ -1381,13 +1447,13 @@ def test_iter_jsonl_reverse_raw_skip_avoids_decoding_skipped_lines(
     )
     monkeypatch.setattr(agentgrep, "_JSONL_REVERSE_CHUNK_BYTES", 9)
     decoded_inputs: list[str] = []
-    original_loads = agentgrep.json.loads
+    original_loads = agentgrep._loads
 
     def loads_with_capture(payload: str) -> object:
         decoded_inputs.append(payload)
         return t.cast("object", original_loads(payload))
 
-    monkeypatch.setattr(agentgrep.json, "loads", loads_with_capture)
+    monkeypatch.setattr(agentgrep, "_loads", loads_with_capture)
 
     parsed = list(
         agentgrep._iter_jsonl(
@@ -1439,13 +1505,13 @@ def test_parse_codex_session_skips_function_call_output_before_json_decode(
         mtime_ns=1,
     )
     decoded_payloads: list[str] = []
-    original_loads = agentgrep.json.loads
+    original_loads = agentgrep._loads
 
     def tracking_loads(payload: str) -> object:
         decoded_payloads.append(payload)
         return original_loads(payload)
 
-    monkeypatch.setattr(agentgrep.json, "loads", tracking_loads)
+    monkeypatch.setattr(agentgrep, "_loads", tracking_loads)
 
     records = list(agentgrep.parse_codex_session_file(source))
 
@@ -1673,13 +1739,13 @@ def test_parse_codex_session_raw_prefilter_preserves_header(
         mtime_ns=1,
     )
     decoded_payloads: list[str] = []
-    original_loads = agentgrep.json.loads
+    original_loads = agentgrep._loads
 
     def tracking_loads(payload: str) -> object:
         decoded_payloads.append(payload)
         return original_loads(payload)
 
-    monkeypatch.setattr(agentgrep.json, "loads", tracking_loads)
+    monkeypatch.setattr(agentgrep, "_loads", tracking_loads)
 
     def raw_skip_line(line: str) -> bool:
         return "bliss" not in line
@@ -1752,13 +1818,13 @@ def test_parse_pi_session_raw_prefilter_preserves_header(
         mtime_ns=1,
     )
     decoded_payloads: list[str] = []
-    original_loads = agentgrep.json.loads
+    original_loads = agentgrep._loads
 
     def tracking_loads(payload: str) -> object:
         decoded_payloads.append(payload)
         return original_loads(payload)
 
-    monkeypatch.setattr(agentgrep.json, "loads", tracking_loads)
+    monkeypatch.setattr(agentgrep, "_loads", tracking_loads)
 
     def raw_skip_line(line: str) -> bool:
         return "bliss" not in line
