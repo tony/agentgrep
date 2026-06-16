@@ -1542,8 +1542,15 @@ type SourceProgressCallback = cabc.Callable[[int, int, SourceHandle, int, int], 
 _SOURCE_PROGRESS_RECORD_INTERVAL = 128
 """Parsed-record cadence for in-source progress updates and GIL yields."""
 
-_JSONL_YIELD_LINE_INTERVAL = 128
-"""Decoded-line cadence for cooperative JSONL parser yields."""
+_JSONL_YIELD_INTERVAL_SECONDS = 0.01
+"""Wall-clock cadence for cooperative JSONL parser yields.
+
+The scanners run inside a Textual worker thread; an occasional
+``time.sleep(0)`` lets the UI thread render. Yielding per decoded line
+or per discarded chunk dominated scan time, so the yield is gated on
+elapsed wall time instead — the interpreter's own thread-switch
+interval already bounds UI latency between yields.
+"""
 
 _JSONL_PREFIX_BYTES = 4096
 """Bytes read up front when a raw-line skip predicate is active."""
@@ -6876,6 +6883,27 @@ def iter_jsonl(path: pathlib.Path) -> cabc.Iterator[JSONValue]:
     yield from _iter_jsonl(path)
 
 
+class _PeriodicYield:
+    """Release the GIL at most once per :data:`_JSONL_YIELD_INTERVAL_SECONDS`.
+
+    One instance is created per JSONL scan and called on every line and
+    discarded chunk; it only invokes ``time.sleep(0)`` when the wall-clock
+    interval has elapsed, so a hot single-threaded scan pays a cheap
+    ``perf_counter`` read per line instead of an OS reschedule.
+    """
+
+    __slots__ = ("_deadline",)
+
+    def __init__(self) -> None:
+        self._deadline = time.perf_counter() + _JSONL_YIELD_INTERVAL_SECONDS
+
+    def __call__(self) -> None:
+        now = time.perf_counter()
+        if now >= self._deadline:
+            time.sleep(0)
+            self._deadline = now + _JSONL_YIELD_INTERVAL_SECONDS
+
+
 def _iter_jsonl(
     path: pathlib.Path,
     *,
@@ -6919,14 +6947,12 @@ def _iter_jsonl(
         return
     try:
         with path.open(encoding="utf-8") as handle:
-            decoded_lines = 0
+            yield_now = _PeriodicYield()
             for line in handle:
                 stripped = line.strip()
                 if not stripped:
                     continue
-                decoded_lines += 1
-                if decoded_lines % _JSONL_YIELD_LINE_INTERVAL == 0:
-                    time.sleep(0)
+                yield_now()
                 try:
                     parsed = t.cast("object", json.loads(stripped))
                 except json.JSONDecodeError:
@@ -6948,7 +6974,7 @@ def _iter_jsonl_reverse(
             handle.seek(0, os.SEEK_END)
             position = handle.tell()
             pending = b""
-            decoded_lines = 0
+            yield_now = _PeriodicYield()
             while position > 0:
                 read_size = min(_JSONL_REVERSE_CHUNK_BYTES, position)
                 position -= read_size
@@ -6960,16 +6986,12 @@ def _iter_jsonl_reverse(
                     decoded = _decode_jsonl_raw_line(raw_line, skip_line=skip_line)
                     if decoded is _SKIPPED_JSONL_LINE:
                         continue
-                    decoded_lines += 1
-                    if decoded_lines % _JSONL_YIELD_LINE_INTERVAL == 0:
-                        time.sleep(0)
+                    yield_now()
                     yield t.cast("JSONValue", decoded)
             if pending.strip():
                 decoded = _decode_jsonl_raw_line(pending, skip_line=skip_line)
                 if decoded is not _SKIPPED_JSONL_LINE:
-                    decoded_lines += 1
-                    if decoded_lines % _JSONL_YIELD_LINE_INTERVAL == 0:
-                        time.sleep(0)
+                    yield_now()
                     yield t.cast("JSONValue", decoded)
     except OSError:
         return
@@ -7015,16 +7037,14 @@ def _iter_jsonl_with_raw_prefix_skip(
     """
     try:
         with path.open("rb") as handle:
-            decoded_lines = 0
+            yield_now = _PeriodicYield()
             while True:
                 prefix = handle.readline(_JSONL_PREFIX_BYTES)
                 if not prefix:
                     break
                 if not prefix.strip():
                     continue
-                decoded_lines += 1
-                if decoded_lines % _JSONL_YIELD_LINE_INTERVAL == 0:
-                    time.sleep(0)
+                yield_now()
                 prefix_text = prefix.decode("utf-8", errors="replace")
                 if skip_line(prefix_text):
                     _discard_rest_of_line(handle, prefix)
@@ -7035,7 +7055,7 @@ def _iter_jsonl_with_raw_prefix_skip(
                     if not chunk:
                         break
                     raw_line.extend(chunk)
-                    time.sleep(0)
+                    yield_now()
                 full_text = raw_line.decode("utf-8", errors="replace")
                 if full_line_skip is not None and full_line_skip(full_text):
                     continue
@@ -7059,13 +7079,11 @@ def _iter_jsonl_with_raw_line_skip(
     """Yield decoded JSON objects while skipping matched full raw lines."""
     try:
         with path.open("rb") as handle:
-            decoded_lines = 0
+            yield_now = _PeriodicYield()
             for raw_line in handle:
                 if not raw_line.strip():
                     continue
-                decoded_lines += 1
-                if decoded_lines % _JSONL_YIELD_LINE_INTERVAL == 0:
-                    time.sleep(0)
+                yield_now()
                 line = raw_line.decode("utf-8", errors="replace")
                 if skip_line(line):
                     continue
@@ -7175,11 +7193,14 @@ def _keep_jsonl_header_lines(
 
 
 def _discard_rest_of_line(handle: t.BinaryIO, prefix: bytes) -> None:
-    """Discard the unread remainder of the current physical line."""
+    """Discard the unread remainder of the current physical line.
+
+    Each ``readline`` releases the GIL for the underlying read, so the
+    discard loop stays cooperative without an explicit per-chunk yield.
+    """
     chunk = prefix
     while chunk and not chunk.endswith(b"\n"):
         chunk = handle.readline(_JSONL_SKIP_CHUNK_BYTES)
-        time.sleep(0)
 
 
 def _is_codex_function_call_output_line(line: str) -> bool:

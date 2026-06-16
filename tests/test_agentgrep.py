@@ -8,6 +8,7 @@ import asyncio
 import contextlib
 import importlib
 import io
+import itertools
 import json
 import os
 import pathlib
@@ -1251,21 +1252,60 @@ def test_iter_jsonl_cooperatively_yields_during_large_files(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """JSONL parsing yields even before search records are produced."""
+    """JSONL parsing yields cooperatively once the wall-clock interval elapses."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     path = tmp_path / "events.jsonl"
-    lines = [
-        json.dumps({"type": "noise", "index": index})
-        for index in range(agentgrep._JSONL_YIELD_LINE_INTERVAL + 1)
-    ]
+    line_count = 300
+    lines = [json.dumps({"type": "noise", "index": index}) for index in range(line_count)]
     path.write_text("\n".join(lines), encoding="utf-8")
+    # Advance the clock past the yield interval on every read so each line
+    # crosses the wall-clock deadline and yields.
+    ticks = itertools.count(0.0, agentgrep._JSONL_YIELD_INTERVAL_SECONDS * 2)
+    monkeypatch.setattr(agentgrep.time, "perf_counter", lambda: next(ticks))
     sleep_calls: list[float] = []
     monkeypatch.setattr(agentgrep.time, "sleep", sleep_calls.append)
 
     parsed = list(agentgrep.iter_jsonl(path))
 
-    assert len(parsed) == agentgrep._JSONL_YIELD_LINE_INTERVAL + 1
-    assert sleep_calls == [0]
+    assert len(parsed) == line_count
+    assert sleep_calls  # cooperative yields fired as wall time advanced
+    assert set(sleep_calls) == {0}
+
+
+class PeriodicYieldCase(t.NamedTuple):
+    """One :class:`agentgrep._PeriodicYield` gating scenario."""
+
+    test_id: str
+    perf_values: tuple[float, ...]
+    """``perf_counter`` returns: index 0 seeds the deadline, the rest drive calls."""
+    expected_sleeps: int
+
+
+_PERIODIC_YIELD_CASES = (
+    PeriodicYieldCase("within_interval_never_yields", (0.0, 0.001, 0.002, 0.009), 0),
+    PeriodicYieldCase("each_call_past_interval_yields", (0.0, 0.02, 0.04, 0.06), 3),
+    PeriodicYieldCase("yields_only_after_interval", (0.0, 0.005, 0.011, 0.012, 0.025), 2),
+)
+
+
+@pytest.mark.parametrize("case", _PERIODIC_YIELD_CASES, ids=lambda case: case.test_id)
+def test_periodic_yield_gates_on_wall_clock(
+    case: PeriodicYieldCase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``_PeriodicYield`` sleeps only when the wall-clock interval has elapsed."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    ticks = iter(case.perf_values)
+    monkeypatch.setattr(agentgrep.time, "perf_counter", lambda: next(ticks))
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(agentgrep.time, "sleep", sleep_calls.append)
+
+    yield_now = agentgrep._PeriodicYield()
+    for _ in case.perf_values[1:]:
+        yield_now()
+
+    assert len(sleep_calls) == case.expected_sleeps
+    assert set(sleep_calls) <= {0}
 
 
 class ReverseJsonlCase(t.NamedTuple):
