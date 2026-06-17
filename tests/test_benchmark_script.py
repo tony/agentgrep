@@ -432,6 +432,56 @@ def test_committed_benchmarks_include_cursor_ide_profile_entries() -> None:
             assert "limit 500" in bench.description.casefold()
 
 
+def test_committed_benchmarks_include_query_language_profile_entries() -> None:
+    """Committed profiling coverage exercises the query-language predicate path."""
+    config = benchmark.load_config(
+        config_path=benchmark.DEFAULT_CONFIG,
+        local_path=_REPO_ROOT / "scripts" / "__missing_benchmark.local.toml",
+    )
+    expected = set(benchmark.PROFILE_ENGINE_QUERY_LANGUAGE_BENCHMARK_GROUP)
+    assert expected == set(benchmark.BENCHMARK_COMMAND_GROUPS["query-language"])
+    assert expected <= set(config.bench)
+    for name in expected:
+        bench = config.bench[name]
+        assert "scripts/profile_engine.py" in bench.command
+        assert "--query-language" in bench.command
+        # Engages the compile path: a field predicate, boolean, or range.
+        assert ":" in bench.default_query
+        tokens = shlex.split(bench.command)
+        format_indexes = [index for index, token in enumerate(tokens) if token == "--format"]
+        assert format_indexes, f"{name} must request machine-readable profiler output"
+        assert tokens[format_indexes[-1] + 1] == "json"
+        if "max-count" in name:
+            assert "--max-count 500" in bench.command
+            assert "max-count 500" in bench.description.casefold()
+        else:
+            assert "--limit 500" in bench.command
+            assert "limit 500" in bench.description.casefold()
+
+
+def test_committed_benchmarks_include_find_source_predicate_entry() -> None:
+    """A committed find bench exercises a source-level predicate (find honors it)."""
+    config = benchmark.load_config(
+        config_path=benchmark.DEFAULT_CONFIG,
+        local_path=_REPO_ROOT / "scripts" / "__missing_benchmark.local.toml",
+    )
+    bench = config.bench["find-query-language"]
+    assert "agentgrep find" in bench.command
+    field = bench.default_query.split(":", 1)[0]
+    assert field in {"agent", "store", "adapter", "adapter_id", "path", "mtime"}
+
+
+def test_committed_benchmarks_include_query_import_cost_entry() -> None:
+    """A committed import bench measures the query-module import the gate defers."""
+    config = benchmark.load_config(
+        config_path=benchmark.DEFAULT_CONFIG,
+        local_path=_REPO_ROOT / "scripts" / "__missing_benchmark.local.toml",
+    )
+    bench = config.bench["import-time-query"]
+    assert "-c" in shlex.split(bench.command)
+    assert "import agentgrep.query" in bench.command
+
+
 class ProfileEngineFormatCase(t.NamedTuple):
     """One profiler-command output-format validation expectation."""
 

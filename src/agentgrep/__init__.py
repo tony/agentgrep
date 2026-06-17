@@ -62,6 +62,16 @@ from rich.markdown import Markdown as _RichMarkdown
 from rich.syntax import Syntax as _RichSyntax
 from rich.text import Text as _RichText
 
+# orjson is an optional JSON-decode accelerator (the ``speedups`` extra).
+# Pure-Python ``json`` stays the semantic source of truth — see ADR 0002 — so
+# ``_loads`` below behaves identically whether or not orjson is installed.
+try:
+    import orjson as _orjson
+except ImportError:
+    # Keep _orjson typed as the module so _loads resolves .loads /
+    # .JSONDecodeError; the runtime None check guards the absent case.
+    _orjson = None  # ty: ignore[invalid-assignment]
+
 from agentgrep.stores import (
     DiscoverySpec,
     PathKind,
@@ -1542,8 +1552,15 @@ type SourceProgressCallback = cabc.Callable[[int, int, SourceHandle, int, int], 
 _SOURCE_PROGRESS_RECORD_INTERVAL = 128
 """Parsed-record cadence for in-source progress updates and GIL yields."""
 
-_JSONL_YIELD_LINE_INTERVAL = 128
-"""Decoded-line cadence for cooperative JSONL parser yields."""
+_JSONL_YIELD_INTERVAL_SECONDS = 0.01
+"""Wall-clock cadence for cooperative JSONL parser yields.
+
+The scanners run inside a Textual worker thread; an occasional
+``time.sleep(0)`` lets the UI thread render. Yielding per decoded line
+or per discarded chunk dominated scan time, so the yield is gated on
+elapsed wall time instead — the interpreter's own thread-switch
+interval already bounds UI latency between yields.
+"""
 
 _JSONL_PREFIX_BYTES = 4096
 """Bytes read up front when a raw-line skip predicate is active."""
@@ -6876,6 +6893,51 @@ def iter_jsonl(path: pathlib.Path) -> cabc.Iterator[JSONValue]:
     yield from _iter_jsonl(path)
 
 
+def _loads(text: str) -> object:
+    """Decode one JSON document, preferring orjson when it is installed.
+
+    Stdlib :func:`json.loads` is the semantic source of truth (ADR 0002);
+    orjson is a drop-in accelerator. orjson rejects a handful of inputs
+    stdlib accepts — ``NaN``, ``Infinity``, ``-Infinity`` (which Python's own
+    ``json.dumps`` emits) — so any orjson decode error falls back to
+    ``json.loads``, recovering the stdlib value or re-raising
+    :class:`json.JSONDecodeError` for genuinely invalid input.
+
+    Documented exemption (ADR 0002): orjson decodes integers beyond the
+    signed 64-bit range to ``float`` instead of raising, so for those inputs
+    the accelerated result is lossy relative to stdlib. Agent-history JSON
+    does not carry integers that large — timestamps, ids, and counts fit in
+    64 bits or are strings — so the divergence is unreachable in practice.
+    """
+    if _orjson is None:
+        return json.loads(text)
+    try:
+        return _orjson.loads(text)
+    except _orjson.JSONDecodeError:
+        return json.loads(text)
+
+
+class _PeriodicYield:
+    """Release the GIL at most once per :data:`_JSONL_YIELD_INTERVAL_SECONDS`.
+
+    One instance is created per JSONL scan and called on every line and
+    discarded chunk; it only invokes ``time.sleep(0)`` when the wall-clock
+    interval has elapsed, so a hot single-threaded scan pays a cheap
+    ``perf_counter`` read per line instead of an OS reschedule.
+    """
+
+    __slots__ = ("_deadline",)
+
+    def __init__(self) -> None:
+        self._deadline = time.perf_counter() + _JSONL_YIELD_INTERVAL_SECONDS
+
+    def __call__(self) -> None:
+        now = time.perf_counter()
+        if now >= self._deadline:
+            time.sleep(0)
+            self._deadline = now + _JSONL_YIELD_INTERVAL_SECONDS
+
+
 def _iter_jsonl(
     path: pathlib.Path,
     *,
@@ -6919,16 +6981,14 @@ def _iter_jsonl(
         return
     try:
         with path.open(encoding="utf-8") as handle:
-            decoded_lines = 0
+            yield_now = _PeriodicYield()
             for line in handle:
                 stripped = line.strip()
                 if not stripped:
                     continue
-                decoded_lines += 1
-                if decoded_lines % _JSONL_YIELD_LINE_INTERVAL == 0:
-                    time.sleep(0)
+                yield_now()
                 try:
-                    parsed = t.cast("object", json.loads(stripped))
+                    parsed = _loads(stripped)
                 except json.JSONDecodeError:
                     continue
                 if isinstance(parsed, (dict, list, str, int, float, bool)) or parsed is None:
@@ -6948,7 +7008,7 @@ def _iter_jsonl_reverse(
             handle.seek(0, os.SEEK_END)
             position = handle.tell()
             pending = b""
-            decoded_lines = 0
+            yield_now = _PeriodicYield()
             while position > 0:
                 read_size = min(_JSONL_REVERSE_CHUNK_BYTES, position)
                 position -= read_size
@@ -6960,16 +7020,12 @@ def _iter_jsonl_reverse(
                     decoded = _decode_jsonl_raw_line(raw_line, skip_line=skip_line)
                     if decoded is _SKIPPED_JSONL_LINE:
                         continue
-                    decoded_lines += 1
-                    if decoded_lines % _JSONL_YIELD_LINE_INTERVAL == 0:
-                        time.sleep(0)
+                    yield_now()
                     yield t.cast("JSONValue", decoded)
             if pending.strip():
                 decoded = _decode_jsonl_raw_line(pending, skip_line=skip_line)
                 if decoded is not _SKIPPED_JSONL_LINE:
-                    decoded_lines += 1
-                    if decoded_lines % _JSONL_YIELD_LINE_INTERVAL == 0:
-                        time.sleep(0)
+                    yield_now()
                     yield t.cast("JSONValue", decoded)
     except OSError:
         return
@@ -6993,7 +7049,7 @@ def _decode_jsonl_raw_line(
     if not stripped:
         return _SKIPPED_JSONL_LINE
     try:
-        parsed = t.cast("object", json.loads(stripped))
+        parsed = _loads(stripped)
     except json.JSONDecodeError:
         return _SKIPPED_JSONL_LINE
     if isinstance(parsed, (dict, list, str, int, float, bool)) or parsed is None:
@@ -7015,16 +7071,14 @@ def _iter_jsonl_with_raw_prefix_skip(
     """
     try:
         with path.open("rb") as handle:
-            decoded_lines = 0
+            yield_now = _PeriodicYield()
             while True:
                 prefix = handle.readline(_JSONL_PREFIX_BYTES)
                 if not prefix:
                     break
                 if not prefix.strip():
                     continue
-                decoded_lines += 1
-                if decoded_lines % _JSONL_YIELD_LINE_INTERVAL == 0:
-                    time.sleep(0)
+                yield_now()
                 prefix_text = prefix.decode("utf-8", errors="replace")
                 if skip_line(prefix_text):
                     _discard_rest_of_line(handle, prefix)
@@ -7035,7 +7089,7 @@ def _iter_jsonl_with_raw_prefix_skip(
                     if not chunk:
                         break
                     raw_line.extend(chunk)
-                    time.sleep(0)
+                    yield_now()
                 full_text = raw_line.decode("utf-8", errors="replace")
                 if full_line_skip is not None and full_line_skip(full_text):
                     continue
@@ -7043,7 +7097,7 @@ def _iter_jsonl_with_raw_prefix_skip(
                 if not stripped:
                     continue
                 try:
-                    parsed = t.cast("object", json.loads(stripped))
+                    parsed = _loads(stripped)
                 except json.JSONDecodeError:
                     continue
                 if isinstance(parsed, (dict, list, str, int, float, bool)) or parsed is None:
@@ -7059,13 +7113,11 @@ def _iter_jsonl_with_raw_line_skip(
     """Yield decoded JSON objects while skipping matched full raw lines."""
     try:
         with path.open("rb") as handle:
-            decoded_lines = 0
+            yield_now = _PeriodicYield()
             for raw_line in handle:
                 if not raw_line.strip():
                     continue
-                decoded_lines += 1
-                if decoded_lines % _JSONL_YIELD_LINE_INTERVAL == 0:
-                    time.sleep(0)
+                yield_now()
                 line = raw_line.decode("utf-8", errors="replace")
                 if skip_line(line):
                     continue
@@ -7073,7 +7125,7 @@ def _iter_jsonl_with_raw_line_skip(
                 if not stripped:
                     continue
                 try:
-                    parsed = t.cast("object", json.loads(stripped))
+                    parsed = _loads(stripped)
                 except json.JSONDecodeError:
                     continue
                 if isinstance(parsed, (dict, list, str, int, float, bool)) or parsed is None:
@@ -7136,10 +7188,7 @@ def _read_first_jsonl_header(
                         break
                     raw_line.extend(chunk)
                 try:
-                    parsed = t.cast(
-                        "object",
-                        json.loads(raw_line.decode("utf-8", errors="replace")),
-                    )
+                    parsed = _loads(raw_line.decode("utf-8", errors="replace"))
                 except json.JSONDecodeError:
                     return None
                 if isinstance(parsed, dict):
@@ -7175,19 +7224,26 @@ def _keep_jsonl_header_lines(
 
 
 def _discard_rest_of_line(handle: t.BinaryIO, prefix: bytes) -> None:
-    """Discard the unread remainder of the current physical line."""
+    """Discard the unread remainder of the current physical line.
+
+    Each ``readline`` releases the GIL for the underlying read, so the
+    discard loop stays cooperative without an explicit per-chunk yield.
+    """
     chunk = prefix
     while chunk and not chunk.endswith(b"\n"):
         chunk = handle.readline(_JSONL_SKIP_CHUNK_BYTES)
-        time.sleep(0)
 
 
 def _is_codex_function_call_output_line(line: str) -> bool:
-    """Return whether a Codex JSONL line is a tool output record."""
-    prefix = line[:512].replace(" ", "")
-    return (
-        '"type":"response_item"' in prefix and '"payload":{"type":"function_call_output"' in prefix
-    )
+    """Return whether a Codex JSONL line is a tool output record.
+
+    Tests the two distinctive quoted value tokens directly on the line
+    prefix. JSON never reformats string contents, so this matches the same
+    lines as a space-stripped key check — verified against the live store —
+    without allocating a normalized copy of every scanned line.
+    """
+    prefix = line[:512]
+    return '"response_item"' in prefix and '"function_call_output"' in prefix
 
 
 def candidate_from_mapping(
@@ -7200,8 +7256,10 @@ def candidate_from_mapping(
 ) -> MessageCandidate | None:
     """Extract one message candidate from a known message-like mapping."""
     role = extract_role(mapping)
+    if role is None:
+        return None
     text = extract_message_text(mapping)
-    if role is None or not text:
+    if not text:
         return None
     return MessageCandidate(
         role=role,
@@ -7215,16 +7273,23 @@ def candidate_from_mapping(
 
 
 def iter_message_candidates(
-    value: JSONValue | None,
+    value: object,
     *,
     fallback_title: str | None = None,
     fallback_conversation_id: str | None = None,
 ) -> cabc.Iterator[MessageCandidate]:
-    """Recursively walk a JSON value and yield message candidates."""
+    """Recursively walk a JSON value and yield message candidates.
+
+    ``value`` is typed ``object`` so the recursive descent into dict values
+    and list items needs no per-node ``cast`` — the ``isinstance`` guards
+    below narrow it, and scalars are ignored.
+    """
     if isinstance(value, dict):
         mapping = t.cast("dict[str, object]", value)
         role = extract_role(mapping)
-        text = extract_message_text(mapping)
+        # Text extraction drives the recursive content flatten; it is only
+        # used when a role is present, so skip it for the many role-less nodes.
+        text = extract_message_text(mapping) if role is not None else None
         if role is not None and text:
             yield MessageCandidate(
                 role=role,
@@ -7237,7 +7302,7 @@ def iter_message_candidates(
             )
         for nested in mapping.values():
             yield from iter_message_candidates(
-                t.cast("JSONValue | None", nested),
+                nested,
                 fallback_title=fallback_title,
                 fallback_conversation_id=fallback_conversation_id,
             )
@@ -7311,13 +7376,13 @@ def extract_message_text(mapping: dict[str, object]) -> str | None:
     """Extract message text from common content fields."""
     for key in ("content", "text", "message", "body", "prompt", "value", "parts"):
         if key in mapping:
-            flattened = flatten_content_value(t.cast("JSONValue | None", mapping[key]))
+            flattened = flatten_content_value(mapping[key])
             if flattened:
                 return flattened
     return None
 
 
-def flatten_content_value(value: JSONValue | None) -> str | None:
+def flatten_content_value(value: object) -> str | None:
     """Flatten a message content payload into text."""
     parts = list(iter_text_fragments(value))
     if not parts:
@@ -7326,7 +7391,7 @@ def flatten_content_value(value: JSONValue | None) -> str | None:
 
 
 def iter_text_fragments(
-    value: JSONValue | None,
+    value: object,
 ) -> cabc.Iterator[str]:
     """Yield text fragments from a nested content payload."""
     if isinstance(value, str):
@@ -7342,7 +7407,7 @@ def iter_text_fragments(
         mapping = t.cast("dict[str, object]", value)
         for key in ("text", "content", "message", "body", "prompt", "value", "parts"):
             if key in mapping:
-                yield from iter_text_fragments(t.cast("JSONValue | None", mapping[key]))
+                yield from iter_text_fragments(mapping[key])
 
 
 def extract_title(mapping: dict[str, object]) -> str | None:
@@ -7421,7 +7486,7 @@ def parse_embedded_json(text: str) -> JSONValue | None:
     if not stripped or stripped[0] not in "[{":
         return None
     try:
-        parsed = t.cast("object", json.loads(stripped))
+        parsed = _loads(stripped)
     except json.JSONDecodeError:
         return None
     if isinstance(parsed, (dict, list, str, int, float, bool)) or parsed is None:

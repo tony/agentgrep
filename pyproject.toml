@@ -39,6 +39,12 @@ dependencies = [
   "rapidfuzz>=3.10.0",
 ]
 
+[project.optional-dependencies]
+# orjson is an optional JSON-decode accelerator for the JSONL scanners.
+# agentgrep runs without it; stdlib json stays the semantic source of truth
+# (see docs/dev/adr/0002).
+speedups = ["orjson>=3.10"]
+
 [project.urls]
 "Bug Tracker" = "https://github.com/tony/agentgrep/issues"
 Repository = "https://github.com/tony/agentgrep"
@@ -64,6 +70,10 @@ dev = [
   "pytest-rerunfailures>=16.2",
   "pytest-watcher",
   "syrupy>=5.1.0",
+  # orjson is the optional JSON-decode accelerator (the `speedups` extra).
+  # Installed in dev so the shared json/orjson behavioral tests exercise the
+  # accelerated path; the runtime dependency stays optional.
+  "orjson>=3.10",
   # The query Pygments lexer (agentgrep.query.pygments_lexer) imports pygments
   # directly; it is docs/test-only (not a runtime dependency). Transitive via
   # Sphinx, but pinned here so the lexer and its test stay importable.

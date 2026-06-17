@@ -35,6 +35,7 @@ from agentgrep.query import (
     build_query_from_input,
     compile_query,
     default_registry,
+    find_unsupported_reason,
     parse_query,
 )
 from agentgrep.query.compile import QueryCompileError
@@ -614,6 +615,16 @@ RECORD_PREDICATE_CASES: tuple[RecordPredicateCase, ...] = (
         record_kwargs={"text": "bliss here", "agent": "codex"},
         expected_matches=True,
     ),
+    RecordPredicateCase(
+        # mtime is source-derived: a record reaching the record layer came
+        # from a source the source predicate admitted, so mtime:* holds here
+        # (the record carries no mtime_ns to decide otherwise). Before the
+        # fix this dropped every record.
+        test_id="field-exists-mtime-present-at-record-layer",
+        query="mtime:* bliss",
+        record_kwargs={"text": "bliss"},
+        expected_matches=True,
+    ),
 )
 
 
@@ -930,3 +941,40 @@ def test_build_query_from_input_widens_discovery_scope_for_scope_predicate(
     result = build_query_from_input(case.query, base, default_registry())
     assert result.query is not None
     assert result.query.scope == case.expected_scope
+
+
+class FindGuardCase(t.NamedTuple):
+    """One query and whether ``find`` cannot faithfully evaluate it."""
+
+    test_id: str
+    query: str
+    unsupported: bool
+
+
+FIND_GUARD_CASES: tuple[FindGuardCase, ...] = (
+    # find cannot flatten boolean text or read records.
+    FindGuardCase("boolean-or-text", "codex OR claude", True),
+    FindGuardCase("not-text", "NOT codex", True),
+    FindGuardCase("text-under-or-with-source", "codex OR agent:claude", True),
+    FindGuardCase("record-field-model", "model:gpt* bliss", True),
+    FindGuardCase("record-field-scope", "scope:conversations", True),
+    FindGuardCase("record-field-timestamp", "timestamp:>2026-01-01 bliss", True),
+    # find honors source predicates (any shape) plus a flat text pattern.
+    FindGuardCase("source-and-text", "agent:codex bliss", False),
+    FindGuardCase("source-only-or", "(agent:codex OR agent:cursor-cli)", False),
+    FindGuardCase("bare-term", "codex", False),
+    FindGuardCase("source-path-and-agent", "path:*codex* agent:codex", False),
+    FindGuardCase("mtime-source-comparison", "mtime:>2026-01-01", False),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    FIND_GUARD_CASES,
+    ids=[c.test_id for c in FIND_GUARD_CASES],
+)
+def test_find_unsupported_reason(case: FindGuardCase) -> None:
+    """``find_unsupported_reason`` flags exactly the queries find can't evaluate."""
+    ast = parse_query(case.query, default_registry())
+    reason = find_unsupported_reason(ast, default_registry())
+    assert (reason is not None) is case.unsupported

@@ -8,6 +8,7 @@ import asyncio
 import contextlib
 import importlib
 import io
+import itertools
 import json
 import os
 import pathlib
@@ -333,6 +334,52 @@ def test_find_without_pattern_lists_every_source(tmp_path: pathlib.Path) -> None
     assert "beta.jsonl" in completed.stdout
     # No help banner.
     assert "usage: agentgrep find" not in completed.stdout
+
+
+class FindRejectCase(t.NamedTuple):
+    """A find query that cannot be faithfully evaluated, and an error fragment."""
+
+    test_id: str
+    argv: tuple[str, ...]
+    fragment: str
+
+
+FIND_REJECT_CASES: tuple[FindRejectCase, ...] = (
+    FindRejectCase("boolean-or-text", ("find", "codex OR claude"), "OR / NOT over text"),
+    FindRejectCase("not-text", ("find", "NOT codex"), "OR / NOT over text"),
+    FindRejectCase("record-field-model", ("find", "model:gpt*"), "model: field filters records"),
+    FindRejectCase(
+        "record-field-scope",
+        ("find", "scope:conversations"),
+        "scope: field filters records",
+    ),
+)
+
+
+@pytest.mark.parametrize("case", FIND_REJECT_CASES, ids=[c.test_id for c in FIND_REJECT_CASES])
+def test_find_rejects_unevaluable_query(
+    case: FindRejectCase,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``find`` errors (exit 2) on queries it cannot honor, instead of mis-searching."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+
+    with pytest.raises(SystemExit) as exc_info:
+        agentgrep.parse_args(case.argv)
+
+    assert exc_info.value.code == 2
+    err = capsys.readouterr().err
+    assert case.fragment in err
+    assert "Traceback" not in err
+
+
+def test_find_allows_source_predicate_with_text() -> None:
+    """``find`` still accepts source-level predicates plus a flat text pattern."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+
+    parsed = agentgrep.parse_args(("find", "agent:codex bliss"))
+
+    assert isinstance(parsed, agentgrep.FindArgs)
 
 
 def test_help_examples_are_present_for_help_flags() -> None:
@@ -1205,21 +1252,212 @@ def test_iter_jsonl_cooperatively_yields_during_large_files(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """JSONL parsing yields even before search records are produced."""
+    """JSONL parsing yields cooperatively once the wall-clock interval elapses."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     path = tmp_path / "events.jsonl"
-    lines = [
-        json.dumps({"type": "noise", "index": index})
-        for index in range(agentgrep._JSONL_YIELD_LINE_INTERVAL + 1)
-    ]
+    line_count = 300
+    lines = [json.dumps({"type": "noise", "index": index}) for index in range(line_count)]
     path.write_text("\n".join(lines), encoding="utf-8")
+    # Advance the clock past the yield interval on every read so each line
+    # crosses the wall-clock deadline and yields.
+    ticks = itertools.count(0.0, agentgrep._JSONL_YIELD_INTERVAL_SECONDS * 2)
+    monkeypatch.setattr(agentgrep.time, "perf_counter", lambda: next(ticks))
     sleep_calls: list[float] = []
     monkeypatch.setattr(agentgrep.time, "sleep", sleep_calls.append)
 
     parsed = list(agentgrep.iter_jsonl(path))
 
-    assert len(parsed) == agentgrep._JSONL_YIELD_LINE_INTERVAL + 1
-    assert sleep_calls == [0]
+    assert len(parsed) == line_count
+    assert sleep_calls  # cooperative yields fired as wall time advanced
+    assert set(sleep_calls) == {0}
+
+
+class PeriodicYieldCase(t.NamedTuple):
+    """One :class:`agentgrep._PeriodicYield` gating scenario."""
+
+    test_id: str
+    perf_values: tuple[float, ...]
+    """``perf_counter`` returns: index 0 seeds the deadline, the rest drive calls."""
+    expected_sleeps: int
+
+
+_PERIODIC_YIELD_CASES = (
+    PeriodicYieldCase("within_interval_never_yields", (0.0, 0.001, 0.002, 0.009), 0),
+    PeriodicYieldCase("each_call_past_interval_yields", (0.0, 0.02, 0.04, 0.06), 3),
+    PeriodicYieldCase("yields_only_after_interval", (0.0, 0.005, 0.011, 0.012, 0.025), 2),
+)
+
+
+@pytest.mark.parametrize("case", _PERIODIC_YIELD_CASES, ids=lambda case: case.test_id)
+def test_periodic_yield_gates_on_wall_clock(
+    case: PeriodicYieldCase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``_PeriodicYield`` sleeps only when the wall-clock interval has elapsed."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    ticks = iter(case.perf_values)
+    monkeypatch.setattr(agentgrep.time, "perf_counter", lambda: next(ticks))
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(agentgrep.time, "sleep", sleep_calls.append)
+
+    yield_now = agentgrep._PeriodicYield()
+    for _ in case.perf_values[1:]:
+        yield_now()
+
+    assert len(sleep_calls) == case.expected_sleeps
+    assert set(sleep_calls) <= {0}
+
+
+@pytest.fixture(params=["accelerated", "stdlib"])
+def loads_impl(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> t.Callable[[str], object]:
+    """Yield ``_loads`` under both the orjson and forced-stdlib paths.
+
+    The ``stdlib`` param forces ``_orjson`` absent so the pure-Python
+    fallback runs even where orjson is installed; ``accelerated`` skips when
+    orjson is missing. Mirrors the shared-implementation fixture in ADR 0002.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    if request.param == "stdlib":
+        monkeypatch.setattr(agentgrep, "_orjson", None)
+    elif agentgrep._orjson is None:
+        pytest.skip("orjson accelerator is not installed")
+    return t.cast("t.Callable[[str], object]", agentgrep._loads)
+
+
+class LoadsCase(t.NamedTuple):
+    """One ``_loads`` decode input shared by both implementations."""
+
+    test_id: str
+    text: str
+
+
+_LOADS_CASES = (
+    LoadsCase("object", '{"a": 1, "b": [2, 3]}'),
+    LoadsCase("array", "[1, 2, 3]"),
+    LoadsCase("string_with_escape", '"hello \\u00e9 world"'),
+    LoadsCase("nested", '{"x": {"y": [true, false, null]}}'),
+    LoadsCase("unicode", '{"emoji": "\U0001f3af", "accent": "café"}'),
+    LoadsCase("float", '{"pi": 3.14159, "t": -273.15}'),
+    LoadsCase("scalar_int", "42"),
+    LoadsCase("scalar_null", "null"),
+    LoadsCase("large_int_within_64bit", "9007199254740993"),
+    # orjson rejects NaN/Infinity (stdlib json — and thus Python's json.dumps
+    # — accepts them); _loads falls back to stdlib so both paths agree.
+    LoadsCase("positive_infinity", "Infinity"),
+    LoadsCase("negative_infinity", "-Infinity"),
+)
+
+
+@pytest.mark.parametrize("case", _LOADS_CASES, ids=lambda case: case.test_id)
+def test_loads_matches_stdlib_json(
+    case: LoadsCase,
+    loads_impl: t.Callable[[str], object],
+) -> None:
+    """``_loads`` returns the same value as ``json.loads`` on both paths."""
+    assert loads_impl(case.text) == json.loads(case.text)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    ['{"a":}', "not json", "{unterminated", ""],
+    ids=["bad_value", "bare_word", "unterminated", "empty"],
+)
+def test_loads_raises_json_decode_error_on_invalid(
+    bad: str,
+    loads_impl: t.Callable[[str], object],
+) -> None:
+    """Invalid input raises ``json.JSONDecodeError`` regardless of backend."""
+    with pytest.raises(json.JSONDecodeError):
+        loads_impl(bad)
+
+
+class MessageCandidateCase(t.NamedTuple):
+    """One ``iter_message_candidates`` walk and its expected candidate roles."""
+
+    test_id: str
+    value: object
+    expected_roles: tuple[str, ...]
+
+
+_MESSAGE_CANDIDATE_CASES = (
+    MessageCandidateCase("message_dict", {"role": "user", "content": "hi"}, ("user",)),
+    MessageCandidateCase("roleless_with_content", {"content": "hi"}, ()),
+    MessageCandidateCase("role_without_text", {"role": "user"}, ()),
+    MessageCandidateCase(
+        "nested_message", {"a": {"role": "assistant", "text": "yo"}}, ("assistant",)
+    ),
+    MessageCandidateCase(
+        "list_of_messages",
+        [{"role": "user", "text": "a"}, {"role": "assistant", "text": "b"}],
+        ("user", "assistant"),
+    ),
+)
+
+
+@pytest.mark.parametrize("case", _MESSAGE_CANDIDATE_CASES, ids=lambda case: case.test_id)
+def test_iter_message_candidates_yields_expected_roles(case: MessageCandidateCase) -> None:
+    """Skipping text extraction for role-less nodes leaves the candidates unchanged."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    candidates = list(agentgrep.iter_message_candidates(case.value))
+    assert tuple(candidate.role for candidate in candidates) == case.expected_roles
+
+
+def test_iter_message_candidates_skips_text_extraction_without_role(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``extract_message_text`` runs only for nodes that carry a role."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    calls: list[object] = []
+    real = agentgrep.extract_message_text
+    monkeypatch.setattr(
+        agentgrep,
+        "extract_message_text",
+        lambda mapping: calls.append(mapping) or real(mapping),
+    )
+
+    list(agentgrep.iter_message_candidates({"content": "hi", "nested": {"x": "y"}}))
+    assert calls == []  # no role anywhere -> never extracted
+
+    list(agentgrep.iter_message_candidates({"role": "user", "content": "hi"}))
+    assert len(calls) == 1  # the single role-bearing node
+
+
+class CodexNoiseLineCase(t.NamedTuple):
+    """One Codex JSONL line and whether it is a function-call-output record."""
+
+    test_id: str
+    line: str
+    expected: bool
+
+
+_CODEX_NOISE_CASES = (
+    CodexNoiseLineCase(
+        "compact_noise",
+        '{"type":"response_item","payload":{"type":"function_call_output","output":"x"}}',
+        True,
+    ),
+    CodexNoiseLineCase(
+        "spaced_noise",
+        '{"type": "response_item", "payload": {"type": "function_call_output", "output": "x"}}',
+        True,
+    ),
+    CodexNoiseLineCase(
+        "real_message",
+        '{"type":"response_item","payload":{"type":"message","role":"user","content":"hi"}}',
+        False,
+    ),
+    CodexNoiseLineCase("non_codex", '{"role":"assistant","text":"hello"}', False),
+)
+
+
+@pytest.mark.parametrize("case", _CODEX_NOISE_CASES, ids=lambda case: case.test_id)
+def test_is_codex_function_call_output_line(case: CodexNoiseLineCase) -> None:
+    """Noise detection tolerates JSON spacing without normalizing each line."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    assert agentgrep._is_codex_function_call_output_line(case.line) is case.expected
 
 
 class ReverseJsonlCase(t.NamedTuple):
@@ -1295,13 +1533,13 @@ def test_iter_jsonl_reverse_raw_skip_avoids_decoding_skipped_lines(
     )
     monkeypatch.setattr(agentgrep, "_JSONL_REVERSE_CHUNK_BYTES", 9)
     decoded_inputs: list[str] = []
-    original_loads = agentgrep.json.loads
+    original_loads = agentgrep._loads
 
     def loads_with_capture(payload: str) -> object:
         decoded_inputs.append(payload)
         return t.cast("object", original_loads(payload))
 
-    monkeypatch.setattr(agentgrep.json, "loads", loads_with_capture)
+    monkeypatch.setattr(agentgrep, "_loads", loads_with_capture)
 
     parsed = list(
         agentgrep._iter_jsonl(
@@ -1353,13 +1591,13 @@ def test_parse_codex_session_skips_function_call_output_before_json_decode(
         mtime_ns=1,
     )
     decoded_payloads: list[str] = []
-    original_loads = agentgrep.json.loads
+    original_loads = agentgrep._loads
 
     def tracking_loads(payload: str) -> object:
         decoded_payloads.append(payload)
         return original_loads(payload)
 
-    monkeypatch.setattr(agentgrep.json, "loads", tracking_loads)
+    monkeypatch.setattr(agentgrep, "_loads", tracking_loads)
 
     records = list(agentgrep.parse_codex_session_file(source))
 
@@ -1587,13 +1825,13 @@ def test_parse_codex_session_raw_prefilter_preserves_header(
         mtime_ns=1,
     )
     decoded_payloads: list[str] = []
-    original_loads = agentgrep.json.loads
+    original_loads = agentgrep._loads
 
     def tracking_loads(payload: str) -> object:
         decoded_payloads.append(payload)
         return original_loads(payload)
 
-    monkeypatch.setattr(agentgrep.json, "loads", tracking_loads)
+    monkeypatch.setattr(agentgrep, "_loads", tracking_loads)
 
     def raw_skip_line(line: str) -> bool:
         return "bliss" not in line
@@ -1666,13 +1904,13 @@ def test_parse_pi_session_raw_prefilter_preserves_header(
         mtime_ns=1,
     )
     decoded_payloads: list[str] = []
-    original_loads = agentgrep.json.loads
+    original_loads = agentgrep._loads
 
     def tracking_loads(payload: str) -> object:
         decoded_payloads.append(payload)
         return original_loads(payload)
 
-    monkeypatch.setattr(agentgrep.json, "loads", tracking_loads)
+    monkeypatch.setattr(agentgrep, "_loads", tracking_loads)
 
     def raw_skip_line(line: str) -> bool:
         return "bliss" not in line
@@ -2219,6 +2457,66 @@ async def test_detail_pane_highlights_filter_terms_distinctly(
         )
 
 
+def _ui_record(agentgrep: t.Any, path: pathlib.Path, text: str, session_id: str) -> t.Any:
+    """Build a minimal prompt :class:`SearchRecord` for detail-pane tests."""
+    return agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=path,
+        text=text,
+        session_id=session_id,
+    )
+
+
+async def test_large_detail_body_builds_off_thread(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A large, uncached detail body is built by a worker, not on the UI thread."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        big = "x" * (app._DETAIL_ASYNC_BODY_THRESHOLD + 1000)
+        record = _ui_record(agentgrep, tmp_path / "big.jsonl", big, "big")
+        terms = list(app.query.terms)
+
+        app.show_detail(record)
+        # show_detail returns immediately; the heavy body is deferred.
+        assert not app._detail_body_is_cached(terms)
+
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        # The worker built and applied the body off the UI thread.
+        assert app._detail_body_is_cached(terms)
+        assert len(list(app._detail.content.renderables)) == 2
+
+
+async def test_present_detail_discards_superseded_record(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A finished build whose record the cursor has left is not rendered."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        current = _ui_record(agentgrep, tmp_path / "cur.jsonl", "current body", "cur")
+        stale = _ui_record(agentgrep, tmp_path / "old.jsonl", "stale body", "old")
+        app._current_detail_record = current
+        updates: list[object] = []
+        monkeypatch.setattr(app._detail, "update", updates.append)
+
+        app._present_detail(stale, "HEADER", app._build_detail_body("stale body", ()), ())
+        assert updates == []  # superseded record is dropped
+
+        app._present_detail(current, "HEADER", app._build_detail_body("current body", ()), ())
+        assert len(updates) == 1  # current record is rendered
+
+
 async def test_dropdown_dismissal_keys_close_without_accepting(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2294,6 +2592,27 @@ async def test_search_and_filter_inputs_carry_query_highlighter(
         filter_input = app.screen.query_one("#filter")
         assert isinstance(search.highlighter, QueryHighlighter)
         assert isinstance(filter_input.highlighter, QueryHighlighter)
+
+
+def test_scope_predicate_widening_does_not_persist(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ``scope:`` predicate widens scope for its own search only; bare queries revert.
+
+    Regression: after ``scope:conversations bliss`` widened discovery to "all"
+    and that query became ``self.query``, a follow-up ``bliss`` (no ``scope:``)
+    used to inherit the widened "all" and keep scanning conversations.
+    """
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    assert app.query.scope == "prompts"
+
+    widened = app._build_search_query("scope:conversations bliss")
+    assert widened.scope == "all"
+    app.query = widened
+
+    reverted = app._build_search_query("bliss")
+    assert reverted.scope == "prompts"
 
 
 def test_streaming_ui_app_passes_runtime_to_search_worker(

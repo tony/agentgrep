@@ -723,6 +723,7 @@ def _maybe_compile_query(
     color_mode: ColorMode,
     subparser: argparse.ArgumentParser,
     explicit_flags: dict[str, str] | None = None,
+    find_mode: bool = False,
 ) -> tuple[CompiledQuery | None, tuple[str, ...], set[str]]:
     """Detect Lucene-style query syntax in positionals and compile if present.
 
@@ -738,6 +739,10 @@ def _maybe_compile_query(
     in the query), the parser errors. Pass ``None`` to skip the
     collision check (the bare-positional fast path).
 
+    ``find_mode`` rejects queries ``find`` cannot faithfully evaluate
+    (record-level field predicates, boolean text composition), since
+    ``find`` only honors the source predicate and a flat path pattern.
+
     Parse / compile errors route through ``subparser.error()`` so the
     user sees an argparse-shaped message instead of a Python
     traceback.
@@ -750,6 +755,7 @@ def _maybe_compile_query(
         compile_query,
         default_registry,
         fields_in_ast,
+        find_unsupported_reason,
         parse_query,
     )
 
@@ -761,6 +767,11 @@ def _maybe_compile_query(
         with configured_color_environment(color_mode):
             subparser.error(f"invalid query: {exc}")
     used_fields = fields_in_ast(ast)
+    if find_mode:
+        reason = find_unsupported_reason(ast, registry)
+        if reason is not None:
+            with configured_color_environment(color_mode):
+                subparser.error(reason)
     if explicit_flags:
         for field_name, flag_name in explicit_flags.items():
             if field_name in used_fields:
@@ -904,6 +915,7 @@ def parse_args(
         color_mode=color_mode,
         subparser=bundle.find_parser,
         explicit_flags=_find_explicit_flags(namespace),
+        find_mode=True,
     )
     pattern: str | None = " ".join(find_residual) if find_residual else None
     if t.cast("bool", namespace.find_glob):

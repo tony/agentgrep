@@ -243,13 +243,13 @@ def test_jsonl_raw_text_prefilter_skips_nonmatching_lines_before_json_decode(
         encoding="utf-8",
     )
     decoded_inputs: list[str] = []
-    original_loads = agentgrep.json.loads
+    original_loads = agentgrep._loads
 
     def loads_with_capture(payload: str) -> object:
         decoded_inputs.append(payload)
-        return t.cast("object", original_loads(payload))
+        return original_loads(payload)
 
-    monkeypatch.setattr(agentgrep.json, "loads", loads_with_capture)
+    monkeypatch.setattr(agentgrep, "_loads", loads_with_capture)
 
     events = list(
         InlineExecutionDriver().iter_search_plan(
@@ -570,13 +570,13 @@ def test_bounded_haystack_raw_prefilter_keeps_source_path_matches(
         encoding="utf-8",
     )
     decoded_inputs: list[str] = []
-    original_loads = agentgrep.json.loads
+    original_loads = agentgrep._loads
 
     def loads_with_capture(payload: str) -> object:
         decoded_inputs.append(payload)
-        return t.cast("object", original_loads(payload))
+        return original_loads(payload)
 
-    monkeypatch.setattr(agentgrep.json, "loads", loads_with_capture)
+    monkeypatch.setattr(agentgrep, "_loads", loads_with_capture)
 
     events = list(
         InlineExecutionDriver().iter_search_plan(
@@ -1941,13 +1941,13 @@ def test_bounded_codex_history_jsonl_does_not_prefetch_older_matches(
         encoding="utf-8",
     )
     decoded_inputs: list[str] = []
-    original_loads = agentgrep.json.loads
+    original_loads = agentgrep._loads
 
     def loads_with_capture(payload: str) -> object:
         decoded_inputs.append(payload)
-        return t.cast("object", original_loads(payload))
+        return original_loads(payload)
 
-    monkeypatch.setattr(agentgrep.json, "loads", loads_with_capture)
+    monkeypatch.setattr(agentgrep, "_loads", loads_with_capture)
 
     events = list(
         InlineExecutionDriver().iter_search_plan(

@@ -81,9 +81,16 @@ PROFILE_ENGINE_CURSOR_IDE_BENCHMARK_GROUP: tuple[str, ...] = (
     "profile-engine-grep-cursor-ide-conversations-max-count-500",
     "profile-engine-find-cursor-ide-prompts-limit-500",
 )
+PROFILE_ENGINE_QUERY_LANGUAGE_BENCHMARK_GROUP: tuple[str, ...] = (
+    "profile-engine-search-all-prompts-query-limit-500",
+    "profile-engine-search-all-conversations-query-limit-500",
+    "profile-engine-grep-all-prompts-query-max-count-500",
+    "profile-engine-grep-all-conversations-query-max-count-500",
+)
 BENCHMARK_COMMAND_GROUPS: dict[str, tuple[str, ...]] = {
     "profile-engine": PROFILE_ENGINE_BENCHMARK_GROUP,
     "profile-engine-cursor-ide": PROFILE_ENGINE_CURSOR_IDE_BENCHMARK_GROUP,
+    "query-language": PROFILE_ENGINE_QUERY_LANGUAGE_BENCHMARK_GROUP,
 }
 
 
