@@ -36,11 +36,22 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a24 (Yet to be released)
+## agentgrep 0.1.0a25 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a24 (2026-06-16)
+
+agentgrep 0.1.0a24 makes search over large Codex, Claude, and Cursor histories
+noticeably faster — most of all on full conversation sweeps — and adds an
+optional `speedups` extra that decodes JSON through orjson when installed, with
+identical results either way. It also rounds out the query language from
+0.1.0a23: `find` now errors instead of silently mis-searching a query it cannot
+fully evaluate, `mtime:*` matches records by modification time instead of
+returning nothing, and a `scope:` predicate in the TUI applies only to its own
+search.
 
 ### What's new
 
