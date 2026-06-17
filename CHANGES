@@ -42,6 +42,25 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### What's new
+
+#### Faster searches over large histories (#71)
+
+Searching and browsing large Codex, Claude, and Cursor stores is faster, and the
+explorer stays responsive while a large record renders. The optional `speedups`
+extra (`pip install agentgrep[speedups]`) adds an orjson-accelerated decode path;
+results are identical with or without it.
+
+### Fixes
+
+- `find` no longer silently mis-searches queries it can't fully evaluate
+  (boolean text or record-level field predicates); it errors with guidance
+  instead. (#71)
+- `mtime:*` now matches every record with a modification time instead of
+  returning nothing. (#71)
+- In the TUI, a `scope:` predicate applies only to its own search; a later bare
+  search returns to the launch scope instead of staying widened. (#71)
+
 ## agentgrep 0.1.0a23 (2026-06-15)
 
 agentgrep 0.1.0a23 brings a Lucene-style query language to `search`, `grep`,
