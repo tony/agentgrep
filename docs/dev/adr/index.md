@@ -23,4 +23,5 @@ multiple adapters or public payloads.
 0013-pluggable-tui-layouts-and-workflows
 0014-result-order-limit-and-streaming-merge
 0014-opentelemetry-local-observability
+0015-agentic-structured-logging
 ```
