@@ -1277,6 +1277,77 @@ def test_run_for_commit_captures_profile_payload_and_sanitizes_command(
     assert "--max-count 500 {query}" in row.command_string
 
 
+def test_run_for_commit_emits_benchmark_subprocess_telemetry(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Benchmark timing and profile capture should expose subprocess cost."""
+    import agentgrep._telemetry as telemetry
+
+    config = benchmark.Config(
+        bench={
+            "profile": benchmark.BenchCommand(
+                command=(
+                    "{venv}/bin/python scripts/profile_engine.py grep-prompts "
+                    "--agent all --max-count 500 {query}"
+                ),
+                default_query="private-token",
+            ),
+        },
+        settings=benchmark.Settings(sync_command="", venv=".venv"),
+    )
+    backend = telemetry.InMemoryTelemetryBackend()
+    telemetry.configure_backend(backend)
+    monkeypatch.setattr(benchmark, "_checkout", lambda _sha, _repo: None)
+    monkeypatch.setattr(benchmark, "time_command", lambda _cmd_str, **_kwargs: [0.25])
+    monkeypatch.setattr(
+        benchmark,
+        "_capture_profile_payload",
+        lambda _cmd_str, **_kwargs: ({"profile": {"samples": []}}, None),
+    )
+    try:
+        rows = benchmark._run_one_commit(
+            commit=benchmark.CommitRef(sha="a" * 40, short_sha="aaaaaaa", subject="subject"),
+            config=config,
+            bench_names=["profile"],
+            query_overrides={},
+            runs=1,
+            warmup=0,
+            no_sync=True,
+            dry_run=False,
+            repo=tmp_path,
+            prefer_hyperfine=False,
+            notify=lambda _message: None,
+        )
+    finally:
+        telemetry.configure_backend(None)
+
+    assert rows[0].samples == [0.25]
+    assert backend.single_root_trace_ids() == ()
+    assert {span.name for span in backend.finished_spans} >= {
+        "agentgrep.benchmark.run",
+        "agentgrep.benchmark.command",
+        "agentgrep.benchmark.subprocess",
+    }
+    subprocess_spans = [
+        span for span in backend.finished_spans if span.name == "agentgrep.benchmark.subprocess"
+    ]
+    assert {span.attributes["agentgrep_subprocess_kind"] for span in subprocess_spans} >= {
+        "time_command",
+        "profile_capture",
+    }
+    assert "private-token" not in str([span.attributes for span in subprocess_spans])
+    assert str(tmp_path) not in str([span.attributes for span in subprocess_spans])
+    assert {
+        metric.name
+        for metric in backend.metric_records
+        if metric.attributes.get("agentgrep_surface") == "benchmark"
+    } >= {
+        "agentgrep.benchmark.subprocess.count",
+        "agentgrep.benchmark.subprocess.duration",
+    }
+
+
 def test_run_for_commit_marks_dry_run_and_skips_profile_capture(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
