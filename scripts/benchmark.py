@@ -3,9 +3,16 @@
 # requires-python = ">=3.14"
 # dependencies = [
 #     "click>=8.1",
+#     "opentelemetry-api>=1.42.1",
+#     "opentelemetry-exporter-otlp-proto-http>=1.42.1",
+#     "opentelemetry-instrumentation-asyncio>=0.63b1",
+#     "opentelemetry-instrumentation-sqlite3>=0.63b1",
+#     "opentelemetry-sdk>=1.42.1",
 #     "typer>=0.12",
 #     "rich>=13.0",
 #     "pydantic>=2.0",
+#     "pyroscope-io>=1.0.12",
+#     "pyroscope-otel>=1.0.1",
 # ]
 # ///
 """Cross-commit benchmark harness — versatile, project-aware, ``git bisect``-shaped.
@@ -22,6 +29,7 @@ Run ``uv run scripts/benchmark.py --help`` for the subcommand list, or see
 from __future__ import annotations
 
 import atexit
+import collections.abc as cabc
 import contextlib
 import csv
 import dataclasses
@@ -46,6 +54,7 @@ import rich.table
 import typer
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+SRC_ROOT = REPO_ROOT / "src"
 DEFAULT_CONFIG = REPO_ROOT / "scripts" / "benchmark.toml"
 LOCAL_CONFIG = REPO_ROOT / "scripts" / "benchmark.local.toml"
 
@@ -66,6 +75,29 @@ BENCHMARK_ANALYSIS_SOURCE_STRATEGY_GROUP_ARTIFACT_KIND = (
 BENCHMARK_ANALYSIS_WARNING_ARTIFACT_KIND = "agentgrep.benchmark.analysis.warning"
 type CommandContext = dict[str, str]
 type ProfilePayload = dict[str, object]
+
+
+def _telemetry_api() -> t.Any | None:
+    """Return the optional project telemetry API when available."""
+    src_path = str(SRC_ROOT)
+    if src_path not in sys.path:
+        sys.path.insert(0, src_path)
+    try:
+        from agentgrep import _telemetry
+    except Exception:
+        return None
+    return _telemetry
+
+
+def _setup_benchmark_telemetry() -> t.Any | None:
+    """Best-effort telemetry bootstrap for benchmark runs."""
+    telemetry = _telemetry_api()
+    if telemetry is None:
+        return None
+    handle = telemetry.setup(repo_root=REPO_ROOT)
+    atexit.register(handle.shutdown)
+    return handle
+
 
 PROFILE_ENGINE_BENCHMARK_GROUP: tuple[str, ...] = (
     "profile-engine-search-all-prompts-limit-500",
@@ -1464,7 +1496,101 @@ def _probe_subcommand(venv: pathlib.Path, subcommand: str, repo: pathlib.Path) -
     return proc.returncode == 0
 
 
+@contextlib.contextmanager
+def _benchmark_subprocess_span(
+    kind: str,
+    *,
+    command_name: str | None = None,
+) -> cabc.Iterator[None]:
+    """Trace one benchmark harness subprocess-shaped operation."""
+    telemetry = _telemetry_api()
+    if telemetry is None:
+        yield
+        return
+    attributes: dict[str, object] = {
+        "agentgrep_surface": "benchmark",
+        "agentgrep_subprocess_kind": kind,
+    }
+    if command_name is not None:
+        attributes["agentgrep_benchmark_command"] = command_name
+    started_at = time.perf_counter()
+    outcome = "ok"
+    with telemetry.span("agentgrep.benchmark.subprocess", **attributes):
+        try:
+            yield
+        except BaseException as exc:
+            outcome = "error"
+            telemetry.set_span_attribute("agentgrep_error_type", type(exc).__name__)
+            raise
+        finally:
+            duration = time.perf_counter() - started_at
+            telemetry.set_span_attribute("agentgrep_outcome", outcome)
+            telemetry.set_span_attribute("agentgrep_duration_seconds", duration)
+            telemetry.record_metric(
+                "agentgrep.benchmark.subprocess.count",
+                1,
+                **attributes,
+                agentgrep_outcome=outcome,
+            )
+            telemetry.record_metric(
+                "agentgrep.benchmark.subprocess.duration",
+                duration,
+                **attributes,
+                agentgrep_outcome=outcome,
+            )
+
+
 def _run_one_commit(
+    *,
+    commit: CommitRef,
+    config: Config,
+    bench_names: list[str],
+    query_overrides: dict[str, str],
+    runs: int,
+    warmup: int,
+    no_sync: bool,
+    dry_run: bool,
+    repo: pathlib.Path,
+    prefer_hyperfine: bool,
+    notify: t.Callable[[str], None],
+) -> list[Measurement]:
+    """Checkout ``commit`` under a benchmark run root."""
+    telemetry = _telemetry_api()
+    if telemetry is None:
+        return _run_one_commit_inner(
+            commit=commit,
+            config=config,
+            bench_names=bench_names,
+            query_overrides=query_overrides,
+            runs=runs,
+            warmup=warmup,
+            no_sync=no_sync,
+            dry_run=dry_run,
+            repo=repo,
+            prefer_hyperfine=prefer_hyperfine,
+            notify=notify,
+        )
+    with telemetry.span(
+        "agentgrep.benchmark.run",
+        agentgrep_surface="benchmark",
+        agentgrep_benchmark_commit=commit.short_sha,
+    ):
+        return _run_one_commit_inner(
+            commit=commit,
+            config=config,
+            bench_names=bench_names,
+            query_overrides=query_overrides,
+            runs=runs,
+            warmup=warmup,
+            no_sync=no_sync,
+            dry_run=dry_run,
+            repo=repo,
+            prefer_hyperfine=prefer_hyperfine,
+            notify=notify,
+        )
+
+
+def _run_one_commit_inner(
     *,
     commit: CommitRef,
     config: Config,
@@ -1481,7 +1607,8 @@ def _run_one_commit(
     """Checkout ``commit``, sync, time each bench. Returns one Measurement per bench."""
     results: list[Measurement] = []
     try:
-        _checkout(commit.sha, repo)
+        with _benchmark_subprocess_span("git_checkout"):
+            _checkout(commit.sha, repo)
     except subprocess.CalledProcessError as exc:
         notify(f"[{commit.short_sha}] checkout failed: {exc.stderr.strip()}")
         for name in bench_names:
@@ -1502,7 +1629,8 @@ def _run_one_commit(
         return results
 
     if not no_sync and not dry_run:
-        sync_result = _maybe_sync(config.settings, repo)
+        with _benchmark_subprocess_span("sync"):
+            sync_result = _maybe_sync(config.settings, repo)
         if sync_result is not None and sync_result.returncode != 0:
             # `uv sync` (or whatever sync_command resolves to) failed —
             # the venv may be in a half-resolved state, so don't run any
@@ -1580,7 +1708,12 @@ def _run_one_commit(
             )
             continue
 
-        if bench.skip_if_missing and not _probe_subcommand(venv, bench.skip_if_missing, repo):
+        if bench.skip_if_missing:
+            with _benchmark_subprocess_span("skip_probe", command_name=name):
+                subcommand_available = _probe_subcommand(venv, bench.skip_if_missing, repo)
+        else:
+            subcommand_available = True
+        if not subcommand_available:
             results.append(
                 Measurement(
                     sha=commit.sha,
@@ -1596,16 +1729,50 @@ def _run_one_commit(
             )
             continue
 
-        notify(f"[{commit.short_sha}] {name}")
-        try:
-            samples = time_command(
-                cmd_str,
-                warmup=warmup,
-                runs=runs,
-                timeout_seconds=config.settings.timeout_seconds,
-                prefer_hyperfine=prefer_hyperfine,
+        telemetry = _telemetry_api()
+        command_span = (
+            contextlib.nullcontext()
+            if telemetry is None
+            else telemetry.span(
+                "agentgrep.benchmark.command",
+                agentgrep_surface="benchmark",
+                agentgrep_benchmark_command=name,
             )
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        )
+        with command_span:
+            notify(f"[{commit.short_sha}] {name}")
+            try:
+                with _benchmark_subprocess_span("time_command", command_name=name):
+                    samples = time_command(
+                        cmd_str,
+                        warmup=warmup,
+                        runs=runs,
+                        timeout_seconds=config.settings.timeout_seconds,
+                        prefer_hyperfine=prefer_hyperfine,
+                    )
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+                results.append(
+                    Measurement(
+                        sha=commit.sha,
+                        short_sha=commit.short_sha,
+                        subject=commit.subject,
+                        command_name=name,
+                        command_string=sanitized_cmd_str,
+                        samples=[],
+                        status="bench_fail",
+                        error=str(exc),
+                        dry_run=dry_run,
+                    ),
+                )
+                continue
+            profile_payload: ProfilePayload | None = None
+            profile_capture_error: str | None = None
+            if _is_profile_engine_command(cmd_str):
+                with _benchmark_subprocess_span("profile_capture", command_name=name):
+                    profile_payload, profile_capture_error = _capture_profile_payload(
+                        cmd_str,
+                        timeout_seconds=config.settings.timeout_seconds,
+                    )
             results.append(
                 Measurement(
                     sha=commit.sha,
@@ -1613,34 +1780,13 @@ def _run_one_commit(
                     subject=commit.subject,
                     command_name=name,
                     command_string=sanitized_cmd_str,
-                    samples=[],
-                    status="bench_fail",
-                    error=str(exc),
+                    samples=samples,
+                    status="ok",
                     dry_run=dry_run,
+                    profile_payload=profile_payload,
+                    profile_capture_error=profile_capture_error,
                 ),
             )
-            continue
-        profile_payload: ProfilePayload | None = None
-        profile_capture_error: str | None = None
-        if _is_profile_engine_command(cmd_str):
-            profile_payload, profile_capture_error = _capture_profile_payload(
-                cmd_str,
-                timeout_seconds=config.settings.timeout_seconds,
-            )
-        results.append(
-            Measurement(
-                sha=commit.sha,
-                short_sha=commit.short_sha,
-                subject=commit.subject,
-                command_name=name,
-                command_string=sanitized_cmd_str,
-                samples=samples,
-                status="ok",
-                dry_run=dry_run,
-                profile_payload=profile_payload,
-                profile_capture_error=profile_capture_error,
-            ),
-        )
     return results
 
 
@@ -1849,6 +1995,7 @@ def cmd_run(
     ),
 ) -> None:
     """Run the configured benchmarks across the targeted commits."""
+    telemetry_handle = _setup_benchmark_telemetry()
     # CLI overrides go through load_config so pydantic validators
     # (e.g. settings.runs >= 1) fire on bad input. model_copy(update=...)
     # would silently skip the validation gate.
@@ -1945,6 +2092,8 @@ def cmd_run(
         notify(f"wrote {output}")
     else:
         typer.echo(rendered)
+    if telemetry_handle is not None:
+        telemetry_handle.shutdown()
 
 
 @app.command("compare")
