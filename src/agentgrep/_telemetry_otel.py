@@ -1,0 +1,338 @@
+"""Lazy OpenTelemetry and Pyroscope backend."""
+
+from __future__ import annotations
+
+import collections.abc as cabc
+import contextlib
+import logging
+import os
+import pathlib
+import sys
+import typing as t
+
+from agentgrep import _telemetry
+
+if t.TYPE_CHECKING:
+    from opentelemetry.sdk.trace import ReadableSpan
+    from opentelemetry.sdk.trace.export import SpanExporter
+
+
+class OtelTelemetryBackend:
+    """OpenTelemetry-backed telemetry backend."""
+
+    def __init__(
+        self,
+        *,
+        tracer: t.Any,
+        tracer_provider: t.Any,
+        meter: t.Any,
+        meter_provider: t.Any,
+        logger_provider: t.Any,
+        logging_handler: logging.Handler,
+        span_counter: t.Any,
+        span_duration: t.Any,
+        instrumentations: tuple[t.Any, ...],
+        profiles_started: bool,
+    ) -> None:
+        self._tracer = tracer
+        self._tracer_provider = tracer_provider
+        self._meter = meter
+        self._meter_provider = meter_provider
+        self._logger_provider = logger_provider
+        self._logging_handler = logging_handler
+        self._span_counter = span_counter
+        self._span_duration = span_duration
+        self._counters: dict[str, t.Any] = {}
+        self._histograms: dict[str, t.Any] = {}
+        self._instrumentations = instrumentations
+        self.profiles_started = profiles_started
+
+    @contextlib.contextmanager
+    def start_span(self, span: _telemetry._SpanState) -> cabc.Iterator[t.Any]:
+        """Start an OTel span."""
+        with self._tracer.start_as_current_span(span.name) as otel_span:
+            for key, value in span.attributes.items():
+                if value is not None:
+                    otel_span.set_attribute(key, value)
+            yield otel_span
+
+    def finish_span(
+        self,
+        span: _telemetry._SpanState,
+        *,
+        status: str,
+        duration_seconds: float,
+    ) -> None:
+        """Record standard span metrics."""
+        attributes = _telemetry._metric_attributes(span.name, status, span.attributes)
+        self._span_counter.add(1, attributes=attributes)
+        self._span_duration.record(max(0.0, duration_seconds), attributes=attributes)
+
+    def set_span_attribute(self, key: str, value: _telemetry.TelemetryAttribute) -> None:
+        """Set an attribute on the current OTel span."""
+        if value is None:
+            return
+        from opentelemetry import trace
+
+        trace.get_current_span().set_attribute(key, value)
+
+    def record_exception(self, error: BaseException) -> None:
+        """Record an exception on the current OTel span."""
+        from opentelemetry import trace
+        from opentelemetry.trace import Status, StatusCode
+
+        active_span = trace.get_current_span()
+        active_span.record_exception(error)
+        active_span.set_status(Status(StatusCode.ERROR, str(error)))
+
+    def record_metric(
+        self,
+        name: str,
+        value: int | float,
+        attributes: _telemetry.TelemetryAttributes,
+    ) -> None:
+        """Record a named metric point."""
+        if name.endswith(".count"):
+            counter = self._counters.get(name)
+            if counter is None:
+                counter = self._meter.create_counter(name)
+                self._counters[name] = counter
+            counter.add(value, attributes=attributes)
+        else:
+            histogram = self._histograms.get(name)
+            if histogram is None:
+                histogram = self._meter.create_histogram(name)
+                self._histograms[name] = histogram
+            histogram.record(value, attributes=attributes)
+
+    def emit_log(
+        self,
+        record: logging.LogRecord,
+        active_span: _telemetry._SpanState | None,
+    ) -> None:
+        """Export ``record`` through OTel logs."""
+        if active_span is None:
+            return
+        self._logging_handler.emit(_sanitized_log_record(record))
+
+    def shutdown(self) -> None:
+        """Flush and release telemetry processors."""
+        for instrumentation in self._instrumentations:
+            with contextlib.suppress(Exception):
+                instrumentation.uninstrument()
+        with contextlib.suppress(Exception):
+            self._tracer_provider.force_flush()
+        with contextlib.suppress(Exception):
+            self._meter_provider.force_flush()
+        with contextlib.suppress(Exception):
+            self._logger_provider.force_flush()
+        with contextlib.suppress(Exception):
+            self._tracer_provider.shutdown()
+        with contextlib.suppress(Exception):
+            self._meter_provider.shutdown()
+        with contextlib.suppress(Exception):
+            self._logger_provider.shutdown()
+        with contextlib.suppress(Exception):
+            import pyroscope
+
+            shutdown = getattr(pyroscope, "shutdown", None)
+            if shutdown is not None:
+                shutdown()
+
+
+class _FilteringSpanExporter:
+    """Drop root spans that are not app-level roots."""
+
+    def __init__(self, wrapped: t.Any) -> None:
+        self._wrapped = wrapped
+
+    def export(self, spans: cabc.Sequence[ReadableSpan]) -> t.Any:
+        """Export spans after app-root filtering."""
+        filtered = [
+            span
+            for span in spans
+            if span.parent is not None or span.name in _telemetry.APP_ROOT_SPAN_NAMES
+        ]
+        if not filtered:
+            from opentelemetry.sdk.trace.export import SpanExportResult
+
+            return SpanExportResult.SUCCESS
+        return self._wrapped.export(filtered)
+
+    def shutdown(self) -> None:
+        """Shut down the wrapped exporter."""
+        self._wrapped.shutdown()
+
+    def force_flush(self, timeout_millis: int = 30_000) -> bool:
+        """Flush the wrapped exporter."""
+        return bool(self._wrapped.force_flush(timeout_millis=timeout_millis))
+
+
+def build_backend(
+    *,
+    mode: _telemetry.TelemetryMode,
+    resource_attributes: _telemetry.TelemetryAttributes,
+) -> OtelTelemetryBackend:
+    """Build an OpenTelemetry/Pyroscope backend."""
+    from opentelemetry import metrics, trace
+    from opentelemetry._logs import set_logger_provider
+    from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
+    from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+    from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+    from opentelemetry.sdk._logs.export import BatchLogRecordProcessor, ConsoleLogRecordExporter
+    from opentelemetry.sdk.metrics import MeterProvider
+    from opentelemetry.sdk.metrics.export import (
+        ConsoleMetricExporter,
+        PeriodicExportingMetricReader,
+    )
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+
+    resource = Resource.create(
+        {key: value for key, value in resource_attributes.items() if value is not None},
+    )
+    profiles_started = _configure_profiles(resource_attributes)
+
+    tracer_provider = TracerProvider(resource=resource)
+    if profiles_started:
+        with contextlib.suppress(Exception):
+            from pyroscope.otel import PyroscopeSpanProcessor
+
+            tracer_provider.add_span_processor(PyroscopeSpanProcessor())
+    tracer_provider.add_span_processor(
+        BatchSpanProcessor(
+            t.cast(
+                "SpanExporter",
+                _FilteringSpanExporter(OTLPSpanExporter(timeout=_timeout_seconds())),
+            ),
+        ),
+    )
+    if mode == "debug-console":
+        tracer_provider.add_span_processor(
+            BatchSpanProcessor(
+                t.cast(
+                    "SpanExporter",
+                    _FilteringSpanExporter(ConsoleSpanExporter(out=sys.stderr)),
+                ),
+            ),
+        )
+    trace.set_tracer_provider(tracer_provider)
+
+    metric_readers = [
+        PeriodicExportingMetricReader(
+            OTLPMetricExporter(timeout=_timeout_seconds()),
+            export_interval_millis=1_000,
+        ),
+    ]
+    if mode == "debug-console":
+        metric_readers.append(
+            PeriodicExportingMetricReader(
+                ConsoleMetricExporter(out=sys.stderr),
+                export_interval_millis=1_000,
+            ),
+        )
+    meter_provider = MeterProvider(resource=resource, metric_readers=metric_readers)
+    metrics.set_meter_provider(meter_provider)
+    meter = metrics.get_meter("agentgrep")
+    span_counter = meter.create_counter(
+        "agentgrep.span.count",
+        description="Number of completed agentgrep spans.",
+    )
+    span_duration = meter.create_histogram(
+        "agentgrep.span.duration",
+        unit="s",
+        description="Duration of completed agentgrep spans.",
+    )
+
+    logger_provider = LoggerProvider(resource=resource)
+    logger_provider.add_log_record_processor(
+        BatchLogRecordProcessor(OTLPLogExporter(timeout=_timeout_seconds())),
+    )
+    if mode == "debug-console":
+        logger_provider.add_log_record_processor(
+            BatchLogRecordProcessor(ConsoleLogRecordExporter(out=sys.stderr)),
+        )
+    set_logger_provider(logger_provider)
+    logging_handler = LoggingHandler(logger_provider=logger_provider)
+
+    instrumentations = _install_auto_instrumentation(mode)
+    return OtelTelemetryBackend(
+        tracer=trace.get_tracer("agentgrep"),
+        tracer_provider=tracer_provider,
+        meter=meter,
+        meter_provider=meter_provider,
+        logger_provider=logger_provider,
+        logging_handler=logging_handler,
+        span_counter=span_counter,
+        span_duration=span_duration,
+        instrumentations=instrumentations,
+        profiles_started=profiles_started,
+    )
+
+
+def _configure_profiles(resource_attributes: _telemetry.TelemetryAttributes) -> bool:
+    """Start Pyroscope profiling for enabled telemetry modes."""
+    try:
+        import pyroscope
+    except Exception:
+        return False
+    server_address = os.environ.get("PYROSCOPE_SERVER_ADDRESS", "http://localhost:4040")
+    tags = {
+        key.replace(".", "_"): str(value)
+        for key, value in resource_attributes.items()
+        if value is not None and key not in {"service.name", "service.version"}
+    }
+    try:
+        pyroscope.configure(
+            application_name="agentgrep",
+            server_address=server_address,
+            sample_rate=100,
+            oncpu=True,
+            gil_only=True,
+            enable_logging=False,
+            tags=tags,
+        )
+    except Exception:
+        return False
+    return True
+
+
+def _install_auto_instrumentation(mode: _telemetry.TelemetryMode) -> tuple[t.Any, ...]:
+    """Install debug/live auto-instrumentation."""
+    if mode not in {"local", "debug", "debug-console", "live"}:
+        return ()
+    installed: list[t.Any] = []
+    with contextlib.suppress(Exception):
+        from opentelemetry.instrumentation.sqlite3 import SQLite3Instrumentor
+
+        sqlite = SQLite3Instrumentor()
+        sqlite.instrument()
+        installed.append(sqlite)
+    with contextlib.suppress(Exception):
+        from opentelemetry.instrumentation.asyncio import AsyncioInstrumentor
+
+        asyncio_instrumentor = AsyncioInstrumentor()
+        asyncio_instrumentor.instrument()
+        installed.append(asyncio_instrumentor)
+    return tuple(installed)
+
+
+def _timeout_seconds() -> float:
+    """Return a short OTLP timeout."""
+    raw_timeout = os.environ.get("OTEL_EXPORTER_OTLP_TIMEOUT")
+    if raw_timeout:
+        with contextlib.suppress(ValueError):
+            return max(0.1, float(raw_timeout))
+    return 0.5
+
+
+def _sanitized_log_record(record: logging.LogRecord) -> logging.LogRecord:
+    """Return a shallow log-record copy without local absolute path metadata."""
+    copied = logging.makeLogRecord(record.__dict__.copy())
+    if copied.pathname:
+        copied.pathname = pathlib.Path(copied.pathname).name
+    if copied.filename:
+        copied.filename = pathlib.Path(copied.filename).name
+    return copied
