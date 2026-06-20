@@ -34,7 +34,11 @@ def main() -> int:
         ):
             logger.info(
                 "otel smoke started",
-                extra={"agentgrep_surface": "otel", "agentgrep_run_id": args.run_id},
+                extra={
+                    "agentgrep_surface": "otel",
+                    "agentgrep_operation": "otel.smoke",
+                    "agentgrep_run_id": args.run_id,
+                },
             )
             with _telemetry.span("agentgrep.otel.smoke.sqlite", agentgrep_surface="otel"):
                 connection = sqlite3.connect(
@@ -71,7 +75,11 @@ def main() -> int:
                 _telemetry.set_span_attribute("agentgrep_cpu_accumulator", accumulator)
             logger.info(
                 "otel smoke completed",
-                extra={"agentgrep_surface": "otel", "agentgrep_run_id": args.run_id},
+                extra={
+                    "agentgrep_surface": "otel",
+                    "agentgrep_operation": "otel.smoke",
+                    "agentgrep_run_id": args.run_id,
+                },
             )
     finally:
         telemetry.shutdown()
