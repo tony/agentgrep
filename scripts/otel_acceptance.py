@@ -21,6 +21,11 @@ import uuid
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CONTAINER_NAME = "agentgrep-lgtm"
+LGTM_CONFIG_LABEL = "source-linking-v1"
+LGTM_GRAFANA_DATASOURCES_CONFIG = ROOT / "scripts" / "lgtm" / "grafana-datasources.yaml"
+LGTM_PYROSCOPE_CONFIG = ROOT / "scripts" / "lgtm" / "pyroscope-config.yaml"
+LGTM_SOURCE_MAP_GENERATOR = ROOT / "scripts" / "lgtm" / "generate_pyroscope_source_map.py"
+LGTM_SOURCE_MAP = ROOT / ".tmp" / "lgtm" / ".pyroscope.yaml"
 DEFAULT_LOKI_BASE_URL = "http://localhost:3000/api/datasources/proxy/uid/loki"
 DEFAULT_PROMETHEUS_BASE_URL = "http://localhost:3000/api/datasources/proxy/uid/prometheus"
 APPROVED_ROOTS = {
@@ -96,6 +101,7 @@ def main() -> int:
 
 def start_stack() -> None:
     """Start the local LGTM container if needed."""
+    generate_lgtm_source_map()
     inspect = subprocess.run(
         ["docker", "inspect", CONTAINER_NAME],
         capture_output=True,
@@ -103,32 +109,66 @@ def start_stack() -> None:
         check=False,
     )
     if inspect.returncode == 0:
+        if not _container_has_current_config(inspect.stdout):
+            subprocess.run(["docker", "rm", "-f", CONTAINER_NAME], check=True)
+            subprocess.run(lgtm_docker_run_command(env=os.environ), check=True)
+            return
         if not _container_is_running(inspect.stdout):
             subprocess.run(["docker", "start", CONTAINER_NAME], check=True)
         return
+    subprocess.run(lgtm_docker_run_command(env=os.environ), check=True)
+
+
+def lgtm_docker_run_command(*, env: cabc.Mapping[str, str]) -> list[str]:
+    """Return the Docker command for the local LGTM stack."""
+    command = [
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        CONTAINER_NAME,
+        "--label",
+        f"agentgrep.lgtm.config={LGTM_CONFIG_LABEL}",
+        "-p",
+        "3000:3000",
+        "-p",
+        "3100:3100",
+        "-p",
+        "3200:3200",
+        "-p",
+        "4040:4040",
+        "-p",
+        "4317:4317",
+        "-p",
+        "4318:4318",
+        "-p",
+        "9090:9090",
+        "-v",
+        (
+            f"{LGTM_GRAFANA_DATASOURCES_CONFIG}:"
+            "/otel-lgtm/grafana/conf/provisioning/datasources/"
+            "grafana-datasources.yaml:ro"
+        ),
+        "-v",
+        f"{LGTM_PYROSCOPE_CONFIG}:/otel-lgtm/pyroscope-config.yaml:ro",
+    ]
+    for name in ("GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET", "GITHUB_SESSION_SECRET"):
+        if env.get(name):
+            command.extend(["-e", name])
+    command.append("grafana/otel-lgtm:latest")
+    return command
+
+
+def generate_lgtm_source_map() -> None:
+    """Generate the local Pyroscope source map used for source-link setup."""
     subprocess.run(
         [
-            "docker",
-            "run",
-            "-d",
-            "--name",
-            CONTAINER_NAME,
-            "-p",
-            "3000:3000",
-            "-p",
-            "3100:3100",
-            "-p",
-            "3200:3200",
-            "-p",
-            "4040:4040",
-            "-p",
-            "4317:4317",
-            "-p",
-            "4318:4318",
-            "-p",
-            "9090:9090",
-            "grafana/otel-lgtm:latest",
+            sys.executable,
+            str(LGTM_SOURCE_MAP_GENERATOR),
+            "--output",
+            str(LGTM_SOURCE_MAP),
         ],
+        cwd=ROOT,
         check=True,
     )
 
@@ -138,6 +178,15 @@ def _container_is_running(inspect_stdout: str) -> bool:
     with contextlib.suppress(json.JSONDecodeError, TypeError, KeyError, IndexError):
         payload = json.loads(inspect_stdout)
         return bool(payload[0]["State"]["Running"])
+    return False
+
+
+def _container_has_current_config(inspect_stdout: str) -> bool:
+    """Return whether ``docker inspect`` reports the current local LGTM config."""
+    with contextlib.suppress(json.JSONDecodeError, TypeError, KeyError, IndexError):
+        payload = json.loads(inspect_stdout)
+        labels = payload[0]["Config"].get("Labels") or {}
+        return labels.get("agentgrep.lgtm.config") == LGTM_CONFIG_LABEL
     return False
 
 
