@@ -417,6 +417,19 @@ logs, raw prompts, raw MCP arguments, raw argv, environment values, file
 contents, secrets, or full local paths. Use redacted shape metadata and stable
 low-cardinality attributes.
 
+When `AGENTGREP_OTEL` is enabled and `AGENTGREP_DEBUG_SESSION_ID` is present,
+traces, logs, metrics, and profiles must all carry enough run identity to
+prove coverage in Grafana. Do not add another agentgrep-specific OTel feature
+flag to hide metrics, traces, logs, or profiles. If metric cardinality later
+becomes a measured project risk, handle that in a follow-up rather than
+preserving blindspots in the instrumentation branch.
+
+Any new subprocess, exporter, auto-instrumentation hook, benchmark command, or
+profiling loop must update `docs/dev/otel-cost-model.md` with its runtime cost
+and signal impact. This includes benchmark warmups, sample counts, extra
+profile-payload captures, Docker/LGTM helper commands, pytest subprocesses,
+and OTLP/Pyroscope flush costs.
+
 Default pytest must be deterministic and offline. Use in-memory telemetry for
 unit assertions. Live LGTM checks are opt-in through `just otel-acceptance`;
 they must prove traces, metrics, logs, and profiles against the real stack
