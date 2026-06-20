@@ -15,6 +15,7 @@ from agentgrep.mcp.instructions import _build_instructions
 from agentgrep.mcp.middleware import (
     AgentgrepAuditMiddleware,
     AgentgrepResponseLimitingMiddleware,
+    AgentgrepTelemetryMiddleware,
 )
 from agentgrep.mcp.prompts import register_prompts
 from agentgrep.mcp.resources import register_resources
@@ -37,13 +38,16 @@ def build_mcp_server() -> FastMCP:
         #      timing captures middleware cost too.
         #   2. ErrorHandlingMiddleware — transforms exceptions into proper MCP
         #      errors after Audit records the original failure type.
-        #   3. AgentgrepAuditMiddleware — wraps response limiting so truncated
+        #   3. AgentgrepTelemetryMiddleware — app request root; parents
+        #      FastMCP request work and the tool-specific audit span.
+        #   4. AgentgrepAuditMiddleware — wraps response limiting so truncated
         #      ToolResult errors are audit-visible as outcome=error.
-        #   4. AgentgrepResponseLimitingMiddleware — bounds successful tool
+        #   5. AgentgrepResponseLimitingMiddleware — bounds successful tool
         #      output before the result returns through Audit.
         middleware=[
             TimingMiddleware(),
             ErrorHandlingMiddleware(transform_errors=True),
+            AgentgrepTelemetryMiddleware(),
             AgentgrepAuditMiddleware(),
             AgentgrepResponseLimitingMiddleware(max_size=DEFAULT_RESPONSE_LIMIT_BYTES),
         ],

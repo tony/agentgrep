@@ -9,6 +9,7 @@ import os
 import pathlib
 import sys
 import typing as t
+import warnings
 
 from agentgrep import _telemetry
 
@@ -33,6 +34,7 @@ class OtelTelemetryBackend:
         span_duration: t.Any,
         instrumentations: tuple[t.Any, ...],
         profiles_started: bool,
+        trace_api: t.Any | None = None,
     ) -> None:
         self._tracer = tracer
         self._tracer_provider = tracer_provider
@@ -42,6 +44,7 @@ class OtelTelemetryBackend:
         self._logging_handler = logging_handler
         self._span_counter = span_counter
         self._span_duration = span_duration
+        self._trace_api = trace_api
         self._counters: dict[str, t.Any] = {}
         self._histograms: dict[str, t.Any] = {}
         self._instrumentations = instrumentations
@@ -111,9 +114,26 @@ class OtelTelemetryBackend:
         active_span: _telemetry._SpanState | None,
     ) -> None:
         """Export ``record`` through OTel logs."""
-        if active_span is None:
+        if active_span is None and not self._has_current_otel_span():
             return
         self._logging_handler.emit(_sanitized_log_record(record))
+
+    def _has_current_otel_span(self) -> bool:
+        """Return whether the OTel context has a valid current span."""
+        trace_api = self._trace_api
+        if trace_api is None:
+            try:
+                from opentelemetry import trace as trace_api
+            except Exception:
+                return False
+        try:
+            current_span = trace_api.get_current_span()
+            if current_span is getattr(trace_api, "INVALID_SPAN", None):
+                return False
+            span_context = current_span.get_span_context()
+            return bool(getattr(span_context, "is_valid", False))
+        except Exception:
+            return False
 
     def shutdown(self) -> None:
         """Flush and release telemetry processors."""
@@ -132,12 +152,6 @@ class OtelTelemetryBackend:
             self._meter_provider.shutdown()
         with contextlib.suppress(Exception):
             self._logger_provider.shutdown()
-        with contextlib.suppress(Exception):
-            import pyroscope
-
-            shutdown = getattr(pyroscope, "shutdown", None)
-            if shutdown is not None:
-                shutdown()
 
 
 class _FilteringSpanExporter:
@@ -179,7 +193,14 @@ def build_backend(
     from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
     from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-    from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="`LoggingHandler` in `opentelemetry-sdk` is deprecated.*",
+            category=DeprecationWarning,
+        )
+        from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
     from opentelemetry.sdk._logs.export import BatchLogRecordProcessor, ConsoleLogRecordExporter
     from opentelemetry.sdk.metrics import MeterProvider
     from opentelemetry.sdk.metrics.export import (
@@ -255,7 +276,13 @@ def build_backend(
             BatchLogRecordProcessor(ConsoleLogRecordExporter(out=sys.stderr)),
         )
     set_logger_provider(logger_provider)
-    logging_handler = LoggingHandler(logger_provider=logger_provider)
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="`LoggingHandler` in `opentelemetry-sdk` is deprecated.*",
+            category=DeprecationWarning,
+        )
+        logging_handler = LoggingHandler(logger_provider=logger_provider)
 
     instrumentations = _install_auto_instrumentation(mode)
     return OtelTelemetryBackend(

@@ -42,7 +42,9 @@ APP_ROOT_SPAN_NAMES: frozenset[str] = frozenset(
         "agentgrep.cli.invocation",
         "agentgrep.cli.interactive_session",
         "agentgrep.tui.session",
+        "agentgrep.mcp.request",
         "agentgrep.mcp.tool",
+        "agentgrep.benchmark.run",
         "agentgrep.profile_engine.run",
         "agentgrep.pytest.session",
         "agentgrep.pytest.test",
@@ -276,7 +278,9 @@ class TelemetryHandle:
             self._remove_logging()
             self._remove_logging = None
         if self.backend is not None:
-            self.backend.shutdown()
+            backend = self.backend
+            self.backend = None
+            backend.shutdown()
         if self._backend_token is not None:
             _BACKEND.reset(self._backend_token)
             self._backend_token = None
@@ -437,7 +441,10 @@ def sqlite_connection_factory() -> type[t.Any]:
                     "agentgrep.sqlite.execute",
                     **_sqlite_span_attributes("execute", args, kwargs),
                 ):
-                    return super().execute(*args, **kwargs)
+                    try:
+                        return super().execute(*args, **kwargs)
+                    finally:
+                        _record_sqlite_metric("execute")
 
             def executemany(self, *args: t.Any, **kwargs: t.Any) -> t.Any:
                 """Execute batched SQL under an agentgrep SQL child span."""
@@ -445,7 +452,10 @@ def sqlite_connection_factory() -> type[t.Any]:
                     "agentgrep.sqlite.executemany",
                     **_sqlite_span_attributes("executemany", args, kwargs),
                 ):
-                    return super().executemany(*args, **kwargs)
+                    try:
+                        return super().executemany(*args, **kwargs)
+                    finally:
+                        _record_sqlite_metric("executemany")
 
             def executescript(self, *args: t.Any, **kwargs: t.Any) -> t.Any:
                 """Execute a SQL script under an agentgrep SQL child span."""
@@ -453,7 +463,10 @@ def sqlite_connection_factory() -> type[t.Any]:
                     "agentgrep.sqlite.executescript",
                     **_sqlite_span_attributes("executescript", args, kwargs),
                 ):
-                    return super().executescript(*args, **kwargs)
+                    try:
+                        return super().executescript(*args, **kwargs)
+                    finally:
+                        _record_sqlite_metric("executescript")
 
         _SQLITE_CONNECTION_FACTORY = _TelemetrySqliteConnection
     return _SQLITE_CONNECTION_FACTORY
@@ -518,6 +531,18 @@ def record_metric(name: str, value: int | float, **attributes: object) -> None:
             **{key: _safe_attribute_value(val) for key, val in attributes.items()},
             **_metric_identity_attributes(),
         },
+    )
+
+
+def record_work_metric(value: int | float, *, work_kind: str, **attributes: object) -> None:
+    """Record a CPU-impacting app work counter."""
+    if value <= 0:
+        return
+    record_metric(
+        "agentgrep.otel.cpu_loops",
+        value,
+        agentgrep_work_kind=work_kind,
+        **attributes,
     )
 
 
@@ -611,6 +636,11 @@ def _metric_attributes(
         "agentgrep_scope",
         "agentgrep_tool",
         "agentgrep_sql_method",
+        "agentgrep_work_kind",
+        "agentgrep_source_strategy",
+        "agentgrep_source_cost_hint",
+        "agentgrep_subprocess_kind",
+        "agentgrep_benchmark_command",
     ):
         value = span_attributes.get(key)
         if value is not None:
@@ -691,3 +721,15 @@ def _normalize_sql_statement(statement: object) -> str:
     if len(normalized) > _SQL_STATEMENT_MAX:
         return f"{normalized[:_SQL_STATEMENT_MAX]}..."
     return normalized
+
+
+def _record_sqlite_metric(method: str) -> None:
+    """Record one SQLite shortcut execution when it belongs to an app trace."""
+    if _BACKEND.get() is None or _CURRENT_SPAN.get() is None:
+        return
+    record_metric(
+        "agentgrep.otel.sqlite_total",
+        1,
+        agentgrep_surface="sqlite",
+        agentgrep_sql_method=method,
+    )
