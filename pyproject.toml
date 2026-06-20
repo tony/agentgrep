@@ -287,8 +287,10 @@ convention = "numpy"
 # typer.Option / typer.Argument calls are metadata, not real callables —
 # B008 does not apply. E501 is suppressed because a few error messages
 # (e.g. the mutually-exclusive-selector message in _select_targets) read
-# more naturally as one line than wrapped.
-"scripts/benchmark.py" = ["B008", "E501"]
+# more naturally as one line than wrapped. The runner also imports telemetry
+# from arbitrary checked-out revisions, where any import failure must degrade
+# to the uninstrumented benchmark path.
+"scripts/benchmark.py" = ["B008", "E501", "BLE001"]
 # The config swap restores the original bytes on any failure of the write or
 # the revalidation that follows it. Narrowing the handler would let some
 # failure modes leave a third-party CLI's config half-rewritten.
