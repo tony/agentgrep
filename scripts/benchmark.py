@@ -35,6 +35,7 @@ import csv
 import dataclasses
 import io
 import json
+import logging
 import math
 import pathlib
 import shlex
@@ -75,6 +76,8 @@ BENCHMARK_ANALYSIS_SOURCE_STRATEGY_GROUP_ARTIFACT_KIND = (
 BENCHMARK_ANALYSIS_WARNING_ARTIFACT_KIND = "agentgrep.benchmark.analysis.warning"
 type CommandContext = dict[str, str]
 type ProfilePayload = dict[str, object]
+
+logger = logging.getLogger("agentgrep.benchmark")
 
 
 def _telemetry_api() -> t.Any | None:
@@ -1570,24 +1573,74 @@ def _run_one_commit(
             prefer_hyperfine=prefer_hyperfine,
             notify=notify,
         )
+    started_at = time.monotonic()
     with telemetry.span(
         "agentgrep.benchmark.run",
         agentgrep_surface="benchmark",
         agentgrep_benchmark_commit=commit.short_sha,
+        agentgrep_benchmark_count=len(bench_names),
     ):
-        return _run_one_commit_inner(
-            commit=commit,
-            config=config,
-            bench_names=bench_names,
-            query_overrides=query_overrides,
-            runs=runs,
-            warmup=warmup,
-            no_sync=no_sync,
-            dry_run=dry_run,
-            repo=repo,
-            prefer_hyperfine=prefer_hyperfine,
-            notify=notify,
+        logger.info(
+            "benchmark run started",
+            extra={
+                "agentgrep_surface": "benchmark",
+                "agentgrep_operation": "benchmark.run",
+                "agentgrep_benchmark_commit": commit.short_sha,
+                "agentgrep_benchmark_count": len(bench_names),
+                "agentgrep_run_count": runs,
+                "agentgrep_warmup_count": warmup,
+                "agentgrep_dry_run": dry_run,
+            },
         )
+        try:
+            measurements = _run_one_commit_inner(
+                commit=commit,
+                config=config,
+                bench_names=bench_names,
+                query_overrides=query_overrides,
+                runs=runs,
+                warmup=warmup,
+                no_sync=no_sync,
+                dry_run=dry_run,
+                repo=repo,
+                prefer_hyperfine=prefer_hyperfine,
+                notify=notify,
+            )
+        except Exception as exc:
+            duration_ms = (time.monotonic() - started_at) * 1000.0
+            telemetry.set_span_attribute("agentgrep_outcome", "error")
+            telemetry.set_span_attribute("agentgrep_error_type", type(exc).__name__)
+            telemetry.set_span_attribute("agentgrep_duration_ms", duration_ms)
+            logger.info(
+                "benchmark run failed",
+                extra={
+                    "agentgrep_surface": "benchmark",
+                    "agentgrep_operation": "benchmark.run",
+                    "agentgrep_benchmark_commit": commit.short_sha,
+                    "agentgrep_benchmark_count": len(bench_names),
+                    "agentgrep_outcome": "error",
+                    "agentgrep_error_type": type(exc).__name__,
+                    "agentgrep_duration_ms": duration_ms,
+                },
+            )
+            raise
+        duration_ms = (time.monotonic() - started_at) * 1000.0
+        telemetry.set_span_attribute("agentgrep_outcome", "ok")
+        telemetry.set_span_attribute("agentgrep_duration_ms", duration_ms)
+        telemetry.set_span_attribute("agentgrep_measurement_count", len(measurements))
+        logger.info(
+            "benchmark run completed",
+            extra={
+                "agentgrep_surface": "benchmark",
+                "agentgrep_operation": "benchmark.run",
+                "agentgrep_benchmark_commit": commit.short_sha,
+                "agentgrep_benchmark_count": len(bench_names),
+                "agentgrep_measurement_count": len(measurements),
+                "agentgrep_outcome": "ok",
+                "agentgrep_duration_ms": duration_ms,
+            },
+        )
+        return measurements
 
 
 def _run_one_commit_inner(
