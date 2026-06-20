@@ -639,6 +639,33 @@ Pass structured data on every log call where useful for filtering, searching, or
 
 Treat established keys as compatibility-sensitive — downstream users may build dashboards and alerts on them. Change deliberately.
 
+#### Agentic OTel logging
+
+Critical CLI, MCP, TUI, engine, profiler, benchmark, and sensitive-decision
+boundaries should emit sparse structured `INFO` logs when they are useful for
+agentic debugging loops. Log operation starts only when they help diagnose a
+hang or handoff; otherwise prefer one completion or failure log with
+`agentgrep_surface`, `agentgrep_operation` or surface-specific operation key,
+`agentgrep_outcome`, safe counts, elapsed duration, and bounded strategy/status
+fields.
+
+Emit telemetry-oriented logs from inside active project spans so exported Loki
+records carry trace and span identifiers. Logs must stay invisible to normal
+users: library code keeps `NullHandler`, never installs console handlers, and
+must not change stdout or stderr. OTel export is the application-level opt-in.
+
+Telemetry logs must describe shape, not content. Do not log raw prompts, raw
+query terms, raw argv, raw MCP arguments, environment values, file contents,
+full exception text that may contain content, or local absolute paths. Use
+counts, booleans, enums, error types, redacted path metadata, and length/digest
+summaries instead.
+
+Do not add per-record, per-line, per-keypress, render-frame, or hot-loop logs.
+Use spans, metrics, counters, or bounded aggregate logs for high-volume detail.
+Tests for new telemetry logs should assert on `caplog.records` or the
+in-memory telemetry backend attributes, including trace/span linkage when OTel
+export is involved.
+
 #### Key naming rules
 
 - `snake_case`, not dotted; `agentgrep_` prefix
