@@ -35,6 +35,19 @@ APPROVED_ROOTS = {
     "agentgrep.pytest.test",
     "agentgrep.otel.smoke",
 }
+VCS_RESOURCE_TO_LABEL = {
+    "vcs.repository.name": "vcs_repository_name",
+    "vcs.repository.url.full": "vcs_repository_url_full",
+    "vcs.ref.head.name": "vcs_ref_head_name",
+    "vcs.ref.head.revision": "vcs_ref_head_revision",
+    "vcs.ref.head.type": "vcs_ref_head_type",
+}
+REQUIRED_VCS_RESOURCE_KEYS = (
+    "vcs.ref.head.name",
+    "vcs.ref.head.revision",
+    "vcs.ref.head.type",
+    "vcs.repository.name",
+)
 
 
 class AcceptanceCheckError(RuntimeError):
@@ -53,17 +66,26 @@ def main() -> int:
         start_stack()
     wait_for_lgtm(args.timeout)
     started_at = time.time()
+    vcs_identity = expected_vcs_identity()
     run_workloads(args.run_id)
     deadline = time.monotonic() + args.timeout
     evidence: dict[str, object] = {}
-    evidence["traces"] = wait_for(lambda: query_traces(args.run_id), deadline, "traces")
+    evidence["traces"] = wait_for(
+        lambda: query_traces(args.run_id, vcs_identity),
+        deadline,
+        "traces",
+    )
     evidence["metrics"] = wait_for(
-        lambda: query_metrics(started_at, args.run_id),
+        lambda: query_metrics(started_at, args.run_id, vcs_identity),
         deadline,
         "metrics",
     )
-    evidence["logs"] = wait_for(lambda: query_logs(args.run_id), deadline, "logs")
-    evidence["profiles"] = wait_for(lambda: query_profiles(args.run_id), deadline, "profiles")
+    evidence["logs"] = wait_for(lambda: query_logs(args.run_id, vcs_identity), deadline, "logs")
+    evidence["profiles"] = wait_for(
+        lambda: query_profiles(args.run_id, vcs_identity),
+        deadline,
+        "profiles",
+    )
     print(json.dumps({"run_id": args.run_id, "evidence": evidence}, indent=2, sort_keys=True))
     return 0
 
@@ -340,7 +362,29 @@ def run_workloads(run_id: str) -> None:
         )
 
 
-def query_traces(run_id: str) -> dict[str, object]:
+def expected_vcs_identity() -> dict[str, dict[str, str]]:
+    """Return the VCS identity that all telemetry signals should expose."""
+    from agentgrep import _telemetry
+
+    resource = _telemetry.build_resource_attributes(
+        env={},
+        repo_root=ROOT,
+        service_version="acceptance",
+    )
+    expected_resource = {
+        key: str(resource[key]) for key in VCS_RESOURCE_TO_LABEL if resource.get(key) is not None
+    }
+    missing = sorted(key for key in REQUIRED_VCS_RESOURCE_KEYS if key not in expected_resource)
+    if missing:
+        message = f"missing local VCS resource attributes: {missing}"
+        raise AcceptanceCheckError(message)
+    expected_labels = {
+        VCS_RESOURCE_TO_LABEL[key]: value for key, value in expected_resource.items()
+    }
+    return {"resource": expected_resource, "labels": expected_labels}
+
+
+def query_traces(run_id: str, vcs_identity: dict[str, dict[str, str]]) -> dict[str, object]:
     """Return trace evidence and reject single-root traces."""
     params = urllib.parse.urlencode(
         {
@@ -361,8 +405,11 @@ def query_traces(run_id: str) -> dict[str, object]:
     sqlite_trace_count = 0
     profile_engine_sqlite_trace_count = 0
     observed_span_names: set[str] = set()
+    missing_vcs_traces: list[dict[str, object]] = []
+    expected_vcs_resource = vcs_identity["resource"]
     for trace_id in trace_ids:
         trace_data = http_json(f"http://localhost:3200/api/traces/{trace_id}")
+        resource_attributes = trace_resource_attributes(trace_data)
         spans = list(iter_trace_spans(trace_data))
         span_names = [str(span.get("name")) for span in spans if span.get("name")]
         observed_span_names.update(span_names)
@@ -378,12 +425,23 @@ def query_traces(run_id: str) -> dict[str, object]:
             bad_root_traces.append({"trace_id": trace_id, "root": root_name})
             continue
         if len(spans) > 1:
+            if not _labels_match(resource_attributes, expected_vcs_resource):
+                missing_vcs_traces.append(
+                    {
+                        "trace_id": trace_id,
+                        "observed": _selected_labels(
+                            resource_attributes,
+                            expected_vcs_resource,
+                        ),
+                    },
+                )
             checked.append(
                 {
                     "trace_id": trace_id,
                     "span_count": len(spans),
                     "root": root_name,
                     "sqlite_spans": sqlite_span_names[:10],
+                    "vcs": _selected_labels(resource_attributes, expected_vcs_resource),
                 }
             )
             if sqlite_span_names:
@@ -398,6 +456,9 @@ def query_traces(run_id: str) -> dict[str, object]:
         raise AcceptanceCheckError(message)
     if not checked:
         message = f"no app-rooted multi-span traces found; candidates={trace_ids[:5]}"
+        raise AcceptanceCheckError(message)
+    if missing_vcs_traces:
+        message = f"traces missing VCS resource attributes: {missing_vcs_traces[:5]}"
         raise AcceptanceCheckError(message)
     required_roots = {
         "agentgrep.otel.smoke",
@@ -429,6 +490,17 @@ def query_traces(run_id: str) -> dict[str, object]:
     return {"count": len(checked), "traces": checked}
 
 
+def trace_resource_attributes(trace_data: dict[str, object]) -> dict[str, object]:
+    """Return merged OTel resource attributes from a Tempo trace payload."""
+    attributes: dict[str, object] = {}
+    for batch in _list_value(trace_data, "batches"):
+        batch_dict = _dict_or_none(batch)
+        if batch_dict is None:
+            continue
+        attributes.update(otel_attribute_map(_dict_value(batch_dict, "resource")))
+    return attributes
+
+
 def iter_trace_spans(trace_data: dict[str, object]) -> cabc.Iterator[dict[str, object]]:
     """Yield Tempo span dictionaries."""
     for batch in _list_value(trace_data, "batches"):
@@ -445,7 +517,11 @@ def iter_trace_spans(trace_data: dict[str, object]) -> cabc.Iterator[dict[str, o
                     yield span_dict
 
 
-def query_metrics(started_at: float, run_id: str) -> dict[str, object]:
+def query_metrics(
+    started_at: float,
+    run_id: str,
+    vcs_identity: dict[str, dict[str, str]],
+) -> dict[str, object]:
     """Return Prometheus metric evidence."""
     required_metrics = {
         "agentgrep_span_count_total": (),
@@ -455,8 +531,13 @@ def query_metrics(started_at: float, run_id: str) -> dict[str, object]:
         "agentgrep_benchmark_subprocess_count_total": ('agentgrep_surface="benchmark"',),
     }
     fresh_metrics: dict[str, float] = {}
+    vcs_matchers = _label_matchers(vcs_identity["labels"])
     for metric_name, matchers in required_metrics.items():
-        timestamp = _latest_metric_timestamp(metric_name, run_id=run_id, matchers=matchers)
+        timestamp = _latest_metric_timestamp(
+            metric_name,
+            run_id=run_id,
+            matchers=(*matchers, *vcs_matchers),
+        )
         if timestamp >= started_at - 5.0:
             fresh_metrics[metric_name] = timestamp
     if len(fresh_metrics) != len(required_metrics):
@@ -466,7 +547,7 @@ def query_metrics(started_at: float, run_id: str) -> dict[str, object]:
     return {"fresh": fresh_metrics}
 
 
-def query_logs(run_id: str) -> dict[str, object]:
+def query_logs(run_id: str, vcs_identity: dict[str, dict[str, str]]) -> dict[str, object]:
     """Return Loki log evidence with trace IDs."""
     query = urllib.parse.urlencode(
         {
@@ -478,6 +559,8 @@ def query_logs(run_id: str) -> dict[str, object]:
     data = http_json(_loki_url(f"/loki/api/v1/query_range?{query}"))
     linked = []
     unlinked = []
+    missing_vcs = []
+    expected_vcs_labels = vcs_identity["labels"]
     payload = _dict_value(data, "data")
     for stream in _list_value(payload, "result"):
         stream_dict = _dict_or_none(stream)
@@ -485,6 +568,9 @@ def query_logs(run_id: str) -> dict[str, object]:
             continue
         labels = _dict_value(stream_dict, "stream")
         if labels.get("agentgrep_debug_session_id") != run_id:
+            continue
+        if not _labels_match(labels, expected_vcs_labels):
+            missing_vcs.append(_selected_labels(labels, expected_vcs_labels))
             continue
         for value in _list_value(stream_dict, "values"):
             rendered = json.dumps({"labels": labels, "value": value}, sort_keys=True)
@@ -495,13 +581,16 @@ def query_logs(run_id: str) -> dict[str, object]:
     if unlinked:
         message = f"unlinked agentgrep logs found: {unlinked[:5]}"
         raise AcceptanceCheckError(message)
+    if missing_vcs:
+        message = f"agentgrep log streams missing VCS labels: {missing_vcs[:5]}"
+        raise AcceptanceCheckError(message)
     if not linked:
         message = "no trace-linked agentgrep logs found"
         raise AcceptanceCheckError(message)
     return {"count": len(linked), "sample": linked[0]}
 
 
-def query_profiles(run_id: str) -> dict[str, object]:
+def query_profiles(run_id: str, vcs_identity: dict[str, dict[str, str]]) -> dict[str, object]:
     """Return Pyroscope profile evidence."""
     now_ms = int(time.time() * 1000)
     service_body = {
@@ -524,14 +613,33 @@ def query_profiles(run_id: str) -> dict[str, object]:
         method="POST",
         body=session_body,
     )
-    rendered = json.dumps({"service": service_data, "session": session_data}, sort_keys=True)
+    vcs_label_data = {
+        label: http_json(
+            "http://localhost:4040/querier.v1.QuerierService/LabelValues",
+            method="POST",
+            body={
+                "start": now_ms - 60 * 60 * 1000,
+                "end": now_ms,
+                "name": label,
+            },
+        )
+        for label in vcs_identity["labels"]
+    }
+    rendered = json.dumps(
+        {"service": service_data, "session": session_data, "vcs": vcs_label_data},
+        sort_keys=True,
+    )
     if "agentgrep" not in rendered:
         message = f"no agentgrep profile labels found: {rendered[:500]}"
         raise AcceptanceCheckError(message)
     if run_id not in rendered:
         message = f"no run-scoped profile labels found: {rendered[:500]}"
         raise AcceptanceCheckError(message)
-    return {"service": service_data, "session": session_data}
+    for label, expected in vcs_identity["labels"].items():
+        if expected not in json.dumps(vcs_label_data[label], sort_keys=True):
+            message = f"no VCS profile label {label}={expected}: {vcs_label_data[label]}"
+            raise AcceptanceCheckError(message)
+    return {"service": service_data, "session": session_data, "vcs": vcs_label_data}
 
 
 def wait_for(callback: cabc.Callable[[], object], deadline: float, label: str) -> object:
@@ -597,7 +705,7 @@ def _latest_metric_timestamp(
     """Return the newest sample timestamp for ``metric_name``."""
     labels = [*matchers]
     if run_id is not None:
-        labels.insert(0, f'agentgrep_debug_session_id="{run_id}"')
+        labels.insert(0, _label_matcher("agentgrep_debug_session_id", run_id))
     query = metric_name if not labels else f"{metric_name}{{{','.join(labels)}}}"
     params = urllib.parse.urlencode({"query": query})
     data = http_json(_prometheus_url(f"/api/v1/query?{params}"))
@@ -618,6 +726,57 @@ def _latest_metric_timestamp(
     if not timestamps:
         return 0.0
     return max(timestamps)
+
+
+def _label_matchers(labels: cabc.Mapping[str, object]) -> tuple[str, ...]:
+    """Return PromQL equality matchers for scalar labels."""
+    return tuple(_label_matcher(key, value) for key, value in sorted(labels.items()))
+
+
+def _label_matcher(key: str, value: object) -> str:
+    """Return one PromQL equality matcher with JSON string escaping."""
+    return f"{key}={json.dumps(str(value))}"
+
+
+def _labels_match(
+    observed: cabc.Mapping[str, object],
+    expected: cabc.Mapping[str, str],
+) -> bool:
+    """Return whether all expected labels match the observed mapping."""
+    return all(str(observed.get(key)) == value for key, value in expected.items())
+
+
+def _selected_labels(
+    observed: cabc.Mapping[str, object],
+    expected: cabc.Mapping[str, str],
+) -> dict[str, object]:
+    """Return just the expected keys from an observed label mapping."""
+    return {key: observed.get(key) for key in expected}
+
+
+def otel_attribute_map(container: cabc.Mapping[str, object]) -> dict[str, object]:
+    """Return an OpenTelemetry JSON ``attributes`` list as a mapping."""
+    mapped: dict[str, object] = {}
+    for raw_attribute in _list_value(container, "attributes"):
+        attribute = _dict_or_none(raw_attribute)
+        if attribute is None:
+            continue
+        key = attribute.get("key")
+        if not isinstance(key, str):
+            continue
+        mapped[key] = otel_value(attribute.get("value"))
+    return mapped
+
+
+def otel_value(value: object) -> object:
+    """Return a scalar value from an OpenTelemetry JSON value object."""
+    value_dict = _dict_or_none(value)
+    if value_dict is None:
+        return value
+    for key in ("stringValue", "intValue", "doubleValue", "boolValue"):
+        if key in value_dict:
+            return value_dict[key]
+    return value
 
 
 def _list_value(data: cabc.Mapping[str, object], key: str) -> list[object]:
