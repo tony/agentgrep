@@ -34,6 +34,10 @@ endpoints must not change CLI, TUI, MCP, pytest, or profiler correctness.
   `scripts/profile_engine.py ... --json` capture for `profile_payload`.
 - Cross-commit runs can execute `git checkout`, `git diff-index`,
   `uv sync --quiet`, and the configured probe command around each target ref.
+- Benchmark runs emit `agentgrep.benchmark.run`,
+  `agentgrep.benchmark.command`, and `agentgrep.benchmark.subprocess` spans
+  when telemetry is enabled. Subprocess metrics record count and duration by
+  subprocess kind and benchmark command, without raw argv or local paths.
 
 `scripts/otel_acceptance.py` also runs subprocesses:
 
@@ -44,8 +48,27 @@ endpoints must not change CLI, TUI, MCP, pytest, or profiler correctness.
 - `python -m agentgrep grep --invert-match ...` for a traced parse-error path.
 - `python -m agentgrep search ...` for a traced app CLI search.
 - `scripts/profile_engine.py grep-prompts ... --json` for profiler traces.
+- `scripts/benchmark.py run ...` for benchmark harness roots, command spans,
+  subprocess spans, and benchmark subprocess metrics.
 - `python -m pytest tests/test_agentgrep.py::test_streaming_ui_app_mounts_cleanly`
   for a traced direct Textual `run_test()` path.
+- `python -m pytest
+  tests/test_agentgrep_mcp.py::test_mcp_lists_tools_resources_prompts_and_templates`
+  for FastMCP request spans under a pytest item root.
+
+The pytest documentation harness also runs subprocesses:
+
+- `git status`, local `git clone`, `git init`, and an empty sandbox commit
+  prepare isolated project trees for documentation examples.
+- Console and page-level Python examples run through `/bin/sh` inside a
+  temporary home and redirected project checkout.
+- Sphinx doctest recipes run through `just` in a temporary build directory.
+
+Those documentation subprocesses emit
+`agentgrep.pytest.documentation.subprocess` spans and count/duration metrics
+when telemetry is active. Attributes identify subprocess kind, documentation
+example kind, language, and outcome; they must not include raw shell scripts,
+raw argv, environment values, prompt text, or local absolute paths.
 
 The engine also records subprocess profile samples when
 `agentgrep._engine.profiling` is active. Those samples must use command shape,
@@ -66,7 +89,14 @@ app.
 
 SQLite and asyncio auto-instrumentation run only in local/debug/live modes.
 Project SQLite helper spans also wrap `sqlite3.Connection` shortcut methods so
-source-parser database work remains visible.
+source-parser database work remains visible. The same shortcut wrapper emits
+`agentgrep.otel.sqlite_total` metrics from normal app paths when the SQLite
+work belongs to an active app trace.
+
+Engine scheduling and source scanning emit `agentgrep.otel.cpu_loops` metrics
+for source counts, submitted/completed sources, batches, emitted records, and
+records scanned. These metrics document CPU-impacting work and cost centers;
+they are observability signal, not a performance fix.
 
 Run-scoped metric labels increase local QA series count. That is accepted for
 this branch because the goal is to close observability blindspots. If the
@@ -93,10 +123,13 @@ it does not prescribe a performance fix.
 Live acceptance must prove all four signals for the same debug session:
 
 - Tempo has multi-span app roots for smoke, CLI, profile engine, and pytest.
+- Tempo has benchmark run roots, benchmark command/subprocess spans, and MCP
+  request spans for the debug session.
 - No current-run trace has exactly one span.
 - At least one checked trace contains `agentgrep.sqlite.*` spans.
-- Prometheus has fresh metrics with `agentgrep_debug_session_id`.
-- Loki logs include trace and span identifiers.
+- Prometheus has fresh span, engine CPU-loop, SQLite, and benchmark
+  subprocess metrics with `agentgrep_debug_session_id`.
+- Loki has no current-run agentgrep logs without trace and span identifiers.
 - Pyroscope exposes the `agentgrep` service and the debug session label.
 
 Future instrumentation changes that add subprocesses, benchmark rows,
