@@ -335,6 +335,44 @@ Local profiles are the source of real bottleneck evidence because CI runners do
 not have representative agent-history stores. If CI artifact upload is needed,
 keep it scoped to a separate issue and use sanitized fixture-only payloads.
 
+### OpenTelemetry and LGTM
+
+OpenTelemetry instrumentation lives behind `agentgrep._telemetry`. Do not
+import OpenTelemetry SDK/exporter modules from normal application paths;
+`agentgrep._telemetry_otel` is the lazy optional backend. Packaged users must
+keep working when OTel dependencies, LGTM, Docker, or OTLP endpoints are
+absent.
+
+Use `AGENTGREP_OTEL` as the single project telemetry switch. Do not add a
+second enable variable. Local checkouts default to passive local telemetry;
+packaged installs stay quiet unless explicitly enabled. Telemetry setup,
+export, and shutdown failures must never change CLI, TUI, MCP, or test
+correctness.
+
+`service.version` is the package version only. Do not put debug attempts,
+dirty candidates, pytest retries, or agent-loop identifiers in
+`service.version`. Use separate attributes such as
+`agentgrep.debug.session_id`, `agentgrep.debug.candidate_id`,
+`agentgrep.debug.attempt`, and `agentgrep.pytest.run_id`.
+
+Do not create empty root spans or orphaned low-level spans. Root spans must be
+app-level operations such as `agentgrep.cli.invocation`,
+`agentgrep.cli.interactive_session`, `agentgrep.tui.session`,
+`agentgrep.mcp.tool`, `agentgrep.profile_engine.run`,
+`agentgrep.pytest.session`, `agentgrep.pytest.test`, or
+`agentgrep.otel.smoke`. Child spans should represent logical work, not every
+keypress, render frame, event-loop callback, or internal dispatch.
+
+Logs exported through OTel must be trace-linked. Do not export unparented
+logs, raw prompts, raw MCP arguments, raw argv, environment values, file
+contents, secrets, or full local paths. Use redacted shape metadata and stable
+low-cardinality attributes.
+
+Default pytest must be deterministic and offline. Use in-memory telemetry for
+unit assertions. Live LGTM checks are opt-in through `just otel-acceptance`;
+they must prove traces, metrics, logs, and profiles against the real stack
+without making ordinary tests depend on Docker or network ports.
+
 ## Code Architecture
 
 agentgrep is no longer a single-module surface. Treat this section as an
