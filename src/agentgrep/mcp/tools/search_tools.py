@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-import collections.abc as cabc
 import contextlib
 import dataclasses
 import datetime

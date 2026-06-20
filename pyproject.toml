@@ -277,6 +277,7 @@ convention = "numpy"
 # more naturally as one line than wrapped.
 "scripts/benchmark.py" = ["B008", "E501"]
 "scripts/mcp_swap.py" = ["T201"]
+"scripts/otel_acceptance.py" = ["T201"]
 
 [tool.pytest.ini_options]
 addopts = [

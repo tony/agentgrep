@@ -8,6 +8,7 @@ import logging
 import os
 import pathlib
 import sqlite3
+import typing as t
 
 import pytest
 
@@ -109,6 +110,7 @@ def test_metrics_include_debug_session_when_otel_is_enabled() -> None:
         service_version="0.1.0",
     )
     assert isinstance(handle.backend, telemetry.InMemoryTelemetryBackend)
+    backend = handle.backend
     try:
         with (
             telemetry.span(
@@ -121,11 +123,35 @@ def test_metrics_include_debug_session_when_otel_is_enabled() -> None:
     finally:
         handle.shutdown()
 
-    assert handle.backend.metric_records
+    assert backend.metric_records
     assert {
-        record.attributes.get("agentgrep_debug_session_id")
-        for record in handle.backend.metric_records
+        record.attributes.get("agentgrep_debug_session_id") for record in backend.metric_records
     } == {"session-1"}
+
+
+def test_telemetry_handle_shutdown_is_idempotent() -> None:
+    """Double cleanup should not call backend shutdown twice."""
+    import agentgrep._telemetry as telemetry
+
+    class CountingBackend(telemetry.InMemoryTelemetryBackend):
+        """In-memory backend with visible shutdown count."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.shutdown_count = 0
+
+        def shutdown(self) -> None:
+            """Count backend shutdown calls."""
+            self.shutdown_count += 1
+
+    backend = CountingBackend()
+    handle = telemetry.TelemetryHandle(mode="test", backend=backend)
+
+    handle.shutdown()
+    handle.shutdown()
+
+    assert backend.shutdown_count == 1
+    assert handle.backend is None
 
 
 def test_sql_span_requires_active_project_span() -> None:
@@ -193,6 +219,50 @@ def test_sqlite_connection_factory_traces_connection_shortcuts_without_parameter
     }
     assert "12345" not in str([span.attributes for span in sql_spans])
     assert backend.single_root_trace_ids() == ()
+    sqlite_metrics = [
+        metric for metric in backend.metric_records if metric.name == "agentgrep.otel.sqlite_total"
+    ]
+    assert [metric.value for metric in sqlite_metrics] == [1, 1, 1]
+    assert {metric.attributes["agentgrep_sql_method"] for metric in sqlite_metrics} == {
+        "execute",
+        "executemany",
+    }
+    assert all(metric.attributes["agentgrep_surface"] == "sqlite" for metric in sqlite_metrics)
+
+
+def test_record_work_metric_keeps_debug_identity() -> None:
+    """CPU-impacting work counters should be real app metrics, not smoke-only."""
+    import agentgrep._telemetry as telemetry
+
+    handle = telemetry.setup(
+        mode="test",
+        env={
+            "AGENTGREP_OTEL": "live",
+            "AGENTGREP_DEBUG_SESSION_ID": "session-work",
+        },
+        service_version="0.1.0",
+    )
+    assert isinstance(handle.backend, telemetry.InMemoryTelemetryBackend)
+    backend = handle.backend
+    try:
+        with telemetry.span("agentgrep.cli.invocation", agentgrep_surface="cli"):
+            telemetry.record_work_metric(
+                42,
+                work_kind="source_records_scanned",
+                agentgrep_surface="engine",
+                agentgrep_source_strategy="root_full_scan",
+            )
+    finally:
+        handle.shutdown()
+
+    work_metric = next(
+        metric for metric in backend.metric_records if metric.name == "agentgrep.otel.cpu_loops"
+    )
+    assert work_metric.value == 42
+    assert work_metric.attributes["agentgrep_work_kind"] == "source_records_scanned"
+    assert work_metric.attributes["agentgrep_surface"] == "engine"
+    assert work_metric.attributes["agentgrep_source_strategy"] == "root_full_scan"
+    assert work_metric.attributes["agentgrep_debug_session_id"] == "session-work"
 
 
 def test_open_readonly_sqlite_uses_traced_connection_factory(tmp_path: pathlib.Path) -> None:
@@ -245,6 +315,33 @@ def test_executor_submit_preserves_current_trace_context() -> None:
         telemetry.configure_backend(None)
 
     assert worker_span_id == root_span_id
+
+
+def test_pytest_item_span_helper_covers_custom_items() -> None:
+    """The pytest hook wrapper should work for custom non-function items."""
+    import agentgrep._telemetry as telemetry
+    import conftest as root_conftest
+
+    class FakeItem:
+        nodeid = "docs.md::documentation-example"
+
+    backend = telemetry.InMemoryTelemetryBackend()
+    telemetry.configure_backend(backend)
+    try:
+        with root_conftest._agentgrep_otel_pytest_item_span(FakeItem()):
+            assert telemetry.current_span_id() is not None
+    finally:
+        telemetry.configure_backend(None)
+
+    assert backend.single_root_trace_ids() == ()
+    assert [span.name for span in backend.finished_spans] == [
+        "agentgrep.pytest.call",
+        "agentgrep.pytest.test",
+    ]
+    call_span, test_span = backend.finished_spans
+    assert test_span.parent_id is None
+    assert call_span.parent_id == test_span.span_id
+    assert test_span.attributes["agentgrep_pytest_test"] == FakeItem.nodeid
 
 
 def test_flatten_safe_attributes_keeps_redacted_mcp_args_safe() -> None:
@@ -442,11 +539,51 @@ async def test_mcp_tool_span_is_non_single_and_redacted(
 
     assert backend.single_root_trace_ids() == ()
     tool_span = next(span for span in backend.finished_spans if span.name == "agentgrep.mcp.tool")
-    assert tool_span.parent_id is None
+    request_span = next(
+        span
+        for span in backend.finished_spans
+        if span.name == "agentgrep.mcp.request" and span.trace_id == tool_span.trace_id
+    )
+    operation_span = next(
+        span
+        for span in backend.finished_spans
+        if span.name == "agentgrep.mcp.operation" and span.trace_id == tool_span.trace_id
+    )
+    assert request_span.parent_id is None
+    assert operation_span.parent_id == request_span.span_id
+    assert tool_span.parent_id == operation_span.span_id
     assert "secret-token" not in str(tool_span.attributes)
     assert tool_span.attributes["agentgrep_mcp_args.terms.0.len"] == len("secret-token")
-    assert all(record.trace_id == tool_span.trace_id for record in backend.log_records)
+    assert all(record.trace_id == request_span.trace_id for record in backend.log_records)
     assert all(record.span_id is not None for record in backend.log_records)
+
+
+async def test_mcp_list_tools_gets_request_root() -> None:
+    """MCP list operations should not rely on tool-only roots."""
+    from fastmcp import Client
+
+    import agentgrep._telemetry as telemetry
+    from agentgrep import mcp as agentgrep_mcp
+
+    backend = telemetry.InMemoryTelemetryBackend()
+    telemetry.configure_backend(backend)
+    try:
+        async with Client(agentgrep_mcp.build_mcp_server()) as client:
+            _ = await client.list_tools()
+    finally:
+        telemetry.configure_backend(None)
+
+    assert backend.single_root_trace_ids() == ()
+    assert [span.name for span in backend.finished_spans] == [
+        "agentgrep.mcp.operation",
+        "agentgrep.mcp.request",
+    ]
+    request_span = backend.finished_spans[-1]
+    operation_span = backend.finished_spans[0]
+    assert request_span.parent_id is None
+    assert request_span.attributes["agentgrep_mcp_method"] == "tools/list"
+    assert operation_span.parent_id == request_span.span_id
+    assert operation_span.attributes["agentgrep_mcp_method"] == "tools/list"
 
 
 def test_otel_backend_records_named_custom_metrics() -> None:
@@ -535,3 +672,85 @@ def test_otel_log_record_sanitizes_absolute_paths() -> None:
     assert sanitized.pathname == "example.py"
     assert sanitized.filename == "example.py"
     assert record.pathname == "/home/d/work/python/agentgrep/src/agentgrep/example.py"
+
+
+def test_otel_backend_exports_logs_with_current_otel_span() -> None:
+    """Live OTel logs should link when only an OTel span is current."""
+    from agentgrep import _telemetry_otel
+
+    class FakeSpanContext:
+        trace_id = int("1" * 32, 16)
+        span_id = int("2" * 16, 16)
+
+        @property
+        def is_valid(self) -> bool:
+            return True
+
+    class FakeSpan:
+        def get_span_context(self) -> FakeSpanContext:
+            return FakeSpanContext()
+
+    class FakeTraceModule:
+        INVALID_SPAN = object()
+
+        @staticmethod
+        def get_current_span() -> FakeSpan:
+            return FakeSpan()
+
+    class FakeProvider:
+        def force_flush(self) -> None:
+            return None
+
+        def shutdown(self) -> None:
+            return None
+
+    class FakeMeter:
+        def create_counter(self, _name: str, **_kwargs: object) -> object:
+            return object()
+
+        def create_histogram(self, _name: str, **_kwargs: object) -> object:
+            return object()
+
+    class CapturingHandler(logging.Handler):
+        def __init__(self) -> None:
+            super().__init__()
+            self.records: list[logging.LogRecord] = []
+
+        def emit(self, record: logging.LogRecord) -> None:
+            self.records.append(record)
+
+    class FakeInstrument:
+        def add(self, _value: int | float, *, attributes: dict[str, object]) -> None:
+            del attributes
+
+        def record(self, _value: int | float, *, attributes: dict[str, object]) -> None:
+            del attributes
+
+    handler = CapturingHandler()
+    backend = _telemetry_otel.OtelTelemetryBackend(
+        tracer=None,
+        tracer_provider=FakeProvider(),
+        meter=FakeMeter(),
+        meter_provider=FakeProvider(),
+        logger_provider=FakeProvider(),
+        logging_handler=handler,
+        span_counter=FakeInstrument(),
+        span_duration=FakeInstrument(),
+        instrumentations=(),
+        profiles_started=False,
+        trace_api=t.cast("object", FakeTraceModule),
+    )
+    record = logging.LogRecord(
+        name="agentgrep.test",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="otel linked",
+        args=(),
+        exc_info=None,
+    )
+
+    backend.emit_log(record, active_span=None)
+
+    assert len(handler.records) == 1
+    assert handler.records[0].getMessage() == "otel linked"
