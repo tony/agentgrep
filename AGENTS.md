@@ -363,6 +363,13 @@ app-level operations such as `agentgrep.cli.invocation`,
 `agentgrep.otel.smoke`. Child spans should represent logical work, not every
 keypress, render frame, event-loop callback, or internal dispatch.
 
+SQLite telemetry must cover `sqlite3.Connection` shortcut methods through
+`agentgrep._telemetry.sqlite_connection_factory()`. Do not rely on
+`SQLite3Instrumentor` alone for SQLite spans; it does not cover the connection
+shortcut path agentgrep uses for source parsing. SQL spans must be children of
+an existing app trace and must not include bound parameter values, prompt text,
+file contents, or local database paths.
+
 Logs exported through OTel must be trace-linked. Do not export unparented
 logs, raw prompts, raw MCP arguments, raw argv, environment values, file
 contents, secrets, or full local paths. Use redacted shape metadata and stable
