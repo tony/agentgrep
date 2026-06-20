@@ -198,9 +198,14 @@ def query_traces(run_id: str) -> dict[str, object]:
     checked: list[dict[str, object]] = []
     single_root_traces: list[str] = []
     bad_root_traces: list[dict[str, object]] = []
+    sqlite_trace_count = 0
     for trace_id in trace_ids[:10]:
         trace_data = http_json(f"http://localhost:3200/api/traces/{trace_id}")
         spans = list(iter_trace_spans(trace_data))
+        span_names = [str(span.get("name")) for span in spans if span.get("name")]
+        sqlite_span_names = sorted(
+            {name for name in span_names if name.startswith("agentgrep.sqlite.")}
+        )
         root_spans = [span for span in spans if not span.get("parentSpanId")]
         root_name = None if not root_spans else root_spans[0].get("name")
         if len(spans) == 1 and root_spans:
@@ -215,8 +220,11 @@ def query_traces(run_id: str) -> dict[str, object]:
                     "trace_id": trace_id,
                     "span_count": len(spans),
                     "root": root_name,
+                    "sqlite_spans": sqlite_span_names[:10],
                 }
             )
+            if sqlite_span_names:
+                sqlite_trace_count += 1
     if single_root_traces:
         message = f"single-root traces found: {single_root_traces[:5]}"
         raise AcceptanceCheckError(message)
@@ -231,6 +239,9 @@ def query_traces(run_id: str) -> dict[str, object]:
     missing_roots = sorted(required_roots - observed_roots)
     if missing_roots:
         message = f"missing required trace roots: {missing_roots}"
+        raise AcceptanceCheckError(message)
+    if sqlite_trace_count == 0:
+        message = f"no sqlite spans found in checked traces: {checked[:5]}"
         raise AcceptanceCheckError(message)
     return {"count": len(checked), "traces": checked}
 
