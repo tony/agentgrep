@@ -77,6 +77,8 @@ def start_stack() -> None:
         check=False,
     )
     if inspect.returncode == 0:
+        if not _container_is_running(inspect.stdout):
+            subprocess.run(["docker", "start", CONTAINER_NAME], check=True)
         return
     subprocess.run(
         [
@@ -103,6 +105,14 @@ def start_stack() -> None:
         ],
         check=True,
     )
+
+
+def _container_is_running(inspect_stdout: str) -> bool:
+    """Return whether ``docker inspect`` reports a running container."""
+    with contextlib.suppress(json.JSONDecodeError, TypeError, KeyError, IndexError):
+        payload = json.loads(inspect_stdout)
+        return bool(payload[0]["State"]["Running"])
+    return False
 
 
 def wait_for_lgtm(timeout: float) -> None:
