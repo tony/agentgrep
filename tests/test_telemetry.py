@@ -8,6 +8,8 @@ import logging
 import os
 import pathlib
 import sqlite3
+import subprocess
+import sys
 import typing as t
 
 import pytest
@@ -20,6 +22,31 @@ def _write_codex_session(home: pathlib.Path, *, text: str) -> pathlib.Path:
     payload = {"type": "response_item", "payload": {"role": "user", "content": text}}
     path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
     return path
+
+
+def _run_git(repo: pathlib.Path, *args: str) -> str:
+    """Run git in a test repository and return stripped stdout."""
+    completed = subprocess.run(
+        ("git", *args),
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return completed.stdout.strip()
+
+
+def _init_vcs_repo(repo: pathlib.Path) -> str:
+    """Create a small Git repository with one branch and one remote."""
+    repo.mkdir()
+    _run_git(repo, "init", "-b", "feature/vcs")
+    _run_git(repo, "config", "user.email", "agentgrep@example.invalid")
+    _run_git(repo, "config", "user.name", "agentgrep test")
+    _ = (repo / "README.md").write_text("vcs\n", encoding="utf-8")
+    _run_git(repo, "add", ".")
+    _run_git(repo, "commit", "-m", "initial")
+    _run_git(repo, "remote", "add", "origin", "https://github.com/tony/agentgrep.git")
+    return _run_git(repo, "rev-parse", "HEAD")
 
 
 def test_resolve_mode_uses_only_agentgrep_otel(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -72,6 +99,48 @@ def test_service_version_is_not_debug_identity(monkeypatch: pytest.MonkeyPatch) 
     assert attributes["agentgrep.debug.session_id"] == "session-1"
     assert attributes["agentgrep.debug.attempt"] == 3
     assert attributes["agentgrep.debug.candidate_id"] == "candidate-1"
+
+
+def test_resource_attributes_include_current_vcs_identity(tmp_path: pathlib.Path) -> None:
+    """Telemetry resource attributes should identify the current Git ref."""
+    import agentgrep._telemetry as telemetry
+
+    repo = tmp_path / "repo"
+    head_revision = _init_vcs_repo(repo)
+
+    attributes = telemetry.build_resource_attributes(
+        env={},
+        service_version="0.1.0",
+        repo_root=repo,
+    )
+
+    assert attributes["vcs.ref.head.name"] == "feature/vcs"
+    assert attributes["vcs.ref.head.revision"] == head_revision
+    assert attributes["vcs.ref.head.type"] == "branch"
+    assert attributes["vcs.repository.name"] == "agentgrep"
+    assert attributes["vcs.repository.url.full"] == "https://github.com/tony/agentgrep"
+    assert "vcs.repository.ref.name" not in attributes
+
+
+def test_resource_attributes_recover_branch_for_detached_head(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Detached acceptance workloads should still carry a branch ref when exact."""
+    import agentgrep._telemetry as telemetry
+
+    repo = tmp_path / "repo"
+    head_revision = _init_vcs_repo(repo)
+    _run_git(repo, "checkout", "--detach", head_revision)
+
+    attributes = telemetry.build_resource_attributes(
+        env={},
+        service_version="0.1.0",
+        repo_root=repo,
+    )
+
+    assert attributes["vcs.ref.head.name"] == "feature/vcs"
+    assert attributes["vcs.ref.head.revision"] == head_revision
+    assert attributes["vcs.ref.head.type"] == "branch"
 
 
 def test_logs_metrics_and_traces_are_linked_under_non_single_root() -> None:
@@ -251,6 +320,83 @@ def test_metrics_include_debug_session_when_otel_is_enabled() -> None:
     assert {
         record.attributes.get("agentgrep_debug_session_id") for record in backend.metric_records
     } == {"session-1"}
+
+
+def test_metrics_include_vcs_identity_when_otel_is_enabled(tmp_path: pathlib.Path) -> None:
+    """OTel-on metrics carry VCS identity for Grafana QA."""
+    import agentgrep._telemetry as telemetry
+
+    repo = tmp_path / "repo"
+    head_revision = _init_vcs_repo(repo)
+    handle = telemetry.setup(
+        mode="test",
+        env={"AGENTGREP_OTEL": "live"},
+        repo_root=repo,
+        service_version="0.1.0",
+    )
+    assert isinstance(handle.backend, telemetry.InMemoryTelemetryBackend)
+    backend = handle.backend
+    try:
+        with telemetry.span("agentgrep.cli.invocation", agentgrep_surface="cli"):
+            telemetry.record_metric("agentgrep.acceptance.count", 1, agentgrep_surface="cli")
+    finally:
+        handle.shutdown()
+
+    assert backend.metric_records
+    assert {record.attributes.get("vcs_ref_head_name") for record in backend.metric_records} == {
+        "feature/vcs",
+    }
+    assert {
+        record.attributes.get("vcs_ref_head_revision") for record in backend.metric_records
+    } == {head_revision}
+    assert {record.attributes.get("vcs_ref_head_type") for record in backend.metric_records} == {
+        "branch",
+    }
+    assert {record.attributes.get("vcs_repository_name") for record in backend.metric_records} == {
+        "agentgrep",
+    }
+    assert {
+        record.attributes.get("vcs_repository_url_full") for record in backend.metric_records
+    } == {"https://github.com/tony/agentgrep"}
+
+
+def test_profiles_reuse_resource_vcs_identity_as_tags(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pyroscope tags should be derived from the same resource VCS attributes."""
+    from agentgrep import _telemetry_otel
+
+    calls: list[dict[str, object]] = []
+
+    class FakePyroscope:
+        @staticmethod
+        def configure(**kwargs: object) -> None:
+            calls.append(kwargs)
+
+    monkeypatch.setitem(sys.modules, "pyroscope", FakePyroscope)
+
+    started = _telemetry_otel._configure_profiles(
+        {
+            "service.name": "agentgrep",
+            "service.version": "0.1.0",
+            "vcs.ref.head.name": "feature/vcs",
+            "vcs.ref.head.revision": "abc123",
+            "vcs.ref.head.type": "branch",
+            "vcs.repository.name": "agentgrep",
+            "vcs.repository.url.full": "https://github.com/tony/agentgrep",
+        },
+    )
+
+    assert started is True
+    assert len(calls) == 1
+    tags = calls[0]["tags"]
+    assert tags == {
+        "vcs_ref_head_name": "feature/vcs",
+        "vcs_ref_head_revision": "abc123",
+        "vcs_ref_head_type": "branch",
+        "vcs_repository_name": "agentgrep",
+        "vcs_repository_url_full": "https://github.com/tony/agentgrep",
+    }
 
 
 def test_telemetry_handle_shutdown_is_idempotent() -> None:
