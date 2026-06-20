@@ -8,6 +8,7 @@ import contextlib
 import json
 import os
 import pathlib
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -54,7 +55,11 @@ def main() -> int:
     deadline = time.monotonic() + args.timeout
     evidence: dict[str, object] = {}
     evidence["traces"] = wait_for(lambda: query_traces(args.run_id), deadline, "traces")
-    evidence["metrics"] = wait_for(lambda: query_metrics(started_at), deadline, "metrics")
+    evidence["metrics"] = wait_for(
+        lambda: query_metrics(started_at, args.run_id),
+        deadline,
+        "metrics",
+    )
     evidence["logs"] = wait_for(lambda: query_logs(args.run_id), deadline, "logs")
     evidence["profiles"] = wait_for(lambda: query_profiles(args.run_id), deadline, "profiles")
     print(json.dumps({"run_id": args.run_id, "evidence": evidence}, indent=2, sort_keys=True))
@@ -112,7 +117,7 @@ def wait_for_lgtm(timeout: float) -> None:
 
 
 def run_workloads(run_id: str) -> None:
-    """Run smoke and real CLI workloads."""
+    """Run smoke, CLI, profiler, and pytest workloads."""
     env = {
         **os.environ,
         "AGENTGREP_OTEL": "live",
@@ -158,6 +163,50 @@ def run_workloads(run_id: str) -> None:
             ),
             encoding="utf-8",
         )
+        cursor_db = pathlib.Path(temp_home) / ".cursor" / "state.vscdb"
+        cursor_db.parent.mkdir(parents=True, exist_ok=True)
+        connection = sqlite3.connect(cursor_db)
+        try:
+            connection.execute("CREATE TABLE ItemTable (key TEXT, value TEXT)")
+            cursor_payload = {"messages": [{"role": "user", "content": marker}]}
+            connection.execute(
+                "INSERT INTO ItemTable VALUES (?, ?)",
+                ("workbench.panel.chat.composerData", json.dumps(cursor_payload)),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "agentgrep",
+                "--help",
+            ],
+            cwd=ROOT,
+            env={**env, "HOME": temp_home},
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        parse_error = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "agentgrep",
+                "grep",
+                "--invert-match",
+                run_id,
+            ],
+            cwd=ROOT,
+            env={**env, "HOME": temp_home},
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if parse_error.returncode != 2:
+            message = f"parse-error workload exited {parse_error.returncode}: {parse_error.stderr}"
+            raise AcceptanceCheckError(message)
         subprocess.run(
             [
                 sys.executable,
@@ -178,6 +227,56 @@ def run_workloads(run_id: str) -> None:
             capture_output=True,
             text=True,
         )
+        subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "profile_engine.py"),
+                "grep-prompts",
+                run_id,
+                "--agent",
+                "codex",
+                "--max-count",
+                "5",
+                "--json",
+            ],
+            cwd=ROOT,
+            env={**env, "HOME": temp_home},
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "profile_engine.py"),
+                "search-prompts",
+                run_id,
+                "--agent",
+                "cursor-ide",
+                "--limit",
+                "5",
+                "--json",
+            ],
+            cwd=ROOT,
+            env={**env, "HOME": temp_home},
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "tests/test_agentgrep.py::test_streaming_ui_app_mounts_cleanly",
+                "-q",
+            ],
+            cwd=ROOT,
+            env={**env, "HOME": temp_home},
+            check=True,
+            capture_output=True,
+            text=True,
+        )
 
 
 def query_traces(run_id: str) -> dict[str, object]:
@@ -185,7 +284,7 @@ def query_traces(run_id: str) -> dict[str, object]:
     params = urllib.parse.urlencode(
         {
             "q": f'{{resource.agentgrep.debug.session_id="{run_id}"}}',
-            "limit": "20",
+            "limit": "100",
         },
     )
     data = http_json(f"http://localhost:3200/api/search?{params}")
@@ -199,7 +298,8 @@ def query_traces(run_id: str) -> dict[str, object]:
     single_root_traces: list[str] = []
     bad_root_traces: list[dict[str, object]] = []
     sqlite_trace_count = 0
-    for trace_id in trace_ids[:10]:
+    profile_engine_sqlite_trace_count = 0
+    for trace_id in trace_ids:
         trace_data = http_json(f"http://localhost:3200/api/traces/{trace_id}")
         spans = list(iter_trace_spans(trace_data))
         span_names = [str(span.get("name")) for span in spans if span.get("name")]
@@ -225,6 +325,8 @@ def query_traces(run_id: str) -> dict[str, object]:
             )
             if sqlite_span_names:
                 sqlite_trace_count += 1
+                if root_name == "agentgrep.profile_engine.run":
+                    profile_engine_sqlite_trace_count += 1
     if single_root_traces:
         message = f"single-root traces found: {single_root_traces[:5]}"
         raise AcceptanceCheckError(message)
@@ -234,7 +336,12 @@ def query_traces(run_id: str) -> dict[str, object]:
     if not checked:
         message = f"no app-rooted multi-span traces found; candidates={trace_ids[:5]}"
         raise AcceptanceCheckError(message)
-    required_roots = {"agentgrep.otel.smoke", "agentgrep.cli.invocation"}
+    required_roots = {
+        "agentgrep.otel.smoke",
+        "agentgrep.cli.invocation",
+        "agentgrep.profile_engine.run",
+        "agentgrep.pytest.test",
+    }
     observed_roots = {str(trace["root"]) for trace in checked}
     missing_roots = sorted(required_roots - observed_roots)
     if missing_roots:
@@ -242,6 +349,9 @@ def query_traces(run_id: str) -> dict[str, object]:
         raise AcceptanceCheckError(message)
     if sqlite_trace_count == 0:
         message = f"no sqlite spans found in checked traces: {checked[:5]}"
+        raise AcceptanceCheckError(message)
+    if profile_engine_sqlite_trace_count == 0:
+        message = f"no profile-engine sqlite spans found in checked traces: {checked[:5]}"
         raise AcceptanceCheckError(message)
     return {"count": len(checked), "traces": checked}
 
@@ -262,7 +372,7 @@ def iter_trace_spans(trace_data: dict[str, object]) -> cabc.Iterator[dict[str, o
                     yield span_dict
 
 
-def query_metrics(started_at: float) -> dict[str, object]:
+def query_metrics(started_at: float, run_id: str) -> dict[str, object]:
     """Return Prometheus metric evidence."""
     required_metrics = (
         "agentgrep_span_count_total",
@@ -272,7 +382,7 @@ def query_metrics(started_at: float) -> dict[str, object]:
     )
     fresh_metrics: dict[str, float] = {}
     for metric_name in required_metrics:
-        timestamp = _latest_metric_timestamp(metric_name)
+        timestamp = _latest_metric_timestamp(metric_name, run_id=run_id)
         if timestamp >= started_at - 5.0:
             fresh_metrics[metric_name] = timestamp
     if len(fresh_metrics) != len(required_metrics):
@@ -398,9 +508,12 @@ def _prometheus_url(path: str) -> str:
     )
 
 
-def _latest_metric_timestamp(metric_name: str) -> float:
+def _latest_metric_timestamp(metric_name: str, *, run_id: str | None = None) -> float:
     """Return the newest sample timestamp for ``metric_name``."""
-    params = urllib.parse.urlencode({"query": metric_name})
+    query = (
+        metric_name if run_id is None else f'{metric_name}{{agentgrep_debug_session_id="{run_id}"}}'
+    )
+    params = urllib.parse.urlencode({"query": query})
     data = http_json(_prometheus_url(f"/api/v1/query?{params}"))
     payload = _dict_value(data, "data")
     timestamps: list[float] = []
