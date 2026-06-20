@@ -16,6 +16,7 @@ from agentgrep.mcp.middleware import (
     AgentgrepArgumentPresenceMiddleware,
     AgentgrepAuditMiddleware,
     AgentgrepResponseLimitingMiddleware,
+    AgentgrepTelemetryMiddleware,
     AgentgrepValidationErrorMiddleware,
     _install_fastmcp_validation_log_redaction,
 )
@@ -41,18 +42,21 @@ def build_mcp_server() -> FastMCP:
         #      timing captures middleware cost too.
         #   2. ErrorHandlingMiddleware — transforms exceptions into proper MCP
         #      errors after Audit records the original failure type.
-        #   3. ValidationErrorMiddleware — maps FastMCP argument failures to
+        #   3. AgentgrepTelemetryMiddleware — app request root; parents
+        #      FastMCP request work and the tool-specific audit span.
+        #   4. ValidationErrorMiddleware — maps FastMCP argument failures to
         #      concise invalid-params errors before generic transformation.
-        #   4. ArgumentPresenceMiddleware — retains raw presence before
+        #   5. ArgumentPresenceMiddleware — retains raw presence before
         #      FastMCP injects tool defaults.
-        #   5. AgentgrepAuditMiddleware — wraps response limiting so semantic
+        #   6. AgentgrepAuditMiddleware — wraps response limiting so semantic
         #      search truncation stays successful and fallback errors are
         #      audit-visible as outcome=error.
-        #   6. AgentgrepResponseLimitingMiddleware — bounds tool output before
+        #   7. AgentgrepResponseLimitingMiddleware — bounds tool output before
         #      the result returns through Audit.
         middleware=[
             TimingMiddleware(),
             ErrorHandlingMiddleware(transform_errors=True),
+            AgentgrepTelemetryMiddleware(),
             AgentgrepValidationErrorMiddleware(),
             AgentgrepArgumentPresenceMiddleware(),
             AgentgrepAuditMiddleware(),
