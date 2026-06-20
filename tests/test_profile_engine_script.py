@@ -530,11 +530,15 @@ def test_profile_main_emits_otel_root_and_render_child(
     assert root.attributes["agentgrep_result_limit"] == 1
     assert "tmux" not in str(root.attributes)
     assert str(tmp_path) not in str(root.attributes)
-    assert [record.message for record in backend.log_records] == [
+    profile_logs = [
+        record for record in backend.log_records if record.logger_name == "agentgrep.profile_engine"
+    ]
+    assert [record.message for record in profile_logs] == [
         "profile engine started",
         "profile engine completed",
     ]
     assert {record.trace_id for record in backend.log_records} == {root.trace_id}
+    assert all(record.span_id is not None for record in backend.log_records)
 
 
 @pytest.mark.parametrize(

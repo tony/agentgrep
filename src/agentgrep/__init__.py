@@ -514,6 +514,7 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
                     "cli command completed",
                     extra={
                         "agentgrep_surface": "cli",
+                        "agentgrep_operation": "cli.command",
                         "agentgrep_command": command,
                         "agentgrep_outcome": outcome,
                         "agentgrep_exit_code": exit_code,
@@ -530,6 +531,7 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
                     "cli command completed",
                     extra={
                         "agentgrep_surface": "cli",
+                        "agentgrep_operation": "cli.command",
                         "agentgrep_command": "help",
                         "agentgrep_outcome": "help",
                         "agentgrep_exit_code": 0,
@@ -542,6 +544,7 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
                 "cli command started",
                 extra={
                     "agentgrep_surface": "cli",
+                    "agentgrep_operation": "cli.command",
                     "agentgrep_command": command,
                 },
             )
@@ -565,6 +568,7 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
                     "cli command failed",
                     extra={
                         "agentgrep_surface": "cli",
+                        "agentgrep_operation": "cli.command",
                         "agentgrep_command": command,
                         "agentgrep_outcome": "error",
                     },
@@ -576,6 +580,7 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
                 "cli command completed",
                 extra={
                     "agentgrep_surface": "cli",
+                    "agentgrep_operation": "cli.command",
                     "agentgrep_command": command,
                     "agentgrep_outcome": "ok",
                     "agentgrep_exit_code": exit_code,

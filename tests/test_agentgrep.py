@@ -10170,7 +10170,9 @@ def test_resolve_env_root_warns_on_missing_path(
     relevant = [r for r in caplog.records if getattr(r, "agentgrep_env_var", None) == "CODEX_HOME"]
     assert relevant, "expected warning record with agentgrep_env_var"
     assert relevant[0].levelname == "WARNING"
-    assert getattr(relevant[0], "agentgrep_env_path", None) == str(bad_path)
+    assert not hasattr(relevant[0], "agentgrep_env_path")
+    assert getattr(relevant[0], "agentgrep_env_path_redacted", None) is True
+    assert getattr(relevant[0], "agentgrep_env_path_len", None) == len(str(bad_path))
     assert getattr(relevant[0], "agentgrep_env_path_status", None) == "not_found"
 
 
@@ -10198,7 +10200,9 @@ def test_resolve_env_root_warns_when_env_path_is_file(
     relevant = [r for r in caplog.records if getattr(r, "agentgrep_env_var", None) == "CODEX_HOME"]
     assert relevant, "expected warning record with agentgrep_env_var"
     assert getattr(relevant[0], "agentgrep_env_path_status", None) == "not_a_directory"
-    assert getattr(relevant[0], "agentgrep_env_path", None) == str(file_path)
+    assert not hasattr(relevant[0], "agentgrep_env_path")
+    assert getattr(relevant[0], "agentgrep_env_path_redacted", None) is True
+    assert getattr(relevant[0], "agentgrep_env_path_len", None) == len(str(file_path))
 
 
 def test_resolve_env_root_returns_default_when_env_unset(
