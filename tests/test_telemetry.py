@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import pathlib
+import sqlite3
 
 import pytest
 
@@ -93,6 +94,107 @@ def test_logs_metrics_and_traces_are_linked_under_non_single_root() -> None:
     assert len(backend.log_records) == 1
     assert backend.log_records[0].trace_id == backend.finished_spans[1].trace_id
     assert backend.log_records[0].span_id == backend.finished_spans[1].span_id
+
+
+def test_sql_span_requires_active_project_span() -> None:
+    """SQL helper spans should never become orphaned root traces."""
+    import agentgrep._telemetry as telemetry
+
+    backend = telemetry.InMemoryTelemetryBackend()
+    root_span_id: str | None = None
+    telemetry.configure_backend(backend)
+    try:
+        with telemetry.sql_span("agentgrep.sqlite.execute", **{"db.system": "sqlite"}):
+            pass
+        with telemetry.span("agentgrep.cli.invocation", agentgrep_surface="cli"):
+            root_span_id = telemetry.current_span_id()
+            with telemetry.sql_span("agentgrep.sqlite.execute", **{"db.system": "sqlite"}):
+                pass
+    finally:
+        telemetry.configure_backend(None)
+
+    assert [span.name for span in backend.finished_spans] == [
+        "agentgrep.sqlite.execute",
+        "agentgrep.cli.invocation",
+    ]
+    assert backend.finished_spans[0].parent_id == root_span_id
+    assert backend.single_root_trace_ids() == ()
+
+
+def test_sqlite_connection_factory_traces_connection_shortcuts_without_parameters() -> None:
+    """Connection shortcut methods get SQL spans without recording bound values."""
+    import agentgrep._telemetry as telemetry
+
+    backend = telemetry.InMemoryTelemetryBackend()
+    root_span_id: str | None = None
+    telemetry.configure_backend(backend)
+    try:
+        connection = sqlite3.connect(":memory:", factory=telemetry.sqlite_connection_factory())
+        try:
+            connection.execute("create table outside_root (value integer)")
+            with telemetry.span("agentgrep.cli.invocation", agentgrep_surface="cli"):
+                root_span_id = telemetry.current_span_id()
+                connection.execute("create table smoke (value integer)")
+                connection.executemany(
+                    "insert into smoke (value) values (?)",
+                    [(12345,), (67890,)],
+                )
+                connection.execute("select value from smoke where value=?", (12345,)).fetchone()
+        finally:
+            connection.close()
+    finally:
+        telemetry.configure_backend(None)
+
+    sql_spans = [
+        span for span in backend.finished_spans if span.name.startswith("agentgrep.sqlite.")
+    ]
+    assert [span.name for span in sql_spans] == [
+        "agentgrep.sqlite.execute",
+        "agentgrep.sqlite.executemany",
+        "agentgrep.sqlite.execute",
+    ]
+    assert all(span.parent_id == root_span_id for span in sql_spans)
+    assert all(span.attributes["db.system"] == "sqlite" for span in sql_spans)
+    assert {span.attributes["agentgrep_sql_method"] for span in sql_spans} == {
+        "execute",
+        "executemany",
+    }
+    assert "12345" not in str([span.attributes for span in sql_spans])
+    assert backend.single_root_trace_ids() == ()
+
+
+def test_open_readonly_sqlite_uses_traced_connection_factory(tmp_path: pathlib.Path) -> None:
+    """The source-parser SQLite helper should use the traced shortcut factory."""
+    import agentgrep
+    import agentgrep._telemetry as telemetry
+
+    db_path = tmp_path / "store.sqlite"
+    writer = sqlite3.connect(db_path)
+    try:
+        writer.execute("create table messages (value text)")
+        writer.execute("insert into messages values ('hello')")
+        writer.commit()
+    finally:
+        writer.close()
+
+    backend = telemetry.InMemoryTelemetryBackend()
+    telemetry.configure_backend(backend)
+    try:
+        with telemetry.span("agentgrep.cli.invocation", agentgrep_surface="cli"):
+            root_span_id = telemetry.current_span_id()
+            reader = agentgrep.open_readonly_sqlite(db_path)
+            try:
+                assert reader.execute("select value from messages").fetchone() == ("hello",)
+            finally:
+                reader.close()
+    finally:
+        telemetry.configure_backend(None)
+
+    sql_span = next(
+        span for span in backend.finished_spans if span.name == "agentgrep.sqlite.execute"
+    )
+    assert sql_span.parent_id == root_span_id
+    assert sql_span.attributes["db.operation.name"] == "select"
 
 
 def test_executor_submit_preserves_current_trace_context() -> None:

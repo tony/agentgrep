@@ -289,6 +289,8 @@ _CURRENT_SPAN: contextvars.ContextVar[_SpanState | None] = contextvars.ContextVa
     "agentgrep_current_span",
     default=None,
 )
+_SQL_STATEMENT_MAX = 512
+_SQLITE_CONNECTION_FACTORY: type[t.Any] | None = None
 
 
 def resolve_mode(
@@ -397,6 +399,50 @@ def current_trace_id() -> str | None:
     """Return the active project trace ID."""
     active_span = _CURRENT_SPAN.get()
     return None if active_span is None else active_span.trace_id
+
+
+def sql_span(name: str, **attributes: object) -> contextlib.AbstractContextManager[object]:
+    """Create a SQL child span only inside an active project trace."""
+    if _BACKEND.get() is None or _CURRENT_SPAN.get() is None:
+        return contextlib.nullcontext()
+    return span(name, **attributes)
+
+
+def sqlite_connection_factory() -> type[t.Any]:
+    """Return a SQLite connection class that traces connection shortcuts."""
+    global _SQLITE_CONNECTION_FACTORY
+    if _SQLITE_CONNECTION_FACTORY is None:
+        import sqlite3
+
+        class _TelemetrySqliteConnection(sqlite3.Connection):
+            """Trace ``Connection`` shortcut methods missed by DB-API wrappers."""
+
+            def execute(self, *args: t.Any, **kwargs: t.Any) -> t.Any:
+                """Execute SQL under an agentgrep SQL child span."""
+                with sql_span(
+                    "agentgrep.sqlite.execute",
+                    **_sqlite_span_attributes("execute", args, kwargs),
+                ):
+                    return super().execute(*args, **kwargs)
+
+            def executemany(self, *args: t.Any, **kwargs: t.Any) -> t.Any:
+                """Execute batched SQL under an agentgrep SQL child span."""
+                with sql_span(
+                    "agentgrep.sqlite.executemany",
+                    **_sqlite_span_attributes("executemany", args, kwargs),
+                ):
+                    return super().executemany(*args, **kwargs)
+
+            def executescript(self, *args: t.Any, **kwargs: t.Any) -> t.Any:
+                """Execute a SQL script under an agentgrep SQL child span."""
+                with sql_span(
+                    "agentgrep.sqlite.executescript",
+                    **_sqlite_span_attributes("executescript", args, kwargs),
+                ):
+                    return super().executescript(*args, **kwargs)
+
+        _SQLITE_CONNECTION_FACTORY = _TelemetrySqliteConnection
+    return _SQLITE_CONNECTION_FACTORY
 
 
 def set_span_attribute(key: str, value: object) -> None:
@@ -540,7 +586,13 @@ def _metric_attributes(
         "operation": span_name,
         "outcome": status,
     }
-    for key in ("agentgrep_surface", "agentgrep_command", "agentgrep_scope", "agentgrep_tool"):
+    for key in (
+        "agentgrep_surface",
+        "agentgrep_command",
+        "agentgrep_scope",
+        "agentgrep_tool",
+        "agentgrep_sql_method",
+    ):
         value = span_attributes.get(key)
         if value is not None:
             attributes[key] = value
@@ -557,3 +609,47 @@ def _safe_attribute_value(value: object) -> TelemetryAttribute:
     if value is None or isinstance(value, str | int | float | bool):
         return value
     return str(value)
+
+
+def _sqlite_span_attributes(
+    method: str,
+    args: tuple[t.Any, ...],
+    kwargs: dict[str, t.Any],
+) -> dict[str, object]:
+    """Build safe low-cardinality SQLite span attributes."""
+    statement = _sqlite_statement_arg(args, kwargs)
+    attributes: dict[str, object] = {
+        "db.system": "sqlite",
+        "agentgrep_sql_method": method,
+    }
+    if statement is None:
+        return attributes
+    normalized = _normalize_sql_statement(statement)
+    if normalized:
+        attributes["db.statement"] = normalized
+        operation = normalized.split(maxsplit=1)[0].casefold()
+        if operation:
+            attributes["db.operation.name"] = operation
+    return attributes
+
+
+def _sqlite_statement_arg(args: tuple[t.Any, ...], kwargs: dict[str, t.Any]) -> object | None:
+    """Return the SQL statement/script argument without reading parameters."""
+    if args:
+        return args[0]
+    for key in ("sql", "sql_script"):
+        if key in kwargs:
+            return kwargs[key]
+    return None
+
+
+def _normalize_sql_statement(statement: object) -> str:
+    """Return a bounded one-line SQL statement string."""
+    if isinstance(statement, bytes):
+        rendered = statement.decode("utf-8", errors="replace")
+    else:
+        rendered = str(statement)
+    normalized = " ".join(rendered.split())
+    if len(normalized) > _SQL_STATEMENT_MAX:
+        return f"{normalized[:_SQL_STATEMENT_MAX]}..."
+    return normalized
