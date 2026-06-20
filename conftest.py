@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import collections.abc as cabc
 import os
 import pathlib
+
+import pytest
 
 from pytest_documentation import (
     ConsoleCommandEvaluator,
@@ -99,6 +102,50 @@ _DOCS_SUITE.register_evaluator("fastmcp-config", FastMCPConfigEvaluator(project_
 _DOCS_SUITE.register_evaluator("just-recipe", SphinxDoctestEvaluator(project_root=_REPO_ROOT))
 
 pytest_collect_file = _DOCS_SUITE.pytest_collect_file
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _agentgrep_otel_pytest_session() -> cabc.Iterator[object | None]:
+    """Configure OTel once for explicitly instrumented pytest runs."""
+    if "AGENTGREP_OTEL" not in os.environ:
+        yield None
+        return
+    from agentgrep import _telemetry
+
+    handle = _telemetry.setup(repo_root=_REPO_ROOT)
+    try:
+        yield handle
+    finally:
+        handle.shutdown()
+
+
+@pytest.fixture(autouse=True)
+def _agentgrep_otel_pytest_test(
+    request: pytest.FixtureRequest,
+    _agentgrep_otel_pytest_session: object | None,
+) -> cabc.Iterator[None]:
+    """Create a non-single-root trace for each explicitly instrumented test."""
+    if _agentgrep_otel_pytest_session is None:
+        yield
+        return
+    from agentgrep import _telemetry
+
+    if _telemetry.active_backend() is None:
+        yield
+        return
+    with (
+        _telemetry.span(
+            "agentgrep.pytest.test",
+            agentgrep_surface="pytest",
+            agentgrep_pytest_test=request.node.nodeid,
+        ),
+        _telemetry.span(
+            "agentgrep.pytest.call",
+            agentgrep_surface="pytest",
+            agentgrep_pytest_test=request.node.nodeid,
+        ),
+    ):
+        yield
 
 
 def pytest_ignore_collect(collection_path: pathlib.Path, config: object) -> bool | None:

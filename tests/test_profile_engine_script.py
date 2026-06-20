@@ -482,6 +482,61 @@ def test_profile_main_honors_ndjson_format(
     assert json.loads(lines[0])["profile_component"] == "grep-prompts"
 
 
+def test_profile_main_emits_otel_root_and_render_child(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The profiler script exports a non-single root when OTel is enabled."""
+    import agentgrep._telemetry as telemetry
+
+    _ = _write_codex_session(tmp_path, name="match.jsonl", text="tmux prompt")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    backend = telemetry.InMemoryTelemetryBackend()
+
+    def fake_setup(**_kwargs: object) -> telemetry.TelemetryHandle:
+        telemetry.configure_backend(backend)
+        remove_handler = telemetry.install_logging_exporter(backend)
+        return telemetry.TelemetryHandle(
+            mode="test",
+            backend=backend,
+            _remove_logging=remove_handler,
+        )
+
+    monkeypatch.setattr(telemetry, "setup", fake_setup)
+
+    try:
+        exit_code = profile_engine.main(
+            ["grep-prompts", "tmux", "--agent", "codex", "--max-count", "1", "--json"],
+        )
+    finally:
+        telemetry.configure_backend(None)
+
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out)["profile_component"] == "grep-prompts"
+    assert backend.single_root_trace_ids() == ()
+    assert [span.name for span in backend.finished_spans[-3:]] == [
+        "agentgrep.profile_engine.execute",
+        "agentgrep.profile_engine.render",
+        "agentgrep.profile_engine.run",
+    ]
+    root = backend.finished_spans[-1]
+    assert root.attributes["agentgrep_profile_component"] == "grep-prompts"
+    assert root.attributes["agentgrep_profile_component_count"] == 1
+    assert root.attributes["agentgrep_command"] == "grep"
+    assert root.attributes["agentgrep_scope"] == "prompts"
+    assert root.attributes["agentgrep_agent_count"] == 1
+    assert root.attributes["agentgrep_output_format"] == "json"
+    assert root.attributes["agentgrep_result_limit"] == 1
+    assert "tmux" not in str(root.attributes)
+    assert str(tmp_path) not in str(root.attributes)
+    assert [record.message for record in backend.log_records] == [
+        "profile engine started",
+        "profile engine completed",
+    ]
+    assert {record.trace_id for record in backend.log_records} == {root.trace_id}
+
+
 @pytest.mark.parametrize(
     "case",
     PROFILE_COMPONENT_CASES,
