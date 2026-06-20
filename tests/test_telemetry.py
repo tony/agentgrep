@@ -391,6 +391,9 @@ def test_profiles_reuse_resource_vcs_identity_as_tags(
     assert len(calls) == 1
     tags = calls[0]["tags"]
     assert tags == {
+        "service_git_ref": "abc123",
+        "service_repository": "https://github.com/tony/agentgrep",
+        "service_root_path": ".",
         "vcs_ref_head_name": "feature/vcs",
         "vcs_ref_head_revision": "abc123",
         "vcs_ref_head_type": "branch",
