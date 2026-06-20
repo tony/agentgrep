@@ -37,7 +37,10 @@ def main() -> int:
                 extra={"agentgrep_surface": "otel", "agentgrep_run_id": args.run_id},
             )
             with _telemetry.span("agentgrep.otel.smoke.sqlite", agentgrep_surface="otel"):
-                connection = sqlite3.connect(":memory:")
+                connection = sqlite3.connect(
+                    ":memory:",
+                    factory=_telemetry.sqlite_connection_factory(),
+                )
                 try:
                     connection.execute("create table smoke (value integer)")
                     connection.executemany(
