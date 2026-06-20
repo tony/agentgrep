@@ -159,6 +159,8 @@ class AgentgrepArgumentPresenceMiddleware(Middleware):
             )
         return await call_next(context)
 
+logger = logging.getLogger(__name__)
+
 
 class AgentgrepResponseLimitingMiddleware(ResponseLimitingMiddleware):
     """Preserve bounded search envelopes and fail closed for generic truncation.
@@ -461,8 +463,10 @@ class AgentgrepTelemetryMiddleware(Middleware):
         method = context.method or "unknown"
         if method == "initialize":
             return await call_next(context)
+        start = time.monotonic()
         attributes: dict[str, object] = {
             "agentgrep_surface": "mcp",
+            "agentgrep_operation": "mcp.request",
             "agentgrep_mcp_method": method,
         }
         attributes.update(_context_ids(context))
@@ -471,10 +475,31 @@ class AgentgrepTelemetryMiddleware(Middleware):
                 with _telemetry.span("agentgrep.mcp.operation", **attributes):
                     result = await call_next(context)
             except Exception as exc:
+                duration_ms = (time.monotonic() - start) * 1000.0
                 _telemetry.set_span_attribute("agentgrep_outcome", "error")
                 _telemetry.set_span_attribute("agentgrep_error_type", type(exc).__name__)
+                _telemetry.set_span_attribute("agentgrep_duration_ms", duration_ms)
+                logger.info(
+                    "mcp request failed",
+                    extra={
+                        **attributes,
+                        "agentgrep_outcome": "error",
+                        "agentgrep_error_type": type(exc).__name__,
+                        "agentgrep_duration_ms": duration_ms,
+                    },
+                )
                 raise
+            duration_ms = (time.monotonic() - start) * 1000.0
             _telemetry.set_span_attribute("agentgrep_outcome", "ok")
+            _telemetry.set_span_attribute("agentgrep_duration_ms", duration_ms)
+            logger.info(
+                "mcp request completed",
+                extra={
+                    **attributes,
+                    "agentgrep_outcome": "ok",
+                    "agentgrep_duration_ms": duration_ms,
+                },
+            )
             return result
 
 
@@ -543,6 +568,8 @@ class AgentgrepAuditMiddleware(Middleware):
                 self._logger.info(
                     "tool call failed",
                     extra={
+                        "agentgrep_surface": "mcp",
+                        "agentgrep_operation": "mcp.tool",
                         "agentgrep_tool": tool_name,
                         "agentgrep_outcome": "error",
                         "agentgrep_error_type": type(exc).__name__,
@@ -556,6 +583,8 @@ class AgentgrepAuditMiddleware(Middleware):
 
             duration_ms = (time.monotonic() - start) * 1000.0
             extra: dict[str, object] = {
+                "agentgrep_surface": "mcp",
+                "agentgrep_operation": "mcp.tool",
                 "agentgrep_tool": tool_name,
                 "agentgrep_outcome": "ok",
                 "agentgrep_duration_ms": duration_ms,

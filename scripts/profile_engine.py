@@ -655,6 +655,7 @@ def main(argv: list[str] | None = None) -> int:
                     "profile engine completed",
                     extra={
                         "agentgrep_surface": "profile_engine",
+                        "agentgrep_operation": "profile_engine.run",
                         "agentgrep_outcome": outcome,
                         "agentgrep_exit_code": exit_code,
                     },
@@ -665,7 +666,10 @@ def main(argv: list[str] | None = None) -> int:
             assert args is not None
             logger.info(
                 "profile engine started",
-                extra={"agentgrep_surface": "profile_engine"},
+                extra={
+                    "agentgrep_surface": "profile_engine",
+                    "agentgrep_operation": "profile_engine.run",
+                },
             )
             try:
                 with _telemetry.span(
@@ -679,6 +683,7 @@ def main(argv: list[str] | None = None) -> int:
                     "profile engine failed",
                     extra={
                         "agentgrep_surface": "profile_engine",
+                        "agentgrep_operation": "profile_engine.run",
                         "agentgrep_outcome": "parse_error",
                     },
                 )
@@ -703,6 +708,7 @@ def main(argv: list[str] | None = None) -> int:
                     "profile engine failed",
                     extra={
                         "agentgrep_surface": "profile_engine",
+                        "agentgrep_operation": "profile_engine.run",
                         "agentgrep_outcome": "parse_error",
                     },
                 )
@@ -715,6 +721,7 @@ def main(argv: list[str] | None = None) -> int:
                 "profile engine completed",
                 extra={
                     "agentgrep_surface": "profile_engine",
+                    "agentgrep_operation": "profile_engine.run",
                     "agentgrep_outcome": "ok",
                     "agentgrep_exit_code": 0,
                 },

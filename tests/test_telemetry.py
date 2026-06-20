@@ -13,6 +13,15 @@ import typing as t
 import pytest
 
 
+def _write_codex_session(home: pathlib.Path, *, text: str) -> pathlib.Path:
+    """Write a minimal Codex session file for telemetry integration tests."""
+    path = home / ".codex" / "sessions" / "2026" / "05" / "match.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"type": "response_item", "payload": {"role": "user", "content": text}}
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    return path
+
+
 def test_resolve_mode_uses_only_agentgrep_otel(monkeypatch: pytest.MonkeyPatch) -> None:
     """``AGENTGREP_OTEL_ENABLED`` must not affect telemetry mode."""
     import agentgrep._telemetry as telemetry
@@ -95,6 +104,121 @@ def test_logs_metrics_and_traces_are_linked_under_non_single_root() -> None:
     assert len(backend.log_records) == 1
     assert backend.log_records[0].trace_id == backend.finished_spans[1].trace_id
     assert backend.log_records[0].span_id == backend.finished_spans[1].span_id
+
+
+def test_engine_search_and_find_emit_structured_trace_linked_logs(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Engine boundaries should emit content-free logs linked to active spans."""
+    import agentgrep
+    import agentgrep._telemetry as telemetry
+
+    home = tmp_path / "home"
+    _ = _write_codex_session(home, text="agentic signal")
+    query = agentgrep.SearchQuery(
+        terms=("agentic",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=5,
+    )
+    backend = telemetry.InMemoryTelemetryBackend()
+    telemetry.configure_backend(backend)
+    remove_handler = telemetry.install_logging_exporter(backend)
+    try:
+        with telemetry.span("agentgrep.cli.invocation", agentgrep_surface="cli"):
+            records = agentgrep.run_search_query(
+                home,
+                query,
+                backends=agentgrep.BackendSelection(None, None, None),
+            )
+            find_records = agentgrep.run_find_query(
+                home,
+                ("codex",),
+                pattern="sessions",
+                limit=10,
+                backends=agentgrep.BackendSelection(None, None, None),
+            )
+    finally:
+        remove_handler()
+        telemetry.configure_backend(None)
+
+    assert len(records) == 1
+    assert find_records
+    logs_by_message = {record.message: record for record in backend.log_records}
+    assert "search sources planned" in logs_by_message
+    assert "search query completed" in logs_by_message
+    assert "find query completed" in logs_by_message
+    search_log = logs_by_message["search query completed"]
+    assert search_log.attributes["agentgrep_surface"] == "engine"
+    assert search_log.attributes["agentgrep_operation"] == "search.run"
+    assert search_log.attributes["agentgrep_outcome"] == "ok"
+    assert search_log.attributes["agentgrep_result_count"] == 1
+    find_log = logs_by_message["find query completed"]
+    find_source_count = find_log.attributes["agentgrep_source_count"]
+    find_result_count = find_log.attributes["agentgrep_result_count"]
+    assert isinstance(find_source_count, int)
+    assert isinstance(find_result_count, int)
+    assert find_source_count >= 1
+    assert find_result_count >= 1
+    assert {record.trace_id for record in backend.log_records} == {
+        backend.finished_spans[-1].trace_id,
+    }
+    assert all(record.span_id is not None for record in backend.log_records)
+    assert "agentic signal" not in str([record.attributes for record in backend.log_records])
+
+
+def test_tui_session_emits_structured_trace_linked_log(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TUI session completion should be visible in Loki without console output."""
+    import agentgrep
+    import agentgrep._telemetry as telemetry
+    from agentgrep.ui import app as ui_app
+
+    class FakeApp:
+        def run(self) -> None:
+            """Stand in for the blocking Textual application."""
+
+    query = agentgrep.SearchQuery(
+        terms=("agentic",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=5,
+    )
+    monkeypatch.setattr(ui_app, "build_streaming_ui_app", lambda *_args, **_kwargs: FakeApp())
+
+    backend = telemetry.InMemoryTelemetryBackend()
+    telemetry.configure_backend(backend)
+    remove_handler = telemetry.install_logging_exporter(backend)
+    try:
+        with telemetry.span("agentgrep.cli.invocation", agentgrep_surface="cli"):
+            ui_app.run_ui(
+                tmp_path,
+                query,
+                control=agentgrep.SearchControl(),
+                initial_search_text="agentic signal",
+            )
+    finally:
+        remove_handler()
+        telemetry.configure_backend(None)
+
+    session_log = next(
+        record for record in backend.log_records if record.message == "tui session completed"
+    )
+    assert session_log.attributes["agentgrep_surface"] == "tui"
+    assert session_log.attributes["agentgrep_operation"] == "tui.session"
+    assert session_log.attributes["agentgrep_outcome"] == "ok"
+    assert session_log.attributes["agentgrep_initial_query_present"] is True
+    assert session_log.trace_id == backend.finished_spans[-1].trace_id
+    assert session_log.span_id is not None
+    assert "agentic signal" not in str(session_log.attributes)
 
 
 def test_metrics_include_debug_session_when_otel_is_enabled() -> None:
@@ -565,12 +689,14 @@ async def test_mcp_tool_span_is_non_single_and_redacted(
     assert tool_span.parent_id == operation_span.span_id
     assert "secret-token" not in str(tool_span.attributes)
     assert tool_span.attributes["agentgrep_mcp_args.terms.0.len"] == len("secret-token")
-    assert all(record.trace_id == request_span.trace_id for record in backend.log_records)
+    assert any(record.trace_id == request_span.trace_id for record in backend.log_records)
+    assert all(record.trace_id is not None for record in backend.log_records)
     assert all(record.span_id is not None for record in backend.log_records)
+    assert "secret-token" not in str([record.attributes for record in backend.log_records])
 
 
 async def test_mcp_list_tools_gets_request_root() -> None:
-    """MCP list operations should not rely on tool-only roots."""
+    """MCP list operations should not rely on tool-only roots or logs."""
     from fastmcp import Client
 
     import agentgrep._telemetry as telemetry
@@ -578,10 +704,12 @@ async def test_mcp_list_tools_gets_request_root() -> None:
 
     backend = telemetry.InMemoryTelemetryBackend()
     telemetry.configure_backend(backend)
+    remove_handler = telemetry.install_logging_exporter(backend)
     try:
         async with Client(agentgrep_mcp.build_mcp_server()) as client:
             _ = await client.list_tools()
     finally:
+        remove_handler()
         telemetry.configure_backend(None)
 
     assert backend.single_root_trace_ids() == ()
@@ -595,6 +723,15 @@ async def test_mcp_list_tools_gets_request_root() -> None:
     assert request_span.attributes["agentgrep_mcp_method"] == "tools/list"
     assert operation_span.parent_id == request_span.span_id
     assert operation_span.attributes["agentgrep_mcp_method"] == "tools/list"
+    request_log = next(
+        record for record in backend.log_records if record.message == "mcp request completed"
+    )
+    assert request_log.attributes["agentgrep_surface"] == "mcp"
+    assert request_log.attributes["agentgrep_operation"] == "mcp.request"
+    assert request_log.attributes["agentgrep_mcp_method"] == "tools/list"
+    assert request_log.attributes["agentgrep_outcome"] == "ok"
+    assert request_log.trace_id == request_span.trace_id
+    assert request_log.span_id == request_span.span_id
 
 
 def test_otel_backend_records_named_custom_metrics() -> None:
