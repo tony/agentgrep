@@ -267,6 +267,7 @@ class TelemetryHandle:
     mode: TelemetryMode
     backend: TelemetryBackend | None = None
     _backend_token: contextvars.Token[TelemetryBackend | None] | None = None
+    _resource_token: contextvars.Token[TelemetryAttributes | None] | None = None
     _remove_logging: cabc.Callable[[], None] | None = None
 
     def shutdown(self) -> None:
@@ -279,6 +280,9 @@ class TelemetryHandle:
         if self._backend_token is not None:
             _BACKEND.reset(self._backend_token)
             self._backend_token = None
+        if self._resource_token is not None:
+            _RESOURCE_ATTRIBUTES.reset(self._resource_token)
+            self._resource_token = None
 
 
 _BACKEND: contextvars.ContextVar[TelemetryBackend | None] = contextvars.ContextVar(
@@ -287,6 +291,10 @@ _BACKEND: contextvars.ContextVar[TelemetryBackend | None] = contextvars.ContextV
 )
 _CURRENT_SPAN: contextvars.ContextVar[_SpanState | None] = contextvars.ContextVar(
     "agentgrep_current_span",
+    default=None,
+)
+_RESOURCE_ATTRIBUTES: contextvars.ContextVar[TelemetryAttributes | None] = contextvars.ContextVar(
+    "agentgrep_resource_attributes",
     default=None,
 )
 _SQL_STATEMENT_MAX = 512
@@ -339,7 +347,13 @@ def setup(
         except Exception:
             return TelemetryHandle(mode=active_mode)
     token = _BACKEND.set(backend)
-    handle = TelemetryHandle(mode=active_mode, backend=backend, _backend_token=token)
+    resource_token = _RESOURCE_ATTRIBUTES.set(resource_attributes)
+    handle = TelemetryHandle(
+        mode=active_mode,
+        backend=backend,
+        _backend_token=token,
+        _resource_token=resource_token,
+    )
     if active_mode in {"local", "debug", "debug-console", "live", "test"}:
         handle._remove_logging = install_logging_exporter(backend)
     return handle
@@ -473,32 +487,37 @@ def span(name: str, **attributes: object) -> cabc.Iterator[None]:
         started_at=time.perf_counter(),
     )
     status = "ok"
-    with backend.start_span(active_span):
-        token = _CURRENT_SPAN.set(active_span)
-        try:
-            yield
-        except BaseException as exc:
-            status = "error"
-            backend.record_exception(exc)
-            raise
-        finally:
-            _CURRENT_SPAN.reset(token)
-    backend.finish_span(
-        active_span,
-        status=status,
-        duration_seconds=time.perf_counter() - active_span.started_at,
-    )
+    try:
+        with backend.start_span(active_span):
+            token = _CURRENT_SPAN.set(active_span)
+            try:
+                yield
+            except BaseException as exc:
+                status = "error"
+                backend.record_exception(exc)
+                raise
+            finally:
+                _CURRENT_SPAN.reset(token)
+    finally:
+        backend.finish_span(
+            active_span,
+            status=status,
+            duration_seconds=time.perf_counter() - active_span.started_at,
+        )
 
 
 def record_metric(name: str, value: int | float, **attributes: object) -> None:
-    """Record a low-cardinality metric point."""
+    """Record a metric point with active run identity."""
     backend = _BACKEND.get()
     if backend is None:
         return
     backend.record_metric(
         name,
         value,
-        {key: _safe_attribute_value(val) for key, val in attributes.items()},
+        {
+            **{key: _safe_attribute_value(val) for key, val in attributes.items()},
+            **_metric_identity_attributes(),
+        },
     )
 
 
@@ -581,7 +600,7 @@ def _metric_attributes(
     status: str,
     span_attributes: TelemetryAttributes,
 ) -> TelemetryAttributes:
-    """Return low-cardinality metric attributes."""
+    """Return metric attributes for a completed span."""
     attributes: TelemetryAttributes = {
         "operation": span_name,
         "outcome": status,
@@ -596,7 +615,26 @@ def _metric_attributes(
         value = span_attributes.get(key)
         if value is not None:
             attributes[key] = value
+    attributes.update(_metric_identity_attributes())
     return attributes
+
+
+def _metric_identity_attributes() -> TelemetryAttributes:
+    """Return active debug/run identity for metrics."""
+    resource_attributes = _RESOURCE_ATTRIBUTES.get()
+    if resource_attributes is None:
+        return {}
+    metric_attributes: TelemetryAttributes = {}
+    for resource_key, metric_key in (
+        ("agentgrep.debug.session_id", "agentgrep_debug_session_id"),
+        ("agentgrep.debug.candidate_id", "agentgrep_debug_candidate_id"),
+        ("agentgrep.debug.attempt", "agentgrep_debug_attempt"),
+        ("agentgrep.pytest.run_id", "agentgrep_pytest_run_id"),
+    ):
+        value = resource_attributes.get(resource_key)
+        if value is not None:
+            metric_attributes[metric_key] = _safe_attribute_value(value)
+    return metric_attributes
 
 
 def _running_under_pytest(env: cabc.Mapping[str, str]) -> bool:

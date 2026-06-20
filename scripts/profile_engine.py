@@ -14,6 +14,7 @@ import argparse
 import dataclasses
 import io
 import json
+import logging
 import pathlib
 import sys
 import typing as t
@@ -27,6 +28,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 import agentgrep  # noqa: E402  (standalone script bootstraps src/ above)
+from agentgrep import _telemetry  # noqa: E402  (standalone script bootstraps src/ above)
 from agentgrep._engine.profiling import (  # noqa: E402  (standalone script bootstraps src/ above)
     FindProfileType,
     profile_find_query,
@@ -46,6 +48,7 @@ OutputFormat = t.Literal["json", "ndjson", "rich"]
 SCHEMA_VERSION = 1
 PROFILE_RUN_ARTIFACT_KIND = "agentgrep.profile.run"
 PROFILE_BATCH_ARTIFACT_KIND = "agentgrep.profile.batch"
+logger = logging.getLogger("agentgrep.profile_engine")
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -585,25 +588,141 @@ def _render_payload(
     raise ValueError(msg)
 
 
+def _arg_count(argv: list[str] | None) -> int:
+    """Return argument count without recording raw argv."""
+    return len(sys.argv[1:] if argv is None else argv)
+
+
+def _set_run_span_attributes(payload: dict[str, object], *, output_format: str) -> None:
+    """Attach safe profile-run metadata to the active root span."""
+    runs = _profile_runs(payload)
+    _telemetry.set_span_attribute("agentgrep_output_format", output_format)
+    _telemetry.set_span_attribute("agentgrep_profile_component_count", len(runs))
+    for source_key, target_key in (
+        ("profile_component", "agentgrep_profile_component"),
+        ("profile_command", "agentgrep_command"),
+        ("agent_count", "agentgrep_agent_count"),
+        ("limit", "agentgrep_result_limit"),
+    ):
+        value = payload.get(source_key)
+        if value is not None:
+            _telemetry.set_span_attribute(target_key, value)
+    if len(runs) == 1:
+        scope = runs[0].get("scope")
+        if scope is not None:
+            _telemetry.set_span_attribute("agentgrep_scope", scope)
+
+
+def _system_exit_code(exc: SystemExit) -> int:
+    """Return a numeric ``SystemExit`` code."""
+    if isinstance(exc.code, int):
+        return exc.code
+    if exc.code is None:
+        return 0
+    return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the profiler command."""
     parser = _build_parser()
-    args = parser.parse_args(argv)
+    telemetry = _telemetry.setup(repo_root=REPO_ROOT)
     try:
-        payload = _run(args)
-    except ValueError as exc:
-        parser.error(str(exc))
-    try:
-        rendered = _render_payload(
-            payload,
-            output_format=t.cast("OutputFormat", args.output_format),
-            top_spans=t.cast("int", args.top_spans),
-        )
-    except ValueError as exc:
-        parser.error(str(exc))
-    sys.stdout.write(rendered)
-    sys.stdout.write("\n")
-    return 0
+        with _telemetry.span(
+            "agentgrep.profile_engine.run",
+            agentgrep_surface="profile_engine",
+            agentgrep_arg_count=_arg_count(argv),
+        ):
+            parse_exit: SystemExit | None = None
+            args: argparse.Namespace | None = None
+            with _telemetry.span(
+                "agentgrep.profile_engine.parse",
+                agentgrep_surface="profile_engine",
+            ):
+                try:
+                    args = parser.parse_args(argv)
+                except SystemExit as exc:
+                    parse_exit = exc
+                    _telemetry.set_span_attribute("agentgrep_outcome", "parse_error")
+                    _telemetry.set_span_attribute(
+                        "agentgrep_exit_code",
+                        _system_exit_code(exc),
+                    )
+            if parse_exit is not None:
+                exit_code = _system_exit_code(parse_exit)
+                outcome = "help" if exit_code == 0 else "parse_error"
+                _telemetry.set_span_attribute("agentgrep_outcome", outcome)
+                _telemetry.set_span_attribute("agentgrep_exit_code", exit_code)
+                logger.info(
+                    "profile engine completed",
+                    extra={
+                        "agentgrep_surface": "profile_engine",
+                        "agentgrep_outcome": outcome,
+                        "agentgrep_exit_code": exit_code,
+                    },
+                )
+                if exit_code == 0:
+                    return 0
+                raise parse_exit
+            assert args is not None
+            logger.info(
+                "profile engine started",
+                extra={"agentgrep_surface": "profile_engine"},
+            )
+            try:
+                with _telemetry.span(
+                    "agentgrep.profile_engine.execute",
+                    agentgrep_surface="profile_engine",
+                ):
+                    payload = _run(args)
+            except ValueError as exc:
+                _telemetry.set_span_attribute("agentgrep_outcome", "parse_error")
+                logger.info(
+                    "profile engine failed",
+                    extra={
+                        "agentgrep_surface": "profile_engine",
+                        "agentgrep_outcome": "parse_error",
+                    },
+                )
+                parser.error(str(exc))
+            _set_run_span_attributes(
+                payload,
+                output_format=t.cast("OutputFormat", args.output_format),
+            )
+            try:
+                with _telemetry.span(
+                    "agentgrep.profile_engine.render",
+                    agentgrep_surface="profile_engine",
+                ):
+                    rendered = _render_payload(
+                        payload,
+                        output_format=t.cast("OutputFormat", args.output_format),
+                        top_spans=t.cast("int", args.top_spans),
+                    )
+            except ValueError as exc:
+                _telemetry.set_span_attribute("agentgrep_outcome", "parse_error")
+                logger.info(
+                    "profile engine failed",
+                    extra={
+                        "agentgrep_surface": "profile_engine",
+                        "agentgrep_outcome": "parse_error",
+                    },
+                )
+                parser.error(str(exc))
+            sys.stdout.write(rendered)
+            sys.stdout.write("\n")
+            _telemetry.set_span_attribute("agentgrep_outcome", "ok")
+            _telemetry.set_span_attribute("agentgrep_exit_code", 0)
+            logger.info(
+                "profile engine completed",
+                extra={
+                    "agentgrep_surface": "profile_engine",
+                    "agentgrep_outcome": "ok",
+                    "agentgrep_exit_code": 0,
+                },
+            )
+            return 0
+    finally:
+        telemetry.shutdown()
 
 
 if __name__ == "__main__":

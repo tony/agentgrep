@@ -468,20 +468,58 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
 
     telemetry = _telemetry.setup(repo_root=pathlib.Path(__file__).resolve().parents[2])
     try:
-        parsed = parse_args(argv)
-        if parsed is None:
-            return 0
-        command = _command_name_for_args(parsed)
-        span_name = (
-            "agentgrep.cli.interactive_session"
-            if isinstance(parsed, UIArgs)
-            else "agentgrep.cli.invocation"
-        )
         with _telemetry.span(
-            span_name,
+            "agentgrep.cli.invocation",
             agentgrep_surface="cli",
-            agentgrep_command=command,
+            agentgrep_arg_count=_cli_arg_count(argv),
         ):
+            parsed: FindArgs | UIArgs | GrepArgs | SearchArgs | None = None
+            parse_exit: SystemExit | None = None
+            with _telemetry.span("agentgrep.cli.parse", agentgrep_surface="cli"):
+                try:
+                    parsed = parse_args(argv)
+                except SystemExit as exc:
+                    parse_exit = exc
+                    _telemetry.set_span_attribute("agentgrep_outcome", "parse_error")
+                    _telemetry.set_span_attribute(
+                        "agentgrep_exit_code",
+                        _system_exit_code(exc),
+                    )
+            if parse_exit is not None:
+                exit_code = _system_exit_code(parse_exit)
+                command = _command_name_for_argv(argv)
+                outcome = "help" if exit_code == 0 else "parse_error"
+                _telemetry.set_span_attribute("agentgrep_command", command)
+                _telemetry.set_span_attribute("agentgrep_outcome", outcome)
+                _telemetry.set_span_attribute("agentgrep_exit_code", exit_code)
+                logger.info(
+                    "cli command completed",
+                    extra={
+                        "agentgrep_surface": "cli",
+                        "agentgrep_command": command,
+                        "agentgrep_outcome": outcome,
+                        "agentgrep_exit_code": exit_code,
+                    },
+                )
+                if exit_code == 0:
+                    return 0
+                raise parse_exit
+            if parsed is None:
+                _telemetry.set_span_attribute("agentgrep_command", "help")
+                _telemetry.set_span_attribute("agentgrep_outcome", "help")
+                _telemetry.set_span_attribute("agentgrep_exit_code", 0)
+                logger.info(
+                    "cli command completed",
+                    extra={
+                        "agentgrep_surface": "cli",
+                        "agentgrep_command": "help",
+                        "agentgrep_outcome": "help",
+                        "agentgrep_exit_code": 0,
+                    },
+                )
+                return 0
+            command = _command_name_for_args(parsed)
+            _telemetry.set_span_attribute("agentgrep_command", command)
             logger.info(
                 "cli command started",
                 extra={
@@ -542,6 +580,31 @@ def _command_name_for_args(args: object) -> str:
     if isinstance(args, UIArgs):
         return "ui"
     return "find"
+
+
+def _cli_arg_count(argv: cabc.Sequence[str] | None) -> int:
+    """Return the CLI argument count without recording raw argv."""
+    return len(sys.argv[1:] if argv is None else argv)
+
+
+def _system_exit_code(exc: SystemExit) -> int:
+    """Return a numeric ``SystemExit`` code."""
+    if isinstance(exc.code, int):
+        return exc.code
+    if exc.code is None:
+        return 0
+    return 1
+
+
+def _command_name_for_argv(argv: cabc.Sequence[str] | None) -> str:
+    """Infer a safe command label from raw argv without recording it."""
+    effective_argv = sys.argv[1:] if argv is None else argv
+    for token in effective_argv:
+        if token in {"grep", "search", "find", "ui"}:
+            return token
+        if token in {"-h", "--help"}:
+            return "help"
+    return "unknown"
 
 
 from agentgrep._engine import (  # noqa: E402  (re-exports must follow main definition)
