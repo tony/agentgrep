@@ -27,7 +27,9 @@ APPROVED_ROOTS = {
     "agentgrep.cli.invocation",
     "agentgrep.cli.interactive_session",
     "agentgrep.tui.session",
+    "agentgrep.mcp.request",
     "agentgrep.mcp.tool",
+    "agentgrep.benchmark.run",
     "agentgrep.profile_engine.run",
     "agentgrep.pytest.session",
     "agentgrep.pytest.test",
@@ -263,12 +265,61 @@ def run_workloads(run_id: str) -> None:
             capture_output=True,
             text=True,
         )
+        benchmark_config = pathlib.Path(temp_home) / "benchmark-otel.toml"
+        benchmark_config.write_text(
+            "\n".join(
+                [
+                    "[settings]",
+                    "warmup = 0",
+                    "runs = 1",
+                    'venv = "."',
+                    "",
+                    "[bench.otel-help]",
+                    'description = "OTel acceptance benchmark help path"',
+                    f"command = {json.dumps(f'{sys.executable} -m agentgrep --help')}",
+                    'default_query = ""',
+                    "",
+                ],
+            ),
+            encoding="utf-8",
+        )
+        subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "benchmark.py"),
+                "run",
+                "--config",
+                str(benchmark_config),
+                "--target",
+                "HEAD",
+                "--commands",
+                "otel-help",
+                "--runs",
+                "1",
+                "--warmup",
+                "0",
+                "--no-sync",
+                "--no-hyperfine",
+                "--allow-dirty",
+                "--format",
+                "json",
+                "--output",
+                str(pathlib.Path(temp_home) / "benchmark-otel.json"),
+                "--no-progress",
+            ],
+            cwd=ROOT,
+            env={**env, "HOME": temp_home},
+            check=True,
+            capture_output=True,
+            text=True,
+        )
         subprocess.run(
             [
                 sys.executable,
                 "-m",
                 "pytest",
                 "tests/test_agentgrep.py::test_streaming_ui_app_mounts_cleanly",
+                "tests/test_agentgrep_mcp.py::test_mcp_lists_tools_resources_prompts_and_templates",
                 "-q",
             ],
             cwd=ROOT,
@@ -284,7 +335,7 @@ def query_traces(run_id: str) -> dict[str, object]:
     params = urllib.parse.urlencode(
         {
             "q": f'{{resource.agentgrep.debug.session_id="{run_id}"}}',
-            "limit": "100",
+            "limit": "200",
         },
     )
     data = http_json(f"http://localhost:3200/api/search?{params}")
@@ -299,10 +350,12 @@ def query_traces(run_id: str) -> dict[str, object]:
     bad_root_traces: list[dict[str, object]] = []
     sqlite_trace_count = 0
     profile_engine_sqlite_trace_count = 0
+    observed_span_names: set[str] = set()
     for trace_id in trace_ids:
         trace_data = http_json(f"http://localhost:3200/api/traces/{trace_id}")
         spans = list(iter_trace_spans(trace_data))
         span_names = [str(span.get("name")) for span in spans if span.get("name")]
+        observed_span_names.update(span_names)
         sqlite_span_names = sorted(
             {name for name in span_names if name.startswith("agentgrep.sqlite.")}
         )
@@ -338,6 +391,7 @@ def query_traces(run_id: str) -> dict[str, object]:
         raise AcceptanceCheckError(message)
     required_roots = {
         "agentgrep.otel.smoke",
+        "agentgrep.benchmark.run",
         "agentgrep.cli.invocation",
         "agentgrep.profile_engine.run",
         "agentgrep.pytest.test",
@@ -346,6 +400,15 @@ def query_traces(run_id: str) -> dict[str, object]:
     missing_roots = sorted(required_roots - observed_roots)
     if missing_roots:
         message = f"missing required trace roots: {missing_roots}"
+        raise AcceptanceCheckError(message)
+    required_spans = {
+        "agentgrep.benchmark.command",
+        "agentgrep.benchmark.subprocess",
+        "agentgrep.mcp.request",
+    }
+    missing_spans = sorted(required_spans - observed_span_names)
+    if missing_spans:
+        message = f"missing required spans: {missing_spans}"
         raise AcceptanceCheckError(message)
     if sqlite_trace_count == 0:
         message = f"no sqlite spans found in checked traces: {checked[:5]}"
@@ -374,15 +437,16 @@ def iter_trace_spans(trace_data: dict[str, object]) -> cabc.Iterator[dict[str, o
 
 def query_metrics(started_at: float, run_id: str) -> dict[str, object]:
     """Return Prometheus metric evidence."""
-    required_metrics = (
-        "agentgrep_span_count_total",
-        "agentgrep_span_duration_seconds_count",
-        "agentgrep_otel_cpu_loops_count",
-        "agentgrep_otel_sqlite_total_count",
-    )
+    required_metrics = {
+        "agentgrep_span_count_total": (),
+        "agentgrep_span_duration_seconds_count": (),
+        "agentgrep_otel_cpu_loops_count": ('agentgrep_surface="engine"',),
+        "agentgrep_otel_sqlite_total_count": ('agentgrep_surface="sqlite"',),
+        "agentgrep_benchmark_subprocess_count_total": ('agentgrep_surface="benchmark"',),
+    }
     fresh_metrics: dict[str, float] = {}
-    for metric_name in required_metrics:
-        timestamp = _latest_metric_timestamp(metric_name, run_id=run_id)
+    for metric_name, matchers in required_metrics.items():
+        timestamp = _latest_metric_timestamp(metric_name, run_id=run_id, matchers=matchers)
         if timestamp >= started_at - 5.0:
             fresh_metrics[metric_name] = timestamp
     if len(fresh_metrics) != len(required_metrics):
@@ -398,11 +462,12 @@ def query_logs(run_id: str) -> dict[str, object]:
         {
             "query": '{service_name="agentgrep"}',
             "direction": "backward",
-            "limit": "100",
+            "limit": "500",
         },
     )
     data = http_json(_loki_url(f"/loki/api/v1/query_range?{query}"))
     linked = []
+    unlinked = []
     payload = _dict_value(data, "data")
     for stream in _list_value(payload, "result"):
         stream_dict = _dict_or_none(stream)
@@ -415,6 +480,11 @@ def query_logs(run_id: str) -> dict[str, object]:
             rendered = json.dumps({"labels": labels, "value": value}, sort_keys=True)
             if "trace" in rendered.lower() and "span" in rendered.lower():
                 linked.append(rendered[:500])
+            else:
+                unlinked.append(rendered[:500])
+    if unlinked:
+        message = f"unlinked agentgrep logs found: {unlinked[:5]}"
+        raise AcceptanceCheckError(message)
     if not linked:
         message = "no trace-linked agentgrep logs found"
         raise AcceptanceCheckError(message)
@@ -508,11 +578,17 @@ def _prometheus_url(path: str) -> str:
     )
 
 
-def _latest_metric_timestamp(metric_name: str, *, run_id: str | None = None) -> float:
+def _latest_metric_timestamp(
+    metric_name: str,
+    *,
+    run_id: str | None = None,
+    matchers: tuple[str, ...] = (),
+) -> float:
     """Return the newest sample timestamp for ``metric_name``."""
-    query = (
-        metric_name if run_id is None else f'{metric_name}{{agentgrep_debug_session_id="{run_id}"}}'
-    )
+    labels = [*matchers]
+    if run_id is not None:
+        labels.insert(0, f'agentgrep_debug_session_id="{run_id}"')
+    query = metric_name if not labels else f"{metric_name}{{{','.join(labels)}}}"
     params = urllib.parse.urlencode({"query": query})
     data = http_json(_prometheus_url(f"/api/v1/query?{params}"))
     payload = _dict_value(data, "data")
