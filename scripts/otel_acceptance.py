@@ -42,6 +42,10 @@ VCS_RESOURCE_TO_LABEL = {
     "vcs.ref.head.revision": "vcs_ref_head_revision",
     "vcs.ref.head.type": "vcs_ref_head_type",
 }
+PYROSCOPE_SOURCE_LABELS = {
+    "service_git_ref": "vcs.ref.head.revision",
+    "service_repository": "vcs.repository.url.full",
+}
 REQUIRED_VCS_RESOURCE_KEYS = (
     "vcs.ref.head.name",
     "vcs.ref.head.revision",
@@ -625,8 +629,25 @@ def query_profiles(run_id: str, vcs_identity: dict[str, dict[str, str]]) -> dict
         )
         for label in vcs_identity["labels"]
     }
+    source_label_data = {
+        label: http_json(
+            "http://localhost:4040/querier.v1.QuerierService/LabelValues",
+            method="POST",
+            body={
+                "start": now_ms - 60 * 60 * 1000,
+                "end": now_ms,
+                "name": label,
+            },
+        )
+        for label in PYROSCOPE_SOURCE_LABELS
+    }
     rendered = json.dumps(
-        {"service": service_data, "session": session_data, "vcs": vcs_label_data},
+        {
+            "service": service_data,
+            "session": session_data,
+            "source": source_label_data,
+            "vcs": vcs_label_data,
+        },
         sort_keys=True,
     )
     if "agentgrep" not in rendered:
@@ -639,7 +660,19 @@ def query_profiles(run_id: str, vcs_identity: dict[str, dict[str, str]]) -> dict
         if expected not in json.dumps(vcs_label_data[label], sort_keys=True):
             message = f"no VCS profile label {label}={expected}: {vcs_label_data[label]}"
             raise AcceptanceCheckError(message)
-    return {"service": service_data, "session": session_data, "vcs": vcs_label_data}
+    for label, resource_key in PYROSCOPE_SOURCE_LABELS.items():
+        expected = vcs_identity["resource"].get(resource_key)
+        if expected is None:
+            continue
+        if str(expected) not in json.dumps(source_label_data[label], sort_keys=True):
+            message = f"no source profile label {label}={expected}: {source_label_data[label]}"
+            raise AcceptanceCheckError(message)
+    return {
+        "service": service_data,
+        "session": session_data,
+        "source": source_label_data,
+        "vcs": vcs_label_data,
+    }
 
 
 def wait_for(callback: cabc.Callable[[], object], deadline: float, label: str) -> object:
