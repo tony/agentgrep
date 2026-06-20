@@ -39,12 +39,15 @@ separate attributes such as `agentgrep.debug.session_id`,
 `agentgrep.debug.candidate_id`, `agentgrep.debug.attempt`, and
 `agentgrep.pytest.run_id`.
 
-Root spans are app-level operations only: CLI invocation or interactive
-session, TUI session, MCP tool execution, profile-engine run, pytest session or
-test case, and the live OTel smoke workload. Child spans cover logical work
-such as dispatch, discovery, planning, collection, filtering, detail building,
-and thread/async boundaries. Low-level keypresses, render frames, event-loop
-callbacks, and orphaned auto-instrumentation roots are not accepted signal.
+Root spans are app-level operations only: CLI invocation, TUI session, MCP tool
+execution, profile-engine run, pytest session or test case, and the live OTel
+smoke workload. CLI roots start before argument parsing so help output and
+parse errors are visible. Profile-engine roots wrap parse, engine execution,
+and rendering so benchmark-only profiler runs are visible in LGTM. Child spans
+cover logical work such as parse, dispatch, discovery, planning, collection,
+filtering, detail building, rendering, and thread/async boundaries. Low-level
+keypresses, render frames, event-loop callbacks, and orphaned
+auto-instrumentation roots are not accepted signal.
 
 SQLite spans use a project connection factory for `sqlite3.Connection`
 shortcut methods such as `execute`, `executemany`, and `executescript`.
@@ -57,10 +60,18 @@ Logs are exported only when there is an active project span so Loki records are
 trace-linked. OTel log records are sanitized before export to avoid local
 absolute source paths.
 
-Metrics start with span count/duration plus explicit low-cardinality project
-metrics for search/source/result counts and live smoke evidence. High-cardinality
-debug identifiers are not metric labels by default; traces, logs, and profiles
-carry debug-loop identity.
+Metrics start with span count/duration plus explicit project metrics for
+search/source/result counts and live smoke evidence. When `AGENTGREP_OTEL` is
+enabled and `AGENTGREP_DEBUG_SESSION_ID` is present, metrics carry
+`agentgrep_debug_session_id` so Grafana QA can prove run-scoped coverage. If
+that series count becomes a project-threatening problem, cardinality reduction
+belongs in a follow-up with measurement rather than hiding metrics in this PR.
+
+Pytest remains offline by default. When `AGENTGREP_OTEL` is explicitly set for
+a pytest process, a session-scoped telemetry setup and per-test
+`agentgrep.pytest.test` root make direct tests, including Textual
+`run_test()` cases that bypass `agentgrep.main()`, visible without creating
+single-root traces.
 
 Pyroscope profiles use `application_name="agentgrep"` and must not duplicate
 the generated `service_name` label in custom tags.
@@ -80,8 +91,9 @@ the generated `service_name` label in custom tags.
 
 - Local source checkouts are more observable by default than packaged installs.
   This is intentional for development but must stay failure-tolerant.
-- Run-scoped metric filtering relies on fresh sample timestamps rather than
-  debug-session labels to avoid high-cardinality metric labels.
+- Run-scoped metric labels add local QA series count. This is accepted here
+  because this branch closes blindspots; later cardinality reductions need
+  evidence.
 - Console exporters are reserved for `debug-console` so normal dev runs do not
   pollute stdout or stderr.
 
@@ -108,14 +120,20 @@ argument redaction, CLI/MCP span shape, named OTel custom metrics, and log path
 sanitization.
 
 Live LGTM verification is opt-in through `scripts/otel_acceptance.py` and
-`just otel-acceptance`. It starts or reuses `grafana/otel-lgtm`, runs a smoke
-workload plus a real CLI search, and verifies:
+`just otel-acceptance`. It starts or reuses `grafana/otel-lgtm`, runs smoke,
+CLI help, CLI parse-error, CLI search, profile-engine, and direct Textual
+pytest workloads, and verifies:
 
-- both `agentgrep.otel.smoke` and `agentgrep.cli.invocation` roots are
+- `agentgrep.otel.smoke`, `agentgrep.cli.invocation`,
+  `agentgrep.profile_engine.run`, and `agentgrep.pytest.test` roots are
   multi-span traces for the current debug session;
 - no current-run single-root trace is accepted;
 - at least one checked trace contains `agentgrep.sqlite.*` spans from SQLite
   connection shortcut work;
-- fresh span and custom smoke metrics are visible in Prometheus;
+- fresh span and custom smoke metrics with the current
+  `agentgrep_debug_session_id` are visible in Prometheus;
 - current-run Loki logs contain trace and span identifiers;
 - Pyroscope exposes both the `agentgrep` service and current debug session.
+
+The subprocess and signal-cost inventory lives in
+{ref}`otel-cost-model`.
