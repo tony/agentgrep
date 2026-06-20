@@ -17,9 +17,11 @@ import importlib.metadata
 import logging
 import os
 import pathlib
+import subprocess
 import threading
 import time
 import typing as t
+import urllib.parse
 import uuid
 
 if t.TYPE_CHECKING:
@@ -303,6 +305,13 @@ _RESOURCE_ATTRIBUTES: contextvars.ContextVar[TelemetryAttributes | None] = conte
 )
 _SQL_STATEMENT_MAX = 512
 _SQLITE_CONNECTION_FACTORY: type[t.Any] | None = None
+_VCS_RESOURCE_TO_METRIC_ATTRIBUTES: tuple[tuple[str, str], ...] = (
+    ("vcs.repository.name", "vcs_repository_name"),
+    ("vcs.repository.url.full", "vcs_repository_url_full"),
+    ("vcs.ref.head.name", "vcs_ref_head_name"),
+    ("vcs.ref.head.revision", "vcs_ref_head_revision"),
+    ("vcs.ref.head.type", "vcs_ref_head_type"),
+)
 
 
 def resolve_mode(
@@ -336,6 +345,7 @@ def setup(
         return TelemetryHandle(mode=active_mode)
     resource_attributes = build_resource_attributes(
         env=active_env,
+        repo_root=repo_root,
         service_version=service_version or package_version(),
     )
     if active_mode == "test":
@@ -374,6 +384,7 @@ def package_version() -> str:
 def build_resource_attributes(
     *,
     env: cabc.Mapping[str, str] | None = None,
+    repo_root: pathlib.Path | None = None,
     service_version: str,
 ) -> TelemetryAttributes:
     """Build resource attributes without overloading ``service.version``."""
@@ -394,6 +405,7 @@ def build_resource_attributes(
     if attempt:
         with contextlib.suppress(ValueError):
             attributes["agentgrep.debug.attempt"] = int(attempt)
+    attributes.update(_vcs_resource_attributes(repo_root))
     return attributes
 
 
@@ -660,11 +672,155 @@ def _metric_identity_attributes() -> TelemetryAttributes:
         ("agentgrep.debug.candidate_id", "agentgrep_debug_candidate_id"),
         ("agentgrep.debug.attempt", "agentgrep_debug_attempt"),
         ("agentgrep.pytest.run_id", "agentgrep_pytest_run_id"),
+        *_VCS_RESOURCE_TO_METRIC_ATTRIBUTES,
     ):
         value = resource_attributes.get(resource_key)
         if value is not None:
             metric_attributes[metric_key] = _safe_attribute_value(value)
     return metric_attributes
+
+
+def _vcs_resource_attributes(repo_root: pathlib.Path | None) -> TelemetryAttributes:
+    """Return OpenTelemetry VCS semantic-convention resource attributes."""
+    if repo_root is None:
+        return {}
+    git_root = _git_output(repo_root, "rev-parse", "--show-toplevel")
+    if git_root is None:
+        return {}
+    resolved_root = pathlib.Path(git_root)
+    attributes: TelemetryAttributes = {}
+    head_revision = _git_output(resolved_root, "rev-parse", "HEAD")
+    if head_revision is not None:
+        attributes["vcs.ref.head.revision"] = head_revision
+    head_branch = _git_head_branch(resolved_root)
+    if head_branch is not None:
+        attributes["vcs.ref.head.name"] = head_branch
+        attributes["vcs.ref.head.type"] = "branch"
+    else:
+        head_tag = _git_output(resolved_root, "describe", "--tags", "--exact-match", "HEAD")
+        if head_tag is not None:
+            attributes["vcs.ref.head.name"] = head_tag
+            attributes["vcs.ref.head.type"] = "tag"
+    repository_url = _canonical_repository_url(
+        _git_output(resolved_root, "config", "--get", "remote.origin.url"),
+    )
+    if repository_url is not None:
+        attributes["vcs.repository.url.full"] = repository_url
+        repository_name = _repository_name_from_url(repository_url)
+    else:
+        repository_name = resolved_root.name
+    if repository_name:
+        attributes["vcs.repository.name"] = repository_name
+    return attributes
+
+
+def _git_head_branch(repo_root: pathlib.Path) -> str | None:
+    """Return the current branch, including detached-at-branch-tip worktrees."""
+    branch = _git_output(repo_root, "branch", "--show-current")
+    if branch is not None:
+        return branch
+    for refs_pattern in ("refs/heads/*", "refs/remotes/*"):
+        candidate = _git_output(
+            repo_root,
+            "name-rev",
+            "--name-only",
+            f"--refs={refs_pattern}",
+            "HEAD",
+        )
+        branch = _normalize_git_branch_name(candidate)
+        if branch is not None:
+            return branch
+    return None
+
+
+def _normalize_git_branch_name(candidate: str | None) -> str | None:
+    """Return a clean branch name from ``git name-rev`` output."""
+    if candidate is None or candidate in {"", "HEAD", "undefined"}:
+        return None
+    if "~" in candidate or "^" in candidate:
+        return None
+    if candidate.startswith("remotes/"):
+        parts = candidate.split("/")
+        if len(parts) >= 3:
+            return "/".join(parts[2:])
+    return candidate
+
+
+def _git_output(repo_root: pathlib.Path, *args: str) -> str | None:
+    """Run a bounded read-only git command and return stripped stdout."""
+    try:
+        completed = subprocess.run(
+            ("git", *args),
+            cwd=repo_root,
+            env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"},
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=0.5,
+        )
+    except OSError, subprocess.SubprocessError:
+        return None
+    if completed.returncode != 0:
+        return None
+    output = completed.stdout.strip()
+    return output or None
+
+
+def _canonical_repository_url(raw_url: str | None) -> str | None:
+    """Return a browser-style repository URL without local path remotes."""
+    if raw_url is None:
+        return None
+    candidate = raw_url.strip()
+    if not candidate:
+        return None
+    scp_like_url = _canonical_scp_like_git_url(candidate)
+    if scp_like_url is not None:
+        return scp_like_url
+    parsed = urllib.parse.urlparse(candidate)
+    if parsed.scheme in {"http", "https"} and parsed.netloc:
+        return _strip_git_suffix(
+            urllib.parse.urlunparse(
+                (
+                    parsed.scheme,
+                    parsed.netloc,
+                    parsed.path.rstrip("/"),
+                    "",
+                    "",
+                    "",
+                ),
+            ),
+        )
+    if parsed.scheme == "ssh" and parsed.hostname and parsed.path:
+        return _strip_git_suffix(f"https://{parsed.hostname}/{parsed.path.lstrip('/')}")
+    return None
+
+
+def _canonical_scp_like_git_url(candidate: str) -> str | None:
+    """Convert ``git@example.com:owner/repo.git`` remotes to HTTPS URLs."""
+    if "://" in candidate or "@" not in candidate or ":" not in candidate:
+        return None
+    user_host, repository_path = candidate.split(":", 1)
+    if "/" in user_host:
+        return None
+    host = user_host.rsplit("@", 1)[-1]
+    if not host or not repository_path:
+        return None
+    return _strip_git_suffix(f"https://{host}/{repository_path.lstrip('/')}")
+
+
+def _strip_git_suffix(url: str) -> str:
+    """Return ``url`` without the conventional trailing Git suffix."""
+    stripped = url.rstrip("/")
+    return stripped[:-4] if stripped.endswith(".git") else stripped
+
+
+def _repository_name_from_url(repository_url: str) -> str | None:
+    """Return the terminal repository name from a canonical repository URL."""
+    parsed = urllib.parse.urlparse(repository_url)
+    path = parsed.path.rstrip("/")
+    if not path:
+        return None
+    return pathlib.PurePosixPath(path).name
 
 
 def _running_under_pytest(env: cabc.Mapping[str, str]) -> bool:
