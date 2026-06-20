@@ -242,10 +242,10 @@ def test_otel_backend_records_named_custom_metrics() -> None:
         def __init__(self) -> None:
             self.points: list[tuple[int | float, dict[str, object]]] = []
 
-        def add(self, value: int | float, *, attributes: dict[str, object]) -> None:
+        def add(self, value: float, *, attributes: dict[str, object]) -> None:
             self.points.append((value, attributes))
 
-        def record(self, value: int | float, *, attributes: dict[str, object]) -> None:
+        def record(self, value: float, *, attributes: dict[str, object]) -> None:
             self.points.append((value, attributes))
 
     class FakeMeter:
