@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import pathlib
 import time
 import typing as t
 
@@ -51,13 +52,28 @@ def _redact_digest(value: str) -> dict[str, t.Any]:
     }
 
 
+def _redact_path(value: str) -> dict[str, t.Any]:
+    """Return path-shaped metadata without the path value."""
+    redacted = _redact_digest(value)
+    redacted["kind"] = "path"
+    redacted["is_absolute"] = pathlib.PurePath(value).is_absolute()
+    return redacted
+
+
+def _is_path_arg_name(key: str) -> bool:
+    """Return whether an MCP argument name is expected to hold a path."""
+    key_folded = key.casefold()
+    return key_folded == "path" or key_folded.endswith("_path")
+
+
 def _summarize_args(args: dict[str, t.Any]) -> dict[str, t.Any]:
     """Summarize tool arguments for audit logging.
 
     Sensitive scalars get replaced by a digest dict. Sensitive list payloads
     (e.g. ``terms`` is ``list[str]``) get each element digested. Long
-    non-sensitive strings get truncated with a marker. Everything else passes
-    through as-is.
+    non-sensitive strings get truncated with a marker. Path-named string
+    payloads get path-shaped metadata without the path value. Everything else
+    passes through as-is.
 
     Examples
     --------
@@ -84,6 +100,11 @@ def _summarize_args(args: dict[str, t.Any]) -> dict[str, t.Any]:
 
     >>> _summarize_args({"cursor": "agcur1:secret"})["cursor"]["len"]
     13
+
+    Path-shaped arguments are redacted before logs or spans see them:
+
+    >>> _summarize_args({"source_path": "/home/d/.codex/history.json"})["source_path"]["kind"]
+    'path'
     """
     summary: dict[str, t.Any] = {}
     for key, value in args.items():
@@ -93,6 +114,8 @@ def _summarize_args(args: dict[str, t.Any]) -> dict[str, t.Any]:
             summary[key] = [
                 _redact_digest(str(item)) if isinstance(item, str) else item for item in value
             ]
+        elif _is_path_arg_name(key) and isinstance(value, str):
+            summary[key] = _redact_path(value)
         elif isinstance(value, str) and len(value) > _MAX_LOGGED_STR_LEN:
             summary[key] = value[:_MAX_LOGGED_STR_LEN] + "...<truncated>"
         else:
