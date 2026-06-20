@@ -96,6 +96,38 @@ def test_logs_metrics_and_traces_are_linked_under_non_single_root() -> None:
     assert backend.log_records[0].span_id == backend.finished_spans[1].span_id
 
 
+def test_metrics_include_debug_session_when_otel_is_enabled() -> None:
+    """OTel-on metrics carry run identity for Grafana QA."""
+    import agentgrep._telemetry as telemetry
+
+    handle = telemetry.setup(
+        mode="test",
+        env={
+            "AGENTGREP_OTEL": "live",
+            "AGENTGREP_DEBUG_SESSION_ID": "session-1",
+        },
+        service_version="0.1.0",
+    )
+    assert isinstance(handle.backend, telemetry.InMemoryTelemetryBackend)
+    try:
+        with (
+            telemetry.span(
+                "agentgrep.cli.invocation",
+                agentgrep_surface="cli",
+            ),
+            telemetry.span("agentgrep.cli.dispatch", agentgrep_surface="cli"),
+        ):
+            telemetry.record_metric("agentgrep.acceptance.count", 1, agentgrep_surface="cli")
+    finally:
+        handle.shutdown()
+
+    assert handle.backend.metric_records
+    assert {
+        record.attributes.get("agentgrep_debug_session_id")
+        for record in handle.backend.metric_records
+    } == {"session-1"}
+
+
 def test_sql_span_requires_active_project_span() -> None:
     """SQL helper spans should never become orphaned root traces."""
     import agentgrep._telemetry as telemetry
@@ -269,6 +301,7 @@ def test_cli_main_emits_non_single_trace_with_linked_logs(
 
     assert backend.single_root_trace_ids() == ()
     assert [span.name for span in backend.finished_spans] == [
+        "agentgrep.cli.parse",
         "agentgrep.cli.dispatch",
         "agentgrep.cli.invocation",
     ]
@@ -276,6 +309,86 @@ def test_cli_main_emits_non_single_trace_with_linked_logs(
         backend.finished_spans[-1].trace_id,
     }
     assert all(record.span_id is not None for record in backend.log_records)
+
+
+def test_cli_help_emits_non_single_trace_without_stderr(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """CLI help should be traced without changing argparse output."""
+    import agentgrep
+    import agentgrep._telemetry as telemetry
+
+    backend = telemetry.InMemoryTelemetryBackend()
+
+    def fake_setup(**_kwargs: object) -> telemetry.TelemetryHandle:
+        telemetry.configure_backend(backend)
+        remove_handler = telemetry.install_logging_exporter(backend)
+        return telemetry.TelemetryHandle(
+            mode="test",
+            backend=backend,
+            _remove_logging=remove_handler,
+        )
+
+    monkeypatch.setattr(telemetry, "setup", fake_setup)
+
+    try:
+        exit_code = agentgrep.main([])
+    finally:
+        telemetry.configure_backend(None)
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "grep examples:" in captured.out
+    assert captured.err == ""
+    assert backend.single_root_trace_ids() == ()
+    assert [span.name for span in backend.finished_spans] == [
+        "agentgrep.cli.parse",
+        "agentgrep.cli.invocation",
+    ]
+    root = backend.finished_spans[-1]
+    assert root.attributes["agentgrep_outcome"] == "help"
+    assert root.attributes["agentgrep_exit_code"] == 0
+
+
+def test_cli_parse_error_emits_non_single_trace_with_argparse_stderr(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """CLI parse errors should be traced while preserving argparse stderr."""
+    import agentgrep
+    import agentgrep._telemetry as telemetry
+
+    backend = telemetry.InMemoryTelemetryBackend()
+
+    def fake_setup(**_kwargs: object) -> telemetry.TelemetryHandle:
+        telemetry.configure_backend(backend)
+        remove_handler = telemetry.install_logging_exporter(backend)
+        return telemetry.TelemetryHandle(
+            mode="test",
+            backend=backend,
+            _remove_logging=remove_handler,
+        )
+
+    monkeypatch.setattr(telemetry, "setup", fake_setup)
+
+    try:
+        with pytest.raises(SystemExit) as exc_info:
+            agentgrep.main(["grep", "--invert-match", "needle"])
+    finally:
+        telemetry.configure_backend(None)
+
+    captured = capsys.readouterr()
+    assert exc_info.value.code == 2
+    assert "--invert-match for text output is not yet implemented" in captured.err
+    assert backend.single_root_trace_ids() == ()
+    assert [span.name for span in backend.finished_spans] == [
+        "agentgrep.cli.parse",
+        "agentgrep.cli.invocation",
+    ]
+    root = backend.finished_spans[-1]
+    assert root.attributes["agentgrep_outcome"] == "parse_error"
+    assert root.attributes["agentgrep_exit_code"] == 2
 
 
 async def test_mcp_tool_span_is_non_single_and_redacted(
