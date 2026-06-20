@@ -144,11 +144,7 @@ watch-ty:
 otel-up:
     #!/usr/bin/env bash
     set -euo pipefail
-    if docker inspect agentgrep-lgtm > /dev/null 2>&1; then
-        docker start agentgrep-lgtm > /dev/null
-    else
-        docker run -d --name agentgrep-lgtm -p 3000:3000 -p 3100:3100 -p 3200:3200 -p 4040:4040 -p 4317:4317 -p 4318:4318 -p 9090:9090 grafana/otel-lgtm:latest
-    fi
+    scripts/lgtm/up.sh
 
 # Stop and remove the local Grafana LGTM stack
 [group: 'otel']
