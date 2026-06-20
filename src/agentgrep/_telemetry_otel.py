@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import collections.abc as cabc
 import contextlib
+import hashlib
 import logging
 import os
 import pathlib
@@ -16,6 +17,15 @@ from agentgrep import _telemetry
 if t.TYPE_CHECKING:
     from opentelemetry.sdk.trace import ReadableSpan
     from opentelemetry.sdk.trace.export import SpanExporter
+
+_SAFE_LOG_ATTRIBUTE_KEYS: frozenset[str] = frozenset(
+    {
+        "agentgrep_path_kind",
+        "agentgrep_env_path_status",
+        "agentgrep_override_path_status",
+    },
+)
+"""Structured log extras that are classifiers rather than private values."""
 
 
 class OtelTelemetryBackend:
@@ -363,9 +373,48 @@ def _timeout_seconds() -> float:
 
 def _sanitized_log_record(record: logging.LogRecord) -> logging.LogRecord:
     """Return a shallow log-record copy without local absolute path metadata."""
-    copied = logging.makeLogRecord(record.__dict__.copy())
+    copied = logging.makeLogRecord(_sanitized_log_record_dict(record))
     if copied.pathname:
         copied.pathname = pathlib.Path(copied.pathname).name
     if copied.filename:
         copied.filename = pathlib.Path(copied.filename).name
     return copied
+
+
+def _sanitized_log_record_dict(record: logging.LogRecord) -> dict[str, object]:
+    """Return a copied record dict with private project extras redacted."""
+    copied: dict[str, object] = record.__dict__.copy()
+    for key, value in tuple(copied.items()):
+        if not _is_sensitive_log_attribute(key):
+            continue
+        del copied[key]
+        copied.update(_redacted_log_attribute_metadata(key, value))
+    return copied
+
+
+def _is_sensitive_log_attribute(key: str) -> bool:
+    """Return whether a structured log extra can contain private user data."""
+    if key in _SAFE_LOG_ATTRIBUTE_KEYS or not key.startswith("agentgrep_"):
+        return False
+    key_folded = key.casefold()
+    return (
+        "path" in key_folded
+        or "query" in key_folded
+        or "argv" in key_folded
+        or key_folded.endswith("_env")
+        or "_env_" in key_folded
+    )
+
+
+def _redacted_log_attribute_metadata(key: str, value: object) -> dict[str, object]:
+    """Return structured metadata for a redacted log extra."""
+    metadata: dict[str, object] = {f"{key}_redacted": True}
+    if isinstance(value, str):
+        metadata[f"{key}_len"] = len(value)
+        metadata[f"{key}_sha256_prefix"] = hashlib.sha256(
+            value.encode("utf-8"),
+        ).hexdigest()[:12]
+        metadata[f"{key}_is_absolute"] = pathlib.PurePath(value).is_absolute()
+    else:
+        metadata[f"{key}_type"] = type(value).__name__
+    return metadata

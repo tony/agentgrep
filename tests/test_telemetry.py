@@ -657,6 +657,9 @@ def test_otel_log_record_sanitizes_absolute_paths() -> None:
     """Exported OTel logs should not carry absolute local source paths."""
     from agentgrep import _telemetry_otel
 
+    env_path = "/home/d/work/python/agentgrep/private-env"
+    override_path = "/home/d/.codex/private-config"
+    source_path = "/home/d/work/python/agentgrep/source.jsonl"
     record = logging.LogRecord(
         name="agentgrep.test",
         level=logging.INFO,
@@ -666,11 +669,31 @@ def test_otel_log_record_sanitizes_absolute_paths() -> None:
         args=(),
         exc_info=None,
     )
+    record.agentgrep_env_path = env_path
+    record.agentgrep_env_path_status = "not_found"
+    record.agentgrep_override_path = override_path
+    record.agentgrep_override_path_status = "not_a_directory"
+    record.agentgrep_path = source_path
+    record.agentgrep_path_kind = "session_file"
 
     sanitized = _telemetry_otel._sanitized_log_record(record)
 
     assert sanitized.pathname == "example.py"
     assert sanitized.filename == "example.py"
+    rendered = str(sanitized.__dict__)
+    assert env_path not in rendered
+    assert override_path not in rendered
+    assert source_path not in rendered
+    assert "agentgrep_env_path" not in sanitized.__dict__
+    assert sanitized.__dict__["agentgrep_env_path_redacted"] is True
+    assert sanitized.__dict__["agentgrep_env_path_len"] == len(env_path)
+    assert "agentgrep_override_path" not in sanitized.__dict__
+    assert sanitized.__dict__["agentgrep_override_path_redacted"] is True
+    assert "agentgrep_path" not in sanitized.__dict__
+    assert sanitized.__dict__["agentgrep_path_redacted"] is True
+    assert sanitized.__dict__["agentgrep_env_path_status"] == "not_found"
+    assert sanitized.__dict__["agentgrep_override_path_status"] == "not_a_directory"
+    assert sanitized.__dict__["agentgrep_path_kind"] == "session_file"
     assert record.pathname == "/home/d/work/python/agentgrep/src/agentgrep/example.py"
 
 
