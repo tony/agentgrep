@@ -21,4 +21,5 @@ multiple adapters or public payloads.
 0011-non-blocking-tui-invariants
 0012-reusable-tui-widget-architecture
 0008-opentelemetry-local-observability
+0009-agentic-structured-logging
 ```
