@@ -152,6 +152,12 @@ class OtelTelemetryBackend:
             self._meter_provider.shutdown()
         with contextlib.suppress(Exception):
             self._logger_provider.shutdown()
+        with contextlib.suppress(Exception):
+            import pyroscope
+
+            shutdown = getattr(pyroscope, "shutdown", None)
+            if shutdown is not None:
+                shutdown()
 
 
 class _FilteringSpanExporter:
