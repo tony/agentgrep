@@ -46,6 +46,7 @@ import threading
 import time
 import typing as t
 
+from agentgrep import _telemetry
 from agentgrep._engine.orchestration import discover_sources_for_search
 from agentgrep.progress import SearchControl, SearchProgress, noop_search_progress
 from agentgrep.readers import select_backends
@@ -519,7 +520,7 @@ async def aiter_search_events(
         finally:
             put_from_worker(_AsyncSearchDone())
 
-    worker_task = asyncio.create_task(asyncio.to_thread(run_worker))
+    worker_task = asyncio.create_task(_telemetry.to_thread(run_worker))
     try:
         while True:
             item = await event_queue.get()

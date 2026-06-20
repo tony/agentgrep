@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import re
 import typing as t
 
 from pydantic import Field
 
+from agentgrep import _telemetry
 from agentgrep.mcp._library import READONLY_TAGS, TOOL_ANNOTATIONS, agentgrep
 from agentgrep.mcp.models import (
     VALIDATE_QUERY_INPUT_ERROR,
@@ -126,6 +126,6 @@ def register(mcp: FastMCP) -> None:
             sample_text=sample_text,
             case_sensitive=case_sensitive,
         )
-        return await asyncio.to_thread(_validate_query_sync, request)
+        return await _telemetry.to_thread(_validate_query_sync, request)
 
     _ = validate_query_tool

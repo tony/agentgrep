@@ -293,6 +293,13 @@ convention = "numpy"
 # the revalidation that follows it. Narrowing the handler would let some
 # failure modes leave a third-party CLI's config half-rewritten.
 "scripts/mcp_swap.py" = ["T201", "BLE001"]
+# Acceptance scripts intentionally print their machine-readable result and
+# retry arbitrary probes until the shared deadline expires.
+"scripts/otel_acceptance.py" = ["T201", "BLE001"]
+# Telemetry is an optional best-effort boundary. Backend import, setup, export,
+# and teardown failures must degrade to the dependency-light no-op facade.
+"src/agentgrep/_telemetry.py" = ["BLE001"]
+"src/agentgrep/_telemetry_otel.py" = ["BLE001"]
 # The documentation harness exists to run the Python examples embedded in the
 # docs; `exec` of a compiled example in an isolated namespace is its whole
 # job, not an untrusted-input hazard. Whatever an example raises is the result
