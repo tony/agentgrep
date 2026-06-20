@@ -46,6 +46,13 @@ such as dispatch, discovery, planning, collection, filtering, detail building,
 and thread/async boundaries. Low-level keypresses, render frames, event-loop
 callbacks, and orphaned auto-instrumentation roots are not accepted signal.
 
+SQLite spans use a project connection factory for `sqlite3.Connection`
+shortcut methods such as `execute`, `executemany`, and `executescript`.
+The upstream SQLite DB-API instrumentation wraps cursor execution, but
+agentgrep's source parsers use connection shortcuts. SQL spans therefore stay
+under an existing app root and do not record bound parameter values, raw
+prompts, file contents, or local database paths.
+
 Logs are exported only when there is an active project span so Loki records are
 trace-linked. OTel log records are sanitized before export to avoid local
 absolute source paths.
@@ -107,6 +114,8 @@ workload plus a real CLI search, and verifies:
 - both `agentgrep.otel.smoke` and `agentgrep.cli.invocation` roots are
   multi-span traces for the current debug session;
 - no current-run single-root trace is accepted;
+- at least one checked trace contains `agentgrep.sqlite.*` spans from SQLite
+  connection shortcut work;
 - fresh span and custom smoke metrics are visible in Prometheus;
 - current-run Loki logs contain trace and span identifiers;
 - Pyroscope exposes both the `agentgrep` service and current debug session.
