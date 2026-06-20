@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import pathlib
+
 from fastmcp import FastMCP
 from fastmcp.server.middleware.error_handling import ErrorHandlingMiddleware
 from fastmcp.server.middleware.timing import TimingMiddleware
 
+from agentgrep import _telemetry
 from agentgrep._engine.runtime import SearchRuntime
 from agentgrep.mcp._library import SERVER_VERSION
 from agentgrep.mcp.instructions import _build_instructions
@@ -55,8 +58,12 @@ def build_mcp_server() -> FastMCP:
 
 def main() -> int:
     """Run the MCP server over stdio."""
-    build_mcp_server().run()
-    return 0
+    telemetry = _telemetry.setup(repo_root=pathlib.Path(__file__).resolve().parents[3])
+    try:
+        build_mcp_server().run()
+        return 0
+    finally:
+        telemetry.shutdown()
 
 
 if __name__ == "__main__":

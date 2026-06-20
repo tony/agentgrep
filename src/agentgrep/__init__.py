@@ -464,20 +464,84 @@ def _write_interrupt_notice() -> None:
 
 def main(argv: cabc.Sequence[str] | None = None) -> int:
     """Run the CLI."""
+    from agentgrep import _telemetry
+
+    telemetry = _telemetry.setup(repo_root=pathlib.Path(__file__).resolve().parents[2])
     try:
         parsed = parse_args(argv)
         if parsed is None:
             return 0
-        if isinstance(parsed, GrepArgs):
-            return run_grep_command(parsed)
-        if isinstance(parsed, SearchArgs):
-            return run_search_command(parsed)
-        if isinstance(parsed, UIArgs):
-            return run_ui_command(parsed)
-        return run_find_command(parsed)
+        command = _command_name_for_args(parsed)
+        span_name = (
+            "agentgrep.cli.interactive_session"
+            if isinstance(parsed, UIArgs)
+            else "agentgrep.cli.invocation"
+        )
+        with _telemetry.span(
+            span_name,
+            agentgrep_surface="cli",
+            agentgrep_command=command,
+        ):
+            logger.info(
+                "cli command started",
+                extra={
+                    "agentgrep_surface": "cli",
+                    "agentgrep_command": command,
+                },
+            )
+            try:
+                with _telemetry.span(
+                    "agentgrep.cli.dispatch",
+                    agentgrep_surface="cli",
+                    agentgrep_command=command,
+                ):
+                    if isinstance(parsed, GrepArgs):
+                        exit_code = run_grep_command(parsed)
+                    elif isinstance(parsed, SearchArgs):
+                        exit_code = run_search_command(parsed)
+                    elif isinstance(parsed, UIArgs):
+                        exit_code = run_ui_command(parsed)
+                    else:
+                        exit_code = run_find_command(parsed)
+            except BaseException:
+                _telemetry.set_span_attribute("agentgrep_outcome", "error")
+                logger.info(
+                    "cli command failed",
+                    extra={
+                        "agentgrep_surface": "cli",
+                        "agentgrep_command": command,
+                        "agentgrep_outcome": "error",
+                    },
+                )
+                raise
+            _telemetry.set_span_attribute("agentgrep_outcome", "ok")
+            _telemetry.set_span_attribute("agentgrep_exit_code", exit_code)
+            logger.info(
+                "cli command completed",
+                extra={
+                    "agentgrep_surface": "cli",
+                    "agentgrep_command": command,
+                    "agentgrep_outcome": "ok",
+                    "agentgrep_exit_code": exit_code,
+                },
+            )
+            return exit_code
     except KeyboardInterrupt:
         _write_interrupt_notice()
         _exit_on_sigint()
+    finally:
+        telemetry.shutdown()
+
+
+def _command_name_for_args(args: object) -> str:
+    """Return a stable CLI command name for parsed args."""
+    if isinstance(args, GrepArgs):
+        return "grep"
+    if isinstance(args, SearchArgs):
+        return "search"
+    if isinstance(args, UIArgs):
+        return "ui"
+    return "find"
 
 
 from agentgrep._engine import (  # noqa: E402  (re-exports must follow main definition)

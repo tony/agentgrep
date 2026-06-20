@@ -9,6 +9,7 @@ import queue
 import time
 import typing as t
 
+from agentgrep import _telemetry
 from agentgrep._engine import scanning
 from agentgrep._engine.orchestration import (
     prompt_history_agents_for_sources,
@@ -424,7 +425,8 @@ class FrontierExecutionDriver:
                     control=task_control,
                     cache_key=cache_key,
                 )
-                future = executor.submit(
+                future = _telemetry.executor_submit(
+                    executor,
                     _scan_source_task_to_queue,
                     query,
                     task,
@@ -659,7 +661,8 @@ def _iter_search_plan_whole_sources(
                 source=task.source,
                 task=task,
             )
-            future = executor.submit(
+            future = _telemetry.executor_submit(
+                executor,
                 scanning.scan_source_task,
                 query,
                 task,

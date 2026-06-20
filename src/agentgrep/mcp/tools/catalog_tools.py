@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 import pathlib
 import typing as t
 
 from fastmcp.exceptions import ToolError
 from pydantic import Field
 
+from agentgrep import _telemetry
 from agentgrep.mcp import refs
 from agentgrep.mcp._library import (
     READONLY_TAGS,
@@ -235,7 +235,7 @@ def register(mcp: FastMCP) -> None:
             role_filter=role_filter,
             search_default_only=search_default_only,
         )
-        return await asyncio.to_thread(_list_stores_sync, request)
+        return await _telemetry.to_thread(_list_stores_sync, request)
 
     _ = list_stores_tool
 
@@ -255,7 +255,7 @@ def register(mcp: FastMCP) -> None:
         ],
     ) -> StoreDescriptorModel:
         request = GetStoreDescriptorRequest(store_id=store_id)
-        return await asyncio.to_thread(_get_store_descriptor_sync, request)
+        return await _telemetry.to_thread(_get_store_descriptor_sync, request)
 
     _ = get_store_descriptor_tool
 
@@ -295,7 +295,7 @@ def register(mcp: FastMCP) -> None:
             source_path=source_path,
             sample_size=sample_size,
         )
-        return await asyncio.to_thread(_inspect_record_sample_sync, request)
+        return await _telemetry.to_thread(_inspect_record_sample_sync, request)
 
     _ = inspect_record_sample_tool
 
@@ -321,6 +321,6 @@ def register(mcp: FastMCP) -> None:
         ] = 1,
     ) -> InspectResultResponse:
         request = InspectResultRequest(ref=ref, sample_size=sample_size)
-        return await asyncio.to_thread(_inspect_result_sync, request)
+        return await _telemetry.to_thread(_inspect_result_sync, request)
 
     _ = inspect_result_tool

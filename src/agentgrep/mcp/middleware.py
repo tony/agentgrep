@@ -16,6 +16,8 @@ from fastmcp.server.middleware import Middleware, MiddlewareContext
 from fastmcp.server.middleware.response_limiting import ResponseLimitingMiddleware
 from fastmcp.tools.base import ToolResult
 
+from agentgrep import _telemetry
+
 _SENSITIVE_ARG_NAMES: frozenset[str] = frozenset(
     {"terms", "pattern", "sample_text", "cursor"},
 )
@@ -156,37 +158,68 @@ class AgentgrepAuditMiddleware(Middleware):
             client_id = getattr(context.fastmcp_context, "client_id", None)
             request_id = getattr(context.fastmcp_context, "request_id", None)
 
-        try:
-            result = await call_next(context)
-        except Exception as exc:
-            duration_ms = (time.monotonic() - start) * 1000.0
-            self._logger.info(
-                "tool call failed",
-                extra={
-                    "agentgrep_tool": tool_name,
-                    "agentgrep_outcome": "error",
-                    "agentgrep_error_type": type(exc).__name__,
-                    "agentgrep_duration_ms": duration_ms,
-                    "agentgrep_client_id": client_id,
-                    "agentgrep_request_id": request_id,
-                    "agentgrep_args_summary": args_summary,
-                },
-            )
-            raise
-
-        duration_ms = (time.monotonic() - start) * 1000.0
-        extra: dict[str, object] = {
+        span_attributes: dict[str, object] = {
+            "agentgrep_surface": "mcp",
             "agentgrep_tool": tool_name,
-            "agentgrep_outcome": "ok",
-            "agentgrep_duration_ms": duration_ms,
-            "agentgrep_client_id": client_id,
-            "agentgrep_request_id": request_id,
-            "agentgrep_args_summary": args_summary,
         }
-        message = "tool call completed"
-        if isinstance(result, ToolResult) and result.is_error:
-            message = "tool call failed"
-            extra["agentgrep_outcome"] = "error"
-            extra["agentgrep_error_type"] = "ToolResultError"
-        self._logger.info(message, extra=extra)
-        return result
+        if client_id is not None:
+            span_attributes["agentgrep_client_id"] = client_id
+        if request_id is not None:
+            span_attributes["agentgrep_request_id"] = request_id
+        span_attributes.update(
+            _telemetry.flatten_safe_attributes("agentgrep_mcp_args", args_summary),
+        )
+
+        with _telemetry.span("agentgrep.mcp.tool", **span_attributes):
+            try:
+                with _telemetry.span(
+                    "agentgrep.mcp.call_next",
+                    agentgrep_surface="mcp",
+                    agentgrep_tool=tool_name,
+                ):
+                    result = await call_next(context)
+            except Exception as exc:
+                duration_ms = (time.monotonic() - start) * 1000.0
+                _telemetry.set_span_attribute("agentgrep_outcome", "error")
+                _telemetry.set_span_attribute("agentgrep_error_type", type(exc).__name__)
+                _telemetry.set_span_attribute("agentgrep_duration_ms", duration_ms)
+                self._logger.info(
+                    "tool call failed",
+                    extra={
+                        "agentgrep_tool": tool_name,
+                        "agentgrep_outcome": "error",
+                        "agentgrep_error_type": type(exc).__name__,
+                        "agentgrep_duration_ms": duration_ms,
+                        "agentgrep_client_id": client_id,
+                        "agentgrep_request_id": request_id,
+                        "agentgrep_args_summary": args_summary,
+                    },
+                )
+                raise
+
+            duration_ms = (time.monotonic() - start) * 1000.0
+            extra: dict[str, object] = {
+                "agentgrep_tool": tool_name,
+                "agentgrep_outcome": "ok",
+                "agentgrep_duration_ms": duration_ms,
+                "agentgrep_client_id": client_id,
+                "agentgrep_request_id": request_id,
+                "agentgrep_args_summary": args_summary,
+            }
+            message = "tool call completed"
+            if isinstance(result, ToolResult) and result.is_error:
+                message = "tool call failed"
+                extra["agentgrep_outcome"] = "error"
+                extra["agentgrep_error_type"] = "ToolResultError"
+            _telemetry.set_span_attribute(
+                "agentgrep_outcome",
+                t.cast(str, extra["agentgrep_outcome"]),
+            )
+            if "agentgrep_error_type" in extra:
+                _telemetry.set_span_attribute(
+                    "agentgrep_error_type",
+                    t.cast(str, extra["agentgrep_error_type"]),
+                )
+            _telemetry.set_span_attribute("agentgrep_duration_ms", duration_ms)
+            self._logger.info(message, extra=extra)
+            return result
