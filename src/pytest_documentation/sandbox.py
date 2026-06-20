@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import os
 import pathlib
@@ -10,9 +11,57 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import time
 import typing as t
 
 from .core import DocumentationExample, blocked_command_error, redact_text
+
+
+@contextlib.contextmanager
+def documentation_subprocess_span(
+    kind: str,
+    **attributes: object,
+) -> t.Iterator[None]:
+    """Emit a docs-subprocess span and cost metrics when telemetry is active."""
+    from agentgrep import _telemetry
+
+    if _telemetry.active_backend() is None or _telemetry.current_span_id() is None:
+        yield
+        return
+
+    span_attributes = {
+        "agentgrep_surface": "pytest",
+        "agentgrep_subprocess_kind": kind,
+        **attributes,
+    }
+    started_at = time.perf_counter()
+    outcome = "ok"
+    with _telemetry.span(
+        "agentgrep.pytest.documentation.subprocess",
+        **span_attributes,
+    ):
+        try:
+            yield
+        except BaseException as exc:
+            outcome = "error"
+            _telemetry.set_span_attribute("agentgrep_error_type", type(exc).__name__)
+            raise
+        finally:
+            duration_seconds = time.perf_counter() - started_at
+            _telemetry.set_span_attribute("agentgrep_outcome", outcome)
+            _telemetry.set_span_attribute("agentgrep_duration_seconds", duration_seconds)
+            _telemetry.record_metric(
+                "agentgrep.pytest.documentation.subprocess.count",
+                1,
+                **span_attributes,
+                agentgrep_outcome=outcome,
+            )
+            _telemetry.record_metric(
+                "agentgrep.pytest.documentation.subprocess.duration",
+                duration_seconds,
+                **span_attributes,
+                agentgrep_outcome=outcome,
+            )
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -169,17 +218,22 @@ class TempHomeSandbox:
         plan = self._plan_script(script, sandbox_root=sandbox_root, project=project)
         cwd = self._sandbox_cwd(project)
         if plan.execute:
-            completed = subprocess.run(
-                plan.script,
-                cwd=cwd,
-                env=env,
-                executable="/bin/sh",
-                shell=True,
-                text=True,
-                capture_output=True,
-                timeout=self.timeout,
-                check=False,
-            )
+            with documentation_subprocess_span(
+                "documentation_example",
+                agentgrep_documentation_kind=example.kind,
+                agentgrep_documentation_language=example.language,
+            ):
+                completed = subprocess.run(
+                    plan.script,
+                    cwd=cwd,
+                    env=env,
+                    executable="/bin/sh",
+                    shell=True,
+                    text=True,
+                    capture_output=True,
+                    timeout=self.timeout,
+                    check=False,
+                )
         else:
             completed = subprocess.CompletedProcess(
                 args=plan.script,
@@ -240,20 +294,21 @@ class TempHomeSandbox:
         project.parent.mkdir(parents=True, exist_ok=True)
         has_git_metadata = (self.project_root / ".git").exists()
         if has_git_metadata and not self._project_is_dirty():
-            completed = subprocess.run(
-                (
-                    "git",
-                    "clone",
-                    "--local",
-                    "--no-hardlinks",
-                    "--quiet",
-                    str(self.project_root),
-                    str(project),
-                ),
-                text=True,
-                capture_output=True,
-                check=False,
-            )
+            with documentation_subprocess_span("documentation_project_clone"):
+                completed = subprocess.run(
+                    (
+                        "git",
+                        "clone",
+                        "--local",
+                        "--no-hardlinks",
+                        "--quiet",
+                        str(self.project_root),
+                        str(project),
+                    ),
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
             if completed.returncode == 0:
                 return
             # An interrupted clone can leave a partial destination behind;
@@ -266,13 +321,14 @@ class TempHomeSandbox:
 
     def _project_is_dirty(self) -> bool:
         """Return whether the source git worktree has uncommitted content."""
-        completed = subprocess.run(
-            ("git", "status", "--porcelain", "--untracked-files=all"),
-            cwd=self.project_root,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        with documentation_subprocess_span("documentation_git_status"):
+            completed = subprocess.run(
+                ("git", "status", "--porcelain", "--untracked-files=all"),
+                cwd=self.project_root,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
         if completed.returncode != 0:
             return True
         return bool(completed.stdout.strip())
@@ -293,33 +349,35 @@ class TempHomeSandbox:
 
     def _initialize_copied_git_repo(self, project: pathlib.Path) -> None:
         """Create a harmless git HEAD for copied dirty projects."""
-        init = subprocess.run(
-            ("git", "init", "--quiet"),
-            cwd=project,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        with documentation_subprocess_span("documentation_git_init"):
+            init = subprocess.run(
+                ("git", "init", "--quiet"),
+                cwd=project,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
         if init.returncode != 0:
             return
-        _ = subprocess.run(
-            (
-                "git",
-                "-c",
-                "user.name=pytest-documentation",
-                "-c",
-                "user.email=pytest-documentation@example.invalid",
-                "commit",
-                "--allow-empty",
-                "--quiet",
-                "-m",
-                "sandbox project",
-            ),
-            cwd=project,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        with documentation_subprocess_span("documentation_git_commit"):
+            _ = subprocess.run(
+                (
+                    "git",
+                    "-c",
+                    "user.name=pytest-documentation",
+                    "-c",
+                    "user.email=pytest-documentation@example.invalid",
+                    "commit",
+                    "--allow-empty",
+                    "--quiet",
+                    "-m",
+                    "sandbox project",
+                ),
+                cwd=project,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
 
     def _sandbox_cwd(self, project: pathlib.Path) -> pathlib.Path:
         """Return the command cwd inside the isolated project tree."""

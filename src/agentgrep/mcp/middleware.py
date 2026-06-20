@@ -100,6 +100,49 @@ def _summarize_args(args: dict[str, t.Any]) -> dict[str, t.Any]:
     return summary
 
 
+def _context_ids(context: MiddlewareContext[t.Any]) -> dict[str, object]:
+    """Return safe FastMCP request identifiers when available."""
+    attributes: dict[str, object] = {}
+    if context.fastmcp_context is None:
+        return attributes
+    client_id = getattr(context.fastmcp_context, "client_id", None)
+    request_id = getattr(context.fastmcp_context, "request_id", None)
+    if client_id is not None:
+        attributes["agentgrep_client_id"] = client_id
+    if request_id is not None:
+        attributes["agentgrep_request_id"] = request_id
+    return attributes
+
+
+class AgentgrepTelemetryMiddleware(Middleware):
+    """Create app-level MCP request roots for observable FastMCP operations."""
+
+    async def on_request(
+        self,
+        context: MiddlewareContext[t.Any],
+        call_next: t.Callable[[MiddlewareContext[t.Any]], t.Awaitable[t.Any]],
+    ) -> t.Any:
+        """Wrap MCP requests that should appear as app-level roots."""
+        method = context.method or "unknown"
+        if method == "initialize":
+            return await call_next(context)
+        attributes: dict[str, object] = {
+            "agentgrep_surface": "mcp",
+            "agentgrep_mcp_method": method,
+        }
+        attributes.update(_context_ids(context))
+        with _telemetry.span("agentgrep.mcp.request", **attributes):
+            try:
+                with _telemetry.span("agentgrep.mcp.operation", **attributes):
+                    result = await call_next(context)
+            except Exception as exc:
+                _telemetry.set_span_attribute("agentgrep_outcome", "error")
+                _telemetry.set_span_attribute("agentgrep_error_type", type(exc).__name__)
+                raise
+            _telemetry.set_span_attribute("agentgrep_outcome", "ok")
+            return result
+
+
 class AgentgrepAuditMiddleware(Middleware):
     """Emit a structured log record per ``agentgrep`` tool invocation.
 

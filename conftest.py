@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import collections.abc as cabc
+import contextlib
 import os
 import pathlib
+import typing as t
 
 import pytest
 
@@ -103,31 +105,33 @@ _DOCS_SUITE.register_evaluator("just-recipe", SphinxDoctestEvaluator(project_roo
 
 pytest_collect_file = _DOCS_SUITE.pytest_collect_file
 
+_AGENTGREP_OTEL_PYTEST_HANDLE: object | None = None
 
-@pytest.fixture(scope="session", autouse=True)
-def _agentgrep_otel_pytest_session() -> cabc.Iterator[object | None]:
+
+def pytest_sessionstart(session: pytest.Session) -> None:
     """Configure OTel once for explicitly instrumented pytest runs."""
+    del session
+    global _AGENTGREP_OTEL_PYTEST_HANDLE
     if "AGENTGREP_OTEL" not in os.environ:
-        yield None
         return
     from agentgrep import _telemetry
 
-    handle = _telemetry.setup(repo_root=_REPO_ROOT)
-    try:
-        yield handle
-    finally:
-        handle.shutdown()
+    _AGENTGREP_OTEL_PYTEST_HANDLE = _telemetry.setup(repo_root=_REPO_ROOT)
 
 
-@pytest.fixture(autouse=True)
-def _agentgrep_otel_pytest_test(
-    request: pytest.FixtureRequest,
-    _agentgrep_otel_pytest_session: object | None,
-) -> cabc.Iterator[None]:
-    """Create a non-single-root trace for each explicitly instrumented test."""
-    if _agentgrep_otel_pytest_session is None:
-        yield
-        return
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Flush OTel after an explicitly instrumented pytest run."""
+    del session, exitstatus
+    global _AGENTGREP_OTEL_PYTEST_HANDLE
+    handle = _AGENTGREP_OTEL_PYTEST_HANDLE
+    _AGENTGREP_OTEL_PYTEST_HANDLE = None
+    if handle is not None:
+        t.cast("t.Any", handle).shutdown()
+
+
+@contextlib.contextmanager
+def _agentgrep_otel_pytest_item_span(item: object) -> cabc.Iterator[None]:
+    """Create a non-single-root trace for one collected pytest item."""
     from agentgrep import _telemetry
 
     if _telemetry.active_backend() is None:
@@ -137,14 +141,28 @@ def _agentgrep_otel_pytest_test(
         _telemetry.span(
             "agentgrep.pytest.test",
             agentgrep_surface="pytest",
-            agentgrep_pytest_test=request.node.nodeid,
+            agentgrep_pytest_test=getattr(item, "nodeid", "<unknown>"),
         ),
         _telemetry.span(
             "agentgrep.pytest.call",
             agentgrep_surface="pytest",
-            agentgrep_pytest_test=request.node.nodeid,
+            agentgrep_pytest_test=getattr(item, "nodeid", "<unknown>"),
         ),
     ):
+        yield
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_protocol(
+    item: pytest.Item,
+    nextitem: pytest.Item | None,
+) -> cabc.Iterator[None]:
+    """Wrap every collected item, including custom documentation items."""
+    del nextitem
+    if _AGENTGREP_OTEL_PYTEST_HANDLE is None:
+        yield
+        return
+    with _agentgrep_otel_pytest_item_span(item):
         yield
 
 

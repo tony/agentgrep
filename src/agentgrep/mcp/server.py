@@ -13,7 +13,7 @@ from agentgrep import _telemetry
 from agentgrep._engine.runtime import SearchRuntime
 from agentgrep.mcp._library import SERVER_VERSION
 from agentgrep.mcp.instructions import _build_instructions
-from agentgrep.mcp.middleware import AgentgrepAuditMiddleware
+from agentgrep.mcp.middleware import AgentgrepAuditMiddleware, AgentgrepTelemetryMiddleware
 from agentgrep.mcp.prompts import register_prompts
 from agentgrep.mcp.resources import register_resources
 from agentgrep.mcp.tools import register_tools
@@ -39,12 +39,15 @@ def build_mcp_server() -> FastMCP:
         #   3. ErrorHandlingMiddleware — transforms exceptions into proper
         #      MCP errors; sits outside Audit so failed-tool records still
         #      log the failure with structured extras.
-        #   4. AgentgrepAuditMiddleware — innermost log hook; records
+        #   4. AgentgrepTelemetryMiddleware — app request root; parents
+        #      FastMCP request work and the tool-specific audit span.
+        #   5. AgentgrepAuditMiddleware — innermost log hook; records
         #      outcome=ok or outcome=error for every call.
         middleware=[
             TimingMiddleware(),
             ResponseLimitingMiddleware(max_size=DEFAULT_RESPONSE_LIMIT_BYTES),
             ErrorHandlingMiddleware(transform_errors=True),
+            AgentgrepTelemetryMiddleware(),
             AgentgrepAuditMiddleware(),
         ],
         on_duplicate="error",
