@@ -358,17 +358,20 @@ dirty candidates, pytest retries, or agent-loop identifiers in
 Do not create empty root spans or orphaned low-level spans. Root spans must be
 app-level operations such as `agentgrep.cli.invocation`,
 `agentgrep.cli.interactive_session`, `agentgrep.tui.session`,
-`agentgrep.mcp.tool`, `agentgrep.profile_engine.run`,
-`agentgrep.pytest.session`, `agentgrep.pytest.test`, or
-`agentgrep.otel.smoke`. Child spans should represent logical work, not every
-keypress, render frame, event-loop callback, or internal dispatch.
+`agentgrep.mcp.request`, `agentgrep.mcp.tool`, `agentgrep.benchmark.run`,
+`agentgrep.profile_engine.run`, `agentgrep.pytest.session`,
+`agentgrep.pytest.test`, or `agentgrep.otel.smoke`. Child spans should
+represent logical work, not every keypress, render frame, event-loop callback,
+or internal dispatch.
 
 SQLite telemetry must cover `sqlite3.Connection` shortcut methods through
 `agentgrep._telemetry.sqlite_connection_factory()`. Do not rely on
 `SQLite3Instrumentor` alone for SQLite spans; it does not cover the connection
 shortcut path agentgrep uses for source parsing. SQL spans must be children of
 an existing app trace and must not include bound parameter values, prompt text,
-file contents, or local database paths.
+file contents, or local database paths. SQLite and CPU-impacting work metrics
+must come from normal app, profiler, benchmark, CLI, TUI, MCP, and pytest paths,
+not only from synthetic smoke scripts.
 
 Logs exported through OTel must be trace-linked. Do not export unparented
 logs, raw prompts, raw MCP arguments, raw argv, environment values, file
@@ -389,9 +392,12 @@ profile-payload captures, Docker/LGTM helper commands, pytest subprocesses,
 and OTLP/Pyroscope flush costs.
 
 Default pytest must be deterministic and offline. Use in-memory telemetry for
-unit assertions. Live LGTM checks are opt-in through `just otel-acceptance`;
-they must prove traces, metrics, logs, and profiles against the real stack
-without making ordinary tests depend on Docker or network ports.
+unit assertions. Explicitly instrumented pytest runs use pytest hooks so every
+collected item, including custom documentation items and direct Textual
+`run_test()` cases, gets an `agentgrep.pytest.test` root. Live LGTM checks are
+opt-in through `just otel-acceptance`; they must prove traces, metrics, logs,
+and profiles against the real stack without making ordinary tests depend on
+Docker or network ports.
 
 ## Code Architecture
 
