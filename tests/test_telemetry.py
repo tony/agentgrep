@@ -349,14 +349,25 @@ def test_flatten_safe_attributes_keeps_redacted_mcp_args_safe() -> None:
     import agentgrep._telemetry as telemetry
     from agentgrep.mcp.middleware import _summarize_args
 
-    summary = _summarize_args({"terms": ["secret-token"], "pattern": "another-secret"})
+    source_path = "/home/d/.codex/history.json"
+    summary = _summarize_args(
+        {
+            "terms": ["secret-token"],
+            "pattern": "another-secret",
+            "source_path": source_path,
+        },
+    )
     attributes = telemetry.flatten_safe_attributes("agentgrep_mcp_args", summary)
 
     rendered = str(attributes)
     assert "secret-token" not in rendered
     assert "another-secret" not in rendered
+    assert source_path not in rendered
     assert attributes["agentgrep_mcp_args.terms.0.len"] == len("secret-token")
     assert attributes["agentgrep_mcp_args.pattern.len"] == len("another-secret")
+    assert attributes["agentgrep_mcp_args.source_path.kind"] == "path"
+    assert attributes["agentgrep_mcp_args.source_path.len"] == len(source_path)
+    assert attributes["agentgrep_mcp_args.source_path.is_absolute"] is True
 
 
 def test_cli_main_emits_non_single_trace_with_linked_logs(
