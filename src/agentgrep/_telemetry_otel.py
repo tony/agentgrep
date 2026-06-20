@@ -322,11 +322,7 @@ def _configure_profiles(resource_attributes: _telemetry.TelemetryAttributes) -> 
     except Exception:
         return False
     server_address = os.environ.get("PYROSCOPE_SERVER_ADDRESS", "http://localhost:4040")
-    tags = {
-        key.replace(".", "_"): str(value)
-        for key, value in resource_attributes.items()
-        if value is not None and key not in {"service.name", "service.version"}
-    }
+    tags = _profile_tags(resource_attributes)
     try:
         pyroscope.configure(
             application_name="agentgrep",
@@ -340,6 +336,25 @@ def _configure_profiles(resource_attributes: _telemetry.TelemetryAttributes) -> 
     except Exception:
         return False
     return True
+
+
+def _profile_tags(resource_attributes: _telemetry.TelemetryAttributes) -> dict[str, str]:
+    """Return Pyroscope tags derived from privacy-safe resource attributes."""
+    tags = {
+        key.replace(".", "_"): str(value)
+        for key, value in resource_attributes.items()
+        if value is not None and key not in {"service.name", "service.version"}
+    }
+    repository = resource_attributes.get("vcs.repository.url.full")
+    if repository is not None:
+        tags["service_repository"] = str(repository)
+        tags["service_root_path"] = "."
+    git_ref = resource_attributes.get("vcs.ref.head.revision") or resource_attributes.get(
+        "vcs.ref.head.name",
+    )
+    if git_ref is not None:
+        tags["service_git_ref"] = str(git_ref)
+    return tags
 
 
 def _install_auto_instrumentation(mode: _telemetry.TelemetryMode) -> tuple[t.Any, ...]:
