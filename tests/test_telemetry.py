@@ -2076,3 +2076,52 @@ def test_otel_backend_exports_logs_with_current_otel_span() -> None:
 
     assert len(handler.records) == 1
     assert handler.records[0].getMessage() == "otel linked"
+
+
+class _McpLifecycleCase(t.NamedTuple):
+    """Parametrized case for MCP server lifecycle outcome attribution."""
+
+    test_id: str
+    raises: type[BaseException] | None
+    expected_outcome: str
+
+
+_MCP_LIFECYCLE_CASES: tuple[_McpLifecycleCase, ...] = (
+    _McpLifecycleCase("completes-ok", None, "ok"),
+    _McpLifecycleCase("propagates-error", RuntimeError, "error"),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    _MCP_LIFECYCLE_CASES,
+    ids=[case.test_id for case in _MCP_LIFECYCLE_CASES],
+)
+def test_mcp_lifecycle_outcome_lands_on_lifecycle_span(case: _McpLifecycleCase) -> None:
+    """The lifecycle span carries the outcome; the server root never does."""
+    import agentgrep._telemetry as telemetry
+    from agentgrep.mcp import server
+
+    def run() -> None:
+        if case.raises is not None:
+            message = "boom"
+            raise case.raises(message)
+
+    backend = telemetry.InMemoryTelemetryBackend()
+    telemetry.configure_backend(backend)
+    try:
+        with telemetry.root_span("agentgrep.mcp.server"):
+            if case.raises is None:
+                server._run_server_lifecycle(run)
+            else:
+                with pytest.raises(case.raises):
+                    server._run_server_lifecycle(run)
+    finally:
+        telemetry.configure_backend(None)
+
+    lifecycle = next(
+        s for s in backend.finished_spans if s.name == "agentgrep.mcp.server.lifecycle"
+    )
+    root = next(s for s in backend.finished_spans if s.name == "agentgrep.mcp.server")
+    assert lifecycle.attributes["agentgrep_outcome"] == case.expected_outcome
+    assert "agentgrep_outcome" not in root.attributes
