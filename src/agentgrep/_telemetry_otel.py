@@ -112,7 +112,7 @@ class OtelTelemetryBackend:
         from opentelemetry.trace import format_span_id, format_trace_id
 
         context = None
-        if span.parent_id is None:
+        if span.parent_id is None and not span.inherit_otel_context:
             context = trace.set_span_in_context(trace.INVALID_SPAN)
         with self._tracer.start_as_current_span(span.name, context=context) as otel_span:
             span_context = otel_span.get_span_context()
