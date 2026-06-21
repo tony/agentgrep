@@ -755,13 +755,13 @@ def test_cli_parse_error_emits_non_single_trace_with_argparse_stderr(
 
     try:
         with pytest.raises(SystemExit) as exc_info:
-            agentgrep.main(["grep", "--invert-match", "needle"])
+            agentgrep.main(["grep", "--invert-match", "--only-matching", "needle"])
     finally:
         telemetry.configure_backend(None)
 
     captured = capsys.readouterr()
     assert exc_info.value.code == 2
-    assert "--invert-match for text output is not yet implemented" in captured.err
+    assert "--invert-match cannot be combined with --only-matching" in captured.err
     assert backend.single_root_trace_ids() == ()
     assert [span.name for span in backend.finished_spans] == [
         "agentgrep.cli.parse",

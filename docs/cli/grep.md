@@ -107,9 +107,16 @@ only the deduplicated paths. `-c` emits `path:N` per matching
 record with the count of matching lines (or just `N` when exactly
 one record matched), matching `rg -c`.
 
-The terminal reducers `-c`, `-l`, and the supported `-v -c` form replace the
-match-event stream with counts or paths. You cannot combine them with `--json`
-or `--ndjson`; choose structured events or reducer text output.
+`-v` / `--invert-match` inverts the line-level text output: flat
+mode emits `path:text` for non-matching lines, `-n` keeps line
+numbers, `--heading` groups the non-matching lines under the record
+heading, `-l` lists records that contain at least one non-matching
+line, and `-c` counts non-matching lines. `-v -o` is refused because
+inverted lines do not have matched substrings to print.
+
+The reducers `-c` and `-l`, plus inverted text output, replace the match-event
+stream. You cannot combine them with `--json` or `--ndjson`; choose structured
+events or reducer text output.
 
 ## Live streaming
 
@@ -239,20 +246,15 @@ agentgrep grep: error: pattern cannot be empty
 The check applies to every term — a valid pattern followed by an
 empty one (`agentgrep grep foo ''`) still fails.
 
-`-v` / `--invert-match` for plain text output is not yet
-implemented and is refused at parse time:
+`-v -o` / `--invert-match --only-matching` is refused at parse
+time:
 
 ```console
-$ agentgrep grep -v bliss
+$ agentgrep grep -v -o bliss
 usage: agentgrep grep [...]
-agentgrep grep: error: --invert-match for text output is not yet
-implemented (see https://github.com/tony/agentgrep/issues/8); use -c
+agentgrep grep: error: --invert-match cannot be combined with
+--only-matching
 ```
-
-The flag is still honored under `-c` (returns `0` if any record
-matched, `1` if none), since it reduces to a "did anything match?"
-question that the engine's current output supports. Tracking issue:
-[tony/agentgrep#8](https://github.com/tony/agentgrep/issues/8).
 
 (cli-grep-dedupe)=
 
