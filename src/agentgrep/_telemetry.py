@@ -578,6 +578,8 @@ def span(name: str, **attributes: object) -> cabc.Iterator[None]:
         yield
         return
     parent = _CURRENT_SPAN.get()
+    # Placeholder ids: the OTel backend adopts the native span ids in live mode;
+    # the in-memory backend keeps these for offline deterministic tests.
     active_span = _SpanState(
         name=name,
         span_id=uuid.uuid4().hex[:16],
