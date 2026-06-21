@@ -133,9 +133,11 @@ after redacting sensitive project extras. The cost is one small serialization
 per exported log record. This does not install console handlers or change
 packaged-user output; it makes Loki query-stage parsing reliable for local QA.
 
-SQLite and asyncio auto-instrumentation run only in local/debug/live modes.
-Project SQLite helper spans also wrap `sqlite3.Connection` shortcut methods so
-source-parser database work remains visible. The same shortcut wrapper emits
+Asyncio auto-instrumentation runs only in local/debug/live modes. SQLite spans
+come solely from the project `sqlite3.Connection` shortcut factory, which wraps
+the `Connection.execute` path agentgrep uses for source parsing;
+`SQLite3Instrumentor` only covers the cursor path agentgrep never takes, so it
+is not installed and cannot double-count. The same shortcut wrapper emits
 `agentgrep.otel.sqlite_total` metrics from normal app paths when the SQLite
 work belongs to an active app trace.
 
