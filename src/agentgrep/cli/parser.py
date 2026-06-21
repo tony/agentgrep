@@ -21,20 +21,22 @@ import re
 import sys
 import typing as t
 
-from agentgrep import (
-    AGENT_CHOICES,
+from agentgrep._text import (
     CLI_DESCRIPTION,
     FIND_DESCRIPTION,
     GREP_DESCRIPTION,
     SEARCH_DESCRIPTION,
     UI_DESCRIPTION,
+)
+from agentgrep.cli.help_theme import create_themed_formatter
+from agentgrep.records import (
+    AGENT_CHOICES,
     AgentName,
     ColorMode,
     GrepStyle,
     OutputMode,
     ProgressMode,
     SearchScope,
-    create_themed_formatter,
 )
 
 if t.TYPE_CHECKING:

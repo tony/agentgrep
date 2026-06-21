@@ -9,6 +9,7 @@ module. See ADR 0010.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import pathlib
@@ -20,6 +21,8 @@ from rich.text import Text as _RichText
 
 if t.TYPE_CHECKING:
     import collections.abc as cabc
+
+    from agentgrep.records import ColorMode
 
     PrivatePathBase = pathlib.Path
 else:
@@ -39,6 +42,7 @@ __all__ = [
     "SEARCH_DESCRIPTION",
     "SHELL_TOKEN_RE",
     "UI_DESCRIPTION",
+    "AnsiColors",
     "ContentFormat",
     "PrivatePath",
     "build_description",
@@ -48,6 +52,7 @@ __all__ = [
     "format_display_path",
     "highlight_matches",
     "highlight_query_spans",
+    "should_enable_color",
     "truncate_lines",
 ]
 
@@ -629,3 +634,101 @@ def detect_content_format(text: str) -> ContentFormat:
     if re.search(r"^#{1,6} \S", text, re.MULTILINE):
         return "markdown"
     return "text"
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class AnsiColors:
+    """Semantic ANSI colors for terminal status output."""
+
+    enabled: bool
+
+    SUCCESS: t.ClassVar[str] = "\x1b[32m"
+    WARNING: t.ClassVar[str] = "\x1b[33m"
+    ERROR: t.ClassVar[str] = "\x1b[31m"
+    INFO: t.ClassVar[str] = "\x1b[36m"
+    HEADING: t.ClassVar[str] = "\x1b[1;36m"
+    HIGHLIGHT: t.ClassVar[str] = "\x1b[35m"
+    MATCH: t.ClassVar[str] = "\x1b[1;31m"
+    LINE_NUMBER: t.ClassVar[str] = "\x1b[32m"
+    PATH: t.ClassVar[str] = "\x1b[38;5;177m"
+    MUTED: t.ClassVar[str] = "\x1b[34m"
+    WHITE: t.ClassVar[str] = "\x1b[37m"
+    ACCENT: t.ClassVar[str] = "\x1b[38;5;179m"
+    DIM: t.ClassVar[str] = "\x1b[38;5;245m"
+    RESET: t.ClassVar[str] = "\x1b[0m"
+
+    @classmethod
+    def for_stream(cls, color_mode: ColorMode, stream: t.TextIO) -> AnsiColors:
+        """Build semantic colors for ``stream`` and ``color_mode``."""
+        return cls(enabled=should_enable_color(color_mode, stream))
+
+    def colorize(self, text: str, color: str) -> str:
+        """Apply ``color`` to ``text`` when colors are enabled."""
+        if not self.enabled:
+            return text
+        return f"{color}{text}{self.RESET}"
+
+    def success(self, text: str) -> str:
+        """Format text as success."""
+        return self.colorize(text, self.SUCCESS)
+
+    def warning(self, text: str) -> str:
+        """Format text as warning."""
+        return self.colorize(text, self.WARNING)
+
+    def error(self, text: str) -> str:
+        """Format text as error."""
+        return self.colorize(text, self.ERROR)
+
+    def info(self, text: str) -> str:
+        """Format text as informational."""
+        return self.colorize(text, self.INFO)
+
+    def heading(self, text: str) -> str:
+        """Format text as a status heading."""
+        return self.colorize(text, self.HEADING)
+
+    def highlight(self, text: str) -> str:
+        """Format text as highlighted."""
+        return self.colorize(text, self.HIGHLIGHT)
+
+    def match(self, text: str) -> str:
+        """Format text as a matched span (rg-style red+bold)."""
+        return self.colorize(text, self.MATCH)
+
+    def line_number(self, text: str) -> str:
+        """Format text as a line-number prefix (rg-style green)."""
+        return self.colorize(text, self.LINE_NUMBER)
+
+    def path(self, text: str) -> str:
+        """Format text as a path prefix (bright purple)."""
+        return self.colorize(text, self.PATH)
+
+    def muted(self, text: str) -> str:
+        """Format text as muted."""
+        return self.colorize(text, self.MUTED)
+
+    def white(self, text: str) -> str:
+        """Format text as plain white."""
+        return self.colorize(text, self.WHITE)
+
+    def accent(self, text: str) -> str:
+        """Format text as a warm-amber search accent."""
+        return self.colorize(text, self.ACCENT)
+
+    def dim(self, text: str) -> str:
+        """Format text as dim (reduced intensity)."""
+        return self.colorize(text, self.DIM)
+
+
+def should_enable_color(color_mode: ColorMode, stream: t.TextIO) -> bool:
+    """Return whether output written to ``stream`` should use colors."""
+    if os.environ.get("NO_COLOR"):
+        return False
+    if color_mode == "never":
+        return False
+    if color_mode == "always":
+        return True
+    if os.environ.get("FORCE_COLOR"):
+        return True
+    return bool(getattr(stream, "isatty", lambda: False)())
