@@ -10410,8 +10410,7 @@ def test_parse_pi_context_mode_db_emits_events(tmp_path: pathlib.Path) -> None:
         "type TEXT, data TEXT, created_at TEXT)",
     )
     conn.execute(
-        "INSERT INTO session_events (session_id, type, data, created_at) "
-        "VALUES (?, ?, ?, ?)",
+        "INSERT INTO session_events (session_id, type, data, created_at) VALUES (?, ?, ?, ?)",
         ("s1", "tool_call", '{"tool":"rg","params":{"q":"login"}}', "2026-06-21"),
     )
     conn.commit()

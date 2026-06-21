@@ -3830,11 +3830,7 @@ def discover_pi_sources(
         label="PI_CODING_AGENT_SESSION_DIR",
     )
     context_mode_dir = home / ".pi" / "context-mode"
-    if (
-        not agent_dir.exists()
-        and not session_dir.exists()
-        and not context_mode_dir.exists()
-    ):
+    if not agent_dir.exists() and not session_dir.exists() and not context_mode_dir.exists():
         return []
     roots: dict[str, DiscoveryRoot] = {
         "default": agent_dir,
