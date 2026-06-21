@@ -58,3 +58,9 @@ by default; include it explicitly to parse it.
 `~/.cursor/skills/` (user) and `~/.cursor/skills-cursor/` (built-in).
 Instruction content that steers future sessions — inspectable (opt-in),
 parity with `claude.skills`.
+
+### cursor-cli.uploads
+
+Markdown attachments the user fed the agent as conversation input,
+under `~/.cursor/projects/<id>/uploads/*.md`. Inspectable (opt-in)
+supplementary content, not searched by default.

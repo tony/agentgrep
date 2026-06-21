@@ -1309,6 +1309,33 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
             ),
         ),
     ),
+    StoreDescriptor(
+        agent="cursor-cli",
+        store_id="cursor-cli.uploads",
+        role=StoreRole.SUPPLEMENTARY_CHAT,
+        format=StoreFormat.TEXT,
+        path_pattern="${HOME}/.cursor/projects/<id>/uploads/<name>.md",
+        observed_version="cursor-agent 2026.06.19-653a7fb",
+        observed_at=_CURSOR_CLI_OBSERVED_AT,
+        schema_notes=(
+            "User-uploaded Markdown attachments the user fed the agent as "
+            "conversation input (plan/reference extracts). Inspectable opt-in "
+            "supplementary content, not searched by default."
+        ),
+        coverage=StoreCoverage.INSPECTABLE,
+        search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="cursor-cli.uploads",
+                adapter_id="cursor_cli.uploads_text.v1",
+                path_kind="store_file",
+                source_kind="text",
+                home_subpath=(".cursor", "projects"),
+                glob="*.md",
+                path_parts_required=("uploads",),
+            ),
+        ),
+    ),
 )
 
 _CURSOR_IDE_STORES: tuple[StoreDescriptor, ...] = (
@@ -3575,7 +3602,7 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
 
 
 CATALOG = StoreCatalog(
-    catalog_version=19,
+    catalog_version=20,
     captured_at=_ANTIGRAVITY_OBSERVED_AT,
     stores=(
         *_CLAUDE_STORES,
