@@ -5,7 +5,6 @@ from __future__ import annotations
 import collections.abc as cabc
 import contextlib
 import hashlib
-import json
 import logging
 import os
 import pathlib
@@ -27,18 +26,6 @@ _SAFE_LOG_ATTRIBUTE_KEYS: frozenset[str] = frozenset(
     },
 )
 """Structured log extras that are classifiers rather than private values."""
-
-_STRUCTURED_LOG_IDENTITY_KEYS: frozenset[str] = frozenset(
-    {
-        "span_id",
-        "spanid",
-        "spanID",
-        "trace_id",
-        "traceid",
-        "traceID",
-    },
-)
-"""Non-project log record keys that are safe and useful in Loki bodies."""
 
 _COUNTER_METRIC_NAMES: frozenset[str] = frozenset(
     {
@@ -398,7 +385,6 @@ def build_backend(
             category=DeprecationWarning,
         )
         logging_handler = LoggingHandler(logger_provider=logger_provider)
-    logging_handler.setFormatter(_StructuredTelemetryLogFormatter())
 
     instrumentations = _install_auto_instrumentation(mode) if explicit else ()
     return OtelTelemetryBackend(
@@ -505,36 +491,6 @@ def _sanitized_log_record_dict(record: logging.LogRecord) -> dict[str, object]:
         del copied[key]
         copied.update(_redacted_log_attribute_metadata(key, value))
     return copied
-
-
-def _structured_log_body(record: logging.LogRecord) -> str:
-    """Return a privacy-safe structured JSON body for exported OTel logs."""
-    copied = _sanitized_log_record_dict(record)
-    body: dict[str, object] = {
-        "message": record.getMessage(),
-        "level": record.levelname,
-        "logger": record.name,
-    }
-    for key in sorted(copied):
-        value = copied[key]
-        if not (key.startswith("agentgrep_") or key in _STRUCTURED_LOG_IDENTITY_KEYS):
-            continue
-        if _is_log_json_scalar(value):
-            body[key] = value
-    return json.dumps(body, sort_keys=True, separators=(",", ":"))
-
-
-def _is_log_json_scalar(value: object) -> bool:
-    """Return whether ``value`` is safe to encode as a structured log scalar."""
-    return isinstance(value, str | int | float | bool) or value is None
-
-
-class _StructuredTelemetryLogFormatter(logging.Formatter):
-    """Formatter that sends structured JSON bodies to OTel only."""
-
-    def format(self, record: logging.LogRecord) -> str:
-        """Return the structured JSON log body."""
-        return _structured_log_body(record)
 
 
 def _is_sensitive_log_attribute(key: str) -> bool:

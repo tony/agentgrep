@@ -128,10 +128,13 @@ shutdown. The final shutdown still performs the last drain for the flush span
 itself. Pyroscope profile samples still require enough runtime and CPU to be
 sampled; the short MCP smoke proves traces/logs/metrics, not profile density.
 
-OTel log export formats each exported application log as one bounded JSON body
-after redacting sensitive project extras. The cost is one small serialization
-per exported log record. This does not install console handlers or change
-packaged-user output; it makes Loki query-stage parsing reliable for local QA.
+OTel log export keeps the plain log message as the record body and carries the
+redacted `agentgrep_*` extras as native OTel log attributes (Loki structured
+metadata), rather than re-encoding them into a JSON body. Sensitive extras are
+still redacted to shape metadata before export, and the active span's trace and
+span ids ride the OTel log record. This does not install console handlers or
+change packaged-user output; trace-linked logs and their fields are queryable in
+Loki without a query-stage JSON parse.
 
 Passive local telemetry (a git checkout with `AGENTGREP_OTEL` unset) still
 exports traces, metrics, and logs but skips Pyroscope and auto-instrumentation
