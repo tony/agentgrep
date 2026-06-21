@@ -2125,3 +2125,56 @@ def test_mcp_lifecycle_outcome_lands_on_lifecycle_span(case: _McpLifecycleCase) 
     root = next(s for s in backend.finished_spans if s.name == "agentgrep.mcp.server")
     assert lifecycle.attributes["agentgrep_outcome"] == case.expected_outcome
     assert "agentgrep_outcome" not in root.attributes
+
+
+class _StartSpanCase(t.NamedTuple):
+    """Parametrized case for span finish gating on a successful start."""
+
+    test_id: str
+    fail_start: bool
+    expected_finished: int
+
+
+_START_SPAN_CASES: tuple[_StartSpanCase, ...] = (
+    _StartSpanCase("start-fails-no-phantom", fail_start=True, expected_finished=0),
+    _StartSpanCase("start-ok-records-one", fail_start=False, expected_finished=1),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    _START_SPAN_CASES,
+    ids=[case.test_id for case in _START_SPAN_CASES],
+)
+def test_span_finish_requires_successful_start(
+    case: _StartSpanCase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """finish_span runs only when the backend span actually started."""
+    import agentgrep._telemetry as telemetry
+
+    class _RaisingStartContext(contextlib.AbstractContextManager[None]):
+        def __enter__(self) -> None:
+            message = "start failed"
+            raise RuntimeError(message)
+
+        def __exit__(self, *exc_info: object) -> None:
+            return None
+
+    backend = telemetry.InMemoryTelemetryBackend()
+    if case.fail_start:
+
+        def _failing_start(span: telemetry._SpanState) -> contextlib.AbstractContextManager[None]:
+            del span
+            return _RaisingStartContext()
+
+        monkeypatch.setattr(backend, "start_span", _failing_start)
+    telemetry.configure_backend(backend)
+    try:
+        guard = pytest.raises(RuntimeError) if case.fail_start else contextlib.nullcontext()
+        with guard, telemetry.span("agentgrep.cli.invocation"):
+            pass
+    finally:
+        telemetry.configure_backend(None)
+
+    assert len(backend.finished_spans) == case.expected_finished
