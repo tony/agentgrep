@@ -32,7 +32,7 @@ from agentgrep.stores import (
 OBSERVED_AT = datetime.date(2026, 5, 17)
 _GROK_OBSERVED_AT = datetime.date(2026, 6, 21)
 _CLAUDE_HISTORY_OBSERVED_AT = datetime.date(2026, 5, 29)
-_CURSOR_CONFIG_OBSERVED_AT = datetime.date(2026, 5, 30)
+_CURSOR_IDE_OBSERVED_AT = datetime.date(2026, 6, 21)
 _PI_OBSERVED_AT = datetime.date(2026, 6, 21)
 _OPENCODE_OBSERVED_AT = datetime.date(2026, 6, 21)
 _ANTIGRAVITY_OBSERVED_AT = datetime.date(2026, 6, 21)
@@ -1295,7 +1295,7 @@ _CURSOR_IDE_STORES: tuple[StoreDescriptor, ...] = (
             "win32": "%APPDATA%/Cursor/User/globalStorage/state.vscdb",
         },
         observed_version="Cursor IDE (current observed paths)",
-        observed_at=OBSERVED_AT,
+        observed_at=_CURSOR_IDE_OBSERVED_AT,
         upstream_ref=("agentgrep.parse_cursor_state_db / CURSOR_STATE_TOKENS"),
         schema_notes=(
             "Cursor IDE chat storage; keys in `ItemTable`/`cursorDiskKV` containing "
@@ -1349,7 +1349,7 @@ _CURSOR_IDE_STORES: tuple[StoreDescriptor, ...] = (
             "win32": "%APPDATA%/Cursor/User/workspaceStorage/<hash>/state.vscdb",
         },
         observed_version="Cursor IDE (current observed paths)",
-        observed_at=_CURSOR_CONFIG_OBSERVED_AT,
+        observed_at=_CURSOR_IDE_OBSERVED_AT,
         upstream_ref=("agentgrep.parse_cursor_state_db / CURSOR_STATE_TOKENS"),
         schema_notes=(
             "Per-workspace `state.vscdb`, one per opened project under "
