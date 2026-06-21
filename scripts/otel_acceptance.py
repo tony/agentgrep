@@ -677,7 +677,7 @@ def query_logs(run_id: str, vcs_identity: dict[str, dict[str, str]]) -> dict[str
     """Return Loki log evidence with trace IDs."""
     query = urllib.parse.urlencode(
         {
-            "query": '{service_name="agentgrep"}',
+            "query": _loki_log_query(run_id),
             "direction": "backward",
             "limit": "500",
         },
@@ -693,14 +693,15 @@ def query_logs(run_id: str, vcs_identity: dict[str, dict[str, str]]) -> dict[str
         if stream_dict is None:
             continue
         labels = _dict_value(stream_dict, "stream")
-        if labels.get("agentgrep_debug_session_id") != run_id:
-            continue
         if not _labels_match(labels, expected_vcs_labels):
             missing_vcs.append(_selected_labels(labels, expected_vcs_labels))
             continue
         for value in _list_value(stream_dict, "values"):
-            rendered = json.dumps({"labels": labels, "value": value}, sort_keys=True)
-            if "trace" in rendered.lower() and "span" in rendered.lower():
+            fields = _loki_log_fields(labels, value)
+            if fields.get("agentgrep_debug_session_id") != run_id:
+                continue
+            rendered = json.dumps({"labels": fields, "value": value}, sort_keys=True)
+            if _loki_log_has_trace_link(fields, value):
                 linked.append(rendered[:500])
             else:
                 unlinked.append(rendered[:500])
@@ -714,6 +715,47 @@ def query_logs(run_id: str, vcs_identity: dict[str, dict[str, str]]) -> dict[str
         message = "no trace-linked agentgrep logs found"
         raise AcceptanceCheckError(message)
     return {"count": len(linked), "sample": linked[0]}
+
+
+def _loki_log_query(run_id: str) -> str:
+    """Return the LogQL query used for run-scoped structured log checks."""
+    return f'{{service_name="agentgrep"}} | json | agentgrep_debug_session_id={json.dumps(run_id)}'
+
+
+def _loki_log_fields(
+    stream_labels: cabc.Mapping[str, object],
+    value: object,
+) -> dict[str, object]:
+    """Return stream labels plus JSON fields parsed from a Loki value."""
+    fields = dict(stream_labels)
+    if not isinstance(value, list | tuple) or len(value) < 2 or not isinstance(value[1], str):
+        return fields
+    with contextlib.suppress(json.JSONDecodeError):
+        body = json.loads(value[1])
+        if isinstance(body, dict):
+            fields.update(body)
+    return fields
+
+
+def _loki_log_has_trace_link(fields: cabc.Mapping[str, object], value: object) -> bool:
+    """Return whether a Loki log record carries trace and span identifiers."""
+    if any(
+        fields.get(key)
+        for key in (
+            "trace_id",
+            "traceid",
+            "traceID",
+            "span_id",
+            "spanid",
+            "spanID",
+        )
+    ):
+        field_names = {key.lower() for key, field_value in fields.items() if field_value}
+        return any(name in field_names for name in ("trace_id", "traceid")) and any(
+            name in field_names for name in ("span_id", "spanid")
+        )
+    rendered = json.dumps({"labels": fields, "value": value}, sort_keys=True).lower()
+    return "trace" in rendered and "span" in rendered
 
 
 def query_profiles(run_id: str, vcs_identity: dict[str, dict[str, str]]) -> dict[str, object]:
