@@ -5,7 +5,7 @@ defines the normalized record dataclasses, their JSON payload ``TypedDict``
 shapes, the public ``Literal`` and type aliases every surface shares, and the
 small set of domain constants. It imports only the standard library and
 :mod:`agentgrep.stores`; it must never import the engine, adapters, discovery,
-or any frontend. See ADR 0008 for the module-boundary contract.
+or any frontend. See ADR 0010 for the module-boundary contract.
 """
 
 from __future__ import annotations

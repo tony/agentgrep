@@ -4,7 +4,7 @@ Private module (the leading underscore marks it internal): these
 ``typing.Protocol`` definitions describe the minimal surfaces agentgrep needs
 from pydantic, argparse help themes, Rich, and Textual so the engine and CLI
 stay duck-typed and the pydantic-free fallback keeps working. They carry no
-behavior. See ADR 0008.
+behavior. See ADR 0010.
 """
 
 from __future__ import annotations
