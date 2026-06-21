@@ -166,23 +166,13 @@ def _agentgrep_pytest_span_attributes(item: object) -> dict[str, object]:
 
 @contextlib.contextmanager
 def _agentgrep_otel_pytest_item_span(item: object) -> cabc.Iterator[None]:
-    """Create a non-single-root trace for one collected pytest item."""
+    """Open one ``agentgrep.pytest.test`` root span for a collected item."""
     from agentgrep import _telemetry
 
     if _telemetry.active_backend() is None:
         yield
         return
-    attributes = _agentgrep_pytest_span_attributes(item)
-    with (
-        _telemetry.span(
-            "agentgrep.pytest.test",
-            **attributes,
-        ),
-        _telemetry.span(
-            "agentgrep.pytest.call",
-            **attributes,
-        ),
-    ):
+    with _telemetry.span("agentgrep.pytest.test", **_agentgrep_pytest_span_attributes(item)):
         yield
 
 
