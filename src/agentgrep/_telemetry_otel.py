@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import collections.abc as cabc
 import contextlib
-import functools
 import hashlib
 import logging
 import os
@@ -44,46 +43,6 @@ def _metric_is_counter(name: str) -> bool:
     :data:`_COUNTER_METRIC_NAMES`; every other metric is a histogram.
     """
     return name.endswith(".count") or name in _COUNTER_METRIC_NAMES
-
-
-def _current_native_span_id() -> str | None:
-    """Return the active native span id as 16-hex, or None outside a valid span."""
-    try:
-        from opentelemetry import trace
-        from opentelemetry.trace import format_span_id
-
-        span_context = trace.get_current_span().get_span_context()
-        return format_span_id(span_context.span_id) if span_context.is_valid else None
-    except Exception:
-        return None
-
-
-def _worker_profiler_thread_tag(fn: cabc.Callable[..., t.Any]) -> cabc.Callable[..., t.Any]:
-    """Tag the worker thread running ``fn`` with the propagated span id.
-
-    ``PyroscopeSpanProcessor`` only tags the thread that creates a root span, so
-    CPU work dispatched to executor / ``to_thread`` / Textual worker threads
-    carries no ``span_id``. This wrapper runs on the worker, reads the span id
-    propagated by ``contextvars.copy_context``, and tags the on-CPU thread for
-    the call's duration so ``tracesToProfilesV2`` can join the busy thread to the
-    span. Failures degrade to running ``fn`` untagged.
-    """
-
-    @functools.wraps(fn)
-    def wrapped(*args: t.Any, **kwargs: t.Any) -> t.Any:
-        span_id = _current_native_span_id()
-        if span_id is None:
-            return fn(*args, **kwargs)
-        try:
-            import pyroscope
-
-            scope = pyroscope.tag_wrapper({"span_id": span_id})
-        except Exception:
-            return fn(*args, **kwargs)
-        with scope:
-            return fn(*args, **kwargs)
-
-    return wrapped
 
 
 class OtelTelemetryBackend:
@@ -237,7 +196,6 @@ class OtelTelemetryBackend:
 
     def shutdown(self) -> None:
         """Flush and release telemetry processors."""
-        _telemetry._PROFILER_THREAD_TAGGER = None
         for instrumentation in self._instrumentations:
             with contextlib.suppress(Exception):
                 instrumentation.uninstrument()
@@ -341,8 +299,6 @@ def build_backend(
         {key: value for key, value in resource_attributes.items() if value is not None},
     )
     profiles_started = _configure_profiles(resource_attributes) if explicit else False
-    if profiles_started:
-        _telemetry._PROFILER_THREAD_TAGGER = _worker_profiler_thread_tag
 
     tracer_provider = TracerProvider(resource=resource)
     if profiles_started:
