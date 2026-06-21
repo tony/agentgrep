@@ -415,7 +415,7 @@ dirty candidates, pytest retries, or agent-loop identifiers in
 Do not create empty root spans or orphaned low-level spans. Root spans must be
 app-level operations such as `agentgrep.cli.invocation`,
 `agentgrep.tui.session`,
-`agentgrep.mcp.request`, `agentgrep.mcp.tool`, `agentgrep.benchmark.run`,
+`mcp.server.request`, `mcp.server.tool`, `agentgrep.benchmark.run`,
 `agentgrep.profile_engine.run`, `agentgrep.pytest.session`,
 `agentgrep.pytest.test`, or `agentgrep.otel.smoke`. Child spans should
 represent logical work, not every keypress, render frame, event-loop callback,
