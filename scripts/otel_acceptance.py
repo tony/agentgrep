@@ -30,7 +30,6 @@ DEFAULT_LOKI_BASE_URL = "http://localhost:3000/api/datasources/proxy/uid/loki"
 DEFAULT_PROMETHEUS_BASE_URL = "http://localhost:3000/api/datasources/proxy/uid/prometheus"
 APPROVED_ROOTS = {
     "agentgrep.cli.invocation",
-    "agentgrep.cli.interactive_session",
     "agentgrep.mcp.server",
     "agentgrep.tui.session",
     "agentgrep.mcp.request",
