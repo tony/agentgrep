@@ -10329,3 +10329,35 @@ def test_parse_gemini_memory_emits_markdown(tmp_path: pathlib.Path) -> None:
     assert len(records) == 1
     assert "prefer ripgrep" in records[0].text
     assert records[0].kind == "history"
+
+
+def test_parse_antigravity_cli_transcript_emits_turns(tmp_path: pathlib.Path) -> None:
+    """antigravity-cli transcript yields readable turns; null content is skipped."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    logs = tmp_path / "brain" / "uuid-1" / ".system_generated" / "logs"
+    logs.mkdir(parents=True)
+    transcript = logs / "transcript_full.jsonl"
+    transcript.write_text(
+        '{"type":"USER_INPUT","source":"USER_EXPLICIT",'
+        '"created_at":"2026-06-21T00:00:00Z","content":"add a retry helper"}\n'
+        '{"type":"CONVERSATION_HISTORY","source":"SYSTEM","content":null}\n'
+        '{"type":"ASSISTANT","content":"here is the helper"}\n',
+        encoding="utf-8",
+    )
+    source = agentgrep.SourceHandle(
+        agent="antigravity-cli",
+        store="antigravity-cli.transcript",
+        adapter_id="antigravity_cli.transcript_jsonl.v1",
+        path=transcript,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=1,
+    )
+    records = list(agentgrep.iter_source_records(source))
+    assert len(records) == 2
+    assert records[0].kind == "prompt"
+    assert records[0].role == "user"
+    assert "retry helper" in records[0].text
+    assert records[0].conversation_id == "uuid-1"
+    assert records[1].kind == "history"

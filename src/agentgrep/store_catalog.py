@@ -2700,6 +2700,41 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
     ),
     StoreDescriptor(
         agent="antigravity-cli",
+        store_id="antigravity-cli.transcript",
+        role=StoreRole.SUPPLEMENTARY_CHAT,
+        format=StoreFormat.JSONL,
+        path_pattern=(
+            "${HOME}/.gemini/antigravity-cli/brain/<conversation_uuid>/"
+            ".system_generated/logs/transcript_full.jsonl"
+        ),
+        observed_version="agy v1.0.10 (observed 2026-06-21)",
+        observed_at=_ANTIGRAVITY_OBSERVED_AT,
+        schema_notes=(
+            "Readable JSONL transcript log under a brain conversation's "
+            "`.system_generated/logs/`. Each line is a step record "
+            "(`type`, `source`, `status`, `created_at`, `content`); string "
+            "`content` carries the user/assistant/tool turns. This is the "
+            "readable counterpart to the opaque protobuf "
+            "`antigravity-cli.conversations` and reaches text the brain "
+            "Markdown glob cannot. The truncated `transcript.jsonl` sibling is "
+            "skipped in favour of `transcript_full.jsonl`."
+        ),
+        distinguishes_from=("antigravity-cli.conversations", "antigravity-cli.brain"),
+        coverage=StoreCoverage.INSPECTABLE,
+        search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="antigravity-cli.transcript",
+                adapter_id="antigravity_cli.transcript_jsonl.v1",
+                path_kind="session_file",
+                source_kind="jsonl",
+                home_subpath=("brain",),
+                glob="**/transcript_full.jsonl",
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="antigravity-cli",
         store_id="antigravity-cli.implicit",
         role=StoreRole.SUPPLEMENTARY_CHAT,
         format=StoreFormat.PROTOBUF,
@@ -3542,7 +3577,7 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
 
 
 CATALOG = StoreCatalog(
-    catalog_version=18,
+    catalog_version=19,
     captured_at=_ANTIGRAVITY_OBSERVED_AT,
     stores=(
         *_CLAUDE_STORES,

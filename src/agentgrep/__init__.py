@@ -155,6 +155,7 @@ ITER_SOURCE_RECORD_ADAPTERS: frozenset[str] = frozenset(
         "antigravity_cli.conversations_sqlite_protobuf.v1",
         "antigravity_cli.history_jsonl.v1",
         "antigravity_cli.implicit_protobuf.v1",
+        "antigravity_cli.transcript_jsonl.v1",
         "antigravity_ide.brain_text.v1",
         "antigravity_ide.conversations_protobuf.v1",
         "antigravity_ide.implicit_protobuf.v1",
@@ -4409,6 +4410,9 @@ def iter_source_records(
     if source.adapter_id == "antigravity_cli.conversations_sqlite_protobuf.v1":
         yield from parse_antigravity_cli_conversation_db(source)
         return
+    if source.adapter_id == "antigravity_cli.transcript_jsonl.v1":
+        yield from parse_antigravity_cli_transcript(source)
+        return
     if source.adapter_id in {
         "antigravity_cli.implicit_protobuf.v1",
         "antigravity_ide.conversations_protobuf.v1",
@@ -6609,6 +6613,46 @@ def parse_antigravity_cli_conversation_db(
         return
     finally:
         connection.close()
+
+
+def parse_antigravity_cli_transcript(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse an Antigravity CLI brain transcript JSONL log.
+
+    Each line is a step record (`type`, `source`, `status`, `created_at`,
+    `content`). Only string-valued `content` carries readable text — the
+    assistant and tool turns here are the readable counterpart to the opaque
+    protobuf ``conversations/<uuid>.db`` that the brain Markdown glob cannot
+    reach.
+    """
+    parents = source.path.parents
+    conversation_id = parents[2].name if len(parents) > 2 else None
+    for event in _iter_jsonl(source.path):
+        if not isinstance(event, dict):
+            continue
+        mapping = t.cast("dict[str, object]", event)
+        content = mapping.get("content")
+        if not isinstance(content, str) or not content.strip():
+            continue
+        record_type = as_optional_str(mapping.get("type")) or ""
+        is_user = record_type == "USER_INPUT"
+        metadata: dict[str, object] = {}
+        if record_type:
+            metadata["type"] = record_type
+        yield SearchRecord(
+            kind="prompt" if is_user else "history",
+            agent=source.agent,
+            store=source.store,
+            adapter_id=source.adapter_id,
+            path=source.path,
+            text=content,
+            role="user" if is_user else "assistant",
+            timestamp=as_optional_str(mapping.get("created_at")),
+            session_id=conversation_id,
+            conversation_id=conversation_id,
+            metadata=metadata,
+        )
 
 
 def parse_antigravity_protobuf_file(
