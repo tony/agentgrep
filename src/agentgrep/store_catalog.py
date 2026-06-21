@@ -3359,6 +3359,101 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
             ),
         ),
     ),
+    StoreDescriptor(
+        agent="grok",
+        store_id="grok.sessions.system_prompt",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.TEXT,
+        path_pattern=(
+            "${GROK_HOME or ${HOME}/.grok}/sessions/<url_encoded_project>/"
+            "<session_uuid>/system_prompt.txt"
+        ),
+        env_overrides=("GROK_HOME",),
+        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
+        observed_at=_GROK_OBSERVED_AT,
+        schema_notes=(
+            "The rendered system prompt for the session (agent instructions "
+            "plus injected context). Agent-side boilerplate, largely shared "
+            "across sessions; documented for inventory, not searched."
+        ),
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="grok",
+        store_id="grok.sessions.prompt_context",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern=(
+            "${GROK_HOME or ${HOME}/.grok}/sessions/<url_encoded_project>/"
+            "<session_uuid>/prompt_context.json"
+        ),
+        env_overrides=("GROK_HOME",),
+        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
+        observed_at=_GROK_OBSERVED_AT,
+        schema_notes=(
+            "Session prompt-context metadata: working_directory, "
+            "agents_md_files, persona_summaries, os_name, current_date, "
+            "prompt_mode, audience, version. Configuration, not chat."
+        ),
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="grok",
+        store_id="grok.sessions.hunk_records",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSONL,
+        path_pattern=(
+            "${GROK_HOME or ${HOME}/.grok}/sessions/<url_encoded_project>/"
+            "<session_uuid>/hunk_records.jsonl"
+        ),
+        env_overrides=("GROK_HOME",),
+        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
+        observed_at=_GROK_OBSERVED_AT,
+        schema_notes=(
+            "Edit-attribution JSONL (filePath, hunkStart/End, linesAdded/"
+            "Removed, authorType, promptIndex, eventType). Code-change "
+            "telemetry, no prompt payload; documented, not searched."
+        ),
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="grok",
+        store_id="grok.sessions.updates",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSONL,
+        path_pattern=(
+            "${GROK_HOME or ${HOME}/.grok}/sessions/<url_encoded_project>/"
+            "<session_uuid>/updates.jsonl"
+        ),
+        env_overrides=("GROK_HOME",),
+        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
+        observed_at=_GROK_OBSERVED_AT,
+        schema_notes=(
+            "ACP-style session/update notification stream (method, "
+            "params.sessionId, update payloads). Protocol traffic, not chat; "
+            "documented, not searched."
+        ),
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="grok",
+        store_id="grok.sessions.terminal",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.TEXT,
+        path_pattern=(
+            "${GROK_HOME or ${HOME}/.grok}/sessions/<url_encoded_project>/"
+            "<session_uuid>/terminal/call-<id>.log"
+        ),
+        env_overrides=("GROK_HOME",),
+        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
+        observed_at=_GROK_OBSERVED_AT,
+        schema_notes=(
+            "Per-tool-call terminal stdout/stderr logs (thousands per active "
+            "project). Tool output, not chat, and high-volume; documented for "
+            "inventory and deliberately not searched."
+        ),
+        search_by_default=False,
+    ),
 )
 
 
@@ -3739,7 +3834,7 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
 
 
 CATALOG = StoreCatalog(
-    catalog_version=25,
+    catalog_version=26,
     captured_at=_ANTIGRAVITY_OBSERVED_AT,
     stores=(
         *_CLAUDE_STORES,
