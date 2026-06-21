@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import collections.abc as cabc
 import concurrent.futures
 import json
 import logging
@@ -880,6 +881,93 @@ def test_executor_submit_preserves_current_trace_context() -> None:
         telemetry.configure_backend(None)
 
     assert worker_span_id == root_span_id
+
+
+def test_profiler_thread_tag_is_noop_without_tagger() -> None:
+    """Without an installed tagger, _profiler_thread_tag returns fn unchanged."""
+    import agentgrep._telemetry as telemetry
+
+    def fn() -> int:
+        return 1
+
+    assert telemetry._PROFILER_THREAD_TAGGER is None
+    assert telemetry._profiler_thread_tag(fn) is fn
+
+
+async def test_profiler_thread_tagger_wraps_worker_callables(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """executor_submit / to_thread / wrap_callable_context route fn through the tagger."""
+    import agentgrep._telemetry as telemetry
+
+    tagged: list[str] = []
+
+    def fake_tagger(fn: cabc.Callable[..., t.Any]) -> cabc.Callable[..., t.Any]:
+        def wrapped(*args: t.Any, **kwargs: t.Any) -> t.Any:
+            tagged.append("x")
+            return fn(*args, **kwargs)
+
+        return wrapped
+
+    monkeypatch.setattr(telemetry, "_PROFILER_THREAD_TAGGER", fake_tagger)
+
+    def work() -> int:
+        return 7
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        assert telemetry.executor_submit(executor, work).result(timeout=5) == 7
+    assert await telemetry.to_thread(work) == 7
+    assert telemetry.wrap_callable_context(work)() == 7
+    assert tagged == ["x", "x", "x"]
+
+
+def test_worker_profiler_thread_tag_tags_native_span_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The worker tagger tags the on-CPU thread with the active native span id."""
+    import contextlib
+
+    import pyroscope
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.trace import format_span_id
+
+    from agentgrep import _telemetry_otel
+
+    recorded: list[dict[str, str]] = []
+
+    @contextlib.contextmanager
+    def fake_tag_wrapper(tags: dict[str, str]) -> cabc.Iterator[None]:
+        recorded.append(dict(tags))
+        yield
+
+    monkeypatch.setattr(pyroscope, "tag_wrapper", fake_tag_wrapper)
+
+    ran: list[bool] = []
+
+    def work() -> int:
+        ran.append(True)
+        return 5
+
+    wrapped = _telemetry_otel._worker_profiler_thread_tag(work)
+
+    assert wrapped() == 5
+    assert recorded == []
+
+    provider = TracerProvider()
+    tracer = provider.get_tracer("test")
+    with tracer.start_as_current_span("x") as span:
+        expected = format_span_id(span.get_span_context().span_id)
+        assert wrapped() == 5
+    provider.shutdown()
+
+    assert ran == [True, True]
+    assert recorded == [{"span_id": expected}]
+
+
+def test_format_span_id_matches_pyroscope_thread_tag_format() -> None:
+    """format_span_id matches PyroscopeSpanProcessor's 016x form for join parity."""
+    from opentelemetry.trace import format_span_id
+
+    span_id = 0x1122334455667788
+    assert format_span_id(span_id) == format(span_id, "016x")
 
 
 def test_span_mirrors_native_otel_trace_ids() -> None:
