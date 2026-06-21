@@ -1116,7 +1116,7 @@ def test_mcp_request_inherits_inbound_traceparent(
     try:
         with _clean_native_otel_context():
             inbound = middleware._inbound_otel_context()
-            detach = middleware._attach_otel_context(inbound)
+            detach = telemetry.attach_otel_context(inbound)
             try:
                 with telemetry.span(
                     "mcp.server.request",
@@ -2178,3 +2178,11 @@ def test_span_finish_requires_successful_start(
         telemetry.configure_backend(None)
 
     assert len(backend.finished_spans) == case.expected_finished
+
+
+def test_attach_otel_context_no_op_without_inbound() -> None:
+    """attach_otel_context returns a callable no-op when there is no inbound context."""
+    import agentgrep._telemetry as telemetry
+
+    detach = telemetry.attach_otel_context(None)
+    detach()

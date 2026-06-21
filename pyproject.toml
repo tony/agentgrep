@@ -302,6 +302,9 @@ convention = "numpy"
 # and teardown failures must degrade to the dependency-light no-op facade.
 "src/agentgrep/_telemetry.py" = ["BLE001"]
 "src/agentgrep/_telemetry_otel.py" = ["BLE001"]
+# Inbound trace context crosses optional MCP and FastMCP internals. Any context
+# access or extraction failure must degrade to an unparented request.
+"src/agentgrep/mcp/middleware.py" = ["BLE001"]
 # The documentation harness exists to run the Python examples embedded in the
 # docs; `exec` of a compiled example in an isolated namespace is its whole
 # job, not an untrusted-input hazard. Whatever an example raises is the result
