@@ -1169,7 +1169,7 @@ def _query_language_root_full_scan_warnings(
     spans: tuple[ProfileSpanSummary, ...],
 ) -> list[str]:
     """Return analyzer warnings for query-language conversation full scans."""
-    counts: dict[str, int] = {}
+    command_spans: dict[str, list[ProfileSpanSummary]] = {}
     for span in spans:
         command_name = span.command_name
         if "query" not in command_name or "conversations" not in command_name:
@@ -1179,14 +1179,34 @@ def _query_language_root_full_scan_warnings(
         source_strategy = _span_attribute_text(span.attributes, "agentgrep_source_strategy")
         if source_strategy != "root_full_scan":
             continue
-        counts[command_name] = counts.get(command_name, 0) + 1
-    return [
-        (
-            f"{command_name} query-language conversation profile used "
-            f"root_full_scan for {count} source span(s)"
+        command_spans.setdefault(command_name, []).append(span)
+
+    warnings: list[str] = []
+    for command_name, grouped_spans in sorted(command_spans.items()):
+        records_seen = sum(
+            _span_attribute_int(span.attributes, "agentgrep_records_seen") for span in grouped_spans
         )
-        for command_name, count in sorted(counts.items())
-    ]
+        matches_seen = sum(
+            _span_attribute_int(span.attributes, "agentgrep_matches_seen") for span in grouped_spans
+        )
+        duration = sum(span.duration_seconds for span in grouped_spans)
+        top_span = max(grouped_spans, key=lambda span: span.duration_seconds)
+        top = "/".join(
+            (
+                _span_attribute_text(top_span.attributes, "agentgrep_agent"),
+                _span_attribute_text(top_span.attributes, "agentgrep_store"),
+                _span_attribute_text(top_span.attributes, "agentgrep_adapter_id"),
+                _span_attribute_text(top_span.attributes, "agentgrep_source_kind"),
+                _span_attribute_text(top_span.attributes, "agentgrep_source_strategy"),
+            ),
+        )
+        warnings.append(
+            f"{command_name} query-language conversation profile used "
+            f"root_full_scan for {len(grouped_spans)} source span(s), "
+            f"{records_seen} record(s), {matches_seen} match(es), "
+            f"{duration:.3f}s; top={top}",
+        )
+    return warnings
 
 
 def build_analysis_report(
