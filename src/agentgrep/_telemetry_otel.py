@@ -40,6 +40,23 @@ _STRUCTURED_LOG_IDENTITY_KEYS: frozenset[str] = frozenset(
 )
 """Non-project log record keys that are safe and useful in Loki bodies."""
 
+_COUNTER_METRIC_NAMES: frozenset[str] = frozenset(
+    {
+        "agentgrep.otel.cpu_loops",
+        "agentgrep.otel.sqlite_total",
+    },
+)
+"""Monotonic counter metrics whose names do not carry a ``.count`` suffix."""
+
+
+def _metric_is_counter(name: str) -> bool:
+    """Return whether a metric name uses a monotonic counter instrument.
+
+    Counters carry a ``.count`` suffix or appear in
+    :data:`_COUNTER_METRIC_NAMES`; every other metric is a histogram.
+    """
+    return name.endswith(".count") or name in _COUNTER_METRIC_NAMES
+
 
 class OtelTelemetryBackend:
     """OpenTelemetry-backed telemetry backend."""
@@ -123,7 +140,7 @@ class OtelTelemetryBackend:
         attributes: _telemetry.TelemetryAttributes,
     ) -> None:
         """Record a named metric point."""
-        if name.endswith(".count"):
+        if _metric_is_counter(name):
             counter = self._counters.get(name)
             if counter is None:
                 counter = self._meter.create_counter(name)
