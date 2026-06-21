@@ -173,7 +173,9 @@ because they have disjoint data homes and on-disk formats.
   default, since it overlaps the cleaner transcripts.
   `cursor-cli.worktrees` is catalogued with `role=SOURCE_TREE` and
   `search_by_default=False` so the adapter never indexes multi-gigabyte
-  git working trees as chat history.
+  git working trees as chat history. `cursor-cli.skills` covers the
+  `SKILL.md` definitions under `~/.cursor/skills/` and
+  `~/.cursor/skills-cursor/` as inspectable instruction text.
 - **`cursor-ide`** is parsed by `cursor_ide.state_vscdb_modern.v1` /
   `cursor_ide.state_vscdb_legacy.v1` via VS Code-style `state.vscdb`
   SQLite. `cursor-ide.state_vscdb` covers the global database and

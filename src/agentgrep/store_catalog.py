@@ -1282,6 +1282,33 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
             ),
         ),
     ),
+    StoreDescriptor(
+        agent="cursor-cli",
+        store_id="cursor-cli.skills",
+        role=StoreRole.INSTRUCTION,
+        format=StoreFormat.TEXT,
+        path_pattern="${HOME}/.cursor/{skills,skills-cursor}/<skill>/SKILL.md",
+        observed_version="cursor-agent 2026.06.19-653a7fb",
+        observed_at=_CURSOR_CLI_OBSERVED_AT,
+        schema_notes=(
+            "Skill definitions installed for cursor-agent — `SKILL.md` files "
+            "with YAML frontmatter under `~/.cursor/skills/` (user) and "
+            "`~/.cursor/skills-cursor/` (built-in). Instruction content that "
+            "steers future sessions; inspectable, parity with claude.skills."
+        ),
+        coverage=StoreCoverage.INSPECTABLE,
+        search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="cursor-cli.skills",
+                adapter_id="cursor_cli.skills_text.v1",
+                path_kind="store_file",
+                source_kind="text",
+                home_subpath=(".cursor",),
+                glob="SKILL.md",
+            ),
+        ),
+    ),
 )
 
 _CURSOR_IDE_STORES: tuple[StoreDescriptor, ...] = (
@@ -3515,7 +3542,7 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
 
 
 CATALOG = StoreCatalog(
-    catalog_version=17,
+    catalog_version=18,
     captured_at=_ANTIGRAVITY_OBSERVED_AT,
     stores=(
         *_CLAUDE_STORES,
