@@ -1165,6 +1165,30 @@ def _source_strategy_groups(
     )
 
 
+def _query_language_root_full_scan_warnings(
+    spans: tuple[ProfileSpanSummary, ...],
+) -> list[str]:
+    """Return analyzer warnings for query-language conversation full scans."""
+    counts: dict[str, int] = {}
+    for span in spans:
+        command_name = span.command_name
+        if "query" not in command_name or "conversations" not in command_name:
+            continue
+        if span.name != "search.collect.source":
+            continue
+        source_strategy = _span_attribute_text(span.attributes, "agentgrep_source_strategy")
+        if source_strategy != "root_full_scan":
+            continue
+        counts[command_name] = counts.get(command_name, 0) + 1
+    return [
+        (
+            f"{command_name} query-language conversation profile used "
+            f"root_full_scan for {count} source span(s)"
+        )
+        for command_name, count in sorted(counts.items())
+    ]
+
+
 def build_analysis_report(
     measurements: list[Measurement],
     *,
@@ -1184,6 +1208,7 @@ def build_analysis_report(
         warnings.append(f"{sampleless_count} measurement(s) have no samples")
     if profile_capture_errors:
         warnings.append(f"{profile_capture_errors} profile capture(s) failed")
+    warnings.extend(_query_language_root_full_scan_warnings(all_spans))
     return AnalysisReport(
         artifact_label=_analysis_artifact_label(artifact_label),
         command_summaries=_command_summaries(

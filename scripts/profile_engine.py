@@ -11,7 +11,9 @@
 from __future__ import annotations
 
 import argparse
+import collections.abc as cabc
 import dataclasses
+import hashlib
 import io
 import json
 import logging
@@ -613,6 +615,41 @@ def _set_run_span_attributes(payload: dict[str, object], *, output_format: str) 
             _telemetry.set_span_attribute("agentgrep_scope", scope)
 
 
+def _record_query_strategy_summary(
+    payload: dict[str, object],
+    *,
+    query_language: bool,
+    terms: cabc.Sequence[str],
+) -> None:
+    """Attach safe query-language scan-shape metadata to the active root span."""
+    if not query_language:
+        return
+    query_text = " ".join(terms)
+    query_hash = hashlib.sha256(query_text.encode("utf-8")).hexdigest()[:16]
+    strategy_groups = _strategy_group_summaries(payload)
+    root_full_scan_count = sum(
+        group.source_count for group in strategy_groups if group.strategy == "root_full_scan"
+    )
+    source_count = sum(group.source_count for group in strategy_groups)
+    dominant = max(strategy_groups, key=lambda group: group.source_count, default=None)
+    attributes: dict[str, object] = {
+        "agentgrep_surface": "profile_engine",
+        "agentgrep_operation": "profile_engine.strategy_summary",
+        "agentgrep_query_language": True,
+        "agentgrep_query_text_len": len(query_text),
+        "agentgrep_query_hash": query_hash,
+        "agentgrep_strategy_group_count": len(strategy_groups),
+        "agentgrep_source_count": source_count,
+        "agentgrep_root_full_scan_source_count": root_full_scan_count,
+    }
+    if dominant is not None:
+        attributes["agentgrep_dominant_source_strategy"] = dominant.strategy
+        attributes["agentgrep_dominant_source_count"] = dominant.source_count
+    for key, value in attributes.items():
+        _telemetry.set_span_attribute(key, value)
+    logger.info("profile engine strategy summarized", extra=attributes)
+
+
 def _system_exit_code(exc: SystemExit) -> int:
     """Return a numeric ``SystemExit`` code."""
     if isinstance(exc.code, int):
@@ -692,6 +729,11 @@ def main(argv: list[str] | None = None) -> int:
             _set_run_span_attributes(
                 payload,
                 output_format=t.cast("OutputFormat", args.output_format),
+            )
+            _record_query_strategy_summary(
+                payload,
+                query_language=bool(args.query_language),
+                terms=t.cast("list[str]", args.terms),
             )
             try:
                 with _telemetry.span(
