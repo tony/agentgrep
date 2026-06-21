@@ -129,6 +129,15 @@ Those rows are dominated by conversation root scans across Claude
 project/subagent JSONL and Codex session roots. This page documents that cost;
 it does not prescribe a performance fix.
 
+For query-language profiler runs, `scripts/profile_engine.py` also attaches a
+safe strategy summary to the root span and emits one trace-linked structured
+log. The summary uses query length, a short query hash, source counts,
+strategy-group counts, `root_full_scan` counts, and dominant strategy fields;
+it never records raw query text, prompt text, argv, or local paths. Benchmark
+analysis warns when a query-language conversation profile payload contains
+`search.collect.source` spans using `root_full_scan`, so the blindspot remains
+visible in saved benchmark artifacts.
+
 ## Acceptance evidence
 
 Live acceptance must prove all four signals for the same debug session:
