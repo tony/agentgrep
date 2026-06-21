@@ -109,12 +109,22 @@ PROFILE_ENGINE_BENCHMARK_GROUP: tuple[str, ...] = (
     "profile-engine-grep-all-conversations-max-count-500",
     "profile-engine-find-all-prompts-limit-500",
 )
-PROFILE_ENGINE_CURSOR_IDE_BENCHMARK_GROUP: tuple[str, ...] = (
+PROFILE_ENGINE_CURSOR_IDE_LOCAL_BENCHMARK_GROUP: tuple[str, ...] = (
     "profile-engine-search-cursor-ide-prompts-limit-500",
     "profile-engine-search-cursor-ide-conversations-limit-500",
     "profile-engine-grep-cursor-ide-prompts-max-count-500",
     "profile-engine-grep-cursor-ide-conversations-max-count-500",
     "profile-engine-find-cursor-ide-prompts-limit-500",
+)
+PROFILE_ENGINE_CURSOR_IDE_FIXTURE_BENCHMARK_GROUP: tuple[str, ...] = (
+    "profile-engine-search-cursor-ide-fixture-prompts-limit-500",
+    "profile-engine-search-cursor-ide-fixture-conversations-limit-500",
+    "profile-engine-grep-cursor-ide-fixture-prompts-max-count-500",
+    "profile-engine-grep-cursor-ide-fixture-conversations-max-count-500",
+)
+PROFILE_ENGINE_CURSOR_IDE_BENCHMARK_GROUP: tuple[str, ...] = (
+    *PROFILE_ENGINE_CURSOR_IDE_LOCAL_BENCHMARK_GROUP,
+    *PROFILE_ENGINE_CURSOR_IDE_FIXTURE_BENCHMARK_GROUP,
 )
 PROFILE_ENGINE_QUERY_LANGUAGE_BENCHMARK_GROUP: tuple[str, ...] = (
     "profile-engine-search-all-prompts-query-limit-500",
@@ -125,6 +135,7 @@ PROFILE_ENGINE_QUERY_LANGUAGE_BENCHMARK_GROUP: tuple[str, ...] = (
 BENCHMARK_COMMAND_GROUPS: dict[str, tuple[str, ...]] = {
     "profile-engine": PROFILE_ENGINE_BENCHMARK_GROUP,
     "profile-engine-cursor-ide": PROFILE_ENGINE_CURSOR_IDE_BENCHMARK_GROUP,
+    "profile-engine-cursor-ide-fixture": PROFILE_ENGINE_CURSOR_IDE_FIXTURE_BENCHMARK_GROUP,
     "query-language": PROFILE_ENGINE_QUERY_LANGUAGE_BENCHMARK_GROUP,
 }
 
@@ -1209,6 +1220,39 @@ def _query_language_root_full_scan_warnings(
     return warnings
 
 
+def _payload_int(payload: ProfilePayload, key: str) -> int:
+    """Read one integer from a benchmark profile payload."""
+    value = payload.get(key)
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return value
+    return 0
+
+
+def _cursor_ide_empty_source_warnings(measurements: cabc.Sequence[Measurement]) -> list[str]:
+    """Return warnings for real-local Cursor IDE rows that found no sources."""
+    warnings: list[str] = []
+    for measurement in measurements:
+        command_name = measurement.command_name
+        if "profile-engine-" not in command_name:
+            continue
+        if "cursor-ide" not in command_name or "cursor-ide-fixture" in command_name:
+            continue
+        payload = measurement.profile_payload
+        if payload is None or payload.get("fixture_kind") is not None:
+            continue
+        discovered = _payload_int(payload, "discovered_source_count")
+        planned = _payload_int(payload, "planned_source_count")
+        if discovered or planned:
+            continue
+        warnings.append(
+            f"{command_name} discovered zero Cursor IDE sources; run "
+            "profile-engine-cursor-ide-fixture for populated SQLite coverage",
+        )
+    return warnings
+
+
 def build_analysis_report(
     measurements: list[Measurement],
     *,
@@ -1229,6 +1273,7 @@ def build_analysis_report(
     if profile_capture_errors:
         warnings.append(f"{profile_capture_errors} profile capture(s) failed")
     warnings.extend(_query_language_root_full_scan_warnings(all_spans))
+    warnings.extend(_cursor_ide_empty_source_warnings(measurements))
     return AnalysisReport(
         artifact_label=_analysis_artifact_label(artifact_label),
         command_summaries=_command_summaries(

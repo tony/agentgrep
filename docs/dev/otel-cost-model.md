@@ -32,6 +32,11 @@ endpoints must not change CLI, TUI, MCP, pytest, or profiler correctness.
   sample when `hyperfine` is unavailable or `--no-hyperfine` is set.
 - `profile-engine-*` benchmark rows run one extra post-timing
   `scripts/profile_engine.py ... --json` capture for `profile_payload`.
+- `profile-engine-cursor-ide-fixture-*` rows run the same profiler subprocess
+  with `--fixture cursor-ide-state-vscdb`. The profiler creates one temporary
+  Cursor `state.vscdb`, scans one synthetic record, and deletes the temporary
+  home before returning. The payload records fixture kind/source/record counts,
+  not the temporary path or fixture text.
 - Cross-commit runs can execute `git checkout`, `git diff-index`,
   `uv sync --quiet`, and the configured probe command around each target ref.
 - Benchmark runs emit `agentgrep.benchmark.run`,
@@ -203,6 +208,13 @@ query-language conversation profile payload contains `search.collect.source`
 spans using `root_full_scan`, including source-span counts, record/match
 counts, total duration, and the top contributing safe strategy label so the
 blindspot remains visible in saved benchmark artifacts.
+
+Cursor IDE benchmark rows now split real-local and fixture-backed coverage.
+Real-local rows preserve workstation truth and can legitimately discover zero
+sources. Fixture rows use a synthetic populated SQLite database so benchmark
+and telemetry checks always exercise Cursor IDE parsing, SQLite spans, and
+profile source labels. Analyzer warnings call out real-local zero-source rows
+and point to the fixture selector for populated coverage.
 
 ## Acceptance evidence
 

@@ -740,6 +740,39 @@ def test_profile_cursor_ide_run_reports_sqlite_source_spans(
     assert str(tmp_path) not in encoded
 
 
+def test_profile_cursor_ide_fixture_runs_populated_sqlite_workload(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cursor IDE fixture mode covers populated SQLite without local Cursor state."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    parser = profile_engine._build_parser()
+    args = parser.parse_args(
+        [
+            "search-prompts",
+            "private-cursor-fixture-token",
+            "--agent",
+            "cursor-ide",
+            "--limit",
+            "1",
+            "--fixture",
+            "cursor-ide-state-vscdb",
+        ],
+    )
+
+    payload = profile_engine._run(args)
+
+    assert payload["fixture_kind"] == "cursor-ide-state-vscdb"
+    assert payload["fixture_source_count"] == 1
+    assert payload["fixture_record_count"] == 1
+    assert payload["discovered_source_count"] == 1
+    assert payload["planned_source_count"] == 1
+    assert payload["result_count"] == 1
+    encoded = json.dumps(payload, sort_keys=True)
+    assert "private-cursor-fixture-token" not in encoded
+    assert str(tmp_path) not in encoded
+
+
 def test_profile_all_runs_every_component(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
