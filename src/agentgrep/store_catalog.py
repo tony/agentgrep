@@ -3203,8 +3203,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.PLAN,
         format=StoreFormat.MARKDOWN_FRONTMATTER,
         path_pattern=(
-            "${GROK_HOME or ${HOME}/.grok}/sessions/<url_encoded_project>/"
-            "<session_uuid>/plan.md"
+            "${GROK_HOME or ${HOME}/.grok}/sessions/<url_encoded_project>/<session_uuid>/plan.md"
         ),
         env_overrides=("GROK_HOME",),
         observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
@@ -3429,8 +3428,7 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
         observed_version="opencode v1.17.9 (observed 2026-06-21)",
         observed_at=_OPENCODE_OBSERVED_AT,
         upstream_ref=(
-            "github.com/anomalyco/opencode/blob/v1.17.9/packages/core/"
-            "src/session/sql.ts#L23-L82"
+            "github.com/anomalyco/opencode/blob/v1.17.9/packages/core/src/session/sql.ts#L23-L82"
         ),
         schema_notes=(
             "SQLite store (Drizzle). Tables `session` (id, project_id, "
