@@ -51,10 +51,7 @@ endpoints must not change CLI, TUI, MCP, pytest, or profiler correctness.
 - `scripts/otel_smoke.py` to generate traces, metrics, logs, SQLite spans, and
   Pyroscope samples.
 - `python -m agentgrep --help` for traced help output.
-- `python -m agentgrep grep --invert-match --only-matching ...` for a traced
-  parse-error path.
-- `python -m agentgrep grep --invert-match ...` for a traced successful
-  inverted-output path.
+- `python -m agentgrep grep --invert-match ...` for a traced parse-error path.
 - `python -m agentgrep search ...` for a traced app CLI search.
 - `scripts/profile_engine.py grep-prompts ... --json` for profiler traces.
 - `scripts/benchmark.py run ...` for benchmark harness roots, command spans,
