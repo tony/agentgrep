@@ -10,6 +10,7 @@ accelerator, and record type aliases. See ADR 0010.
 
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import pathlib
@@ -29,7 +30,10 @@ if t.TYPE_CHECKING:
     from agentgrep.records import JSONValue, RawJsonlSkipLine, SummaryRow
 
 __all__ = [
+    "as_optional_str",
     "decode_sqlite_value",
+    "file_mtime_ns",
+    "isoformat_from_mtime_ns",
     "iter_conversation_summaries",
     "iter_jsonl",
     "iter_key_value_rows",
@@ -697,4 +701,43 @@ def parse_embedded_json(text: str) -> JSONValue | None:
         return None
     if isinstance(parsed, (dict, list, str, int, float, bool)) or parsed is None:
         return t.cast("JSONValue", parsed)
+    return None
+
+
+def file_mtime_ns(path: pathlib.Path) -> int:
+    """Return a cached modification time for a path."""
+    try:
+        return path.stat().st_mtime_ns
+    except OSError:
+        return 0
+
+
+def _file_size(path: pathlib.Path) -> int:
+    """Return file size in bytes, falling back to zero on stat failure."""
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
+
+
+def isoformat_from_mtime_ns(mtime_ns: int) -> str | None:
+    """Convert a nanosecond ``mtime`` to an ISO-8601 UTC timestamp.
+
+    Used as a timestamp fallback for stores whose records carry no native
+    timestamp — most notably Cursor CLI agent transcripts.
+    """
+    if mtime_ns <= 0:
+        return None
+    return (
+        datetime.datetime.fromtimestamp(mtime_ns / 1_000_000_000, tz=datetime.UTC)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
+def as_optional_str(value: object) -> str | None:
+    """Return a stripped string when possible."""
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
     return None
