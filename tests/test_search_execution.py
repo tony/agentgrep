@@ -249,7 +249,7 @@ def test_jsonl_raw_text_prefilter_skips_nonmatching_lines_before_json_decode(
         decoded_inputs.append(payload)
         return original_loads(payload)
 
-    monkeypatch.setattr(agentgrep, "_loads", loads_with_capture)
+    monkeypatch.setattr(agentgrep.readers, "_loads", loads_with_capture)
 
     events = list(
         InlineExecutionDriver().iter_search_plan(
@@ -576,7 +576,7 @@ def test_bounded_haystack_raw_prefilter_keeps_source_path_matches(
         decoded_inputs.append(payload)
         return original_loads(payload)
 
-    monkeypatch.setattr(agentgrep, "_loads", loads_with_capture)
+    monkeypatch.setattr(agentgrep.readers, "_loads", loads_with_capture)
 
     events = list(
         InlineExecutionDriver().iter_search_plan(
@@ -1947,7 +1947,7 @@ def test_bounded_codex_history_jsonl_does_not_prefetch_older_matches(
         decoded_inputs.append(payload)
         return original_loads(payload)
 
-    monkeypatch.setattr(agentgrep, "_loads", loads_with_capture)
+    monkeypatch.setattr(agentgrep.readers, "_loads", loads_with_capture)
 
     events = list(
         InlineExecutionDriver().iter_search_plan(

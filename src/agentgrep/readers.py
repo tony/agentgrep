@@ -1,0 +1,700 @@
+"""Low-level read-only file and database primitives.
+
+SQLite (read-only connections, table/column introspection, key-value and
+conversation-summary iteration), JSONL streaming (forward, reverse, and
+raw-line-skip variants with cooperative yields), protobuf text-field
+extraction, and small JSON/text decoders. These are the I/O floor the per-agent
+adapters sit on; they depend only on the standard library, the optional orjson
+accelerator, and record type aliases. See ADR 0010.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import pathlib
+import re
+import sqlite3
+import time
+import typing as t
+
+try:
+    import orjson as _orjson
+except ImportError:
+    _orjson = None  # ty: ignore[invalid-assignment]
+
+if t.TYPE_CHECKING:
+    import collections.abc as cabc
+
+    from agentgrep.records import JSONValue, RawJsonlSkipLine, SummaryRow
+
+__all__ = [
+    "decode_sqlite_value",
+    "iter_conversation_summaries",
+    "iter_jsonl",
+    "iter_key_value_rows",
+    "iter_protobuf_text_fields",
+    "open_readonly_sqlite",
+    "parse_embedded_json",
+    "read_json_file",
+    "read_text_file",
+    "sqlite_column_names",
+    "sqlite_table_names",
+]
+
+
+_JSONL_YIELD_INTERVAL_SECONDS = 0.01
+"""Wall-clock cadence for cooperative JSONL parser yields.
+
+The scanners run inside a Textual worker thread; an occasional
+``time.sleep(0)`` lets the UI thread render. Yielding per decoded line
+or per discarded chunk dominated scan time, so the yield is gated on
+elapsed wall time instead — the interpreter's own thread-switch
+interval already bounds UI latency between yields.
+"""
+
+
+_JSONL_PREFIX_BYTES = 4096
+"""Bytes read up front when a raw-line skip predicate is active."""
+
+
+_JSONL_SKIP_CHUNK_BYTES = 1024 * 1024
+"""Chunk size for discarding skipped oversized JSONL lines."""
+
+
+_JSONL_REVERSE_CHUNK_BYTES = 1024 * 1024
+"""Chunk size for reading JSONL files from end to start."""
+
+
+_CODEX_RAW_SKIP_MIN_BYTES = 1024 * 1024
+"""Minimum Codex session size before enabling raw-line output skipping."""
+
+
+def _read_varint(data: bytes, start: int) -> tuple[int | None, int]:
+    """Decode a base-128 varint.
+
+    Returns ``(value, next_index)``; ``value`` is ``None`` when the bytes
+    run out mid-varint or the value would exceed 64 bits.
+    """
+    result = 0
+    shift = 0
+    index = start
+    length = len(data)
+    while index < length:
+        byte = data[index]
+        index += 1
+        result |= (byte & 0x7F) << shift
+        if not byte & 0x80:
+            return result, index
+        shift += 7
+        if shift > 63:
+            return None, index
+    return None, index
+
+
+def _looks_like_protobuf_message(chunk: bytes) -> bool:
+    """Guess whether a length-delimited chunk is a nested message.
+
+    A nested message begins with a tag byte: a low value whose lowest
+    three bits are a valid wire type. Real UTF-8 text begins with a
+    printable byte (``>= 0x20``) or a multi-byte lead, so the two rarely
+    collide.
+    """
+    if not chunk:
+        return False
+    first = chunk[0]
+    return first < 0x20 and (first & 0x07) in (0, 1, 2, 5)
+
+
+def _decode_protobuf_text(chunk: bytes, min_length: int) -> str | None:
+    """Return ``chunk`` as text when it is a plausible UTF-8 string."""
+    if len(chunk) < min_length:
+        return None
+    try:
+        text = chunk.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    printable = sum(1 for char in text if char.isprintable() or char in "\n\t")
+    if printable / len(text) < 0.85:
+        return None
+    return text
+
+
+def iter_protobuf_text_fields(
+    data: bytes,
+    *,
+    min_length: int = 2,
+    _depth: int = 0,
+) -> cabc.Iterator[str]:
+    r"""Yield readable UTF-8 runs from an unknown protobuf message.
+
+    Walks the protobuf wire format without a schema: each
+    length-delimited (wire type 2) field is decoded as UTF-8 and yielded
+    when it looks like text, otherwise recursed into as a nested message.
+    A best-effort extractor for opaque protobuf blobs — such as the
+    Cursor CLI chat ``store.db`` — whose schema is unofficial and may
+    drift. It never raises on malformed input; unparseable bytes simply
+    end the walk.
+
+    Parameters
+    ----------
+    data : bytes
+        Raw protobuf message bytes.
+    min_length : int
+        Shortest decoded string to yield.
+
+    Yields
+    ------
+    str
+        Each plausible text run, in wire order.
+
+    Examples
+    --------
+    >>> list(iter_protobuf_text_fields(b"\x0a\x05hello"))
+    ['hello']
+    >>> list(iter_protobuf_text_fields(b"\x0a\x07\x0a\x05world"))
+    ['world']
+    >>> list(iter_protobuf_text_fields(b"\x08\x96\x01"))
+    []
+    """
+    if _depth > 12:
+        return
+    index = 0
+    length = len(data)
+    while index < length:
+        tag, index = _read_varint(data, index)
+        if tag is None:
+            return
+        wire_type = tag & 0x07
+        if wire_type == 0:
+            _, index = _read_varint(data, index)
+        elif wire_type == 2:
+            size, index = _read_varint(data, index)
+            if size is None or index + size > length:
+                return
+            chunk = data[index : index + size]
+            index += size
+            if _looks_like_protobuf_message(chunk):
+                yield from iter_protobuf_text_fields(
+                    chunk, min_length=min_length, _depth=_depth + 1
+                )
+                continue
+            text = _decode_protobuf_text(chunk, min_length)
+            if text is not None:
+                yield text
+            else:
+                yield from iter_protobuf_text_fields(
+                    chunk, min_length=min_length, _depth=_depth + 1
+                )
+        elif wire_type == 5:
+            index += 4
+        elif wire_type == 1:
+            index += 8
+        else:
+            return
+
+
+def open_readonly_sqlite(path: pathlib.Path) -> sqlite3.Connection:
+    """Open a SQLite database with a read-only URI."""
+    return sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+
+
+def sqlite_table_names(connection: sqlite3.Connection) -> set[str]:
+    """Return the table names from a SQLite connection."""
+    rows = t.cast(
+        "cabc.Iterable[tuple[object]]",
+        connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'"),
+    )
+    names: set[str] = set()
+    for row in rows:
+        name = row[0]
+        if isinstance(name, str):
+            names.add(name)
+    return names
+
+
+def sqlite_column_names(connection: sqlite3.Connection, table: str) -> set[str]:
+    """Return the column names for a known SQLite table."""
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", table):
+        return set()
+    rows = t.cast(
+        "cabc.Iterable[tuple[object, ...]]",
+        connection.execute(f"PRAGMA table_info({table})"),
+    )
+    columns: set[str] = set()
+    for row in rows:
+        if len(row) > 1 and isinstance(row[1], str):
+            columns.add(row[1])
+    return columns
+
+
+def iter_key_value_rows(
+    connection: sqlite3.Connection,
+    table: str,
+    *,
+    key_tokens: cabc.Sequence[str] | None = None,
+) -> cabc.Iterator[tuple[str, object]]:
+    """Yield likely key/value rows, reading values only for matched keys.
+
+    Stage 1 selects keys only — optionally filtered in SQL by
+    ``key_tokens`` substrings — so large non-matching ``value`` BLOBs are
+    never materialized; on the real Cursor schema the key scan rides a
+    covering index. Stage 2 point-fetches ``value`` per distinct matched
+    key, yielding every row for keys that repeat in index-less databases.
+    """
+    if table not in {"ItemTable", "cursorDiskKV"}:
+        return
+    info = t.cast(
+        "cabc.Iterable[tuple[object, ...]]",
+        connection.execute(f"PRAGMA table_info({table})"),
+    )
+    columns = [str(row[1]) for row in info]
+    if "key" not in columns or "value" not in columns:
+        return
+    key_query = f"SELECT key FROM {table}"  # table validated against the allowlist above
+    parameters: tuple[str, ...] = ()
+    if key_tokens is not None:
+        tokens = tuple(token for token in key_tokens if token)
+        if tokens:
+            predicates = " OR ".join("key LIKE ? COLLATE NOCASE" for _ in tokens)
+            key_query = f"{key_query} WHERE {predicates}"
+            parameters = tuple(f"%{token}%" for token in tokens)
+    seen_keys: set[str] = set()
+    matched_keys: list[str] = []
+    key_rows = t.cast(
+        "cabc.Iterable[tuple[object]]",
+        connection.execute(key_query, parameters),
+    )
+    for (key,) in key_rows:
+        if isinstance(key, str) and key not in seen_keys:
+            seen_keys.add(key)
+            matched_keys.append(key)
+    value_query = f"SELECT value FROM {table} WHERE key = ?"  # table validated above
+    for key in matched_keys:
+        value_rows = t.cast(
+            "cabc.Iterable[tuple[object]]",
+            connection.execute(value_query, (key,)),
+        )
+        for (value,) in value_rows:
+            yield key, value
+
+
+def iter_conversation_summaries(
+    connection: sqlite3.Connection,
+) -> cabc.Iterator[SummaryRow]:
+    """Yield typed rows from Cursor AI tracking summaries."""
+    query = """
+        SELECT
+            conversationId,
+            title,
+            tldr,
+            overview,
+            summaryBullets,
+            model,
+            mode,
+            updatedAt
+        FROM conversation_summaries
+    """
+    rows = t.cast("cabc.Iterable[SummaryRow]", connection.execute(query))
+    yield from rows
+
+
+def read_text_file(path: pathlib.Path) -> str:
+    """Read a text file with replacement for decode errors."""
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def read_json_file(path: pathlib.Path) -> JSONValue | None:
+    """Read a JSON file."""
+    try:
+        parsed = t.cast("object", json.loads(path.read_text(encoding="utf-8")))
+    except OSError, json.JSONDecodeError:
+        return None
+    if isinstance(parsed, (dict, list, str, int, float, bool)) or parsed is None:
+        return t.cast("JSONValue", parsed)
+    return None
+
+
+def iter_jsonl(path: pathlib.Path) -> cabc.Iterator[JSONValue]:
+    """Yield decoded JSON objects from a JSONL file."""
+    yield from _iter_jsonl(path)
+
+
+def _loads(text: str) -> object:
+    """Decode one JSON document, preferring orjson when it is installed.
+
+    Stdlib :func:`json.loads` is the semantic source of truth (ADR 0002);
+    orjson is a drop-in accelerator. orjson rejects a handful of inputs
+    stdlib accepts — ``NaN``, ``Infinity``, ``-Infinity`` (which Python's own
+    ``json.dumps`` emits) — so any orjson decode error falls back to
+    ``json.loads``, recovering the stdlib value or re-raising
+    :class:`json.JSONDecodeError` for genuinely invalid input.
+
+    Documented exemption (ADR 0002): orjson decodes integers beyond the
+    signed 64-bit range to ``float`` instead of raising, so for those inputs
+    the accelerated result is lossy relative to stdlib. Agent-history JSON
+    does not carry integers that large — timestamps, ids, and counts fit in
+    64 bits or are strings — so the divergence is unreachable in practice.
+    """
+    if _orjson is None:
+        return json.loads(text)
+    try:
+        return _orjson.loads(text)
+    except _orjson.JSONDecodeError:
+        return json.loads(text)
+
+
+class _PeriodicYield:
+    """Release the GIL at most once per :data:`_JSONL_YIELD_INTERVAL_SECONDS`.
+
+    One instance is created per JSONL scan and called on every line and
+    discarded chunk; it only invokes ``time.sleep(0)`` when the wall-clock
+    interval has elapsed, so a hot single-threaded scan pays a cheap
+    ``perf_counter`` read per line instead of an OS reschedule.
+    """
+
+    __slots__ = ("_deadline",)
+
+    def __init__(self) -> None:
+        self._deadline = time.perf_counter() + _JSONL_YIELD_INTERVAL_SECONDS
+
+    def __call__(self) -> None:
+        now = time.perf_counter()
+        if now >= self._deadline:
+            time.sleep(0)
+            self._deadline = now + _JSONL_YIELD_INTERVAL_SECONDS
+
+
+def _iter_jsonl(
+    path: pathlib.Path,
+    *,
+    skip_line: RawJsonlSkipLine | None = None,
+    skip_line_mode: t.Literal["prefix", "line"] = "prefix",
+    full_line_skip: RawJsonlSkipLine | None = None,
+    reverse: bool = False,
+) -> cabc.Iterator[JSONValue]:
+    """Yield decoded JSON objects from a JSONL file with an optional raw-line filter.
+
+    ``skip_line`` runs in ``skip_line_mode``: ``"prefix"`` checks only the
+    first :data:`_JSONL_PREFIX_BYTES` of each line so oversized lines can be
+    discarded in chunks without full allocation, while ``"line"`` checks the
+    whole line. ``full_line_skip`` always sees the complete decoded line
+    before JSON decode, so predicates that may match past the prefix window
+    stay correct alongside a cheap prefix skip. Reverse iteration ignores
+    ``skip_line_mode``: both predicates are combined and run against full
+    decoded lines, because reverse reads already materialize each line from
+    tail chunks.
+    """
+    if reverse:
+        yield from _iter_jsonl_reverse(
+            path,
+            skip_line=_combine_raw_skip_lines(skip_line, full_line_skip),
+        )
+        return
+    if skip_line is not None:
+        if skip_line_mode == "line":
+            combined = _combine_raw_skip_lines(skip_line, full_line_skip)
+            assert combined is not None
+            yield from _iter_jsonl_with_raw_line_skip(path, combined)
+        else:
+            yield from _iter_jsonl_with_raw_prefix_skip(
+                path,
+                skip_line,
+                full_line_skip=full_line_skip,
+            )
+        return
+    if full_line_skip is not None:
+        yield from _iter_jsonl_with_raw_line_skip(path, full_line_skip)
+        return
+    try:
+        with path.open(encoding="utf-8") as handle:
+            yield_now = _PeriodicYield()
+            for line in handle:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                yield_now()
+                try:
+                    parsed = _loads(stripped)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(parsed, (dict, list, str, int, float, bool)) or parsed is None:
+                    yield t.cast("JSONValue", parsed)
+    except OSError:
+        return
+
+
+def _iter_jsonl_reverse(
+    path: pathlib.Path,
+    *,
+    skip_line: RawJsonlSkipLine | None = None,
+) -> cabc.Iterator[JSONValue]:
+    """Yield decoded JSONL values from the end of ``path`` toward the start."""
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            position = handle.tell()
+            pending = b""
+            yield_now = _PeriodicYield()
+            while position > 0:
+                read_size = min(_JSONL_REVERSE_CHUNK_BYTES, position)
+                position -= read_size
+                handle.seek(position)
+                pending = handle.read(read_size) + pending
+                lines = pending.split(b"\n")
+                pending = lines[0]
+                for raw_line in reversed(lines[1:]):
+                    decoded = _decode_jsonl_raw_line(raw_line, skip_line=skip_line)
+                    if decoded is _SKIPPED_JSONL_LINE:
+                        continue
+                    yield_now()
+                    yield t.cast("JSONValue", decoded)
+            if pending.strip():
+                decoded = _decode_jsonl_raw_line(pending, skip_line=skip_line)
+                if decoded is not _SKIPPED_JSONL_LINE:
+                    yield_now()
+                    yield t.cast("JSONValue", decoded)
+    except OSError:
+        return
+
+
+_SKIPPED_JSONL_LINE = object()
+
+
+def _decode_jsonl_raw_line(
+    raw_line: bytes,
+    *,
+    skip_line: RawJsonlSkipLine | None = None,
+) -> JSONValue | object:
+    """Decode one raw JSONL line, or return a sentinel for skipped/invalid lines."""
+    if not raw_line.strip():
+        return _SKIPPED_JSONL_LINE
+    line = raw_line.decode("utf-8", errors="replace")
+    if skip_line is not None and skip_line(line):
+        return _SKIPPED_JSONL_LINE
+    stripped = line.strip()
+    if not stripped:
+        return _SKIPPED_JSONL_LINE
+    try:
+        parsed = _loads(stripped)
+    except json.JSONDecodeError:
+        return _SKIPPED_JSONL_LINE
+    if isinstance(parsed, (dict, list, str, int, float, bool)) or parsed is None:
+        return t.cast("JSONValue", parsed)
+    return _SKIPPED_JSONL_LINE
+
+
+def _iter_jsonl_with_raw_prefix_skip(
+    path: pathlib.Path,
+    skip_line: RawJsonlSkipLine,
+    *,
+    full_line_skip: RawJsonlSkipLine | None = None,
+) -> cabc.Iterator[JSONValue]:
+    """Yield decoded JSON objects while skipping matched raw prefixes.
+
+    ``skip_line`` sees only the line prefix and gates the chunked discard
+    path; ``full_line_skip`` sees the fully accumulated line before JSON
+    decode.
+    """
+    try:
+        with path.open("rb") as handle:
+            yield_now = _PeriodicYield()
+            while True:
+                prefix = handle.readline(_JSONL_PREFIX_BYTES)
+                if not prefix:
+                    break
+                if not prefix.strip():
+                    continue
+                yield_now()
+                prefix_text = prefix.decode("utf-8", errors="replace")
+                if skip_line(prefix_text):
+                    _discard_rest_of_line(handle, prefix)
+                    continue
+                raw_line = bytearray(prefix)
+                while raw_line and not raw_line.endswith(b"\n"):
+                    chunk = handle.readline(_JSONL_SKIP_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    raw_line.extend(chunk)
+                    yield_now()
+                full_text = raw_line.decode("utf-8", errors="replace")
+                if full_line_skip is not None and full_line_skip(full_text):
+                    continue
+                stripped = full_text.strip()
+                if not stripped:
+                    continue
+                try:
+                    parsed = _loads(stripped)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(parsed, (dict, list, str, int, float, bool)) or parsed is None:
+                    yield t.cast("JSONValue", parsed)
+    except OSError:
+        return
+
+
+def _iter_jsonl_with_raw_line_skip(
+    path: pathlib.Path,
+    skip_line: RawJsonlSkipLine,
+) -> cabc.Iterator[JSONValue]:
+    """Yield decoded JSON objects while skipping matched full raw lines."""
+    try:
+        with path.open("rb") as handle:
+            yield_now = _PeriodicYield()
+            for raw_line in handle:
+                if not raw_line.strip():
+                    continue
+                yield_now()
+                line = raw_line.decode("utf-8", errors="replace")
+                if skip_line(line):
+                    continue
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    parsed = _loads(stripped)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(parsed, (dict, list, str, int, float, bool)) or parsed is None:
+                    yield t.cast("JSONValue", parsed)
+    except OSError:
+        return
+
+
+def _combine_raw_skip_lines(
+    first: RawJsonlSkipLine | None,
+    second: RawJsonlSkipLine | None,
+) -> RawJsonlSkipLine | None:
+    """Return a raw-line predicate that skips when either predicate skips."""
+    if first is None:
+        return second
+    if second is None:
+        return first
+
+    def skip_line(raw_line: str) -> bool:
+        return first(raw_line) or second(raw_line)
+
+    return skip_line
+
+
+_CODEX_SESSION_META_MARKER = '"type":"session_meta"'
+"""Space-stripped prefix marker for the Codex session header line."""
+
+
+_PI_SESSION_HEADER_MARKER = '"type":"session"'
+"""Space-stripped prefix marker for the pi session header line."""
+
+
+def _read_first_jsonl_header(
+    path: pathlib.Path,
+    marker: str,
+) -> dict[str, object] | None:
+    """Decode the first JSONL line bearing a header marker.
+
+    Scans forward with the bounded prefix check used by the raw skip
+    predicates, decoding only the matching line, so reverse scans can
+    seed header state without paying a full forward parse. Assumes the
+    canonical single leading header; later header updates are not
+    positionally attributed.
+    """
+    try:
+        with path.open("rb") as handle:
+            while True:
+                prefix = handle.readline(_JSONL_PREFIX_BYTES)
+                if not prefix:
+                    return None
+                if not prefix.strip():
+                    continue
+                prefix_text = prefix.decode("utf-8", errors="replace")
+                if marker not in prefix_text[:512].replace(" ", ""):
+                    _discard_rest_of_line(handle, prefix)
+                    continue
+                raw_line = bytearray(prefix)
+                while raw_line and not raw_line.endswith(b"\n"):
+                    chunk = handle.readline(_JSONL_SKIP_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    raw_line.extend(chunk)
+                try:
+                    parsed = _loads(raw_line.decode("utf-8", errors="replace"))
+                except json.JSONDecodeError:
+                    return None
+                if isinstance(parsed, dict):
+                    return t.cast("dict[str, object]", parsed)
+                return None
+    except OSError:
+        return None
+
+
+def _keep_jsonl_header_lines(
+    skip_line: RawJsonlSkipLine,
+    marker: str,
+) -> RawJsonlSkipLine:
+    """Wrap a raw skip predicate so header lines are always decoded.
+
+    Stateful session parsers learn canonical metadata (session id, model,
+    cwd) from a header line that rarely contains the search term, so a raw
+    text prefilter must never drop it.
+
+    >>> keep = _keep_jsonl_header_lines(lambda _line: True, '"type":"session_meta"')
+    >>> keep('{"type": "session_meta", "payload": {}}')
+    False
+    >>> keep('{"type": "response_item"}')
+    True
+    """
+
+    def wrapped(raw_line: str) -> bool:
+        if marker in raw_line[:512].replace(" ", ""):
+            return False
+        return skip_line(raw_line)
+
+    return wrapped
+
+
+def _discard_rest_of_line(handle: t.BinaryIO, prefix: bytes) -> None:
+    """Discard the unread remainder of the current physical line.
+
+    Each ``readline`` releases the GIL for the underlying read, so the
+    discard loop stays cooperative without an explicit per-chunk yield.
+    """
+    chunk = prefix
+    while chunk and not chunk.endswith(b"\n"):
+        chunk = handle.readline(_JSONL_SKIP_CHUNK_BYTES)
+
+
+def _is_codex_function_call_output_line(line: str) -> bool:
+    """Return whether a Codex JSONL line is a tool output record.
+
+    Tests the two distinctive quoted value tokens directly on the line
+    prefix. JSON never reformats string contents, so this matches the same
+    lines as a space-stripped key check — verified against the live store —
+    without allocating a normalized copy of every scanned line.
+    """
+    prefix = line[:512]
+    return '"response_item"' in prefix and '"function_call_output"' in prefix
+
+
+def decode_sqlite_value(value: object) -> str | None:
+    """Decode a SQLite value into UTF-8 text if possible."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value).decode("utf-8", errors="replace")
+    return None
+
+
+def parse_embedded_json(text: str) -> JSONValue | None:
+    """Parse a JSON-encoded string, returning ``None`` when unavailable."""
+    stripped = text.strip()
+    if not stripped or stripped[0] not in "[{":
+        return None
+    try:
+        parsed = _loads(stripped)
+    except json.JSONDecodeError:
+        return None
+    if isinstance(parsed, (dict, list, str, int, float, bool)) or parsed is None:
+        return t.cast("JSONValue", parsed)
+    return None

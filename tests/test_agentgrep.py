@@ -1505,7 +1505,7 @@ def test_iter_jsonl_reverse_reads_newest_lines_first(
     if case.trailing_newline:
         text += "\n"
     path.write_text(text, encoding="utf-8")
-    monkeypatch.setattr(agentgrep, "_JSONL_REVERSE_CHUNK_BYTES", case.chunk_bytes)
+    monkeypatch.setattr(agentgrep.readers, "_JSONL_REVERSE_CHUNK_BYTES", case.chunk_bytes)
 
     parsed = list(agentgrep._iter_jsonl(path, reverse=True))
 
@@ -1531,7 +1531,7 @@ def test_iter_jsonl_reverse_raw_skip_avoids_decoding_skipped_lines(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(agentgrep, "_JSONL_REVERSE_CHUNK_BYTES", 9)
+    monkeypatch.setattr(agentgrep.readers, "_JSONL_REVERSE_CHUNK_BYTES", 9)
     decoded_inputs: list[str] = []
     original_loads = agentgrep._loads
 
@@ -1539,7 +1539,7 @@ def test_iter_jsonl_reverse_raw_skip_avoids_decoding_skipped_lines(
         decoded_inputs.append(payload)
         return t.cast("object", original_loads(payload))
 
-    monkeypatch.setattr(agentgrep, "_loads", loads_with_capture)
+    monkeypatch.setattr(agentgrep.readers, "_loads", loads_with_capture)
 
     parsed = list(
         agentgrep._iter_jsonl(
@@ -1597,7 +1597,7 @@ def test_parse_codex_session_skips_function_call_output_before_json_decode(
         decoded_payloads.append(payload)
         return original_loads(payload)
 
-    monkeypatch.setattr(agentgrep, "_loads", tracking_loads)
+    monkeypatch.setattr(agentgrep.readers, "_loads", tracking_loads)
 
     records = list(agentgrep.parse_codex_session_file(source))
 
@@ -1727,7 +1727,7 @@ def test_codex_session_raw_prefilter_keeps_prefix_tool_output_skip(
         discard_calls.append(prefix)
         original_discard(handle, prefix)
 
-    monkeypatch.setattr(agentgrep, "_discard_rest_of_line", tracking_discard)
+    monkeypatch.setattr(agentgrep.readers, "_discard_rest_of_line", tracking_discard)
 
     def raw_skip_line(line: str) -> bool:
         return "bliss" not in line
@@ -1831,7 +1831,7 @@ def test_parse_codex_session_raw_prefilter_preserves_header(
         decoded_payloads.append(payload)
         return original_loads(payload)
 
-    monkeypatch.setattr(agentgrep, "_loads", tracking_loads)
+    monkeypatch.setattr(agentgrep.readers, "_loads", tracking_loads)
 
     def raw_skip_line(line: str) -> bool:
         return "bliss" not in line
@@ -1910,7 +1910,7 @@ def test_parse_pi_session_raw_prefilter_preserves_header(
         decoded_payloads.append(payload)
         return original_loads(payload)
 
-    monkeypatch.setattr(agentgrep, "_loads", tracking_loads)
+    monkeypatch.setattr(agentgrep.readers, "_loads", tracking_loads)
 
     def raw_skip_line(line: str) -> bool:
         return "bliss" not in line
