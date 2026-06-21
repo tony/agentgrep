@@ -4,9 +4,7 @@
 
 Base path: `~/.claude` (env override: `CLAUDE_CONFIG_DIR`).
 
-Rows carry per-store observation stamps. Project transcripts were
-observed against `claude-code v2.1.143` (2026-05-15); global prompt
-history was observed against `claude-code v2.1.157` (2026-05-29).
+`observed_version`: `claude-code v2.1.185` (observed 2026-06-21).
 
 ## Stores
 

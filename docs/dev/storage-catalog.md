@@ -115,10 +115,7 @@ keeps the full default-search catalogue.
 
 ### Claude Code
 
-Claude rows carry per-store observation stamps. Project transcript
-schemas were observed against ``claude-code v2.1.143`` (2026-05-15);
-global prompt history was observed against ``claude-code v2.1.157``
-(2026-05-29).
+`observed_version`: ``claude-code v2.1.185`` (observed 2026-06-21).
 
 Claude honours `CLAUDE_CONFIG_DIR`, falling back to `${HOME}/.claude`.
 Its global prompt-history audit log lives at
