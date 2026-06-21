@@ -826,40 +826,77 @@ def test_grep_empty_pattern_exits_with_argparse_error(
     assert "Traceback" not in captured.err
 
 
-# ----- -v / --invert-match parse-time refusal -----------------------------
+# ----- -v / --invert-match text output ------------------------------------
 
 
-class InvertMatchRefusedCase(t.NamedTuple):
-    """Parametrized case for ``-v`` rejection outside ``-c``."""
+class InvertMatchTextCase(t.NamedTuple):
+    """Parametrized case for text output under ``-v``."""
 
     test_id: str
-    argv: tuple[str, ...]
+    args: agentgrep.GrepArgs
+    expected_stdout_lines: list[str]
 
 
-INVERT_MATCH_REFUSED_CASES: tuple[InvertMatchRefusedCase, ...] = (
-    InvertMatchRefusedCase("invert-alone", ("grep", "-v", "bliss")),
-    InvertMatchRefusedCase("invert-with-line-number", ("grep", "-v", "-n", "bliss")),
-    InvertMatchRefusedCase("invert-with-json", ("grep", "-v", "--json", "bliss")),
-    InvertMatchRefusedCase("invert-with-vimgrep", ("grep", "-v", "--vimgrep", "bliss")),
+INVERT_MATCH_TEXT_CASES: tuple[InvertMatchTextCase, ...] = (
+    InvertMatchTextCase(
+        "pipe-default-prefixes-path",
+        _make_grep_args(patterns=("foo",), invert_match=True, color_mode="never"),
+        ["/tmp/fake.jsonl:bar only"],
+    ),
+    InvertMatchTextCase(
+        "line-number",
+        _make_grep_args(
+            patterns=("foo",),
+            invert_match=True,
+            line_number=True,
+            color_mode="never",
+        ),
+        ["/tmp/fake.jsonl:2:bar only"],
+    ),
+    InvertMatchTextCase(
+        "heading",
+        _make_grep_args(
+            patterns=("foo",),
+            invert_match=True,
+            heading=True,
+            color_mode="never",
+        ),
+        ["codex  /tmp/fake.jsonl", "bar only"],
+    ),
 )
 
 
 @pytest.mark.parametrize(
     "case",
-    INVERT_MATCH_REFUSED_CASES,
-    ids=[c.test_id for c in INVERT_MATCH_REFUSED_CASES],
+    INVERT_MATCH_TEXT_CASES,
+    ids=[c.test_id for c in INVERT_MATCH_TEXT_CASES],
 )
-def test_grep_invert_match_outside_count_is_refused(
-    case: InvertMatchRefusedCase,
+def test_run_grep_command_invert_match_text_output(
+    case: InvertMatchTextCase,
+    monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """``-v`` errors at parse time unless paired with ``-c``."""
+    """``-v`` emits non-matching lines for text output."""
+    _fake_search_records(
+        [_make_count_record(text="foo line\nbar only\nfoo again")],
+        monkeypatch,
+    )
+    exit_code = agentgrep.run_grep_command(case.args)
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    actual_lines = [line for line in captured.out.splitlines() if line.strip()]
+    assert actual_lines == case.expected_stdout_lines
+
+
+def test_grep_invert_match_with_only_matching_is_refused(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``-v -o`` is refused because inverted lines have no match substring."""
     with pytest.raises(SystemExit) as exc_info:
-        _ = agentgrep.parse_args(list(case.argv))
+        _ = agentgrep.parse_args(["grep", "--invert-match", "--only-matching", "bliss"])
     assert exc_info.value.code == 2
     captured = capsys.readouterr()
-    assert "--invert-match for text output is not yet implemented" in captured.err
-    assert "issues/8" in captured.err
+    assert "--invert-match cannot be combined with --only-matching" in captured.err
 
 
 def test_grep_invert_match_with_count_is_allowed() -> None:
@@ -868,6 +905,25 @@ def test_grep_invert_match_with_count_is_allowed() -> None:
     assert args is not None
     assert isinstance(args, agentgrep.GrepArgs)
     assert args.invert_match is True
+
+
+def test_run_grep_command_invert_match_files_with_matches_filters_empty_records(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``-l -v`` lists only records that contain a non-matching line."""
+    match_only = _make_count_record(text="foo one\nfoo two", name="match-only.jsonl")
+    inverted = _make_count_record(text="foo one\nbar two", name="inverted.jsonl")
+    _fake_search_records([match_only, inverted], monkeypatch)
+    args = _make_grep_args(
+        patterns=("foo",),
+        invert_match=True,
+        files_with_matches=True,
+    )
+    exit_code = agentgrep.run_grep_command(args)
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert captured.out.splitlines() == ["/tmp/inverted.jsonl"]
 
 
 def test_grep_files_without_match_flag_is_rejected(
