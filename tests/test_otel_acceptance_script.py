@@ -472,3 +472,17 @@ def test_lgtm_grafana_datasource_forwards_pyroscope_git_session() -> None:
 
     assert "grafana-pyroscope-datasource" in content
     assert "keepCookies: [pyroscope_git_session]" in content
+
+
+def test_lgtm_grafana_datasource_links_traces_to_metrics_and_profiles() -> None:
+    """The Tempo datasource must drill out to Prometheus metrics and Pyroscope profiles."""
+    import yaml
+
+    content = otel_acceptance.LGTM_GRAFANA_DATASOURCES_CONFIG.read_text(encoding="utf-8")
+    datasources = yaml.safe_load(content)["datasources"]
+    tempo = next(source for source in datasources if source["name"] == "Tempo")
+    json_data = tempo["jsonData"]
+
+    assert json_data["tracesToMetricsV2"]["datasourceUid"] == "prometheus"
+    assert json_data["tracesToProfilesV2"]["datasourceUid"] == "pyroscope"
+    assert json_data["tracesToProfilesV2"]["profileTypeId"].startswith("process_cpu:")
