@@ -11,6 +11,7 @@ import typing as t
 import pytest
 
 import agentgrep
+from agentgrep._engine import orchestration
 from agentgrep._engine.profiling import (
     EnginePhaseSample,
     EngineProfile,
@@ -480,7 +481,7 @@ def test_search_planning_reports_source_level_samples(
             assert control is not None
             return {path}
 
-        monkeypatch.setattr(agentgrep, "grep_root_paths", grep_root_paths)
+        monkeypatch.setattr(orchestration, "grep_root_paths", grep_root_paths)
         with use_engine_profiler(profiler):
             filtered = agentgrep.prefilter_sources_by_root(query, [source], "rg")
         assert filtered == [source]
@@ -547,7 +548,7 @@ def test_prefilter_source_count_excludes_sqlite_candidates(
         assert control is not None
         return {file_path}
 
-    monkeypatch.setattr(agentgrep, "grep_root_paths", fake_grep_root_paths)
+    monkeypatch.setattr(orchestration, "grep_root_paths", fake_grep_root_paths)
     profiler = EngineProfiler()
 
     with use_engine_profiler(profiler):
