@@ -349,7 +349,11 @@ def _fit_search_tool_result(
 
 
 def _inbound_otel_context() -> object | None:
-    """Return the inbound traceparent context from the MCP request meta, if any."""
+    """Return the inbound traceparent context from the MCP request meta, if any.
+
+    None unless the caller propagated a W3C ``traceparent`` in request meta;
+    stock MCP clients (including agentgrep's CLI) do not.
+    """
     try:
         from mcp.server.lowlevel.server import request_ctx
 
