@@ -133,7 +133,12 @@ after redacting sensitive project extras. The cost is one small serialization
 per exported log record. This does not install console handlers or change
 packaged-user output; it makes Loki query-stage parsing reliable for local QA.
 
-Asyncio auto-instrumentation runs only in local/debug/live modes. SQLite spans
+Passive local telemetry (a git checkout with `AGENTGREP_OTEL` unset) still
+exports traces, metrics, and logs but skips Pyroscope and auto-instrumentation
+so an in-repo `agentgrep --help` stays fast. Setting `AGENTGREP_OTEL`
+explicitly (or passing an explicit mode) opts into all four signals, including
+profiles. Asyncio auto-instrumentation therefore runs only for explicit
+local/debug/live runs. SQLite spans
 come solely from the project `sqlite3.Connection` shortcut factory, which wraps
 the `Connection.execute` path agentgrep uses for source parsing;
 `SQLite3Instrumentor` only covers the cursor path agentgrep never takes, so it

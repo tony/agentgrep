@@ -356,6 +356,24 @@ def resolve_mode(
     return "off"
 
 
+def resolve_explicit(
+    mode: TelemetryMode | None,
+    env: cabc.Mapping[str, str] | None = None,
+) -> bool:
+    """Return whether telemetry is an explicit opt-in rather than passive local.
+
+    Passive local telemetry is the auto-resolved ``local`` mode of a git
+    checkout with ``AGENTGREP_OTEL`` unset; it keeps traces, metrics, and logs
+    but skips the heavier Pyroscope profiler and auto-instrumentation to protect
+    cold start. Any explicit ``mode`` argument or ``AGENTGREP_OTEL`` value is an
+    opt-in that keeps every signal.
+    """
+    if mode is not None:
+        return True
+    active_env = os.environ if env is None else env
+    return active_env.get("AGENTGREP_OTEL") is not None
+
+
 def setup(
     *,
     mode: TelemetryMode | None = None,
@@ -369,6 +387,7 @@ def setup(
     active_mode = resolve_mode(env=active_env, repo_root=repo_root) if mode is None else mode
     if active_mode == "off":
         return TelemetryHandle(mode=active_mode)
+    explicit = resolve_explicit(mode, active_env)
     resource_attributes = build_resource_attributes(
         env=active_env,
         repo_root=repo_root,
@@ -384,6 +403,7 @@ def setup(
             backend = _telemetry_otel.build_backend(
                 mode=active_mode,
                 resource_attributes=resource_attributes,
+                explicit=explicit,
             )
         except Exception:
             return TelemetryHandle(mode=active_mode)
