@@ -186,7 +186,7 @@ because they have disjoint data homes and on-disk formats.
 
 ### Codex
 
-`observed_version`: ``github.com/openai/codex@4c89772`` (2026-05-16).
+`observed_version`: ``github.com/openai/codex@3fb81667`` (2026-06-21).
 Codex honours `CODEX_HOME` for primary files. SQLite files resolve
 through `CODEX_SQLITE_HOME`, then `sqlite_home` in `config.toml`, then
 `CODEX_HOME`.
@@ -195,11 +195,11 @@ Schemas are pinned directly to the upstream Rust types:
 
 - {attr}`~agentgrep.stores.StoreFormat.JSONL` `history.jsonl` →
   `HistoryEntry { session_id: String, ts: u64, text: String }`
-  ([`codex-rs/message-history/src/lib.rs:54-58`](https://github.com/openai/codex/blob/4c89772/codex-rs/message-history/src/lib.rs#L54)).
+  ([`codex-rs/message-history/src/lib.rs:56-60`](https://github.com/openai/codex/blob/3fb81667/codex-rs/message-history/src/lib.rs#L56)).
 - Per-thread `sessions/YYYY/MM/DD/rollout-…jsonl` → tagged enum
   `RolloutItem` with variants `SessionMeta`, `ResponseItem`,
   `Compacted`, `TurnContext`, `EventMsg`
-  ([`codex-rs/protocol/src/protocol.rs:2783`](https://github.com/openai/codex/blob/4c89772/codex-rs/protocol/src/protocol.rs#L2783)).
+  ([`codex-rs/protocol/src/protocol.rs:2929`](https://github.com/openai/codex/blob/3fb81667/codex-rs/protocol/src/protocol.rs#L2929)).
 - Legacy root `sessions/rollout-*.json` → JSON object with `session`
   metadata and an `items` array carrying message-like records.
 

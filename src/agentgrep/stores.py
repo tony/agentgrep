@@ -220,7 +220,7 @@ class StoreDescriptor(pydantic.BaseModel):
     upstream_ref: str | None = None
     """Pointer to the authoritative type definition.
 
-    Example: ``github.com/openai/codex@4c89772/codex-rs/...#L2783``.
+    Example: ``github.com/openai/codex@3fb81667/codex-rs/...#L2929``.
     """
 
     schema_notes: str
