@@ -344,7 +344,7 @@ def _configure_profiles(resource_attributes: _telemetry.TelemetryAttributes) -> 
     tags = _profile_tags(resource_attributes)
     try:
         pyroscope.configure(
-            application_name="agentgrep",
+            application_name=str(resource_attributes.get("service.name") or "agentgrep"),
             server_address=server_address,
             sample_rate=100,
             oncpu=True,

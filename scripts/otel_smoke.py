@@ -24,6 +24,7 @@ def main() -> int:
     telemetry = _telemetry.setup(
         mode="live",
         repo_root=pathlib.Path(__file__).resolve().parents[1],
+        service_name="agentgrep-otel-smoke",
     )
     logger = logging.getLogger("agentgrep.otel.smoke")
     try:

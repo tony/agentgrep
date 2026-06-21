@@ -47,6 +47,7 @@ VCS_RESOURCE_TO_LABEL = {
     "vcs.ref.head.revision": "vcs_ref_head_revision",
     "vcs.ref.head.type": "vcs_ref_head_type",
 }
+SERVICE_NAME_PATTERN = "agentgrep|agentgrep-.+"
 PYROSCOPE_SOURCE_LABELS = {
     "service_git_ref": "vcs.ref.head.revision",
     "service_repository": "vcs.repository.url.full",
@@ -328,7 +329,7 @@ def fake_build(*_args, **_kwargs):
     return FakeApp()
 
 
-handle = telemetry.setup(repo_root=pathlib.Path.cwd())
+handle = telemetry.setup(repo_root=pathlib.Path.cwd(), service_name="agentgrep-tui")
 try:
     ui_app.build_streaming_ui_app = fake_build
     query = agentgrep.SearchQuery(
@@ -817,7 +818,10 @@ def query_logs(run_id: str, vcs_identity: dict[str, dict[str, str]]) -> dict[str
 
 def _loki_log_query(run_id: str) -> str:
     """Return the LogQL query used for run-scoped structured log checks."""
-    return f'{{service_name="agentgrep"}} | json | agentgrep_debug_session_id={json.dumps(run_id)}'
+    return (
+        f'{{service_name=~"{SERVICE_NAME_PATTERN}"}} '
+        f"| json | agentgrep_debug_session_id={json.dumps(run_id)}"
+    )
 
 
 def _loki_log_fields(
@@ -960,7 +964,7 @@ def _pyroscope_label_values_body(
     """Return a run- and source-scoped Pyroscope LabelValues request body."""
     matchers: dict[str, str] = {
         "agentgrep_debug_session_id": run_id,
-        "service_name": "agentgrep",
+        "service_name": f"~{SERVICE_NAME_PATTERN}",
     }
     matchers.update(vcs_identity["labels"])
     repository = vcs_identity["resource"].get("vcs.repository.url.full")
@@ -1073,6 +1077,8 @@ def _label_matchers(labels: cabc.Mapping[str, object]) -> tuple[str, ...]:
 
 def _label_matcher(key: str, value: object) -> str:
     """Return one PromQL equality matcher with JSON string escaping."""
+    if isinstance(value, str) and value.startswith("~"):
+        return f"{key}=~{json.dumps(value[1:])}"
     return f"{key}={json.dumps(str(value))}"
 
 
