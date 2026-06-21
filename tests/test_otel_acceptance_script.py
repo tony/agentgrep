@@ -334,9 +334,9 @@ _TRACE_ROOT_CASES: tuple[_TraceRootCase, ...] = (
     ),
     _TraceRootCase(
         test_id="unapproved-single-span-root",
-        spans=[{"spanID": "root", "name": "agentgrep.mcp.operation"}],
+        spans=[{"spanID": "root", "name": "agentgrep.engine.scan"}],
         expected_status="bad_root",
-        expected_root="agentgrep.mcp.operation",
+        expected_root="agentgrep.engine.scan",
     ),
     _TraceRootCase(
         test_id="orphan-child",

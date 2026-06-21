@@ -101,7 +101,7 @@ docs = [
 
 [package.metadata]
 requires-dist = [
-    { name = "fastmcp", specifier = ">=3.0.0" },
+    { name = "fastmcp", specifier = ">=3.0.0,<4" },
     { name = "opentelemetry-api", marker = "extra == 'otel'", specifier = ">=1.42.1" },
     { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'otel'", specifier = ">=1.42.1" },
     { name = "opentelemetry-instrumentation-asyncio", marker = "extra == 'otel'", specifier = ">=0.63b1" },

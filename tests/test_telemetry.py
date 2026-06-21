@@ -991,11 +991,11 @@ def test_span_inherits_inbound_otel_context() -> None:
     try:
         with inbound_tracer.start_as_current_span("caller") as caller:
             caller_trace = format_trace_id(caller.get_span_context().trace_id)
-            with telemetry.span("agentgrep.mcp.request", inherit_otel_context=True):
+            with telemetry.span("mcp.server.request", inherit_otel_context=True):
                 inherited_trace = telemetry.current_trace_id()
         with inbound_tracer.start_as_current_span("caller2") as caller2:
             caller2_trace = format_trace_id(caller2.get_span_context().trace_id)
-            with telemetry.span("agentgrep.mcp.request"):
+            with telemetry.span("mcp.server.request"):
                 severed_trace = telemetry.current_trace_id()
     finally:
         telemetry.configure_backend(None)
@@ -1573,21 +1573,15 @@ async def test_mcp_tool_span_is_non_single_and_redacted(
         remove_handler()
         telemetry.configure_backend(None)
 
-    assert backend.single_root_trace_ids() == ()
-    tool_span = next(span for span in backend.finished_spans if span.name == "agentgrep.mcp.tool")
+    tool_span = next(span for span in backend.finished_spans if span.name == "mcp.server.tool")
     request_span = next(
         span
         for span in backend.finished_spans
-        if span.name == "agentgrep.mcp.request" and span.trace_id == tool_span.trace_id
-    )
-    operation_span = next(
-        span
-        for span in backend.finished_spans
-        if span.name == "agentgrep.mcp.operation" and span.trace_id == tool_span.trace_id
+        if span.name == "mcp.server.request" and span.trace_id == tool_span.trace_id
     )
     assert request_span.parent_id is None
-    assert operation_span.parent_id == request_span.span_id
-    assert tool_span.parent_id == operation_span.span_id
+    assert tool_span.parent_id == request_span.span_id
+    assert request_span.trace_id not in backend.single_root_trace_ids()
     assert "secret-token" not in str(tool_span.attributes)
     assert tool_span.attributes["agentgrep_mcp_args.terms.0.len"] == len("secret-token")
     assert any(record.trace_id == request_span.trace_id for record in backend.log_records)
@@ -1614,7 +1608,7 @@ async def test_mcp_validate_query_span_redacts_query_arg() -> None:
         remove_handler()
         telemetry.configure_backend(None)
 
-    tool_span = next(span for span in backend.finished_spans if span.name == "agentgrep.mcp.tool")
+    tool_span = next(span for span in backend.finished_spans if span.name == "mcp.server.tool")
     assert "secret-query" not in str(tool_span.attributes)
     assert "agentgrep_mcp_args.query" not in tool_span.attributes
     assert tool_span.attributes["agentgrep_mcp_args.query.len"] == len(query)
@@ -1638,17 +1632,12 @@ async def test_mcp_list_tools_gets_request_root() -> None:
         remove_handler()
         telemetry.configure_backend(None)
 
-    assert backend.single_root_trace_ids() == ()
-    assert [span.name for span in backend.finished_spans] == [
-        "agentgrep.mcp.operation",
-        "agentgrep.mcp.request",
-    ]
-    request_span = backend.finished_spans[-1]
-    operation_span = backend.finished_spans[0]
+    mcp_spans = [span for span in backend.finished_spans if span.name.startswith("mcp.server.")]
+    assert [span.name for span in mcp_spans] == ["mcp.server.request"]
+    request_span = mcp_spans[0]
     assert request_span.parent_id is None
     assert request_span.attributes["agentgrep_mcp_method"] == "tools/list"
-    assert operation_span.parent_id == request_span.span_id
-    assert operation_span.attributes["agentgrep_mcp_method"] == "tools/list"
+    assert backend.single_root_trace_ids() == (request_span.trace_id,)
     request_log = next(
         record for record in backend.log_records if record.message == "mcp request completed"
     )
