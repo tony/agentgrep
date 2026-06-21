@@ -403,6 +403,11 @@ WSL-remote workspace stores its chat client-side on Windows.
 overrides the Windows users mount. See
 {doc}`adr/0009-cross-host-discovery` for the cross-host design.
 
+Documentary-only entries cover the per-chat `chatEditingSessions/` edit
+snapshots (a byproduct of the transcripts, keyed by the same session
+UUID) and the `secret://…` auth keys in `state.vscdb` (private
+credentials, never enumerated).
+
 ## Adding or updating a store
 
 1. Edit `src/agentgrep/store_catalog.py`. Stamp `observed_version`

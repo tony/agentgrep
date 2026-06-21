@@ -4107,11 +4107,54 @@ _VSCODE_STORES: tuple[StoreDescriptor, ...] = (
             ),
         ),
     ),
+    StoreDescriptor(
+        agent="vscode",
+        store_id="vscode.editing_sessions",
+        role=StoreRole.SOURCE_TREE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern=(
+            "${HOME}/.config/Code/User/workspaceStorage/<hash>/chatEditingSessions/<sessionId>/"
+        ),
+        env_overrides=("VSCODE_APPDATA", "AGENTGREP_WSL_USERS_ROOT"),
+        observed_version="VS Code GitHub Copilot Chat (chatEditingSessions)",
+        observed_at=_VSCODE_OBSERVED_AT,
+        schema_notes=(
+            "Per-chat working-set snapshots written when a Copilot Chat turn edits "
+            "files: `chatEditingSessions/<sessionId>/state.json` plus a `contents/` "
+            "tree of pre/post file states, keyed by the same session UUID as "
+            "`chatSessions/`. A byproduct of the transcripts (often empty), not a "
+            "prompt source — documented so future adapters do not mistake the edit "
+            "snapshots for chat history."
+        ),
+        distinguishes_from=("vscode.chat_sessions",),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="vscode",
+        store_id="vscode.auth",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.SQLITE,
+        path_pattern="${HOME}/.config/Code/User/globalStorage/state.vscdb",
+        env_overrides=("VSCODE_APPDATA", "AGENTGREP_WSL_USERS_ROOT"),
+        observed_version="VS Code GitHub Copilot Chat (state.vscdb secrets)",
+        observed_at=_VSCODE_OBSERVED_AT,
+        schema_notes=(
+            "The same global `state.vscdb` holds `secret://...` keys with provider "
+            "OAuth tokens and API keys alongside the searchable `inline-chat-history`. "
+            "Documented but never enumerated: the inline-history adapter is "
+            "token-filtered to its one key, so these auth keys are never read "
+            "(see ADR 0001)."
+        ),
+        distinguishes_from=("vscode.inline_history",),
+        coverage=StoreCoverage.PRIVATE,
+        search_by_default=False,
+    ),
 )
 
 
 CATALOG = StoreCatalog(
-    catalog_version=30,
+    catalog_version=31,
     captured_at=_VSCODE_OBSERVED_AT,
     stores=(
         *_CLAUDE_STORES,
