@@ -120,6 +120,7 @@ AGENT_PRODUCT_NAMES: dict[agentgrep.AgentName, str] = {
     "pi": "Pi",
     "opencode": "OpenCode",
     "windsurf": "Windsurf",
+    "vscode": "VS Code",
 }
 
 

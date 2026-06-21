@@ -32,8 +32,8 @@ Read `agentgrep://sources/codex`, `agentgrep://sources/claude`,
 `agentgrep://sources/cursor-cli`, `agentgrep://sources/cursor-ide`,
 `agentgrep://sources/gemini`, `agentgrep://sources/antigravity-cli`,
 `agentgrep://sources/antigravity-ide`, `agentgrep://sources/grok`,
-`agentgrep://sources/pi`, or `agentgrep://sources/opencode` to filter
-discovery by agent.
+`agentgrep://sources/pi`, `agentgrep://sources/opencode`, or
+`agentgrep://sources/vscode` to filter discovery by agent.
 
 ## Store catalog
 

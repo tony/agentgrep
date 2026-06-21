@@ -102,7 +102,8 @@ def default_registry() -> FieldRegistry:
     ============= ====== ======= ===========================================
     ``agent``     enum   source  Values: codex, claude, cursor-cli, cursor-ide,
                                          gemini, antigravity-cli,
-                                         antigravity-ide, grok, pi, opencode
+                                         antigravity-ide, grok, pi, opencode,
+                                         vscode
     ``store``     string source  Substring against :attr:`SourceHandle.store`
     ``adapter``   string source  Alias of ``adapter_id``
     ``path``      path   source  Glob against the file basename by default
@@ -130,6 +131,7 @@ def default_registry() -> FieldRegistry:
                 "grok",
                 "pi",
                 "opencode",
+                "vscode",
             ),
         ),
         FieldSpec(name="store", kind="string", layer="source"),

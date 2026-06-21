@@ -36,6 +36,7 @@ KNOWN_AGENTS: tuple[AgentName, ...] = (
     "pi",
     "opencode",
     "windsurf",
+    "vscode",
 )
 PATH_TOKEN_RE = re.compile(r"\$\{(?:HOME|[A-Z][A-Z0-9_]*)(?:\s+or\s+[^}]+)?\}")
 
@@ -919,6 +920,7 @@ PRIMARY_FIXTURES: tuple[tuple[str, str], ...] = (
     ("grok.sessions", "chat_history.jsonl"),
     ("grok.subagents", "meta.json"),
     ("pi.sessions", "example.jsonl"),
+    ("vscode.chat_sessions", "example.json"),
 )
 
 

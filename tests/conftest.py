@@ -9,7 +9,26 @@ from __future__ import annotations
 
 import pathlib
 
+import pytest
+
 SAMPLES_ROOT = pathlib.Path(__file__).parent / "samples"
+
+
+@pytest.fixture(autouse=True)
+def _isolate_vscode_wsl_bridge(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep the VS Code WSL cross-host probe off the developer's real ``/mnt/c``.
+
+    ``agentgrep.discover_vscode_sources`` auto-probes the Windows-host VS Code
+    data under ``/mnt/c/Users`` when it detects WSL. That path is independent of
+    ``$HOME``, so on a WSL dev box it would leak real Copilot Chat history into
+    hermetic ``find --agent all`` tests. Point the users-mount root at a
+    nonexistent path by default; tests that exercise the bridge override
+    ``AGENTGREP_WSL_USERS_ROOT`` explicitly.
+    """
+    monkeypatch.setenv("AGENTGREP_WSL_USERS_ROOT", str(tmp_path / "no-windows-mount"))
 
 
 def fixture_path(store_id: str, name: str) -> pathlib.Path:

@@ -55,6 +55,7 @@ import threading
 import time
 import tomllib
 import typing as t
+import urllib.parse
 
 import pydantic
 from rich.console import Group as _RichGroup
@@ -109,6 +110,7 @@ AgentName = t.Literal[
     "pi",
     "opencode",
     "windsurf",
+    "vscode",
 ]
 OutputMode = t.Literal["text", "json", "ndjson", "ui"]
 ProgressMode = t.Literal["auto", "always", "never"]
@@ -137,6 +139,7 @@ AGENT_CHOICES: tuple[AgentName, ...] = (
     "grok",
     "pi",
     "opencode",
+    "vscode",
 )
 JSON_FILE_SUFFIXES: frozenset[str] = frozenset({".json", ".jsonl"})
 SCHEMA_VERSION: str = "agentgrep.v1"
@@ -230,6 +233,8 @@ ITER_SOURCE_RECORD_ADAPTERS: frozenset[str] = frozenset(
         "pi.sessions_jsonl.v1",
         "pi.context_mode_sqlite.v1",
         "opencode.db_sqlite.v1",
+        "vscode.chat_sessions_json.v1",
+        "vscode.inline_history_sqlite.v1",
     },
 )
 EnvelopeFactory = t.Callable[[str, dict[str, object], list[dict[str, object]]], dict[str, object]]
@@ -2786,6 +2791,16 @@ def discover_sources(
                     store_roles=store_roles,
                 ),
             )
+        elif agent == "vscode":
+            discovered.extend(
+                discover_vscode_sources(
+                    home,
+                    backends,
+                    include_non_default=include_non_default,
+                    version_detail=version_detail,
+                    store_roles=store_roles,
+                ),
+            )
     discovered.sort(key=lambda item: (item.agent, item.store, str(item.path)))
     return discovered
 
@@ -3701,6 +3716,92 @@ def discover_cursor_ide_sources(
     )
 
 
+def _is_wsl() -> bool:
+    """Detect WSL so the Windows ``/mnt/c`` VS Code data is only probed there."""
+    try:
+        return (
+            "microsoft"
+            in pathlib.Path("/proc/version").read_text(encoding="utf-8", errors="ignore").casefold()
+        )
+    except OSError:
+        return False
+
+
+_VSCODE_EDITIONS: tuple[str, ...] = (
+    "Code",
+    "Code - Insiders",
+    "VSCodium",
+    "Code - OSS",
+)
+
+
+def _vscode_user_dirs(home: pathlib.Path) -> tuple[pathlib.Path, ...]:
+    """Return the existing VS Code ``User/`` directories across editions and OS.
+
+    Covers the native per-platform location and — on WSL, or when
+    ``VSCODE_APPDATA`` points at a Windows ``Roaming`` dir — the Windows-host
+    mount, since a workspace opened through WSL persists its chat client-side
+    on Windows (reachable from the distro via ``/mnt/c``). ``VSCODE_APPDATA``
+    pins one ``Roaming`` dir; ``AGENTGREP_WSL_USERS_ROOT`` overrides the
+    Windows users mount that the WSL auto-probe globs (default ``/mnt/c/Users``).
+    """
+    if sys.platform == "darwin":
+        native_base = home / "Library" / "Application Support"
+    elif sys.platform == "win32":
+        native_base = home / "AppData" / "Roaming"
+    else:
+        native_base = pathlib.Path(os.environ.get("XDG_CONFIG_HOME") or (home / ".config"))
+    roaming_bases: list[pathlib.Path] = [native_base]
+    override = os.environ.get("VSCODE_APPDATA")
+    if override:
+        roaming_bases.append(pathlib.Path(os.path.expandvars(override)).expanduser())
+    elif _is_wsl():
+        windows_users = pathlib.Path(os.environ.get("AGENTGREP_WSL_USERS_ROOT") or "/mnt/c/Users")
+        if windows_users.is_dir():
+            roaming_bases.extend(
+                user_dir / "AppData" / "Roaming" for user_dir in sorted(windows_users.glob("*"))
+            )
+    user_dirs = [base / edition / "User" for base in roaming_bases for edition in _VSCODE_EDITIONS]
+    return tuple(path for path in dict.fromkeys(user_dirs) if path.is_dir())
+
+
+def discover_vscode_sources(
+    home: pathlib.Path,
+    backends: BackendSelection,
+    *,
+    include_non_default: bool = False,
+    version_detail: DiscoveryVersionDetail = "shape",
+    store_roles: DiscoveryStoreRoles = None,
+) -> list[SourceHandle]:
+    """Discover VS Code (GitHub Copilot Chat) sources.
+
+    VS Code persists chat client-side in the workbench ``User/`` directory:
+    per-workspace ``workspaceStorage/<hash>/chatSessions/*.json`` transcripts,
+    windowless ``globalStorage/emptyWindowChatSessions/*.json``, and the global
+    ``globalStorage/state.vscdb`` inline-edit history. Roots span every existing
+    edition and OS ``User/`` dir (including the Windows-host mount under WSL);
+    globs and adapters come from the ``vscode.*`` rows of
+    :data:`agentgrep.store_catalog.CATALOG`.
+    """
+    user_dirs = _vscode_user_dirs(home)
+    if not user_dirs:
+        return []
+    roots: dict[str, DiscoveryRoot] = {
+        "default": home,
+        "vscode_workspace": tuple(d / "workspaceStorage" for d in user_dirs),
+        "vscode_global": tuple(d / "globalStorage" for d in user_dirs),
+    }
+    return discover_from_catalog(
+        home,
+        "vscode",
+        roots,
+        backends,
+        include_non_default=include_non_default,
+        version_detail=version_detail,
+        store_roles=store_roles,
+    )
+
+
 def discover_gemini_sources(
     home: pathlib.Path,
     backends: BackendSelection,
@@ -4597,6 +4698,12 @@ def iter_source_records(
         return
     if source.adapter_id == "opencode.db_sqlite.v1":
         yield from parse_opencode_db(source)
+        return
+    if source.adapter_id == "vscode.chat_sessions_json.v1":
+        yield from parse_vscode_chat_session(source)
+        return
+    if source.adapter_id == "vscode.inline_history_sqlite.v1":
+        yield from parse_vscode_inline_history(source)
         return
 
 
@@ -6886,6 +6993,210 @@ def parse_cursor_state_db(
                         continue
                     seen.add(entry_key)
                     yield build_search_record(source, candidate)
+    except sqlite3.DatabaseError:
+        return
+    finally:
+        connection.close()
+
+
+def parse_vscode_chat_session(source: SourceHandle) -> cabc.Iterator[SearchRecord]:
+    """Parse a VS Code GitHub Copilot Chat ``chatSessions/<uuid>.json``.
+
+    Each ``requests[]`` turn yields a user-prompt record (``message.text``) and,
+    when present, an assistant record (the bare ``MarkdownString`` response parts
+    with no ``kind``, joined). Tool-call names and the resolved workspace cwd are
+    attached as metadata. Tolerates empty/draft turns and absent ``result``.
+    """
+    payload = read_json_file(source.path)
+    if not isinstance(payload, dict):
+        return
+    mapping = t.cast("dict[str, object]", payload)
+    requests = mapping.get("requests")
+    if not isinstance(requests, list):
+        return
+    session_id = as_optional_str(mapping.get("sessionId"))
+    base_metadata: dict[str, object] = {}
+    cwd = _vscode_workspace_cwd(source.path)
+    if cwd:
+        base_metadata["cwd"] = cwd
+    title: str | None = None
+    for entry in requests:
+        if not isinstance(entry, dict):
+            continue
+        request = t.cast("dict[str, object]", entry)
+        timestamp = _unix_millis_to_isoformat(request.get("timestamp"))
+        message = request.get("message")
+        prompt = (
+            as_optional_str(t.cast("dict[str, object]", message).get("text"))
+            if isinstance(message, dict)
+            else None
+        )
+        if prompt and title is None:
+            title = prompt[:80]
+        if prompt:
+            yield SearchRecord(
+                kind="prompt",
+                agent=source.agent,
+                store=source.store,
+                adapter_id=source.adapter_id,
+                path=source.path,
+                text=prompt,
+                title=title,
+                role="user",
+                timestamp=timestamp,
+                session_id=session_id,
+                conversation_id=session_id,
+                metadata=dict(base_metadata),
+            )
+        reply = _vscode_response_text(request.get("response"))
+        if reply:
+            metadata = dict(base_metadata)
+            tools = _vscode_tool_names(request.get("result"))
+            if tools:
+                metadata["tools"] = tools
+            yield SearchRecord(
+                kind="history",
+                agent=source.agent,
+                store=source.store,
+                adapter_id=source.adapter_id,
+                path=source.path,
+                text=reply,
+                title=title,
+                role="assistant",
+                timestamp=timestamp,
+                model=as_optional_str(request.get("modelId")),
+                session_id=session_id,
+                conversation_id=session_id,
+                metadata=metadata,
+            )
+
+
+def _vscode_response_text(response: object) -> str | None:
+    """Join the readable Markdown parts of a Copilot Chat response array.
+
+    Assistant prose lives in the bare ``MarkdownString`` parts (no ``kind``,
+    shape ``{value, supportHtml, supportThemeIcons}``); a forward-compatible
+    ``markdownContent`` kind is also accepted. Tool-invocation, reference,
+    progress, and warning parts are skipped.
+    """
+    if not isinstance(response, list):
+        return None
+    chunks: list[str] = []
+    for part in response:
+        if not isinstance(part, dict):
+            continue
+        mapping = t.cast("dict[str, object]", part)
+        kind = mapping.get("kind")
+        if kind is not None and kind != "markdownContent":
+            continue
+        value = mapping.get("value")
+        if not isinstance(value, str):
+            content = mapping.get("content")
+            value = (
+                t.cast("dict[str, object]", content).get("value")
+                if isinstance(content, dict)
+                else None
+            )
+        if isinstance(value, str):
+            chunks.append(value)
+    text = "".join(chunks).strip()
+    return text or None
+
+
+def _vscode_tool_names(result: object) -> list[str] | None:
+    """Extract the tool names a Copilot Chat agent turn invoked, if any."""
+    if not isinstance(result, dict):
+        return None
+    metadata = t.cast("dict[str, object]", result).get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    rounds = t.cast("dict[str, object]", metadata).get("toolCallRounds")
+    if not isinstance(rounds, list):
+        return None
+    names: list[str] = []
+    for round_ in rounds:
+        if not isinstance(round_, dict):
+            continue
+        calls = t.cast("dict[str, object]", round_).get("toolCalls")
+        if not isinstance(calls, list):
+            continue
+        for call in calls:
+            if isinstance(call, dict):
+                name = as_optional_str(t.cast("dict[str, object]", call).get("name"))
+                if name:
+                    names.append(name)
+    return names or None
+
+
+def _vscode_workspace_cwd(session_path: pathlib.Path) -> str | None:
+    """Resolve the project cwd for a chat session via its ``workspace.json``.
+
+    ``workspaceStorage/<hash>/chatSessions/<uuid>.json`` has a sibling
+    ``workspace.json`` whose ``folder`` URI names the opened directory. A
+    ``vscode-remote://wsl+<distro>/<path>`` URI maps to the Linux path
+    ``<path>``; ``file://`` URIs are unquoted. Returns ``None`` for windowless
+    sessions (``globalStorage/emptyWindowChatSessions/``) with no workspace.
+    """
+    workspace_json = session_path.parent.parent / "workspace.json"
+    payload = read_json_file(workspace_json)
+    if not isinstance(payload, dict):
+        return None
+    folder = as_optional_str(t.cast("dict[str, object]", payload).get("folder"))
+    if not folder:
+        return None
+    return _vscode_uri_to_path(folder)
+
+
+def _vscode_uri_to_path(uri: str) -> str | None:
+    """Map a VS Code folder URI to a local filesystem path.
+
+    ``vscode-remote://wsl+<distro>/home/u/proj`` -> ``/home/u/proj``;
+    ``file:///home/u/proj`` -> ``/home/u/proj``. Other remotes (ssh, dev
+    container) return their path component too, best-effort.
+    """
+    remote = re.match(r"vscode-remote://[^/]+(/.*)$", uri)
+    if remote:
+        return urllib.parse.unquote(remote.group(1)) or None
+    if uri.startswith("file://"):
+        return urllib.parse.unquote(uri[len("file://") :]) or None
+    return None
+
+
+def parse_vscode_inline_history(source: SourceHandle) -> cabc.Iterator[SearchRecord]:
+    """Parse the VS Code global ``state.vscdb`` inline-edit prompt history.
+
+    The ``inline-chat-history`` ``ItemTable`` key holds a JSON array of the
+    user's Ctrl+I inline-edit prompts. Token-filtered to that key alone, so the
+    ``secret://`` auth keys in the same database are never read.
+    """
+    connection = open_readonly_sqlite(source.path)
+    try:
+        if "ItemTable" not in sqlite_table_names(connection):
+            return
+        for _key, raw_value in iter_key_value_rows(
+            connection,
+            "ItemTable",
+            key_tokens=("inline-chat-history",),
+        ):
+            decoded = decode_sqlite_value(raw_value)
+            if decoded is None:
+                continue
+            parsed = parse_embedded_json(decoded)
+            if not isinstance(parsed, list):
+                continue
+            for item in parsed:
+                if isinstance(item, str) and item.strip():
+                    yield SearchRecord(
+                        kind="prompt",
+                        agent=source.agent,
+                        store=source.store,
+                        adapter_id=source.adapter_id,
+                        path=source.path,
+                        text=item,
+                        title="VS Code inline chat",
+                        role="user",
+                        timestamp=isoformat_from_mtime_ns(source.mtime_ns),
+                    )
     except sqlite3.DatabaseError:
         return
     finally:

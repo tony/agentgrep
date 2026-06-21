@@ -77,6 +77,12 @@ Pi (earendil-works) session transcripts, settings, prompts, and managed extensio
 OpenCode (anomalyco) SQLite session store, config, snapshots, and caches.
 :::
 
+:::{grid-item-card} VS Code
+:link: vscode
+:link-type: doc
+VS Code GitHub Copilot Chat JSON transcripts and inline-edit history, including WSL cross-host stores.
+:::
+
 ::::
 
 ## Unsupported backends
@@ -131,5 +137,6 @@ antigravity-ide
 grok
 pi
 opencode
+vscode
 unsupported/index
 ```

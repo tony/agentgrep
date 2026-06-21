@@ -100,6 +100,7 @@ AgentName = t.Literal[
     "pi",
     "opencode",
     "windsurf",
+    "vscode",
 ]
 PathKind = t.Literal["history_file", "session_file", "sqlite_db", "store_file"]
 SourceKind = t.Literal["json", "jsonl", "sqlite", "text", "opaque"]
