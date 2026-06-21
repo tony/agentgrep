@@ -470,8 +470,14 @@ def _resolve_service_name(active_env: cabc.Mapping[str, str], service_name: str 
 
 
 def configure_backend(backend: TelemetryBackend | None) -> None:
-    """Set the active backend for tests."""
+    """Set the active backend for tests.
+
+    Also clears the active project span so a test starts from a clean root,
+    matching the uninstrumented suite even when an outer ``agentgrep.pytest.test``
+    span is active (set by the conftest hook under ``AGENTGREP_OTEL``).
+    """
     _BACKEND.set(backend)
+    _CURRENT_SPAN.set(None)
 
 
 def active_backend() -> TelemetryBackend | None:
