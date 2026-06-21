@@ -172,12 +172,14 @@ this branch because the goal is to close observability blindspots. If the
 series count becomes a project-threatening problem, reduce cardinality in a
 follow-up with measurement rather than hiding metrics in this PR.
 
-Explicitly instrumented pytest runs add low-cardinality xdist context to each
+Explicitly instrumented pytest runs open one `agentgrep.pytest.session` root for
+the run lifecycle and add low-cardinality xdist context to each
 `agentgrep.pytest.test` span when xdist metadata is
-present: worker id, whether xdist is active, and the distribution mode. Default
-pytest remains offline and uninstrumented unless `AGENTGREP_OTEL` is set.
-Each pytest worker is its own process and emits its own roots under the shared
-debug session; agentgrep does not stitch cross-worker parent spans together.
+present: worker id, whether xdist is active, and the distribution mode. Each
+`agentgrep.pytest.test` is its own independent trace, not a child of the session
+root. Default pytest remains offline and uninstrumented unless `AGENTGREP_OTEL`
+is set. Each pytest worker is its own process and emits its own roots under the
+shared debug session; agentgrep does not stitch cross-worker parent spans together.
 Ordinary test subprocesses are not monkeypatched globally. They either run a
 telemetry-enabled agentgrep entrypoint themselves, or they stay visible only as
 part of the parent pytest item unless a focused harness such as the

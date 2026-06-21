@@ -899,6 +899,33 @@ def test_pytest_item_span_helper_covers_custom_items() -> None:
     assert test_span.attributes["agentgrep_pytest_test"] == FakeItem.nodeid
 
 
+def test_pytest_session_root_brackets_test_traces(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The session hooks open a pytest.session root; item traces stay independent."""
+    import agentgrep._telemetry as telemetry
+    import conftest as root_conftest
+
+    class FakeItem:
+        nodeid = "tests/test_x.py::test_y"
+
+    monkeypatch.setenv("AGENTGREP_OTEL", "test")
+    root_conftest.pytest_sessionstart(t.cast("t.Any", None))
+    backend = telemetry.active_backend()
+    assert isinstance(backend, telemetry.InMemoryTelemetryBackend)
+    try:
+        with root_conftest._agentgrep_otel_pytest_item_span(FakeItem()):
+            pass
+    finally:
+        root_conftest.pytest_sessionfinish(t.cast("t.Any", None), 0)
+
+    by_name = {span.name: span for span in backend.finished_spans}
+    assert "agentgrep.pytest.session" in by_name
+    session_span = by_name["agentgrep.pytest.session"]
+    test_span = by_name["agentgrep.pytest.test"]
+    assert session_span.parent_id is None
+    assert test_span.parent_id is None
+    assert test_span.trace_id != session_span.trace_id
+
+
 @pytest.mark.parametrize(
     "case",
     PYTEST_XDIST_ATTRIBUTE_CASES,
