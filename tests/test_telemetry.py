@@ -61,6 +61,14 @@ class VcsRepositoryUrlCase(t.NamedTuple):
     expected_url: str
 
 
+class SensitiveLogExtraCase(t.NamedTuple):
+    """Parametrized case for sensitive OTel log extras."""
+
+    test_id: str
+    key: str
+    value: str
+
+
 VCS_REPOSITORY_URL_CASES: tuple[VcsRepositoryUrlCase, ...] = (
     VcsRepositoryUrlCase(
         test_id="https-userinfo",
@@ -81,6 +89,24 @@ VCS_REPOSITORY_URL_CASES: tuple[VcsRepositoryUrlCase, ...] = (
         test_id="scp-like",
         raw_url="git@example.invalid:org/repo.git",
         expected_url="https://example.invalid/org/repo",
+    ),
+)
+
+SENSITIVE_LOG_EXTRA_CASES: tuple[SensitiveLogExtraCase, ...] = (
+    SensitiveLogExtraCase(
+        test_id="query",
+        key="agentgrep_query",
+        value="secret query token",
+    ),
+    SensitiveLogExtraCase(
+        test_id="path",
+        key="agentgrep_path",
+        value="/tmp/agentgrep/private/session.jsonl",
+    ),
+    SensitiveLogExtraCase(
+        test_id="argv",
+        key="agentgrep_argv",
+        value="agentgrep search secret-token",
     ),
 )
 
@@ -1148,6 +1174,87 @@ def test_otel_log_record_sanitizes_absolute_paths() -> None:
     assert sanitized.__dict__["agentgrep_override_path_status"] == "not_a_directory"
     assert sanitized.__dict__["agentgrep_path_kind"] == "session_file"
     assert record.pathname == "/tmp/agentgrep/src/agentgrep/example.py"
+
+
+def test_otel_log_body_is_structured_json() -> None:
+    """Exported OTel log bodies should be JSON, not plain messages."""
+    from agentgrep import _telemetry_otel
+
+    record = logging.LogRecord(
+        name="agentgrep.test",
+        level=logging.INFO,
+        pathname="/tmp/agentgrep/src/agentgrep/example.py",
+        lineno=12,
+        msg="search completed",
+        args=(),
+        exc_info=None,
+    )
+    record.agentgrep_surface = "cli"
+    record.agentgrep_operation = "search.run"
+    record.agentgrep_outcome = "ok"
+    record.agentgrep_result_count = 3
+
+    body = json.loads(_telemetry_otel._structured_log_body(record))
+
+    assert body == {
+        "agentgrep_operation": "search.run",
+        "agentgrep_outcome": "ok",
+        "agentgrep_result_count": 3,
+        "agentgrep_surface": "cli",
+        "level": "INFO",
+        "logger": "agentgrep.test",
+        "message": "search completed",
+    }
+
+
+@pytest.mark.parametrize(
+    "case",
+    SENSITIVE_LOG_EXTRA_CASES,
+    ids=[case.test_id for case in SENSITIVE_LOG_EXTRA_CASES],
+)
+def test_otel_log_body_redacts_sensitive_extras(case: SensitiveLogExtraCase) -> None:
+    """Structured OTel log bodies should contain shape metadata, not private values."""
+    from agentgrep import _telemetry_otel
+
+    record = logging.LogRecord(
+        name="agentgrep.test",
+        level=logging.WARNING,
+        pathname="/tmp/agentgrep/src/agentgrep/example.py",
+        lineno=12,
+        msg="warning fired",
+        args=(),
+        exc_info=None,
+    )
+    setattr(record, case.key, case.value)
+
+    rendered = _telemetry_otel._structured_log_body(record)
+    body = json.loads(rendered)
+
+    assert case.value not in rendered
+    assert body[f"{case.key}_redacted"] is True
+    assert body[f"{case.key}_len"] == len(case.value)
+    assert len(str(body[f"{case.key}_sha256_prefix"])) == 12
+
+
+def test_otel_structured_log_formatter_uses_json_body() -> None:
+    """The telemetry logging handler formatter should emit structured JSON."""
+    from agentgrep import _telemetry_otel
+
+    record = logging.LogRecord(
+        name="agentgrep.test",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="otel linked",
+        args=(),
+        exc_info=None,
+    )
+    record.agentgrep_surface = "cli"
+
+    body = json.loads(_telemetry_otel._StructuredTelemetryLogFormatter().format(record))
+
+    assert body["message"] == "otel linked"
+    assert body["agentgrep_surface"] == "cli"
 
 
 def test_otel_backend_exports_logs_with_current_otel_span() -> None:
