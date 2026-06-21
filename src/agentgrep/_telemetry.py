@@ -631,6 +631,19 @@ def root_span(name: str, **attributes: object) -> cabc.Iterator[None]:
         _CURRENT_SPAN.reset(token)
 
 
+def attach_otel_context(inbound: object | None) -> cabc.Callable[[], None]:
+    """Attach an inbound OTel context, returning a detach callback.
+
+    Delegates to the lazy OTel backend so the SDK import stays out of normal
+    application paths. A no-op when there is no inbound context.
+    """
+    if inbound is None:
+        return lambda: None
+    from agentgrep import _telemetry_otel
+
+    return _telemetry_otel.attach_otel_context(inbound)
+
+
 def record_metric(name: str, value: int | float, **attributes: object) -> None:
     """Record a metric point with active run identity."""
     backend = _BACKEND.get()

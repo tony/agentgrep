@@ -45,6 +45,14 @@ def _metric_is_counter(name: str) -> bool:
     return name.endswith(".count") or name in _COUNTER_METRIC_NAMES
 
 
+def attach_otel_context(inbound: object) -> cabc.Callable[[], None]:
+    """Attach an inbound OTel context, returning a detach callback."""
+    from opentelemetry import context as otel_context
+
+    token = otel_context.attach(t.cast("t.Any", inbound))
+    return lambda: otel_context.detach(token)
+
+
 class OtelTelemetryBackend:
     """OpenTelemetry-backed telemetry backend."""
 
