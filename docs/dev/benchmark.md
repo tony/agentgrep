@@ -221,7 +221,11 @@ mixes still work, so `--commands grep,profile-engine` runs the `grep`
 bench plus the profiler benchmark group. `list-commands` prints
 available command groups after the configured `[bench.X]` entries.
 Use `--commands profile-engine-cursor-ide` for the Cursor IDE SQLite
-profile-engine set without expanding the all-agent profiler group.
+profile-engine set without expanding the all-agent profiler group. That group
+includes real-local Cursor IDE rows and fixture-backed rows. Use
+`--commands profile-engine-cursor-ide-fixture` when the local workstation has
+no Cursor IDE sources but the benchmark still needs to exercise populated
+SQLite parsing and tracing.
 
 ## Engine profiler
 
@@ -248,6 +252,17 @@ $ uv run python scripts/profile_engine.py search-prompts \
     --limit 500 \
     --format json \
     agentgrep-cursor-db-no-match > .tmp/profile-cursor-ide.json
+```
+
+Profile the synthetic populated Cursor IDE fixture:
+
+```console
+$ uv run python scripts/profile_engine.py search-prompts \
+    --agent cursor-ide \
+    --fixture cursor-ide-state-vscdb \
+    --limit 500 \
+    --format json \
+    agentgrep-cursor-fixture-token > .tmp/profile-cursor-ide-fixture.json
 ```
 
 Profile every component:

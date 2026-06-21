@@ -276,6 +276,18 @@ $ uv run python scripts/profile_engine.py search-prompts \
     agentgrep-cursor-db-no-match > .tmp/profile-cursor-ide.json
 ```
 
+Run the synthetic populated Cursor IDE SQLite fixture when the local machine
+has no Cursor IDE state:
+
+```console
+$ uv run python scripts/profile_engine.py search-prompts \
+    --agent cursor-ide \
+    --fixture cursor-ide-state-vscdb \
+    --limit 500 \
+    --format json \
+    agentgrep-cursor-fixture-token > .tmp/profile-cursor-ide-fixture.json
+```
+
 Run the full profiler matrix and save a machine-readable artifact:
 
 ```console
@@ -311,7 +323,10 @@ present. Use `--commands profile-engine` for the all-agent profiler
 benchmark group, or pass an exact `profile-engine-*` key for one profiler
 benchmark.
 Use `--commands profile-engine-cursor-ide` for the Cursor IDE SQLite benchmark
-set without expanding the all-agent profiler group.
+set without expanding the all-agent profiler group. That group includes
+real-local Cursor rows plus fixture-backed populated SQLite rows. Use
+`--commands profile-engine-cursor-ide-fixture` when you need only the
+synthetic populated SQLite coverage.
 
 Run one profiler benchmark:
 
