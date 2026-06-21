@@ -577,8 +577,43 @@ def expected_vcs_identity() -> dict[str, dict[str, str]]:
     return {"resource": expected_resource, "labels": expected_labels}
 
 
+class _TraceRootVerdict(t.NamedTuple):
+    """Per-trace acceptance verdict for the trace evidence walk."""
+
+    status: t.Literal["approved", "orphan", "bad_root"]
+    root_name: str | None
+    span_names: list[str]
+    sqlite_span_names: list[str]
+    orphans: list[dict[str, str]]
+
+
+def _evaluate_trace_root(
+    spans: cabc.Sequence[cabc.Mapping[str, object]],
+    approved_roots: cabc.Set[str],
+) -> _TraceRootVerdict:
+    """Classify one trace's root.
+
+    An approved root is accepted regardless of span count, so a single-span
+    approved root (such as a childless CLI invocation or an idle pytest session)
+    is valid evidence. Orphan child spans and roots outside ``approved_roots``
+    are still rejected.
+    """
+    span_names = [str(span.get("name")) for span in spans if span.get("name")]
+    sqlite_span_names = sorted(
+        {name for name in span_names if name.startswith("agentgrep.sqlite.")},
+    )
+    orphans = _orphan_trace_spans(spans)
+    if orphans:
+        return _TraceRootVerdict("orphan", None, span_names, sqlite_span_names, orphans[:5])
+    root_spans = [span for span in spans if not span.get("parentSpanId")]
+    root_name = None if not root_spans else str(root_spans[0].get("name"))
+    if root_name not in approved_roots:
+        return _TraceRootVerdict("bad_root", root_name, span_names, sqlite_span_names, [])
+    return _TraceRootVerdict("approved", root_name, span_names, sqlite_span_names, [])
+
+
 def query_traces(run_id: str, vcs_identity: dict[str, dict[str, str]]) -> dict[str, object]:
-    """Return trace evidence and reject single-root traces."""
+    """Return trace evidence and reject orphan or unapproved-root traces."""
     params = urllib.parse.urlencode(
         {
             "q": f'{{resource.agentgrep.debug.session_id="{run_id}"}}',
@@ -593,7 +628,6 @@ def query_traces(run_id: str, vcs_identity: dict[str, dict[str, str]]) -> dict[s
         if trace is not None and trace.get("traceID"):
             trace_ids.append(str(trace["traceID"]))
     checked: list[dict[str, object]] = []
-    single_root_traces: list[str] = []
     bad_root_traces: list[dict[str, object]] = []
     sqlite_trace_count = 0
     profile_engine_sqlite_trace_count = 0
@@ -609,59 +643,39 @@ def query_traces(run_id: str, vcs_identity: dict[str, dict[str, str]]) -> dict[s
         trace_data = http_json(f"http://localhost:3200/api/traces/{trace_id}")
         resource_attributes = trace_resource_attributes(trace_data)
         spans = list(iter_trace_spans(trace_data))
-        span_names = [str(span.get("name")) for span in spans if span.get("name")]
-        observed_span_names.update(span_names)
-        orphan_spans = _orphan_trace_spans(spans)
-        if orphan_spans:
-            orphan_span_traces.append(
+        verdict = _evaluate_trace_root(spans, APPROVED_ROOTS)
+        observed_span_names.update(verdict.span_names)
+        if verdict.status == "orphan":
+            orphan_span_traces.append({"trace_id": trace_id, "orphans": verdict.orphans})
+            continue
+        if verdict.status == "bad_root":
+            bad_root_traces.append({"trace_id": trace_id, "root": verdict.root_name})
+            continue
+        root_name = verdict.root_name
+        if not _labels_match(resource_attributes, expected_vcs_resource):
+            missing_vcs_traces.append(
                 {
                     "trace_id": trace_id,
-                    "orphans": orphan_spans[:5],
+                    "observed": _selected_labels(resource_attributes, expected_vcs_resource),
                 },
             )
-            continue
-        sqlite_span_names = sorted(
-            {name for name in span_names if name.startswith("agentgrep.sqlite.")}
+        checked.append(
+            {
+                "trace_id": trace_id,
+                "span_count": len(spans),
+                "root": root_name,
+                "sqlite_spans": verdict.sqlite_span_names[:10],
+                "vcs": _selected_labels(resource_attributes, expected_vcs_resource),
+            },
         )
-        root_spans = [span for span in spans if not span.get("parentSpanId")]
-        root_name = None if not root_spans else root_spans[0].get("name")
-        if len(spans) == 1 and root_spans:
-            single_root_traces.append(trace_id)
-            continue
-        if root_name not in APPROVED_ROOTS:
-            bad_root_traces.append({"trace_id": trace_id, "root": root_name})
-            continue
-        if len(spans) > 1:
-            if not _labels_match(resource_attributes, expected_vcs_resource):
-                missing_vcs_traces.append(
-                    {
-                        "trace_id": trace_id,
-                        "observed": _selected_labels(
-                            resource_attributes,
-                            expected_vcs_resource,
-                        ),
-                    },
-                )
-            checked.append(
-                {
-                    "trace_id": trace_id,
-                    "span_count": len(spans),
-                    "root": root_name,
-                    "sqlite_spans": sqlite_span_names[:10],
-                    "vcs": _selected_labels(resource_attributes, expected_vcs_resource),
-                }
-            )
-            if sqlite_span_names:
-                sqlite_trace_count += 1
-                if root_name == "agentgrep.profile_engine.run":
-                    profile_engine_sqlite_trace_count += 1
-            if root_name == "agentgrep.cli.invocation":
-                candidate_id = resource_attributes.get("agentgrep.debug.candidate_id")
-                if isinstance(candidate_id, str):
-                    observed_cli_candidate_ids.add(candidate_id)
-    if single_root_traces:
-        message = f"single-root traces found: {single_root_traces[:5]}"
-        raise AcceptanceCheckError(message)
+        if verdict.sqlite_span_names:
+            sqlite_trace_count += 1
+            if root_name == "agentgrep.profile_engine.run":
+                profile_engine_sqlite_trace_count += 1
+        if root_name == "agentgrep.cli.invocation":
+            candidate_id = resource_attributes.get("agentgrep.debug.candidate_id")
+            if isinstance(candidate_id, str):
+                observed_cli_candidate_ids.add(candidate_id)
     if bad_root_traces:
         message = f"unexpected root traces found: {bad_root_traces[:5]}"
         raise AcceptanceCheckError(message)
@@ -669,7 +683,7 @@ def query_traces(run_id: str, vcs_identity: dict[str, dict[str, str]]) -> dict[s
         message = f"orphan child spans found: {orphan_span_traces[:5]}"
         raise AcceptanceCheckError(message)
     if not checked:
-        message = f"no app-rooted multi-span traces found; candidates={trace_ids[:5]}"
+        message = f"no app-rooted traces found; candidates={trace_ids[:5]}"
         raise AcceptanceCheckError(message)
     if missing_vcs_traces:
         message = f"traces missing VCS resource attributes: {missing_vcs_traces[:5]}"

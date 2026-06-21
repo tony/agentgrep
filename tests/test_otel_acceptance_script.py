@@ -307,6 +307,62 @@ def test_orphan_trace_spans_detect_missing_parent() -> None:
     ]
 
 
+class _TraceRootCase(t.NamedTuple):
+    """Parametrized case for trace-root acceptance classification."""
+
+    test_id: str
+    spans: list[dict[str, object]]
+    expected_status: str
+    expected_root: str | None
+
+
+_TRACE_ROOT_CASES: tuple[_TraceRootCase, ...] = (
+    _TraceRootCase(
+        test_id="approved-single-span-root",
+        spans=[{"spanID": "root", "name": "agentgrep.cli.invocation"}],
+        expected_status="approved",
+        expected_root="agentgrep.cli.invocation",
+    ),
+    _TraceRootCase(
+        test_id="approved-multi-span-root",
+        spans=[
+            {"spanID": "root", "name": "agentgrep.cli.invocation"},
+            {"spanID": "child", "parentSpanId": "root", "name": "agentgrep.cli.parse"},
+        ],
+        expected_status="approved",
+        expected_root="agentgrep.cli.invocation",
+    ),
+    _TraceRootCase(
+        test_id="unapproved-single-span-root",
+        spans=[{"spanID": "root", "name": "agentgrep.mcp.operation"}],
+        expected_status="bad_root",
+        expected_root="agentgrep.mcp.operation",
+    ),
+    _TraceRootCase(
+        test_id="orphan-child",
+        spans=[
+            {"spanID": "root", "name": "agentgrep.cli.invocation"},
+            {"spanID": "child", "parentSpanId": "missing", "name": "agentgrep.cli.parse"},
+        ],
+        expected_status="orphan",
+        expected_root=None,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    _TRACE_ROOT_CASES,
+    ids=[case.test_id for case in _TRACE_ROOT_CASES],
+)
+def test_evaluate_trace_root_accepts_approved_single_span_roots(case: _TraceRootCase) -> None:
+    """Approved roots are valid at any span count; orphans and unknown roots fail."""
+    verdict = otel_acceptance._evaluate_trace_root(case.spans, otel_acceptance.APPROVED_ROOTS)
+
+    assert verdict.status == case.expected_status
+    assert verdict.root_name == case.expected_root
+
+
 def test_query_logs_rejects_loki_json_parser_errors(monkeypatch: t.Any) -> None:
     """Loki parser errors mean exported log bodies are not structured."""
 
