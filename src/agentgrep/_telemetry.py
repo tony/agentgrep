@@ -788,12 +788,15 @@ def _canonical_repository_url(raw_url: str | None) -> str | None:
     if scp_like_url is not None:
         return scp_like_url
     parsed = urllib.parse.urlparse(candidate)
-    if parsed.scheme in {"http", "https"} and parsed.netloc:
+    if parsed.scheme in {"http", "https"} and parsed.hostname:
+        netloc = _parsed_url_netloc_without_userinfo(parsed)
+        if netloc is None:
+            return None
         return _strip_git_suffix(
             urllib.parse.urlunparse(
                 (
                     parsed.scheme,
-                    parsed.netloc,
+                    netloc,
                     parsed.path.rstrip("/"),
                     "",
                     "",
@@ -804,6 +807,18 @@ def _canonical_repository_url(raw_url: str | None) -> str | None:
     if parsed.scheme == "ssh" and parsed.hostname and parsed.path:
         return _strip_git_suffix(f"https://{parsed.hostname}/{parsed.path.lstrip('/')}")
     return None
+
+
+def _parsed_url_netloc_without_userinfo(parsed: urllib.parse.ParseResult) -> str | None:
+    """Return parsed URL host and port without username or password."""
+    host = parsed.hostname
+    if host is None:
+        return None
+    netloc = f"[{host}]" if ":" in host and not host.startswith("[") else host
+    with contextlib.suppress(ValueError):
+        if parsed.port is not None:
+            netloc = f"{netloc}:{parsed.port}"
+    return netloc
 
 
 def _canonical_scp_like_git_url(candidate: str) -> str | None:
