@@ -141,7 +141,9 @@ work belongs to an active app trace.
 
 Engine scheduling and source scanning emit `agentgrep.otel.cpu_loops` metrics
 for source counts, submitted/completed sources, batches, emitted records, and
-records scanned. Engine CPU-loop metrics and top-level search/find spans carry
+records scanned. Both `agentgrep.otel.cpu_loops` and `agentgrep.otel.sqlite_total`
+export as monotonic counters, not histograms. Engine CPU-loop metrics and
+top-level search/find spans carry
 `agentgrep_component=core` and `agentgrep_component_kind=in_process` so Grafana
 can filter core cost without modeling fake CLI-to-core service edges. These
 metrics document CPU-impacting work and cost centers; they are observability

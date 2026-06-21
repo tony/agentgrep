@@ -926,6 +926,38 @@ def test_pytest_session_root_brackets_test_traces(monkeypatch: pytest.MonkeyPatc
     assert test_span.trace_id != session_span.trace_id
 
 
+class _MetricKindCase(t.NamedTuple):
+    """Parametrized case for OTel metric instrument-kind classification."""
+
+    test_id: str
+    metric_name: str
+    expected_counter: bool
+
+
+_METRIC_KIND_CASES: tuple[_MetricKindCase, ...] = (
+    _MetricKindCase("grep-candidate-count", "agentgrep.grep.candidate.count", True),
+    _MetricKindCase("benchmark-subprocess-count", "agentgrep.benchmark.subprocess.count", True),
+    _MetricKindCase("span-count", "agentgrep.span.count", True),
+    _MetricKindCase("cpu-loops", "agentgrep.otel.cpu_loops", True),
+    _MetricKindCase("sqlite-total", "agentgrep.otel.sqlite_total", True),
+    _MetricKindCase("grep-duration", "agentgrep.grep.duration", False),
+    _MetricKindCase("span-duration", "agentgrep.span.duration", False),
+    _MetricKindCase("search-results", "agentgrep.search.results", False),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    _METRIC_KIND_CASES,
+    ids=[case.test_id for case in _METRIC_KIND_CASES],
+)
+def test_metric_is_counter_classifies_work_metrics(case: _MetricKindCase) -> None:
+    """cpu_loops and sqlite_total are counters despite lacking a .count suffix."""
+    import agentgrep._telemetry_otel as telemetry_otel
+
+    assert telemetry_otel._metric_is_counter(case.metric_name) is case.expected_counter
+
+
 @pytest.mark.parametrize(
     "case",
     PYTEST_XDIST_ATTRIBUTE_CASES,
@@ -1487,14 +1519,18 @@ def test_otel_backend_records_named_custom_metrics() -> None:
 
     backend.record_metric("agentgrep.otel.cpu_loops", 42, {"agentgrep_surface": "otel"})
     backend.record_metric("agentgrep.otel.event.count", 1, {"agentgrep_surface": "otel"})
+    backend.record_metric("agentgrep.grep.duration", 0.5, {"agentgrep_surface": "otel"})
 
-    assert set(fake_meter.histograms) == {"agentgrep.otel.cpu_loops"}
-    assert set(fake_meter.counters) == {"agentgrep.otel.event.count"}
-    assert fake_meter.histograms["agentgrep.otel.cpu_loops"].points == [
+    assert set(fake_meter.counters) == {"agentgrep.otel.cpu_loops", "agentgrep.otel.event.count"}
+    assert set(fake_meter.histograms) == {"agentgrep.grep.duration"}
+    assert fake_meter.counters["agentgrep.otel.cpu_loops"].points == [
         (42, {"agentgrep_surface": "otel"}),
     ]
     assert fake_meter.counters["agentgrep.otel.event.count"].points == [
         (1, {"agentgrep_surface": "otel"}),
+    ]
+    assert fake_meter.histograms["agentgrep.grep.duration"].points == [
+        (0.5, {"agentgrep_surface": "otel"}),
     ]
 
 
