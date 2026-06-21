@@ -156,6 +156,16 @@ can filter core cost without modeling fake CLI-to-core service edges. These
 metrics document CPU-impacting work and cost centers; they are observability
 signal, not a performance fix.
 
+The Tempo datasource drills out to Prometheus (`tracesToMetricsV2`) and
+Pyroscope (`tracesToProfilesV2`) so a span links to its RED metrics and its
+flamegraph, alongside the existing exemplar (metric to trace) and
+`tracesToLogsV2` (trace to log) links. `PyroscopeSpanProcessor` tags only root
+spans, so the OTel backend additionally tags the active profiler thread with
+the span id for each child span when profiling is active; that is the
+`span_id` join `tracesToProfilesV2` needs for CPU work that runs under child
+spans on executor threads. The tag set/unset cost is bounded to explicit
+profiling runs.
+
 Inverted grep (`agentgrep grep --invert-match ...`) deliberately clears the
 positive text terms it sends to the engine and then applies line-level
 inversion after records are parsed. That makes the product surface correct for

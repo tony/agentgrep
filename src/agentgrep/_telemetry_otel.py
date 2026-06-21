@@ -58,6 +58,29 @@ def _metric_is_counter(name: str) -> bool:
     return name.endswith(".count") or name in _COUNTER_METRIC_NAMES
 
 
+@contextlib.contextmanager
+def _pyroscope_span_scope(otel_span: t.Any) -> cabc.Iterator[None]:
+    """Tag the active profiler thread with the span id for one child span.
+
+    ``PyroscopeSpanProcessor`` only tags root spans, so CPU work that runs under
+    child spans on executor threads carries no ``span_id`` for span-scoped
+    profile linking. Tagging the active thread here lets ``tracesToProfilesV2``
+    join a span to its flamegraph.
+    """
+    try:
+        import pyroscope
+        from opentelemetry.trace import format_span_id
+
+        scope = pyroscope.tag_wrapper(
+            {"span_id": format_span_id(otel_span.get_span_context().span_id)},
+        )
+    except Exception:
+        yield
+        return
+    with scope:
+        yield
+
+
 class OtelTelemetryBackend:
     """OpenTelemetry-backed telemetry backend."""
 
@@ -102,7 +125,11 @@ class OtelTelemetryBackend:
             for key, value in span.attributes.items():
                 if value is not None:
                     otel_span.set_attribute(key, value)
-            yield otel_span
+            if self.profiles_started and span.parent_id is not None:
+                with _pyroscope_span_scope(otel_span):
+                    yield otel_span
+            else:
+                yield otel_span
 
     def finish_span(
         self,
