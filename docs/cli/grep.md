@@ -194,15 +194,19 @@ agentgrep grep: error: pattern cannot be empty
 The check applies to every term — a valid pattern followed by an
 empty one (`agentgrep grep foo ''`) still fails.
 
-`-v` / `--invert-match` is not implemented yet and is refused at
-parse time:
+`-v` / `--invert-match` selects lines that do not match the pattern.
+Because a nonmatching record cannot be found by a positive text
+prefilter, inverted grep enumerates candidate records first and applies
+line-level inversion after parsing:
 
 ```console
 $ agentgrep grep -v bliss
-usage: agentgrep grep [...]
-agentgrep grep: error: --invert-match is not implemented yet (see
-https://github.com/tony/agentgrep/issues/8)
 ```
+
+`-c` counts selected nonmatching lines. `-l` lists files with at least
+one selected nonmatching line. `-o -v` follows `rg` by printing the whole
+selected line, and `--vimgrep -v` prints `path:line:text` without a
+column because there is no positive submatch offset.
 
 (cli-grep-dedupe)=
 

@@ -9,12 +9,15 @@ in :mod:`agentgrep.cli.renderers`.
 
 from __future__ import annotations
 
+import collections.abc as cabc
 import json
+import logging
 import pathlib
 import sys
+import time
 import typing as t
 
-from agentgrep import run_ui
+from agentgrep import _telemetry, run_ui
 from agentgrep._engine import iter_find_events, iter_search_events
 from agentgrep._engine.orchestration import run_search_query
 from agentgrep._text import AnsiColors, format_display_path
@@ -51,7 +54,10 @@ from agentgrep.progress import (
     SearchProgress,
     noop_search_progress,
 )
+from agentgrep.query.compile import CompiledQuery
 from agentgrep.records import AGENT_CHOICES, FindRecord, SearchQuery, SearchRecord
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "GrepSummary",
@@ -450,8 +456,10 @@ def build_grep_query(args: GrepArgs) -> SearchQuery:
     else:
         terms = args.patterns
 
+    terms_for_query = () if args.invert_match else terms
+    compiled = _grep_candidate_compiled(args)
     return SearchQuery(
-        terms=terms,
+        terms=terms_for_query,
         scope=args.scope,
         any_term=False,
         regex=regex,
@@ -459,9 +467,89 @@ def build_grep_query(args: GrepArgs) -> SearchQuery:
         agents=args.agents,
         limit=args.limit,
         dedupe=not args.no_dedupe,
-        compiled=args.compiled,
+        compiled=compiled,
         match_surface="text",
     )
+
+
+def _grep_candidate_compiled(args: GrepArgs) -> CompiledQuery | None:
+    """Return compiled predicates safe for grep candidate enumeration."""
+    compiled = args.compiled
+    if compiled is None or not args.invert_match:
+        return compiled
+    if compiled.source_predicate is None:
+        return None
+    return CompiledQuery(
+        source_predicate=compiled.source_predicate,
+        record_predicate=None,
+        text_terms=(),
+        is_pure_text=False,
+    )
+
+
+def _grep_emitted_count(records: cabc.Sequence[SearchRecord], args: GrepArgs) -> int:
+    """Return the bounded record/line count emitted by eager grep paths."""
+    if args.output_mode in {"json", "ndjson"}:
+        return sum(
+            1 for event in _iter_grep_json_events(list(records), args) if event["type"] == "match"
+        )
+    if args.count_only:
+        return sum(1 for record in records if any(iter_match_lines(record.text, args)))
+    if args.files_with_matches:
+        seen: set[str] = set()
+        for record in records:
+            if not any(iter_match_lines(record.text, args)):
+                continue
+            seen.add(format_display_path(record.path))
+        return len(seen)
+    return sum(1 for record in records if format_grep_record(record, args))
+
+
+def _record_grep_telemetry(
+    args: GrepArgs,
+    *,
+    candidate_count: int,
+    emitted_count: int,
+    duration_ms: float,
+    outcome: str,
+) -> None:
+    """Emit sparse grep dispatcher telemetry."""
+    if not args.invert_match:
+        return
+    attributes = {
+        "agentgrep_surface": "cli",
+        "agentgrep_operation": "grep.invert",
+        "agentgrep_command": "grep",
+        "agentgrep_scope": args.scope,
+        "agentgrep_output_mode": args.output_mode,
+        "agentgrep_grep_invert": True,
+        "agentgrep_grep_candidate_strategy": "all_candidates",
+        "agentgrep_candidate_count": candidate_count,
+        "agentgrep_emitted_count": emitted_count,
+        "agentgrep_outcome": outcome,
+        "agentgrep_duration_ms": duration_ms,
+    }
+    _telemetry.set_span_attribute("agentgrep_grep_invert", True)
+    _telemetry.set_span_attribute(
+        "agentgrep_grep_candidate_strategy",
+        "all_candidates",
+    )
+    _telemetry.record_metric(
+        "agentgrep.grep.candidate.count",
+        candidate_count,
+        **attributes,
+    )
+    _telemetry.record_metric(
+        "agentgrep.grep.emitted.count",
+        emitted_count,
+        **attributes,
+    )
+    _telemetry.record_metric(
+        "agentgrep.grep.duration",
+        duration_ms,
+        **attributes,
+    )
+    logger.info("grep invert completed", extra=attributes)
 
 
 def print_grep_results(records: list[SearchRecord], args: GrepArgs) -> int:
@@ -557,10 +645,12 @@ def stream_grep_results(args: GrepArgs) -> int:
     # agentgrep`` path (pinned by tests/test_import_time.py).
     from agentgrep import events
 
+    started_at = time.monotonic()
     query = build_grep_query(args)
     control = SearchControl()
     is_tty = sys.stdout.isatty()
     match_count = 0
+    candidate_count = 0
     pretty = args.style == "pretty"
     summary = GrepSummary() if pretty else None
     for event in iter_search_events(
@@ -569,13 +659,17 @@ def stream_grep_results(args: GrepArgs) -> int:
         control=control,
     ):
         if isinstance(event, events.RecordEmitted):
+            candidate_count += 1
             if args.output_mode == "ndjson":
                 for json_event in _iter_grep_json_events([event.record], args):
                     print(json.dumps(json_event, ensure_ascii=False))
                     if json_event.get("type") == "match":
                         match_count += 1
             else:
-                print(format_grep_record(event.record, args))
+                text = format_grep_record(event.record, args)
+                if not text:
+                    continue
+                print(text)
                 if pretty or (
                     not args.only_matching
                     and (args.heading is True or (args.heading is None and is_tty))
@@ -594,6 +688,13 @@ def stream_grep_results(args: GrepArgs) -> int:
             print(footer, file=sys.stderr)
     if match_count == 0 and args.output_mode == "text":
         print("No matches found.", file=sys.stderr)
+    _record_grep_telemetry(
+        args,
+        candidate_count=candidate_count,
+        emitted_count=match_count,
+        duration_ms=(time.monotonic() - started_at) * 1000.0,
+        outcome="match" if match_count > 0 else "no_match",
+    )
     return 0 if match_count > 0 else 1
 
 
@@ -605,16 +706,10 @@ def run_grep_command(args: GrepArgs) -> int:
     (:func:`print_grep_results`), depending on the requested output mode.
     See :func:`_grep_path_is_eager` for the routing decision.
     """
+    started_at = time.monotonic()
     if not args.patterns:
         msg = "grep requires at least one pattern"
         raise SystemExit(msg)
-    if args.invert_match:
-        print(
-            "error: --invert-match is not implemented yet "
-            "(see https://github.com/tony/agentgrep/issues/8)",
-            file=sys.stderr,
-        )
-        return 2
     query = build_grep_query(args)
     if args.output_mode == "ui":
         run_ui(
@@ -646,4 +741,12 @@ def run_grep_command(args: GrepArgs) -> int:
         progress=progress,
         control=control,
     )
-    return print_grep_results(records, args)
+    exit_code = print_grep_results(records, args)
+    _record_grep_telemetry(
+        args,
+        candidate_count=len(records),
+        emitted_count=_grep_emitted_count(records, args),
+        duration_ms=(time.monotonic() - started_at) * 1000.0,
+        outcome="match" if exit_code == 0 else "no_match",
+    )
+    return exit_code
