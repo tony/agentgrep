@@ -3267,11 +3267,29 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         store_id="grok.memory",
         role=StoreRole.PERSISTENT_MEMORY,
         format=StoreFormat.MARKDOWN_FRONTMATTER,
-        path_pattern="${GROK_HOME or ${HOME}/.grok}/memory/MEMORY.md",
+        path_pattern="${GROK_HOME or ${HOME}/.grok}/memory/**/MEMORY.md",
         env_overrides=("GROK_HOME",),
         observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
         observed_at=_GROK_OBSERVED_AT,
-        schema_notes="Persistent memory in Markdown; managed by Grok's memory system.",
+        schema_notes=(
+            "Persistent memory Markdown managed by Grok's memory system. Covers "
+            "the flat `memory/MEMORY.md` and the per-project "
+            "`memory/<project_hash>/MEMORY.md` subtree; the companion "
+            "`index.sqlite` FTS index of the same content is not separately "
+            "enumerated. Inspectable opt-in."
+        ),
+        coverage=StoreCoverage.INSPECTABLE,
+        search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="grok.memory",
+                adapter_id="grok.memory_text.v1",
+                path_kind="store_file",
+                source_kind="text",
+                home_subpath=("memory",),
+                glob="**/MEMORY.md",
+            ),
+        ),
     ),
     StoreDescriptor(
         agent="grok",
@@ -3721,7 +3739,7 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
 
 
 CATALOG = StoreCatalog(
-    catalog_version=24,
+    catalog_version=25,
     captured_at=_ANTIGRAVITY_OBSERVED_AT,
     stores=(
         *_CLAUDE_STORES,

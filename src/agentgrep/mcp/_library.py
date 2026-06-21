@@ -115,6 +115,7 @@ KNOWN_ADAPTERS: tuple[str, ...] = (
     "grok.session_search_sqlite.v1",
     "grok.subagents_json.v1",
     "grok.plans_text.v1",
+    "grok.memory_text.v1",
     "pi.sessions_jsonl.v1",
     "pi.context_mode_sqlite.v1",
     "opencode.db_sqlite.v1",

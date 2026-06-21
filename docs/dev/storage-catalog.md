@@ -300,9 +300,11 @@ the searchable store shapes:
   and Cursor CLI subagent stores.
 
 The `grok.plans` row covers per-session `plan.md` plan-mode Markdown,
-parsed inspectably (opt-in) like `claude.plans`. Documentary-only
-entries cover events, summaries, memory, logs, worktrees, and config —
-all catalogued with `search_by_default=False` or deferred.
+and `grok.memory` covers the flat and per-project
+`memory/**/MEMORY.md` subtree — both inspectable (opt-in) like
+`claude.plans`. Documentary-only entries cover events, summaries, logs,
+worktrees, and config — all catalogued with `search_by_default=False`
+or deferred.
 
 ### Pi
 
