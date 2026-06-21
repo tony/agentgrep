@@ -284,10 +284,11 @@ Live acceptance must prove all four signals for the same debug session:
 - Prometheus has fresh span, engine CPU-loop, SQLite, and benchmark
   subprocess metrics with `agentgrep_debug_session_id`; engine CPU-loop
   metrics must include the in-process core component labels.
-- Loki has current-run agentgrep logs selected through a query-stage JSON parse
-  and no selected logs without trace and span identifiers.
-- Loki log checks reject selected records with JSON parser errors or body text
-  that contributes no parsed structured fields.
+- Loki has current-run agentgrep logs selected through OTLP structured metadata
+  (no query-stage JSON parse) and no selected logs without trace and span
+  identifiers.
+- Loki log checks reject selected records whose structured metadata carries no
+  trace and span ids, and streams missing the current VCS labels.
 - Pyroscope exposes the `agentgrep` service and the debug session label.
 - Pyroscope label checks are scoped by service, debug session, current VCS
   labels, `service_repository`, and exact `service_git_ref` so broad Grafana
