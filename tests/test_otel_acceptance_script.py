@@ -269,7 +269,7 @@ def test_query_logs_filters_run_id_after_json_parse(monkeypatch: t.Any) -> None:
     parsed = urllib.parse.urlparse(observed_urls[0])
     params = urllib.parse.parse_qs(parsed.query)
     assert params["query"] == [
-        '{service_name="agentgrep"} | json | agentgrep_debug_session_id="run-123"',
+        '{service_name=~"agentgrep|agentgrep-.+"} | json | agentgrep_debug_session_id="run-123"',
     ]
     assert result["count"] == 1
 
@@ -389,7 +389,7 @@ def test_pyroscope_label_values_body_scopes_to_run_and_source_labels() -> None:
     assert body["matchers"] == [
         (
             '{agentgrep_debug_session_id="run-123",service_git_ref="abc123",'
-            'service_name="agentgrep",'
+            'service_name=~"agentgrep|agentgrep-.+",'
             'service_repository="https://github.com/tony/agentgrep",'
             'vcs_ref_head_revision="abc123",'
             'vcs_repository_url_full="https://github.com/tony/agentgrep"}'

@@ -73,6 +73,9 @@ _MODE_ALIASES: dict[str, TelemetryMode] = {
     "live": "live",
 }
 
+DEFAULT_SERVICE_NAME = "agentgrep"
+SERVICE_NAMESPACE = "agentgrep"
+
 _LOG_RECORD_BASE_KEYS: frozenset[str] = frozenset(logging.makeLogRecord({}).__dict__)
 
 
@@ -336,6 +339,7 @@ def setup(
     mode: TelemetryMode | None = None,
     env: cabc.Mapping[str, str] | None = None,
     repo_root: pathlib.Path | None = None,
+    service_name: str | None = None,
     service_version: str | None = None,
 ) -> TelemetryHandle:
     """Configure telemetry for the current execution context."""
@@ -346,6 +350,7 @@ def setup(
     resource_attributes = build_resource_attributes(
         env=active_env,
         repo_root=repo_root,
+        service_name=service_name,
         service_version=service_version or package_version(),
     )
     if active_mode == "test":
@@ -385,12 +390,14 @@ def build_resource_attributes(
     *,
     env: cabc.Mapping[str, str] | None = None,
     repo_root: pathlib.Path | None = None,
+    service_name: str | None = None,
     service_version: str,
 ) -> TelemetryAttributes:
     """Build resource attributes without overloading ``service.version``."""
     active_env = os.environ if env is None else env
     attributes: TelemetryAttributes = {
-        "service.name": "agentgrep",
+        "service.name": _resolve_service_name(active_env, service_name),
+        "service.namespace": SERVICE_NAMESPACE,
         "service.version": service_version,
     }
     for env_name, attr_name in (
@@ -407,6 +414,16 @@ def build_resource_attributes(
             attributes["agentgrep.debug.attempt"] = int(attempt)
     attributes.update(_vcs_resource_attributes(repo_root))
     return attributes
+
+
+def _resolve_service_name(active_env: cabc.Mapping[str, str], service_name: str | None) -> str:
+    """Return the OTel service name for this process."""
+    env_service_name = active_env.get("OTEL_SERVICE_NAME")
+    if env_service_name and env_service_name.strip():
+        return env_service_name.strip()
+    if service_name and service_name.strip():
+        return service_name.strip()
+    return DEFAULT_SERVICE_NAME
 
 
 def configure_backend(backend: TelemetryBackend | None) -> None:
