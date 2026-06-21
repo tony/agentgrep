@@ -797,6 +797,7 @@ def test_record_work_metric_keeps_debug_identity() -> None:
         env={
             "AGENTGREP_OTEL": "live",
             "AGENTGREP_DEBUG_SESSION_ID": "session-work",
+            "AGENTGREP_DEBUG_CANDIDATE_ID": "candidate-work",
         },
         service_version="0.1.0",
     )
@@ -823,6 +824,7 @@ def test_record_work_metric_keeps_debug_identity() -> None:
     assert work_metric.attributes["agentgrep_component_kind"] == "in_process"
     assert work_metric.attributes["agentgrep_source_strategy"] == "root_full_scan"
     assert work_metric.attributes["agentgrep_debug_session_id"] == "session-work"
+    assert "agentgrep_debug_candidate_id" not in work_metric.attributes
 
 
 def test_open_readonly_sqlite_uses_traced_connection_factory(tmp_path: pathlib.Path) -> None:

@@ -714,7 +714,6 @@ def _metric_identity_attributes() -> TelemetryAttributes:
     metric_attributes: TelemetryAttributes = {}
     for resource_key, metric_key in (
         ("agentgrep.debug.session_id", "agentgrep_debug_session_id"),
-        ("agentgrep.debug.candidate_id", "agentgrep_debug_candidate_id"),
         ("agentgrep.debug.attempt", "agentgrep_debug_attempt"),
         ("agentgrep.pytest.run_id", "agentgrep_pytest_run_id"),
         *_VCS_RESOURCE_TO_METRIC_ATTRIBUTES,
