@@ -10,6 +10,8 @@ import sys
 import typing as t
 import urllib.parse
 
+import pytest
+
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 _SCRIPT = _REPO_ROOT / "scripts" / "otel_acceptance.py"
 
@@ -136,8 +138,8 @@ def test_lgtm_docker_run_command_keeps_github_env_opt_in() -> None:
     assert "GH_TOKEN" not in command_with_github
 
 
-def test_grep_invert_acceptance_workload_covers_parse_error() -> None:
-    """Acceptance should exercise unsupported ``-v`` as a parse error."""
+def test_grep_parse_error_workload_uses_invalid_regex() -> None:
+    """Acceptance should still exercise traced argparse failures."""
     run_id = "agentgrep-test-run"
 
     assert otel_acceptance._grep_parse_error_workload_command(run_id) == [
@@ -145,8 +147,7 @@ def test_grep_invert_acceptance_workload_covers_parse_error() -> None:
         "-m",
         "agentgrep",
         "grep",
-        "--invert-match",
-        run_id,
+        "[",
     ]
 
 
@@ -158,6 +159,7 @@ def test_cli_acceptance_matrix_covers_short_lived_process_shapes() -> None:
         ("help", 0),
         ("search", 0),
         ("grep-parse-error", 2),
+        ("grep-invert", 0),
         ("find", 0),
         ("json-no-hit", 1),
         ("ui-help", 0),
@@ -166,6 +168,7 @@ def test_cli_acceptance_matrix_covers_short_lived_process_shapes() -> None:
         "cli-help",
         "cli-search",
         "cli-grep-parse-error",
+        "cli-grep-invert",
         "cli-find",
         "cli-json-no-hit",
         "cli-ui-help",
@@ -182,6 +185,7 @@ def test_cli_acceptance_matrix_sets_candidate_env(
         "cli-help": 0,
         "cli-search": 0,
         "cli-grep-parse-error": 2,
+        "cli-grep-invert": 0,
         "cli-find": 0,
         "cli-json-no-hit": 1,
         "cli-ui-help": 0,
@@ -318,16 +322,14 @@ def test_query_logs_rejects_loki_json_parser_errors(monkeypatch: t.Any) -> None:
 
     monkeypatch.setattr(otel_acceptance, "http_json", fake_http_json)
 
-    try:
+    with pytest.raises(
+        otel_acceptance.AcceptanceCheckError,
+        match="Loki JSON parser errors",
+    ):
         otel_acceptance.query_logs(
             "run-123",
             {"labels": {"vcs_ref_head_name": "otel-bootstrap"}},
         )
-    except otel_acceptance.AcceptanceCheckError as error:
-        assert "Loki JSON parser errors" in str(error)
-    else:
-        message = "query_logs accepted Loki parser errors"
-        raise AssertionError(message)
 
 
 def test_query_logs_rejects_label_only_structure(monkeypatch: t.Any) -> None:
@@ -353,16 +355,14 @@ def test_query_logs_rejects_label_only_structure(monkeypatch: t.Any) -> None:
 
     monkeypatch.setattr(otel_acceptance, "http_json", fake_http_json)
 
-    try:
+    with pytest.raises(
+        otel_acceptance.AcceptanceCheckError,
+        match="unstructured agentgrep log bodies",
+    ):
         otel_acceptance.query_logs(
             "run-123",
             {"labels": {"vcs_ref_head_name": "otel-bootstrap"}},
         )
-    except otel_acceptance.AcceptanceCheckError as error:
-        assert "unstructured agentgrep log bodies" in str(error)
-    else:
-        message = "query_logs accepted label-only structure"
-        raise AssertionError(message)
 
 
 def test_pyroscope_label_values_body_scopes_to_run_and_source_labels() -> None:
