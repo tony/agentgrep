@@ -170,9 +170,12 @@ structured log before exiting; non-empty inputs still edit normally and do not
 emit a keypress log.
 
 Run-scoped metric labels increase local QA series count. That is accepted for
-this branch because the goal is to close observability blindspots. If the
-series count becomes a project-threatening problem, reduce cardinality in a
-follow-up with measurement rather than hiding metrics in this PR.
+this branch because the goal is to close observability blindspots. The
+per-attempt `agentgrep.debug.candidate_id` is the exception: it stays a
+resource attribute on traces (so per-attempt drill-down survives via the
+trace), but it is not stamped on every metric point, where it is pure series
+fan-out. If the remaining series count becomes a project-threatening problem,
+reduce cardinality in a follow-up with measurement rather than hiding metrics.
 
 Explicitly instrumented pytest runs open one `agentgrep.pytest.session` root for
 the run lifecycle and add low-cardinality xdist context to each
