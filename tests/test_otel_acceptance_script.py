@@ -158,6 +158,16 @@ def test_grep_invert_acceptance_workloads_cover_success_and_parse_error() -> Non
     ]
 
 
+def test_tui_acceptance_workload_exercises_tui_root_and_child_span() -> None:
+    """Acceptance should exercise a root TUI session and child TUI search span."""
+    command = otel_acceptance._tui_root_workload_command()
+
+    assert command[:2] == [sys.executable, "-c"]
+    assert "agentgrep.tui.search" in command[2]
+    assert "ui_app.run_ui(" in command[2]
+    assert 'initial_search_text="acceptance tui"' in command[2]
+
+
 def test_lgtm_grafana_datasource_forwards_pyroscope_git_session() -> None:
     """Grafana must forward Pyroscope's GitHub session cookie."""
     content = otel_acceptance.LGTM_GRAFANA_DATASOURCES_CONFIG.read_text(encoding="utf-8")

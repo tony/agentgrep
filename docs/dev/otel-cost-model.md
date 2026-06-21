@@ -59,6 +59,8 @@ endpoints must not change CLI, TUI, MCP, pytest, or profiler correctness.
 - `scripts/profile_engine.py grep-prompts ... --json` for profiler traces.
 - `scripts/benchmark.py run ...` for benchmark harness roots, command spans,
   subprocess spans, and benchmark subprocess metrics.
+- a short Python `-c` TUI smoke that fakes the blocking Textual app while
+  exporting an `agentgrep.tui.session` root and child TUI span.
 - `python -m pytest tests/test_agentgrep.py::test_streaming_ui_app_mounts_cleanly`
   for a traced direct Textual `run_test()` path.
 - `python -m pytest
@@ -131,7 +133,8 @@ it does not prescribe a performance fix.
 
 Live acceptance must prove all four signals for the same debug session:
 
-- Tempo has multi-span app roots for smoke, CLI, profile engine, and pytest.
+- Tempo has multi-span app roots for smoke, CLI, TUI, profile engine, and
+  pytest.
 - Tempo has benchmark run roots, benchmark command/subprocess spans, and MCP
   request spans for the debug session.
 - No current-run trace has exactly one span.

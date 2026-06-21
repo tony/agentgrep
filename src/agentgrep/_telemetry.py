@@ -531,6 +531,17 @@ def span(name: str, **attributes: object) -> cabc.Iterator[None]:
         )
 
 
+@contextlib.contextmanager
+def root_span(name: str, **attributes: object) -> cabc.Iterator[None]:
+    """Create a span that starts a new trace even when a span is active."""
+    token = _CURRENT_SPAN.set(None)
+    try:
+        with span(name, **attributes):
+            yield
+    finally:
+        _CURRENT_SPAN.reset(token)
+
+
 def record_metric(name: str, value: int | float, **attributes: object) -> None:
     """Record a metric point with active run identity."""
     backend = _BACKEND.get()
