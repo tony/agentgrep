@@ -174,20 +174,15 @@ signal, not a performance fix.
 The Tempo datasource drills out to Prometheus (`tracesToMetricsV2`) and
 Pyroscope (`tracesToProfilesV2`) so a span links to its RED metrics and its
 flamegraph, alongside the existing exemplar (metric to trace) and
-`tracesToLogsV2` (trace to log) links. `PyroscopeSpanProcessor` only tags the
-thread that creates a root span, but agentgrep's CPU runs on executor,
-`to_thread`, and Textual worker threads. So when profiling is active the OTel
-backend installs a worker-thread tagger through the telemetry
-context-propagation helpers (`executor_submit`, `to_thread`,
-`wrap_callable_context`): on each worker the propagated native span id is set as
-the Pyroscope `span_id` thread-tag for the callable's duration. The cost is one
-tag set/unset per submitted callable (not per record), bounded to explicit
-profiling runs. Root-level profile linking works today through the
-`pyroscope.profile.id` span attribute that `PyroscopeSpanProcessor` sets. The
-per-span `span_id` join is a backend concern: `grafana/otel-lgtm`'s bundled
-Pyroscope does not surface the high-cardinality `span_id` tag as a queryable
-label (the upstream processor's root `span_id` tag is hidden too), so completing
-the per-span pivot needs a Pyroscope ingestion change, not an agentgrep one.
+`tracesToLogsV2` (trace to log) links. Root-level profile linking works today:
+`PyroscopeSpanProcessor` tags the thread that creates a root span, so the root
+carries a `pyroscope.profile.id` attribute and the run's flamegraph is reachable
+by its `span_name`. Per-span (child) filtering is a backend limitation, not an
+agentgrep one: `grafana/otel-lgtm`'s bundled Pyroscope indexes `span_name` but
+drops the high-cardinality `span_id`. The configured `tracesToProfilesV2` pivot
+therefore joins by `service.name` (a working service-level flamegraph); a true
+per-span `span_id` filter would need a Pyroscope ingestion change, not an
+agentgrep one.
 
 Inverted grep (`agentgrep grep --invert-match ...`) deliberately clears the
 positive text terms it sends to the engine and then applies line-level

@@ -331,9 +331,6 @@ _RESOURCE_ATTRIBUTES: contextvars.ContextVar[TelemetryAttributes | None] = conte
 )
 _SQL_STATEMENT_MAX = 512
 _SQLITE_CONNECTION_FACTORY: type[t.Any] | None = None
-_ProfilerThreadTagger = cabc.Callable[[cabc.Callable[..., t.Any]], cabc.Callable[..., t.Any]]
-_PROFILER_THREAD_TAGGER: _ProfilerThreadTagger | None = None
-"""Worker-thread profiler tagger, installed by the OTel backend when profiling."""
 _VCS_RESOURCE_TO_METRIC_ATTRIBUTES: tuple[tuple[str, str], ...] = (
     ("vcs.repository.name", "vcs_repository_name"),
     ("vcs.repository.url.full", "vcs_repository_url_full"),
@@ -684,16 +681,6 @@ def install_logging_exporter(backend: TelemetryBackend) -> cabc.Callable[[], Non
     return remove_handler
 
 
-def _profiler_thread_tag(fn: cabc.Callable[..., t.Any]) -> cabc.Callable[..., t.Any]:
-    """Wrap ``fn`` to carry the active span id on its worker thread for profiling.
-
-    Returns ``fn`` unchanged unless the OTel backend installed a tagger (only
-    when profiling is active), keeping this module free of any SDK import.
-    """
-    tagger = _PROFILER_THREAD_TAGGER
-    return fn if tagger is None else tagger(fn)
-
-
 def executor_submit(
     executor: concurrent.futures.Executor,
     fn: cabc.Callable[..., t.Any],
@@ -703,7 +690,7 @@ def executor_submit(
 ) -> concurrent.futures.Future[t.Any]:
     """Submit work while preserving telemetry context."""
     context = contextvars.copy_context()
-    return executor.submit(context.run, _profiler_thread_tag(fn), *args, **kwargs)
+    return executor.submit(context.run, fn, *args, **kwargs)
 
 
 async def to_thread(
@@ -716,17 +703,16 @@ async def to_thread(
     import asyncio
 
     context = contextvars.copy_context()
-    return await asyncio.to_thread(context.run, _profiler_thread_tag(fn), *args, **kwargs)
+    return await asyncio.to_thread(context.run, fn, *args, **kwargs)
 
 
 def wrap_callable_context(fn: cabc.Callable[..., t.Any]) -> cabc.Callable[..., t.Any]:
     """Return ``fn`` wrapped in the current context."""
     context = contextvars.copy_context()
-    tagged = _profiler_thread_tag(fn)
 
     @functools.wraps(fn)
     def wrapped(*args: t.Any, **kwargs: t.Any) -> t.Any:
-        return context.run(tagged, *args, **kwargs)
+        return context.run(fn, *args, **kwargs)
 
     return wrapped
 
