@@ -18,7 +18,7 @@ import collections
 import typing as t
 
 if t.TYPE_CHECKING:
-    from agentgrep import SearchRecord
+    from agentgrep.records import SearchRecord
 
 __all__ = [
     "collapse_near_duplicates",

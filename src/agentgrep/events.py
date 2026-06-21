@@ -50,7 +50,7 @@ import typing as t
 
 import pydantic
 
-from agentgrep import FindRecord, SearchRecord
+from agentgrep.records import FindRecord, SearchRecord
 
 
 class _BaseEvent(pydantic.BaseModel):
