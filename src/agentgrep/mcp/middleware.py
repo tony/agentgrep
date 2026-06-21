@@ -7,7 +7,6 @@ own timing and error-handling middleware are wired alongside them from
 
 from __future__ import annotations
 
-import collections.abc as cabc
 import hashlib
 import logging
 import pathlib
@@ -77,16 +76,6 @@ def _inbound_otel_context() -> object | None:
         return extract_trace_context(dict(meta))
     except Exception:
         return None
-
-
-def _attach_otel_context(inbound: object | None) -> cabc.Callable[[], None]:
-    """Attach an inbound OTel context and return a detach callback."""
-    if inbound is None:
-        return lambda: None
-    from opentelemetry import context as otel_context
-
-    token = otel_context.attach(t.cast("t.Any", inbound))
-    return lambda: otel_context.detach(token)
 
 
 def _redact_digest(value: str) -> dict[str, t.Any]:
@@ -213,7 +202,7 @@ class AgentgrepTelemetryMiddleware(Middleware):
         }
         attributes.update(_context_ids(context))
         inbound = _inbound_otel_context()
-        detach = _attach_otel_context(inbound)
+        detach = _telemetry.attach_otel_context(inbound)
         try:
             with _telemetry.span(
                 "mcp.server.request",
