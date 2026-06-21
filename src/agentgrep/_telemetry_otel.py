@@ -425,16 +425,16 @@ def _profile_tags(resource_attributes: _telemetry.TelemetryAttributes) -> dict[s
 
 
 def _install_auto_instrumentation(mode: _telemetry.TelemetryMode) -> tuple[t.Any, ...]:
-    """Install debug/live auto-instrumentation."""
+    """Install debug/live auto-instrumentation.
+
+    SQLite spans come solely from
+    :func:`agentgrep._telemetry.sqlite_connection_factory`, which traces the
+    ``Connection.execute`` shortcut path agentgrep uses; ``SQLite3Instrumentor``
+    only covers the cursor path agentgrep never takes, so it is not installed.
+    """
     if mode not in {"local", "debug", "debug-console", "live"}:
         return ()
     installed: list[t.Any] = []
-    with contextlib.suppress(Exception):
-        from opentelemetry.instrumentation.sqlite3 import SQLite3Instrumentor
-
-        sqlite = SQLite3Instrumentor()
-        sqlite.instrument()
-        installed.append(sqlite)
     with contextlib.suppress(Exception):
         from opentelemetry.instrumentation.asyncio import AsyncioInstrumentor
 
