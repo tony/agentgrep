@@ -98,7 +98,11 @@ Tasks are JSON files under `tasks/<task_list>/<task_id>.json` with
 `id`, `subject`, `description`, `status`, `blocks`, `blockedBy`, and
 optional metadata fields. agentgrep emits one inspectable task sample
 from the subject and description plus status/blocking metadata. Plans
-are Markdown files under `plans/*.md`.
+are Markdown files under `plans/*.md`. Orchestration-workflow driver
+scripts written by the Workflow tool live under
+`projects/<encoded_project>/<session_uuid>/workflows/scripts/*.js`,
+each carrying an embedded `meta = {name, description}`; they are
+inspectable (opt-in), not searched by default.
 
 Settings and keybindings expose only top-level key summaries for
 explicit inspection, so raw values such as environment variables are

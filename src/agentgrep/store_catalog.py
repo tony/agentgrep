@@ -410,6 +410,38 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
     ),
     StoreDescriptor(
         agent="claude",
+        store_id="claude.projects.workflows",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.TEXT,
+        path_pattern=(
+            "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/projects/<encoded_project>/"
+            "<session_uuid>/workflows/scripts/<name>.js"
+        ),
+        env_overrides=("CLAUDE_CONFIG_DIR",),
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
+        schema_notes=(
+            "Orchestration-workflow driver scripts emitted by the Workflow "
+            "tool, each carrying an embedded `meta = {name, description}` that "
+            "names the workflow intent. Machine-generated driver code; "
+            "inspectable opt-in, not searched by default."
+        ),
+        coverage=StoreCoverage.INSPECTABLE,
+        search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="claude.projects.workflows",
+                adapter_id="claude.workflow_scripts_text.v1",
+                path_kind="store_file",
+                source_kind="text",
+                home_subpath=("projects",),
+                glob="*.js",
+                path_parts_required=("workflows", "scripts"),
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="claude",
         store_id="claude.projects.session_memory",
         role=StoreRole.PERSISTENT_MEMORY,
         format=StoreFormat.TEXT,
@@ -3602,7 +3634,7 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
 
 
 CATALOG = StoreCatalog(
-    catalog_version=20,
+    catalog_version=21,
     captured_at=_ANTIGRAVITY_OBSERVED_AT,
     stores=(
         *_CLAUDE_STORES,
