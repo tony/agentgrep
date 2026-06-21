@@ -268,8 +268,14 @@ def build_backend(
     *,
     mode: _telemetry.TelemetryMode,
     resource_attributes: _telemetry.TelemetryAttributes,
+    explicit: bool = True,
 ) -> OtelTelemetryBackend:
-    """Build an OpenTelemetry/Pyroscope backend."""
+    """Build an OpenTelemetry/Pyroscope backend.
+
+    Passive local telemetry (``explicit`` false) still exports traces, metrics,
+    and logs but skips Pyroscope and auto-instrumentation so an in-repo
+    ``agentgrep --help`` stays fast.
+    """
     from opentelemetry import metrics, trace
     from opentelemetry._logs import set_logger_provider
     from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
@@ -296,7 +302,7 @@ def build_backend(
     resource = Resource.create(
         {key: value for key, value in resource_attributes.items() if value is not None},
     )
-    profiles_started = _configure_profiles(resource_attributes)
+    profiles_started = _configure_profiles(resource_attributes) if explicit else False
 
     tracer_provider = TracerProvider(resource=resource)
     if profiles_started:
@@ -367,7 +373,7 @@ def build_backend(
         logging_handler = LoggingHandler(logger_provider=logger_provider)
     logging_handler.setFormatter(_StructuredTelemetryLogFormatter())
 
-    instrumentations = _install_auto_instrumentation(mode)
+    instrumentations = _install_auto_instrumentation(mode) if explicit else ()
     return OtelTelemetryBackend(
         tracer=trace.get_tracer("agentgrep"),
         tracer_provider=tracer_provider,
