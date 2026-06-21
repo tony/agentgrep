@@ -593,6 +593,9 @@ def record_work_metric(value: int | float, *, work_kind: str, **attributes: obje
     """Record a CPU-impacting app work counter."""
     if value <= 0:
         return
+    if attributes.get("agentgrep_surface") == "engine":
+        attributes.setdefault("agentgrep_component", "core")
+        attributes.setdefault("agentgrep_component_kind", "in_process")
     record_metric(
         "agentgrep.otel.cpu_loops",
         value,

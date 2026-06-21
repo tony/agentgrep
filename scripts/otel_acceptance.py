@@ -773,7 +773,11 @@ def query_metrics(
     required_metrics = {
         "agentgrep_span_count_total": (),
         "agentgrep_span_duration_seconds_count": (),
-        "agentgrep_otel_cpu_loops_count": ('agentgrep_surface="engine"',),
+        "agentgrep_otel_cpu_loops_count": (
+            'agentgrep_surface="engine"',
+            'agentgrep_component="core"',
+            'agentgrep_component_kind="in_process"',
+        ),
         "agentgrep_otel_sqlite_total_count": ('agentgrep_surface="sqlite"',),
         "agentgrep_benchmark_subprocess_count_total": ('agentgrep_surface="benchmark"',),
     }
