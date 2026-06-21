@@ -568,6 +568,7 @@ def query_traces(run_id: str, vcs_identity: dict[str, dict[str, str]]) -> dict[s
     observed_span_names: set[str] = set()
     observed_cli_candidate_ids: set[str] = set()
     missing_vcs_traces: list[dict[str, object]] = []
+    orphan_span_traces: list[dict[str, object]] = []
     expected_vcs_resource = vcs_identity["resource"]
     required_cli_candidate_ids = {
         case.candidate_id for case in _cli_acceptance_workload_cases(run_id)
@@ -578,6 +579,15 @@ def query_traces(run_id: str, vcs_identity: dict[str, dict[str, str]]) -> dict[s
         spans = list(iter_trace_spans(trace_data))
         span_names = [str(span.get("name")) for span in spans if span.get("name")]
         observed_span_names.update(span_names)
+        orphan_spans = _orphan_trace_spans(spans)
+        if orphan_spans:
+            orphan_span_traces.append(
+                {
+                    "trace_id": trace_id,
+                    "orphans": orphan_spans[:5],
+                },
+            )
+            continue
         sqlite_span_names = sorted(
             {name for name in span_names if name.startswith("agentgrep.sqlite.")}
         )
@@ -622,6 +632,9 @@ def query_traces(run_id: str, vcs_identity: dict[str, dict[str, str]]) -> dict[s
         raise AcceptanceCheckError(message)
     if bad_root_traces:
         message = f"unexpected root traces found: {bad_root_traces[:5]}"
+        raise AcceptanceCheckError(message)
+    if orphan_span_traces:
+        message = f"orphan child spans found: {orphan_span_traces[:5]}"
         raise AcceptanceCheckError(message)
     if not checked:
         message = f"no app-rooted multi-span traces found; candidates={trace_ids[:5]}"
@@ -690,6 +703,31 @@ def iter_trace_spans(trace_data: dict[str, object]) -> cabc.Iterator[dict[str, o
                 span_dict = _dict_or_none(span)
                 if span_dict is not None:
                     yield span_dict
+
+
+def _orphan_trace_spans(spans: cabc.Sequence[cabc.Mapping[str, object]]) -> list[dict[str, str]]:
+    """Return child spans whose parent span id is missing from the trace."""
+    span_ids = {
+        str(span_id)
+        for span in spans
+        if (span_id := span.get("spanID") or span.get("spanId"))
+    }
+    orphans: list[dict[str, str]] = []
+    for span in spans:
+        parent_span_id = span.get("parentSpanId") or span.get("parentSpanID")
+        if not parent_span_id:
+            continue
+        parent = str(parent_span_id)
+        if parent in span_ids:
+            continue
+        orphans.append(
+            {
+                "span": str(span.get("name") or "<unknown>"),
+                "span_id": str(span.get("spanID") or span.get("spanId") or "<unknown>"),
+                "parent_span_id": parent,
+            },
+        )
+    return orphans
 
 
 def query_metrics(

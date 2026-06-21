@@ -177,6 +177,8 @@ Live acceptance must prove all four signals for the same debug session:
 - Tempo has one `agentgrep.cli.invocation` trace for each candidate-tagged
   short-lived CLI subprocess in the acceptance matrix.
 - No current-run trace has exactly one span.
+- No current-run trace has child spans whose parent span id is absent from the
+  retrieved trace.
 - At least one checked trace contains `agentgrep.sqlite.*` spans.
 - The TUI trace contains an `agentgrep.tui.lifecycle` child span even when the
   acceptance app exits without running a search.

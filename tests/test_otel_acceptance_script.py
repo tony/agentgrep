@@ -274,6 +274,26 @@ def test_query_logs_filters_run_id_after_json_parse(monkeypatch: t.Any) -> None:
     assert result["count"] == 1
 
 
+def test_orphan_trace_spans_detect_missing_parent() -> None:
+    """Tempo traces with child spans whose parent is absent should fail acceptance."""
+    spans = [
+        {"spanID": "root", "name": "agentgrep.cli.invocation"},
+        {
+            "spanID": "child",
+            "parentSpanId": "missing-parent",
+            "name": "agentgrep.cli.parse",
+        },
+    ]
+
+    assert otel_acceptance._orphan_trace_spans(spans) == [
+        {
+            "span": "agentgrep.cli.parse",
+            "span_id": "child",
+            "parent_span_id": "missing-parent",
+        },
+    ]
+
+
 def test_query_logs_rejects_loki_json_parser_errors(monkeypatch: t.Any) -> None:
     """Loki parser errors mean exported log bodies are not structured."""
 
