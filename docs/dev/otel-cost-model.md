@@ -87,6 +87,18 @@ The engine also records subprocess profile samples when
 counts, return code, and duration. They must not contain raw argv, prompt text,
 environment values, or local absolute paths.
 
+Telemetry resource setup runs bounded read-only `git` commands with optional
+locks disabled to resolve branch, revision, and repository identity. Each call
+has a short timeout and exports only VCS semantic-convention attributes, not
+raw command output.
+
+agentgrep intentionally does not monkeypatch `subprocess.Popen` globally for
+OTel. The subprocess call sites that matter for this local workflow live in
+the benchmark, acceptance, engine profiling, and pytest documentation
+harnesses, where explicit spans and metrics can keep command shape bounded and
+privacy-safe. Adding global subprocess instrumentation would increase coverage
+ambiguity without reducing the documented harness costs.
+
 ## Cost multipliers
 
 Benchmark timings are multiplied by warmups, timed samples, command count, and
@@ -124,6 +136,11 @@ Run-scoped metric labels increase local QA series count. That is accepted for
 this branch because the goal is to close observability blindspots. If the
 series count becomes a project-threatening problem, reduce cardinality in a
 follow-up with measurement rather than hiding metrics in this PR.
+
+Explicitly instrumented pytest runs add low-cardinality xdist context to
+`agentgrep.pytest.test` and `agentgrep.pytest.call` spans when xdist metadata is
+present: worker id, whether xdist is active, and the distribution mode. Default
+pytest remains offline and uninstrumented unless `AGENTGREP_OTEL` is set.
 
 ## Benchmark interpretation
 

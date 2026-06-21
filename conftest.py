@@ -137,6 +137,30 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         t.cast("t.Any", handle).shutdown()
 
 
+def _agentgrep_pytest_span_attributes(item: object) -> dict[str, object]:
+    """Return low-cardinality pytest span attributes."""
+    attributes: dict[str, object] = {
+        "agentgrep_surface": "pytest",
+        "agentgrep_pytest_test": getattr(item, "nodeid", "<unknown>"),
+    }
+    config = getattr(item, "config", None)
+    workerinput = getattr(config, "workerinput", None)
+    option = getattr(config, "option", None)
+    dist = getattr(option, "dist", None)
+    worker_id = os.environ.get("PYTEST_XDIST_WORKER")
+    if worker_id is None and isinstance(workerinput, cabc.Mapping):
+        raw_worker_id = workerinput.get("workerid")
+        if isinstance(raw_worker_id, str):
+            worker_id = raw_worker_id
+    xdist_active = bool(worker_id or workerinput or dist)
+    attributes["agentgrep_pytest_xdist"] = xdist_active
+    if worker_id:
+        attributes["agentgrep_pytest_worker_id"] = worker_id
+    if dist:
+        attributes["agentgrep_pytest_dist"] = str(dist)
+    return attributes
+
+
 @contextlib.contextmanager
 def _agentgrep_otel_pytest_item_span(item: object) -> cabc.Iterator[None]:
     """Create a non-single-root trace for one collected pytest item."""
@@ -145,16 +169,15 @@ def _agentgrep_otel_pytest_item_span(item: object) -> cabc.Iterator[None]:
     if _telemetry.active_backend() is None:
         yield
         return
+    attributes = _agentgrep_pytest_span_attributes(item)
     with (
         _telemetry.span(
             "agentgrep.pytest.test",
-            agentgrep_surface="pytest",
-            agentgrep_pytest_test=getattr(item, "nodeid", "<unknown>"),
+            **attributes,
         ),
         _telemetry.span(
             "agentgrep.pytest.call",
-            agentgrep_surface="pytest",
-            agentgrep_pytest_test=getattr(item, "nodeid", "<unknown>"),
+            **attributes,
         ),
     ):
         yield
