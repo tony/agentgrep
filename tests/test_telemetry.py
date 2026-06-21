@@ -928,6 +928,42 @@ def test_pytest_session_root_brackets_test_traces(monkeypatch: pytest.MonkeyPatc
     assert test_span.trace_id != session_span.trace_id
 
 
+class _SpanStatusCase(t.NamedTuple):
+    """Parametrized case for non-exception span status marking."""
+
+    test_id: str
+    mark_error: bool
+    expected_status: str
+
+
+_SPAN_STATUS_CASES: tuple[_SpanStatusCase, ...] = (
+    _SpanStatusCase("clean", mark_error=False, expected_status="ok"),
+    _SpanStatusCase("marked-error", mark_error=True, expected_status="error"),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    _SPAN_STATUS_CASES,
+    ids=[case.test_id for case in _SPAN_STATUS_CASES],
+)
+def test_mark_span_error_sets_span_status(case: _SpanStatusCase) -> None:
+    """mark_span_error flips the active span to error without raising."""
+    import agentgrep._telemetry as telemetry
+
+    backend = telemetry.InMemoryTelemetryBackend()
+    telemetry.configure_backend(backend)
+    try:
+        with telemetry.span("agentgrep.cli.invocation", agentgrep_surface="cli"):
+            if case.mark_error:
+                telemetry.mark_span_error("boom")
+    finally:
+        telemetry.configure_backend(None)
+
+    (recorded,) = backend.finished_spans
+    assert recorded.status == case.expected_status
+
+
 class _MetricKindCase(t.NamedTuple):
     """Parametrized case for OTel metric instrument-kind classification."""
 
@@ -1211,9 +1247,11 @@ def test_cli_parse_error_emits_non_single_trace_with_argparse_stderr(
         "agentgrep.cli.parse",
         "agentgrep.cli.invocation",
     ]
-    root = backend.finished_spans[-1]
+    parse_span, root = backend.finished_spans
     assert root.attributes["agentgrep_outcome"] == "parse_error"
     assert root.attributes["agentgrep_exit_code"] == 2
+    assert root.status == "error"
+    assert parse_span.status == "error"
 
 
 def test_cli_main_uses_cli_service_name(monkeypatch: pytest.MonkeyPatch) -> None:
