@@ -419,16 +419,28 @@ def test_engine_search_and_find_emit_structured_trace_linked_logs(
     assert "find query completed" in logs_by_message
     search_log = logs_by_message["search query completed"]
     assert search_log.attributes["agentgrep_surface"] == "engine"
+    assert search_log.attributes["agentgrep_component"] == "core"
+    assert search_log.attributes["agentgrep_component_kind"] == "in_process"
     assert search_log.attributes["agentgrep_operation"] == "search.run"
     assert search_log.attributes["agentgrep_outcome"] == "ok"
     assert search_log.attributes["agentgrep_result_count"] == 1
     find_log = logs_by_message["find query completed"]
+    assert find_log.attributes["agentgrep_component"] == "core"
+    assert find_log.attributes["agentgrep_component_kind"] == "in_process"
     find_source_count = find_log.attributes["agentgrep_source_count"]
     find_result_count = find_log.attributes["agentgrep_result_count"]
     assert isinstance(find_source_count, int)
     assert isinstance(find_result_count, int)
     assert find_source_count >= 1
     assert find_result_count >= 1
+    search_span = next(
+        span for span in backend.finished_spans if span.name == "agentgrep.search.run"
+    )
+    find_span = next(span for span in backend.finished_spans if span.name == "agentgrep.find.run")
+    assert search_span.attributes["agentgrep_component"] == "core"
+    assert search_span.attributes["agentgrep_component_kind"] == "in_process"
+    assert find_span.attributes["agentgrep_component"] == "core"
+    assert find_span.attributes["agentgrep_component_kind"] == "in_process"
     assert {record.trace_id for record in backend.log_records} == {
         backend.finished_spans[-1].trace_id,
     }
@@ -756,6 +768,8 @@ def test_record_work_metric_keeps_debug_identity() -> None:
     assert work_metric.value == 42
     assert work_metric.attributes["agentgrep_work_kind"] == "source_records_scanned"
     assert work_metric.attributes["agentgrep_surface"] == "engine"
+    assert work_metric.attributes["agentgrep_component"] == "core"
+    assert work_metric.attributes["agentgrep_component_kind"] == "in_process"
     assert work_metric.attributes["agentgrep_source_strategy"] == "root_full_scan"
     assert work_metric.attributes["agentgrep_debug_session_id"] == "session-work"
 
