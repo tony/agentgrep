@@ -755,7 +755,12 @@ def iter_trace_spans(trace_data: dict[str, object]) -> cabc.Iterator[dict[str, o
 
 
 def _orphan_trace_spans(spans: cabc.Sequence[cabc.Mapping[str, object]]) -> list[dict[str, str]]:
-    """Return child spans whose parent span id is missing from the trace."""
+    """Return child spans whose parent span id is missing from the trace.
+
+    This walks the assembled ``/api/traces/{id}`` payload because TraceQL has no
+    operator to test a span's raw ``parentID`` against the trace's own span-id
+    set, so the orphan policy cannot be expressed declaratively.
+    """
     span_ids = {
         str(span_id) for span in spans if (span_id := span.get("spanID") or span.get("spanId"))
     }
