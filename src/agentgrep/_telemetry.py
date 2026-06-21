@@ -124,6 +124,7 @@ class _SpanState:
     attributes: TelemetryAttributes
     started_at: float
     status: str = "ok"
+    inherit_otel_context: bool = False
 
 
 class TelemetryBackend(t.Protocol):
@@ -572,7 +573,14 @@ def mark_span_error(description: str) -> None:
 
 @contextlib.contextmanager
 def span(name: str, **attributes: object) -> cabc.Iterator[None]:
-    """Create a span in the active backend."""
+    """Create a span in the active backend.
+
+    Pass ``inherit_otel_context=True`` to nest a parentless span under the
+    current native OTel span, so an inbound ``traceparent`` links the caller's
+    trace to this span instead of severing into a fresh trace. The flag is
+    consumed here and never recorded as a span attribute.
+    """
+    inherit_otel_context = attributes.pop("inherit_otel_context", False) is True
     backend = _BACKEND.get()
     if backend is None:
         yield
@@ -587,6 +595,7 @@ def span(name: str, **attributes: object) -> cabc.Iterator[None]:
         parent_id=parent.span_id if parent is not None else None,
         attributes={key: _safe_attribute_value(value) for key, value in attributes.items()},
         started_at=time.perf_counter(),
+        inherit_otel_context=inherit_otel_context and parent is None,
     )
     try:
         with backend.start_span(active_span):

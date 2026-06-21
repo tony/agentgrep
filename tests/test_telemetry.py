@@ -946,6 +946,65 @@ def test_span_mirrors_native_otel_trace_ids() -> None:
     assert child_parent_id == format_span_id(native_root.context.span_id)
 
 
+def test_span_inherits_inbound_otel_context() -> None:
+    """inherit_otel_context nests the span under an active inbound OTel span."""
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+    from opentelemetry.trace import format_trace_id
+
+    import agentgrep._telemetry as telemetry
+    from agentgrep import _telemetry_otel
+
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(InMemorySpanExporter()))
+
+    class _Noop:
+        def add(self, *args: object, **kwargs: object) -> None:
+            return None
+
+        def record(self, *args: object, **kwargs: object) -> None:
+            return None
+
+        def force_flush(self, *args: object, **kwargs: object) -> bool:
+            return True
+
+        def shutdown(self) -> None:
+            return None
+
+    noop = _Noop()
+    backend = _telemetry_otel.OtelTelemetryBackend(
+        tracer=provider.get_tracer("agentgrep"),
+        tracer_provider=provider,
+        meter=noop,
+        meter_provider=noop,
+        logger_provider=noop,
+        logging_handler=logging.NullHandler(),
+        span_counter=noop,
+        span_duration=noop,
+        instrumentations=(),
+        profiles_started=False,
+    )
+    inbound_tracer = provider.get_tracer("inbound")
+
+    telemetry.configure_backend(backend)
+    try:
+        with inbound_tracer.start_as_current_span("caller") as caller:
+            caller_trace = format_trace_id(caller.get_span_context().trace_id)
+            with telemetry.span("agentgrep.mcp.request", inherit_otel_context=True):
+                inherited_trace = telemetry.current_trace_id()
+        with inbound_tracer.start_as_current_span("caller2") as caller2:
+            caller2_trace = format_trace_id(caller2.get_span_context().trace_id)
+            with telemetry.span("agentgrep.mcp.request"):
+                severed_trace = telemetry.current_trace_id()
+    finally:
+        telemetry.configure_backend(None)
+        provider.shutdown()
+
+    assert inherited_trace == caller_trace
+    assert severed_trace != caller2_trace
+
+
 def test_pytest_item_span_helper_covers_custom_items() -> None:
     """The pytest hook wrapper opens one pytest.test root for custom items."""
     import agentgrep._telemetry as telemetry
