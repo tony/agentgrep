@@ -43,6 +43,7 @@ APP_ROOT_SPAN_NAMES: frozenset[str] = frozenset(
     {
         "agentgrep.cli.invocation",
         "agentgrep.cli.interactive_session",
+        "agentgrep.mcp.server",
         "agentgrep.tui.session",
         "agentgrep.mcp.request",
         "agentgrep.mcp.tool",
@@ -151,6 +152,9 @@ class TelemetryBackend(t.Protocol):
     def emit_log(self, record: logging.LogRecord, active_span: _SpanState | None) -> None:
         """Export a log record."""
 
+    def force_flush(self, timeout_millis: int = 30_000) -> bool:
+        """Flush pending telemetry without releasing backend resources."""
+
     def shutdown(self) -> None:
         """Flush and release backend resources."""
 
@@ -243,6 +247,11 @@ class InMemoryTelemetryBackend:
     def shutdown(self) -> None:
         """Release backend resources."""
 
+    def force_flush(self, timeout_millis: int = 30_000) -> bool:
+        """Flush pending telemetry."""
+        del timeout_millis
+        return True
+
     def single_root_trace_ids(self) -> tuple[str, ...]:
         """Return trace IDs with exactly one span."""
         spans_by_trace: dict[str, list[SpanRecord]] = collections.defaultdict(list)
@@ -292,6 +301,12 @@ class TelemetryHandle:
         if self._resource_token is not None:
             _RESOURCE_ATTRIBUTES.reset(self._resource_token)
             self._resource_token = None
+
+    def force_flush(self, *, timeout_millis: int = 30_000) -> bool:
+        """Flush pending telemetry while keeping exporters active."""
+        if self.backend is None:
+            return True
+        return self.backend.force_flush(timeout_millis=timeout_millis)
 
 
 _BACKEND: contextvars.ContextVar[TelemetryBackend | None] = contextvars.ContextVar(
