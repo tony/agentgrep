@@ -130,14 +130,15 @@ sampled; the short MCP smoke proves traces/logs/metrics, not profile density.
 
 Each observable MCP request opens an `mcp.server.request` root (and, for tool
 calls, an `mcp.server.tool` child) that owns the trace, carries the redacted
-`agentgrep_*` / `agentgrep_mcp_args.*` attributes, and emits the audit log.
-Nested inside each is a FastMCP `server_span` SERVER child that adds the
-`mcp.method.name`, `gen_ai.tool.name`, and `mcp.session.id` semantic
-conventions; raw arguments never reach it. When the caller sends a
-`traceparent` in the request metadata, the request root inherits that context so
-the caller's trace links to agentgrep's. The pinned `fastmcp` does not auto-emit
-these SERVER spans, so composing `server_span` produces exactly one per request
-or tool.
+`agentgrep_*` / `agentgrep_mcp_args.*` attributes, and emits the audit log. The
+pinned `fastmcp` (3.x) auto-emits its own `SpanKind.SERVER` spans (`tools/list`,
+`tools/call {name}`, etc.) carrying `mcp.method.name`, `gen_ai.tool.name`, and
+`mcp.session.id`, gated only by a global OTel `TracerProvider` being present —
+the same provider agentgrep installs. Those native SERVER spans nest directly
+under the agentgrep roots, so agentgrep does not compose its own. When the caller
+sends a `traceparent` in the request metadata, the request root inherits that
+context so the caller's trace links to agentgrep's; raw arguments never reach the
+SERVER span (only the public tool name does).
 
 OTel log export keeps the plain log message as the record body and carries the
 redacted `agentgrep_*` extras as native OTel log attributes (Loki structured
