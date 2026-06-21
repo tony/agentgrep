@@ -36,7 +36,11 @@ def _run_git(repo: pathlib.Path, *args: str) -> str:
     return completed.stdout.strip()
 
 
-def _init_vcs_repo(repo: pathlib.Path) -> str:
+def _init_vcs_repo(
+    repo: pathlib.Path,
+    *,
+    remote_url: str = "https://github.com/tony/agentgrep.git",
+) -> str:
     """Create a small Git repository with one branch and one remote."""
     repo.mkdir()
     _run_git(repo, "init", "-b", "feature/vcs")
@@ -45,8 +49,40 @@ def _init_vcs_repo(repo: pathlib.Path) -> str:
     _ = (repo / "README.md").write_text("vcs\n", encoding="utf-8")
     _run_git(repo, "add", ".")
     _run_git(repo, "commit", "-m", "initial")
-    _run_git(repo, "remote", "add", "origin", "https://github.com/tony/agentgrep.git")
+    _run_git(repo, "remote", "add", "origin", remote_url)
     return _run_git(repo, "rev-parse", "HEAD")
+
+
+class VcsRepositoryUrlCase(t.NamedTuple):
+    """Parametrized case for canonical telemetry repository URLs."""
+
+    test_id: str
+    raw_url: str
+    expected_url: str
+
+
+VCS_REPOSITORY_URL_CASES: tuple[VcsRepositoryUrlCase, ...] = (
+    VcsRepositoryUrlCase(
+        test_id="https-userinfo",
+        raw_url="https://user:token@github.com/tony/agentgrep.git",
+        expected_url="https://github.com/tony/agentgrep",
+    ),
+    VcsRepositoryUrlCase(
+        test_id="https-userinfo-with-port",
+        raw_url="https://user:token@example.invalid:8443/org/repo.git",
+        expected_url="https://example.invalid:8443/org/repo",
+    ),
+    VcsRepositoryUrlCase(
+        test_id="ssh-url",
+        raw_url="ssh://git@example.invalid/org/repo.git",
+        expected_url="https://example.invalid/org/repo",
+    ),
+    VcsRepositoryUrlCase(
+        test_id="scp-like",
+        raw_url="git@example.invalid:org/repo.git",
+        expected_url="https://example.invalid/org/repo",
+    ),
+)
 
 
 def test_resolve_mode_uses_only_agentgrep_otel(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -101,6 +137,22 @@ def test_service_version_is_not_debug_identity(monkeypatch: pytest.MonkeyPatch) 
     assert attributes["agentgrep.debug.candidate_id"] == "candidate-1"
 
 
+@pytest.mark.parametrize(
+    "case",
+    VCS_REPOSITORY_URL_CASES,
+    ids=[case.test_id for case in VCS_REPOSITORY_URL_CASES],
+)
+def test_canonical_repository_url_strips_credentials(case: VcsRepositoryUrlCase) -> None:
+    """Telemetry repository URLs must never include remote credentials."""
+    import agentgrep._telemetry as telemetry
+
+    canonical = telemetry._canonical_repository_url(case.raw_url)
+
+    assert canonical == case.expected_url
+    assert "token" not in str(canonical)
+    assert "user:" not in str(canonical)
+
+
 def test_resource_attributes_include_current_vcs_identity(tmp_path: pathlib.Path) -> None:
     """Telemetry resource attributes should identify the current Git ref."""
     import agentgrep._telemetry as telemetry
@@ -120,6 +172,24 @@ def test_resource_attributes_include_current_vcs_identity(tmp_path: pathlib.Path
     assert attributes["vcs.repository.name"] == "agentgrep"
     assert attributes["vcs.repository.url.full"] == "https://github.com/tony/agentgrep"
     assert "vcs.repository.ref.name" not in attributes
+
+
+def test_resource_attributes_strip_vcs_url_credentials(tmp_path: pathlib.Path) -> None:
+    """Exported VCS resource URLs should be browser URLs without userinfo."""
+    import agentgrep._telemetry as telemetry
+
+    repo = tmp_path / "repo"
+    _ = _init_vcs_repo(repo, remote_url="https://user:token@github.com/tony/agentgrep.git")
+
+    attributes = telemetry.build_resource_attributes(
+        env={},
+        service_version="0.1.0",
+        repo_root=repo,
+    )
+
+    assert attributes["vcs.repository.url.full"] == "https://github.com/tony/agentgrep"
+    assert "token" not in str(attributes)
+    assert "user:" not in str(attributes)
 
 
 def test_resource_attributes_recover_branch_for_detached_head(
