@@ -79,8 +79,13 @@ collected item in an `agentgrep.pytest.test` root. That covers direct tests,
 custom documentation items, doctest-style items, and Textual `run_test()` cases
 that bypass `agentgrep.main()`, without creating single-root traces.
 
-Pyroscope profiles use `application_name="agentgrep"` and must not duplicate
-the generated `service_name` label in custom tags.
+Pyroscope profiles use the same resource `service.name` as traces, logs, and
+metrics. Default process entrypoints split into stable service names such as
+`agentgrep-cli`, `agentgrep-mcp`, `agentgrep-benchmark`,
+`agentgrep-profile-engine`, `agentgrep-pytest`, and `agentgrep-otel-smoke`.
+The standard `OTEL_SERVICE_NAME` environment variable can override those
+defaults. In-process components such as the engine remain span attributes and
+instrumentation scopes, not separate services.
 
 ## Consequences
 
@@ -141,9 +146,10 @@ Textual pytest workloads, and verifies:
   connection shortcut work;
 - fresh span, app CPU-loop, app SQLite, and benchmark subprocess metrics with
   the current `agentgrep_debug_session_id` are visible in Prometheus;
-- current-run Loki logs are selected with `{service_name="agentgrep"} | json |
+- current-run Loki logs are selected with
+  `{service_name=~"agentgrep|agentgrep-.+"} | json |
   agentgrep_debug_session_id="..."` and all contain trace and span identifiers;
-- Pyroscope exposes both the `agentgrep` service and current debug session.
+- Pyroscope exposes split `agentgrep-*` services and the current debug session.
 
 The subprocess and signal-cost inventory lives in
 {ref}`otel-cost-model`.

@@ -124,7 +124,10 @@ def pytest_sessionstart(session: pytest.Session) -> None:
         return
     from agentgrep import _telemetry
 
-    _AGENTGREP_OTEL_PYTEST_HANDLE = _telemetry.setup(repo_root=_REPO_ROOT)
+    _AGENTGREP_OTEL_PYTEST_HANDLE = _telemetry.setup(
+        repo_root=_REPO_ROOT,
+        service_name="agentgrep-pytest",
+    )
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
