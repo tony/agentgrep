@@ -241,8 +241,8 @@ def test_mcp_acceptance_workload_exercises_server_root_and_flush() -> None:
     assert "FakeServer" in command[2]
 
 
-def test_query_logs_filters_run_id_after_json_parse(monkeypatch: t.Any) -> None:
-    """Loki log checks should query run ids through a JSON parser stage."""
+def test_query_logs_filters_run_id_via_structured_metadata(monkeypatch: t.Any) -> None:
+    """Loki log checks query run ids through OTLP structured metadata, no JSON parse."""
     observed_urls: list[str] = []
 
     def fake_http_json(url: str, **_kwargs: object) -> dict[str, object]:
@@ -258,13 +258,12 @@ def test_query_logs_filters_run_id_after_json_parse(monkeypatch: t.Any) -> None:
                         "values": [
                             [
                                 "1782000000000000000",
-                                json.dumps(
-                                    {
-                                        "agentgrep_debug_session_id": "run-123",
-                                        "trace_id": "trace",
-                                        "span_id": "span",
-                                    },
-                                ),
+                                "mcp request completed",
+                                {
+                                    "agentgrep_debug_session_id": "run-123",
+                                    "trace_id": "trace",
+                                    "span_id": "span",
+                                },
                             ],
                         ],
                     },
@@ -282,8 +281,9 @@ def test_query_logs_filters_run_id_after_json_parse(monkeypatch: t.Any) -> None:
     parsed = urllib.parse.urlparse(observed_urls[0])
     params = urllib.parse.parse_qs(parsed.query)
     assert params["query"] == [
-        '{service_name=~"agentgrep|agentgrep-.+"} | json | agentgrep_debug_session_id="run-123"',
+        '{service_name=~"agentgrep|agentgrep-.+"} | agentgrep_debug_session_id="run-123"',
     ]
+    assert "| json" not in params["query"][0]
     assert result["count"] == 1
 
 
@@ -363,8 +363,8 @@ def test_evaluate_trace_root_accepts_approved_single_span_roots(case: _TraceRoot
     assert verdict.root_name == case.expected_root
 
 
-def test_query_logs_rejects_loki_json_parser_errors(monkeypatch: t.Any) -> None:
-    """Loki parser errors mean exported log bodies are not structured."""
+def test_query_logs_rejects_logs_missing_trace_link(monkeypatch: t.Any) -> None:
+    """A selected log without trace and span ids in its metadata must fail."""
 
     def fake_http_json(_url: str, **_kwargs: object) -> dict[str, object]:
         return {
@@ -372,14 +372,16 @@ def test_query_logs_rejects_loki_json_parser_errors(monkeypatch: t.Any) -> None:
                 "result": [
                     {
                         "stream": {
-                            "__error__": "JSONParserErr",
-                            "agentgrep_debug_session_id": "run-123",
                             "service_name": "agentgrep",
-                            "trace_id": "trace",
-                            "span_id": "span",
                             "vcs_ref_head_name": "otel-bootstrap",
                         },
-                        "values": [["1782000000000000000", "plain text body"]],
+                        "values": [
+                            [
+                                "1782000000000000000",
+                                "search completed",
+                                {"agentgrep_debug_session_id": "run-123"},
+                            ],
+                        ],
                     },
                 ],
             },
@@ -387,32 +389,33 @@ def test_query_logs_rejects_loki_json_parser_errors(monkeypatch: t.Any) -> None:
 
     monkeypatch.setattr(otel_acceptance, "http_json", fake_http_json)
 
-    with pytest.raises(
-        otel_acceptance.AcceptanceCheckError,
-        match="Loki JSON parser errors",
-    ):
+    with pytest.raises(otel_acceptance.AcceptanceCheckError, match="unlinked agentgrep logs"):
         otel_acceptance.query_logs(
             "run-123",
             {"labels": {"vcs_ref_head_name": "otel-bootstrap"}},
         )
 
 
-def test_query_logs_rejects_label_only_structure(monkeypatch: t.Any) -> None:
-    """A selected log must expose structured fields from the log body."""
+def test_query_logs_rejects_streams_missing_vcs_labels(monkeypatch: t.Any) -> None:
+    """A log stream without the expected VCS labels must fail acceptance."""
 
     def fake_http_json(_url: str, **_kwargs: object) -> dict[str, object]:
         return {
             "data": {
                 "result": [
                     {
-                        "stream": {
-                            "agentgrep_debug_session_id": "run-123",
-                            "service_name": "agentgrep",
-                            "trace_id": "trace",
-                            "span_id": "span",
-                            "vcs_ref_head_name": "otel-bootstrap",
-                        },
-                        "values": [["1782000000000000000", "plain text body"]],
+                        "stream": {"service_name": "agentgrep"},
+                        "values": [
+                            [
+                                "1782000000000000000",
+                                "search completed",
+                                {
+                                    "agentgrep_debug_session_id": "run-123",
+                                    "trace_id": "trace",
+                                    "span_id": "span",
+                                },
+                            ],
+                        ],
                     },
                 ],
             },
@@ -420,10 +423,7 @@ def test_query_logs_rejects_label_only_structure(monkeypatch: t.Any) -> None:
 
     monkeypatch.setattr(otel_acceptance, "http_json", fake_http_json)
 
-    with pytest.raises(
-        otel_acceptance.AcceptanceCheckError,
-        match="unstructured agentgrep log bodies",
-    ):
+    with pytest.raises(otel_acceptance.AcceptanceCheckError, match="missing VCS labels"):
         otel_acceptance.query_logs(
             "run-123",
             {"labels": {"vcs_ref_head_name": "otel-bootstrap"}},
