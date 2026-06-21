@@ -4,9 +4,7 @@
 
 Base path: `~/.claude` (env override: `CLAUDE_CONFIG_DIR`).
 
-Rows carry per-store observation stamps. Project transcripts were
-observed against `claude-code v2.1.143` (2026-05-15); global prompt
-history was observed against `claude-code v2.1.157` (2026-05-29).
+`observed_version`: `claude-code v2.1.185` (observed 2026-06-21).
 
 ## Stores
 
@@ -100,7 +98,11 @@ Tasks are JSON files under `tasks/<task_list>/<task_id>.json` with
 `id`, `subject`, `description`, `status`, `blocks`, `blockedBy`, and
 optional metadata fields. agentgrep emits one inspectable task sample
 from the subject and description plus status/blocking metadata. Plans
-are Markdown files under `plans/*.md`.
+are Markdown files under `plans/*.md`. Orchestration-workflow driver
+scripts written by the Workflow tool live under
+`projects/<encoded_project>/<session_uuid>/workflows/scripts/*.js`,
+each carrying an embedded `meta = {name, description}`; they are
+inspectable (opt-in), not searched by default.
 
 Settings and keybindings expose only top-level key summaries for
 explicit inspection, so raw values such as environment variables are
@@ -111,6 +113,12 @@ are inspectable because they can steer future Claude Code behavior.
 Project-local files are discovered only from roots already referenced
 by local Claude transcript metadata; agentgrep does not recursively
 scan `$HOME` for every possible project.
+
+Claude's own derived per-session reflection summaries under
+`usage-data/facets/*.json` are inspectable: agentgrep emits the
+natural-language `brief_summary`, `underlying_goal`, and
+`friction_detail` fields and leaves the count/category metadata aside.
+This is derived state, not transcript, so it is opt-in.
 
 Context-mode files, IDE bridge state, Chrome/native integration state,
 native installer metadata, jobs, stats/update cache, and session state

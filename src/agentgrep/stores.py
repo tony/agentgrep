@@ -99,6 +99,7 @@ AgentName = t.Literal[
     "grok",
     "pi",
     "opencode",
+    "windsurf",
 ]
 PathKind = t.Literal["history_file", "session_file", "sqlite_db", "store_file"]
 SourceKind = t.Literal["json", "jsonl", "sqlite", "text", "opaque"]
@@ -220,7 +221,7 @@ class StoreDescriptor(pydantic.BaseModel):
     upstream_ref: str | None = None
     """Pointer to the authoritative type definition.
 
-    Example: ``github.com/openai/codex@4c89772/codex-rs/...#L2783``.
+    Example: ``github.com/openai/codex@3fb81667/codex-rs/...#L2929``.
     """
 
     schema_notes: str

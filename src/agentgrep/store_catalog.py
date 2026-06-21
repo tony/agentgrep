@@ -30,20 +30,24 @@ from agentgrep.stores import (
 )
 
 OBSERVED_AT = datetime.date(2026, 5, 17)
-_GROK_OBSERVED_AT = datetime.date(2026, 5, 25)
-_CLAUDE_HISTORY_OBSERVED_AT = datetime.date(2026, 5, 29)
-_CURSOR_CONFIG_OBSERVED_AT = datetime.date(2026, 5, 30)
-_PI_OBSERVED_AT = datetime.date(2026, 5, 30)
-_OPENCODE_OBSERVED_AT = datetime.date(2026, 5, 30)
-_ANTIGRAVITY_OBSERVED_AT = datetime.date(2026, 6, 14)
+_GROK_OBSERVED_AT = datetime.date(2026, 6, 21)
+_CLAUDE_OBSERVED_AT = datetime.date(2026, 6, 21)
+_CURSOR_IDE_OBSERVED_AT = datetime.date(2026, 6, 21)
+_PI_OBSERVED_AT = datetime.date(2026, 6, 21)
+_OPENCODE_OBSERVED_AT = datetime.date(2026, 6, 21)
+_ANTIGRAVITY_OBSERVED_AT = datetime.date(2026, 6, 21)
+_GEMINI_OBSERVED_AT = datetime.date(2026, 6, 21)
+_CURSOR_CLI_OBSERVED_AT = datetime.date(2026, 6, 21)
+_CODEX_OBSERVED_AT = datetime.date(2026, 6, 21)
+_WINDSURF_OBSERVED_AT = datetime.date(2026, 6, 21)
 
 
 def gemini_project_hash(project_root: pathlib.Path) -> str:
     """Reproduce Gemini CLI's project-hash derivation.
 
     Mirrors the ``getProjectHash`` helper at
-    ``packages/core/src/utils/paths.ts:318-320`` in
-    ``github.com/google-gemini/gemini-cli`` (HEAD ``77e65c0d``):
+    ``packages/core/src/utils/paths.ts:187-189`` in
+    ``github.com/google-gemini/gemini-cli`` (HEAD ``927170fc``):
 
     .. code-block:: typescript
 
@@ -77,8 +81,8 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSONL,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/history.jsonl",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.157",
-        observed_at=_CLAUDE_HISTORY_OBSERVED_AT,
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes=(
             "Global prompt history JSONL. Each line carries `display`, "
             "`pastedContents`, `timestamp` (Unix milliseconds), `project`, and "
@@ -121,8 +125,8 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
             "<encoded_project>/<session_uuid>.jsonl"
         ),
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.143",
-        observed_at=OBSERVED_AT,
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
         upstream_ref="code.claude.com/docs/en/changelog",
         schema_notes=(
             "JSONL; stream fragments grouped by `uuid`, dedup across `/resume`, skip "
@@ -161,8 +165,8 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
             "<encoded_project>/<session_uuid>/subagents/<agent>.jsonl"
         ),
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.143",
-        observed_at=OBSERVED_AT,
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes=(
             "Same JSONL line format as the parent session. Each file is one sub-agent "
             "dispatch from the Task tool."
@@ -200,8 +204,8 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
             "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/projects/<encoded_project>/memory/*.md"
         ),
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.143",
-        observed_at=OBSERVED_AT,
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes=(
             "Markdown files with YAML frontmatter; the auto-memory feature. Each file "
             "holds one fact/feedback/project/reference memory."
@@ -235,8 +239,8 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
             "project roots/{CLAUDE.md,.claude.md}"
         ),
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.157",
-        observed_at=_CLAUDE_HISTORY_OBSERVED_AT,
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes=(
             "Persistent user and project memory Markdown loaded into Claude Code. "
             "Project-root files are discovered only from roots already referenced "
@@ -275,8 +279,8 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/tasks/<task_list>/<task_id>.json",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.143",
-        observed_at=OBSERVED_AT,
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes=(
             "Claude Code task JSON with `id`, `subject`, `description`, `status`, "
             "`blocks`, `blockedBy`, and optional `activeForm` / metadata fields."
@@ -306,8 +310,8 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/todos/*.json",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.143",
-        observed_at=OBSERVED_AT,
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Persistent todo lists keyed by agent UUID.",
         coverage=StoreCoverage.INSPECTABLE,
         search_by_default=False,
@@ -334,8 +338,8 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/sessions/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.143",
-        observed_at=OBSERVED_AT,
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Shell environment snapshots; rarely contains conversation text.",
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
@@ -358,8 +362,8 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.SQLITE,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/__store.db",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.143",
-        observed_at=OBSERVED_AT,
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes=(
             "SQLite conversation/app state. Observed tables include "
             "`base_messages`, `user_messages`, `assistant_messages`, and "
@@ -385,8 +389,8 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/plans/*.md",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.157",
-        observed_at=_CLAUDE_HISTORY_OBSERVED_AT,
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes=(
             "Markdown plans stored under the configured Claude Code root. "
             "Project settings may redirect plan creation, but this root is the "
@@ -407,6 +411,67 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
     ),
     StoreDescriptor(
         agent="claude",
+        store_id="claude.projects.workflows",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.TEXT,
+        path_pattern=(
+            "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/projects/<encoded_project>/"
+            "<session_uuid>/workflows/scripts/<name>.js"
+        ),
+        env_overrides=("CLAUDE_CONFIG_DIR",),
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
+        schema_notes=(
+            "Orchestration-workflow driver scripts emitted by the Workflow "
+            "tool, each carrying an embedded `meta = {name, description}` that "
+            "names the workflow intent. Machine-generated driver code; "
+            "inspectable opt-in, not searched by default."
+        ),
+        coverage=StoreCoverage.INSPECTABLE,
+        search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="claude.projects.workflows",
+                adapter_id="claude.workflow_scripts_text.v1",
+                path_kind="store_file",
+                source_kind="text",
+                home_subpath=("projects",),
+                glob="*.js",
+                path_parts_required=("workflows", "scripts"),
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="claude",
+        store_id="claude.usage_data",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/usage-data/facets/<session>.json",
+        env_overrides=("CLAUDE_CONFIG_DIR",),
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
+        schema_notes=(
+            "Claude Code's own derived per-session reflection summaries. The "
+            "readable natural-language fields are `brief_summary`, "
+            "`underlying_goal`, and `friction_detail`; counts and category "
+            "fields are metadata. Derived state, not transcript — inspectable "
+            "opt-in, not searched by default."
+        ),
+        coverage=StoreCoverage.INSPECTABLE,
+        search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="claude.usage_data",
+                adapter_id="claude.usage_facets_json.v1",
+                path_kind="store_file",
+                source_kind="json",
+                home_subpath=("usage-data", "facets"),
+                glob="*.json",
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="claude",
         store_id="claude.projects.session_memory",
         role=StoreRole.PERSISTENT_MEMORY,
         format=StoreFormat.TEXT,
@@ -415,8 +480,8 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
             "<session_uuid>/session-memory/summary.md"
         ),
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.157",
-        observed_at=_CLAUDE_HISTORY_OBSERVED_AT,
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes=(
             "Per-session memory summary Markdown plus optional session-memory "
             "template/prompt configuration. It can contain prompt context but is "
@@ -443,8 +508,8 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/{settings*.json,keybindings.json}",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.157",
-        observed_at=_CLAUDE_HISTORY_OBSERVED_AT,
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes=(
             "User configuration, local overrides, keybindings, policy limits, "
             "and update/auth cache state. Documented for inventory, not searched "
@@ -480,8 +545,8 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/.credentials.json",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.157",
-        observed_at=_CLAUDE_HISTORY_OBSERVED_AT,
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Authentication and account credentials. Documented but never enumerated.",
         coverage=StoreCoverage.PRIVATE,
         search_by_default=False,
@@ -493,8 +558,8 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/{.last-*,.last-update-result.json}",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.157",
-        observed_at=_CLAUDE_HISTORY_OBSERVED_AT,
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Update and cleanup marker files; not prompt history.",
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
@@ -516,8 +581,8 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/stats-cache.json",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.157",
-        observed_at=_CLAUDE_HISTORY_OBSERVED_AT,
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Cached usage and statistics state; not conversation content.",
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
@@ -539,8 +604,8 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/debug/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.157",
-        observed_at=_CLAUDE_HISTORY_OBSERVED_AT,
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Debug output and diagnostics. Catalogued separately from transcripts.",
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
@@ -563,8 +628,8 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/backups/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.157",
-        observed_at=_CLAUDE_HISTORY_OBSERVED_AT,
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Backup files retained by Claude Code; opaque inventory only.",
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
@@ -576,8 +641,8 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/cache/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.157",
-        observed_at=_CLAUDE_HISTORY_OBSERVED_AT,
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="General cache directory; not a prompt/history source.",
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
@@ -589,8 +654,8 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/file-history/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.157",
-        observed_at=_CLAUDE_HISTORY_OBSERVED_AT,
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes=(
             "Content-addressed file-history backups referenced by transcript "
             "snapshots. This can be large and is not conversation history."
@@ -605,8 +670,8 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/shell-snapshots/*.sh",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.157",
-        observed_at=_CLAUDE_HISTORY_OBSERVED_AT,
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Shell integration snapshots; runtime state rather than prompt history.",
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
@@ -629,8 +694,8 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/image-cache/<session>/<image>",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.157",
-        observed_at=_CLAUDE_HISTORY_OBSERVED_AT,
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Base64/image payload cache for pasted image references.",
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
@@ -642,8 +707,8 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/context-mode/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.157",
-        observed_at=_CLAUDE_HISTORY_OBSERVED_AT,
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Context-mode counters and local app state, sometimes backed by SQLite.",
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
@@ -668,8 +733,8 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
             "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/{security/,security_warnings_state_*.json}"
         ),
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.157",
-        observed_at=_CLAUDE_HISTORY_OBSERVED_AT,
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Security warning and repository baseline state.",
         coverage=StoreCoverage.PRIVATE,
         search_by_default=False,
@@ -681,8 +746,8 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/skills/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.157",
-        observed_at=_CLAUDE_HISTORY_OBSERVED_AT,
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="User and managed skill instructions loaded into Claude Code behavior.",
         coverage=StoreCoverage.INSPECTABLE,
         search_by_default=False,
@@ -710,8 +775,8 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/commands/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.157",
-        observed_at=_CLAUDE_HISTORY_OBSERVED_AT,
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Legacy custom slash-command Markdown loaded through the skill loader.",
         coverage=StoreCoverage.INSPECTABLE,
         search_by_default=False,
@@ -739,8 +804,8 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${HOME}/<known_project_root>/.claude/{commands,agents,skills}/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.157",
-        observed_at=_CLAUDE_HISTORY_OBSERVED_AT,
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes=(
             "Project-local commands, agents, and skills. Roots are bounded to "
             "projects already observed in local Claude transcript metadata."
@@ -794,8 +859,8 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/teams/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.157",
-        observed_at=_CLAUDE_HISTORY_OBSERVED_AT,
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Team config JSON with member prompts and coordination metadata.",
         coverage=StoreCoverage.INSPECTABLE,
         search_by_default=False,
@@ -822,8 +887,8 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/session-env/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.157",
-        observed_at=_CLAUDE_HISTORY_OBSERVED_AT,
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Environment state captured for active or resumed sessions.",
         coverage=StoreCoverage.PRIVATE,
         search_by_default=False,
@@ -835,8 +900,8 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/ide/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.157",
-        observed_at=_CLAUDE_HISTORY_OBSERVED_AT,
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="IDE integration state and bridge metadata.",
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
@@ -859,8 +924,8 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/chrome/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.157",
-        observed_at=_CLAUDE_HISTORY_OBSERVED_AT,
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Claude-in-Chrome native-host and browser bridge state.",
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
@@ -883,8 +948,8 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/local/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.157",
-        observed_at=_CLAUDE_HISTORY_OBSERVED_AT,
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Native installer and local binary-management state.",
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
@@ -907,8 +972,8 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/jobs/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.157",
-        observed_at=_CLAUDE_HISTORY_OBSERVED_AT,
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Background job state and metadata, summarized without raw values.",
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
@@ -931,8 +996,8 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/uploads/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.157",
-        observed_at=_CLAUDE_HISTORY_OBSERVED_AT,
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Attachment upload staging; documented as opaque cache inventory.",
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
@@ -944,8 +1009,8 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/paste-cache/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.143",
-        observed_at=OBSERVED_AT,
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Transient clipboard staging.",
         search_by_default=False,
     ),
@@ -956,8 +1021,8 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/plugins/cache/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.157",
-        observed_at=_CLAUDE_HISTORY_OBSERVED_AT,
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes=(
             "Installed plugin bundles. Manifest, command, agent, skill, and hook "
             "instruction surfaces are inspectable; runtime/cache payloads remain opaque."
@@ -1038,8 +1103,8 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
         path_pattern=(
             "${HOME}/.cursor/projects/<id>/agent-transcripts/<session_uuid>/<session_uuid>.jsonl"
         ),
-        observed_version="cursor-agent (version not surfaced publicly)",
-        observed_at=OBSERVED_AT,
+        observed_version="cursor-agent 2026.06.19-653a7fb",
+        observed_at=_CURSOR_CLI_OBSERVED_AT,
         upstream_ref="cursor.com/docs/cli/overview",
         schema_notes=(
             "JSONL Anthropic-style: `role`, `message.content[]` with "
@@ -1078,8 +1143,8 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
         path_pattern=(
             "${HOME}/.cursor/projects/<id>/agent-transcripts/<session_uuid>/subagents/<agent>.jsonl"
         ),
-        observed_version="cursor-agent 2026.05.28-a70ca7c",
-        observed_at=datetime.date(2026, 5, 29),
+        observed_version="cursor-agent 2026.06.19-653a7fb",
+        observed_at=_CURSOR_CLI_OBSERVED_AT,
         schema_notes=(
             "Same JSONL Anthropic-style shape as `cursor-cli.transcripts`, nested "
             "under a session's `subagents/` directory."
@@ -1105,8 +1170,8 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.APP_STATE,
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${HOME}/.cursor/projects/<id>/repo.json",
-        observed_version="cursor-agent (version not surfaced publicly)",
-        observed_at=OBSERVED_AT,
+        observed_version="cursor-agent 2026.06.19-653a7fb",
+        observed_at=_CURSOR_CLI_OBSERVED_AT,
         schema_notes="Project tree/manifest metadata.",
     ),
     StoreDescriptor(
@@ -1118,8 +1183,8 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
             "${HOME}/.cursor/projects/<id>/{mcps/*/SERVER_METADATA.json,"
             "tools/*.json,mcp-approvals.json}"
         ),
-        observed_version="cursor-agent (version not surfaced publicly)",
-        observed_at=OBSERVED_AT,
+        observed_version="cursor-agent 2026.06.19-653a7fb",
+        observed_at=_CURSOR_CLI_OBSERVED_AT,
         schema_notes="MCP tool registry and approval records.",
     ),
     StoreDescriptor(
@@ -1128,8 +1193,8 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.APP_STATE,
         format=StoreFormat.OPAQUE,
         path_pattern="${HOME}/.cursor/projects/<id>/terminals/",
-        observed_version="cursor-agent (version not surfaced publicly)",
-        observed_at=OBSERVED_AT,
+        observed_version="cursor-agent 2026.06.19-653a7fb",
+        observed_at=_CURSOR_CLI_OBSERVED_AT,
         schema_notes="Terminal output logs.",
     ),
     StoreDescriptor(
@@ -1138,8 +1203,8 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.APP_STATE,
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${HOME}/.cursor/projects/<id>/canvases/",
-        observed_version="cursor-agent (version not surfaced publicly)",
-        observed_at=OBSERVED_AT,
+        observed_version="cursor-agent 2026.06.19-653a7fb",
+        observed_at=_CURSOR_CLI_OBSERVED_AT,
         schema_notes="Cursor canvas state.",
     ),
     StoreDescriptor(
@@ -1148,8 +1213,8 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.PLAN,
         format=StoreFormat.MARKDOWN_FRONTMATTER,
         path_pattern="${HOME}/.cursor/plans/*.plan.md",
-        observed_version="cursor-agent (version not surfaced publicly)",
-        observed_at=OBSERVED_AT,
+        observed_version="cursor-agent 2026.06.19-653a7fb",
+        observed_at=_CURSOR_CLI_OBSERVED_AT,
         schema_notes=("YAML frontmatter (name, overview, todos[], isProject) plus markdown body."),
     ),
     StoreDescriptor(
@@ -1158,8 +1223,8 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.APP_STATE,
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${HOME}/.cursor/agent-cli-state.json",
-        observed_version="cursor-agent (version not surfaced publicly)",
-        observed_at=OBSERVED_AT,
+        observed_version="cursor-agent 2026.06.19-653a7fb",
+        observed_at=_CURSOR_CLI_OBSERVED_AT,
         schema_notes="UI tip-shown flags and legacy-cleanup markers.",
         search_by_default=False,
     ),
@@ -1169,8 +1234,8 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.SOURCE_TREE,
         format=StoreFormat.OPAQUE,
         path_pattern="${HOME}/.cursor/worktrees/",
-        observed_version="cursor-agent (version not surfaced publicly)",
-        observed_at=OBSERVED_AT,
+        observed_version="cursor-agent 2026.06.19-653a7fb",
+        observed_at=_CURSOR_CLI_OBSERVED_AT,
         schema_notes=(
             "Full git worktrees used as code context by the CLI agent. Not chat — "
             "catalogued so future adapter PRs do not index source code as history."
@@ -1184,8 +1249,8 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.SUPPLEMENTARY_CHAT,
         format=StoreFormat.SQLITE,
         path_pattern="${HOME}/.cursor/ai-tracking/ai-code-tracking.db",
-        observed_version="cursor-agent (version not surfaced publicly)",
-        observed_at=OBSERVED_AT,
+        observed_version="cursor-agent 2026.06.19-653a7fb",
+        observed_at=_CURSOR_CLI_OBSERVED_AT,
         schema_notes=(
             "SQLite with `conversation_summaries(conversationId, title, tldr, "
             "overview, summaryBullets, model, mode, updatedAt)` — title and prose "
@@ -1211,8 +1276,8 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.PROMPT_HISTORY,
         format=StoreFormat.JSON_ARRAY,
         path_pattern="${HOME}/.config/cursor/prompt_history.json",
-        observed_version="cursor-agent 2026.05.27-fe9a6e2",
-        observed_at=_CURSOR_CONFIG_OBSERVED_AT,
+        observed_version="cursor-agent 2026.06.19-653a7fb",
+        observed_at=_CURSOR_CLI_OBSERVED_AT,
         schema_notes=(
             "Flat JSON array of strings — one entry per prompt typed into "
             "`cursor-agent`, oldest first. The CLI's up-arrow recall buffer; "
@@ -1245,8 +1310,8 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.PRIMARY_CHAT,
         format=StoreFormat.SQLITE,
         path_pattern="${HOME}/.config/cursor/chats/<project_hash>/<session_uuid>/store.db",
-        observed_version="cursor-agent 2026.05.27-fe9a6e2",
-        observed_at=_CURSOR_CONFIG_OBSERVED_AT,
+        observed_version="cursor-agent 2026.06.19-653a7fb",
+        observed_at=_CURSOR_CLI_OBSERVED_AT,
         version_strategies=(VersionDetectionStrategy.CATALOG_OBSERVATION,),
         upstream_ref="agentgrep.parse_cursor_cli_chats_db / iter_protobuf_text_fields",
         schema_notes=(
@@ -1279,6 +1344,88 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
             ),
         ),
     ),
+    StoreDescriptor(
+        agent="cursor-cli",
+        store_id="cursor-cli.skills",
+        role=StoreRole.INSTRUCTION,
+        format=StoreFormat.TEXT,
+        path_pattern="${HOME}/.cursor/{skills,skills-cursor}/<skill>/SKILL.md",
+        observed_version="cursor-agent 2026.06.19-653a7fb",
+        observed_at=_CURSOR_CLI_OBSERVED_AT,
+        schema_notes=(
+            "Skill definitions installed for cursor-agent — `SKILL.md` files "
+            "with YAML frontmatter under `~/.cursor/skills/` (user) and "
+            "`~/.cursor/skills-cursor/` (built-in). Instruction content that "
+            "steers future sessions; inspectable, parity with claude.skills."
+        ),
+        coverage=StoreCoverage.INSPECTABLE,
+        search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="cursor-cli.skills",
+                adapter_id="cursor_cli.skills_text.v1",
+                path_kind="store_file",
+                source_kind="text",
+                home_subpath=(".cursor",),
+                glob="SKILL.md",
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="cursor-cli",
+        store_id="cursor-cli.uploads",
+        role=StoreRole.SUPPLEMENTARY_CHAT,
+        format=StoreFormat.TEXT,
+        path_pattern="${HOME}/.cursor/projects/<id>/uploads/<name>.md",
+        observed_version="cursor-agent 2026.06.19-653a7fb",
+        observed_at=_CURSOR_CLI_OBSERVED_AT,
+        schema_notes=(
+            "User-uploaded Markdown attachments the user fed the agent as "
+            "conversation input (plan/reference extracts). Inspectable opt-in "
+            "supplementary content, not searched by default."
+        ),
+        coverage=StoreCoverage.INSPECTABLE,
+        search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="cursor-cli.uploads",
+                adapter_id="cursor_cli.uploads_text.v1",
+                path_kind="store_file",
+                source_kind="text",
+                home_subpath=(".cursor", "projects"),
+                glob="*.md",
+                path_parts_required=("uploads",),
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="cursor-cli",
+        store_id="cursor-cli.agent_tools",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.TEXT,
+        path_pattern="${HOME}/.cursor/projects/<id>/agent-tools/<name>.txt",
+        observed_version="cursor-agent 2026.06.19-653a7fb",
+        observed_at=_CURSOR_CLI_OBSERVED_AT,
+        schema_notes=(
+            "Captured tool-result payloads written per project under "
+            "`agent-tools/*.txt`, distinct from the `tools/*.json` registry. "
+            "Tool output rather than chat; inspectable opt-in, not searched by "
+            "default."
+        ),
+        coverage=StoreCoverage.INSPECTABLE,
+        search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="cursor-cli.agent_tools",
+                adapter_id="cursor_cli.agent_tools_text.v1",
+                path_kind="store_file",
+                source_kind="text",
+                home_subpath=(".cursor", "projects"),
+                glob="*.txt",
+                path_parts_required=("agent-tools",),
+            ),
+        ),
+    ),
 )
 
 _CURSOR_IDE_STORES: tuple[StoreDescriptor, ...] = (
@@ -1293,7 +1440,7 @@ _CURSOR_IDE_STORES: tuple[StoreDescriptor, ...] = (
             "win32": "%APPDATA%/Cursor/User/globalStorage/state.vscdb",
         },
         observed_version="Cursor IDE (current observed paths)",
-        observed_at=OBSERVED_AT,
+        observed_at=_CURSOR_IDE_OBSERVED_AT,
         upstream_ref=("agentgrep.parse_cursor_state_db / CURSOR_STATE_TOKENS"),
         schema_notes=(
             "Cursor IDE chat storage; keys in `ItemTable`/`cursorDiskKV` containing "
@@ -1347,7 +1494,7 @@ _CURSOR_IDE_STORES: tuple[StoreDescriptor, ...] = (
             "win32": "%APPDATA%/Cursor/User/workspaceStorage/<hash>/state.vscdb",
         },
         observed_version="Cursor IDE (current observed paths)",
-        observed_at=_CURSOR_CONFIG_OBSERVED_AT,
+        observed_at=_CURSOR_IDE_OBSERVED_AT,
         upstream_ref=("agentgrep.parse_cursor_state_db / CURSOR_STATE_TOKENS"),
         schema_notes=(
             "Per-workspace `state.vscdb`, one per opened project under "
@@ -1384,9 +1531,9 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSONL,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/history.jsonl",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
-        observed_at=OBSERVED_AT,
-        upstream_ref=("github.com/openai/codex@4c89772/codex-rs/message-history/src/lib.rs#L54"),
+        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_at=_CODEX_OBSERVED_AT,
+        upstream_ref=("github.com/openai/codex@3fb81667/codex-rs/message-history/src/lib.rs#L56"),
         schema_notes=(
             "`HistoryEntry { session_id: String, ts: u64 (unix seconds), text: "
             "String }` — one record per user prompt, append-only across all threads."
@@ -1428,9 +1575,9 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
             "rollout-YYYY-MM-DDThh-mm-ss-<uuid>.jsonl"
         ),
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
-        observed_at=OBSERVED_AT,
-        upstream_ref=("github.com/openai/codex@4c89772/codex-rs/protocol/src/protocol.rs#L2783"),
+        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_at=_CODEX_OBSERVED_AT,
+        upstream_ref=("github.com/openai/codex@3fb81667/codex-rs/protocol/src/protocol.rs#L2929"),
         schema_notes=(
             "JSONL `RolloutItem` tagged enum (`type` + `payload`): "
             "`session_meta` | `response_item` | `compacted` | `turn_context` | "
@@ -1479,9 +1626,9 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSONL,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/session_index.jsonl",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
-        observed_at=OBSERVED_AT,
-        upstream_ref="github.com/openai/codex@4c89772/codex-rs/rollout/src/session_index.rs",
+        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_at=_CODEX_OBSERVED_AT,
+        upstream_ref="github.com/openai/codex@3fb81667/codex-rs/rollout/src/session_index.rs",
         schema_notes=(
             "Append-only JSONL session index with `id`, `thread_name`, and "
             "`updated_at`. It summarizes sessions but does not replace the full "
@@ -1511,9 +1658,9 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.SQLITE,
         path_pattern="${CODEX_SQLITE_HOME or ${CODEX_HOME or ${HOME}/.codex}}/state_5.sqlite",
         env_overrides=("CODEX_HOME", "CODEX_SQLITE_HOME"),
-        observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
-        observed_at=OBSERVED_AT,
-        upstream_ref="github.com/openai/codex@4c89772/codex-rs/state/src/lib.rs#L70",
+        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_at=_CODEX_OBSERVED_AT,
+        upstream_ref="github.com/openai/codex@3fb81667/codex-rs/state/src/lib.rs#L95",
         schema_notes=(
             "Codex state DB; schema managed via migrations. Observed prompt-bearing "
             "columns include `threads.first_user_message`, `threads.preview`, "
@@ -1544,9 +1691,9 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.SQLITE,
         path_pattern="${CODEX_SQLITE_HOME or ${CODEX_HOME or ${HOME}/.codex}}/logs_2.sqlite",
         env_overrides=("CODEX_HOME", "CODEX_SQLITE_HOME"),
-        observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
-        observed_at=OBSERVED_AT,
-        upstream_ref="github.com/openai/codex@4c89772/codex-rs/state/src/lib.rs#L71",
+        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_at=_CODEX_OBSERVED_AT,
+        upstream_ref="github.com/openai/codex@3fb81667/codex-rs/state/src/lib.rs#L92",
         schema_notes=(
             "Codex logs DB (`LOGS_DB_FILENAME` in `codex-rs/state/src/lib.rs`). "
             "The `_N.sqlite` files at the Codex root (`logs_2.sqlite`, "
@@ -1577,8 +1724,8 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.SQLITE,
         path_pattern="${CODEX_SQLITE_HOME or ${CODEX_HOME or ${HOME}/.codex}}/memories_1.sqlite",
         env_overrides=("CODEX_HOME", "CODEX_SQLITE_HOME"),
-        observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
-        observed_at=OBSERVED_AT,
+        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_at=_CODEX_OBSERVED_AT,
         schema_notes=(
             "SQLite memory pipeline state. Observed tables include `stage1_outputs` "
             "with raw memory, rollout summary, slug, usage, and selection columns."
@@ -1608,8 +1755,8 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.SQLITE,
         path_pattern="${CODEX_SQLITE_HOME or ${CODEX_HOME or ${HOME}/.codex}}/goals_1.sqlite",
         env_overrides=("CODEX_HOME", "CODEX_SQLITE_HOME"),
-        observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
-        observed_at=OBSERVED_AT,
+        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_at=_CODEX_OBSERVED_AT,
         schema_notes=(
             "SQLite goal tracker with `thread_goals(objective, status, "
             "token_budget, tokens_used, time_used_seconds, created_at_ms, "
@@ -1640,9 +1787,9 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/external_agent_session_imports.json",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
-        observed_at=OBSERVED_AT,
-        upstream_ref="github.com/openai/codex@4c89772/codex-rs/external-agent-sessions/src/ledger.rs",
+        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_at=_CODEX_OBSERVED_AT,
+        upstream_ref="github.com/openai/codex@3fb81667/codex-rs/external-agent-sessions/src/ledger.rs",
         schema_notes=(
             "Import ledger with `records` carrying source path, content hash, "
             "imported thread id, and import timestamp."
@@ -1671,8 +1818,8 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/instructions.md",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
-        observed_at=OBSERVED_AT,
+        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_at=_CODEX_OBSERVED_AT,
         schema_notes="User-level Codex instructions loaded into new sessions.",
         coverage=StoreCoverage.INSPECTABLE,
         search_by_default=False,
@@ -1693,8 +1840,8 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.MARKDOWN_FRONTMATTER,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/memories/",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
-        observed_at=OBSERVED_AT,
+        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_at=_CODEX_OBSERVED_AT,
         schema_notes=(
             "Persistent memory workspace: `MEMORY.md`, `memory_summary.md`, "
             "`raw_memories.md`, rollout summaries, and skill memory folders."
@@ -1725,8 +1872,8 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/{config.toml,*.toml}",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
-        observed_at=OBSERVED_AT,
+        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_at=_CODEX_OBSERVED_AT,
         schema_notes=(
             "Codex TOML configuration, including optional `sqlite_home`. "
             "It can affect discovery roots but is not prompt history."
@@ -1767,8 +1914,8 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/{config.toml.bak*,config.toml.backup-*}",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
-        observed_at=OBSERVED_AT,
+        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_at=_CODEX_OBSERVED_AT,
         schema_notes="Historical config backups. Catalogued separately from active config.",
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
@@ -1798,8 +1945,8 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/auth.json",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
-        observed_at=OBSERVED_AT,
+        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_at=_CODEX_OBSERVED_AT,
         schema_notes="Authentication state. Documented but never enumerated or searched.",
         coverage=StoreCoverage.PRIVATE,
         search_by_default=False,
@@ -1811,8 +1958,8 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/installation_id",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
-        observed_at=OBSERVED_AT,
+        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_at=_CODEX_OBSERVED_AT,
         schema_notes="Stable local installation identifier. Documented but never enumerated.",
         coverage=StoreCoverage.PRIVATE,
         search_by_default=False,
@@ -1824,8 +1971,8 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/secrets/",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
-        observed_at=OBSERVED_AT,
+        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_at=_CODEX_OBSERVED_AT,
         schema_notes="Local secret store. Documented but never enumerated or searched.",
         coverage=StoreCoverage.PRIVATE,
         search_by_default=False,
@@ -1837,8 +1984,8 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/.env",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
-        observed_at=OBSERVED_AT,
+        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_at=_CODEX_OBSERVED_AT,
         schema_notes="Environment file for local runtime configuration. Private inventory only.",
         coverage=StoreCoverage.PRIVATE,
         search_by_default=False,
@@ -1850,8 +1997,8 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/update-check.json",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
-        observed_at=OBSERVED_AT,
+        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_at=_CODEX_OBSERVED_AT,
         schema_notes="Update-check cache metadata; not prompt history.",
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
@@ -1873,8 +2020,8 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/version.json",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
-        observed_at=OBSERVED_AT,
+        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_at=_CODEX_OBSERVED_AT,
         schema_notes="Local app-version cache used as an inventory hint.",
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
@@ -1896,8 +2043,8 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/.personality_migration",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
-        observed_at=OBSERVED_AT,
+        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_at=_CODEX_OBSERVED_AT,
         schema_notes="Migration marker for Codex personality defaults; not prompt history.",
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
@@ -1919,8 +2066,8 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/models_cache.json",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
-        observed_at=OBSERVED_AT,
+        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_at=_CODEX_OBSERVED_AT,
         schema_notes="Cached model metadata: client version, ETag, fetch time, and models.",
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
@@ -1942,8 +2089,8 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/internal_storage.json",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
-        observed_at=OBSERVED_AT,
+        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_at=_CODEX_OBSERVED_AT,
         schema_notes="Small app flags and migration markers.",
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
@@ -1965,8 +2112,8 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/plugins/",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
-        observed_at=OBSERVED_AT,
+        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_at=_CODEX_OBSERVED_AT,
         schema_notes="Installed plugin bundles, commands, skills, and cached metadata.",
         coverage=StoreCoverage.INSPECTABLE,
         search_by_default=False,
@@ -2049,8 +2196,8 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/plugins/**/marketplace.json",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
-        observed_at=OBSERVED_AT,
+        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_at=_CODEX_OBSERVED_AT,
         schema_notes=(
             "Plugin marketplace metadata for installed or project-local plugin roots. "
             "Summarized structurally, not searched as prompt history."
@@ -2081,8 +2228,8 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/skills/",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
-        observed_at=OBSERVED_AT,
+        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_at=_CODEX_OBSERVED_AT,
         schema_notes="User-level Codex skill instructions.",
         coverage=StoreCoverage.INSPECTABLE,
         search_by_default=False,
@@ -2110,8 +2257,8 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/rules/",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
-        observed_at=OBSERVED_AT,
+        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_at=_CODEX_OBSERVED_AT,
         schema_notes="User-defined rule files that can affect agent behavior.",
         coverage=StoreCoverage.INSPECTABLE,
         search_by_default=False,
@@ -2152,8 +2299,8 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
             "${HOME}/<known_project_root>/.codex/hooks.json"
         ),
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
-        observed_at=OBSERVED_AT,
+        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_at=_CODEX_OBSERVED_AT,
         schema_notes=(
             "Hook configuration JSON. User/project hook shape is summarized without "
             "raw command values."
@@ -2192,8 +2339,8 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${HOME}/<known_project_root>/.codex/config.toml",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
-        observed_at=OBSERVED_AT,
+        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_at=_CODEX_OBSERVED_AT,
         schema_notes=(
             "Project-local Codex configuration discovered only from roots already "
             "referenced by local Codex sessions."
@@ -2224,8 +2371,8 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${HOME}/<known_project_root>/.codex/skills/",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
-        observed_at=OBSERVED_AT,
+        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_at=_CODEX_OBSERVED_AT,
         schema_notes=(
             "Project-local Codex skill Markdown from known project roots. Kept "
             "non-default because project instructions are broader than chat history."
@@ -2257,8 +2404,8 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/policy/",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
-        observed_at=OBSERVED_AT,
+        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_at=_CODEX_OBSERVED_AT,
         schema_notes="Policy state and downloaded policy metadata.",
         coverage=StoreCoverage.PRIVATE,
         search_by_default=False,
@@ -2270,8 +2417,8 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/{cache,tmp,.tmp,sqlite}/",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
-        observed_at=OBSERVED_AT,
+        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_at=_CODEX_OBSERVED_AT,
         schema_notes="Runtime cache, temporary files, and SQLite sidecar directories.",
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
@@ -2283,8 +2430,8 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/tmp/arg0/",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
-        observed_at=OBSERVED_AT,
+        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_at=_CODEX_OBSERVED_AT,
         schema_notes="Arg0 runtime coordination state, summarized without raw values.",
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
@@ -2307,8 +2454,8 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${CODEX_SQLITE_HOME or ${CODEX_HOME or ${HOME}/.codex}}/*.sqlite-{wal,shm}",
         env_overrides=("CODEX_HOME", "CODEX_SQLITE_HOME"),
-        observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
-        observed_at=OBSERVED_AT,
+        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_at=_CODEX_OBSERVED_AT,
         schema_notes="SQLite WAL/SHM sidecars for Codex databases.",
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
@@ -2320,8 +2467,8 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/log/",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
-        observed_at=OBSERVED_AT,
+        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_at=_CODEX_OBSERVED_AT,
         schema_notes=(
             "Runtime log files. Search the structured logs DB only by explicit inspection."
         ),
@@ -2346,8 +2493,8 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/process_manager/",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
-        observed_at=OBSERVED_AT,
+        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_at=_CODEX_OBSERVED_AT,
         schema_notes="Process-manager state for background jobs.",
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
@@ -2370,8 +2517,8 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/shell_snapshots/",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@4c89772 (2026-05-16)",
-        observed_at=OBSERVED_AT,
+        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_at=_CODEX_OBSERVED_AT,
         schema_notes="Shell/runtime snapshots, not prompt history.",
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
@@ -2401,11 +2548,11 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
             "session-<timestamp><id>.jsonl"
         ),
         env_overrides=("GEMINI_CLI_HOME",),
-        observed_version="gemini-cli v0.42.0 stable; types from v0.44.0-nightly @77e65c0d",
-        observed_at=OBSERVED_AT,
+        observed_version="gemini-cli v0.47.0 stable",
+        observed_at=_GEMINI_OBSERVED_AT,
         upstream_ref=(
-            "github.com/google-gemini/gemini-cli@77e65c0d/"
-            "packages/core/src/services/chatRecordingTypes.ts#L12"
+            "github.com/google-gemini/gemini-cli@927170fc/"
+            "packages/core/src/services/chatRecordingTypes.ts#L82"
         ),
         schema_notes=(
             "JSONL with mixed record types. Line 1 is a SessionMetadataRecord "
@@ -2450,10 +2597,10 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
             "${GEMINI_CLI_HOME or ${HOME}/.gemini}/tmp/<project_hash>/chats/checkpoint-<tag>.json"
         ),
         env_overrides=("GEMINI_CLI_HOME",),
-        observed_version="gemini-cli v0.42.0 stable; types from v0.44.0-nightly @77e65c0d",
-        observed_at=OBSERVED_AT,
+        observed_version="gemini-cli v0.47.0 stable",
+        observed_at=_GEMINI_OBSERVED_AT,
         upstream_ref=(
-            "github.com/google-gemini/gemini-cli@77e65c0d/packages/core/src/core/logger.ts#L29"
+            "github.com/google-gemini/gemini-cli@927170fc/packages/core/src/core/logger.ts#L29"
         ),
         schema_notes=(
             "Single-file conversation snapshot written by the `/chat save` command. "
@@ -2470,10 +2617,10 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_ARRAY,
         path_pattern="${GEMINI_CLI_HOME or ${HOME}/.gemini}/tmp/<project_hash>/logs.json",
         env_overrides=("GEMINI_CLI_HOME",),
-        observed_version="gemini-cli v0.42.0 stable; types from v0.44.0-nightly @77e65c0d",
-        observed_at=OBSERVED_AT,
+        observed_version="gemini-cli v0.47.0 stable",
+        observed_at=_GEMINI_OBSERVED_AT,
         upstream_ref=(
-            "github.com/google-gemini/gemini-cli@77e65c0d/packages/core/src/core/logger.ts#L15"
+            "github.com/google-gemini/gemini-cli@927170fc/packages/core/src/core/logger.ts#L21"
         ),
         schema_notes=(
             "JSON array of `LogEntry { sessionId, messageId, timestamp, type, "
@@ -2506,11 +2653,11 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
             "session-<timestamp><id>.json"
         ),
         env_overrides=("GEMINI_CLI_HOME",),
-        observed_version="gemini-cli v0.42.0 stable; types from v0.44.0-nightly @77e65c0d",
-        observed_at=OBSERVED_AT,
+        observed_version="gemini-cli v0.47.0 stable",
+        observed_at=_GEMINI_OBSERVED_AT,
         upstream_ref=(
-            "github.com/google-gemini/gemini-cli@77e65c0d/"
-            "packages/core/src/services/chatRecordingService.ts#L941"
+            "github.com/google-gemini/gemini-cli@927170fc/"
+            "packages/core/src/services/chatRecordingService.ts#L1041"
         ),
         schema_notes=(
             "Pre-Feb 2026 single-file session format. JSON object with "
@@ -2550,8 +2697,8 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.MARKDOWN_FRONTMATTER,
         path_pattern="${GEMINI_CLI_HOME or ${HOME}/.gemini}/skills/",
         env_overrides=("GEMINI_CLI_HOME",),
-        observed_version="gemini-cli v0.42.0 stable",
-        observed_at=OBSERVED_AT,
+        observed_version="gemini-cli v0.47.0 stable",
+        observed_at=_GEMINI_OBSERVED_AT,
         schema_notes="Skill definitions; not chat.",
         search_by_default=False,
     ),
@@ -2562,10 +2709,74 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${GEMINI_CLI_HOME or ${HOME}/.gemini}/settings.json",
         env_overrides=("GEMINI_CLI_HOME",),
-        observed_version="gemini-cli v0.42.0 stable",
-        observed_at=OBSERVED_AT,
+        observed_version="gemini-cli v0.47.0 stable",
+        observed_at=_GEMINI_OBSERVED_AT,
         schema_notes="Configuration; not chat.",
         search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="gemini",
+        store_id="gemini.memory",
+        role=StoreRole.PERSISTENT_MEMORY,
+        format=StoreFormat.TEXT,
+        path_pattern="${GEMINI_CLI_HOME or ${HOME}/.gemini}/GEMINI.md",
+        env_overrides=("GEMINI_CLI_HOME",),
+        observed_version="gemini-cli v0.47.0 stable",
+        observed_at=_GEMINI_OBSERVED_AT,
+        schema_notes=(
+            "Global user-authored context/memory Markdown injected into Gemini "
+            "CLI sessions — the Gemini analogue of Claude's CLAUDE.md. Standing "
+            "instructions, not chat; inspectable opt-in rather than searched by "
+            "default."
+        ),
+        coverage=StoreCoverage.INSPECTABLE,
+        search_by_default=False,
+        version_strategies=(
+            VersionDetectionStrategy.SHAPE_INFERENCE,
+            VersionDetectionStrategy.CATALOG_OBSERVATION,
+        ),
+        discovery=(
+            DiscoverySpec(
+                store="gemini.memory",
+                adapter_id="gemini.memory_text.v1",
+                data_version="gemini.memory.markdown.v1",
+                path_kind="store_file",
+                source_kind="text",
+                files=("GEMINI.md",),
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="gemini",
+        store_id="gemini.tool_outputs",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.TEXT,
+        path_pattern=(
+            "${GEMINI_CLI_HOME or ${HOME}/.gemini}/tmp/<project_hash>/"
+            "tool-outputs/session-<id>/<name>.txt"
+        ),
+        env_overrides=("GEMINI_CLI_HOME",),
+        observed_version="gemini-cli v0.47.0 stable",
+        observed_at=_GEMINI_OBSERVED_AT,
+        schema_notes=(
+            "Per-tool-call output text (run_shell_command / read_file / "
+            "update_topic results) under `tmp/<hash>/tool-outputs/session-<id>/`. "
+            "Tool output rather than user prompts (may echo file or command "
+            "content), so inspectable opt-in, not searched by default."
+        ),
+        coverage=StoreCoverage.INSPECTABLE,
+        search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="gemini.tool_outputs",
+                adapter_id="gemini.tool_outputs_text.v1",
+                path_kind="store_file",
+                source_kind="text",
+                home_subpath=("tmp",),
+                glob="*.txt",
+                path_parts_required=("tool-outputs",),
+            ),
+        ),
     ),
 )
 
@@ -2577,7 +2788,7 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.PROMPT_HISTORY,
         format=StoreFormat.JSONL,
         path_pattern="${HOME}/.gemini/antigravity-cli/history.jsonl",
-        observed_version="agy v1.0.8 (observed 2026-06-14)",
+        observed_version="agy v1.0.10 (observed 2026-06-21)",
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes=(
             "JSONL prompt recall log. Observed keys: `display` (prompt text), "
@@ -2610,7 +2821,7 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.PRIMARY_CHAT,
         format=StoreFormat.SQLITE,
         path_pattern="${HOME}/.gemini/antigravity-cli/conversations/<conversation_uuid>.db",
-        observed_version="agy v1.0.8 (observed 2026-06-14)",
+        observed_version="agy v1.0.10 (observed 2026-06-21)",
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes=(
             "One SQLite database per conversation. Table `steps` contains "
@@ -2638,11 +2849,46 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
     ),
     StoreDescriptor(
         agent="antigravity-cli",
+        store_id="antigravity-cli.transcript",
+        role=StoreRole.SUPPLEMENTARY_CHAT,
+        format=StoreFormat.JSONL,
+        path_pattern=(
+            "${HOME}/.gemini/antigravity-cli/brain/<conversation_uuid>/"
+            ".system_generated/logs/transcript_full.jsonl"
+        ),
+        observed_version="agy v1.0.10 (observed 2026-06-21)",
+        observed_at=_ANTIGRAVITY_OBSERVED_AT,
+        schema_notes=(
+            "Readable JSONL transcript log under a brain conversation's "
+            "`.system_generated/logs/`. Each line is a step record "
+            "(`type`, `source`, `status`, `created_at`, `content`); string "
+            "`content` carries the user/assistant/tool turns. This is the "
+            "readable counterpart to the opaque protobuf "
+            "`antigravity-cli.conversations` and reaches text the brain "
+            "Markdown glob cannot. The truncated `transcript.jsonl` sibling is "
+            "skipped in favour of `transcript_full.jsonl`."
+        ),
+        distinguishes_from=("antigravity-cli.conversations", "antigravity-cli.brain"),
+        coverage=StoreCoverage.INSPECTABLE,
+        search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="antigravity-cli.transcript",
+                adapter_id="antigravity_cli.transcript_jsonl.v1",
+                path_kind="session_file",
+                source_kind="jsonl",
+                home_subpath=("brain",),
+                glob="**/transcript_full.jsonl",
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="antigravity-cli",
         store_id="antigravity-cli.implicit",
         role=StoreRole.SUPPLEMENTARY_CHAT,
         format=StoreFormat.PROTOBUF,
         path_pattern="${HOME}/.gemini/antigravity-cli/implicit/<conversation_uuid>.pb",
-        observed_version="agy v1.0.8 (observed 2026-06-14)",
+        observed_version="agy v1.0.10 (observed 2026-06-21)",
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes=(
             "Protobuf conversation artifacts without a published schema. "
@@ -2669,7 +2915,7 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.PLAN,
         format=StoreFormat.TEXT,
         path_pattern="${HOME}/.gemini/antigravity-cli/brain/**/*.md",
-        observed_version="agy v1.0.8 (observed 2026-06-14)",
+        observed_version="agy v1.0.10 (observed 2026-06-21)",
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes="Markdown planning and memory artifacts, not prompt recall.",
         search_by_default=False,
@@ -2692,7 +2938,7 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.CACHE,
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${HOME}/.gemini/antigravity-cli/cache/",
-        observed_version="agy v1.0.8 (observed 2026-06-14)",
+        observed_version="agy v1.0.10 (observed 2026-06-21)",
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes="Runtime cache files. Cache state, not conversation history.",
         search_by_default=False,
@@ -2703,7 +2949,7 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.APP_STATE,
         format=StoreFormat.TEXT,
         path_pattern="${HOME}/.gemini/antigravity-cli/log/",
-        observed_version="agy v1.0.8 (observed 2026-06-14)",
+        observed_version="agy v1.0.10 (observed 2026-06-21)",
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes="Application logs. Diagnostics, not chat content.",
         search_by_default=False,
@@ -2714,7 +2960,7 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.APP_STATE,
         format=StoreFormat.OPAQUE,
         path_pattern="${HOME}/.gemini/antigravity-cli/antigravity-oauth-token",
-        observed_version="agy v1.0.8 (observed 2026-06-14)",
+        observed_version="agy v1.0.10 (observed 2026-06-21)",
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes="OAuth token material. Documented but never enumerated.",
         coverage=StoreCoverage.PRIVATE,
@@ -2730,7 +2976,7 @@ _ANTIGRAVITY_IDE_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.PRIMARY_CHAT,
         format=StoreFormat.PROTOBUF,
         path_pattern="${HOME}/.gemini/antigravity/conversations/<conversation_uuid>.pb",
-        observed_version="Google Antigravity IDE (observed 2026-06-14)",
+        observed_version="Google Antigravity IDE (observed 2026-06-21)",
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes=(
             "Per-conversation protobuf artifacts without a published schema. "
@@ -2757,7 +3003,7 @@ _ANTIGRAVITY_IDE_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.SUPPLEMENTARY_CHAT,
         format=StoreFormat.PROTOBUF,
         path_pattern="${HOME}/.gemini/antigravity/implicit/<conversation_uuid>.pb",
-        observed_version="Google Antigravity IDE (observed 2026-06-14)",
+        observed_version="Google Antigravity IDE (observed 2026-06-21)",
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes=(
             "Implicit protobuf conversation artifacts without a published "
@@ -2784,7 +3030,7 @@ _ANTIGRAVITY_IDE_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.PLAN,
         format=StoreFormat.TEXT,
         path_pattern="${HOME}/.gemini/antigravity/brain/**/*.md",
-        observed_version="Google Antigravity IDE (observed 2026-06-14)",
+        observed_version="Google Antigravity IDE (observed 2026-06-21)",
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes="Markdown planning and memory artifacts, not prompt recall.",
         search_by_default=False,
@@ -2803,11 +3049,38 @@ _ANTIGRAVITY_IDE_STORES: tuple[StoreDescriptor, ...] = (
     ),
     StoreDescriptor(
         agent="antigravity-ide",
+        store_id="antigravity-ide.brain_resolved",
+        role=StoreRole.PLAN,
+        format=StoreFormat.TEXT,
+        path_pattern="${HOME}/.gemini/antigravity/brain/<uuid>/task.md.resolved",
+        observed_version="Google Antigravity IDE (observed 2026-06-21)",
+        observed_at=_ANTIGRAVITY_OBSERVED_AT,
+        schema_notes=(
+            "Expanded task Markdown (`task.md.resolved` plus numbered "
+            "`.resolved.0..N` snapshots) that the `**/*.md` brain glob cannot "
+            "reach because of the `.resolved` suffix. Readable plan text, "
+            "inspectable opt-in."
+        ),
+        distinguishes_from=("antigravity-ide.brain",),
+        search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="antigravity-ide.brain_resolved",
+                adapter_id="antigravity_ide.brain_resolved_text.v1",
+                path_kind="store_file",
+                source_kind="text",
+                home_subpath=("brain",),
+                glob="**/task.md.resolved*",
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="antigravity-ide",
         store_id="antigravity-ide.skills",
         role=StoreRole.INSTRUCTION,
         format=StoreFormat.MARKDOWN_FRONTMATTER,
         path_pattern="${HOME}/.gemini/antigravity/skills/**/*.md",
-        observed_version="Google Antigravity IDE (observed 2026-06-14)",
+        observed_version="Google Antigravity IDE (observed 2026-06-21)",
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes="Markdown skill definitions and instructions, not conversation history.",
         search_by_default=False,
@@ -2830,7 +3103,7 @@ _ANTIGRAVITY_IDE_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.APP_STATE,
         format=StoreFormat.PROTOBUF,
         path_pattern="${HOME}/.gemini/antigravity/user_settings.pb",
-        observed_version="Google Antigravity IDE (observed 2026-06-14)",
+        observed_version="Google Antigravity IDE (observed 2026-06-21)",
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes="Protobuf user settings. Configuration, not chat content.",
         search_by_default=False,
@@ -2841,7 +3114,7 @@ _ANTIGRAVITY_IDE_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.APP_STATE,
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${HOME}/.gemini/antigravity/mcp_config.json",
-        observed_version="Google Antigravity IDE (observed 2026-06-14)",
+        observed_version="Google Antigravity IDE (observed 2026-06-21)",
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes="MCP server configuration. Configuration, not chat content.",
         search_by_default=False,
@@ -2852,7 +3125,7 @@ _ANTIGRAVITY_IDE_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.SOURCE_TREE,
         format=StoreFormat.OPAQUE,
         path_pattern="${HOME}/.antigravity-server/",
-        observed_version="Google Antigravity IDE (observed 2026-06-14)",
+        observed_version="Google Antigravity IDE (observed 2026-06-21)",
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes="Local IDE server state and binaries. Not conversation history.",
         search_by_default=False,
@@ -2863,7 +3136,7 @@ _ANTIGRAVITY_IDE_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.CACHE,
         format=StoreFormat.OPAQUE,
         path_pattern="${HOME}/.cache/antigravity/staging/",
-        observed_version="Google Antigravity IDE (observed 2026-06-14)",
+        observed_version="Google Antigravity IDE (observed 2026-06-21)",
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes="Staging cache files. Cache state, not conversation history.",
         search_by_default=False,
@@ -2881,7 +3154,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
             "${GROK_HOME or ${HOME}/.grok}/sessions/<url_encoded_project>/prompt_history.jsonl"
         ),
         env_overrides=("GROK_HOME",),
-        observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
+        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
         observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
             "JSONL per-project user-prompt audit log. Keys: `timestamp` "
@@ -2914,7 +3187,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
             "<url_encoded_project>/<session_uuid>/chat_history.jsonl"
         ),
         env_overrides=("GROK_HOME",),
-        observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
+        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
         observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
             "JSONL full session transcripts. `type` field discriminates "
@@ -2948,7 +3221,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.SQLITE,
         path_pattern="${GROK_HOME or ${HOME}/.grok}/sessions/session_search.sqlite",
         env_overrides=("GROK_HOME",),
-        observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
+        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
         observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
             "SQLite with FTS5. Table `session_docs`: session_id, cwd, "
@@ -2973,6 +3246,49 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
     ),
     StoreDescriptor(
         agent="grok",
+        store_id="grok.subagents",
+        role=StoreRole.SUPPLEMENTARY_CHAT,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern=(
+            "${GROK_HOME or ${HOME}/.grok}/sessions/<url_encoded_project>/"
+            "<session_uuid>/subagents/<subagent_uuid>/meta.json"
+        ),
+        env_overrides=("GROK_HOME",),
+        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
+        observed_at=_GROK_OBSERVED_AT,
+        schema_notes=(
+            "Per-subagent dispatch record. One JSON object per delegated "
+            "subagent: `prompt` (the delegated instruction), `description`, "
+            "`subagent_type`, `tool_calls`, `turns`, and parent/child session "
+            "linkage. The subagent's own turns are not persisted separately, so "
+            "this `prompt` is the only searchable record of the delegation."
+        ),
+        sample_record=(
+            '{"subagent_id":"...","parent_session_id":"...",'
+            '"subagent_type":"...","description":"<redacted>",'
+            '"prompt":"<redacted>","tool_calls":[]}'
+        ),
+        distinguishes_from=("grok.sessions",),
+        search_by_default=True,
+        search_notes=(
+            "Subagent dispatch prompts are conversation content with no sibling "
+            "transcript; parity with claude.projects.subagent and "
+            "cursor-cli.subagent_transcripts."
+        ),
+        discovery=(
+            DiscoverySpec(
+                store="grok.subagents",
+                adapter_id="grok.subagents_json.v1",
+                path_kind="session_file",
+                source_kind="json",
+                home_subpath=("sessions",),
+                glob="meta.json",
+                path_parts_required=("subagents",),
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="grok",
         store_id="grok.sessions.events",
         role=StoreRole.APP_STATE,
         format=StoreFormat.JSONL,
@@ -2981,7 +3297,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
             "<url_encoded_project>/<session_uuid>/events.jsonl"
         ),
         env_overrides=("GROK_HOME",),
-        observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
+        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
         observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
             "Per-session event stream with turn-level lifecycle events: "
@@ -2999,7 +3315,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
             "<url_encoded_project>/<session_uuid>/summary.json"
         ),
         env_overrides=("GROK_HOME",),
-        observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
+        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
         observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
             "Per-session summary: id, cwd, session_summary, created_at, "
@@ -3012,11 +3328,29 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         store_id="grok.memory",
         role=StoreRole.PERSISTENT_MEMORY,
         format=StoreFormat.MARKDOWN_FRONTMATTER,
-        path_pattern="${GROK_HOME or ${HOME}/.grok}/memory/MEMORY.md",
+        path_pattern="${GROK_HOME or ${HOME}/.grok}/memory/**/MEMORY.md",
         env_overrides=("GROK_HOME",),
-        observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
+        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
         observed_at=_GROK_OBSERVED_AT,
-        schema_notes="Persistent memory in Markdown; managed by Grok's memory system.",
+        schema_notes=(
+            "Persistent memory Markdown managed by Grok's memory system. Covers "
+            "the flat `memory/MEMORY.md` and the per-project "
+            "`memory/<project_hash>/MEMORY.md` subtree; the companion "
+            "`index.sqlite` FTS index of the same content is not separately "
+            "enumerated. Inspectable opt-in."
+        ),
+        coverage=StoreCoverage.INSPECTABLE,
+        search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="grok.memory",
+                adapter_id="grok.memory_text.v1",
+                path_kind="store_file",
+                source_kind="text",
+                home_subpath=("memory",),
+                glob="**/MEMORY.md",
+            ),
+        ),
     ),
     StoreDescriptor(
         agent="grok",
@@ -3025,7 +3359,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSONL,
         path_pattern="${GROK_HOME or ${HOME}/.grok}/logs/unified.jsonl",
         env_overrides=("GROK_HOME",),
-        observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
+        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
         observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
             "Structured application logs: ts, src, pid, lvl, msg, ctx. "
@@ -3040,7 +3374,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.SQLITE,
         path_pattern="${GROK_HOME or ${HOME}/.grok}/worktrees.db",
         env_overrides=("GROK_HOME",),
-        observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
+        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
         observed_at=_GROK_OBSERVED_AT,
         schema_notes="SQLite database tracking git worktrees created by Grok.",
         search_by_default=False,
@@ -3052,9 +3386,133 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${GROK_HOME or ${HOME}/.grok}/config.toml",
         env_overrides=("GROK_HOME",),
-        observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
+        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
         observed_at=_GROK_OBSERVED_AT,
         schema_notes="TOML configuration file.",
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="grok",
+        store_id="grok.plans",
+        role=StoreRole.PLAN,
+        format=StoreFormat.MARKDOWN_FRONTMATTER,
+        path_pattern=(
+            "${GROK_HOME or ${HOME}/.grok}/sessions/<url_encoded_project>/<session_uuid>/plan.md"
+        ),
+        env_overrides=("GROK_HOME",),
+        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
+        observed_at=_GROK_OBSERVED_AT,
+        schema_notes=(
+            "Per-session plan-mode Markdown — the agent's working plan for the "
+            "session. Inspectable, parity with claude.plans and "
+            "cursor-cli.plans; not searched by default."
+        ),
+        coverage=StoreCoverage.INSPECTABLE,
+        search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="grok.plans",
+                adapter_id="grok.plans_text.v1",
+                path_kind="store_file",
+                source_kind="text",
+                home_subpath=("sessions",),
+                glob="plan.md",
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="grok",
+        store_id="grok.sessions.system_prompt",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.TEXT,
+        path_pattern=(
+            "${GROK_HOME or ${HOME}/.grok}/sessions/<url_encoded_project>/"
+            "<session_uuid>/system_prompt.txt"
+        ),
+        env_overrides=("GROK_HOME",),
+        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
+        observed_at=_GROK_OBSERVED_AT,
+        schema_notes=(
+            "The rendered system prompt for the session (agent instructions "
+            "plus injected context). Agent-side boilerplate, largely shared "
+            "across sessions; documented for inventory, not searched."
+        ),
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="grok",
+        store_id="grok.sessions.prompt_context",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern=(
+            "${GROK_HOME or ${HOME}/.grok}/sessions/<url_encoded_project>/"
+            "<session_uuid>/prompt_context.json"
+        ),
+        env_overrides=("GROK_HOME",),
+        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
+        observed_at=_GROK_OBSERVED_AT,
+        schema_notes=(
+            "Session prompt-context metadata: working_directory, "
+            "agents_md_files, persona_summaries, os_name, current_date, "
+            "prompt_mode, audience, version. Configuration, not chat."
+        ),
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="grok",
+        store_id="grok.sessions.hunk_records",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSONL,
+        path_pattern=(
+            "${GROK_HOME or ${HOME}/.grok}/sessions/<url_encoded_project>/"
+            "<session_uuid>/hunk_records.jsonl"
+        ),
+        env_overrides=("GROK_HOME",),
+        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
+        observed_at=_GROK_OBSERVED_AT,
+        schema_notes=(
+            "Edit-attribution JSONL (filePath, hunkStart/End, linesAdded/"
+            "Removed, authorType, promptIndex, eventType). Code-change "
+            "telemetry, no prompt payload; documented, not searched."
+        ),
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="grok",
+        store_id="grok.sessions.updates",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSONL,
+        path_pattern=(
+            "${GROK_HOME or ${HOME}/.grok}/sessions/<url_encoded_project>/"
+            "<session_uuid>/updates.jsonl"
+        ),
+        env_overrides=("GROK_HOME",),
+        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
+        observed_at=_GROK_OBSERVED_AT,
+        schema_notes=(
+            "ACP-style session/update notification stream (method, "
+            "params.sessionId, update payloads). Protocol traffic, not chat; "
+            "documented, not searched."
+        ),
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="grok",
+        store_id="grok.sessions.terminal",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.TEXT,
+        path_pattern=(
+            "${GROK_HOME or ${HOME}/.grok}/sessions/<url_encoded_project>/"
+            "<session_uuid>/terminal/call-<id>.log"
+        ),
+        env_overrides=("GROK_HOME",),
+        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
+        observed_at=_GROK_OBSERVED_AT,
+        schema_notes=(
+            "Per-tool-call terminal stdout/stderr logs (thousands per active "
+            "project). Tool output, not chat, and high-volume; documented for "
+            "inventory and deliberately not searched."
+        ),
         search_by_default=False,
     ),
 )
@@ -3071,11 +3529,11 @@ _PI_STORES: tuple[StoreDescriptor, ...] = (
             "--<encoded_cwd>--/<ts>_<session_uuid>.jsonl"
         ),
         env_overrides=("PI_CODING_AGENT_DIR", "PI_CODING_AGENT_SESSION_DIR"),
-        observed_version="pi v0.78.0 (observed 2026-05-30)",
+        observed_version="pi v0.79.9 (observed 2026-06-21)",
         observed_at=_PI_OBSERVED_AT,
         upstream_ref=(
-            "github.com/earendil-works/pi@v0.78.0/packages/coding-agent/"
-            "src/core/session-manager.ts#L51-L54"
+            "github.com/earendil-works/pi@v0.79.9/packages/coding-agent/"
+            "src/core/session-manager.ts#L24-L31"
         ),
         schema_notes=(
             "Append-only JSONL transcript, one file per session, grouped by "
@@ -3125,12 +3583,43 @@ _PI_STORES: tuple[StoreDescriptor, ...] = (
     ),
     StoreDescriptor(
         agent="pi",
+        store_id="pi.context_mode_db",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.SQLITE,
+        path_pattern="${HOME}/.pi/context-mode/sessions/<session_id>.db",
+        observed_version="pi v0.79.9 (observed 2026-06-21)",
+        observed_at=_PI_OBSERVED_AT,
+        schema_notes=(
+            "Per-session context-mode SQLite database, rooted at "
+            "`~/.pi/context-mode/sessions/<16-hex>.db` (outside the agent dir "
+            "and keyed by a 16-hex session id, unlike `pi.sessions`' "
+            "`--<cwd>--` grouping). The `session_events` table holds events "
+            "(`type` = role/intent/decision/tool_call/file_read/"
+            "blocker_resolved) with a JSON `data` payload, emitted as "
+            "inspectable records."
+        ),
+        coverage=StoreCoverage.INSPECTABLE,
+        search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="pi.context_mode_db",
+                adapter_id="pi.context_mode_sqlite.v1",
+                path_kind="sqlite_db",
+                source_kind="sqlite",
+                root_key="pi_context_mode",
+                home_subpath=("sessions",),
+                glob="*.db",
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="pi",
         store_id="pi.settings",
         role=StoreRole.APP_STATE,
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/settings.json",
         env_overrides=("PI_CODING_AGENT_DIR",),
-        observed_version="pi v0.78.0 (observed 2026-05-30)",
+        observed_version="pi v0.79.9 (observed 2026-06-21)",
         observed_at=_PI_OBSERVED_AT,
         schema_notes=(
             "User preferences: selected models, themes, installed extension "
@@ -3146,7 +3635,7 @@ _PI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/auth.json",
         env_overrides=("PI_CODING_AGENT_DIR",),
-        observed_version="pi v0.78.0 (observed 2026-05-30)",
+        observed_version="pi v0.79.9 (observed 2026-06-21)",
         observed_at=_PI_OBSERVED_AT,
         schema_notes="Provider API credentials. Documented but never enumerated.",
         coverage=StoreCoverage.PRIVATE,
@@ -3159,7 +3648,7 @@ _PI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/models.json",
         env_overrides=("PI_CODING_AGENT_DIR",),
-        observed_version="pi v0.78.0 (observed 2026-05-30)",
+        observed_version="pi v0.79.9 (observed 2026-06-21)",
         observed_at=_PI_OBSERVED_AT,
         schema_notes=(
             "Custom model definitions and provider overrides. Created only "
@@ -3174,7 +3663,7 @@ _PI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/themes/<theme>.json",
         env_overrides=("PI_CODING_AGENT_DIR",),
-        observed_version="pi v0.78.0 (observed 2026-05-30)",
+        observed_version="pi v0.79.9 (observed 2026-06-21)",
         observed_at=_PI_OBSERVED_AT,
         schema_notes="User-defined TUI colour schemes. Created only when the user adds themes.",
         search_by_default=False,
@@ -3186,7 +3675,7 @@ _PI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/tools/<tool>",
         env_overrides=("PI_CODING_AGENT_DIR",),
-        observed_version="pi v0.78.0 (observed 2026-05-30)",
+        observed_version="pi v0.79.9 (observed 2026-06-21)",
         observed_at=_PI_OBSERVED_AT,
         schema_notes="Directory of user-authored custom tool scripts. Created on demand.",
         search_by_default=False,
@@ -3198,7 +3687,7 @@ _PI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/bin/<binary>",
         env_overrides=("PI_CODING_AGENT_DIR",),
-        observed_version="pi v0.78.0 (observed 2026-05-30)",
+        observed_version="pi v0.79.9 (observed 2026-06-21)",
         observed_at=_PI_OBSERVED_AT,
         schema_notes="Managed binaries (e.g. `fd`, `rg`) pi downloads for its own use.",
         search_by_default=False,
@@ -3210,7 +3699,7 @@ _PI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.MARKDOWN_FRONTMATTER,
         path_pattern="${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/prompts/<prompt>.md",
         env_overrides=("PI_CODING_AGENT_DIR",),
-        observed_version="pi v0.78.0 (observed 2026-05-30)",
+        observed_version="pi v0.79.9 (observed 2026-06-21)",
         observed_at=_PI_OBSERVED_AT,
         schema_notes=(
             "User-authored Markdown prompt templates, not conversation history. Created on demand."
@@ -3224,7 +3713,7 @@ _PI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/pi-debug.log",
         env_overrides=("PI_CODING_AGENT_DIR",),
-        observed_version="pi v0.78.0 (observed 2026-05-30)",
+        observed_version="pi v0.79.9 (observed 2026-06-21)",
         observed_at=_PI_OBSERVED_AT,
         schema_notes="Runtime diagnostics log. Written only when debug logging is enabled.",
         search_by_default=False,
@@ -3236,7 +3725,7 @@ _PI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/npm/",
         env_overrides=("PI_CODING_AGENT_DIR",),
-        observed_version="pi v0.78.0 (observed 2026-05-30)",
+        observed_version="pi v0.79.9 (observed 2026-06-21)",
         observed_at=_PI_OBSERVED_AT,
         schema_notes=(
             "Managed npm extension install root: `package.json`, "
@@ -3256,11 +3745,10 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.SQLITE,
         path_pattern="${XDG_DATA_HOME or ${HOME}/.local/share}/opencode/opencode.db",
         env_overrides=("XDG_DATA_HOME", "OPENCODE_DB"),
-        observed_version="opencode v1.15.11 (observed 2026-05-30)",
+        observed_version="opencode v1.17.9 (observed 2026-06-21)",
         observed_at=_OPENCODE_OBSERVED_AT,
         upstream_ref=(
-            "github.com/anomalyco/opencode/blob/v1.15.11/packages/opencode/"
-            "src/session/session.sql.ts#L16-L91"
+            "github.com/anomalyco/opencode/blob/v1.17.9/packages/core/src/session/sql.ts#L23-L82"
         ),
         schema_notes=(
             "SQLite store (Drizzle). Tables `session` (id, project_id, "
@@ -3272,7 +3760,14 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
             "`reasoning` -> `text`, `subtask` -> `prompt`. A conversation turn "
             "is reconstructed by joining part -> message -> session. Channel "
             "installs use `opencode-<channel>.db`; `OPENCODE_DB` overrides the "
-            "path (also `:memory:`/absolute)."
+            "path (also `:memory:`/absolute). The same file also carries the "
+            "unreleased v2 event-sourced tables `session_input`, "
+            "`session_message`, `event`/`event_sequence`, and `todo`; in stable "
+            "installs these are empty beta state, the canonical transcript "
+            "staying in `session`/`message`/`part`, so they are not searched. "
+            "Secret-bearing `account`, `account_state`, `control_account`, and "
+            "`credential` tables are present but never enumerated — the adapter "
+            "reads only text-bearing `part` rows."
         ),
         sample_record=(
             'part.data: {"type":"text","text":"<redacted>",'
@@ -3304,10 +3799,10 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
             "{session,message,part}/**/*.json"
         ),
         env_overrides=("XDG_DATA_HOME",),
-        observed_version="opencode v1.15.11 (observed 2026-05-30)",
+        observed_version="opencode v1.17.9 (observed 2026-06-21)",
         observed_at=_OPENCODE_OBSERVED_AT,
         upstream_ref=(
-            "github.com/anomalyco/opencode/blob/v1.15.11/packages/opencode/"
+            "github.com/anomalyco/opencode/blob/v1.17.9/packages/opencode/"
             "src/storage/storage.ts#L189-L230"
         ),
         schema_notes=(
@@ -3327,7 +3822,7 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${XDG_CONFIG_HOME or ${HOME}/.config}/opencode/opencode.json",
         env_overrides=("XDG_CONFIG_HOME", "OPENCODE_CONFIG_DIR"),
-        observed_version="opencode v1.15.11 (observed 2026-05-30)",
+        observed_version="opencode v1.17.9 (observed 2026-06-21)",
         observed_at=_OPENCODE_OBSERVED_AT,
         schema_notes=(
             "Application config (`opencode.json`/`opencode.jsonc`): providers, "
@@ -3342,7 +3837,7 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${XDG_DATA_HOME or ${HOME}/.local/share}/opencode/auth.json",
         env_overrides=("XDG_DATA_HOME",),
-        observed_version="opencode v1.15.11 (observed 2026-05-30)",
+        observed_version="opencode v1.17.9 (observed 2026-06-21)",
         observed_at=_OPENCODE_OBSERVED_AT,
         schema_notes="Provider API keys and OAuth tokens. Documented but never enumerated.",
         coverage=StoreCoverage.PRIVATE,
@@ -3355,7 +3850,7 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${XDG_DATA_HOME or ${HOME}/.local/share}/opencode/snapshot/",
         env_overrides=("XDG_DATA_HOME",),
-        observed_version="opencode v1.15.11 (observed 2026-05-30)",
+        observed_version="opencode v1.17.9 (observed 2026-06-21)",
         observed_at=_OPENCODE_OBSERVED_AT,
         schema_notes="Per-project git repositories holding session file snapshots.",
         search_by_default=False,
@@ -3367,7 +3862,7 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${XDG_DATA_HOME or ${HOME}/.local/share}/opencode/repos/",
         env_overrides=("XDG_DATA_HOME",),
-        observed_version="opencode v1.15.11 (observed 2026-05-30)",
+        observed_version="opencode v1.17.9 (observed 2026-06-21)",
         observed_at=_OPENCODE_OBSERVED_AT,
         schema_notes="Cache of cloned git repositories referenced during sessions.",
         search_by_default=False,
@@ -3379,7 +3874,7 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${XDG_DATA_HOME or ${HOME}/.local/share}/opencode/log/",
         env_overrides=("XDG_DATA_HOME",),
-        observed_version="opencode v1.15.11 (observed 2026-05-30)",
+        observed_version="opencode v1.17.9 (observed 2026-06-21)",
         observed_at=_OPENCODE_OBSERVED_AT,
         schema_notes="Timestamped application logs. Diagnostics, not chat content.",
         search_by_default=False,
@@ -3391,7 +3886,7 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${XDG_DATA_HOME or ${HOME}/.local/share}/opencode/tool-output/",
         env_overrides=("XDG_DATA_HOME",),
-        observed_version="opencode v1.15.11 (observed 2026-05-30)",
+        observed_version="opencode v1.17.9 (observed 2026-06-21)",
         observed_at=_OPENCODE_OBSERVED_AT,
         schema_notes="Overflow storage for large tool output that exceeds inline limits.",
         search_by_default=False,
@@ -3399,8 +3894,123 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
 )
 
 
+# Windsurf (Codeium Cascade) is documented but UNSUPPORTED: its per-session
+# conversation transcripts are stored as opaque, high-entropy binary
+# (`.pb` that is not gzip/zlib and yields no extractable UTF-8) — they appear
+# encrypted, so agentgrep cannot read them. These rows document the storage
+# locations only (catalog-only, no discovery/adapter); Windsurf is excluded
+# from AGENT_CHOICES so it is never a search or find target. See the
+# Unsupported backends documentation.
+_WINDSURF_STORES: tuple[StoreDescriptor, ...] = (
+    StoreDescriptor(
+        agent="windsurf",
+        store_id="windsurf.cascade",
+        role=StoreRole.PRIMARY_CHAT,
+        format=StoreFormat.PROTOBUF,
+        path_pattern="${HOME}/.codeium/windsurf/cascade/<session_uuid>.pb",
+        observed_version="Windsurf Cascade (observed 2026-06-21)",
+        observed_at=_WINDSURF_OBSERVED_AT,
+        schema_notes=(
+            "Per-session Cascade conversation transcript as opaque binary "
+            "(`cascade/<uuid>.pb`, often multi-megabyte). The observed payloads "
+            "are high-entropy with no extractable UTF-8 runs and are not "
+            "gzip/zlib — they appear encrypted or custom-encoded, so agentgrep "
+            "cannot read them. Documented location only; Windsurf is "
+            "unsupported. The top-level `~/.codeium/cascade/` directory mirrors "
+            "this for the non-Windsurf Codeium install."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="windsurf",
+        store_id="windsurf.implicit",
+        role=StoreRole.SUPPLEMENTARY_CHAT,
+        format=StoreFormat.PROTOBUF,
+        path_pattern="${HOME}/.codeium/windsurf/implicit/<uuid>.pb",
+        observed_version="Windsurf Cascade (observed 2026-06-21)",
+        observed_at=_WINDSURF_OBSERVED_AT,
+        schema_notes=(
+            "Implicit/background Cascade context-capture records as opaque, "
+            "apparently-encrypted binary. Documented location only; unsupported."
+        ),
+        distinguishes_from=("windsurf.cascade",),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="windsurf",
+        store_id="windsurf.chat_state",
+        role=StoreRole.SUPPLEMENTARY_CHAT,
+        format=StoreFormat.PROTOBUF,
+        path_pattern="${HOME}/.codeium/windsurf/chat_state/<name>.pb",
+        observed_version="Windsurf Cascade (observed 2026-06-21)",
+        observed_at=_WINDSURF_OBSERVED_AT,
+        schema_notes=(
+            "Per-file chat state for legacy Codeium chat, opaque "
+            "apparently-encrypted binary keyed by source file path. Documented "
+            "location only; unsupported."
+        ),
+        distinguishes_from=("windsurf.cascade",),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="windsurf",
+        store_id="windsurf.memories",
+        role=StoreRole.PERSISTENT_MEMORY,
+        format=StoreFormat.PROTOBUF,
+        path_pattern="${HOME}/.codeium/windsurf/memories/<uuid>.pb",
+        observed_version="Windsurf Cascade (observed 2026-06-21)",
+        observed_at=_WINDSURF_OBSERVED_AT,
+        schema_notes=(
+            "Cascade memory entries as opaque, apparently-encrypted binary, one "
+            "per uuid. Documented location only; unsupported. The companion "
+            "`memories/global_rules.md` is readable Markdown (see "
+            "`windsurf.global_rules`)."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="windsurf",
+        store_id="windsurf.brain",
+        role=StoreRole.PLAN,
+        format=StoreFormat.MARKDOWN_FRONTMATTER,
+        path_pattern="${HOME}/.codeium/windsurf/brain/<uuid>/plan.md",
+        observed_version="Windsurf Cascade (observed 2026-06-21)",
+        observed_at=_WINDSURF_OBSERVED_AT,
+        schema_notes=(
+            "Cascade agent-authored implementation plans as Markdown "
+            "(`brain/<uuid>/plan.md`). Readable, but documented location only "
+            "because Windsurf's conversation transcripts are encrypted and the "
+            "agent is unsupported; the companion `plan_metadata.pbtxt` is "
+            "protobuf-text metadata."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="windsurf",
+        store_id="windsurf.global_rules",
+        role=StoreRole.INSTRUCTION,
+        format=StoreFormat.TEXT,
+        path_pattern="${HOME}/.codeium/windsurf/memories/global_rules.md",
+        observed_version="Windsurf Cascade (observed 2026-06-21)",
+        observed_at=_WINDSURF_OBSERVED_AT,
+        schema_notes=(
+            "User-authored global rules Markdown injected into Cascade "
+            "sessions — the Windsurf analogue of Claude's CLAUDE.md. Readable, "
+            "but documented location only because the agent is unsupported."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+)
+
+
 CATALOG = StoreCatalog(
-    catalog_version=14,
+    catalog_version=29,
     captured_at=_ANTIGRAVITY_OBSERVED_AT,
     stores=(
         *_CLAUDE_STORES,
@@ -3413,6 +4023,7 @@ CATALOG = StoreCatalog(
         *_GROK_STORES,
         *_PI_STORES,
         *_OPENCODE_STORES,
+        *_WINDSURF_STORES,
     ),
 )
 """The canonical agentgrep store catalogue.

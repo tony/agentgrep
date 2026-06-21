@@ -115,10 +115,7 @@ keeps the full default-search catalogue.
 
 ### Claude Code
 
-Claude rows carry per-store observation stamps. Project transcript
-schemas were observed against ``claude-code v2.1.143`` (2026-05-15);
-global prompt history was observed against ``claude-code v2.1.157``
-(2026-05-29).
+`observed_version`: ``claude-code v2.1.185`` (observed 2026-06-21).
 
 Claude honours `CLAUDE_CONFIG_DIR`, falling back to `${HOME}/.claude`.
 Its global prompt-history audit log lives at
@@ -176,7 +173,9 @@ because they have disjoint data homes and on-disk formats.
   default, since it overlaps the cleaner transcripts.
   `cursor-cli.worktrees` is catalogued with `role=SOURCE_TREE` and
   `search_by_default=False` so the adapter never indexes multi-gigabyte
-  git working trees as chat history.
+  git working trees as chat history. `cursor-cli.skills` covers the
+  `SKILL.md` definitions under `~/.cursor/skills/` and
+  `~/.cursor/skills-cursor/` as inspectable instruction text.
 - **`cursor-ide`** is parsed by `cursor_ide.state_vscdb_modern.v1` /
   `cursor_ide.state_vscdb_legacy.v1` via VS Code-style `state.vscdb`
   SQLite. `cursor-ide.state_vscdb` covers the global database and
@@ -186,7 +185,7 @@ because they have disjoint data homes and on-disk formats.
 
 ### Codex
 
-`observed_version`: ``github.com/openai/codex@4c89772`` (2026-05-16).
+`observed_version`: ``github.com/openai/codex@3fb81667`` (2026-06-21).
 Codex honours `CODEX_HOME` for primary files. SQLite files resolve
 through `CODEX_SQLITE_HOME`, then `sqlite_home` in `config.toml`, then
 `CODEX_HOME`.
@@ -195,11 +194,11 @@ Schemas are pinned directly to the upstream Rust types:
 
 - {attr}`~agentgrep.stores.StoreFormat.JSONL` `history.jsonl` →
   `HistoryEntry { session_id: String, ts: u64, text: String }`
-  ([`codex-rs/message-history/src/lib.rs:54-58`](https://github.com/openai/codex/blob/4c89772/codex-rs/message-history/src/lib.rs#L54)).
+  ([`codex-rs/message-history/src/lib.rs:56-60`](https://github.com/openai/codex/blob/3fb81667/codex-rs/message-history/src/lib.rs#L56)).
 - Per-thread `sessions/YYYY/MM/DD/rollout-…jsonl` → tagged enum
   `RolloutItem` with variants `SessionMeta`, `ResponseItem`,
   `Compacted`, `TurnContext`, `EventMsg`
-  ([`codex-rs/protocol/src/protocol.rs:2783`](https://github.com/openai/codex/blob/4c89772/codex-rs/protocol/src/protocol.rs#L2783)).
+  ([`codex-rs/protocol/src/protocol.rs:2929`](https://github.com/openai/codex/blob/3fb81667/codex-rs/protocol/src/protocol.rs#L2929)).
 - Legacy root `sessions/rollout-*.json` → JSON object with `session`
   metadata and an `items` array carrying message-like records.
 
@@ -222,8 +221,8 @@ present in Codex session metadata.
 
 ### Gemini CLI
 
-`observed_version`: ``gemini-cli v0.42.0`` stable (2026-05-12); types
-from `v0.44.0-nightly` HEAD `77e65c0d`. Three adapters cover the
+`observed_version`: ``gemini-cli v0.47.0`` stable (observed
+2026-06-21); types pinned at HEAD `927170fc`. Three adapters cover the
 three on-disk shapes:
 
 - `gemini.tmp_chats_jsonl.v1` parses
@@ -243,19 +242,24 @@ three on-disk shapes:
   `tmp/<project_hash>/chats/session-*.json` single-file sessions.
   Upstream still reads this shape via the `isLegacyRecord`
   discriminator at
-  [`chatRecordingService.ts:941`](https://github.com/google-gemini/gemini-cli/blob/77e65c0d/packages/core/src/services/chatRecordingService.ts#L941);
+  [`chatRecordingService.ts:1041`](https://github.com/google-gemini/gemini-cli/blob/927170fc/packages/core/src/services/chatRecordingService.ts#L1041);
   the legacy file holds session metadata at the top level and the
   full conversation under a `messages` array.
 - `gemini.tmp_logs_json.v1` parses
   `tmp/<project_hash>/logs.json` — a flat JSON array of
   `LogEntry` records (user-prompt audit log).
 
+The `gemini.memory` row covers `~/.gemini/GEMINI.md`, the global
+user-authored context file injected into sessions — the Gemini
+analogue of Claude's `CLAUDE.md`, parsed by `gemini.memory_text.v1` as
+an inspectable (opt-in) store rather than searched by default.
+
 Gemini's
-[`sessionCleanup.ts`](https://github.com/google-gemini/gemini-cli/blob/77e65c0d/packages/cli/src/utils/sessionCleanup.ts)
+[`sessionCleanup.ts`](https://github.com/google-gemini/gemini-cli/blob/927170fc/packages/cli/src/utils/sessionCleanup.ts)
 hard-deletes expired sessions via `fs.unlink()` — there is no
 `history/` archive. The Antigravity files some installs carry under
 `~/.gemini/antigravity/conversations/` are written by the
-[Antigravity IDE](https://github.com/google-gemini/gemini-cli/blob/77e65c0d/packages/core/src/ide/detect-ide.ts),
+[Antigravity IDE](https://github.com/google-gemini/gemini-cli/blob/927170fc/packages/core/src/ide/detect-ide.ts),
 a separate Google product — Gemini CLI only detects Antigravity as
 an IDE launcher and does not read or write the protobuf
 conversation files. They are documented as the separate
@@ -269,12 +273,12 @@ answer "which Gemini sessions belong to *this* repo?".
 
 ### Grok CLI
 
-`observed_version`: ``grok-cli v0.1.219`` (observed 2026-05-25).
+`observed_version`: ``grok-cli v0.2.59`` (observed 2026-06-21).
 
 Grok stores data under `${GROK_HOME or ${HOME}/.grok}/sessions/`
 using URL-encoded absolute project paths as directory keys
-(e.g. `%2Fhome%2Fd%2Fwork%2Fpython%2Fproj`). Three adapters cover
-the three searchable store shapes:
+(e.g. `%2Fhome%2Fd%2Fwork%2Fpython%2Fproj`). Four adapters cover
+the searchable store shapes:
 
 - `grok.prompt_history_jsonl.v1` parses per-project
   `sessions/<project>/prompt_history.jsonl`. Each line is a
@@ -289,14 +293,25 @@ the three searchable store shapes:
   `sessions/session_search.sqlite` FTS5 index. Table `session_docs`
   has `session_id`, `cwd`, `updated_at` (unix seconds), `title`
   (generated), and `content` (full-text indexed body).
+- `grok.subagents_json.v1` parses per-subagent
+  `sessions/<project>/<uuid>/subagents/<subagent>/meta.json`. The
+  delegated `prompt` is the only persisted record of the subagent, so
+  it is emitted as supplementary-chat content, parity with the Claude
+  and Cursor CLI subagent stores.
 
-Documentary-only entries cover events, summaries, memory, logs,
-worktrees, and config — all catalogued with `search_by_default=False`
-or deferred.
+The `grok.plans` row covers per-session `plan.md` plan-mode Markdown,
+and `grok.memory` covers the flat and per-project
+`memory/**/MEMORY.md` subtree — both inspectable (opt-in) like
+`claude.plans`. Documentary-only entries cover per-session
+`system_prompt.txt`, `prompt_context.json`, `hunk_records.jsonl`
+(edit attribution), `updates.jsonl` (ACP stream), `terminal/*.log`
+(tool stdout), plus events, summaries, logs, worktrees, and config —
+all carrying no user prompt payload and catalogued with
+`search_by_default=False` or deferred.
 
 ### Pi
 
-`observed_version`: ``pi v0.78.0`` (observed 2026-05-30).
+`observed_version`: ``pi v0.79.9`` (observed 2026-06-21).
 
 Pi (earendil-works) stores each conversation as one append-only JSONL
 file under `${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/sessions/`,
@@ -324,7 +339,7 @@ log, and the npm extension install root.
 
 ### OpenCode
 
-`observed_version`: ``opencode v1.15.11`` (observed 2026-05-30).
+`observed_version`: ``opencode v1.17.9`` (observed 2026-06-21).
 
 OpenCode (anomalyco/opencode) stores conversations in a single SQLite
 database under `${XDG_DATA_HOME or ${HOME}/.local/share}/opencode/`,
@@ -345,6 +360,13 @@ filename — not a glob, so the binary SQLite file bypasses the text
 prefilter. An absolute `OPENCODE_DB` value is discovered as that exact
 file, so channel installs are reachable by pointing `OPENCODE_DB` at
 their `opencode-<channel>.db`.
+
+OpenCode's unreleased v2 event-sourced tables (`session_input`,
+`session_message`, `event`/`event_sequence`, `todo`) share the same
+`opencode.db` file but are empty beta state on stable installs — the
+canonical transcript stays in `session`/`message`/`part` — so they are
+not searched. The secret-bearing `account`/`credential` tables are
+present but never enumerated.
 
 Documentary-only entries cover the legacy per-file JSON layout, config,
 auth (private credentials), snapshots, the repo cache, logs, and tool

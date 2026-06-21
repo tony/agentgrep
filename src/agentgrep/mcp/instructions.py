@@ -23,7 +23,10 @@ _INSTR_SCOPE = (
     "ANTI-TRIGGERS: do NOT invoke for IDE editor history (VS Code timeline), "
     "shell history (zsh/fish history), browser tabs, or live agent sessions "
     "in progress. Use shell tools for filesystem-wide grep that is not "
-    "agent-history scoped."
+    "agent-history scoped.\n"
+    "Windsurf (Codeium Cascade) is catalogued for storage inventory but "
+    "UNSUPPORTED for search — its conversation transcripts are encrypted, so "
+    "agentgrep cannot read them."
 )
 
 _INSTR_SEARCH_VS_DISCOVERY = (

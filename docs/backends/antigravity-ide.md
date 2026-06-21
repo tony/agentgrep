@@ -4,7 +4,7 @@
 
 Base path: `~/.gemini/antigravity` (no observed env override).
 
-`observed_version`: Google Antigravity IDE (observed 2026-06-14).
+`observed_version`: Google Antigravity IDE (observed 2026-06-21).
 
 Antigravity IDE is documented as its own backend instead of being folded
 into Gemini CLI. Its conversation and implicit transcript files are
@@ -35,3 +35,10 @@ the primary conversation files.
 `brain/**/*.md` and `skills/**/*.md` are Markdown planning, memory, and
 instruction artifacts. They are safe to inventory, but they are not prompt
 history or chat transcripts and are not searched by default.
+
+### antigravity-ide.brain_resolved
+
+`brain/<uuid>/task.md.resolved` (plus numbered `.resolved.0..N`
+snapshots) is the expanded task Markdown. The `.resolved` suffix keeps
+it outside the `**/*.md` brain glob, so it is catalogued separately as
+inspectable plan text.

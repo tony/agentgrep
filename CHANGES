@@ -42,6 +42,17 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### What's new
+
+#### Wider storage coverage across the supported agents (#73)
+
+`find` now inventories more of each agent's on-disk storage — additional
+stores across Claude, Cursor, Gemini, Antigravity, Grok, Pi, and OpenCode —
+with the catalogue re-observed against current tool releases. Windsurf is
+documented for the first time, but flagged unsupported: its Cascade
+conversations are stored encrypted, so agentgrep records where they live
+without searching them.
+
 ## agentgrep 0.1.0a24 (2026-06-16)
 
 agentgrep 0.1.0a24 makes search over large Codex, Claude, and Cursor histories

@@ -79,6 +79,13 @@ OpenCode (anomalyco) SQLite session store, config, snapshots, and caches.
 
 ::::
 
+## Unsupported backends
+
+Some agents store their conversations in an obfuscated or encrypted form
+agentgrep cannot read. Their storage is catalogued for inventory, but
+they are excluded from search — see {doc}`unsupported/index`
+(currently {doc}`Windsurf <unsupported/windsurf>`).
+
 ## Coverage levels
 
 The backend pages distinguish search support from storage coverage.
@@ -124,4 +131,5 @@ antigravity-ide
 grok
 pi
 opencode
+unsupported/index
 ```

@@ -4,7 +4,7 @@
 
 Base path: `~/.grok` (env override: `GROK_HOME`).
 
-`observed_version`: `grok-cli v0.1.219` (observed 2026-05-25).
+`observed_version`: `grok-cli v0.2.59` (observed 2026-06-21).
 
 Grok stores data under `~/.grok/sessions/` using URL-encoded project
 paths as directory keys (e.g. `%2Fhome%2Fd%2Fwork%2Fpython%2Fproj`).
@@ -40,6 +40,23 @@ kinds: `system`, `user`, `assistant`, `tool_use`, `tool_result`.
  "timestamp": "2026-05-25T10:00:01.000000000Z"}
 ```
 
+### grok.subagents
+
+Per-subagent dispatch record, one JSON object per delegated subagent
+under `sessions/<project>/<session>/subagents/<subagent>/meta.json`.
+The subagent's own turns are not persisted separately, so the
+delegated `prompt` is the only searchable record of the delegation.
+
+```json
+{"subagent_id": "019e6626-...", "parent_session_id": "019e660d-...",
+ "subagent_type": "code-explorer", "description": "Map the auth module",
+ "prompt": "Explore the auth module and summarize ...", "tool_calls": []}
+```
+
+agentgrep emits the `prompt` as one supplementary-chat record titled
+with `description`; `subagent_type` and `parent_session_id` are
+attached as metadata.
+
 ### grok.session\_search
 
 SQLite with FTS5. Table `session_docs`:
@@ -55,3 +72,10 @@ SQLite with FTS5. Table `session_docs`:
 
 agentgrep converts `updated_at` to ISO-8601 for timestamp
 consistency with other adapters.
+
+### grok.plans
+
+Per-session plan-mode Markdown at
+`sessions/<project>/<session>/plan.md` — the agent's working plan.
+Inspectable (opt-in), parity with `claude.plans` and
+`cursor-cli.plans`; not searched by default.

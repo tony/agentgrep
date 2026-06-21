@@ -51,3 +51,16 @@ surfaces the readable UTF-8 runs it finds — a best-effort, date-versioned
 adapter. Because the extraction is noisier than and overlaps the JSONL
 transcripts, the store is **inspectable** (opt-in) rather than searched
 by default; include it explicitly to parse it.
+
+### cursor-cli.skills
+
+`SKILL.md` definitions installed for cursor-agent under
+`~/.cursor/skills/` (user) and `~/.cursor/skills-cursor/` (built-in).
+Instruction content that steers future sessions — inspectable (opt-in),
+parity with `claude.skills`.
+
+### cursor-cli.uploads
+
+Markdown attachments the user fed the agent as conversation input,
+under `~/.cursor/projects/<id>/uploads/*.md`. Inspectable (opt-in)
+supplementary content, not searched by default.

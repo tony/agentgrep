@@ -4,7 +4,7 @@
 
 Base path: `~/.gemini/antigravity-cli` (no observed env override).
 
-`observed_version`: `agy v1.0.8` (observed 2026-06-14).
+`observed_version`: `agy v1.0.10` (observed 2026-06-21).
 
 Antigravity CLI is a separate backend from Gemini CLI even though both
 store data under `~/.gemini`. The CLI prompt recall log is plain JSONL and
@@ -33,6 +33,17 @@ conversation. The observed `steps` table stores protobuf data in
 no published schema, so agentgrep extracts readable protobuf strings
 best-effort and exposes the store only when non-default inventory sources
 are requested.
+
+### antigravity-cli.transcript
+
+`brain/<conversation_uuid>/.system_generated/logs/transcript_full.jsonl`
+is a readable JSONL log of the conversation. Each line is a step record
+(`type`, `source`, `status`, `created_at`, `content`); string `content`
+holds the user/assistant/tool turns. This is the readable counterpart to
+the opaque protobuf `antigravity-cli.conversations` and reaches text the
+brain Markdown glob cannot. agentgrep discovers the untruncated
+`transcript_full.jsonl` (skipping the `transcript.jsonl` sibling) and
+exposes it as an inspectable store.
 
 ### antigravity-cli.implicit
 

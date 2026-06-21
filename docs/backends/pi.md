@@ -4,7 +4,7 @@
 
 Base path: `~/.pi/agent` (env override: `PI_CODING_AGENT_DIR`).
 
-`observed_version`: `pi v0.78.0` (observed 2026-05-30).
+`observed_version`: `pi v0.79.9` (observed 2026-06-21).
 
 pi (the earendil-works "Pi Agent Harness") stores each conversation as
 one append-only JSONL file under `~/.pi/agent/sessions/`, grouped by
@@ -65,6 +65,15 @@ its user-set `name`; `model_change`, `thinking_level_change`, `custom`,
 and `label` entries are metadata only. Entry-level timestamps are
 ISO-8601; the inner `message.timestamp` is unix-milliseconds and is used
 only as a fallback.
+
+### pi.context_mode_db
+
+`~/.pi/context-mode/sessions/<16-hex>.db` is a per-session SQLite
+database rooted outside the agent dir and keyed by a 16-hex session id
+(unlike `pi.sessions`' `--<cwd>--` grouping). Its `session_events`
+table holds events (`type` = role/intent/decision/tool_call/
+file_read/blocker_resolved) with a JSON `data` payload, emitted as
+inspectable records.
 
 ## Documentary stores
 

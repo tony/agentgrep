@@ -15,4 +15,5 @@ multiple adapters or public payloads.
 0005-local-insights-reports-and-model-backed-enrichment
 0006-public-cli-mcp-surface-contract
 0007-query-language-comparison-and-full-queryability
+0008-unsupported-obfuscated-backends
 ```

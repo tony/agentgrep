@@ -4,8 +4,8 @@
 
 Base path: `~/.gemini` (env override: `GEMINI_CLI_HOME`).
 
-`observed_version`: `gemini-cli v0.42.0` stable; types from
-`v0.44.0-nightly` HEAD `77e65c0d`.
+`observed_version`: `gemini-cli v0.47.0` stable (observed 2026-06-21);
+types pinned at HEAD `927170fc`.
 
 ## Stores
 
@@ -36,6 +36,13 @@ metadata at the top level and the full conversation under a
 
 Flat JSON array of `LogEntry { sessionId, messageId, timestamp,
 type, message }` — user-prompt audit log.
+
+### gemini.memory
+
+`~/.gemini/GEMINI.md` — the global user-authored context/memory file
+injected into Gemini CLI sessions, the analogue of Claude's
+`CLAUDE.md`. Standing instructions rather than chat, so it is
+inspectable (opt-in) rather than searched by default.
 
 ## Path hashing
 

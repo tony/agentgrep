@@ -108,6 +108,7 @@ AgentName = t.Literal[
     "grok",
     "pi",
     "opencode",
+    "windsurf",
 ]
 OutputMode = t.Literal["text", "json", "ndjson", "ui"]
 ProgressMode = t.Literal["auto", "always", "never"]
@@ -155,7 +156,9 @@ ITER_SOURCE_RECORD_ADAPTERS: frozenset[str] = frozenset(
         "antigravity_cli.conversations_sqlite_protobuf.v1",
         "antigravity_cli.history_jsonl.v1",
         "antigravity_cli.implicit_protobuf.v1",
+        "antigravity_cli.transcript_jsonl.v1",
         "antigravity_ide.brain_text.v1",
+        "antigravity_ide.brain_resolved_text.v1",
         "antigravity_ide.conversations_protobuf.v1",
         "antigravity_ide.implicit_protobuf.v1",
         "antigravity_ide.skills_text.v1",
@@ -174,9 +177,11 @@ ITER_SOURCE_RECORD_ADAPTERS: frozenset[str] = frozenset(
         "claude.settings_json.v1",
         "claude.skills_text.v1",
         "claude.store_sqlite.v1",
+        "claude.usage_facets_json.v1",
         "claude.tasks_json.v1",
         "claude.teams_json.v1",
         "claude.todos_json.v1",
+        "claude.workflow_scripts_text.v1",
         "codex.app_state_json_summary.v1",
         "codex.config_backup_toml.v1",
         "codex.config_toml.v1",
@@ -205,16 +210,25 @@ ITER_SOURCE_RECORD_ADAPTERS: frozenset[str] = frozenset(
         "cursor_cli.ai_tracking_sqlite.v1",
         "cursor_cli.chats_protobuf.v1",
         "cursor_cli.prompt_history_json.v1",
+        "cursor_cli.skills_text.v1",
+        "cursor_cli.uploads_text.v1",
+        "cursor_cli.agent_tools_text.v1",
         "cursor_cli.transcripts_jsonl.v1",
         "cursor_ide.state_vscdb_legacy.v1",
         "cursor_ide.state_vscdb_modern.v1",
         "gemini.tmp_chats_jsonl.v1",
         "gemini.tmp_chats_legacy_json.v1",
         "gemini.tmp_logs_json.v1",
+        "gemini.memory_text.v1",
+        "gemini.tool_outputs_text.v1",
         "grok.prompt_history_jsonl.v1",
         "grok.session_search_sqlite.v1",
         "grok.sessions_jsonl.v1",
+        "grok.subagents_json.v1",
+        "grok.plans_text.v1",
+        "grok.memory_text.v1",
         "pi.sessions_jsonl.v1",
+        "pi.context_mode_sqlite.v1",
         "opencode.db_sqlite.v1",
     },
 )
@@ -3815,11 +3829,13 @@ def discover_pi_sources(
         agent_dir / "sessions",
         label="PI_CODING_AGENT_SESSION_DIR",
     )
-    if not agent_dir.exists() and not session_dir.exists():
+    context_mode_dir = home / ".pi" / "context-mode"
+    if not agent_dir.exists() and not session_dir.exists() and not context_mode_dir.exists():
         return []
     roots: dict[str, DiscoveryRoot] = {
         "default": agent_dir,
         "pi_session": session_dir,
+        "pi_context_mode": context_mode_dir,
     }
     return discover_from_catalog(
         home,
@@ -4405,6 +4421,9 @@ def iter_source_records(
     if source.adapter_id == "antigravity_cli.conversations_sqlite_protobuf.v1":
         yield from parse_antigravity_cli_conversation_db(source)
         return
+    if source.adapter_id == "antigravity_cli.transcript_jsonl.v1":
+        yield from parse_antigravity_cli_transcript(source)
+        return
     if source.adapter_id in {
         "antigravity_cli.implicit_protobuf.v1",
         "antigravity_ide.conversations_protobuf.v1",
@@ -4421,6 +4440,9 @@ def iter_source_records(
         return
     if source.adapter_id == "claude.store_sqlite.v1":
         yield from parse_claude_store_db(source)
+        return
+    if source.adapter_id == "claude.usage_facets_json.v1":
+        yield from parse_claude_usage_facet(source)
         return
     if source.adapter_id == "claude.tasks_json.v1":
         yield from parse_claude_task_file(source)
@@ -4450,11 +4472,19 @@ def iter_source_records(
         "claude.commands_text.v1",
         "claude.memory_text.v1",
         "claude.projects_memory_text.v1",
+        "gemini.memory_text.v1",
+        "gemini.tool_outputs_text.v1",
+        "grok.plans_text.v1",
+        "grok.memory_text.v1",
         "claude.plugin_instruction_text.v1",
         "claude.project_instruction_text.v1",
         "claude.session_memory_text.v1",
         "claude.skills_text.v1",
         "claude.plans_text.v1",
+        "cursor_cli.skills_text.v1",
+        "cursor_cli.uploads_text.v1",
+        "cursor_cli.agent_tools_text.v1",
+        "claude.workflow_scripts_text.v1",
         "codex.instructions_text.v1",
         "codex.memories_text.v1",
         "codex.plugin_instruction_text.v1",
@@ -4463,6 +4493,7 @@ def iter_source_records(
         "codex.skills_text.v1",
         "antigravity_cli.brain_text.v1",
         "antigravity_ide.brain_text.v1",
+        "antigravity_ide.brain_resolved_text.v1",
         "antigravity_ide.skills_text.v1",
     }:
         yield from parse_text_store_file(source)
@@ -4551,12 +4582,18 @@ def iter_source_records(
     if source.adapter_id == "grok.session_search_sqlite.v1":
         yield from parse_grok_session_search_db(source)
         return
+    if source.adapter_id == "grok.subagents_json.v1":
+        yield from parse_grok_subagents(source)
+        return
     if source.adapter_id == "pi.sessions_jsonl.v1":
         yield from parse_pi_session_file(
             source,
             raw_skip_line=raw_skip_line,
             reverse=reverse,
         )
+        return
+    if source.adapter_id == "pi.context_mode_sqlite.v1":
+        yield from parse_pi_context_mode_db(source)
         return
     if source.adapter_id == "opencode.db_sqlite.v1":
         yield from parse_opencode_db(source)
@@ -5515,6 +5552,49 @@ def parse_grok_prompt_history(
         )
 
 
+def parse_grok_subagents(source: SourceHandle) -> cabc.Iterator[SearchRecord]:
+    """Parse a Grok CLI subagent ``meta.json`` dispatch record.
+
+    Each ``sessions/<project>/<session>/subagents/<subagent>/meta.json`` is a
+    single JSON object describing one dispatched subagent: ``prompt`` (the
+    delegated instruction), ``description``, ``subagent_type``, ``tool_calls``,
+    and parent/child session linkage. The subagent's own conversation is not
+    stored elsewhere, so the dispatch prompt is the only searchable record of
+    the delegation — emitted here as supplementary conversation content.
+    """
+    payload = read_json_file(source.path)
+    if not isinstance(payload, dict):
+        return
+    mapping = t.cast("dict[str, object]", payload)
+    prompt = as_optional_str(mapping.get("prompt"))
+    description = as_optional_str(mapping.get("description"))
+    text = prompt or description
+    if not text:
+        return
+    child_session_id = as_optional_str(mapping.get("child_session_id"))
+    parent_session_id = as_optional_str(mapping.get("parent_session_id"))
+    subagent_type = as_optional_str(mapping.get("subagent_type"))
+    metadata: dict[str, object] = {}
+    if subagent_type:
+        metadata["subagent_type"] = subagent_type
+    if parent_session_id:
+        metadata["parent_session_id"] = parent_session_id
+    yield SearchRecord(
+        kind="prompt",
+        agent=source.agent,
+        store=source.store,
+        adapter_id=source.adapter_id,
+        path=source.path,
+        text=text,
+        title=description or "Grok subagent",
+        role="user",
+        timestamp=as_optional_str(mapping.get("started_at")),
+        session_id=child_session_id,
+        conversation_id=child_session_id or parent_session_id,
+        metadata=metadata,
+    )
+
+
 def parse_grok_chat_history(
     source: SourceHandle,
     *,
@@ -5747,6 +5827,43 @@ def parse_text_store_file(
         text=text,
         title=source.store,
         timestamp=isoformat_from_mtime_ns(source.mtime_ns),
+        metadata={"coverage": source.coverage.value},
+    )
+
+
+def parse_claude_usage_facet(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse a Claude Code ``usage-data/facets/<session>.json`` reflection.
+
+    Each facet is Claude's own derived summary of a session; the readable
+    natural-language fields are ``brief_summary``, ``underlying_goal``, and
+    ``friction_detail``. Derived state, not transcript — emitted as one
+    inspectable record.
+    """
+    payload = read_json_file(source.path)
+    if not isinstance(payload, dict):
+        return
+    mapping = t.cast("dict[str, object]", payload)
+    parts = [
+        as_optional_str(mapping.get(key))
+        for key in ("brief_summary", "underlying_goal", "friction_detail")
+    ]
+    text = "\n\n".join(part for part in parts if part)
+    if not text:
+        return
+    session_id = as_optional_str(mapping.get("session_id"))
+    yield SearchRecord(
+        kind="history",
+        agent=source.agent,
+        store=source.store,
+        adapter_id=source.adapter_id,
+        path=source.path,
+        text=text,
+        title="Claude session reflection",
+        timestamp=isoformat_from_mtime_ns(source.mtime_ns),
+        session_id=session_id,
+        conversation_id=session_id,
         metadata={"coverage": source.coverage.value},
     )
 
@@ -6219,6 +6336,49 @@ def _opencode_part_text(part_type: str, part_data: dict[str, object]) -> str | N
     return None
 
 
+def parse_pi_context_mode_db(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse a Pi context-mode session SQLite database.
+
+    The ``session_events`` table records per-session events (`type` =
+    role/intent/decision/tool_call/file_read/blocker_resolved) with a JSON
+    ``data`` payload. Each event's payload is emitted as one inspectable
+    record. Rooted under ``~/.pi/context-mode/sessions/`` and keyed by a
+    16-hex session id, distinct from ``pi.sessions``' cwd grouping.
+    """
+    connection = open_readonly_sqlite(source.path)
+    try:
+        if "session_events" not in sqlite_table_names(connection):
+            return
+        cursor = connection.execute(
+            "SELECT session_id, type, data, created_at FROM session_events ORDER BY id",
+        )
+        for session_id_raw, type_raw, data_raw, created_raw in cursor:
+            data_text = as_optional_str(data_raw)
+            if not data_text or not data_text.strip():
+                continue
+            event_type = as_optional_str(type_raw) or "event"
+            session_id = as_optional_str(session_id_raw)
+            yield SearchRecord(
+                kind="history",
+                agent=source.agent,
+                store=source.store,
+                adapter_id=source.adapter_id,
+                path=source.path,
+                text=data_text,
+                title=f"Pi context-mode {event_type}",
+                role=event_type,
+                timestamp=as_optional_str(created_raw),
+                session_id=session_id,
+                conversation_id=session_id,
+            )
+    except sqlite3.DatabaseError:
+        return
+    finally:
+        connection.close()
+
+
 def parse_opencode_db(
     source: SourceHandle,
 ) -> cabc.Iterator[SearchRecord]:
@@ -6556,6 +6716,46 @@ def parse_antigravity_cli_conversation_db(
         return
     finally:
         connection.close()
+
+
+def parse_antigravity_cli_transcript(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse an Antigravity CLI brain transcript JSONL log.
+
+    Each line is a step record (`type`, `source`, `status`, `created_at`,
+    `content`). Only string-valued `content` carries readable text — the
+    assistant and tool turns here are the readable counterpart to the opaque
+    protobuf ``conversations/<uuid>.db`` that the brain Markdown glob cannot
+    reach.
+    """
+    parents = source.path.parents
+    conversation_id = parents[2].name if len(parents) > 2 else None
+    for event in _iter_jsonl(source.path):
+        if not isinstance(event, dict):
+            continue
+        mapping = t.cast("dict[str, object]", event)
+        content = mapping.get("content")
+        if not isinstance(content, str) or not content.strip():
+            continue
+        record_type = as_optional_str(mapping.get("type")) or ""
+        is_user = record_type == "USER_INPUT"
+        metadata: dict[str, object] = {}
+        if record_type:
+            metadata["type"] = record_type
+        yield SearchRecord(
+            kind="prompt" if is_user else "history",
+            agent=source.agent,
+            store=source.store,
+            adapter_id=source.adapter_id,
+            path=source.path,
+            text=content,
+            role="user" if is_user else "assistant",
+            timestamp=as_optional_str(mapping.get("created_at")),
+            session_id=conversation_id,
+            conversation_id=conversation_id,
+            metadata=metadata,
+        )
 
 
 def parse_antigravity_protobuf_file(

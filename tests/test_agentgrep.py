@@ -10283,3 +10283,150 @@ def test_unix_to_isoformat_edge_cases(
     else:
         assert result is not None, f"{test_id}: expected timestamp, got None"
         assert result.startswith(expected), f"{test_id}: {result!r}"
+
+
+def test_parse_grok_subagents_emits_dispatch_prompt() -> None:
+    """grok.subagents meta.json yields the delegated prompt as one record."""
+    from tests.conftest import fixture_path
+
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    source = agentgrep.SourceHandle(
+        agent="grok",
+        store="grok.subagents",
+        adapter_id="grok.subagents_json.v1",
+        path=fixture_path("grok.subagents", "meta.json"),
+        path_kind="session_file",
+        source_kind="json",
+        search_root=None,
+        mtime_ns=1,
+    )
+    records = list(agentgrep.iter_source_records(source))
+    assert len(records) == 1
+    record = records[0]
+    assert record.kind == "prompt"
+    assert record.role == "user"
+    assert "login sessions are issued" in record.text
+    assert record.title == "Map the authentication module"
+    assert record.metadata.get("subagent_type") == "code-explorer"
+
+
+def test_parse_gemini_memory_emits_markdown(tmp_path: pathlib.Path) -> None:
+    """gemini.memory (GEMINI.md) is parsed as one inspectable text record."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    md = tmp_path / "GEMINI.md"
+    md.write_text("# Project memory\n\nAlways prefer ripgrep.\n", encoding="utf-8")
+    source = agentgrep.SourceHandle(
+        agent="gemini",
+        store="gemini.memory",
+        adapter_id="gemini.memory_text.v1",
+        path=md,
+        path_kind="store_file",
+        source_kind="text",
+        search_root=None,
+        mtime_ns=1,
+    )
+    records = list(agentgrep.iter_source_records(source))
+    assert len(records) == 1
+    assert "prefer ripgrep" in records[0].text
+    assert records[0].kind == "history"
+
+
+def test_parse_antigravity_cli_transcript_emits_turns(tmp_path: pathlib.Path) -> None:
+    """antigravity-cli transcript yields readable turns; null content is skipped."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    logs = tmp_path / "brain" / "uuid-1" / ".system_generated" / "logs"
+    logs.mkdir(parents=True)
+    transcript = logs / "transcript_full.jsonl"
+    transcript.write_text(
+        '{"type":"USER_INPUT","source":"USER_EXPLICIT",'
+        '"created_at":"2026-06-21T00:00:00Z","content":"add a retry helper"}\n'
+        '{"type":"CONVERSATION_HISTORY","source":"SYSTEM","content":null}\n'
+        '{"type":"ASSISTANT","content":"here is the helper"}\n',
+        encoding="utf-8",
+    )
+    source = agentgrep.SourceHandle(
+        agent="antigravity-cli",
+        store="antigravity-cli.transcript",
+        adapter_id="antigravity_cli.transcript_jsonl.v1",
+        path=transcript,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=1,
+    )
+    records = list(agentgrep.iter_source_records(source))
+    assert len(records) == 2
+    assert records[0].kind == "prompt"
+    assert records[0].role == "user"
+    assert "retry helper" in records[0].text
+    assert records[0].conversation_id == "uuid-1"
+    assert records[1].kind == "history"
+
+
+def test_parse_claude_usage_facet_joins_nl_fields(tmp_path: pathlib.Path) -> None:
+    """claude.usage_data facet emits the natural-language fields as one record."""
+    import json as _json
+
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    facet = tmp_path / "abc.json"
+    facet.write_text(
+        _json.dumps(
+            {
+                "session_id": "abc",
+                "brief_summary": "Refactored the parser",
+                "underlying_goal": "make discovery faster",
+                "friction_detail": "flaky fixture",
+                "goal_categories": ["perf"],
+            },
+        ),
+        encoding="utf-8",
+    )
+    source = agentgrep.SourceHandle(
+        agent="claude",
+        store="claude.usage_data",
+        adapter_id="claude.usage_facets_json.v1",
+        path=facet,
+        path_kind="store_file",
+        source_kind="json",
+        search_root=None,
+        mtime_ns=1,
+    )
+    records = list(agentgrep.iter_source_records(source))
+    assert len(records) == 1
+    assert "Refactored the parser" in records[0].text
+    assert "make discovery faster" in records[0].text
+    assert records[0].kind == "history"
+
+
+def test_parse_pi_context_mode_db_emits_events(tmp_path: pathlib.Path) -> None:
+    """pi.context_mode_db emits session_events payloads as records."""
+    import sqlite3 as _sqlite3
+
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    db = tmp_path / "abc.db"
+    conn = _sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE session_events (id INTEGER PRIMARY KEY, session_id TEXT, "
+        "type TEXT, data TEXT, created_at TEXT)",
+    )
+    conn.execute(
+        "INSERT INTO session_events (session_id, type, data, created_at) VALUES (?, ?, ?, ?)",
+        ("s1", "tool_call", '{"tool":"rg","params":{"q":"login"}}', "2026-06-21"),
+    )
+    conn.commit()
+    conn.close()
+    source = agentgrep.SourceHandle(
+        agent="pi",
+        store="pi.context_mode_db",
+        adapter_id="pi.context_mode_sqlite.v1",
+        path=db,
+        path_kind="sqlite_db",
+        source_kind="sqlite",
+        search_root=None,
+        mtime_ns=1,
+    )
+    records = list(agentgrep.iter_source_records(source))
+    assert len(records) == 1
+    assert "login" in records[0].text
+    assert records[0].role == "tool_call"
+    assert records[0].kind == "history"

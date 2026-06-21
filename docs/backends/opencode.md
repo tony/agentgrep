@@ -4,7 +4,7 @@
 
 Base path: `~/.local/share/opencode` (env overrides: `XDG_DATA_HOME`, `OPENCODE_DB`).
 
-`observed_version`: `opencode v1.15.11` (observed 2026-05-30).
+`observed_version`: `opencode v1.17.9` (observed 2026-06-21).
 
 OpenCode (anomalyco/opencode) stores conversations in a single SQLite
 database, `opencode.db`, under its XDG data directory
@@ -59,6 +59,14 @@ A part's `kind` is derived from the joined message `role` (`user` →
 prompt, otherwise history). Tool, file, snapshot, patch, and step-marker
 parts are metadata and stay outside default search. Message timestamps
 are unix-milliseconds and are normalized to ISO-8601.
+
+The same `opencode.db` file also carries OpenCode's unreleased v2
+event-sourced tables — `session_input`, `session_message`,
+`event`/`event_sequence`, and `todo`. On stable installs these are empty
+beta state; the canonical transcript stays in `session`/`message`/`part`,
+so agentgrep does not search them. The secret-bearing `account`,
+`account_state`, `control_account`, and `credential` tables are present
+but never enumerated — the adapter reads only text-bearing `part` rows.
 
 The legacy pre-migration layout (one JSON file per session, message, and
 part under `storage/`) is documented but no longer searched — current
