@@ -37,6 +37,7 @@ _PI_OBSERVED_AT = datetime.date(2026, 6, 21)
 _OPENCODE_OBSERVED_AT = datetime.date(2026, 6, 21)
 _ANTIGRAVITY_OBSERVED_AT = datetime.date(2026, 6, 21)
 _GEMINI_OBSERVED_AT = datetime.date(2026, 6, 21)
+_CURSOR_CLI_OBSERVED_AT = datetime.date(2026, 6, 21)
 
 
 def gemini_project_hash(project_root: pathlib.Path) -> str:
@@ -1039,8 +1040,8 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
         path_pattern=(
             "${HOME}/.cursor/projects/<id>/agent-transcripts/<session_uuid>/<session_uuid>.jsonl"
         ),
-        observed_version="cursor-agent (version not surfaced publicly)",
-        observed_at=OBSERVED_AT,
+        observed_version="cursor-agent 2026.06.19-653a7fb",
+        observed_at=_CURSOR_CLI_OBSERVED_AT,
         upstream_ref="cursor.com/docs/cli/overview",
         schema_notes=(
             "JSONL Anthropic-style: `role`, `message.content[]` with "
@@ -1079,8 +1080,8 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
         path_pattern=(
             "${HOME}/.cursor/projects/<id>/agent-transcripts/<session_uuid>/subagents/<agent>.jsonl"
         ),
-        observed_version="cursor-agent 2026.05.28-a70ca7c",
-        observed_at=datetime.date(2026, 5, 29),
+        observed_version="cursor-agent 2026.06.19-653a7fb",
+        observed_at=_CURSOR_CLI_OBSERVED_AT,
         schema_notes=(
             "Same JSONL Anthropic-style shape as `cursor-cli.transcripts`, nested "
             "under a session's `subagents/` directory."
@@ -1106,8 +1107,8 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.APP_STATE,
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${HOME}/.cursor/projects/<id>/repo.json",
-        observed_version="cursor-agent (version not surfaced publicly)",
-        observed_at=OBSERVED_AT,
+        observed_version="cursor-agent 2026.06.19-653a7fb",
+        observed_at=_CURSOR_CLI_OBSERVED_AT,
         schema_notes="Project tree/manifest metadata.",
     ),
     StoreDescriptor(
@@ -1119,8 +1120,8 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
             "${HOME}/.cursor/projects/<id>/{mcps/*/SERVER_METADATA.json,"
             "tools/*.json,mcp-approvals.json}"
         ),
-        observed_version="cursor-agent (version not surfaced publicly)",
-        observed_at=OBSERVED_AT,
+        observed_version="cursor-agent 2026.06.19-653a7fb",
+        observed_at=_CURSOR_CLI_OBSERVED_AT,
         schema_notes="MCP tool registry and approval records.",
     ),
     StoreDescriptor(
@@ -1129,8 +1130,8 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.APP_STATE,
         format=StoreFormat.OPAQUE,
         path_pattern="${HOME}/.cursor/projects/<id>/terminals/",
-        observed_version="cursor-agent (version not surfaced publicly)",
-        observed_at=OBSERVED_AT,
+        observed_version="cursor-agent 2026.06.19-653a7fb",
+        observed_at=_CURSOR_CLI_OBSERVED_AT,
         schema_notes="Terminal output logs.",
     ),
     StoreDescriptor(
@@ -1139,8 +1140,8 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.APP_STATE,
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${HOME}/.cursor/projects/<id>/canvases/",
-        observed_version="cursor-agent (version not surfaced publicly)",
-        observed_at=OBSERVED_AT,
+        observed_version="cursor-agent 2026.06.19-653a7fb",
+        observed_at=_CURSOR_CLI_OBSERVED_AT,
         schema_notes="Cursor canvas state.",
     ),
     StoreDescriptor(
@@ -1149,8 +1150,8 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.PLAN,
         format=StoreFormat.MARKDOWN_FRONTMATTER,
         path_pattern="${HOME}/.cursor/plans/*.plan.md",
-        observed_version="cursor-agent (version not surfaced publicly)",
-        observed_at=OBSERVED_AT,
+        observed_version="cursor-agent 2026.06.19-653a7fb",
+        observed_at=_CURSOR_CLI_OBSERVED_AT,
         schema_notes=("YAML frontmatter (name, overview, todos[], isProject) plus markdown body."),
     ),
     StoreDescriptor(
@@ -1159,8 +1160,8 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.APP_STATE,
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${HOME}/.cursor/agent-cli-state.json",
-        observed_version="cursor-agent (version not surfaced publicly)",
-        observed_at=OBSERVED_AT,
+        observed_version="cursor-agent 2026.06.19-653a7fb",
+        observed_at=_CURSOR_CLI_OBSERVED_AT,
         schema_notes="UI tip-shown flags and legacy-cleanup markers.",
         search_by_default=False,
     ),
@@ -1170,8 +1171,8 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.SOURCE_TREE,
         format=StoreFormat.OPAQUE,
         path_pattern="${HOME}/.cursor/worktrees/",
-        observed_version="cursor-agent (version not surfaced publicly)",
-        observed_at=OBSERVED_AT,
+        observed_version="cursor-agent 2026.06.19-653a7fb",
+        observed_at=_CURSOR_CLI_OBSERVED_AT,
         schema_notes=(
             "Full git worktrees used as code context by the CLI agent. Not chat — "
             "catalogued so future adapter PRs do not index source code as history."
@@ -1185,8 +1186,8 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.SUPPLEMENTARY_CHAT,
         format=StoreFormat.SQLITE,
         path_pattern="${HOME}/.cursor/ai-tracking/ai-code-tracking.db",
-        observed_version="cursor-agent (version not surfaced publicly)",
-        observed_at=OBSERVED_AT,
+        observed_version="cursor-agent 2026.06.19-653a7fb",
+        observed_at=_CURSOR_CLI_OBSERVED_AT,
         schema_notes=(
             "SQLite with `conversation_summaries(conversationId, title, tldr, "
             "overview, summaryBullets, model, mode, updatedAt)` — title and prose "
@@ -1212,8 +1213,8 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.PROMPT_HISTORY,
         format=StoreFormat.JSON_ARRAY,
         path_pattern="${HOME}/.config/cursor/prompt_history.json",
-        observed_version="cursor-agent 2026.05.27-fe9a6e2",
-        observed_at=_CURSOR_CONFIG_OBSERVED_AT,
+        observed_version="cursor-agent 2026.06.19-653a7fb",
+        observed_at=_CURSOR_CLI_OBSERVED_AT,
         schema_notes=(
             "Flat JSON array of strings — one entry per prompt typed into "
             "`cursor-agent`, oldest first. The CLI's up-arrow recall buffer; "
@@ -1246,8 +1247,8 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.PRIMARY_CHAT,
         format=StoreFormat.SQLITE,
         path_pattern="${HOME}/.config/cursor/chats/<project_hash>/<session_uuid>/store.db",
-        observed_version="cursor-agent 2026.05.27-fe9a6e2",
-        observed_at=_CURSOR_CONFIG_OBSERVED_AT,
+        observed_version="cursor-agent 2026.06.19-653a7fb",
+        observed_at=_CURSOR_CLI_OBSERVED_AT,
         version_strategies=(VersionDetectionStrategy.CATALOG_OBSERVATION,),
         upstream_ref="agentgrep.parse_cursor_cli_chats_db / iter_protobuf_text_fields",
         schema_notes=(
