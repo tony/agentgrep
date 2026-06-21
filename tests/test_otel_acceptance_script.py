@@ -136,20 +136,11 @@ def test_lgtm_docker_run_command_keeps_github_env_opt_in() -> None:
     assert "GH_TOKEN" not in command_with_github
 
 
-def test_grep_invert_acceptance_workloads_cover_success_and_parse_error() -> None:
-    """Acceptance should exercise both valid ``-v`` and invalid ``-v -o``."""
+def test_grep_invert_acceptance_workload_covers_parse_error() -> None:
+    """Acceptance should exercise unsupported ``-v`` as a parse error."""
     run_id = "agentgrep-test-run"
 
     assert otel_acceptance._grep_parse_error_workload_command(run_id) == [
-        sys.executable,
-        "-m",
-        "agentgrep",
-        "grep",
-        "--invert-match",
-        "--only-matching",
-        run_id,
-    ]
-    assert otel_acceptance._grep_invert_workload_command(run_id) == [
         sys.executable,
         "-m",
         "agentgrep",

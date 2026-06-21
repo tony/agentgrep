@@ -574,12 +574,7 @@ def _grep_path_is_eager(args: GrepArgs) -> bool:
     (text, NDJSON, vimgrep, only-matching) can emit per record as they
     arrive.
     """
-    return (
-        args.output_mode == "json"
-        or args.count_only
-        or args.files_with_matches
-        or args.invert_match
-    )
+    return args.output_mode == "json" or args.count_only or args.files_with_matches
 
 
 def stream_grep_results(args: GrepArgs) -> int:
@@ -592,8 +587,8 @@ def stream_grep_results(args: GrepArgs) -> int:
     exit code (``0`` if any match was emitted, ``1`` otherwise).
 
     Only the streaming-friendly output modes route here — :func:`run_grep_command`
-    picks :func:`print_grep_results` for JSON, ``-c``, ``-l``, ``-L``,
-    and ``-v`` paths that need the full record list up front.
+    picks :func:`print_grep_results` for JSON, ``-c``, ``-l``, and ``-L``
+    paths that need the full record list up front.
     """
     # Lazy import keeps ``agentgrep.events`` off the eager ``import
     # agentgrep`` path (pinned by tests/test_import_time.py).
@@ -650,6 +645,13 @@ def run_grep_command(args: GrepArgs) -> int:
     if not args.patterns:
         msg = "grep requires at least one pattern"
         raise SystemExit(msg)
+    if args.invert_match:
+        print(
+            "error: --invert-match is not implemented yet "
+            "(see https://github.com/tony/agentgrep/issues/8)",
+            file=sys.stderr,
+        )
+        return 2
     query = build_grep_query(args)
     if args.output_mode == "ui":
         _launch_ui(
