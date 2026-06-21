@@ -206,6 +206,75 @@ def test_query_logs_filters_run_id_after_json_parse(monkeypatch: t.Any) -> None:
     assert result["count"] == 1
 
 
+def test_query_logs_rejects_loki_json_parser_errors(monkeypatch: t.Any) -> None:
+    """Loki parser errors mean exported log bodies are not structured."""
+
+    def fake_http_json(_url: str, **_kwargs: object) -> dict[str, object]:
+        return {
+            "data": {
+                "result": [
+                    {
+                        "stream": {
+                            "__error__": "JSONParserErr",
+                            "agentgrep_debug_session_id": "run-123",
+                            "service_name": "agentgrep",
+                            "trace_id": "trace",
+                            "span_id": "span",
+                            "vcs_ref_head_name": "otel-bootstrap",
+                        },
+                        "values": [["1782000000000000000", "plain text body"]],
+                    },
+                ],
+            },
+        }
+
+    monkeypatch.setattr(otel_acceptance, "http_json", fake_http_json)
+
+    try:
+        otel_acceptance.query_logs(
+            "run-123",
+            {"labels": {"vcs_ref_head_name": "otel-bootstrap"}},
+        )
+    except otel_acceptance.AcceptanceCheckError as error:
+        assert "Loki JSON parser errors" in str(error)
+    else:
+        raise AssertionError("query_logs accepted Loki parser errors")
+
+
+def test_query_logs_rejects_label_only_structure(monkeypatch: t.Any) -> None:
+    """A selected log must expose structured fields from the log body."""
+
+    def fake_http_json(_url: str, **_kwargs: object) -> dict[str, object]:
+        return {
+            "data": {
+                "result": [
+                    {
+                        "stream": {
+                            "agentgrep_debug_session_id": "run-123",
+                            "service_name": "agentgrep",
+                            "trace_id": "trace",
+                            "span_id": "span",
+                            "vcs_ref_head_name": "otel-bootstrap",
+                        },
+                        "values": [["1782000000000000000", "plain text body"]],
+                    },
+                ],
+            },
+        }
+
+    monkeypatch.setattr(otel_acceptance, "http_json", fake_http_json)
+
+    try:
+        otel_acceptance.query_logs(
+            "run-123",
+            {"labels": {"vcs_ref_head_name": "otel-bootstrap"}},
+        )
+    except otel_acceptance.AcceptanceCheckError as error:
+        assert "unstructured agentgrep log bodies" in str(error)
+    else:
+        raise AssertionError("query_logs accepted label-only structure")
+
+
 def test_lgtm_grafana_datasource_forwards_pyroscope_git_session() -> None:
     """Grafana must forward Pyroscope's GitHub session cookie."""
     content = otel_acceptance.LGTM_GRAFANA_DATASOURCES_CONFIG.read_text(encoding="utf-8")
