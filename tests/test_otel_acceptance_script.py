@@ -230,6 +230,15 @@ def test_tui_acceptance_workload_exercises_tui_root_and_child_spans() -> None:
     assert 'initial_search_text="acceptance tui"' in command[2]
 
 
+def test_mcp_acceptance_workload_exercises_server_root_and_flush() -> None:
+    """Acceptance should exercise short MCP server lifecycle and flush spans."""
+    command = otel_acceptance._mcp_server_workload_command()
+
+    assert command[:2] == [sys.executable, "-c"]
+    assert "mcp_server.main()" in command[2]
+    assert "FakeServer" in command[2]
+
+
 def test_query_logs_filters_run_id_after_json_parse(monkeypatch: t.Any) -> None:
     """Loki log checks should query run ids through a JSON parser stage."""
     observed_urls: list[str] = []

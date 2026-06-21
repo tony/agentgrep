@@ -163,17 +163,24 @@ class OtelTelemetryBackend:
         except Exception:
             return False
 
+    def force_flush(self, timeout_millis: int = 30_000) -> bool:
+        """Flush pending traces, metrics, and logs."""
+        return all(
+            _force_flush_provider(provider, timeout_millis=timeout_millis)
+            for provider in (
+                self._tracer_provider,
+                self._meter_provider,
+                self._logger_provider,
+            )
+        )
+
     def shutdown(self) -> None:
         """Flush and release telemetry processors."""
         for instrumentation in self._instrumentations:
             with contextlib.suppress(Exception):
                 instrumentation.uninstrument()
         with contextlib.suppress(Exception):
-            self._tracer_provider.force_flush()
-        with contextlib.suppress(Exception):
-            self._meter_provider.force_flush()
-        with contextlib.suppress(Exception):
-            self._logger_provider.force_flush()
+            self.force_flush()
         with contextlib.suppress(Exception):
             self._tracer_provider.shutdown()
         with contextlib.suppress(Exception):
@@ -186,6 +193,23 @@ class OtelTelemetryBackend:
             shutdown = getattr(pyroscope, "shutdown", None)
             if shutdown is not None:
                 shutdown()
+
+
+def _force_flush_provider(provider: t.Any, *, timeout_millis: int) -> bool:
+    """Force-flush one OTel provider across SDK signature variants."""
+    force_flush = getattr(provider, "force_flush", None)
+    if force_flush is None:
+        return True
+    try:
+        result = force_flush(timeout_millis=timeout_millis)
+    except TypeError:
+        try:
+            result = force_flush()
+        except Exception:
+            return False
+    except Exception:
+        return False
+    return result is not False
 
 
 class _FilteringSpanExporter:

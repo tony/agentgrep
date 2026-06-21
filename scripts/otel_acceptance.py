@@ -31,6 +31,7 @@ DEFAULT_PROMETHEUS_BASE_URL = "http://localhost:3000/api/datasources/proxy/uid/p
 APPROVED_ROOTS = {
     "agentgrep.cli.invocation",
     "agentgrep.cli.interactive_session",
+    "agentgrep.mcp.server",
     "agentgrep.tui.session",
     "agentgrep.mcp.request",
     "agentgrep.mcp.tool",
@@ -360,6 +361,23 @@ finally:
     return [sys.executable, "-c", code]
 
 
+def _mcp_server_workload_command() -> list[str]:
+    """Return a command that exercises a short MCP stdio server lifecycle."""
+    code = """
+from agentgrep.mcp import server as mcp_server
+
+
+class FakeServer:
+    def run(self) -> None:
+        return None
+
+
+mcp_server.build_mcp_server = lambda: FakeServer()
+raise SystemExit(mcp_server.main())
+""".strip()
+    return [sys.executable, "-c", code]
+
+
 def run_workloads(run_id: str) -> None:
     """Run smoke, CLI, profiler, and pytest workloads."""
     env = {
@@ -513,6 +531,14 @@ def run_workloads(run_id: str) -> None:
             text=True,
         )
         subprocess.run(
+            _mcp_server_workload_command(),
+            cwd=ROOT,
+            env={**env, "HOME": temp_home},
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
             [
                 sys.executable,
                 "-m",
@@ -652,6 +678,7 @@ def query_traces(run_id: str, vcs_identity: dict[str, dict[str, str]]) -> dict[s
         "agentgrep.otel.smoke",
         "agentgrep.benchmark.run",
         "agentgrep.cli.invocation",
+        "agentgrep.mcp.server",
         "agentgrep.profile_engine.run",
         "agentgrep.pytest.test",
         "agentgrep.tui.session",
@@ -669,6 +696,8 @@ def query_traces(run_id: str, vcs_identity: dict[str, dict[str, str]]) -> dict[s
         "agentgrep.benchmark.command",
         "agentgrep.benchmark.subprocess",
         "agentgrep.mcp.request",
+        "agentgrep.mcp.server.lifecycle",
+        "agentgrep.mcp.flush",
         "agentgrep.tui.lifecycle",
         "agentgrep.tui.shutdown",
     }
