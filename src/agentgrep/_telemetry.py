@@ -603,23 +603,21 @@ def span(name: str, **attributes: object) -> cabc.Iterator[None]:
         started_at=time.perf_counter(),
         inherit_otel_context=inherit_otel_context and parent is None,
     )
-    try:
-        with backend.start_span(active_span):
-            token = _CURRENT_SPAN.set(active_span)
-            try:
-                yield
-            except BaseException as exc:
-                active_span.status = "error"
-                backend.record_exception(exc)
-                raise
-            finally:
-                _CURRENT_SPAN.reset(token)
-    finally:
-        backend.finish_span(
-            active_span,
-            status=active_span.status,
-            duration_seconds=time.perf_counter() - active_span.started_at,
-        )
+    with backend.start_span(active_span):
+        token = _CURRENT_SPAN.set(active_span)
+        try:
+            yield
+        except BaseException as exc:
+            active_span.status = "error"
+            backend.record_exception(exc)
+            raise
+        finally:
+            _CURRENT_SPAN.reset(token)
+            backend.finish_span(
+                active_span,
+                status=active_span.status,
+                duration_seconds=time.perf_counter() - active_span.started_at,
+            )
 
 
 @contextlib.contextmanager
