@@ -18,7 +18,7 @@ import typing as t
 
 from rich.highlighter import Highlighter
 
-from agentgrep import highlight_query_spans
+from agentgrep._text import highlight_query_spans
 
 if t.TYPE_CHECKING:
     from rich.text import Text

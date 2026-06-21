@@ -27,7 +27,7 @@ from pygments.token import (
     Text,
 )
 
-from agentgrep import highlight_query_spans
+from agentgrep._text import highlight_query_spans
 
 if t.TYPE_CHECKING:
     import collections.abc as cabc
