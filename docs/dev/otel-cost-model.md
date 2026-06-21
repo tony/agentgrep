@@ -128,6 +128,17 @@ shutdown. The final shutdown still performs the last drain for the flush span
 itself. Pyroscope profile samples still require enough runtime and CPU to be
 sampled; the short MCP smoke proves traces/logs/metrics, not profile density.
 
+Each observable MCP request opens an `mcp.server.request` root (and, for tool
+calls, an `mcp.server.tool` child) that owns the trace, carries the redacted
+`agentgrep_*` / `agentgrep_mcp_args.*` attributes, and emits the audit log.
+Nested inside each is a FastMCP `server_span` SERVER child that adds the
+`mcp.method.name`, `gen_ai.tool.name`, and `mcp.session.id` semantic
+conventions; raw arguments never reach it. When the caller sends a
+`traceparent` in the request metadata, the request root inherits that context so
+the caller's trace links to agentgrep's. The pinned `fastmcp` does not auto-emit
+these SERVER spans, so composing `server_span` produces exactly one per request
+or tool.
+
 OTel log export keeps the plain log message as the record body and carries the
 redacted `agentgrep_*` extras as native OTel log attributes (Loki structured
 metadata), rather than re-encoding them into a JSON body. Sensitive extras are

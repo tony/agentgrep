@@ -7,6 +7,8 @@ own timing and error-handling middleware are wired alongside them from
 
 from __future__ import annotations
 
+import collections.abc as cabc
+import contextlib
 import hashlib
 import logging
 import pathlib
@@ -54,6 +56,66 @@ class AgentgrepResponseLimitingMiddleware(ResponseLimitingMiddleware):
             meta=truncated.meta,
             is_error=True,
         )
+
+
+def _inbound_otel_context() -> object | None:
+    """Return the inbound traceparent context from the MCP request meta, if any."""
+    try:
+        from mcp.server.lowlevel.server import request_ctx
+
+        meta = getattr(request_ctx.get(), "meta", None)
+    except Exception:
+        return None
+    if not meta:
+        return None
+    try:
+        from fastmcp.telemetry import extract_trace_context
+
+        return extract_trace_context(dict(meta))
+    except Exception:
+        return None
+
+
+def _attach_otel_context(inbound: object | None) -> cabc.Callable[[], None]:
+    """Attach an inbound OTel context and return a detach callback."""
+    if inbound is None:
+        return lambda: None
+    from opentelemetry import context as otel_context
+
+    token = otel_context.attach(t.cast("t.Any", inbound))
+    return lambda: otel_context.detach(token)
+
+
+@contextlib.contextmanager
+def _native_server_span(
+    *,
+    name: str,
+    method: str,
+    component_type: str,
+    component_key: str,
+    tool_name: str | None = None,
+) -> cabc.Iterator[None]:
+    """Nest a FastMCP SERVER span carrying MCP and GenAI semantic conventions.
+
+    The span is a child of the agentgrep request/tool root, so it survives the
+    span filter and adds ``mcp.method.name``, ``gen_ai.tool.name``, and
+    ``mcp.session.id`` without taking over the trace. Raw arguments never reach
+    it; only the public tool name does.
+    """
+    try:
+        from fastmcp.server.telemetry import server_span
+    except Exception:
+        yield
+        return
+    with server_span(
+        name=name,
+        method=method,
+        server_name="agentgrep",
+        component_type=component_type,
+        component_key=component_key,
+        tool_name=tool_name,
+    ):
+        yield
 
 
 def _redact_digest(value: str) -> dict[str, t.Any]:
@@ -179,37 +241,51 @@ class AgentgrepTelemetryMiddleware(Middleware):
             "agentgrep_mcp_method": method,
         }
         attributes.update(_context_ids(context))
-        with _telemetry.span("agentgrep.mcp.request", **attributes):
-            try:
-                with _telemetry.span("agentgrep.mcp.operation", **attributes):
-                    result = await call_next(context)
-            except Exception as exc:
+        inbound = _inbound_otel_context()
+        detach = _attach_otel_context(inbound)
+        try:
+            with _telemetry.span(
+                "mcp.server.request",
+                inherit_otel_context=inbound is not None,
+                **attributes,
+            ):
+                try:
+                    with _native_server_span(
+                        name=f"request {method}",
+                        method=method,
+                        component_type="request",
+                        component_key=method,
+                    ):
+                        result = await call_next(context)
+                except Exception as exc:
+                    duration_ms = (time.monotonic() - start) * 1000.0
+                    _telemetry.set_span_attribute("agentgrep_outcome", "error")
+                    _telemetry.set_span_attribute("agentgrep_error_type", type(exc).__name__)
+                    _telemetry.set_span_attribute("agentgrep_duration_ms", duration_ms)
+                    logger.info(
+                        "mcp request failed",
+                        extra={
+                            **attributes,
+                            "agentgrep_outcome": "error",
+                            "agentgrep_error_type": type(exc).__name__,
+                            "agentgrep_duration_ms": duration_ms,
+                        },
+                    )
+                    raise
                 duration_ms = (time.monotonic() - start) * 1000.0
-                _telemetry.set_span_attribute("agentgrep_outcome", "error")
-                _telemetry.set_span_attribute("agentgrep_error_type", type(exc).__name__)
+                _telemetry.set_span_attribute("agentgrep_outcome", "ok")
                 _telemetry.set_span_attribute("agentgrep_duration_ms", duration_ms)
                 logger.info(
-                    "mcp request failed",
+                    "mcp request completed",
                     extra={
                         **attributes,
-                        "agentgrep_outcome": "error",
-                        "agentgrep_error_type": type(exc).__name__,
+                        "agentgrep_outcome": "ok",
                         "agentgrep_duration_ms": duration_ms,
                     },
                 )
-                raise
-            duration_ms = (time.monotonic() - start) * 1000.0
-            _telemetry.set_span_attribute("agentgrep_outcome", "ok")
-            _telemetry.set_span_attribute("agentgrep_duration_ms", duration_ms)
-            logger.info(
-                "mcp request completed",
-                extra={
-                    **attributes,
-                    "agentgrep_outcome": "ok",
-                    "agentgrep_duration_ms": duration_ms,
-                },
-            )
-            return result
+                return result
+        finally:
+            detach()
 
 
 class AgentgrepAuditMiddleware(Middleware):
@@ -261,12 +337,14 @@ class AgentgrepAuditMiddleware(Middleware):
             _telemetry.flatten_safe_attributes("agentgrep_mcp_args", args_summary),
         )
 
-        with _telemetry.span("agentgrep.mcp.tool", **span_attributes):
+        with _telemetry.span("mcp.server.tool", **span_attributes):
             try:
-                with _telemetry.span(
-                    "agentgrep.mcp.call_next",
-                    agentgrep_surface="mcp",
-                    agentgrep_tool=tool_name,
+                with _native_server_span(
+                    name=f"tool {tool_name}",
+                    method="tools/call",
+                    component_type="tool",
+                    component_key=tool_name,
+                    tool_name=tool_name,
                 ):
                     result = await call_next(context)
             except Exception as exc:
