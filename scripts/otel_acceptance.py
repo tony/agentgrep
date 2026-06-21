@@ -218,6 +218,54 @@ def _grep_invert_workload_command(run_id: str) -> list[str]:
     return _agentgrep_module_command("grep", "--invert-match", run_id)
 
 
+def _tui_root_workload_command() -> list[str]:
+    """Return a command that exercises a TUI root span without opening a UI."""
+    code = """
+import pathlib
+
+import agentgrep
+import agentgrep._telemetry as telemetry
+from agentgrep.ui import app as ui_app
+
+
+class FakeApp:
+    def run(self) -> None:
+        with telemetry.span(
+            "agentgrep.tui.search",
+            agentgrep_surface="tui",
+            agentgrep_operation="tui.search",
+        ):
+            telemetry.set_span_attribute("agentgrep_outcome", "ok")
+
+
+def fake_build(*_args, **_kwargs):
+    return FakeApp()
+
+
+handle = telemetry.setup(repo_root=pathlib.Path.cwd())
+try:
+    ui_app.build_streaming_ui_app = fake_build
+    query = agentgrep.SearchQuery(
+        terms=("acceptance",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=1,
+    )
+    ui_app.run_ui(
+        pathlib.Path.home(),
+        query,
+        control=agentgrep.SearchControl(),
+        initial_search_text="acceptance tui",
+    )
+finally:
+    handle.shutdown()
+""".strip()
+    return [sys.executable, "-c", code]
+
+
 def run_workloads(run_id: str) -> None:
     """Run smoke, CLI, profiler, and pytest workloads."""
     env = {
@@ -415,6 +463,14 @@ def run_workloads(run_id: str) -> None:
             text=True,
         )
         subprocess.run(
+            _tui_root_workload_command(),
+            cwd=ROOT,
+            env={**env, "HOME": temp_home},
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
             [
                 sys.executable,
                 "-m",
@@ -535,6 +591,7 @@ def query_traces(run_id: str, vcs_identity: dict[str, dict[str, str]]) -> dict[s
         "agentgrep.cli.invocation",
         "agentgrep.profile_engine.run",
         "agentgrep.pytest.test",
+        "agentgrep.tui.session",
     }
     observed_roots = {str(trace["root"]) for trace in checked}
     missing_roots = sorted(required_roots - observed_roots)

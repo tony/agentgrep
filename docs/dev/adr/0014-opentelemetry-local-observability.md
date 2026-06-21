@@ -128,13 +128,13 @@ OTel custom metrics, and log path sanitization.
 
 Live LGTM verification is opt-in through `scripts/otel_acceptance.py` and
 `just otel-acceptance`. It starts or reuses `grafana/otel-lgtm`, runs smoke,
-CLI help, CLI parse-error, CLI search, profile-engine, and direct Textual
-pytest workloads, and verifies:
+CLI help, CLI parse-error, CLI search, profile-engine, TUI smoke, and direct
+Textual pytest workloads, and verifies:
 
 - `agentgrep.otel.smoke`, `agentgrep.cli.invocation`,
-  `agentgrep.benchmark.run`, `agentgrep.profile_engine.run`, and
-  `agentgrep.pytest.test` roots are multi-span traces for the current debug
-  session;
+  `agentgrep.tui.session`, `agentgrep.benchmark.run`,
+  `agentgrep.profile_engine.run`, and `agentgrep.pytest.test` roots are
+  multi-span traces for the current debug session;
 - no current-run single-root trace is accepted;
 - benchmark command/subprocess spans and MCP request spans are present;
 - at least one checked trace contains `agentgrep.sqlite.*` spans from SQLite

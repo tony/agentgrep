@@ -63,7 +63,12 @@ class OtelTelemetryBackend:
     @contextlib.contextmanager
     def start_span(self, span: _telemetry._SpanState) -> cabc.Iterator[t.Any]:
         """Start an OTel span."""
-        with self._tracer.start_as_current_span(span.name) as otel_span:
+        from opentelemetry import trace
+
+        context = None
+        if span.parent_id is None:
+            context = trace.set_span_in_context(trace.INVALID_SPAN)
+        with self._tracer.start_as_current_span(span.name, context=context) as otel_span:
             for key, value in span.attributes.items():
                 if value is not None:
                     otel_span.set_attribute(key, value)
