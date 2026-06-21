@@ -1066,6 +1066,56 @@ def test_build_analysis_report_groups_source_strategies(
     assert group.matches_seen == 5
 
 
+def test_build_analysis_report_warns_on_query_language_root_full_scan() -> None:
+    """Query-language conversation scans should be surfaced as analyzer warnings."""
+    measurement = benchmark.Measurement(
+        sha="d" * 40,
+        short_sha="ddddddd",
+        subject="query profile",
+        command_name="profile-engine-search-all-conversations-query-limit-500",
+        command_string="{venv}/bin/python scripts/profile_engine.py search-conversations {query}",
+        samples=[9.8],
+        profile_payload={
+            "profile_component": "search-conversations",
+            "profile": {
+                "samples": [
+                    {
+                        "name": "search.collect.source",
+                        "duration_seconds": 5.0,
+                        "attributes": {
+                            "agentgrep_source_strategy": "root_full_scan",
+                            "agentgrep_adapter_id": "claude.projects_jsonl.v1",
+                        },
+                    },
+                    {
+                        "name": "search.collect.source",
+                        "duration_seconds": 4.0,
+                        "attributes": {
+                            "agentgrep_source_strategy": "jsonl_raw_text_prefilter",
+                            "agentgrep_adapter_id": "codex.sessions_jsonl.v1",
+                        },
+                    },
+                ],
+            },
+        },
+    )
+
+    report = benchmark.build_analysis_report(
+        [measurement],
+        artifact_label="benchmark.json",
+        percentile_labels=["min"],
+        top_spans=0,
+        top_groups=10,
+    )
+
+    assert report.warnings == [
+        (
+            "profile-engine-search-all-conversations-query-limit-500 "
+            "query-language conversation profile used root_full_scan for 1 source span(s)"
+        ),
+    ]
+
+
 class AnalysisRenderCase(t.NamedTuple):
     """One analysis reporter expectation."""
 

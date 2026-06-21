@@ -541,6 +541,69 @@ def test_profile_main_emits_otel_root_and_render_child(
     assert all(record.span_id is not None for record in backend.log_records)
 
 
+def test_profile_query_language_emits_strategy_cost_summary(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Query-language profiler runs expose scan-shape cost without raw query text."""
+    import agentgrep._telemetry as telemetry
+
+    _ = _write_codex_session(tmp_path, name="match.jsonl", text="tmux prompt")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    backend = telemetry.InMemoryTelemetryBackend()
+
+    def fake_setup(**_kwargs: object) -> telemetry.TelemetryHandle:
+        telemetry.configure_backend(backend)
+        remove_handler = telemetry.install_logging_exporter(backend)
+        return telemetry.TelemetryHandle(
+            mode="test",
+            backend=backend,
+            _remove_logging=remove_handler,
+        )
+
+    monkeypatch.setattr(telemetry, "setup", fake_setup)
+
+    try:
+        exit_code = profile_engine.main(
+            [
+                "search-conversations",
+                "agent:codex",
+                "tmux",
+                "--agent",
+                "codex",
+                "--limit",
+                "1",
+                "--json",
+                "--query-language",
+            ],
+        )
+    finally:
+        telemetry.configure_backend(None)
+
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out)["profile_component"] == "search-conversations"
+    root = backend.finished_spans[-1]
+    assert root.attributes["agentgrep_query_language"] is True
+    assert root.attributes["agentgrep_query_text_len"] == len("agent:codex tmux")
+    assert isinstance(root.attributes["agentgrep_query_hash"], str)
+    strategy_group_count = root.attributes["agentgrep_strategy_group_count"]
+    assert isinstance(strategy_group_count, int)
+    assert strategy_group_count >= 1
+    assert "agent:codex" not in str(root.attributes)
+    assert "tmux" not in str(root.attributes)
+    strategy_log = next(
+        record
+        for record in backend.log_records
+        if record.message == "profile engine strategy summarized"
+    )
+    assert strategy_log.trace_id == root.trace_id
+    assert strategy_log.span_id == root.span_id
+    assert strategy_log.attributes["agentgrep_query_language"] is True
+    assert "agent:codex" not in str(strategy_log.attributes)
+    assert "tmux" not in str(strategy_log.attributes)
+
+
 @pytest.mark.parametrize(
     "case",
     PROFILE_COMPONENT_CASES,
