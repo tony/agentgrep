@@ -4,7 +4,7 @@
 
 Base path: `~/.gemini/antigravity-cli` (no observed env override).
 
-`observed_version`: `agy v1.0.8` (observed 2026-06-14).
+`observed_version`: `agy v1.0.10` (observed 2026-06-21).
 
 Antigravity CLI is a separate backend from Gemini CLI even though both
 store data under `~/.gemini`. The CLI prompt recall log is plain JSONL and

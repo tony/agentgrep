@@ -4,7 +4,7 @@
 
 Base path: `~/.gemini/antigravity` (no observed env override).
 
-`observed_version`: Google Antigravity IDE (observed 2026-06-14).
+`observed_version`: Google Antigravity IDE (observed 2026-06-21).
 
 Antigravity IDE is documented as its own backend instead of being folded
 into Gemini CLI. Its conversation and implicit transcript files are
