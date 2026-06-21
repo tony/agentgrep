@@ -693,14 +693,67 @@ def test_pytest_item_span_helper_covers_custom_items() -> None:
     assert test_span.attributes["agentgrep_pytest_test"] == FakeItem.nodeid
 
 
+class McpSensitiveScalarArgCase(t.NamedTuple):
+    """Parametrized case for scalar MCP argument redaction."""
+
+    test_id: str
+    key: str
+    value: str
+
+
+MCP_SENSITIVE_SCALAR_ARG_CASES: tuple[McpSensitiveScalarArgCase, ...] = (
+    McpSensitiveScalarArgCase(
+        test_id="pattern",
+        key="pattern",
+        value="secret-pattern",
+    ),
+    McpSensitiveScalarArgCase(
+        test_id="sample-text",
+        key="sample_text",
+        value="secret sample text",
+    ),
+    McpSensitiveScalarArgCase(
+        test_id="cursor",
+        key="cursor",
+        value="agcur1:secret-cursor",
+    ),
+    McpSensitiveScalarArgCase(
+        test_id="query",
+        key="query",
+        value="agent:codex secret-query",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    MCP_SENSITIVE_SCALAR_ARG_CASES,
+    ids=[case.test_id for case in MCP_SENSITIVE_SCALAR_ARG_CASES],
+)
+def test_summarize_args_redacts_sensitive_scalar_args(
+    case: McpSensitiveScalarArgCase,
+) -> None:
+    """Sensitive MCP scalar arguments should be summarized by digest."""
+    from agentgrep.mcp.middleware import _summarize_args
+
+    summary = _summarize_args({case.key: case.value})
+
+    assert isinstance(summary[case.key], dict)
+    assert set(summary[case.key]) == {"len", "sha256_prefix"}
+    assert summary[case.key]["len"] == len(case.value)
+    assert case.value not in str(summary)
+
+
 def test_flatten_safe_attributes_keeps_redacted_mcp_args_safe() -> None:
     """MCP telemetry attributes should carry redacted shape metadata only."""
     import agentgrep._telemetry as telemetry
     from agentgrep.mcp.middleware import _summarize_args
 
-    source_path = "/home/d/.codex/history.json"
+    query = "agent:codex secret-query"
+    source_path = "/tmp/agentgrep/history.json"
     summary = _summarize_args(
         {
+            "query": query,
             "terms": ["secret-token"],
             "pattern": "another-secret",
             "source_path": source_path,
@@ -709,9 +762,11 @@ def test_flatten_safe_attributes_keeps_redacted_mcp_args_safe() -> None:
     attributes = telemetry.flatten_safe_attributes("agentgrep_mcp_args", summary)
 
     rendered = str(attributes)
+    assert "secret-query" not in rendered
     assert "secret-token" not in rendered
     assert "another-secret" not in rendered
     assert source_path not in rendered
+    assert attributes["agentgrep_mcp_args.query.len"] == len(query)
     assert attributes["agentgrep_mcp_args.terms.0.len"] == len("secret-token")
     assert attributes["agentgrep_mcp_args.pattern.len"] == len("another-secret")
     assert attributes["agentgrep_mcp_args.source_path.kind"] == "path"
@@ -920,6 +975,31 @@ async def test_mcp_tool_span_is_non_single_and_redacted(
     assert "secret-token" not in str([record.attributes for record in backend.log_records])
 
 
+async def test_mcp_validate_query_span_redacts_query_arg() -> None:
+    """``validate_query(query=...)`` should not export raw query text."""
+    from fastmcp import Client
+
+    import agentgrep._telemetry as telemetry
+    from agentgrep import mcp as agentgrep_mcp
+
+    query = "agent:codex secret-query"
+    backend = telemetry.InMemoryTelemetryBackend()
+    telemetry.configure_backend(backend)
+    remove_handler = telemetry.install_logging_exporter(backend)
+    try:
+        async with Client(agentgrep_mcp.build_mcp_server()) as client:
+            _ = await client.call_tool("validate_query", {"query": query})
+    finally:
+        remove_handler()
+        telemetry.configure_backend(None)
+
+    tool_span = next(span for span in backend.finished_spans if span.name == "agentgrep.mcp.tool")
+    assert "secret-query" not in str(tool_span.attributes)
+    assert "agentgrep_mcp_args.query" not in tool_span.attributes
+    assert tool_span.attributes["agentgrep_mcp_args.query.len"] == len(query)
+    assert "secret-query" not in str([record.attributes for record in backend.log_records])
+
+
 async def test_mcp_list_tools_gets_request_root() -> None:
     """MCP list operations should not rely on tool-only roots or logs."""
     from fastmcp import Client
@@ -1030,13 +1110,13 @@ def test_otel_log_record_sanitizes_absolute_paths() -> None:
     """Exported OTel logs should not carry absolute local source paths."""
     from agentgrep import _telemetry_otel
 
-    env_path = "/home/d/work/python/agentgrep/private-env"
-    override_path = "/home/d/.codex/private-config"
-    source_path = "/home/d/work/python/agentgrep/source.jsonl"
+    env_path = "/tmp/agentgrep/private-env"
+    override_path = "/tmp/agentgrep/private-config"
+    source_path = "/tmp/agentgrep/source.jsonl"
     record = logging.LogRecord(
         name="agentgrep.test",
         level=logging.INFO,
-        pathname="/home/d/work/python/agentgrep/src/agentgrep/example.py",
+        pathname="/tmp/agentgrep/src/agentgrep/example.py",
         lineno=12,
         msg="message",
         args=(),
@@ -1067,7 +1147,7 @@ def test_otel_log_record_sanitizes_absolute_paths() -> None:
     assert sanitized.__dict__["agentgrep_env_path_status"] == "not_found"
     assert sanitized.__dict__["agentgrep_override_path_status"] == "not_a_directory"
     assert sanitized.__dict__["agentgrep_path_kind"] == "session_file"
-    assert record.pathname == "/home/d/work/python/agentgrep/src/agentgrep/example.py"
+    assert record.pathname == "/tmp/agentgrep/src/agentgrep/example.py"
 
 
 def test_otel_backend_exports_logs_with_current_otel_span() -> None:
