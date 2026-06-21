@@ -220,8 +220,8 @@ def test_cli_acceptance_matrix_sets_candidate_env(
     assert [candidate_id for _command, candidate_id in observed] == list(expected_codes)
 
 
-def test_tui_acceptance_workload_exercises_tui_root_and_child_span() -> None:
-    """Acceptance should exercise an idle TUI root and lifecycle child span."""
+def test_tui_acceptance_workload_exercises_tui_root_and_child_spans() -> None:
+    """Acceptance should exercise idle TUI lifecycle and shutdown child spans."""
     command = otel_acceptance._tui_root_workload_command()
 
     assert command[:2] == [sys.executable, "-c"]
