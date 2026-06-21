@@ -931,6 +931,37 @@ def test_pytest_session_root_brackets_test_traces(monkeypatch: pytest.MonkeyPatc
     assert test_span.trace_id != session_span.trace_id
 
 
+class _ExplicitCase(t.NamedTuple):
+    """Parametrized case for explicit telemetry opt-in resolution."""
+
+    test_id: str
+    mode: str | None
+    env: dict[str, str]
+    expected_explicit: bool
+
+
+_EXPLICIT_CASES: tuple[_ExplicitCase, ...] = (
+    _ExplicitCase("passive-local", mode=None, env={}, expected_explicit=False),
+    _ExplicitCase("env-enabled", mode=None, env={"AGENTGREP_OTEL": "1"}, expected_explicit=True),
+    _ExplicitCase("env-live", mode=None, env={"AGENTGREP_OTEL": "live"}, expected_explicit=True),
+    _ExplicitCase("explicit-mode", mode="live", env={}, expected_explicit=True),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    _EXPLICIT_CASES,
+    ids=[case.test_id for case in _EXPLICIT_CASES],
+)
+def test_resolve_explicit_distinguishes_passive_local(case: _ExplicitCase) -> None:
+    """Only the auto-resolved local default with AGENTGREP_OTEL unset is passive."""
+    import agentgrep._telemetry as telemetry
+
+    resolved = telemetry.resolve_explicit(t.cast("t.Any", case.mode), case.env)
+
+    assert resolved is case.expected_explicit
+
+
 class _SpanStatusCase(t.NamedTuple):
     """Parametrized case for non-exception span status marking."""
 
