@@ -51,6 +51,14 @@ filtering, detail building, rendering, subprocess execution, and thread/async
 boundaries. Low-level keypresses, render frames, event-loop callbacks, and
 orphaned auto-instrumentation roots are not accepted signal.
 
+Native OpenTelemetry context is the source of truth for trace and span ids.
+The dependency-light facade mints placeholder ids and keeps a contextvar span
+stack so packaged installs never import the SDK; in live mode the OTel backend
+adopts the started span's real W3C ids back onto that state, so
+`current_trace_id` and trace-linked logs report ids that match Tempo, Loki, and
+the metric exemplars. The in-memory backend keeps the minted ids for offline
+deterministic tests.
+
 SQLite spans use a project connection factory for `sqlite3.Connection`
 shortcut methods such as `execute`, `executemany`, and `executescript`.
 The upstream SQLite DB-API instrumentation wraps cursor execution, but
