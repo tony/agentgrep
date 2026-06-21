@@ -141,7 +141,8 @@ Live acceptance must prove all four signals for the same debug session:
 - At least one checked trace contains `agentgrep.sqlite.*` spans.
 - Prometheus has fresh span, engine CPU-loop, SQLite, and benchmark
   subprocess metrics with `agentgrep_debug_session_id`.
-- Loki has no current-run agentgrep logs without trace and span identifiers.
+- Loki has current-run agentgrep logs selected through a query-stage JSON parse
+  and no selected logs without trace and span identifiers.
 - Pyroscope exposes the `agentgrep` service and the debug session label.
 
 Future instrumentation changes that add subprocesses, benchmark rows,

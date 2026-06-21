@@ -8,6 +8,7 @@ import pathlib
 import subprocess
 import sys
 import typing as t
+import urllib.parse
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 _SCRIPT = _REPO_ROOT / "scripts" / "otel_acceptance.py"
@@ -166,6 +167,52 @@ def test_tui_acceptance_workload_exercises_tui_root_and_child_span() -> None:
     assert "agentgrep.tui.search" in command[2]
     assert "ui_app.run_ui(" in command[2]
     assert 'initial_search_text="acceptance tui"' in command[2]
+
+
+def test_query_logs_filters_run_id_after_json_parse(monkeypatch: t.Any) -> None:
+    """Loki log checks should query run ids through a JSON parser stage."""
+    observed_urls: list[str] = []
+
+    def fake_http_json(url: str, **_kwargs: object) -> dict[str, object]:
+        observed_urls.append(url)
+        return {
+            "data": {
+                "result": [
+                    {
+                        "stream": {
+                            "service_name": "agentgrep",
+                            "vcs_ref_head_name": "otel-bootstrap",
+                        },
+                        "values": [
+                            [
+                                "1782000000000000000",
+                                json.dumps(
+                                    {
+                                        "agentgrep_debug_session_id": "run-123",
+                                        "trace_id": "trace",
+                                        "span_id": "span",
+                                    },
+                                ),
+                            ],
+                        ],
+                    },
+                ],
+            },
+        }
+
+    monkeypatch.setattr(otel_acceptance, "http_json", fake_http_json)
+
+    result = otel_acceptance.query_logs(
+        "run-123",
+        {"labels": {"vcs_ref_head_name": "otel-bootstrap"}},
+    )
+
+    parsed = urllib.parse.urlparse(observed_urls[0])
+    params = urllib.parse.parse_qs(parsed.query)
+    assert params["query"] == [
+        '{service_name="agentgrep"} | json | agentgrep_debug_session_id="run-123"',
+    ]
+    assert result["count"] == 1
 
 
 def test_lgtm_grafana_datasource_forwards_pyroscope_git_session() -> None:
