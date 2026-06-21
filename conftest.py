@@ -114,12 +114,13 @@ _DOCS_SUITE.register_evaluator("just-recipe", SphinxDoctestEvaluator(project_roo
 pytest_collect_file = _DOCS_SUITE.pytest_collect_file
 
 _AGENTGREP_OTEL_PYTEST_HANDLE: object | None = None
+_AGENTGREP_OTEL_PYTEST_SESSION: contextlib.AbstractContextManager[None] | None = None
 
 
 def pytest_sessionstart(session: pytest.Session) -> None:
-    """Configure OTel once for explicitly instrumented pytest runs."""
+    """Configure OTel and open the session root for instrumented runs."""
     del session
-    global _AGENTGREP_OTEL_PYTEST_HANDLE
+    global _AGENTGREP_OTEL_PYTEST_HANDLE, _AGENTGREP_OTEL_PYTEST_SESSION
     if "AGENTGREP_OTEL" not in os.environ:
         return
     from agentgrep import _telemetry
@@ -128,12 +129,19 @@ def pytest_sessionstart(session: pytest.Session) -> None:
         repo_root=_REPO_ROOT,
         service_name="agentgrep-pytest",
     )
+    session_span = _telemetry.root_span("agentgrep.pytest.session", agentgrep_surface="pytest")
+    session_span.__enter__()
+    _AGENTGREP_OTEL_PYTEST_SESSION = session_span
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
-    """Flush OTel after an explicitly instrumented pytest run."""
+    """Close the session root and flush OTel after an instrumented run."""
     del session, exitstatus
-    global _AGENTGREP_OTEL_PYTEST_HANDLE
+    global _AGENTGREP_OTEL_PYTEST_HANDLE, _AGENTGREP_OTEL_PYTEST_SESSION
+    session_span = _AGENTGREP_OTEL_PYTEST_SESSION
+    _AGENTGREP_OTEL_PYTEST_SESSION = None
+    if session_span is not None:
+        session_span.__exit__(None, None, None)
     handle = _AGENTGREP_OTEL_PYTEST_HANDLE
     _AGENTGREP_OTEL_PYTEST_HANDLE = None
     if handle is not None:
@@ -172,7 +180,7 @@ def _agentgrep_otel_pytest_item_span(item: object) -> cabc.Iterator[None]:
     if _telemetry.active_backend() is None:
         yield
         return
-    with _telemetry.span("agentgrep.pytest.test", **_agentgrep_pytest_span_attributes(item)):
+    with _telemetry.root_span("agentgrep.pytest.test", **_agentgrep_pytest_span_attributes(item)):
         yield
 
 
