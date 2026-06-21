@@ -8,7 +8,6 @@ own timing and error-handling middleware are wired alongside them from
 from __future__ import annotations
 
 import collections.abc as cabc
-import contextlib
 import hashlib
 import logging
 import pathlib
@@ -84,38 +83,6 @@ def _attach_otel_context(inbound: object | None) -> cabc.Callable[[], None]:
 
     token = otel_context.attach(t.cast("t.Any", inbound))
     return lambda: otel_context.detach(token)
-
-
-@contextlib.contextmanager
-def _native_server_span(
-    *,
-    name: str,
-    method: str,
-    component_type: str,
-    component_key: str,
-    tool_name: str | None = None,
-) -> cabc.Iterator[None]:
-    """Nest a FastMCP SERVER span carrying MCP and GenAI semantic conventions.
-
-    The span is a child of the agentgrep request/tool root, so it survives the
-    span filter and adds ``mcp.method.name``, ``gen_ai.tool.name``, and
-    ``mcp.session.id`` without taking over the trace. Raw arguments never reach
-    it; only the public tool name does.
-    """
-    try:
-        from fastmcp.server.telemetry import server_span
-    except Exception:
-        yield
-        return
-    with server_span(
-        name=name,
-        method=method,
-        server_name="agentgrep",
-        component_type=component_type,
-        component_key=component_key,
-        tool_name=tool_name,
-    ):
-        yield
 
 
 def _redact_digest(value: str) -> dict[str, t.Any]:
@@ -250,13 +217,7 @@ class AgentgrepTelemetryMiddleware(Middleware):
                 **attributes,
             ):
                 try:
-                    with _native_server_span(
-                        name=f"request {method}",
-                        method=method,
-                        component_type="request",
-                        component_key=method,
-                    ):
-                        result = await call_next(context)
+                    result = await call_next(context)
                 except Exception as exc:
                     duration_ms = (time.monotonic() - start) * 1000.0
                     _telemetry.set_span_attribute("agentgrep_outcome", "error")
@@ -339,14 +300,7 @@ class AgentgrepAuditMiddleware(Middleware):
 
         with _telemetry.span("mcp.server.tool", **span_attributes):
             try:
-                with _native_server_span(
-                    name=f"tool {tool_name}",
-                    method="tools/call",
-                    component_type="tool",
-                    component_key=tool_name,
-                    tool_name=tool_name,
-                ):
-                    result = await call_next(context)
+                result = await call_next(context)
             except Exception as exc:
                 duration_ms = (time.monotonic() - start) * 1000.0
                 _telemetry.set_span_attribute("agentgrep_outcome", "error")
