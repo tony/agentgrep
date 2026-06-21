@@ -133,8 +133,11 @@ work belongs to an active app trace.
 
 Engine scheduling and source scanning emit `agentgrep.otel.cpu_loops` metrics
 for source counts, submitted/completed sources, batches, emitted records, and
-records scanned. These metrics document CPU-impacting work and cost centers;
-they are observability signal, not a performance fix.
+records scanned. Engine CPU-loop metrics and top-level search/find spans carry
+`agentgrep_component=core` and `agentgrep_component_kind=in_process` so Grafana
+can filter core cost without modeling fake CLI-to-core service edges. These
+metrics document CPU-impacting work and cost centers; they are observability
+signal, not a performance fix.
 
 Inverted grep (`agentgrep grep --invert-match ...`) deliberately clears the
 positive text terms it sends to the engine and then applies line-level
@@ -207,7 +210,8 @@ Live acceptance must prove all four signals for the same debug session:
   `agentgrep.tui.shutdown` child spans even when the acceptance app exits
   without running a search.
 - Prometheus has fresh span, engine CPU-loop, SQLite, and benchmark
-  subprocess metrics with `agentgrep_debug_session_id`.
+  subprocess metrics with `agentgrep_debug_session_id`; engine CPU-loop
+  metrics must include the in-process core component labels.
 - Loki has current-run agentgrep logs selected through a query-stage JSON parse
   and no selected logs without trace and span identifiers.
 - Loki log checks reject selected records with JSON parser errors or body text
