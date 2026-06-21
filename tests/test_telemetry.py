@@ -1003,7 +1003,9 @@ def test_cli_parse_error_emits_non_single_trace_with_argparse_stderr(
     monkeypatch.setattr(telemetry, "setup", fake_setup)
 
     try:
-        exit_code = agentgrep.main(["grep", "--invert-match", "needle"])
+        with pytest.raises(SystemExit) as exc_info:
+            agentgrep.main(["grep", "--invert-match", "needle"])
+        exit_code = exc_info.value.code
     finally:
         telemetry.configure_backend(None)
 

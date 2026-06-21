@@ -520,6 +520,8 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
                         "agentgrep_exit_code": exit_code,
                     },
                 )
+                if exit_code != 0:
+                    raise parse_exit
                 return exit_code
             if parsed is None:
                 _telemetry.set_span_attribute("agentgrep_command", "help")

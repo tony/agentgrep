@@ -326,7 +326,8 @@ def test_query_logs_rejects_loki_json_parser_errors(monkeypatch: t.Any) -> None:
     except otel_acceptance.AcceptanceCheckError as error:
         assert "Loki JSON parser errors" in str(error)
     else:
-        raise AssertionError("query_logs accepted Loki parser errors")
+        message = "query_logs accepted Loki parser errors"
+        raise AssertionError(message)
 
 
 def test_query_logs_rejects_label_only_structure(monkeypatch: t.Any) -> None:
@@ -360,7 +361,8 @@ def test_query_logs_rejects_label_only_structure(monkeypatch: t.Any) -> None:
     except otel_acceptance.AcceptanceCheckError as error:
         assert "unstructured agentgrep log bodies" in str(error)
     else:
-        raise AssertionError("query_logs accepted label-only structure")
+        message = "query_logs accepted label-only structure"
+        raise AssertionError(message)
 
 
 def test_pyroscope_label_values_body_scopes_to_run_and_source_labels() -> None:
