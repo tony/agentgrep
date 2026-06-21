@@ -372,6 +372,37 @@ Documentary-only entries cover the legacy per-file JSON layout, config,
 auth (private credentials), snapshots, the repo cache, logs, and tool
 output.
 
+### VS Code (GitHub Copilot Chat)
+
+`observed_version`: ``VS Code GitHub Copilot Chat (chatSessions v3)``
+(observed 2026-06-21).
+
+VS Code's built-in Copilot Chat stores readable JSON transcripts under
+the workbench `User/` directory, covered across the `Code`,
+`Code - Insiders`, `VSCodium`, and `Code - OSS` editions:
+
+- `vscode.chat_sessions_json.v1` parses one session object per
+  `workspaceStorage/<hash>/chatSessions/<uuid>.json` (and the windowless
+  `globalStorage/emptyWindowChatSessions/*.json`). Each `requests[]` turn
+  yields a user prompt from `message.text` and an assistant record from
+  the no-`kind` `MarkdownString` response parts joined; tool names come
+  from `result.metadata.toolCallRounds[].toolCalls[].name`, and the
+  epoch-millisecond `timestamp` is normalized to ISO-8601. The sibling
+  `workspace.json` `folder` URI resolves the project `cwd`, mapping a
+  `vscode-remote://wsl+<distro>/<path>` remote to its Linux path.
+- `vscode.inline_history_sqlite.v1` reads the `inline-chat-history` key of
+  the global `state.vscdb` `ItemTable` — a JSON array of Ctrl+I
+  inline-edit prompts. Only that key is read, so the `secret://…` auth
+  keys in the same database are never enumerated.
+
+Discovery resolves `User/` directories per OS (Linux `~/.config/Code`,
+macOS `~/Library/Application Support/Code`, Windows `%APPDATA%/Code`) and,
+on WSL, also probes the Windows host mount under `/mnt/c/Users` because a
+WSL-remote workspace stores its chat client-side on Windows.
+`VSCODE_APPDATA` pins one `Roaming` directory and `AGENTGREP_WSL_USERS_ROOT`
+overrides the Windows users mount. See
+{doc}`adr/0009-cross-host-discovery` for the cross-host design.
+
 ## Adding or updating a store
 
 1. Edit `src/agentgrep/store_catalog.py`. Stamp `observed_version`

@@ -40,6 +40,7 @@ _GEMINI_OBSERVED_AT = datetime.date(2026, 6, 21)
 _CURSOR_CLI_OBSERVED_AT = datetime.date(2026, 6, 21)
 _CODEX_OBSERVED_AT = datetime.date(2026, 6, 21)
 _WINDSURF_OBSERVED_AT = datetime.date(2026, 6, 21)
+_VSCODE_OBSERVED_AT = datetime.date(2026, 6, 21)
 
 
 def gemini_project_hash(project_root: pathlib.Path) -> str:
@@ -4009,9 +4010,109 @@ _WINDSURF_STORES: tuple[StoreDescriptor, ...] = (
 )
 
 
+_VSCODE_STORES: tuple[StoreDescriptor, ...] = (
+    StoreDescriptor(
+        agent="vscode",
+        store_id="vscode.chat_sessions",
+        role=StoreRole.PRIMARY_CHAT,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern=("${HOME}/.config/Code/User/workspaceStorage/<hash>/chatSessions/<uuid>.json"),
+        platform_variants={
+            "darwin": (
+                "${HOME}/Library/Application Support/Code/User/workspaceStorage/"
+                "<hash>/chatSessions/<uuid>.json"
+            ),
+            "win32": "%APPDATA%/Code/User/workspaceStorage/<hash>/chatSessions/<uuid>.json",
+        },
+        env_overrides=("VSCODE_APPDATA", "AGENTGREP_WSL_USERS_ROOT"),
+        observed_version="VS Code GitHub Copilot Chat (chatSessions v3)",
+        observed_at=_VSCODE_OBSERVED_AT,
+        upstream_ref="agentgrep.parse_vscode_chat_session",
+        schema_notes=(
+            "GitHub Copilot Chat transcript, one JSON object per session under a "
+            "per-workspace `workspaceStorage/<hash>/chatSessions/` directory "
+            "(windowless sessions live in `globalStorage/emptyWindowChatSessions/`). "
+            "`requests[]` is the turn list: the user prompt is `message.text`; the "
+            "assistant reply is the response parts with no `kind` (bare "
+            "`MarkdownString`), joined; `result.metadata.toolCallRounds[].toolCalls[]"
+            ".name` names invoked tools; `timestamp` is epoch-ms. The sibling "
+            "`workspace.json` `folder` URI resolves the project cwd, including "
+            "`vscode-remote://wsl+<distro>/<path>` remotes. VS Code does not publish "
+            "a formal schema — agentgrep's parser is the reference implementation."
+        ),
+        sample_record=(
+            '{"sessionId":"...","requests":[{"message":{"text":"<redacted>"},'
+            '"response":[{"value":"<redacted>"}],"timestamp":1779999665000}]}'
+        ),
+        distinguishes_from=("vscode.inline_history", "cursor-ide.state_vscdb"),
+        search_notes=(
+            "The primary searchable VS Code store. Distinct from the Cursor IDE "
+            "fork's `state.vscdb` chat and from the inline-edit prompt history."
+        ),
+        search_by_default=True,
+        discovery=(
+            DiscoverySpec(
+                store="vscode.chat_sessions",
+                adapter_id="vscode.chat_sessions_json.v1",
+                path_kind="session_file",
+                source_kind="json",
+                root_key="vscode_workspace",
+                glob="*/chatSessions/*.json",
+            ),
+            DiscoverySpec(
+                store="vscode.chat_sessions",
+                adapter_id="vscode.chat_sessions_json.v1",
+                path_kind="session_file",
+                source_kind="json",
+                root_key="vscode_global",
+                glob="emptyWindowChatSessions/*.json",
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="vscode",
+        store_id="vscode.inline_history",
+        role=StoreRole.PROMPT_HISTORY,
+        format=StoreFormat.SQLITE,
+        path_pattern="${HOME}/.config/Code/User/globalStorage/state.vscdb",
+        platform_variants={
+            "darwin": ("${HOME}/Library/Application Support/Code/User/globalStorage/state.vscdb"),
+            "win32": "%APPDATA%/Code/User/globalStorage/state.vscdb",
+        },
+        env_overrides=("VSCODE_APPDATA", "AGENTGREP_WSL_USERS_ROOT"),
+        observed_version="VS Code GitHub Copilot Chat (inline-chat-history)",
+        observed_at=_VSCODE_OBSERVED_AT,
+        upstream_ref="agentgrep.parse_vscode_inline_history",
+        schema_notes=(
+            "The workbench `state.vscdb` `ItemTable` holds an `inline-chat-history` "
+            "key: a JSON array of the user's Ctrl+I inline-edit prompts. agentgrep "
+            "reads that key alone (token-filtered), so the `secret://...` auth keys "
+            "in the same database are never enumerated (see ADR 0001)."
+        ),
+        sample_record='inline-chat-history -> ["<redacted prompt>", "<redacted prompt>"]',
+        distinguishes_from=("vscode.chat_sessions",),
+        search_notes=(
+            "Inline-edit prompts only (no assistant text); complements the full "
+            "`vscode.chat_sessions` transcripts."
+        ),
+        search_by_default=True,
+        discovery=(
+            DiscoverySpec(
+                store="vscode.inline_history",
+                adapter_id="vscode.inline_history_sqlite.v1",
+                path_kind="sqlite_db",
+                source_kind="sqlite",
+                root_key="vscode_global",
+                files=("state.vscdb",),
+            ),
+        ),
+    ),
+)
+
+
 CATALOG = StoreCatalog(
-    catalog_version=29,
-    captured_at=_ANTIGRAVITY_OBSERVED_AT,
+    catalog_version=30,
+    captured_at=_VSCODE_OBSERVED_AT,
     stores=(
         *_CLAUDE_STORES,
         *_CURSOR_CLI_STORES,
@@ -4024,6 +4125,7 @@ CATALOG = StoreCatalog(
         *_PI_STORES,
         *_OPENCODE_STORES,
         *_WINDSURF_STORES,
+        *_VSCODE_STORES,
     ),
 )
 """The canonical agentgrep store catalogue.

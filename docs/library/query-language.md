@@ -66,7 +66,7 @@ predicates prune sources before any file is opened.
 
 | Field | Kind | Notes |
 |---|---|---|
-| `agent` | enum | One of `codex`, `claude`, `cursor-cli`, `cursor-ide`, `gemini`, `antigravity-cli`, `antigravity-ide`, `grok`, `pi`, `opencode` |
+| `agent` | enum | One of `codex`, `claude`, `cursor-cli`, `cursor-ide`, `gemini`, `antigravity-cli`, `antigravity-ide`, `grok`, `pi`, `opencode`, `vscode` |
 | `store` | string | Substring, or `*` / `?` wildcard, against the source's store name |
 | `adapter_id` | string | Substring or `*` / `?` wildcard; alias `adapter` |
 | `path` | path | Glob (with `*` / `?` / `[…]`, case-sensitive) or substring |

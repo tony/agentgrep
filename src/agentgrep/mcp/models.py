@@ -41,6 +41,7 @@ class SearchRecordModel(AgentGrepModel):
         "pi",
         "opencode",
         "windsurf",
+        "vscode",
     ]
     store: str
     adapter_id: str
@@ -82,6 +83,7 @@ class FindRecordModel(AgentGrepModel):
         "pi",
         "opencode",
         "windsurf",
+        "vscode",
     ]
     store: str
     adapter_id: str
@@ -130,6 +132,7 @@ class SourceRecordModel(AgentGrepModel):
         "pi",
         "opencode",
         "windsurf",
+        "vscode",
     ]
     store: str
     adapter_id: str
@@ -272,6 +275,7 @@ class CapabilitiesModel(AgentGrepModel):
             "pi",
             "opencode",
             "windsurf",
+            "vscode",
         ]
     ]
     search_scopes: list[SearchScopeName]
@@ -302,6 +306,7 @@ class StoreDescriptorModel(AgentGrepModel):
         "pi",
         "opencode",
         "windsurf",
+        "vscode",
     ]
     store_id: str
     role: str

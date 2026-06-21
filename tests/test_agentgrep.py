@@ -7836,6 +7836,232 @@ def test_parse_claude_task_json_returns_task_sample(tmp_path: pathlib.Path) -> N
     }
 
 
+def test_parse_vscode_chat_session_emits_prompt_and_assistant() -> None:
+    """VS Code chat parsing yields paired user/assistant records with tool metadata."""
+    from tests.conftest import fixture_path
+
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    path = fixture_path("vscode.chat_sessions", "example.json")
+    source = agentgrep.SourceHandle(
+        agent="vscode",
+        store="vscode.chat_sessions",
+        adapter_id="vscode.chat_sessions_json.v1",
+        path=path,
+        path_kind="session_file",
+        source_kind="json",
+        search_root=path.parent,
+        mtime_ns=0,
+    )
+
+    records = list(agentgrep.iter_source_records(source))
+
+    assert [(r.kind, r.role) for r in records] == [
+        ("prompt", "user"),
+        ("history", "assistant"),
+        ("prompt", "user"),
+        ("history", "assistant"),
+    ]
+    assert records[0].text == "Summarize the build pipeline in this repository"
+    # Assistant prose is the no-`kind` response parts joined; the
+    # toolInvocationSerialized part between them is skipped.
+    assert records[1].text == (
+        "The pipeline builds, then tests, then publishes. "
+        "See the workflow file for the exact steps."
+    )
+    assert records[1].metadata["tools"] == ["copilot_readFile"]
+    assert records[3].metadata["tools"] == ["copilot_searchWorkspace"]
+    assert all(r.session_id == "00000000-0000-4000-8000-000000000000" for r in records)
+    assert records[0].timestamp is not None
+
+
+def test_parse_vscode_chat_session_tolerates_empty_and_draft_turns(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Empty request lists, missing messages, and empty responses don't crash parsing."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    path = tmp_path / "draft.json"
+    _ = path.write_text(
+        json.dumps(
+            {
+                "sessionId": "sess-1",
+                "requests": [
+                    {"timestamp": 1779999665000},
+                    {
+                        "message": {"text": "only a prompt"},
+                        "response": [],
+                        "timestamp": 1779999666000,
+                    },
+                ],
+            },
+        ),
+        encoding="utf-8",
+    )
+    source = agentgrep.SourceHandle(
+        agent="vscode",
+        store="vscode.chat_sessions",
+        adapter_id="vscode.chat_sessions_json.v1",
+        path=path,
+        path_kind="session_file",
+        source_kind="json",
+        search_root=path.parent,
+        mtime_ns=0,
+    )
+
+    records = list(agentgrep.iter_source_records(source))
+
+    assert [(r.kind, r.text) for r in records] == [("prompt", "only a prompt")]
+
+
+def test_vscode_workspace_cwd_resolves_wsl_remote(tmp_path: pathlib.Path) -> None:
+    """A sibling workspace.json maps a WSL remote folder URI to the Linux path."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    workspace = tmp_path / "workspaceStorage" / "abc123"
+    sessions = workspace / "chatSessions"
+    sessions.mkdir(parents=True)
+    _ = (workspace / "workspace.json").write_text(
+        json.dumps({"folder": "vscode-remote://wsl+Ubuntu/home/u/work/proj"}),
+        encoding="utf-8",
+    )
+
+    assert agentgrep._vscode_workspace_cwd(sessions / "s.json") == "/home/u/work/proj"
+
+    # A windowless session has no sibling workspace.json -> no cwd.
+    lonely = tmp_path / "globalStorage" / "emptyWindowChatSessions" / "w.json"
+    lonely.parent.mkdir(parents=True)
+    assert agentgrep._vscode_workspace_cwd(lonely) is None
+
+
+@pytest.mark.parametrize(
+    ("uri", "expected"),
+    [
+        ("vscode-remote://wsl+Ubuntu/home/u/proj", "/home/u/proj"),
+        ("vscode-remote://wsl%2BUbuntu/home/u/proj", "/home/u/proj"),
+        ("file:///home/u/proj", "/home/u/proj"),
+        ("file:///home/u/with%20space", "/home/u/with space"),
+        ("vscode-remote://ssh-remote+host/srv/code", "/srv/code"),
+        ("untitled:Untitled-1", None),
+    ],
+)
+def test_vscode_uri_to_path_variants(uri: str, expected: str | None) -> None:
+    """Folder URIs map to local paths; non-file/remote schemes return None."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    assert agentgrep._vscode_uri_to_path(uri) == expected
+
+
+def test_discover_vscode_finds_workspace_chat_sessions(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Workspace chat transcripts under an edition's User dir are discovered."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    roaming = tmp_path / "Roaming"
+    monkeypatch.setenv("VSCODE_APPDATA", str(roaming))
+    session = roaming / "Code" / "User" / "workspaceStorage" / "hash1" / "chatSessions" / "s.json"
+    session.parent.mkdir(parents=True)
+    _ = session.write_text(
+        json.dumps({"sessionId": "x", "requests": []}),
+        encoding="utf-8",
+    )
+
+    sources = agentgrep.discover_sources(
+        home,
+        ("vscode",),
+        agentgrep.BackendSelection(None, None, None),
+    )
+
+    assert session in {s.path for s in sources}
+
+
+def test_discover_vscode_wsl_bridge_probes_windows_mount(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On WSL, discovery reaches Windows-host chat under the users mount root."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.delenv("VSCODE_APPDATA", raising=False)
+    # Force the WSL branch so the bridge is exercised on any host, and point
+    # the users-mount root at a fake Windows profile tree.
+    monkeypatch.setattr(agentgrep, "_is_wsl", lambda: True)
+    users_root = tmp_path / "mnt-c-users"
+    monkeypatch.setenv("AGENTGREP_WSL_USERS_ROOT", str(users_root))
+    session = (
+        users_root
+        / "winuser"
+        / "AppData"
+        / "Roaming"
+        / "Code"
+        / "User"
+        / "workspaceStorage"
+        / "h"
+        / "chatSessions"
+        / "s.json"
+    )
+    session.parent.mkdir(parents=True)
+    _ = session.write_text(
+        json.dumps({"sessionId": "x", "requests": []}),
+        encoding="utf-8",
+    )
+
+    sources = agentgrep.discover_sources(
+        home,
+        ("vscode",),
+        agentgrep.BackendSelection(None, None, None),
+    )
+
+    assert session in {s.path for s in sources}
+
+
+def test_vscode_inline_history_discovers_and_extracts_prompts(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The global state.vscdb inline-chat-history key yields one prompt per entry."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    roaming = tmp_path / "Roaming"
+    monkeypatch.setenv("VSCODE_APPDATA", str(roaming))
+    global_storage = roaming / "Code" / "User" / "globalStorage"
+    global_storage.mkdir(parents=True)
+    connection = sqlite3.connect(global_storage / "state.vscdb")
+    _ = connection.execute("CREATE TABLE ItemTable (key TEXT, value TEXT)")
+    _ = connection.execute(
+        "INSERT INTO ItemTable VALUES (?, ?)",
+        ("inline-chat-history", json.dumps(["rename this symbol", "add a docstring"])),
+    )
+    # An auth-shaped key in the same db must never be read.
+    _ = connection.execute(
+        "INSERT INTO ItemTable VALUES (?, ?)",
+        ("secret://github-copilot/token", "do-not-index"),
+    )
+    connection.commit()
+    connection.close()
+
+    sources = agentgrep.discover_sources(
+        home,
+        ("vscode",),
+        agentgrep.BackendSelection(None, None, None),
+    )
+    inline = [s for s in sources if s.adapter_id == "vscode.inline_history_sqlite.v1"]
+    assert len(inline) == 1
+
+    records = list(agentgrep.iter_source_records(inline[0]))
+    texts = [r.text for r in records]
+    assert texts == ["rename this symbol", "add a docstring"]
+    assert all(r.kind == "prompt" and r.role == "user" for r in records)
+    assert "do-not-index" not in " ".join(texts)
+
+
 def test_discover_remaining_claude_inventory_sources(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -24,6 +24,7 @@ AgentName = t.Literal[
     "grok",
     "pi",
     "opencode",
+    "vscode",
 ]
 AgentSelector = t.Literal[
     "codex",
@@ -36,6 +37,7 @@ AgentSelector = t.Literal[
     "grok",
     "pi",
     "opencode",
+    "vscode",
     "all",
 ]
 SearchScopeName = t.Literal["prompts", "conversations", "all"]
@@ -121,6 +123,8 @@ KNOWN_ADAPTERS: tuple[str, ...] = (
     "pi.sessions_jsonl.v1",
     "pi.context_mode_sqlite.v1",
     "opencode.db_sqlite.v1",
+    "vscode.chat_sessions_json.v1",
+    "vscode.inline_history_sqlite.v1",
 )
 READONLY_TAGS = {"readonly", "agentgrep"}
 RESOURCE_ANNOTATIONS = {"readOnlyHint": True, "idempotentHint": True}

@@ -1,0 +1,74 @@
+{
+  "version": 3,
+  "sessionId": "00000000-0000-4000-8000-000000000000",
+  "creationDate": 1779999660000,
+  "lastMessageDate": 1779999720000,
+  "isImported": false,
+  "initialLocation": "panel",
+  "requesterUsername": "sample-user",
+  "responderUsername": "GitHub Copilot",
+  "requests": [
+    {
+      "requestId": "request_0",
+      "agent": { "id": "github.copilot.default" },
+      "timestamp": 1779999665000,
+      "message": {
+        "text": "Summarize the build pipeline in this repository",
+        "parts": [
+          { "kind": "text", "text": "Summarize the build pipeline in this repository" }
+        ]
+      },
+      "response": [
+        {
+          "value": "The pipeline builds, then tests, then publishes. ",
+          "supportThemeIcons": false,
+          "supportHtml": false
+        },
+        {
+          "kind": "toolInvocationSerialized",
+          "toolId": "copilot_readFile",
+          "toolCallId": "tool_0"
+        },
+        {
+          "value": "See the workflow file for the exact steps.",
+          "supportThemeIcons": false,
+          "supportHtml": false
+        }
+      ],
+      "result": {
+        "metadata": {
+          "toolCallRounds": [
+            { "toolCalls": [{ "name": "copilot_readFile" }] }
+          ]
+        }
+      },
+      "isCanceled": false
+    },
+    {
+      "requestId": "request_1",
+      "agent": { "id": "github.copilot.default" },
+      "timestamp": 1779999710000,
+      "message": {
+        "text": "Now add a status badge to the README",
+        "parts": [
+          { "kind": "text", "text": "Now add a status badge to the README" }
+        ]
+      },
+      "response": [
+        {
+          "value": "Added a badge near the top of the README heading.",
+          "supportThemeIcons": false,
+          "supportHtml": false
+        }
+      ],
+      "result": {
+        "metadata": {
+          "toolCallRounds": [
+            { "toolCalls": [{ "name": "copilot_searchWorkspace" }] }
+          ]
+        }
+      },
+      "isCanceled": false
+    }
+  ]
+}

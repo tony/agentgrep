@@ -13,10 +13,10 @@ $ uv run agentgrep grep "cache" --agent codex
 ```
 
 Supported agents are `codex`, `claude`, `cursor-cli`, `cursor-ide`,
-`gemini`, `antigravity-cli`, `antigravity-ide`, `grok`, `pi`, and
-`opencode`. Omitting `--agent` searches all supported agents. Windsurf
-storage is documented but unsupported (its conversations are
-encrypted); see {doc}`/backends/unsupported/index`.
+`gemini`, `antigravity-cli`, `antigravity-ide`, `grok`, `pi`,
+`opencode`, and `vscode`. Omitting `--agent` searches all supported
+agents. Windsurf storage is documented but unsupported (its
+conversations are encrypted); see {doc}`/backends/unsupported/index`.
 
 ## Search scope
 
