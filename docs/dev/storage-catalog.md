@@ -297,9 +297,10 @@ the searchable store shapes:
   it is emitted as supplementary-chat content, parity with the Claude
   and Cursor CLI subagent stores.
 
-Documentary-only entries cover events, summaries, memory, logs,
-worktrees, and config — all catalogued with `search_by_default=False`
-or deferred.
+The `grok.plans` row covers per-session `plan.md` plan-mode Markdown,
+parsed inspectably (opt-in) like `claude.plans`. Documentary-only
+entries cover events, summaries, memory, logs, worktrees, and config —
+all catalogued with `search_by_default=False` or deferred.
 
 ### Pi
 

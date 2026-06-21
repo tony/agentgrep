@@ -72,3 +72,10 @@ SQLite with FTS5. Table `session_docs`:
 
 agentgrep converts `updated_at` to ISO-8601 for timestamp
 consistency with other adapters.
+
+### grok.plans
+
+Per-session plan-mode Markdown at
+`sessions/<project>/<session>/plan.md` — the agent's working plan.
+Inspectable (opt-in), parity with `claude.plans` and
+`cursor-cli.plans`; not searched by default.

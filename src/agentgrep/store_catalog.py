@@ -3135,6 +3135,36 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         schema_notes="TOML configuration file.",
         search_by_default=False,
     ),
+    StoreDescriptor(
+        agent="grok",
+        store_id="grok.plans",
+        role=StoreRole.PLAN,
+        format=StoreFormat.MARKDOWN_FRONTMATTER,
+        path_pattern=(
+            "${GROK_HOME or ${HOME}/.grok}/sessions/<url_encoded_project>/"
+            "<session_uuid>/plan.md"
+        ),
+        env_overrides=("GROK_HOME",),
+        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
+        observed_at=_GROK_OBSERVED_AT,
+        schema_notes=(
+            "Per-session plan-mode Markdown — the agent's working plan for the "
+            "session. Inspectable, parity with claude.plans and "
+            "cursor-cli.plans; not searched by default."
+        ),
+        coverage=StoreCoverage.INSPECTABLE,
+        search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="grok.plans",
+                adapter_id="grok.plans_text.v1",
+                path_kind="store_file",
+                source_kind="text",
+                home_subpath=("sessions",),
+                glob="plan.md",
+            ),
+        ),
+    ),
 )
 
 
@@ -3485,7 +3515,7 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
 
 
 CATALOG = StoreCatalog(
-    catalog_version=16,
+    catalog_version=17,
     captured_at=_ANTIGRAVITY_OBSERVED_AT,
     stores=(
         *_CLAUDE_STORES,
