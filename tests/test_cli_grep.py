@@ -457,9 +457,9 @@ def _fake_search_records(
     """Stub the search engine surface so dispatcher tests don't touch the FS.
 
     Patches both ``run_search_query`` (the eager list-return wrapper used
-    by --json / -c / -l / -L / --invert-match paths) and
-    ``iter_search_events`` (the streaming surface used by text and
-    NDJSON paths) so every dispatcher route is FS-isolated.
+    by --json / -c / -l / -L paths) and ``iter_search_events`` (the
+    streaming surface used by text and NDJSON paths) so every dispatcher
+    route is FS-isolated.
     """
 
     def _stub_list(
@@ -826,104 +826,84 @@ def test_grep_empty_pattern_exits_with_argparse_error(
     assert "Traceback" not in captured.err
 
 
-# ----- -v / --invert-match text output ------------------------------------
+# ----- -v / --invert-match rejection --------------------------------------
 
 
-class InvertMatchTextCase(t.NamedTuple):
-    """Parametrized case for text output under ``-v``."""
+class InvertMatchRefusedCase(t.NamedTuple):
+    """Parametrized case for unsupported ``-v`` variants."""
 
     test_id: str
-    args: agentgrep.GrepArgs
-    expected_stdout_lines: list[str]
+    argv: tuple[str, ...]
 
 
-INVERT_MATCH_TEXT_CASES: tuple[InvertMatchTextCase, ...] = (
-    InvertMatchTextCase(
-        "pipe-default-prefixes-path",
-        _make_grep_args(patterns=("foo",), invert_match=True, color_mode="never"),
-        ["/tmp/fake.jsonl:bar only"],
+INVERT_MATCH_REFUSED_CASES: tuple[InvertMatchRefusedCase, ...] = (
+    InvertMatchRefusedCase(
+        test_id="invert-alone",
+        argv=("grep", "-v", "bliss"),
     ),
-    InvertMatchTextCase(
-        "line-number",
-        _make_grep_args(
-            patterns=("foo",),
-            invert_match=True,
-            line_number=True,
-            color_mode="never",
-        ),
-        ["/tmp/fake.jsonl:2:bar only"],
+    InvertMatchRefusedCase(
+        test_id="invert-line-number",
+        argv=("grep", "-v", "-n", "bliss"),
     ),
-    InvertMatchTextCase(
-        "heading",
-        _make_grep_args(
-            patterns=("foo",),
-            invert_match=True,
-            heading=True,
-            color_mode="never",
-        ),
-        ["codex  /tmp/fake.jsonl", "bar only"],
+    InvertMatchRefusedCase(
+        test_id="invert-json",
+        argv=("grep", "-v", "--json", "bliss"),
+    ),
+    InvertMatchRefusedCase(
+        test_id="invert-vimgrep",
+        argv=("grep", "-v", "--vimgrep", "bliss"),
+    ),
+    InvertMatchRefusedCase(
+        test_id="invert-count",
+        argv=("grep", "-v", "-c", "bliss"),
+    ),
+    InvertMatchRefusedCase(
+        test_id="invert-files-with-matches",
+        argv=("grep", "-v", "-l", "bliss"),
+    ),
+    InvertMatchRefusedCase(
+        test_id="invert-only-matching",
+        argv=("grep", "-v", "-o", "bliss"),
     ),
 )
 
 
 @pytest.mark.parametrize(
     "case",
-    INVERT_MATCH_TEXT_CASES,
-    ids=[c.test_id for c in INVERT_MATCH_TEXT_CASES],
+    INVERT_MATCH_REFUSED_CASES,
+    ids=[c.test_id for c in INVERT_MATCH_REFUSED_CASES],
 )
-def test_run_grep_command_invert_match_text_output(
-    case: InvertMatchTextCase,
-    monkeypatch: pytest.MonkeyPatch,
+def test_grep_invert_match_is_refused(
+    case: InvertMatchRefusedCase,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """``-v`` emits non-matching lines for text output."""
-    _fake_search_records(
-        [_make_count_record(text="foo line\nbar only\nfoo again")],
-        monkeypatch,
-    )
-    exit_code = agentgrep.run_grep_command(case.args)
-    captured = capsys.readouterr()
-    assert exit_code == 0
-    actual_lines = [line for line in captured.out.splitlines() if line.strip()]
-    assert actual_lines == case.expected_stdout_lines
-
-
-def test_grep_invert_match_with_only_matching_is_refused(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """``-v -o`` is refused because inverted lines have no match substring."""
+    """``-v`` is refused until engine-level inversion is correct."""
     with pytest.raises(SystemExit) as exc_info:
-        _ = agentgrep.parse_args(["grep", "--invert-match", "--only-matching", "bliss"])
+        _ = agentgrep.parse_args(list(case.argv))
     assert exc_info.value.code == 2
     captured = capsys.readouterr()
-    assert "--invert-match cannot be combined with --only-matching" in captured.err
+    assert "--invert-match is not implemented yet" in captured.err
+    assert "https://github.com/tony/agentgrep/issues/8" in captured.err
+    assert "Traceback" not in captured.err
 
 
-def test_grep_invert_match_with_count_is_allowed() -> None:
-    """``-v -c`` still parses — that path honors inversion."""
-    args = agentgrep.parse_args(["grep", "-v", "-c", "bliss"])
-    assert args is not None
-    assert isinstance(args, agentgrep.GrepArgs)
-    assert args.invert_match is True
-
-
-def test_run_grep_command_invert_match_files_with_matches_filters_empty_records(
+def test_run_grep_command_invert_match_guard(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """``-l -v`` lists only records that contain a non-matching line."""
-    match_only = _make_count_record(text="foo one\nfoo two", name="match-only.jsonl")
-    inverted = _make_count_record(text="foo one\nbar two", name="inverted.jsonl")
-    _fake_search_records([match_only, inverted], monkeypatch)
+    """Direct calls also reject unsupported inverted grep."""
+    _fake_search_records([_make_count_record(text="foo one\nbar two")], monkeypatch)
     args = _make_grep_args(
         patterns=("foo",),
         invert_match=True,
-        files_with_matches=True,
+        color_mode="never",
     )
+
     exit_code = agentgrep.run_grep_command(args)
     captured = capsys.readouterr()
-    assert exit_code == 0
-    assert captured.out.splitlines() == ["/tmp/inverted.jsonl"]
+    assert exit_code == 2
+    assert captured.out == ""
+    assert "--invert-match is not implemented yet" in captured.err
 
 
 def test_grep_files_without_match_flag_is_rejected(

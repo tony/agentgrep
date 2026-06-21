@@ -100,13 +100,6 @@ only the deduplicated paths. `-c` emits `path:N` per matching
 record with the count of matching lines (or just `N` when exactly
 one record matched), matching `rg -c`.
 
-`-v` / `--invert-match` inverts the line-level text output: flat
-mode emits `path:text` for non-matching lines, `-n` keeps line
-numbers, `--heading` groups the non-matching lines under the record
-heading, `-l` lists records that contain at least one non-matching
-line, and `-c` counts non-matching lines. `-v -o` is refused because
-inverted lines do not have matched substrings to print.
-
 ## Live streaming
 
 `grep` consumes the {ref}`library-event-stream` directly — text and
@@ -114,7 +107,7 @@ NDJSON output emit each match as the engine finds it, then flush so
 your terminal sees rows live. On a slow store the first matches
 appear within milliseconds, not after the whole scan finishes.
 
-The eager output modes (`--json`, `-c`, `-l`, `-v`) buffer
+The eager output modes (`--json`, `-c`, `-l`) buffer
 because their output shape needs the final tally or cross-record
 deduplication.
 
@@ -201,14 +194,14 @@ agentgrep grep: error: pattern cannot be empty
 The check applies to every term — a valid pattern followed by an
 empty one (`agentgrep grep foo ''`) still fails.
 
-`-v -o` / `--invert-match --only-matching` is refused at parse
-time:
+`-v` / `--invert-match` is not implemented yet and is refused at
+parse time:
 
 ```console
-$ agentgrep grep -v -o bliss
+$ agentgrep grep -v bliss
 usage: agentgrep grep [...]
-agentgrep grep: error: --invert-match cannot be combined with
---only-matching
+agentgrep grep: error: --invert-match is not implemented yet (see
+https://github.com/tony/agentgrep/issues/8)
 ```
 
 (cli-grep-dedupe)=
