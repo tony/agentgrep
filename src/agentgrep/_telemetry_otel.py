@@ -102,13 +102,22 @@ class OtelTelemetryBackend:
 
     @contextlib.contextmanager
     def start_span(self, span: _telemetry._SpanState) -> cabc.Iterator[t.Any]:
-        """Start an OTel span."""
+        """Start an OTel span and adopt its native trace and span ids.
+
+        The facade mints placeholder ids; in live mode the OTel SDK owns the
+        real W3C ids, so the active span state mirrors them. ``parent_id`` is
+        already the parent's adopted span id because parents are started first.
+        """
         from opentelemetry import trace
+        from opentelemetry.trace import format_span_id, format_trace_id
 
         context = None
         if span.parent_id is None:
             context = trace.set_span_in_context(trace.INVALID_SPAN)
         with self._tracer.start_as_current_span(span.name, context=context) as otel_span:
+            span_context = otel_span.get_span_context()
+            span.trace_id = format_trace_id(span_context.trace_id)
+            span.span_id = format_span_id(span_context.span_id)
             for key, value in span.attributes.items():
                 if value is not None:
                     otel_span.set_attribute(key, value)
