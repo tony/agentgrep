@@ -137,10 +137,13 @@ emits `agentgrep.grep.candidate.count`, `agentgrep.grep.emitted.count`, and
 `agentgrep.grep.duration` metrics plus one structured completion log so Grafana
 can show the cost without logging raw patterns, argv, prompts, or paths.
 
-Each TUI launch emits one `agentgrep.tui.lifecycle` child span under
-`agentgrep.tui.session`. The span covers app construction and `app.run()`, so
-blank or idle sessions remain non-root-only without adding per-keypress,
-per-render, or per-record logging.
+Each TUI launch emits `agentgrep.tui.lifecycle` and
+`agentgrep.tui.shutdown` child spans under `agentgrep.tui.session`. The
+lifecycle span covers app construction and `app.run()`, while shutdown records
+the post-run cleanup boundary. That keeps blank or idle sessions non-root-only
+without adding per-keypress, per-render, or per-record logging. Normal unmount
+also asks Textual's worker manager to cancel active workers before timers are
+disarmed, which is a shutdown-only control-plane cost.
 
 Run-scoped metric labels increase local QA series count. That is accepted for
 this branch because the goal is to close observability blindspots. If the
@@ -190,8 +193,9 @@ Live acceptance must prove all four signals for the same debug session:
 - No current-run trace has child spans whose parent span id is absent from the
   retrieved trace.
 - At least one checked trace contains `agentgrep.sqlite.*` spans.
-- The TUI trace contains an `agentgrep.tui.lifecycle` child span even when the
-  acceptance app exits without running a search.
+- The TUI trace contains `agentgrep.tui.lifecycle` and
+  `agentgrep.tui.shutdown` child spans even when the acceptance app exits
+  without running a search.
 - Prometheus has fresh span, engine CPU-loop, SQLite, and benchmark
   subprocess metrics with `agentgrep_debug_session_id`.
 - Loki has current-run agentgrep logs selected through a query-stage JSON parse

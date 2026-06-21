@@ -670,6 +670,7 @@ def query_traces(run_id: str, vcs_identity: dict[str, dict[str, str]]) -> dict[s
         "agentgrep.benchmark.subprocess",
         "agentgrep.mcp.request",
         "agentgrep.tui.lifecycle",
+        "agentgrep.tui.shutdown",
     }
     missing_spans = sorted(required_spans - observed_span_names)
     if missing_spans:

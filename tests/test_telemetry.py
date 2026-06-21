@@ -495,6 +495,16 @@ def test_tui_session_emits_structured_trace_linked_log(
     )
     assert lifecycle_span.parent_id == tui_span.span_id
     assert lifecycle_span.trace_id == tui_span.trace_id
+    shutdown_span = next(
+        span for span in backend.finished_spans if span.name == "agentgrep.tui.shutdown"
+    )
+    assert shutdown_span.parent_id == tui_span.span_id
+    assert shutdown_span.trace_id == tui_span.trace_id
+    shutdown_log = next(
+        record for record in backend.log_records if record.message == "tui shutdown completed"
+    )
+    assert shutdown_log.trace_id == shutdown_span.trace_id
+    assert shutdown_log.span_id == shutdown_span.span_id
     assert tui_span.trace_id not in backend.single_root_trace_ids()
     assert "agentic signal" not in str(session_log.attributes)
 
