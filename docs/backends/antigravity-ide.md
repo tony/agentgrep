@@ -35,3 +35,10 @@ the primary conversation files.
 `brain/**/*.md` and `skills/**/*.md` are Markdown planning, memory, and
 instruction artifacts. They are safe to inventory, but they are not prompt
 history or chat transcripts and are not searched by default.
+
+### antigravity-ide.brain_resolved
+
+`brain/<uuid>/task.md.resolved` (plus numbered `.resolved.0..N`
+snapshots) is the expanded task Markdown. The `.resolved` suffix keeps
+it outside the `**/*.md` brain glob, so it is catalogued separately as
+inspectable plan text.

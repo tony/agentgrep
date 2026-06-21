@@ -157,6 +157,7 @@ ITER_SOURCE_RECORD_ADAPTERS: frozenset[str] = frozenset(
         "antigravity_cli.implicit_protobuf.v1",
         "antigravity_cli.transcript_jsonl.v1",
         "antigravity_ide.brain_text.v1",
+        "antigravity_ide.brain_resolved_text.v1",
         "antigravity_ide.conversations_protobuf.v1",
         "antigravity_ide.implicit_protobuf.v1",
         "antigravity_ide.skills_text.v1",
@@ -4482,6 +4483,7 @@ def iter_source_records(
         "codex.skills_text.v1",
         "antigravity_cli.brain_text.v1",
         "antigravity_ide.brain_text.v1",
+        "antigravity_ide.brain_resolved_text.v1",
         "antigravity_ide.skills_text.v1",
     }:
         yield from parse_text_store_file(source)

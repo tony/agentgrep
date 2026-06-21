@@ -2988,6 +2988,33 @@ _ANTIGRAVITY_IDE_STORES: tuple[StoreDescriptor, ...] = (
     ),
     StoreDescriptor(
         agent="antigravity-ide",
+        store_id="antigravity-ide.brain_resolved",
+        role=StoreRole.PLAN,
+        format=StoreFormat.TEXT,
+        path_pattern="${HOME}/.gemini/antigravity/brain/<uuid>/task.md.resolved",
+        observed_version="Google Antigravity IDE (observed 2026-06-21)",
+        observed_at=_ANTIGRAVITY_OBSERVED_AT,
+        schema_notes=(
+            "Expanded task Markdown (`task.md.resolved` plus numbered "
+            "`.resolved.0..N` snapshots) that the `**/*.md` brain glob cannot "
+            "reach because of the `.resolved` suffix. Readable plan text, "
+            "inspectable opt-in."
+        ),
+        distinguishes_from=("antigravity-ide.brain",),
+        search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="antigravity-ide.brain_resolved",
+                adapter_id="antigravity_ide.brain_resolved_text.v1",
+                path_kind="store_file",
+                source_kind="text",
+                home_subpath=("brain",),
+                glob="**/task.md.resolved*",
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="antigravity-ide",
         store_id="antigravity-ide.skills",
         role=StoreRole.INSTRUCTION,
         format=StoreFormat.MARKDOWN_FRONTMATTER,
@@ -3663,7 +3690,7 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
 
 
 CATALOG = StoreCatalog(
-    catalog_version=22,
+    catalog_version=23,
     captured_at=_ANTIGRAVITY_OBSERVED_AT,
     stores=(
         *_CLAUDE_STORES,

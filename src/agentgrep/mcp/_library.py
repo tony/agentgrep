@@ -73,6 +73,7 @@ KNOWN_ADAPTERS: tuple[str, ...] = (
     "antigravity_cli.implicit_protobuf.v1",
     "antigravity_cli.transcript_jsonl.v1",
     "antigravity_ide.brain_text.v1",
+    "antigravity_ide.brain_resolved_text.v1",
     "antigravity_ide.conversations_protobuf.v1",
     "antigravity_ide.implicit_protobuf.v1",
     "antigravity_ide.skills_text.v1",
