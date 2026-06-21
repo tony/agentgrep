@@ -193,11 +193,16 @@ it does not prescribe a performance fix.
 For query-language profiler runs, `scripts/profile_engine.py` also attaches a
 safe strategy summary to the root span and emits one trace-linked structured
 log. The summary uses query length, a short query hash, source counts,
-strategy-group counts, `root_full_scan` counts, and dominant strategy fields;
-it never records raw query text, prompt text, argv, or local paths. Benchmark
-analysis warns when a query-language conversation profile payload contains
-`search.collect.source` spans using `root_full_scan`, so the blindspot remains
-visible in saved benchmark artifacts.
+strategy-group counts, `root_full_scan` counts, source ratios, record and
+match counters, aggregate `root_full_scan` duration, and dominant
+agent/store/adapter/strategy fields; it never records raw query text, prompt
+text, argv, or local paths. These fields are computed from profile samples
+already collected for the profiler payload, so they add one bounded
+aggregation pass and no extra source reads. Benchmark analysis warns when a
+query-language conversation profile payload contains `search.collect.source`
+spans using `root_full_scan`, including source-span counts, record/match
+counts, total duration, and the top contributing safe strategy label so the
+blindspot remains visible in saved benchmark artifacts.
 
 ## Acceptance evidence
 
