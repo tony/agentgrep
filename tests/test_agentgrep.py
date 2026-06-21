@@ -2229,7 +2229,7 @@ def test_cached_haystack_memoizes_per_record(
         call_count += 1
         return t.cast("str", real_build_search_haystack(rec))
 
-    monkeypatch.setattr(agentgrep, "build_search_haystack", counting_build)
+    monkeypatch.setattr(agentgrep._engine.orchestration, "build_search_haystack", counting_build)
     first = agentgrep.cached_haystack(record)
     second = agentgrep.cached_haystack(record)
     assert first == second
@@ -2267,7 +2267,7 @@ def test_compute_filter_matches_uses_cached_haystack(
         msg = "build_search_haystack must not run after cache is warm"
         raise RuntimeError(msg)
 
-    monkeypatch.setattr(agentgrep, "build_search_haystack", raise_if_called)
+    monkeypatch.setattr(agentgrep._engine.orchestration, "build_search_haystack", raise_if_called)
     matches = agentgrep.compute_filter_matches(records, "alpha")
     assert len(matches) == 3
 
@@ -5326,7 +5326,7 @@ def test_plan_search_sources_prefilters_one_root_once(
         calls.append(command)
         return subprocess.CompletedProcess(command, 0, f"{first}\n", "")
 
-    monkeypatch.setattr(agentgrep, "run_readonly_command", fake_run)
+    monkeypatch.setattr(agentgrep._engine.orchestration, "run_readonly_command", fake_run)
     planned = agentgrep.plan_search_sources(
         query,
         sources,

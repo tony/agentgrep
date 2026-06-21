@@ -102,12 +102,12 @@ def test_source_predicate_prunes_codex_sources_without_reading_records(
             yield claude_record
 
     monkeypatch.setattr(
-        agentgrep,
+        agentgrep._engine.orchestration,
         "discover_sources",
         lambda *args, **kwargs: [codex_source, claude_source],
     )
     monkeypatch.setattr(
-        agentgrep,
+        agentgrep._engine.orchestration,
         "plan_search_sources",
         lambda query, sources, backends, **kwargs: list(sources),
     )
@@ -159,12 +159,12 @@ def test_record_predicate_filters_after_source_predicate(
         yield from (matching, non_matching)
 
     monkeypatch.setattr(
-        agentgrep,
+        agentgrep._engine.orchestration,
         "discover_sources",
         lambda *args, **kwargs: [codex_source, claude_source],
     )
     monkeypatch.setattr(
-        agentgrep,
+        agentgrep._engine.orchestration,
         "plan_search_sources",
         lambda query, sources, backends, **kwargs: list(sources),
     )
@@ -293,12 +293,12 @@ def test_search_emits_every_or_branch_match(
         yield from records
 
     monkeypatch.setattr(
-        agentgrep,
+        agentgrep._engine.orchestration,
         "discover_sources",
         lambda *args, **kwargs: [source],
     )
     monkeypatch.setattr(
-        agentgrep,
+        agentgrep._engine.orchestration,
         "plan_search_sources",
         lambda query, sources, backends, **kwargs: list(sources),
     )
@@ -350,12 +350,12 @@ def test_text_matches_finds_needle_in_model_and_path(
         yield record
 
     monkeypatch.setattr(
-        agentgrep,
+        agentgrep._engine.orchestration,
         "discover_sources",
         lambda *args, **kwargs: [source],
     )
     monkeypatch.setattr(
-        agentgrep,
+        agentgrep._engine.orchestration,
         "plan_search_sources",
         lambda query, sources, backends, **kwargs: list(sources),
     )
@@ -467,12 +467,12 @@ def test_engine_routes_query_through_predicates(
             yield record
 
     monkeypatch.setattr(
-        agentgrep,
+        agentgrep._engine.orchestration,
         "discover_sources",
         lambda *args, **kwargs: list(sources),
     )
     monkeypatch.setattr(
-        agentgrep,
+        agentgrep._engine.orchestration,
         "plan_search_sources",
         lambda query, sources, backends, **kwargs: list(sources),
     )
@@ -693,12 +693,12 @@ def test_eager_search_path_prunes_sources_before_reading(
         )
 
     monkeypatch.setattr(
-        agentgrep,
+        agentgrep._engine.orchestration,
         "discover_sources",
         lambda *args, **kwargs: list(sources),
     )
     monkeypatch.setattr(
-        agentgrep,
+        agentgrep._engine.orchestration,
         "plan_search_sources",
         lambda query, sources_, backends, **kwargs: list(sources_),
     )
@@ -841,9 +841,10 @@ def test_fast_entrypoints_request_metadata_free_discovery(
         calls.append(kwargs)
         return [source]
 
+    monkeypatch.setattr(agentgrep._engine.orchestration, "discover_sources", fake_discover_sources)
     monkeypatch.setattr(agentgrep, "discover_sources", fake_discover_sources)
     monkeypatch.setattr(
-        agentgrep,
+        agentgrep._engine.orchestration,
         "plan_search_sources",
         lambda query, sources, backends, **kwargs: list(sources),
     )
@@ -990,7 +991,7 @@ def test_search_discovery_pushes_scope_into_store_roles(
             for agent in agents
         ]
 
-    monkeypatch.setattr(agentgrep, "discover_sources", fake_discover_sources)
+    monkeypatch.setattr(agentgrep._engine.orchestration, "discover_sources", fake_discover_sources)
 
     query = agentgrep.SearchQuery(
         terms=("bliss",),
@@ -1380,12 +1381,12 @@ def test_compiled_none_falls_through_to_legacy_path(
     record = _make_record(agent="codex", text="bliss")
 
     monkeypatch.setattr(
-        agentgrep,
+        agentgrep._engine.orchestration,
         "discover_sources",
         lambda *args, **kwargs: [source],
     )
     monkeypatch.setattr(
-        agentgrep,
+        agentgrep._engine.orchestration,
         "plan_search_sources",
         lambda query, sources, backends, **kwargs: list(sources),
     )
