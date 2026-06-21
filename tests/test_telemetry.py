@@ -389,6 +389,12 @@ def test_tui_session_emits_structured_trace_linked_log(
     assert tui_span.trace_id != cli_span.trace_id
     assert session_log.trace_id == tui_span.trace_id
     assert session_log.span_id == tui_span.span_id
+    lifecycle_span = next(
+        span for span in backend.finished_spans if span.name == "agentgrep.tui.lifecycle"
+    )
+    assert lifecycle_span.parent_id == tui_span.span_id
+    assert lifecycle_span.trace_id == tui_span.trace_id
+    assert tui_span.trace_id not in backend.single_root_trace_ids()
     assert "agentic signal" not in str(session_log.attributes)
 
 
