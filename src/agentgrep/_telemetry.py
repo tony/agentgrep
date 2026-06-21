@@ -872,7 +872,7 @@ def _canonical_scp_like_git_url(candidate: str) -> str | None:
 def _strip_git_suffix(url: str) -> str:
     """Return ``url`` without the conventional trailing Git suffix."""
     stripped = url.rstrip("/")
-    return stripped[:-4] if stripped.endswith(".git") else stripped
+    return stripped.removesuffix(".git")
 
 
 def _repository_name_from_url(repository_url: str) -> str | None:

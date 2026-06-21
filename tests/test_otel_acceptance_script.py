@@ -10,6 +10,8 @@ import sys
 import typing as t
 import urllib.parse
 
+import pytest
+
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 _SCRIPT = _REPO_ROOT / "scripts" / "otel_acceptance.py"
 
@@ -329,16 +331,14 @@ def test_query_logs_rejects_loki_json_parser_errors(monkeypatch: t.Any) -> None:
 
     monkeypatch.setattr(otel_acceptance, "http_json", fake_http_json)
 
-    try:
+    with pytest.raises(
+        otel_acceptance.AcceptanceCheckError,
+        match="Loki JSON parser errors",
+    ):
         otel_acceptance.query_logs(
             "run-123",
             {"labels": {"vcs_ref_head_name": "otel-bootstrap"}},
         )
-    except otel_acceptance.AcceptanceCheckError as error:
-        assert "Loki JSON parser errors" in str(error)
-    else:
-        message = "query_logs accepted Loki parser errors"
-        raise AssertionError(message)
 
 
 def test_query_logs_rejects_label_only_structure(monkeypatch: t.Any) -> None:
@@ -364,16 +364,14 @@ def test_query_logs_rejects_label_only_structure(monkeypatch: t.Any) -> None:
 
     monkeypatch.setattr(otel_acceptance, "http_json", fake_http_json)
 
-    try:
+    with pytest.raises(
+        otel_acceptance.AcceptanceCheckError,
+        match="unstructured agentgrep log bodies",
+    ):
         otel_acceptance.query_logs(
             "run-123",
             {"labels": {"vcs_ref_head_name": "otel-bootstrap"}},
         )
-    except otel_acceptance.AcceptanceCheckError as error:
-        assert "unstructured agentgrep log bodies" in str(error)
-    else:
-        message = "query_logs accepted label-only structure"
-        raise AssertionError(message)
 
 
 def test_pyroscope_label_values_body_scopes_to_run_and_source_labels() -> None:
