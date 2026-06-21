@@ -73,9 +73,9 @@ except ImportError:
     # .JSONDecodeError; the runtime None check guards the absent case.
     _orjson = None  # ty: ignore[invalid-assignment]
 
-# Records, payloads, and shared vocabulary live in agentgrep.records (ADR 0008).
-# Structural typing shims live in agentgrep._types (ADR 0008).
-# Text-presentation helpers live in agentgrep._text (ADR 0008).
+# Records, payloads, and shared vocabulary live in agentgrep.records (ADR 0010).
+# Structural typing shims live in agentgrep._types (ADR 0010).
+# Text-presentation helpers live in agentgrep._text (ADR 0010).
 from agentgrep._text import (
     ANSI_CSI_RE,
     CLI_DESCRIPTION,

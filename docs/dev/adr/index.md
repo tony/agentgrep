@@ -17,4 +17,5 @@ multiple adapters or public payloads.
 0007-query-language-comparison-and-full-queryability
 0008-unsupported-obfuscated-backends
 0009-cross-host-discovery
+0010-module-boundaries-and-facade-re-export-contract
 ```
