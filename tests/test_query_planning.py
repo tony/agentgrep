@@ -8,6 +8,7 @@ import typing as t
 import pytest
 
 import agentgrep
+from agentgrep._engine import orchestration
 from agentgrep._engine.planning import (
     APPEND_ONLY_JSONL_ADAPTERS,
     RAW_TEXT_PREFILTER_ADAPTERS,
@@ -190,7 +191,7 @@ def test_plan_search_sources_delegates_to_physical_plan(
         assert control is not None
         return {matched.path}
 
-    monkeypatch.setattr(agentgrep, "grep_root_paths", grep_root_paths)
+    monkeypatch.setattr(orchestration, "grep_root_paths", grep_root_paths)
     query = _query()
     backends = agentgrep.BackendSelection(find_tool=None, grep_tool="rg", json_tool=None)
 
@@ -216,7 +217,7 @@ def test_compiled_record_predicate_skips_root_grep_prefilter(
         message = "root prefilter must not run for compiled record queries"
         raise AssertionError(message)
 
-    monkeypatch.setattr(agentgrep, "grep_root_paths", grep_root_paths)
+    monkeypatch.setattr(orchestration, "grep_root_paths", grep_root_paths)
     root = pathlib.Path("/tmp/project")
     source = _source(
         agent="codex",

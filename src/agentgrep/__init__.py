@@ -374,8 +374,6 @@ else:
     PrivatePathBase = type(pathlib.Path())
 
 
-
-
 def maybe_use_pydantic() -> tuple[
     t.Callable[[SearchRecord], dict[str, object]],
     t.Callable[[FindRecord], dict[str, object]],
