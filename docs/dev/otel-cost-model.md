@@ -112,6 +112,14 @@ available, exports OTLP spans/logs/metrics, and flushes providers at shutdown.
 The timeout is intentionally short so a missing collector does not break the
 app.
 
+The MCP stdio entrypoint also emits an `agentgrep.mcp.server` root with
+`agentgrep.mcp.server.lifecycle` and `agentgrep.mcp.flush` child spans. The
+flush span calls the active telemetry handle with a 2 second timeout so a very
+short stdio process can drain request and lifecycle spans before final provider
+shutdown. The final shutdown still performs the last drain for the flush span
+itself. Pyroscope profile samples still require enough runtime and CPU to be
+sampled; the short MCP smoke proves traces/logs/metrics, not profile density.
+
 OTel log export formats each exported application log as one bounded JSON body
 after redacting sensitive project extras. The cost is one small serialization
 per exported log record. This does not install console handlers or change
@@ -187,6 +195,8 @@ Live acceptance must prove all four signals for the same debug session:
   pytest.
 - Tempo has benchmark run roots, benchmark command/subprocess spans, and MCP
   request spans for the debug session.
+- Tempo has a short `agentgrep.mcp.server` root with lifecycle and flush child
+  spans for the debug session.
 - Tempo has one `agentgrep.cli.invocation` trace for each candidate-tagged
   short-lived CLI subprocess in the acceptance matrix.
 - No current-run trace has exactly one span.

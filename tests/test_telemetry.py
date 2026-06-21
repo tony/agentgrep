@@ -1137,6 +1137,77 @@ def test_mcp_main_uses_mcp_service_name(monkeypatch: pytest.MonkeyPatch) -> None
     assert setup_kwargs[0]["service_name"] == "agentgrep-mcp"
 
 
+def test_mcp_main_traces_lifecycle_and_flush(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Short MCP stdio processes should expose lifecycle and flush boundaries."""
+    import agentgrep._telemetry as telemetry
+    import agentgrep.mcp.server as mcp_server
+
+    class CountingBackend(telemetry.InMemoryTelemetryBackend):
+        """In-memory backend that exposes flush and shutdown calls."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.force_flush_calls: list[int] = []
+            self.shutdown_count = 0
+
+        def force_flush(self, timeout_millis: int = 30_000) -> bool:
+            self.force_flush_calls.append(timeout_millis)
+            return True
+
+        def shutdown(self) -> None:
+            self.shutdown_count += 1
+
+    class FakeServer:
+        def run(self) -> None:
+            run_calls.append("run")
+
+    backend = CountingBackend()
+    run_calls: list[str] = []
+
+    def fake_setup(**_kwargs: object) -> telemetry.TelemetryHandle:
+        telemetry.configure_backend(backend)
+        remove_handler = telemetry.install_logging_exporter(backend)
+        return telemetry.TelemetryHandle(
+            mode="test",
+            backend=backend,
+            _remove_logging=remove_handler,
+        )
+
+    monkeypatch.setattr(telemetry, "setup", fake_setup)
+    monkeypatch.setattr(mcp_server, "build_mcp_server", lambda: FakeServer())
+
+    try:
+        assert mcp_server.main() == 0
+    finally:
+        telemetry.configure_backend(None)
+
+    assert run_calls == ["run"]
+    assert backend.force_flush_calls == [2_000]
+    assert backend.shutdown_count == 1
+    server_span = next(
+        span for span in backend.finished_spans if span.name == "agentgrep.mcp.server"
+    )
+    lifecycle_span = next(
+        span for span in backend.finished_spans if span.name == "agentgrep.mcp.server.lifecycle"
+    )
+    flush_span = next(span for span in backend.finished_spans if span.name == "agentgrep.mcp.flush")
+    assert server_span.parent_id is None
+    assert lifecycle_span.parent_id == server_span.span_id
+    assert flush_span.parent_id == server_span.span_id
+    assert server_span.trace_id not in backend.single_root_trace_ids()
+    flush_log = next(
+        record for record in backend.log_records if record.message == "mcp telemetry flushed"
+    )
+    complete_log = next(
+        record for record in backend.log_records if record.message == "mcp server completed"
+    )
+    assert flush_log.trace_id == flush_span.trace_id
+    assert flush_log.span_id == flush_span.span_id
+    assert complete_log.trace_id == server_span.trace_id
+    assert complete_log.span_id == server_span.span_id
+    assert flush_log.attributes["agentgrep_mcp_flush_ok"] is True
+
+
 async def test_mcp_tool_span_is_non_single_and_redacted(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
