@@ -348,6 +348,13 @@ prefilter. An absolute `OPENCODE_DB` value is discovered as that exact
 file, so channel installs are reachable by pointing `OPENCODE_DB` at
 their `opencode-<channel>.db`.
 
+OpenCode's unreleased v2 event-sourced tables (`session_input`,
+`session_message`, `event`/`event_sequence`, `todo`) share the same
+`opencode.db` file but are empty beta state on stable installs — the
+canonical transcript stays in `session`/`message`/`part` — so they are
+not searched. The secret-bearing `account`/`credential` tables are
+present but never enumerated.
+
 Documentary-only entries cover the legacy per-file JSON layout, config,
 auth (private credentials), snapshots, the repo cache, logs, and tool
 output.

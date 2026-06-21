@@ -3318,7 +3318,14 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
             "`reasoning` -> `text`, `subtask` -> `prompt`. A conversation turn "
             "is reconstructed by joining part -> message -> session. Channel "
             "installs use `opencode-<channel>.db`; `OPENCODE_DB` overrides the "
-            "path (also `:memory:`/absolute)."
+            "path (also `:memory:`/absolute). The same file also carries the "
+            "unreleased v2 event-sourced tables `session_input`, "
+            "`session_message`, `event`/`event_sequence`, and `todo`; in stable "
+            "installs these are empty beta state, the canonical transcript "
+            "staying in `session`/`message`/`part`, so they are not searched. "
+            "Secret-bearing `account`, `account_state`, `control_account`, and "
+            "`credential` tables are present but never enumerated — the adapter "
+            "reads only text-bearing `part` rows."
         ),
         sample_record=(
             'part.data: {"type":"text","text":"<redacted>",'
