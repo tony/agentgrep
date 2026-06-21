@@ -62,12 +62,15 @@ endpoints must not change CLI, TUI, MCP, pytest, or profiler correctness.
 - `scripts/benchmark.py run ...` for benchmark harness roots, command spans,
   subprocess spans, and benchmark subprocess metrics.
 - a short Python `-c` TUI smoke that fakes the blocking Textual app while
-  exporting an `agentgrep.tui.session` root and lifecycle child span.
-- `python -m pytest tests/test_agentgrep.py::test_streaming_ui_app_mounts_cleanly`
-  for a traced direct Textual `run_test()` path.
-- `python -m pytest
-  tests/test_agentgrep_mcp.py::test_mcp_lists_tools_resources_prompts_and_templates`
-  for FastMCP request spans under a pytest item root.
+  exporting an `agentgrep.tui.session` root with lifecycle and shutdown child
+  spans.
+- a short Python `-c` MCP smoke that fakes `FastMCP.run()` while exporting an
+  `agentgrep.mcp.server` root with lifecycle and flush child spans.
+- one `python -m pytest ...` subprocess that runs
+  `tests/test_agentgrep.py::test_streaming_ui_app_mounts_cleanly` for a traced
+  direct Textual `run_test()` path and
+  `tests/test_agentgrep_mcp.py::test_mcp_lists_tools_resources_prompts_and_templates`
+  for FastMCP request spans under pytest item roots.
 
 The pytest documentation harness also runs subprocesses:
 
@@ -165,6 +168,12 @@ Explicitly instrumented pytest runs add low-cardinality xdist context to
 `agentgrep.pytest.test` and `agentgrep.pytest.call` spans when xdist metadata is
 present: worker id, whether xdist is active, and the distribution mode. Default
 pytest remains offline and uninstrumented unless `AGENTGREP_OTEL` is set.
+Each pytest worker is its own process and emits its own roots under the shared
+debug session; agentgrep does not stitch cross-worker parent spans together.
+Ordinary test subprocesses are not monkeypatched globally. They either run a
+telemetry-enabled agentgrep entrypoint themselves, or they stay visible only as
+part of the parent pytest item unless a focused harness such as the
+documentation plugin wraps the subprocess call.
 
 ## Benchmark interpretation
 
