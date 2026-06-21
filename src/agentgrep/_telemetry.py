@@ -42,7 +42,6 @@ type TelemetryAttributes = dict[str, TelemetryAttribute]
 APP_ROOT_SPAN_NAMES: frozenset[str] = frozenset(
     {
         "agentgrep.cli.invocation",
-        "agentgrep.cli.interactive_session",
         "agentgrep.mcp.server",
         "agentgrep.tui.session",
         "agentgrep.mcp.request",
