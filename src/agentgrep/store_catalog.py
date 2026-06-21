@@ -33,7 +33,7 @@ OBSERVED_AT = datetime.date(2026, 5, 17)
 _GROK_OBSERVED_AT = datetime.date(2026, 6, 21)
 _CLAUDE_HISTORY_OBSERVED_AT = datetime.date(2026, 5, 29)
 _CURSOR_CONFIG_OBSERVED_AT = datetime.date(2026, 5, 30)
-_PI_OBSERVED_AT = datetime.date(2026, 5, 30)
+_PI_OBSERVED_AT = datetime.date(2026, 6, 21)
 _OPENCODE_OBSERVED_AT = datetime.date(2026, 6, 21)
 _ANTIGRAVITY_OBSERVED_AT = datetime.date(2026, 6, 14)
 
@@ -3071,11 +3071,11 @@ _PI_STORES: tuple[StoreDescriptor, ...] = (
             "--<encoded_cwd>--/<ts>_<session_uuid>.jsonl"
         ),
         env_overrides=("PI_CODING_AGENT_DIR", "PI_CODING_AGENT_SESSION_DIR"),
-        observed_version="pi v0.78.0 (observed 2026-05-30)",
+        observed_version="pi v0.79.9 (observed 2026-06-21)",
         observed_at=_PI_OBSERVED_AT,
         upstream_ref=(
-            "github.com/earendil-works/pi@v0.78.0/packages/coding-agent/"
-            "src/core/session-manager.ts#L51-L54"
+            "github.com/earendil-works/pi@v0.79.9/packages/coding-agent/"
+            "src/core/session-manager.ts#L24-L31"
         ),
         schema_notes=(
             "Append-only JSONL transcript, one file per session, grouped by "
@@ -3130,7 +3130,7 @@ _PI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/settings.json",
         env_overrides=("PI_CODING_AGENT_DIR",),
-        observed_version="pi v0.78.0 (observed 2026-05-30)",
+        observed_version="pi v0.79.9 (observed 2026-06-21)",
         observed_at=_PI_OBSERVED_AT,
         schema_notes=(
             "User preferences: selected models, themes, installed extension "
@@ -3146,7 +3146,7 @@ _PI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/auth.json",
         env_overrides=("PI_CODING_AGENT_DIR",),
-        observed_version="pi v0.78.0 (observed 2026-05-30)",
+        observed_version="pi v0.79.9 (observed 2026-06-21)",
         observed_at=_PI_OBSERVED_AT,
         schema_notes="Provider API credentials. Documented but never enumerated.",
         coverage=StoreCoverage.PRIVATE,
@@ -3159,7 +3159,7 @@ _PI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/models.json",
         env_overrides=("PI_CODING_AGENT_DIR",),
-        observed_version="pi v0.78.0 (observed 2026-05-30)",
+        observed_version="pi v0.79.9 (observed 2026-06-21)",
         observed_at=_PI_OBSERVED_AT,
         schema_notes=(
             "Custom model definitions and provider overrides. Created only "
@@ -3174,7 +3174,7 @@ _PI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/themes/<theme>.json",
         env_overrides=("PI_CODING_AGENT_DIR",),
-        observed_version="pi v0.78.0 (observed 2026-05-30)",
+        observed_version="pi v0.79.9 (observed 2026-06-21)",
         observed_at=_PI_OBSERVED_AT,
         schema_notes="User-defined TUI colour schemes. Created only when the user adds themes.",
         search_by_default=False,
@@ -3186,7 +3186,7 @@ _PI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/tools/<tool>",
         env_overrides=("PI_CODING_AGENT_DIR",),
-        observed_version="pi v0.78.0 (observed 2026-05-30)",
+        observed_version="pi v0.79.9 (observed 2026-06-21)",
         observed_at=_PI_OBSERVED_AT,
         schema_notes="Directory of user-authored custom tool scripts. Created on demand.",
         search_by_default=False,
@@ -3198,7 +3198,7 @@ _PI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/bin/<binary>",
         env_overrides=("PI_CODING_AGENT_DIR",),
-        observed_version="pi v0.78.0 (observed 2026-05-30)",
+        observed_version="pi v0.79.9 (observed 2026-06-21)",
         observed_at=_PI_OBSERVED_AT,
         schema_notes="Managed binaries (e.g. `fd`, `rg`) pi downloads for its own use.",
         search_by_default=False,
@@ -3210,7 +3210,7 @@ _PI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.MARKDOWN_FRONTMATTER,
         path_pattern="${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/prompts/<prompt>.md",
         env_overrides=("PI_CODING_AGENT_DIR",),
-        observed_version="pi v0.78.0 (observed 2026-05-30)",
+        observed_version="pi v0.79.9 (observed 2026-06-21)",
         observed_at=_PI_OBSERVED_AT,
         schema_notes=(
             "User-authored Markdown prompt templates, not conversation history. Created on demand."
@@ -3224,7 +3224,7 @@ _PI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/pi-debug.log",
         env_overrides=("PI_CODING_AGENT_DIR",),
-        observed_version="pi v0.78.0 (observed 2026-05-30)",
+        observed_version="pi v0.79.9 (observed 2026-06-21)",
         observed_at=_PI_OBSERVED_AT,
         schema_notes="Runtime diagnostics log. Written only when debug logging is enabled.",
         search_by_default=False,
@@ -3236,7 +3236,7 @@ _PI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/npm/",
         env_overrides=("PI_CODING_AGENT_DIR",),
-        observed_version="pi v0.78.0 (observed 2026-05-30)",
+        observed_version="pi v0.79.9 (observed 2026-06-21)",
         observed_at=_PI_OBSERVED_AT,
         schema_notes=(
             "Managed npm extension install root: `package.json`, "

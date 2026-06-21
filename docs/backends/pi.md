@@ -4,7 +4,7 @@
 
 Base path: `~/.pi/agent` (env override: `PI_CODING_AGENT_DIR`).
 
-`observed_version`: `pi v0.78.0` (observed 2026-05-30).
+`observed_version`: `pi v0.79.9` (observed 2026-06-21).
 
 pi (the earendil-works "Pi Agent Harness") stores each conversation as
 one append-only JSONL file under `~/.pi/agent/sessions/`, grouped by

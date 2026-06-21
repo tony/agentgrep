@@ -296,7 +296,7 @@ or deferred.
 
 ### Pi
 
-`observed_version`: ``pi v0.78.0`` (observed 2026-05-30).
+`observed_version`: ``pi v0.79.9`` (observed 2026-06-21).
 
 Pi (earendil-works) stores each conversation as one append-only JSONL
 file under `${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/sessions/`,
