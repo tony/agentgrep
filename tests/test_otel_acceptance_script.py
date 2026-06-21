@@ -470,15 +470,47 @@ def test_lgtm_grafana_datasource_forwards_pyroscope_git_session() -> None:
     assert "keepCookies: [pyroscope_git_session]" in content
 
 
-def test_lgtm_grafana_datasource_links_traces_to_metrics_and_profiles() -> None:
-    """The Tempo datasource must drill out to Prometheus metrics and Pyroscope profiles."""
+class _DatasourceLinkCase(t.NamedTuple):
+    """Parametrized case for a Grafana datasource cross-link."""
+
+    test_id: str
+    source: str
+    field: str
+    target: str
+    profile_type_prefix: str | None
+
+
+_DATASOURCE_LINK_CASES: tuple[_DatasourceLinkCase, ...] = (
+    _DatasourceLinkCase("loki-logs-to-traces", "Loki", "derivedFields", "Tempo", None),
+    _DatasourceLinkCase("tempo-traces-to-logs", "Tempo", "tracesToLogsV2", "Loki", None),
+    _DatasourceLinkCase(
+        "tempo-traces-to-metrics", "Tempo", "tracesToMetricsV2", "Prometheus", None
+    ),
+    _DatasourceLinkCase(
+        "tempo-traces-to-profiles", "Tempo", "tracesToProfilesV2", "Pyroscope", "process_cpu:"
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    _DATASOURCE_LINK_CASES,
+    ids=[case.test_id for case in _DATASOURCE_LINK_CASES],
+)
+def test_lgtm_grafana_datasource_links_resolve_by_uid(case: _DatasourceLinkCase) -> None:
+    """Each datasource cross-link must target the uid of its named datasource."""
     import yaml
 
     content = otel_acceptance.LGTM_GRAFANA_DATASOURCES_CONFIG.read_text(encoding="utf-8")
-    datasources = yaml.safe_load(content)["datasources"]
-    tempo = next(source for source in datasources if source["name"] == "Tempo")
-    json_data = tempo["jsonData"]
-
-    assert json_data["tracesToMetricsV2"]["datasourceUid"] == "prometheus"
-    assert json_data["tracesToProfilesV2"]["datasourceUid"] == "pyroscope"
-    assert json_data["tracesToProfilesV2"]["profileTypeId"].startswith("process_cpu:")
+    by_name = {source["name"]: source for source in yaml.safe_load(content)["datasources"]}
+    link = by_name[case.source]["jsonData"][case.field]
+    if isinstance(link, list):
+        trace_field = next(field for field in link if field["name"] == "trace_id")
+        assert trace_field["matcherType"] == "label"
+        assert trace_field["matcherRegex"] == "trace_id"
+        link_uid = trace_field["datasourceUid"]
+    else:
+        link_uid = link["datasourceUid"]
+        if case.profile_type_prefix is not None:
+            assert link["profileTypeId"].startswith(case.profile_type_prefix)
+    assert link_uid == by_name[case.target]["uid"]
