@@ -162,7 +162,10 @@ lifecycle span covers app construction and `app.run()`, while shutdown records
 the post-run cleanup boundary. That keeps blank or idle sessions non-root-only
 without adding per-keypress, per-render, or per-record logging. Normal unmount
 also asks Textual's worker manager to cancel active workers before timers are
-disarmed, which is a shutdown-only control-plane cost.
+disarmed, which is a shutdown-only control-plane cost. Pressing `q` in an empty
+focused search/filter input emits one `agentgrep.tui.quit` child span and one
+structured log before exiting; non-empty inputs still edit normally and do not
+emit a keypress log.
 
 Run-scoped metric labels increase local QA series count. That is accepted for
 this branch because the goal is to close observability blindspots. If the

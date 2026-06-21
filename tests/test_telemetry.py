@@ -521,6 +521,57 @@ def test_tui_session_emits_structured_trace_linked_log(
     assert "agentic signal" not in str(session_log.attributes)
 
 
+def test_tui_empty_input_quit_emits_trace_linked_log(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Focused-input quit requests should be visible under the TUI trace."""
+    import agentgrep
+    import agentgrep._telemetry as telemetry
+
+    home = tmp_path / "home"
+    home.mkdir()
+    query = agentgrep.SearchQuery(
+        terms=(),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+    app = agentgrep.build_streaming_ui_app(home, query, control=agentgrep.SearchControl())
+    exits: list[bool] = []
+    monkeypatch.setattr(app, "exit", lambda: exits.append(True))
+
+    backend = telemetry.InMemoryTelemetryBackend()
+    telemetry.configure_backend(backend)
+    remove_handler = telemetry.install_logging_exporter(backend)
+    try:
+        with telemetry.root_span("agentgrep.tui.session", agentgrep_surface="tui"):
+            t.cast("t.Any", app)._quit_from_empty_input(input_id="search", key="q")
+    finally:
+        remove_handler()
+        telemetry.configure_backend(None)
+
+    assert exits == [True]
+    quit_span = next(span for span in backend.finished_spans if span.name == "agentgrep.tui.quit")
+    session_span = next(
+        span for span in backend.finished_spans if span.name == "agentgrep.tui.session"
+    )
+    assert quit_span.parent_id == session_span.span_id
+    assert quit_span.trace_id == session_span.trace_id
+    assert quit_span.attributes["agentgrep_operation"] == "tui.quit"
+    assert quit_span.attributes["agentgrep_tui_input_id"] == "search"
+    assert quit_span.attributes["agentgrep_tui_key"] == "q"
+    quit_log = next(
+        record for record in backend.log_records if record.message == "tui quit requested"
+    )
+    assert quit_log.trace_id == quit_span.trace_id
+    assert quit_log.span_id == quit_span.span_id
+    assert quit_log.attributes["agentgrep_outcome"] == "exit"
+
+
 def test_metrics_include_debug_session_when_otel_is_enabled() -> None:
     """OTel-on metrics carry run identity for Grafana QA."""
     import agentgrep._telemetry as telemetry
