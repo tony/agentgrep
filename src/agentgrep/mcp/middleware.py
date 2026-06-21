@@ -162,14 +162,14 @@ def _context_ids(context: MiddlewareContext[t.Any]) -> dict[str, object]:
 
 
 class AgentgrepTelemetryMiddleware(Middleware):
-    """Create app-level MCP request roots for observable FastMCP operations."""
+    """Open an app-level span per observable FastMCP request."""
 
     async def on_request(
         self,
         context: MiddlewareContext[t.Any],
         call_next: t.Callable[[MiddlewareContext[t.Any]], t.Awaitable[t.Any]],
     ) -> t.Any:
-        """Wrap MCP requests that should appear as app-level roots."""
+        """Wrap an observable MCP request in its app-level span."""
         method = context.method or "unknown"
         if method == "initialize":
             return await call_next(context)
