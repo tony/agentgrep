@@ -203,6 +203,21 @@ def wait_for_lgtm(timeout: float) -> None:
     wait_for(lambda: http_text(_loki_url("/ready")), deadline, "loki")
 
 
+def _agentgrep_module_command(*args: str) -> list[str]:
+    """Return a Python-module agentgrep command."""
+    return [sys.executable, "-m", "agentgrep", *args]
+
+
+def _grep_parse_error_workload_command(run_id: str) -> list[str]:
+    """Return the grep command used to exercise traced parse errors."""
+    return _agentgrep_module_command("grep", "--invert-match", "--only-matching", run_id)
+
+
+def _grep_invert_workload_command(run_id: str) -> list[str]:
+    """Return the grep command used to exercise successful inverted output."""
+    return _agentgrep_module_command("grep", "--invert-match", run_id)
+
+
 def run_workloads(run_id: str) -> None:
     """Run smoke, CLI, profiler, and pytest workloads."""
     env = {
@@ -227,7 +242,7 @@ def run_workloads(run_id: str) -> None:
         check=True,
     )
     with tempfile.TemporaryDirectory(prefix="agentgrep-otel-home-") as temp_home:
-        marker = f"{run_id} prompt"
+        marker = f"{run_id} prompt\nacceptance invert line"
         session = (
             pathlib.Path(temp_home) / ".codex" / "sessions" / "2026" / "01" / "01" / "session.jsonl"
         )
@@ -277,14 +292,7 @@ def run_workloads(run_id: str) -> None:
             text=True,
         )
         parse_error = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "agentgrep",
-                "grep",
-                "--invert-match",
-                run_id,
-            ],
+            _grep_parse_error_workload_command(run_id),
             cwd=ROOT,
             env={**env, "HOME": temp_home},
             check=False,
@@ -294,6 +302,14 @@ def run_workloads(run_id: str) -> None:
         if parse_error.returncode != 2:
             message = f"parse-error workload exited {parse_error.returncode}: {parse_error.stderr}"
             raise AcceptanceCheckError(message)
+        subprocess.run(
+            _grep_invert_workload_command(run_id),
+            cwd=ROOT,
+            env={**env, "HOME": temp_home},
+            check=True,
+            capture_output=True,
+            text=True,
+        )
         subprocess.run(
             [
                 sys.executable,
