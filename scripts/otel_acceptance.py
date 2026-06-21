@@ -672,6 +672,8 @@ def query_logs(run_id: str, vcs_identity: dict[str, dict[str, str]]) -> dict[str
     data = http_json(_loki_url(f"/loki/api/v1/query_range?{query}"))
     linked = []
     unlinked = []
+    parser_errors = []
+    unstructured = []
     missing_vcs = []
     expected_vcs_labels = vcs_identity["labels"]
     payload = _dict_value(data, "data")
@@ -684,14 +686,27 @@ def query_logs(run_id: str, vcs_identity: dict[str, dict[str, str]]) -> dict[str
             missing_vcs.append(_selected_labels(labels, expected_vcs_labels))
             continue
         for value in _list_value(stream_dict, "values"):
+            body_fields = _loki_log_body_fields(value)
             fields = _loki_log_fields(labels, value)
             if fields.get("agentgrep_debug_session_id") != run_id:
                 continue
             rendered = json.dumps({"labels": fields, "value": value}, sort_keys=True)
+            if _loki_log_has_parser_error(fields):
+                parser_errors.append(rendered[:500])
+                continue
+            if not body_fields:
+                unstructured.append(rendered[:500])
+                continue
             if _loki_log_has_trace_link(fields, value):
                 linked.append(rendered[:500])
             else:
                 unlinked.append(rendered[:500])
+    if parser_errors:
+        message = f"Loki JSON parser errors found: {parser_errors[:5]}"
+        raise AcceptanceCheckError(message)
+    if unstructured:
+        message = f"unstructured agentgrep log bodies found: {unstructured[:5]}"
+        raise AcceptanceCheckError(message)
     if unlinked:
         message = f"unlinked agentgrep logs found: {unlinked[:5]}"
         raise AcceptanceCheckError(message)
@@ -715,13 +730,24 @@ def _loki_log_fields(
 ) -> dict[str, object]:
     """Return stream labels plus JSON fields parsed from a Loki value."""
     fields = dict(stream_labels)
+    fields.update(_loki_log_body_fields(value))
+    return fields
+
+
+def _loki_log_body_fields(value: object) -> dict[str, object]:
+    """Return structured JSON fields parsed from a Loki log body."""
     if not isinstance(value, list | tuple) or len(value) < 2 or not isinstance(value[1], str):
-        return fields
+        return {}
     with contextlib.suppress(json.JSONDecodeError):
         body = json.loads(value[1])
         if isinstance(body, dict):
-            fields.update(body)
-    return fields
+            return body
+    return {}
+
+
+def _loki_log_has_parser_error(fields: cabc.Mapping[str, object]) -> bool:
+    """Return whether Loki reported a JSON parser error for a selected log."""
+    return bool(fields.get("__error__") or fields.get("__error_details__"))
 
 
 def _loki_log_has_trace_link(fields: cabc.Mapping[str, object], value: object) -> bool:

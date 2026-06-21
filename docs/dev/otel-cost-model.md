@@ -95,6 +95,11 @@ available, exports OTLP spans/logs/metrics, and flushes providers at shutdown.
 The timeout is intentionally short so a missing collector does not break the
 app.
 
+OTel log export formats each exported application log as one bounded JSON body
+after redacting sensitive project extras. The cost is one small serialization
+per exported log record. This does not install console handlers or change
+packaged-user output; it makes Loki query-stage parsing reliable for local QA.
+
 SQLite and asyncio auto-instrumentation run only in local/debug/live modes.
 Project SQLite helper spans also wrap `sqlite3.Connection` shortcut methods so
 source-parser database work remains visible. The same shortcut wrapper emits
@@ -149,6 +154,8 @@ Live acceptance must prove all four signals for the same debug session:
   subprocess metrics with `agentgrep_debug_session_id`.
 - Loki has current-run agentgrep logs selected through a query-stage JSON parse
   and no selected logs without trace and span identifiers.
+- Loki log checks reject selected records with JSON parser errors or body text
+  that contributes no parsed structured fields.
 - Pyroscope exposes the `agentgrep` service and the debug session label.
 
 Future instrumentation changes that add subprocesses, benchmark rows,
