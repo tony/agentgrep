@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import collections.abc as cabc
 import logging
 import pathlib
 import time
@@ -65,6 +66,50 @@ def build_mcp_server() -> FastMCP:
     return mcp
 
 
+def _run_server_lifecycle(run: cabc.Callable[[], None]) -> None:
+    """Run ``run`` under the lifecycle span, recording the outcome on it.
+
+    The ok and error annotations stay inside the span context so a failure out
+    of ``run`` lands on ``agentgrep.mcp.server.lifecycle``, not its parent root.
+    """
+    started_at = time.monotonic()
+    with _telemetry.span(
+        "agentgrep.mcp.server.lifecycle",
+        agentgrep_surface="mcp",
+        agentgrep_operation="mcp.server.lifecycle",
+    ):
+        try:
+            run()
+        except BaseException as exc:
+            duration_ms = (time.monotonic() - started_at) * 1000.0
+            _telemetry.set_span_attribute("agentgrep_outcome", "error")
+            _telemetry.set_span_attribute("agentgrep_error_type", type(exc).__name__)
+            _telemetry.set_span_attribute("agentgrep_duration_ms", duration_ms)
+            logger.info(
+                "mcp server lifecycle failed",
+                extra={
+                    "agentgrep_surface": "mcp",
+                    "agentgrep_operation": "mcp.server.lifecycle",
+                    "agentgrep_outcome": "error",
+                    "agentgrep_error_type": type(exc).__name__,
+                    "agentgrep_duration_ms": duration_ms,
+                },
+            )
+            raise
+        duration_ms = (time.monotonic() - started_at) * 1000.0
+        _telemetry.set_span_attribute("agentgrep_outcome", "ok")
+        _telemetry.set_span_attribute("agentgrep_duration_ms", duration_ms)
+        logger.info(
+            "mcp server lifecycle completed",
+            extra={
+                "agentgrep_surface": "mcp",
+                "agentgrep_operation": "mcp.server.lifecycle",
+                "agentgrep_outcome": "ok",
+                "agentgrep_duration_ms": duration_ms,
+            },
+        )
+
+
 def main() -> int:
     """Run the MCP server over stdio."""
     telemetry = _telemetry.setup(
@@ -85,45 +130,7 @@ def main() -> int:
                     "agentgrep_operation": "mcp.server",
                 },
             )
-            lifecycle_started_at = time.monotonic()
-            try:
-                with _telemetry.span(
-                    "agentgrep.mcp.server.lifecycle",
-                    agentgrep_surface="mcp",
-                    agentgrep_operation="mcp.server.lifecycle",
-                ):
-                    build_mcp_server().run()
-                    lifecycle_duration_ms = (time.monotonic() - lifecycle_started_at) * 1000.0
-                    _telemetry.set_span_attribute("agentgrep_outcome", "ok")
-                    _telemetry.set_span_attribute(
-                        "agentgrep_duration_ms",
-                        lifecycle_duration_ms,
-                    )
-                    logger.info(
-                        "mcp server lifecycle completed",
-                        extra={
-                            "agentgrep_surface": "mcp",
-                            "agentgrep_operation": "mcp.server.lifecycle",
-                            "agentgrep_outcome": "ok",
-                            "agentgrep_duration_ms": lifecycle_duration_ms,
-                        },
-                    )
-            except BaseException as exc:
-                duration_ms = (time.monotonic() - lifecycle_started_at) * 1000.0
-                _telemetry.set_span_attribute("agentgrep_outcome", "error")
-                _telemetry.set_span_attribute("agentgrep_error_type", type(exc).__name__)
-                _telemetry.set_span_attribute("agentgrep_duration_ms", duration_ms)
-                logger.info(
-                    "mcp server lifecycle failed",
-                    extra={
-                        "agentgrep_surface": "mcp",
-                        "agentgrep_operation": "mcp.server.lifecycle",
-                        "agentgrep_outcome": "error",
-                        "agentgrep_error_type": type(exc).__name__,
-                        "agentgrep_duration_ms": duration_ms,
-                    },
-                )
-                raise
+            _run_server_lifecycle(lambda: build_mcp_server().run())
             flush_started_at = time.monotonic()
             with _telemetry.span(
                 "agentgrep.mcp.flush",
