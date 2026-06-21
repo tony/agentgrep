@@ -53,6 +53,14 @@ documented for the first time, but flagged unsupported: its Cascade
 conversations are stored encrypted, so agentgrep records where they live
 without searching them.
 
+#### New backend: VS Code (GitHub Copilot Chat) (#74)
+
+agentgrep now searches VS Code's built-in GitHub Copilot Chat — both the
+per-workspace conversation transcripts and the inline-edit (Ctrl+I) prompt
+history — across the Code, Insiders, VSCodium, and OSS editions. On WSL it
+also reaches chat written by a Windows-host VS Code, and results name the
+real project directory rather than an opaque storage folder.
+
 ## agentgrep 0.1.0a24 (2026-06-16)
 
 agentgrep 0.1.0a24 makes search over large Codex, Claude, and Cursor histories
