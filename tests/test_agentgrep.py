@@ -7989,7 +7989,7 @@ def test_discover_vscode_wsl_bridge_probes_windows_mount(
     monkeypatch.delenv("VSCODE_APPDATA", raising=False)
     # Force the WSL branch so the bridge is exercised on any host, and point
     # the users-mount root at a fake Windows profile tree.
-    monkeypatch.setattr(agentgrep, "_is_wsl", lambda: True)
+    monkeypatch.setattr(agentgrep.discovery, "_is_wsl", lambda: True)
     users_root = tmp_path / "mnt-c-users"
     monkeypatch.setenv("AGENTGREP_WSL_USERS_ROOT", str(users_root))
     session = (
@@ -10503,7 +10503,7 @@ def test_unix_to_isoformat_edge_cases(
 ) -> None:
     """_unix_to_isoformat handles edge cases without crashing."""
     agentgrep = load_agentgrep_module()
-    result = t.cast("t.Any", agentgrep.adapters)._unix_to_isoformat(value)
+    result = t.cast("t.Any", agentgrep).adapters._unix_to_isoformat(value)
     if expected is None:
         assert result is None, f"{test_id}: expected None, got {result!r}"
     else:

@@ -15,9 +15,14 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import sqlite3
+import subprocess
+import sys
 import time
 import typing as t
+
+from agentgrep.records import BackendSelection
 
 try:
     import orjson as _orjson
@@ -27,7 +32,8 @@ except ImportError:
 if t.TYPE_CHECKING:
     import collections.abc as cabc
 
-    from agentgrep.records import JSONValue, RawJsonlSkipLine, SummaryRow
+    from agentgrep.progress import SearchControl
+    from agentgrep.records import JSONScalar, JSONValue, RawJsonlSkipLine, SummaryRow
 
 __all__ = [
     "as_optional_str",
@@ -741,3 +747,128 @@ def as_optional_str(value: object) -> str | None:
         stripped = value.strip()
         return stripped or None
     return None
+
+
+def select_backends() -> BackendSelection:
+    """Return the best available subprocess helpers."""
+    return BackendSelection(
+        find_tool=which_first(("fd", "fdfind")),
+        grep_tool=which_first(("rg", "ag")),
+        json_tool=which_first(("jq", "jaq")),
+    )
+
+
+def which_first(names: tuple[str, ...]) -> str | None:
+    """Return the first executable available on ``PATH``."""
+    for name in names:
+        found = shutil.which(name)
+        if found is not None:
+            return found
+    return None
+
+
+def run_readonly_command(
+    command: list[str],
+    *,
+    control: SearchControl | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run a command without a shell and capture text output."""
+    started_at = time.perf_counter()
+    if control is None:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        _record_readonly_command_profile(command, started_at, completed)
+        return completed
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    while True:
+        try:
+            stdout, stderr = process.communicate(timeout=0.05)
+        except subprocess.TimeoutExpired:
+            if control.answer_now_requested():
+                process.terminate()
+                try:
+                    stdout, stderr = process.communicate(timeout=0.2)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    stdout, stderr = process.communicate()
+                completed = subprocess.CompletedProcess(
+                    command,
+                    process.returncode,
+                    stdout,
+                    stderr,
+                )
+                _record_readonly_command_profile(command, started_at, completed)
+                return completed
+            continue
+        completed = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+        _record_readonly_command_profile(command, started_at, completed)
+        return completed
+
+
+def _record_readonly_command_profile(
+    command: list[str],
+    started_at: float,
+    completed: subprocess.CompletedProcess[str],
+) -> None:
+    """Record optional engine profiling metadata for a completed subprocess."""
+    if "agentgrep._engine.profiling" not in sys.modules:
+        return
+    from agentgrep._engine.profiling import record_subprocess_run
+
+    record_subprocess_run(
+        command,
+        duration_seconds=time.perf_counter() - started_at,
+        completed=completed,
+    )
+
+
+def _record_engine_profile_sample(
+    name: str,
+    duration_seconds: float,
+    **attributes: JSONScalar,
+) -> None:
+    """Record an optional engine profile sample when profiling is active."""
+    if "agentgrep._engine.profiling" not in sys.modules:
+        return
+    from agentgrep._engine.profiling import current_engine_profiler
+
+    profiler = current_engine_profiler()
+    if profiler is None:
+        return
+    profiler.record(name, duration_seconds, **attributes)
+
+
+def list_files_matching(
+    root: pathlib.Path,
+    glob_pattern: str,
+    fd_program: str | None,
+) -> list[pathlib.Path]:
+    """List files under ``root`` that match a glob."""
+    if not root.exists():
+        return []
+    if "/" in glob_pattern or "\\" in glob_pattern:
+        return sorted(path for path in root.glob(glob_pattern) if path.is_file())
+    if fd_program is not None:
+        command = [
+            fd_program,
+            "-H",
+            "-I",
+            "-t",
+            "f",
+            "--glob",
+            glob_pattern,
+            str(root),
+        ]
+        completed = run_readonly_command(command)
+        if completed.returncode == 0:
+            return [pathlib.Path(line) for line in completed.stdout.splitlines() if line.strip()]
+    return sorted(path for path in root.rglob(glob_pattern) if path.is_file())
