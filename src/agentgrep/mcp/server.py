@@ -62,7 +62,10 @@ def build_mcp_server() -> FastMCP:
 
 def main() -> int:
     """Run the MCP server over stdio."""
-    telemetry = _telemetry.setup(repo_root=pathlib.Path(__file__).resolve().parents[3])
+    telemetry = _telemetry.setup(
+        repo_root=pathlib.Path(__file__).resolve().parents[3],
+        service_name="agentgrep-mcp",
+    )
     try:
         build_mcp_server().run()
         return 0

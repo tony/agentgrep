@@ -466,7 +466,10 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
     """Run the CLI."""
     from agentgrep import _telemetry
 
-    telemetry = _telemetry.setup(repo_root=pathlib.Path(__file__).resolve().parents[2])
+    telemetry = _telemetry.setup(
+        repo_root=pathlib.Path(__file__).resolve().parents[2],
+        service_name="agentgrep-cli",
+    )
     try:
         with _telemetry.span(
             "agentgrep.cli.invocation",

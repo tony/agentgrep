@@ -97,7 +97,7 @@ def _setup_benchmark_telemetry() -> t.Any | None:
     telemetry = _telemetry_api()
     if telemetry is None:
         return None
-    handle = telemetry.setup(repo_root=REPO_ROOT)
+    handle = telemetry.setup(repo_root=REPO_ROOT, service_name="agentgrep-benchmark")
     atexit.register(handle.shutdown)
     return handle
 

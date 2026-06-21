@@ -662,7 +662,7 @@ def _system_exit_code(exc: SystemExit) -> int:
 def main(argv: list[str] | None = None) -> int:
     """Run the profiler command."""
     parser = _build_parser()
-    telemetry = _telemetry.setup(repo_root=REPO_ROOT)
+    telemetry = _telemetry.setup(repo_root=REPO_ROOT, service_name="agentgrep-profile-engine")
     try:
         with _telemetry.span(
             "agentgrep.profile_engine.run",

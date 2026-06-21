@@ -79,6 +79,15 @@ class PytestXdistAttributeCase(t.NamedTuple):
     expected: dict[str, object]
 
 
+class TelemetryServiceNameCase(t.NamedTuple):
+    """Parametrized case for telemetry service-name resolution."""
+
+    test_id: str
+    env_service_name: str | None
+    service_name: str | None
+    expected_service_name: str
+
+
 VCS_REPOSITORY_URL_CASES: tuple[VcsRepositoryUrlCase, ...] = (
     VcsRepositoryUrlCase(
         test_id="https-userinfo",
@@ -99,6 +108,33 @@ VCS_REPOSITORY_URL_CASES: tuple[VcsRepositoryUrlCase, ...] = (
         test_id="scp-like",
         raw_url="git@example.invalid:org/repo.git",
         expected_url="https://example.invalid/org/repo",
+    ),
+)
+
+TELEMETRY_SERVICE_NAME_CASES: tuple[TelemetryServiceNameCase, ...] = (
+    TelemetryServiceNameCase(
+        test_id="default",
+        env_service_name=None,
+        service_name=None,
+        expected_service_name="agentgrep",
+    ),
+    TelemetryServiceNameCase(
+        test_id="entrypoint-default",
+        env_service_name=None,
+        service_name="agentgrep-cli",
+        expected_service_name="agentgrep-cli",
+    ),
+    TelemetryServiceNameCase(
+        test_id="standard-env",
+        env_service_name="custom-agentgrep",
+        service_name=None,
+        expected_service_name="custom-agentgrep",
+    ),
+    TelemetryServiceNameCase(
+        test_id="standard-env-overrides-entrypoint",
+        env_service_name="custom-agentgrep",
+        service_name="agentgrep-cli",
+        expected_service_name="custom-agentgrep",
     ),
 )
 
@@ -202,6 +238,30 @@ def test_service_version_is_not_debug_identity(monkeypatch: pytest.MonkeyPatch) 
     assert attributes["agentgrep.debug.session_id"] == "session-1"
     assert attributes["agentgrep.debug.attempt"] == 3
     assert attributes["agentgrep.debug.candidate_id"] == "candidate-1"
+
+
+@pytest.mark.parametrize(
+    "case",
+    TELEMETRY_SERVICE_NAME_CASES,
+    ids=[case.test_id for case in TELEMETRY_SERVICE_NAME_CASES],
+)
+def test_resource_attributes_include_service_identity(case: TelemetryServiceNameCase) -> None:
+    """Telemetry resources should carry stable service identity."""
+    import agentgrep._telemetry as telemetry
+
+    env = {}
+    if case.env_service_name is not None:
+        env["OTEL_SERVICE_NAME"] = case.env_service_name
+
+    attributes = telemetry.build_resource_attributes(
+        env=env,
+        service_name=case.service_name,
+        service_version="0.1.0a24",
+    )
+
+    assert attributes["service.name"] == case.expected_service_name
+    assert attributes["service.namespace"] == "agentgrep"
+    assert attributes["service.version"] == "0.1.0a24"
 
 
 @pytest.mark.parametrize(
@@ -526,7 +586,8 @@ def test_profiles_reuse_resource_vcs_identity_as_tags(
 
     started = _telemetry_otel._configure_profiles(
         {
-            "service.name": "agentgrep",
+            "service.name": "agentgrep-cli",
+            "service.namespace": "agentgrep",
             "service.version": "0.1.0",
             "vcs.ref.head.name": "feature/vcs",
             "vcs.ref.head.revision": "abc123",
@@ -538,8 +599,10 @@ def test_profiles_reuse_resource_vcs_identity_as_tags(
 
     assert started is True
     assert len(calls) == 1
+    assert calls[0]["application_name"] == "agentgrep-cli"
     tags = calls[0]["tags"]
     assert tags == {
+        "service_namespace": "agentgrep",
         "service_git_ref": "abc123",
         "service_repository": "https://github.com/tony/agentgrep",
         "service_root_path": ".",
@@ -1020,6 +1083,48 @@ def test_cli_parse_error_emits_non_single_trace_with_argparse_stderr(
     root = backend.finished_spans[-1]
     assert root.attributes["agentgrep_outcome"] == "parse_error"
     assert root.attributes["agentgrep_exit_code"] == 2
+
+
+def test_cli_main_uses_cli_service_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The CLI process should report an entrypoint-specific OTel service."""
+    import agentgrep
+    import agentgrep._telemetry as telemetry
+
+    setup_kwargs: list[dict[str, object]] = []
+
+    def fake_setup(**kwargs: object) -> telemetry.TelemetryHandle:
+        setup_kwargs.append(kwargs)
+        return telemetry.TelemetryHandle(mode="off")
+
+    monkeypatch.setattr(telemetry, "setup", fake_setup)
+    monkeypatch.setattr(agentgrep, "parse_args", lambda _argv: None)
+
+    assert agentgrep.main([]) == 0
+    assert setup_kwargs
+    assert setup_kwargs[0]["service_name"] == "agentgrep-cli"
+
+
+def test_mcp_main_uses_mcp_service_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The MCP server process should report an entrypoint-specific OTel service."""
+    import agentgrep._telemetry as telemetry
+    import agentgrep.mcp.server as mcp_server
+
+    setup_kwargs: list[dict[str, object]] = []
+
+    class FakeServer:
+        def run(self) -> None:
+            return None
+
+    def fake_setup(**kwargs: object) -> telemetry.TelemetryHandle:
+        setup_kwargs.append(kwargs)
+        return telemetry.TelemetryHandle(mode="off")
+
+    monkeypatch.setattr(telemetry, "setup", fake_setup)
+    monkeypatch.setattr(mcp_server, "build_mcp_server", lambda: FakeServer())
+
+    assert mcp_server.main() == 0
+    assert setup_kwargs
+    assert setup_kwargs[0]["service_name"] == "agentgrep-mcp"
 
 
 async def test_mcp_tool_span_is_non_single_and_redacted(
