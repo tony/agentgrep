@@ -882,6 +882,70 @@ def test_executor_submit_preserves_current_trace_context() -> None:
     assert worker_span_id == root_span_id
 
 
+def test_span_mirrors_native_otel_trace_ids() -> None:
+    """In live mode the facade span ids mirror the native OTel ids."""
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+    from opentelemetry.trace import format_span_id, format_trace_id
+
+    import agentgrep._telemetry as telemetry
+    from agentgrep import _telemetry_otel
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+    class _Noop:
+        def add(self, *args: object, **kwargs: object) -> None:
+            return None
+
+        def record(self, *args: object, **kwargs: object) -> None:
+            return None
+
+        def force_flush(self, *args: object, **kwargs: object) -> bool:
+            return True
+
+        def shutdown(self) -> None:
+            return None
+
+    noop = _Noop()
+    backend = _telemetry_otel.OtelTelemetryBackend(
+        tracer=provider.get_tracer("test"),
+        tracer_provider=provider,
+        meter=noop,
+        meter_provider=noop,
+        logger_provider=noop,
+        logging_handler=logging.NullHandler(),
+        span_counter=noop,
+        span_duration=noop,
+        instrumentations=(),
+        profiles_started=False,
+    )
+
+    telemetry.configure_backend(backend)
+    try:
+        with telemetry.span("agentgrep.cli.invocation", agentgrep_surface="cli"):
+            root_trace_id = telemetry.current_trace_id()
+            root_span_id = telemetry.current_span_id()
+            with telemetry.span("agentgrep.cli.parse"):
+                child_trace_id = telemetry.current_trace_id()
+                child_state = telemetry._CURRENT_SPAN.get()
+                child_parent_id = None if child_state is None else child_state.parent_id
+    finally:
+        telemetry.configure_backend(None)
+        provider.shutdown()
+
+    by_name = {span.name: span for span in exporter.get_finished_spans()}
+    native_root = by_name["agentgrep.cli.invocation"]
+    native_child = by_name["agentgrep.cli.parse"]
+    assert root_trace_id == format_trace_id(native_root.context.trace_id)
+    assert root_span_id == format_span_id(native_root.context.span_id)
+    assert child_trace_id == format_trace_id(native_child.context.trace_id)
+    assert child_trace_id == root_trace_id
+    assert child_parent_id == format_span_id(native_root.context.span_id)
+
+
 def test_pytest_item_span_helper_covers_custom_items() -> None:
     """The pytest hook wrapper opens one pytest.test root for custom items."""
     import agentgrep._telemetry as telemetry
