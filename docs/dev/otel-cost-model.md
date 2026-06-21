@@ -137,8 +137,11 @@ pinned `fastmcp` (3.x) auto-emits its own `SpanKind.SERVER` spans (`tools/list`,
 the same provider agentgrep installs. Those native SERVER spans nest directly
 under the agentgrep roots, so agentgrep does not compose its own. When the caller
 sends a `traceparent` in the request metadata, the request root inherits that
-context so the caller's trace links to agentgrep's; raw arguments never reach the
-SERVER span (only the public tool name does).
+context so the caller's trace links to agentgrep's. Stock MCP clients (including
+agentgrep's own CLI) do not inject one, so this inheritance fires only for a
+traceparent-propagating caller and is otherwise exercised by the inbound-context
+unit test. Raw arguments never reach the SERVER span (only the public tool name
+does).
 
 OTel log export keeps the plain log message as the record body and carries the
 redacted `agentgrep_*` extras as native OTel log attributes (Loki structured
