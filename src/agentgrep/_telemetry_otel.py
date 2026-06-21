@@ -436,10 +436,7 @@ def _structured_log_body(record: logging.LogRecord) -> str:
     }
     for key in sorted(copied):
         value = copied[key]
-        if not (
-            key.startswith("agentgrep_")
-            or key in _STRUCTURED_LOG_IDENTITY_KEYS
-        ):
+        if not (key.startswith("agentgrep_") or key in _STRUCTURED_LOG_IDENTITY_KEYS):
             continue
         if _is_log_json_scalar(value):
             body[key] = value
