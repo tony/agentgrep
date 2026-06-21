@@ -224,6 +224,7 @@ ITER_SOURCE_RECORD_ADAPTERS: frozenset[str] = frozenset(
         "grok.subagents_json.v1",
         "grok.plans_text.v1",
         "pi.sessions_jsonl.v1",
+        "pi.context_mode_sqlite.v1",
         "opencode.db_sqlite.v1",
     },
 )
@@ -3824,11 +3825,17 @@ def discover_pi_sources(
         agent_dir / "sessions",
         label="PI_CODING_AGENT_SESSION_DIR",
     )
-    if not agent_dir.exists() and not session_dir.exists():
+    context_mode_dir = home / ".pi" / "context-mode"
+    if (
+        not agent_dir.exists()
+        and not session_dir.exists()
+        and not context_mode_dir.exists()
+    ):
         return []
     roots: dict[str, DiscoveryRoot] = {
         "default": agent_dir,
         "pi_session": session_dir,
+        "pi_context_mode": context_mode_dir,
     }
     return discover_from_catalog(
         home,
@@ -4581,6 +4588,9 @@ def iter_source_records(
             raw_skip_line=raw_skip_line,
             reverse=reverse,
         )
+        return
+    if source.adapter_id == "pi.context_mode_sqlite.v1":
+        yield from parse_pi_context_mode_db(source)
         return
     if source.adapter_id == "opencode.db_sqlite.v1":
         yield from parse_opencode_db(source)
@@ -6321,6 +6331,49 @@ def _opencode_part_text(part_type: str, part_data: dict[str, object]) -> str | N
             part_data.get("description"),
         )
     return None
+
+
+def parse_pi_context_mode_db(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse a Pi context-mode session SQLite database.
+
+    The ``session_events`` table records per-session events (`type` =
+    role/intent/decision/tool_call/file_read/blocker_resolved) with a JSON
+    ``data`` payload. Each event's payload is emitted as one inspectable
+    record. Rooted under ``~/.pi/context-mode/sessions/`` and keyed by a
+    16-hex session id, distinct from ``pi.sessions``' cwd grouping.
+    """
+    connection = open_readonly_sqlite(source.path)
+    try:
+        if "session_events" not in sqlite_table_names(connection):
+            return
+        cursor = connection.execute(
+            "SELECT session_id, type, data, created_at FROM session_events ORDER BY id",
+        )
+        for session_id_raw, type_raw, data_raw, created_raw in cursor:
+            data_text = as_optional_str(data_raw)
+            if not data_text or not data_text.strip():
+                continue
+            event_type = as_optional_str(type_raw) or "event"
+            session_id = as_optional_str(session_id_raw)
+            yield SearchRecord(
+                kind="history",
+                agent=source.agent,
+                store=source.store,
+                adapter_id=source.adapter_id,
+                path=source.path,
+                text=data_text,
+                title=f"Pi context-mode {event_type}",
+                role=event_type,
+                timestamp=as_optional_str(created_raw),
+                session_id=session_id,
+                conversation_id=session_id,
+            )
+    except sqlite3.DatabaseError:
+        return
+    finally:
+        connection.close()
 
 
 def parse_opencode_db(

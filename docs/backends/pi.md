@@ -66,6 +66,15 @@ and `label` entries are metadata only. Entry-level timestamps are
 ISO-8601; the inner `message.timestamp` is unix-milliseconds and is used
 only as a fallback.
 
+### pi.context_mode_db
+
+`~/.pi/context-mode/sessions/<16-hex>.db` is a per-session SQLite
+database rooted outside the agent dir and keyed by a 16-hex session id
+(unlike `pi.sessions`' `--<cwd>--` grouping). Its `session_events`
+table holds events (`type` = role/intent/decision/tool_call/
+file_read/blocker_resolved) with a JSON `data` payload, emitted as
+inspectable records.
+
 ## Documentary stores
 
 The remaining `pi.*` rows are catalogued for completeness but not

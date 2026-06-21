@@ -10396,3 +10396,38 @@ def test_parse_claude_usage_facet_joins_nl_fields(tmp_path: pathlib.Path) -> Non
     assert "Refactored the parser" in records[0].text
     assert "make discovery faster" in records[0].text
     assert records[0].kind == "history"
+
+
+def test_parse_pi_context_mode_db_emits_events(tmp_path: pathlib.Path) -> None:
+    """pi.context_mode_db emits session_events payloads as records."""
+    import sqlite3 as _sqlite3
+
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    db = tmp_path / "abc.db"
+    conn = _sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE session_events (id INTEGER PRIMARY KEY, session_id TEXT, "
+        "type TEXT, data TEXT, created_at TEXT)",
+    )
+    conn.execute(
+        "INSERT INTO session_events (session_id, type, data, created_at) "
+        "VALUES (?, ?, ?, ?)",
+        ("s1", "tool_call", '{"tool":"rg","params":{"q":"login"}}', "2026-06-21"),
+    )
+    conn.commit()
+    conn.close()
+    source = agentgrep.SourceHandle(
+        agent="pi",
+        store="pi.context_mode_db",
+        adapter_id="pi.context_mode_sqlite.v1",
+        path=db,
+        path_kind="sqlite_db",
+        source_kind="sqlite",
+        search_root=None,
+        mtime_ns=1,
+    )
+    records = list(agentgrep.iter_source_records(source))
+    assert len(records) == 1
+    assert "login" in records[0].text
+    assert records[0].role == "tool_call"
+    assert records[0].kind == "history"

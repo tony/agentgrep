@@ -3409,6 +3409,37 @@ _PI_STORES: tuple[StoreDescriptor, ...] = (
     ),
     StoreDescriptor(
         agent="pi",
+        store_id="pi.context_mode_db",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.SQLITE,
+        path_pattern="${HOME}/.pi/context-mode/sessions/<session_id>.db",
+        observed_version="pi v0.79.9 (observed 2026-06-21)",
+        observed_at=_PI_OBSERVED_AT,
+        schema_notes=(
+            "Per-session context-mode SQLite database, rooted at "
+            "`~/.pi/context-mode/sessions/<16-hex>.db` (outside the agent dir "
+            "and keyed by a 16-hex session id, unlike `pi.sessions`' "
+            "`--<cwd>--` grouping). The `session_events` table holds events "
+            "(`type` = role/intent/decision/tool_call/file_read/"
+            "blocker_resolved) with a JSON `data` payload, emitted as "
+            "inspectable records."
+        ),
+        coverage=StoreCoverage.INSPECTABLE,
+        search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="pi.context_mode_db",
+                adapter_id="pi.context_mode_sqlite.v1",
+                path_kind="sqlite_db",
+                source_kind="sqlite",
+                root_key="pi_context_mode",
+                home_subpath=("sessions",),
+                glob="*.db",
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="pi",
         store_id="pi.settings",
         role=StoreRole.APP_STATE,
         format=StoreFormat.JSON_OBJECT,
@@ -3690,7 +3721,7 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
 
 
 CATALOG = StoreCatalog(
-    catalog_version=23,
+    catalog_version=24,
     captured_at=_ANTIGRAVITY_OBSERVED_AT,
     stores=(
         *_CLAUDE_STORES,
