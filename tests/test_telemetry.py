@@ -285,8 +285,14 @@ def test_tui_session_emits_structured_trace_linked_log(
     assert session_log.attributes["agentgrep_operation"] == "tui.session"
     assert session_log.attributes["agentgrep_outcome"] == "ok"
     assert session_log.attributes["agentgrep_initial_query_present"] is True
-    assert session_log.trace_id == backend.finished_spans[-1].trace_id
-    assert session_log.span_id is not None
+    tui_span = next(span for span in backend.finished_spans if span.name == "agentgrep.tui.session")
+    cli_span = next(
+        span for span in backend.finished_spans if span.name == "agentgrep.cli.invocation"
+    )
+    assert tui_span.parent_id is None
+    assert tui_span.trace_id != cli_span.trace_id
+    assert session_log.trace_id == tui_span.trace_id
+    assert session_log.span_id == tui_span.span_id
     assert "agentic signal" not in str(session_log.attributes)
 
 
