@@ -50,9 +50,12 @@ endpoints must not change CLI, TUI, MCP, pytest, or profiler correctness.
   and recreated because Docker cannot add mounts to an existing container.
 - `scripts/otel_smoke.py` to generate traces, metrics, logs, SQLite spans, and
   Pyroscope samples.
-- `python -m agentgrep --help` for traced help output.
-- `python -m agentgrep grep --invert-match ...` for a traced parse-error path.
-- `python -m agentgrep search ...` for a traced app CLI search.
+- a candidate-tagged short-lived CLI matrix:
+  `python -m agentgrep --help`, `python -m agentgrep search ...`,
+  `python -m agentgrep grep --invert-match ...`,
+  `python -m agentgrep find codex --json`,
+  `python -m agentgrep search --json ...` for a no-hit exit, and
+  `python -m agentgrep ui --help`.
 - `scripts/profile_engine.py grep-prompts ... --json` for profiler traces.
 - `scripts/benchmark.py run ...` for benchmark harness roots, command spans,
   subprocess spans, and benchmark subprocess metrics.
@@ -153,6 +156,8 @@ Live acceptance must prove all four signals for the same debug session:
   pytest.
 - Tempo has benchmark run roots, benchmark command/subprocess spans, and MCP
   request spans for the debug session.
+- Tempo has one `agentgrep.cli.invocation` trace for each candidate-tagged
+  short-lived CLI subprocess in the acceptance matrix.
 - No current-run trace has exactly one span.
 - At least one checked trace contains `agentgrep.sqlite.*` spans.
 - The TUI trace contains an `agentgrep.tui.lifecycle` child span even when the
