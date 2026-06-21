@@ -1005,6 +1005,53 @@ def test_span_inherits_inbound_otel_context() -> None:
     assert severed_trace != caller2_trace
 
 
+class _ConfigureBackendCase(t.NamedTuple):
+    """Parametrized case for configure_backend clearing the active span."""
+
+    test_id: str
+    span_active: bool
+    pass_none: bool
+
+
+_CONFIGURE_BACKEND_CASES: tuple[_ConfigureBackendCase, ...] = (
+    _ConfigureBackendCase("clean-backend", span_active=False, pass_none=False),
+    _ConfigureBackendCase("active-span-backend", span_active=True, pass_none=False),
+    _ConfigureBackendCase("active-span-none", span_active=True, pass_none=True),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    _CONFIGURE_BACKEND_CASES,
+    ids=[case.test_id for case in _CONFIGURE_BACKEND_CASES],
+)
+def test_configure_backend_clears_current_span(case: _ConfigureBackendCase) -> None:
+    """configure_backend detaches any active project span, like the conftest hook."""
+    import agentgrep._telemetry as telemetry
+
+    backend = telemetry.InMemoryTelemetryBackend()
+    telemetry.configure_backend(telemetry.InMemoryTelemetryBackend())
+    ambient: t.Any = None
+    if case.span_active:
+        ambient = telemetry.span("agentgrep.pytest.test", agentgrep_surface="pytest")
+        ambient.__enter__()
+    try:
+        if case.span_active:
+            assert telemetry.current_span_id() is not None
+        telemetry.configure_backend(None if case.pass_none else backend)
+        assert telemetry.current_span_id() is None
+        if not case.pass_none:
+            with telemetry.span("agentgrep.cli.invocation", agentgrep_surface="cli"):
+                pass
+            (root,) = backend.finished_spans
+            assert root.parent_id is None
+            assert backend.single_root_trace_ids() == (root.trace_id,)
+    finally:
+        if ambient is not None:
+            ambient.__exit__(None, None, None)
+        telemetry.configure_backend(None)
+
+
 def test_pytest_item_span_helper_covers_custom_items() -> None:
     """The pytest hook wrapper opens one pytest.test root for custom items."""
     import agentgrep._telemetry as telemetry
