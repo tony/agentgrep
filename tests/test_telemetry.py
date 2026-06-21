@@ -1093,6 +1093,115 @@ def test_span_inherits_inbound_otel_context() -> None:
     assert severed_trace != caller2_trace
 
 
+_INBOUND_TRACE_ID = "aabbccddeeff00112233445566778899"
+_INBOUND_SPAN_ID = "1122334455667788"
+_W3C_TRACEPARENT = f"00-{_INBOUND_TRACE_ID}-{_INBOUND_SPAN_ID}-01"
+
+
+class _InboundTraceparentCase(t.NamedTuple):
+    """Parametrized case for inbound MCP traceparent inheritance."""
+
+    test_id: str
+    meta_payload: dict[str, object] | None
+    request_ctx_set: bool
+    expect_linked: bool
+
+
+_INBOUND_TRACEPARENT_CASES: tuple[_InboundTraceparentCase, ...] = (
+    _InboundTraceparentCase("traceparent-present", {"traceparent": _W3C_TRACEPARENT}, True, True),
+    _InboundTraceparentCase("meta-without-traceparent", {"progressToken": "p1"}, True, False),
+    _InboundTraceparentCase("malformed-traceparent", {"traceparent": "not-valid"}, True, False),
+    _InboundTraceparentCase("meta-none", None, True, False),
+    _InboundTraceparentCase("no-request-ctx", None, False, False),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    _INBOUND_TRACEPARENT_CASES,
+    ids=[case.test_id for case in _INBOUND_TRACEPARENT_CASES],
+)
+def test_mcp_request_inherits_inbound_traceparent(
+    case: _InboundTraceparentCase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An inbound W3C traceparent links the caller's trace to mcp.server.request."""
+    import mcp.server.lowlevel.server as low
+    from mcp.types import RequestParams
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    import agentgrep._telemetry as telemetry
+    from agentgrep import _telemetry_otel
+    from agentgrep.mcp import middleware
+
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(InMemorySpanExporter()))
+
+    class _Noop:
+        def add(self, *args: object, **kwargs: object) -> None:
+            return None
+
+        def record(self, *args: object, **kwargs: object) -> None:
+            return None
+
+        def force_flush(self, *args: object, **kwargs: object) -> bool:
+            return True
+
+        def shutdown(self) -> None:
+            return None
+
+    noop = _Noop()
+    backend = _telemetry_otel.OtelTelemetryBackend(
+        tracer=provider.get_tracer("agentgrep"),
+        tracer_provider=provider,
+        meter=noop,
+        meter_provider=noop,
+        logger_provider=noop,
+        logging_handler=logging.NullHandler(),
+        span_counter=noop,
+        span_duration=noop,
+        instrumentations=(),
+        profiles_started=False,
+    )
+
+    meta = (
+        None if case.meta_payload is None else RequestParams.Meta.model_validate(case.meta_payload)
+    )
+
+    class _Holder:
+        def __init__(self) -> None:
+            self.meta = meta
+
+    class _FakeRequestCtx:
+        def get(self) -> _Holder:
+            if not case.request_ctx_set:
+                raise LookupError
+            return _Holder()
+
+    monkeypatch.setattr(low, "request_ctx", _FakeRequestCtx())
+
+    telemetry.configure_backend(backend)
+    try:
+        inbound = middleware._inbound_otel_context()
+        detach = middleware._attach_otel_context(inbound)
+        try:
+            with telemetry.span("mcp.server.request", inherit_otel_context=inbound is not None):
+                observed = telemetry.current_trace_id()
+        finally:
+            detach()
+    finally:
+        telemetry.configure_backend(None)
+        provider.shutdown()
+
+    assert observed is not None
+    if case.expect_linked:
+        assert observed == _INBOUND_TRACE_ID
+    else:
+        assert observed != _INBOUND_TRACE_ID
+
+
 class _ConfigureBackendCase(t.NamedTuple):
     """Parametrized case for configure_backend clearing the active span."""
 
