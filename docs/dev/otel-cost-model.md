@@ -43,7 +43,8 @@ endpoints must not change CLI, TUI, MCP, pytest, or profiler correctness.
 
 - `scripts/lgtm/generate_pyroscope_source_map.py` to write the ignored local
   `.tmp/lgtm/.pyroscope.yaml` source map used when validating Pyroscope source
-  links.
+  links. The generated mappings use repository- and package-relative prefixes,
+  not local checkout or virtualenv paths.
 - Docker inspect/start/run for the local `grafana/otel-lgtm` container.
   Container creation mounts `scripts/lgtm/grafana-datasources.yaml` and
   `scripts/lgtm/pyroscope-config.yaml`; unlabeled older containers are removed
@@ -169,6 +170,9 @@ Live acceptance must prove all four signals for the same debug session:
 - Loki log checks reject selected records with JSON parser errors or body text
   that contributes no parsed structured fields.
 - Pyroscope exposes the `agentgrep` service and the debug session label.
+- Pyroscope label checks are scoped by service, debug session, current VCS
+  labels, `service_repository`, and exact `service_git_ref` so broad Grafana
+  time windows do not mix older revisions with current-run evidence.
 
 Future instrumentation changes that add subprocesses, benchmark rows,
 exporters, auto-instrumentation, profile loops, or run-scoped metrics must

@@ -49,9 +49,11 @@ def test_build_mappings_covers_agentgrep_and_otel_packages(tmp_path: pathlib.Pat
 
     rendered = lgtm_source_map.render_pyroscope_yaml(mappings)
 
-    assert f"prefix: {repo_root}/src" in rendered
+    assert str(repo_root) not in rendered
+    assert str(site_packages) not in rendered
+    assert "prefix: src" in rendered
     assert "path: src" in rendered
-    assert f"prefix: {site_packages}/opentelemetry/exporter/otlp/proto/common" in rendered
+    assert "prefix: opentelemetry/exporter/otlp/proto/common" in rendered
     assert "owner: open-telemetry" in rendered
     assert "repo: opentelemetry-python" in rendered
     assert "ref: v1.42.1" in rendered
@@ -59,10 +61,10 @@ def test_build_mappings_covers_agentgrep_and_otel_packages(tmp_path: pathlib.Pat
         "path: exporter/opentelemetry-exporter-otlp-proto-common/src/"
         "opentelemetry/exporter/otlp/proto/common"
     ) in rendered
-    assert f"prefix: {site_packages}/opentelemetry/instrumentation/sqlite3" in rendered
+    assert "prefix: opentelemetry/instrumentation/sqlite3" in rendered
     assert "repo: opentelemetry-python-contrib" in rendered
     assert "ref: v0.63b1" in rendered
-    assert f"prefix: {site_packages}/opentelemetry/sdk" in rendered
+    assert "prefix: opentelemetry/sdk" in rendered
     assert "path: opentelemetry-sdk/src/opentelemetry/sdk" in rendered
 
 
