@@ -107,15 +107,8 @@ only the deduplicated paths. `-c` emits `path:N` per matching
 record with the count of matching lines (or just `N` when exactly
 one record matched), matching `rg -c`.
 
-`-v` / `--invert-match` inverts the line-level text output: flat
-mode emits `path:text` for non-matching lines, `-n` keeps line
-numbers, `--heading` groups the non-matching lines under the record
-heading, `-l` lists records that contain at least one non-matching
-line, and `-c` counts non-matching lines. `-v -o` is refused because
-inverted lines do not have matched substrings to print.
-
-The reducers `-c` and `-l`, plus inverted text output, replace the match-event
-stream. You cannot combine them with `--json` or `--ndjson`; choose structured
+The terminal reducers `-c` and `-l` replace the match-event stream with counts
+or paths. You cannot combine them with `--json` or `--ndjson`; choose structured
 events or reducer text output.
 
 ## Live streaming
@@ -127,7 +120,7 @@ priority. Direct terminal output flushes each accepted match because stdout is
 a TTY. A pipe is block-buffered; set `PYTHONUNBUFFERED=1` when a downstream
 process must observe each NDJSON event immediately.
 
-The eager output modes (`--json`, `-c`, `-l`, `-v`) buffer
+The eager output modes (`--json`, `-c`, `-l`) buffer
 because their output shape needs the final tally or cross-record
 deduplication. Ranked relevance and global-newest search also buffer when the
 engine must establish a global frontier.
@@ -246,14 +239,14 @@ agentgrep grep: error: pattern cannot be empty
 The check applies to every term — a valid pattern followed by an
 empty one (`agentgrep grep foo ''`) still fails.
 
-`-v -o` / `--invert-match --only-matching` is refused at parse
-time:
+`-v` / `--invert-match` is not implemented yet and is refused at
+parse time:
 
 ```console
-$ agentgrep grep -v -o bliss
+$ agentgrep grep -v bliss
 usage: agentgrep grep [...]
-agentgrep grep: error: --invert-match cannot be combined with
---only-matching
+agentgrep grep: error: --invert-match is not implemented yet (see
+https://github.com/tony/agentgrep/issues/8)
 ```
 
 (cli-grep-dedupe)=

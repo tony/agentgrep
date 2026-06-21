@@ -210,11 +210,6 @@ def _agentgrep_module_command(*args: str) -> list[str]:
 
 def _grep_parse_error_workload_command(run_id: str) -> list[str]:
     """Return the grep command used to exercise traced parse errors."""
-    return _agentgrep_module_command("grep", "--invert-match", "--only-matching", run_id)
-
-
-def _grep_invert_workload_command(run_id: str) -> list[str]:
-    """Return the grep command used to exercise successful inverted output."""
     return _agentgrep_module_command("grep", "--invert-match", run_id)
 
 
@@ -350,14 +345,6 @@ def run_workloads(run_id: str) -> None:
         if parse_error.returncode != 2:
             message = f"parse-error workload exited {parse_error.returncode}: {parse_error.stderr}"
             raise AcceptanceCheckError(message)
-        subprocess.run(
-            _grep_invert_workload_command(run_id),
-            cwd=ROOT,
-            env={**env, "HOME": temp_home},
-            check=True,
-            capture_output=True,
-            text=True,
-        )
         subprocess.run(
             [
                 sys.executable,
