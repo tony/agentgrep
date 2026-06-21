@@ -69,6 +69,16 @@ class SensitiveLogExtraCase(t.NamedTuple):
     value: str
 
 
+class PytestXdistAttributeCase(t.NamedTuple):
+    """Parametrized case for pytest-xdist telemetry attributes."""
+
+    test_id: str
+    env_worker: str | None
+    workerinput: dict[str, object] | None
+    dist: str | None
+    expected: dict[str, object]
+
+
 VCS_REPOSITORY_URL_CASES: tuple[VcsRepositoryUrlCase, ...] = (
     VcsRepositoryUrlCase(
         test_id="https-userinfo",
@@ -107,6 +117,37 @@ SENSITIVE_LOG_EXTRA_CASES: tuple[SensitiveLogExtraCase, ...] = (
         test_id="argv",
         key="agentgrep_argv",
         value="agentgrep search secret-token",
+    ),
+)
+
+PYTEST_XDIST_ATTRIBUTE_CASES: tuple[PytestXdistAttributeCase, ...] = (
+    PytestXdistAttributeCase(
+        test_id="env-worker",
+        env_worker="gw0",
+        workerinput=None,
+        dist=None,
+        expected={
+            "agentgrep_pytest_worker_id": "gw0",
+            "agentgrep_pytest_xdist": True,
+        },
+    ),
+    PytestXdistAttributeCase(
+        test_id="workerinput",
+        env_worker=None,
+        workerinput={"workerid": "gw1"},
+        dist="loadscope",
+        expected={
+            "agentgrep_pytest_worker_id": "gw1",
+            "agentgrep_pytest_xdist": True,
+            "agentgrep_pytest_dist": "loadscope",
+        },
+    ),
+    PytestXdistAttributeCase(
+        test_id="no-xdist",
+        env_worker=None,
+        workerinput=None,
+        dist=None,
+        expected={"agentgrep_pytest_xdist": False},
     ),
 )
 
@@ -723,6 +764,51 @@ def test_pytest_item_span_helper_covers_custom_items() -> None:
     assert test_span.parent_id is None
     assert call_span.parent_id == test_span.span_id
     assert test_span.attributes["agentgrep_pytest_test"] == FakeItem.nodeid
+
+
+@pytest.mark.parametrize(
+    "case",
+    PYTEST_XDIST_ATTRIBUTE_CASES,
+    ids=[case.test_id for case in PYTEST_XDIST_ATTRIBUTE_CASES],
+)
+def test_pytest_item_span_helper_adds_xdist_worker_attributes(
+    case: PytestXdistAttributeCase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit pytest telemetry should label xdist worker context when present."""
+    import agentgrep._telemetry as telemetry
+    import conftest as root_conftest
+
+    class FakeOption:
+        def __init__(self, dist: str | None) -> None:
+            self.dist = dist
+
+    class FakeConfig:
+        def __init__(self) -> None:
+            self.workerinput = case.workerinput
+            self.option = FakeOption(case.dist)
+
+    class FakeItem:
+        nodeid = "tests/test_example.py::test_name"
+        config = FakeConfig()
+
+    if case.env_worker is None:
+        monkeypatch.delenv("PYTEST_XDIST_WORKER", raising=False)
+    else:
+        monkeypatch.setenv("PYTEST_XDIST_WORKER", case.env_worker)
+
+    backend = telemetry.InMemoryTelemetryBackend()
+    telemetry.configure_backend(backend)
+    try:
+        with root_conftest._agentgrep_otel_pytest_item_span(FakeItem()):
+            assert telemetry.current_span_id() is not None
+    finally:
+        telemetry.configure_backend(None)
+
+    for span in backend.finished_spans:
+        assert span.attributes["agentgrep_pytest_test"] == FakeItem.nodeid
+        for key, expected in case.expected.items():
+            assert span.attributes[key] == expected
 
 
 class McpSensitiveScalarArgCase(t.NamedTuple):
