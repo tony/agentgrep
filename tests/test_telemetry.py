@@ -854,9 +854,12 @@ def test_open_readonly_sqlite_uses_traced_connection_factory(tmp_path: pathlib.P
     finally:
         telemetry.configure_backend(None)
 
-    sql_span = next(
-        span for span in backend.finished_spans if span.name == "agentgrep.sqlite.execute"
-    )
+    sql_spans = [
+        span for span in backend.finished_spans if span.name.startswith("agentgrep.sqlite.")
+    ]
+    assert len(sql_spans) == 1
+    (sql_span,) = sql_spans
+    assert sql_span.name == "agentgrep.sqlite.execute"
     assert sql_span.parent_id == root_span_id
     assert sql_span.attributes["db.operation.name"] == "select"
 
