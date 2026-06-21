@@ -133,6 +133,13 @@ class OtelTelemetryBackend:
         active_span.record_exception(error)
         active_span.set_status(Status(StatusCode.ERROR, str(error)))
 
+    def set_span_status_error(self, description: str) -> None:
+        """Mark the current OTel span as errored without an exception."""
+        from opentelemetry import trace
+        from opentelemetry.trace import Status, StatusCode
+
+        trace.get_current_span().set_status(Status(StatusCode.ERROR, description))
+
     def record_metric(
         self,
         name: str,

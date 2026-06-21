@@ -158,6 +158,11 @@ emits `agentgrep.grep.candidate.count`, `agentgrep.grep.emitted.count`, and
 `agentgrep.grep.duration` metrics plus one structured completion log so Grafana
 can show the cost without logging raw patterns, argv, prompts, or paths.
 
+Handled non-exception failures (such as a CLI parse error that exits non-zero)
+set `StatusCode.ERROR` on the active span through `mark_span_error`, so Tempo's
+error filter selects them even though no exception propagates. `--help` and
+other zero-exit paths stay unset.
+
 Each TUI launch emits `agentgrep.tui.lifecycle` and
 `agentgrep.tui.shutdown` child spans under `agentgrep.tui.session`. The
 lifecycle span covers app construction and `app.run()`, while shutdown records
