@@ -4,7 +4,7 @@
 
 Base path: `~/.local/share/opencode` (env overrides: `XDG_DATA_HOME`, `OPENCODE_DB`).
 
-`observed_version`: `opencode v1.15.11` (observed 2026-05-30).
+`observed_version`: `opencode v1.17.9` (observed 2026-06-21).
 
 OpenCode (anomalyco/opencode) stores conversations in a single SQLite
 database, `opencode.db`, under its XDG data directory
