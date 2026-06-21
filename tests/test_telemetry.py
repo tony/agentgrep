@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import collections.abc as cabc
 import concurrent.futures
+import contextlib
 import json
 import logging
 import os
@@ -14,6 +15,22 @@ import sys
 import typing as t
 
 import pytest
+
+
+@contextlib.contextmanager
+def _clean_native_otel_context() -> cabc.Iterator[None]:
+    """Detach any ambient native OTel span (the conftest pytest.test root under OTel).
+
+    Tests that read the native OTel context directly must start from a clean
+    slate so they hold whether or not ``AGENTGREP_OTEL`` instruments the suite.
+    """
+    from opentelemetry import context as otel_context
+
+    token = otel_context.attach(otel_context.Context())
+    try:
+        yield
+    finally:
+        otel_context.detach(token)
 
 
 def _write_codex_session(home: pathlib.Path, *, text: str) -> pathlib.Path:
@@ -883,14 +900,15 @@ def test_executor_submit_preserves_current_trace_context() -> None:
     assert worker_span_id == root_span_id
 
 
-def test_profiler_thread_tag_is_noop_without_tagger() -> None:
+def test_profiler_thread_tag_is_noop_without_tagger(monkeypatch: pytest.MonkeyPatch) -> None:
     """Without an installed tagger, _profiler_thread_tag returns fn unchanged."""
     import agentgrep._telemetry as telemetry
+
+    monkeypatch.setattr(telemetry, "_PROFILER_THREAD_TAGGER", None)
 
     def fn() -> int:
         return 1
 
-    assert telemetry._PROFILER_THREAD_TAGGER is None
     assert telemetry._profiler_thread_tag(fn) is fn
 
 
@@ -923,8 +941,6 @@ async def test_profiler_thread_tagger_wraps_worker_callables(
 
 def test_worker_profiler_thread_tag_tags_native_span_id(monkeypatch: pytest.MonkeyPatch) -> None:
     """The worker tagger tags the on-CPU thread with the active native span id."""
-    import contextlib
-
     import pyroscope
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.trace import format_span_id
@@ -948,26 +964,69 @@ def test_worker_profiler_thread_tag_tags_native_span_id(monkeypatch: pytest.Monk
 
     wrapped = _telemetry_otel._worker_profiler_thread_tag(work)
 
-    assert wrapped() == 5
-    assert recorded == []
-
-    provider = TracerProvider()
-    tracer = provider.get_tracer("test")
-    with tracer.start_as_current_span("x") as span:
-        expected = format_span_id(span.get_span_context().span_id)
+    with _clean_native_otel_context():
         assert wrapped() == 5
-    provider.shutdown()
+        assert recorded == []
+
+        provider = TracerProvider()
+        tracer = provider.get_tracer("test")
+        with tracer.start_as_current_span("x") as span:
+            expected = format_span_id(span.get_span_context().span_id)
+            assert wrapped() == 5
+        provider.shutdown()
 
     assert ran == [True, True]
     assert recorded == [{"span_id": expected}]
 
 
-def test_format_span_id_matches_pyroscope_thread_tag_format() -> None:
-    """format_span_id matches PyroscopeSpanProcessor's 016x form for join parity."""
-    from opentelemetry.trace import format_span_id
+def test_worker_profiler_thread_tag_degrades_on_pyroscope_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If Pyroscope tagging fails, the worker callable still runs untagged."""
+    import pyroscope
+    from opentelemetry.sdk.trace import TracerProvider
 
-    span_id = 0x1122334455667788
-    assert format_span_id(span_id) == format(span_id, "016x")
+    from agentgrep import _telemetry_otel
+
+    def boom(_tags: dict[str, str]) -> object:
+        message = "pyroscope unavailable"
+        raise RuntimeError(message)
+
+    monkeypatch.setattr(pyroscope, "tag_wrapper", boom)
+
+    ran: list[bool] = []
+
+    def work() -> int:
+        ran.append(True)
+        return 9
+
+    wrapped = _telemetry_otel._worker_profiler_thread_tag(work)
+
+    provider = TracerProvider()
+    tracer = provider.get_tracer("test")
+    with tracer.start_as_current_span("x"):
+        assert wrapped() == 9
+    provider.shutdown()
+
+    assert ran == [True]
+
+
+def test_worker_tag_span_id_matches_pyroscope_processor_key() -> None:
+    """The worker tag's span id equals PyroscopeSpanProcessor's join key for a span."""
+    import pyroscope.otel
+    from opentelemetry.sdk.trace import TracerProvider
+
+    from agentgrep._telemetry_otel import _current_native_span_id
+
+    provider = TracerProvider()
+    tracer = provider.get_tracer("test")
+    with tracer.start_as_current_span("x") as span:
+        worker_key = _current_native_span_id()
+        processor_key = pyroscope.otel._get_span_id(t.cast("t.Any", span))
+    provider.shutdown()
+
+    assert worker_key is not None
+    assert worker_key == processor_key
 
 
 def test_span_mirrors_native_otel_trace_ids() -> None:
@@ -1184,13 +1243,17 @@ def test_mcp_request_inherits_inbound_traceparent(
 
     telemetry.configure_backend(backend)
     try:
-        inbound = middleware._inbound_otel_context()
-        detach = middleware._attach_otel_context(inbound)
-        try:
-            with telemetry.span("mcp.server.request", inherit_otel_context=inbound is not None):
-                observed = telemetry.current_trace_id()
-        finally:
-            detach()
+        with _clean_native_otel_context():
+            inbound = middleware._inbound_otel_context()
+            detach = middleware._attach_otel_context(inbound)
+            try:
+                with telemetry.span(
+                    "mcp.server.request",
+                    inherit_otel_context=inbound is not None,
+                ):
+                    observed = telemetry.current_trace_id()
+            finally:
+                detach()
     finally:
         telemetry.configure_backend(None)
         provider.shutdown()
