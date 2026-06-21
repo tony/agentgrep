@@ -20,14 +20,14 @@ from fastmcp.server.middleware import Middleware, MiddlewareContext
 from agentgrep import _telemetry
 
 _SENSITIVE_ARG_NAMES: frozenset[str] = frozenset(
-    {"terms", "pattern", "sample_text", "cursor"},
+    {"terms", "pattern", "query", "sample_text", "cursor"},
 )
 """Tool argument names whose values get redacted before logging.
 
 ``terms`` and ``pattern`` can carry user secrets when an agent searches its
 own history for tokens; page ``cursor`` values encode those same inputs;
-``sample_text`` is the validate-query payload and may contain anything the
-caller pastes in.
+``query`` and ``sample_text`` are diagnostic payloads and may contain anything
+the caller pastes in.
 """
 
 _MAX_LOGGED_STR_LEN: int = 200
@@ -105,7 +105,7 @@ def _summarize_args(args: dict[str, t.Any]) -> dict[str, t.Any]:
 
     Path-shaped arguments are redacted before logs or spans see them:
 
-    >>> _summarize_args({"source_path": "/home/d/.codex/history.json"})["source_path"]["kind"]
+    >>> _summarize_args({"source_path": "/tmp/agentgrep/history.json"})["source_path"]["kind"]
     'path'
     """
     summary: dict[str, t.Any] = {}
