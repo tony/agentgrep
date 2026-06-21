@@ -108,6 +108,7 @@ AgentName = t.Literal[
     "grok",
     "pi",
     "opencode",
+    "windsurf",
 ]
 OutputMode = t.Literal["text", "json", "ndjson", "ui"]
 ProgressMode = t.Literal["auto", "always", "never"]

@@ -40,6 +40,7 @@ class SearchRecordModel(AgentGrepModel):
         "grok",
         "pi",
         "opencode",
+        "windsurf",
     ]
     store: str
     adapter_id: str
@@ -80,6 +81,7 @@ class FindRecordModel(AgentGrepModel):
         "grok",
         "pi",
         "opencode",
+        "windsurf",
     ]
     store: str
     adapter_id: str
@@ -127,6 +129,7 @@ class SourceRecordModel(AgentGrepModel):
         "grok",
         "pi",
         "opencode",
+        "windsurf",
     ]
     store: str
     adapter_id: str
@@ -268,6 +271,7 @@ class CapabilitiesModel(AgentGrepModel):
             "grok",
             "pi",
             "opencode",
+            "windsurf",
         ]
     ]
     search_scopes: list[SearchScopeName]
@@ -297,6 +301,7 @@ class StoreDescriptorModel(AgentGrepModel):
         "grok",
         "pi",
         "opencode",
+        "windsurf",
     ]
     store_id: str
     role: str

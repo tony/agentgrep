@@ -35,6 +35,7 @@ KNOWN_AGENTS: tuple[AgentName, ...] = (
     "grok",
     "pi",
     "opencode",
+    "windsurf",
 )
 PATH_TOKEN_RE = re.compile(r"\$\{(?:HOME|[A-Z][A-Z0-9_]*)(?:\s+or\s+[^}]+)?\}")
 
@@ -112,9 +113,14 @@ def test_catalog_path_patterns_match_observed_layout(
 
 
 def test_primary_chat_stores_have_upstream_or_sample() -> None:
-    """Stores we plan to parse need *some* schema provenance pinned."""
+    """Stores we plan to parse need *some* schema provenance pinned.
+
+    Documentary primary-chat rows (no ``discovery`` — e.g. Windsurf's
+    encrypted, unparsed transcripts) are exempt: we catalogue their location
+    but never read them, so there is no record shape to pin.
+    """
     for store in CATALOG.stores:
-        if store.role is not StoreRole.PRIMARY_CHAT:
+        if store.role is not StoreRole.PRIMARY_CHAT or not store.discovery:
             continue
         assert store.upstream_ref or store.sample_record, store.store_id
 
