@@ -57,7 +57,7 @@ endpoints must not change CLI, TUI, MCP, pytest, or profiler correctness.
 - `scripts/benchmark.py run ...` for benchmark harness roots, command spans,
   subprocess spans, and benchmark subprocess metrics.
 - a short Python `-c` TUI smoke that fakes the blocking Textual app while
-  exporting an `agentgrep.tui.session` root and child TUI span.
+  exporting an `agentgrep.tui.session` root and lifecycle child span.
 - `python -m pytest tests/test_agentgrep.py::test_streaming_ui_app_mounts_cleanly`
   for a traced direct Textual `run_test()` path.
 - `python -m pytest
@@ -111,6 +111,11 @@ for source counts, submitted/completed sources, batches, emitted records, and
 records scanned. These metrics document CPU-impacting work and cost centers;
 they are observability signal, not a performance fix.
 
+Each TUI launch emits one `agentgrep.tui.lifecycle` child span under
+`agentgrep.tui.session`. The span covers app construction and `app.run()`, so
+blank or idle sessions remain non-root-only without adding per-keypress,
+per-render, or per-record logging.
+
 Run-scoped metric labels increase local QA series count. That is accepted for
 this branch because the goal is to close observability blindspots. If the
 series count becomes a project-threatening problem, reduce cardinality in a
@@ -150,6 +155,8 @@ Live acceptance must prove all four signals for the same debug session:
   request spans for the debug session.
 - No current-run trace has exactly one span.
 - At least one checked trace contains `agentgrep.sqlite.*` spans.
+- The TUI trace contains an `agentgrep.tui.lifecycle` child span even when the
+  acceptance app exits without running a search.
 - Prometheus has fresh span, engine CPU-loop, SQLite, and benchmark
   subprocess metrics with `agentgrep_debug_session_id`.
 - Loki has current-run agentgrep logs selected through a query-stage JSON parse

@@ -225,12 +225,7 @@ from agentgrep.ui import app as ui_app
 
 class FakeApp:
     def run(self) -> None:
-        with telemetry.span(
-            "agentgrep.tui.search",
-            agentgrep_surface="tui",
-            agentgrep_operation="tui.search",
-        ):
-            telemetry.set_span_attribute("agentgrep_outcome", "ok")
+        return None
 
 
 def fake_build(*_args, **_kwargs):
@@ -589,6 +584,7 @@ def query_traces(run_id: str, vcs_identity: dict[str, dict[str, str]]) -> dict[s
         "agentgrep.benchmark.command",
         "agentgrep.benchmark.subprocess",
         "agentgrep.mcp.request",
+        "agentgrep.tui.lifecycle",
     }
     missing_spans = sorted(required_spans - observed_span_names)
     if missing_spans:
