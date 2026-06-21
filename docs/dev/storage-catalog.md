@@ -222,8 +222,8 @@ present in Codex session metadata.
 
 ### Gemini CLI
 
-`observed_version`: ``gemini-cli v0.42.0`` stable (2026-05-12); types
-from `v0.44.0-nightly` HEAD `77e65c0d`. Three adapters cover the
+`observed_version`: ``gemini-cli v0.47.0`` stable (observed
+2026-06-21); types pinned at HEAD `927170fc`. Three adapters cover the
 three on-disk shapes:
 
 - `gemini.tmp_chats_jsonl.v1` parses
@@ -243,7 +243,7 @@ three on-disk shapes:
   `tmp/<project_hash>/chats/session-*.json` single-file sessions.
   Upstream still reads this shape via the `isLegacyRecord`
   discriminator at
-  [`chatRecordingService.ts:941`](https://github.com/google-gemini/gemini-cli/blob/77e65c0d/packages/core/src/services/chatRecordingService.ts#L941);
+  [`chatRecordingService.ts:1041`](https://github.com/google-gemini/gemini-cli/blob/927170fc/packages/core/src/services/chatRecordingService.ts#L1041);
   the legacy file holds session metadata at the top level and the
   full conversation under a `messages` array.
 - `gemini.tmp_logs_json.v1` parses
@@ -251,11 +251,11 @@ three on-disk shapes:
   `LogEntry` records (user-prompt audit log).
 
 Gemini's
-[`sessionCleanup.ts`](https://github.com/google-gemini/gemini-cli/blob/77e65c0d/packages/cli/src/utils/sessionCleanup.ts)
+[`sessionCleanup.ts`](https://github.com/google-gemini/gemini-cli/blob/927170fc/packages/cli/src/utils/sessionCleanup.ts)
 hard-deletes expired sessions via `fs.unlink()` — there is no
 `history/` archive. The Antigravity files some installs carry under
 `~/.gemini/antigravity/conversations/` are written by the
-[Antigravity IDE](https://github.com/google-gemini/gemini-cli/blob/77e65c0d/packages/core/src/ide/detect-ide.ts),
+[Antigravity IDE](https://github.com/google-gemini/gemini-cli/blob/927170fc/packages/core/src/ide/detect-ide.ts),
 a separate Google product — Gemini CLI only detects Antigravity as
 an IDE launcher and does not read or write the protobuf
 conversation files. They are documented as the separate

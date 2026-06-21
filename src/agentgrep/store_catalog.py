@@ -36,14 +36,15 @@ _CURSOR_CONFIG_OBSERVED_AT = datetime.date(2026, 5, 30)
 _PI_OBSERVED_AT = datetime.date(2026, 6, 21)
 _OPENCODE_OBSERVED_AT = datetime.date(2026, 6, 21)
 _ANTIGRAVITY_OBSERVED_AT = datetime.date(2026, 6, 21)
+_GEMINI_OBSERVED_AT = datetime.date(2026, 6, 21)
 
 
 def gemini_project_hash(project_root: pathlib.Path) -> str:
     """Reproduce Gemini CLI's project-hash derivation.
 
     Mirrors the ``getProjectHash`` helper at
-    ``packages/core/src/utils/paths.ts:318-320`` in
-    ``github.com/google-gemini/gemini-cli`` (HEAD ``77e65c0d``):
+    ``packages/core/src/utils/paths.ts:187-189`` in
+    ``github.com/google-gemini/gemini-cli`` (HEAD ``927170fc``):
 
     .. code-block:: typescript
 
@@ -2401,11 +2402,11 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
             "session-<timestamp><id>.jsonl"
         ),
         env_overrides=("GEMINI_CLI_HOME",),
-        observed_version="gemini-cli v0.42.0 stable; types from v0.44.0-nightly @77e65c0d",
-        observed_at=OBSERVED_AT,
+        observed_version="gemini-cli v0.47.0 stable",
+        observed_at=_GEMINI_OBSERVED_AT,
         upstream_ref=(
-            "github.com/google-gemini/gemini-cli@77e65c0d/"
-            "packages/core/src/services/chatRecordingTypes.ts#L12"
+            "github.com/google-gemini/gemini-cli@927170fc/"
+            "packages/core/src/services/chatRecordingTypes.ts#L82"
         ),
         schema_notes=(
             "JSONL with mixed record types. Line 1 is a SessionMetadataRecord "
@@ -2450,10 +2451,10 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
             "${GEMINI_CLI_HOME or ${HOME}/.gemini}/tmp/<project_hash>/chats/checkpoint-<tag>.json"
         ),
         env_overrides=("GEMINI_CLI_HOME",),
-        observed_version="gemini-cli v0.42.0 stable; types from v0.44.0-nightly @77e65c0d",
-        observed_at=OBSERVED_AT,
+        observed_version="gemini-cli v0.47.0 stable",
+        observed_at=_GEMINI_OBSERVED_AT,
         upstream_ref=(
-            "github.com/google-gemini/gemini-cli@77e65c0d/packages/core/src/core/logger.ts#L29"
+            "github.com/google-gemini/gemini-cli@927170fc/packages/core/src/core/logger.ts#L29"
         ),
         schema_notes=(
             "Single-file conversation snapshot written by the `/chat save` command. "
@@ -2470,10 +2471,10 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_ARRAY,
         path_pattern="${GEMINI_CLI_HOME or ${HOME}/.gemini}/tmp/<project_hash>/logs.json",
         env_overrides=("GEMINI_CLI_HOME",),
-        observed_version="gemini-cli v0.42.0 stable; types from v0.44.0-nightly @77e65c0d",
-        observed_at=OBSERVED_AT,
+        observed_version="gemini-cli v0.47.0 stable",
+        observed_at=_GEMINI_OBSERVED_AT,
         upstream_ref=(
-            "github.com/google-gemini/gemini-cli@77e65c0d/packages/core/src/core/logger.ts#L15"
+            "github.com/google-gemini/gemini-cli@927170fc/packages/core/src/core/logger.ts#L21"
         ),
         schema_notes=(
             "JSON array of `LogEntry { sessionId, messageId, timestamp, type, "
@@ -2506,11 +2507,11 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
             "session-<timestamp><id>.json"
         ),
         env_overrides=("GEMINI_CLI_HOME",),
-        observed_version="gemini-cli v0.42.0 stable; types from v0.44.0-nightly @77e65c0d",
-        observed_at=OBSERVED_AT,
+        observed_version="gemini-cli v0.47.0 stable",
+        observed_at=_GEMINI_OBSERVED_AT,
         upstream_ref=(
-            "github.com/google-gemini/gemini-cli@77e65c0d/"
-            "packages/core/src/services/chatRecordingService.ts#L941"
+            "github.com/google-gemini/gemini-cli@927170fc/"
+            "packages/core/src/services/chatRecordingService.ts#L1041"
         ),
         schema_notes=(
             "Pre-Feb 2026 single-file session format. JSON object with "
@@ -2550,8 +2551,8 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.MARKDOWN_FRONTMATTER,
         path_pattern="${GEMINI_CLI_HOME or ${HOME}/.gemini}/skills/",
         env_overrides=("GEMINI_CLI_HOME",),
-        observed_version="gemini-cli v0.42.0 stable",
-        observed_at=OBSERVED_AT,
+        observed_version="gemini-cli v0.47.0 stable",
+        observed_at=_GEMINI_OBSERVED_AT,
         schema_notes="Skill definitions; not chat.",
         search_by_default=False,
     ),
@@ -2562,8 +2563,8 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${GEMINI_CLI_HOME or ${HOME}/.gemini}/settings.json",
         env_overrides=("GEMINI_CLI_HOME",),
-        observed_version="gemini-cli v0.42.0 stable",
-        observed_at=OBSERVED_AT,
+        observed_version="gemini-cli v0.47.0 stable",
+        observed_at=_GEMINI_OBSERVED_AT,
         schema_notes="Configuration; not chat.",
         search_by_default=False,
     ),

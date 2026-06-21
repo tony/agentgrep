@@ -4,8 +4,8 @@
 
 Base path: `~/.gemini` (env override: `GEMINI_CLI_HOME`).
 
-`observed_version`: `gemini-cli v0.42.0` stable; types from
-`v0.44.0-nightly` HEAD `77e65c0d`.
+`observed_version`: `gemini-cli v0.47.0` stable (observed 2026-06-21);
+types pinned at HEAD `927170fc`.
 
 ## Stores
 
