@@ -103,6 +103,7 @@ KNOWN_ADAPTERS: tuple[str, ...] = (
     "cursor_cli.prompt_history_json.v1",
     "cursor_cli.skills_text.v1",
     "cursor_cli.uploads_text.v1",
+    "cursor_cli.agent_tools_text.v1",
     "cursor_cli.transcripts_jsonl.v1",
     "cursor_ide.state_vscdb_legacy.v1",
     "cursor_ide.state_vscdb_modern.v1",

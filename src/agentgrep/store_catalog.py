@@ -1397,6 +1397,34 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
             ),
         ),
     ),
+    StoreDescriptor(
+        agent="cursor-cli",
+        store_id="cursor-cli.agent_tools",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.TEXT,
+        path_pattern="${HOME}/.cursor/projects/<id>/agent-tools/<name>.txt",
+        observed_version="cursor-agent 2026.06.19-653a7fb",
+        observed_at=_CURSOR_CLI_OBSERVED_AT,
+        schema_notes=(
+            "Captured tool-result payloads written per project under "
+            "`agent-tools/*.txt`, distinct from the `tools/*.json` registry. "
+            "Tool output rather than chat; inspectable opt-in, not searched by "
+            "default."
+        ),
+        coverage=StoreCoverage.INSPECTABLE,
+        search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="cursor-cli.agent_tools",
+                adapter_id="cursor_cli.agent_tools_text.v1",
+                path_kind="store_file",
+                source_kind="text",
+                home_subpath=(".cursor", "projects"),
+                glob="*.txt",
+                path_parts_required=("agent-tools",),
+            ),
+        ),
+    ),
 )
 
 _CURSOR_IDE_STORES: tuple[StoreDescriptor, ...] = (
@@ -3834,7 +3862,7 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
 
 
 CATALOG = StoreCatalog(
-    catalog_version=26,
+    catalog_version=27,
     captured_at=_ANTIGRAVITY_OBSERVED_AT,
     stores=(
         *_CLAUDE_STORES,
