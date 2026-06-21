@@ -46,13 +46,17 @@ selectors:
 | `find-prompts` | `profile-engine-find-all-prompts-limit-500` |
 | `all` | `profile-engine` |
 | `cursor-ide` | `profile-engine-cursor-ide` |
+| `cursor-ide-fixture` | `profile-engine-cursor-ide-fixture` |
 
 If a component is supplied, use its selector as `--commands`. For
 `all`, pass `--commands profile-engine`; the benchmark harness expands
 that command group into every committed `profile-engine-*` benchmark.
 For Cursor IDE SQLite profiling, pass `--commands profile-engine-cursor-ide`;
-that group runs the Cursor-only search, grep, and find profile-engine
-benchmarks without expanding the all-agent profiler group.
+that group runs real-local Cursor-only search, grep, and find rows plus
+fixture-backed search and grep rows without expanding the all-agent profiler
+group.
+Use `--commands profile-engine-cursor-ide-fixture` when the local machine has
+no Cursor IDE state but the run still needs populated SQLite coverage.
 Keep the cap visible in reports: if a selector includes `limit-500` or
 `max-count-500`, say `limit 500` or `max-count 500`.
 

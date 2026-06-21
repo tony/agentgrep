@@ -24,6 +24,7 @@ prompt text, raw argv, or local absolute paths.
 | `find-prompts` | `uv run python scripts/profile_engine.py find-prompts --agent all --limit 500` |
 | `all` | `uv run python scripts/profile_engine.py all --agent all --limit 500 <query>` |
 | `cursor-ide` | `uv run python scripts/profile_engine.py search-prompts --agent cursor-ide --limit 500 <query>` |
+| `cursor-ide-fixture` | `uv run python scripts/profile_engine.py search-prompts --agent cursor-ide --fixture cursor-ide-state-vscdb --limit 500 agentgrep-cursor-fixture-token` |
 
 ## Procedure
 
