@@ -270,8 +270,8 @@ answer "which Gemini sessions belong to *this* repo?".
 
 Grok stores data under `${GROK_HOME or ${HOME}/.grok}/sessions/`
 using URL-encoded absolute project paths as directory keys
-(e.g. `%2Fhome%2Fd%2Fwork%2Fpython%2Fproj`). Three adapters cover
-the three searchable store shapes:
+(e.g. `%2Fhome%2Fd%2Fwork%2Fpython%2Fproj`). Four adapters cover
+the searchable store shapes:
 
 - `grok.prompt_history_jsonl.v1` parses per-project
   `sessions/<project>/prompt_history.jsonl`. Each line is a
@@ -286,6 +286,11 @@ the three searchable store shapes:
   `sessions/session_search.sqlite` FTS5 index. Table `session_docs`
   has `session_id`, `cwd`, `updated_at` (unix seconds), `title`
   (generated), and `content` (full-text indexed body).
+- `grok.subagents_json.v1` parses per-subagent
+  `sessions/<project>/<uuid>/subagents/<subagent>/meta.json`. The
+  delegated `prompt` is the only persisted record of the subagent, so
+  it is emitted as supplementary-chat content, parity with the Claude
+  and Cursor CLI subagent stores.
 
 Documentary-only entries cover events, summaries, memory, logs,
 worktrees, and config — all catalogued with `search_by_default=False`

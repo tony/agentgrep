@@ -10283,3 +10283,28 @@ def test_unix_to_isoformat_edge_cases(
     else:
         assert result is not None, f"{test_id}: expected timestamp, got None"
         assert result.startswith(expected), f"{test_id}: {result!r}"
+
+
+def test_parse_grok_subagents_emits_dispatch_prompt() -> None:
+    """grok.subagents meta.json yields the delegated prompt as one record."""
+    from tests.conftest import fixture_path
+
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    source = agentgrep.SourceHandle(
+        agent="grok",
+        store="grok.subagents",
+        adapter_id="grok.subagents_json.v1",
+        path=fixture_path("grok.subagents", "meta.json"),
+        path_kind="session_file",
+        source_kind="json",
+        search_root=None,
+        mtime_ns=1,
+    )
+    records = list(agentgrep.iter_source_records(source))
+    assert len(records) == 1
+    record = records[0]
+    assert record.kind == "prompt"
+    assert record.role == "user"
+    assert "login sessions are issued" in record.text
+    assert record.title == "Map the authentication module"
+    assert record.metadata.get("subagent_type") == "code-explorer"

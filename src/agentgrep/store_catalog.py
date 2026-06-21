@@ -2976,6 +2976,49 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
     ),
     StoreDescriptor(
         agent="grok",
+        store_id="grok.subagents",
+        role=StoreRole.SUPPLEMENTARY_CHAT,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern=(
+            "${GROK_HOME or ${HOME}/.grok}/sessions/<url_encoded_project>/"
+            "<session_uuid>/subagents/<subagent_uuid>/meta.json"
+        ),
+        env_overrides=("GROK_HOME",),
+        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
+        observed_at=_GROK_OBSERVED_AT,
+        schema_notes=(
+            "Per-subagent dispatch record. One JSON object per delegated "
+            "subagent: `prompt` (the delegated instruction), `description`, "
+            "`subagent_type`, `tool_calls`, `turns`, and parent/child session "
+            "linkage. The subagent's own turns are not persisted separately, so "
+            "this `prompt` is the only searchable record of the delegation."
+        ),
+        sample_record=(
+            '{"subagent_id":"...","parent_session_id":"...",'
+            '"subagent_type":"...","description":"<redacted>",'
+            '"prompt":"<redacted>","tool_calls":[]}'
+        ),
+        distinguishes_from=("grok.sessions",),
+        search_by_default=True,
+        search_notes=(
+            "Subagent dispatch prompts are conversation content with no sibling "
+            "transcript; parity with claude.projects.subagent and "
+            "cursor-cli.subagent_transcripts."
+        ),
+        discovery=(
+            DiscoverySpec(
+                store="grok.subagents",
+                adapter_id="grok.subagents_json.v1",
+                path_kind="session_file",
+                source_kind="json",
+                home_subpath=("sessions",),
+                glob="meta.json",
+                path_parts_required=("subagents",),
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="grok",
         store_id="grok.sessions.events",
         role=StoreRole.APP_STATE,
         format=StoreFormat.JSONL,
@@ -3403,7 +3446,7 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
 
 
 CATALOG = StoreCatalog(
-    catalog_version=14,
+    catalog_version=15,
     captured_at=_ANTIGRAVITY_OBSERVED_AT,
     stores=(
         *_CLAUDE_STORES,

@@ -40,6 +40,23 @@ kinds: `system`, `user`, `assistant`, `tool_use`, `tool_result`.
  "timestamp": "2026-05-25T10:00:01.000000000Z"}
 ```
 
+### grok.subagents
+
+Per-subagent dispatch record, one JSON object per delegated subagent
+under `sessions/<project>/<session>/subagents/<subagent>/meta.json`.
+The subagent's own turns are not persisted separately, so the
+delegated `prompt` is the only searchable record of the delegation.
+
+```json
+{"subagent_id": "019e6626-...", "parent_session_id": "019e660d-...",
+ "subagent_type": "code-explorer", "description": "Map the auth module",
+ "prompt": "Explore the auth module and summarize ...", "tool_calls": []}
+```
+
+agentgrep emits the `prompt` as one supplementary-chat record titled
+with `description`; `subagent_type` and `parent_session_id` are
+attached as metadata.
+
 ### grok.session\_search
 
 SQLite with FTS5. Table `session_docs`:

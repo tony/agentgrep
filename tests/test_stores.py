@@ -911,6 +911,7 @@ PRIMARY_FIXTURES: tuple[tuple[str, str], ...] = (
     ("antigravity-cli.history", "history.jsonl"),
     ("grok.prompt_history", "prompt_history.jsonl"),
     ("grok.sessions", "chat_history.jsonl"),
+    ("grok.subagents", "meta.json"),
     ("pi.sessions", "example.jsonl"),
 )
 

@@ -214,6 +214,7 @@ ITER_SOURCE_RECORD_ADAPTERS: frozenset[str] = frozenset(
         "grok.prompt_history_jsonl.v1",
         "grok.session_search_sqlite.v1",
         "grok.sessions_jsonl.v1",
+        "grok.subagents_json.v1",
         "pi.sessions_jsonl.v1",
         "opencode.db_sqlite.v1",
     },
@@ -4551,6 +4552,9 @@ def iter_source_records(
     if source.adapter_id == "grok.session_search_sqlite.v1":
         yield from parse_grok_session_search_db(source)
         return
+    if source.adapter_id == "grok.subagents_json.v1":
+        yield from parse_grok_subagents(source)
+        return
     if source.adapter_id == "pi.sessions_jsonl.v1":
         yield from parse_pi_session_file(
             source,
@@ -5513,6 +5517,49 @@ def parse_grok_prompt_history(
             conversation_id=session_id,
             metadata={"is_bash": mapping.get("is_bash", False)},
         )
+
+
+def parse_grok_subagents(source: SourceHandle) -> cabc.Iterator[SearchRecord]:
+    """Parse a Grok CLI subagent ``meta.json`` dispatch record.
+
+    Each ``sessions/<project>/<session>/subagents/<subagent>/meta.json`` is a
+    single JSON object describing one dispatched subagent: ``prompt`` (the
+    delegated instruction), ``description``, ``subagent_type``, ``tool_calls``,
+    and parent/child session linkage. The subagent's own conversation is not
+    stored elsewhere, so the dispatch prompt is the only searchable record of
+    the delegation — emitted here as supplementary conversation content.
+    """
+    payload = read_json_file(source.path)
+    if not isinstance(payload, dict):
+        return
+    mapping = t.cast("dict[str, object]", payload)
+    prompt = as_optional_str(mapping.get("prompt"))
+    description = as_optional_str(mapping.get("description"))
+    text = prompt or description
+    if not text:
+        return
+    child_session_id = as_optional_str(mapping.get("child_session_id"))
+    parent_session_id = as_optional_str(mapping.get("parent_session_id"))
+    subagent_type = as_optional_str(mapping.get("subagent_type"))
+    metadata: dict[str, object] = {}
+    if subagent_type:
+        metadata["subagent_type"] = subagent_type
+    if parent_session_id:
+        metadata["parent_session_id"] = parent_session_id
+    yield SearchRecord(
+        kind="prompt",
+        agent=source.agent,
+        store=source.store,
+        adapter_id=source.adapter_id,
+        path=source.path,
+        text=text,
+        title=description or "Grok subagent",
+        role="user",
+        timestamp=as_optional_str(mapping.get("started_at")),
+        session_id=child_session_id,
+        conversation_id=child_session_id or parent_session_id,
+        metadata=metadata,
+    )
 
 
 def parse_grok_chat_history(
