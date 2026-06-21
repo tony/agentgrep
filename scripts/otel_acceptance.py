@@ -63,6 +63,15 @@ class AcceptanceCheckError(RuntimeError):
     """Raised when live LGTM evidence is not yet available."""
 
 
+class CliAcceptanceWorkloadCase(t.NamedTuple):
+    """One short-lived CLI subprocess shape for live trace coverage."""
+
+    test_id: str
+    candidate_id: str
+    command: list[str]
+    expected_returncode: int
+
+
 def main() -> int:
     """Run acceptance checks."""
     parser = argparse.ArgumentParser()
@@ -213,6 +222,93 @@ def _grep_parse_error_workload_command(run_id: str) -> list[str]:
     return _agentgrep_module_command("grep", "--invert-match", run_id)
 
 
+def _cli_acceptance_workload_cases(run_id: str) -> tuple[CliAcceptanceWorkloadCase, ...]:
+    """Return the short-lived CLI subprocess matrix."""
+    return (
+        CliAcceptanceWorkloadCase(
+            test_id="help",
+            candidate_id="cli-help",
+            command=_agentgrep_module_command("--help"),
+            expected_returncode=0,
+        ),
+        CliAcceptanceWorkloadCase(
+            test_id="search",
+            candidate_id="cli-search",
+            command=_agentgrep_module_command(
+                "search",
+                "--agent",
+                "codex",
+                "--scope",
+                "prompts",
+                "--limit",
+                "5",
+                run_id,
+            ),
+            expected_returncode=0,
+        ),
+        CliAcceptanceWorkloadCase(
+            test_id="grep-parse-error",
+            candidate_id="cli-grep-parse-error",
+            command=_grep_parse_error_workload_command(run_id),
+            expected_returncode=2,
+        ),
+        CliAcceptanceWorkloadCase(
+            test_id="find",
+            candidate_id="cli-find",
+            command=_agentgrep_module_command("find", "codex", "--json"),
+            expected_returncode=0,
+        ),
+        CliAcceptanceWorkloadCase(
+            test_id="json-no-hit",
+            candidate_id="cli-json-no-hit",
+            command=_agentgrep_module_command(
+                "search",
+                "--agent",
+                "codex",
+                "--scope",
+                "prompts",
+                "--json",
+                f"{run_id}-missing",
+            ),
+            expected_returncode=1,
+        ),
+        CliAcceptanceWorkloadCase(
+            test_id="ui-help",
+            candidate_id="cli-ui-help",
+            command=_agentgrep_module_command("ui", "--help"),
+            expected_returncode=0,
+        ),
+    )
+
+
+def _run_cli_acceptance_matrix(
+    run_id: str,
+    *,
+    home: pathlib.Path,
+    env: cabc.Mapping[str, str],
+) -> None:
+    """Run short-lived CLI subprocesses with per-case candidate IDs."""
+    for case in _cli_acceptance_workload_cases(run_id):
+        completed = subprocess.run(
+            case.command,
+            cwd=ROOT,
+            env={
+                **env,
+                "HOME": str(home),
+                "AGENTGREP_DEBUG_CANDIDATE_ID": case.candidate_id,
+            },
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != case.expected_returncode:
+            message = (
+                f"CLI workload {case.test_id} exited {completed.returncode}, "
+                f"expected {case.expected_returncode}: {completed.stderr[:500]}"
+            )
+            raise AcceptanceCheckError(message)
+
+
 def _tui_root_workload_command() -> list[str]:
     """Return a command that exercises a TUI root span without opening a UI."""
     code = """
@@ -280,9 +376,10 @@ def run_workloads(run_id: str) -> None:
         check=True,
     )
     with tempfile.TemporaryDirectory(prefix="agentgrep-otel-home-") as temp_home:
+        temp_home_path = pathlib.Path(temp_home)
         marker = f"{run_id} prompt\nacceptance invert line"
         session = (
-            pathlib.Path(temp_home) / ".codex" / "sessions" / "2026" / "01" / "01" / "session.jsonl"
+            temp_home_path / ".codex" / "sessions" / "2026" / "01" / "01" / "session.jsonl"
         )
         session.parent.mkdir(parents=True)
         session.write_text(
@@ -303,7 +400,7 @@ def run_workloads(run_id: str) -> None:
             ),
             encoding="utf-8",
         )
-        cursor_db = pathlib.Path(temp_home) / ".cursor" / "state.vscdb"
+        cursor_db = temp_home_path / ".cursor" / "state.vscdb"
         cursor_db.parent.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(cursor_db)
         try:
@@ -316,50 +413,7 @@ def run_workloads(run_id: str) -> None:
             connection.commit()
         finally:
             connection.close()
-        subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "agentgrep",
-                "--help",
-            ],
-            cwd=ROOT,
-            env={**env, "HOME": temp_home},
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        parse_error = subprocess.run(
-            _grep_parse_error_workload_command(run_id),
-            cwd=ROOT,
-            env={**env, "HOME": temp_home},
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        if parse_error.returncode != 2:
-            message = f"parse-error workload exited {parse_error.returncode}: {parse_error.stderr}"
-            raise AcceptanceCheckError(message)
-        subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "agentgrep",
-                "search",
-                "--agent",
-                "codex",
-                "--scope",
-                "prompts",
-                "--limit",
-                "5",
-                run_id,
-            ],
-            cwd=ROOT,
-            env={**env, "HOME": temp_home},
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+        _run_cli_acceptance_matrix(run_id, home=temp_home_path, env=env)
         subprocess.run(
             [
                 sys.executable,
@@ -512,8 +566,12 @@ def query_traces(run_id: str, vcs_identity: dict[str, dict[str, str]]) -> dict[s
     sqlite_trace_count = 0
     profile_engine_sqlite_trace_count = 0
     observed_span_names: set[str] = set()
+    observed_cli_candidate_ids: set[str] = set()
     missing_vcs_traces: list[dict[str, object]] = []
     expected_vcs_resource = vcs_identity["resource"]
+    required_cli_candidate_ids = {
+        case.candidate_id for case in _cli_acceptance_workload_cases(run_id)
+    }
     for trace_id in trace_ids:
         trace_data = http_json(f"http://localhost:3200/api/traces/{trace_id}")
         resource_attributes = trace_resource_attributes(trace_data)
@@ -555,6 +613,10 @@ def query_traces(run_id: str, vcs_identity: dict[str, dict[str, str]]) -> dict[s
                 sqlite_trace_count += 1
                 if root_name == "agentgrep.profile_engine.run":
                     profile_engine_sqlite_trace_count += 1
+            if root_name == "agentgrep.cli.invocation":
+                candidate_id = resource_attributes.get("agentgrep.debug.candidate_id")
+                if isinstance(candidate_id, str):
+                    observed_cli_candidate_ids.add(candidate_id)
     if single_root_traces:
         message = f"single-root traces found: {single_root_traces[:5]}"
         raise AcceptanceCheckError(message)
@@ -579,6 +641,10 @@ def query_traces(run_id: str, vcs_identity: dict[str, dict[str, str]]) -> dict[s
     missing_roots = sorted(required_roots - observed_roots)
     if missing_roots:
         message = f"missing required trace roots: {missing_roots}"
+        raise AcceptanceCheckError(message)
+    missing_cli_candidates = sorted(required_cli_candidate_ids - observed_cli_candidate_ids)
+    if missing_cli_candidates:
+        message = f"missing CLI candidate traces: {missing_cli_candidates}"
         raise AcceptanceCheckError(message)
     required_spans = {
         "agentgrep.benchmark.command",

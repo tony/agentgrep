@@ -150,6 +150,74 @@ def test_grep_invert_acceptance_workload_covers_parse_error() -> None:
     ]
 
 
+def test_cli_acceptance_matrix_covers_short_lived_process_shapes() -> None:
+    """The live CLI matrix should identify each short subprocess by candidate id."""
+    cases = otel_acceptance._cli_acceptance_workload_cases("run-123")
+
+    assert [(case.test_id, case.expected_returncode) for case in cases] == [
+        ("help", 0),
+        ("search", 0),
+        ("grep-parse-error", 2),
+        ("find", 0),
+        ("json-no-hit", 1),
+        ("ui-help", 0),
+    ]
+    assert [case.candidate_id for case in cases] == [
+        "cli-help",
+        "cli-search",
+        "cli-grep-parse-error",
+        "cli-find",
+        "cli-json-no-hit",
+        "cli-ui-help",
+    ]
+
+
+def test_cli_acceptance_matrix_sets_candidate_env(
+    monkeypatch: t.Any,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Each live CLI subprocess should carry its candidate id in resource attrs."""
+    observed: list[tuple[list[str], str | None]] = []
+    expected_codes = {
+        "cli-help": 0,
+        "cli-search": 0,
+        "cli-grep-parse-error": 2,
+        "cli-find": 0,
+        "cli-json-no-hit": 1,
+        "cli-ui-help": 0,
+    }
+
+    def fake_run(
+        command: list[str],
+        *,
+        cwd: pathlib.Path,
+        env: dict[str, str],
+        check: bool,
+        capture_output: bool,
+        text: bool,
+    ) -> subprocess.CompletedProcess[str]:
+        del cwd, check, capture_output, text
+        candidate_id = env.get("AGENTGREP_DEBUG_CANDIDATE_ID")
+        observed.append((command, candidate_id))
+        assert candidate_id is not None
+        return subprocess.CompletedProcess(
+            command,
+            expected_codes[candidate_id],
+            stdout="",
+            stderr="",
+        )
+
+    monkeypatch.setattr(otel_acceptance.subprocess, "run", fake_run)
+
+    otel_acceptance._run_cli_acceptance_matrix(
+        "run-123",
+        home=tmp_path,
+        env={"AGENTGREP_DEBUG_SESSION_ID": "run-123"},
+    )
+
+    assert [candidate_id for _command, candidate_id in observed] == list(expected_codes)
+
+
 def test_tui_acceptance_workload_exercises_tui_root_and_child_span() -> None:
     """Acceptance should exercise an idle TUI root and lifecycle child span."""
     command = otel_acceptance._tui_root_workload_command()
