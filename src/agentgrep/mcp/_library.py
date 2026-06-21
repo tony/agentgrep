@@ -111,6 +111,7 @@ KNOWN_ADAPTERS: tuple[str, ...] = (
     "gemini.tmp_chats_legacy_json.v1",
     "gemini.tmp_logs_json.v1",
     "gemini.memory_text.v1",
+    "gemini.tool_outputs_text.v1",
     "grok.prompt_history_jsonl.v1",
     "grok.sessions_jsonl.v1",
     "grok.session_search_sqlite.v1",

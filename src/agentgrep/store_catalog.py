@@ -2745,6 +2745,38 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
             ),
         ),
     ),
+    StoreDescriptor(
+        agent="gemini",
+        store_id="gemini.tool_outputs",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.TEXT,
+        path_pattern=(
+            "${GEMINI_CLI_HOME or ${HOME}/.gemini}/tmp/<project_hash>/"
+            "tool-outputs/session-<id>/<name>.txt"
+        ),
+        env_overrides=("GEMINI_CLI_HOME",),
+        observed_version="gemini-cli v0.47.0 stable",
+        observed_at=_GEMINI_OBSERVED_AT,
+        schema_notes=(
+            "Per-tool-call output text (run_shell_command / read_file / "
+            "update_topic results) under `tmp/<hash>/tool-outputs/session-<id>/`. "
+            "Tool output rather than user prompts (may echo file or command "
+            "content), so inspectable opt-in, not searched by default."
+        ),
+        coverage=StoreCoverage.INSPECTABLE,
+        search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="gemini.tool_outputs",
+                adapter_id="gemini.tool_outputs_text.v1",
+                path_kind="store_file",
+                source_kind="text",
+                home_subpath=("tmp",),
+                glob="*.txt",
+                path_parts_required=("tool-outputs",),
+            ),
+        ),
+    ),
 )
 
 
@@ -3862,7 +3894,7 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
 
 
 CATALOG = StoreCatalog(
-    catalog_version=27,
+    catalog_version=28,
     captured_at=_ANTIGRAVITY_OBSERVED_AT,
     stores=(
         *_CLAUDE_STORES,
