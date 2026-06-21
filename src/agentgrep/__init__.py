@@ -175,6 +175,7 @@ ITER_SOURCE_RECORD_ADAPTERS: frozenset[str] = frozenset(
         "claude.settings_json.v1",
         "claude.skills_text.v1",
         "claude.store_sqlite.v1",
+        "claude.usage_facets_json.v1",
         "claude.tasks_json.v1",
         "claude.teams_json.v1",
         "claude.todos_json.v1",
@@ -4432,6 +4433,9 @@ def iter_source_records(
     if source.adapter_id == "claude.store_sqlite.v1":
         yield from parse_claude_store_db(source)
         return
+    if source.adapter_id == "claude.usage_facets_json.v1":
+        yield from parse_claude_usage_facet(source)
+        return
     if source.adapter_id == "claude.tasks_json.v1":
         yield from parse_claude_task_file(source)
         return
@@ -5808,6 +5812,43 @@ def parse_text_store_file(
         text=text,
         title=source.store,
         timestamp=isoformat_from_mtime_ns(source.mtime_ns),
+        metadata={"coverage": source.coverage.value},
+    )
+
+
+def parse_claude_usage_facet(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse a Claude Code ``usage-data/facets/<session>.json`` reflection.
+
+    Each facet is Claude's own derived summary of a session; the readable
+    natural-language fields are ``brief_summary``, ``underlying_goal``, and
+    ``friction_detail``. Derived state, not transcript — emitted as one
+    inspectable record.
+    """
+    payload = read_json_file(source.path)
+    if not isinstance(payload, dict):
+        return
+    mapping = t.cast("dict[str, object]", payload)
+    parts = [
+        as_optional_str(mapping.get(key))
+        for key in ("brief_summary", "underlying_goal", "friction_detail")
+    ]
+    text = "\n\n".join(part for part in parts if part)
+    if not text:
+        return
+    session_id = as_optional_str(mapping.get("session_id"))
+    yield SearchRecord(
+        kind="history",
+        agent=source.agent,
+        store=source.store,
+        adapter_id=source.adapter_id,
+        path=source.path,
+        text=text,
+        title="Claude session reflection",
+        timestamp=isoformat_from_mtime_ns(source.mtime_ns),
+        session_id=session_id,
+        conversation_id=session_id,
         metadata={"coverage": source.coverage.value},
     )
 

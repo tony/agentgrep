@@ -80,6 +80,7 @@ KNOWN_ADAPTERS: tuple[str, ...] = (
     "claude.projects_jsonl.v1",
     "claude.projects_memory_text.v1",
     "claude.store_sqlite.v1",
+    "claude.usage_facets_json.v1",
     "claude.tasks_json.v1",
     "claude.todos_json.v1",
     "claude.teams_json.v1",

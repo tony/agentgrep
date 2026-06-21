@@ -114,6 +114,12 @@ Project-local files are discovered only from roots already referenced
 by local Claude transcript metadata; agentgrep does not recursively
 scan `$HOME` for every possible project.
 
+Claude's own derived per-session reflection summaries under
+`usage-data/facets/*.json` are inspectable: agentgrep emits the
+natural-language `brief_summary`, `underlying_goal`, and
+`friction_detail` fields and leaves the count/category metadata aside.
+This is derived state, not transcript, so it is opt-in.
+
 Context-mode files, IDE bridge state, Chrome/native integration state,
 native installer metadata, jobs, stats/update cache, and session state
 expose only key/type summaries. Debug logs and shell snapshots expose

@@ -442,6 +442,35 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
     ),
     StoreDescriptor(
         agent="claude",
+        store_id="claude.usage_data",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/usage-data/facets/<session>.json",
+        env_overrides=("CLAUDE_CONFIG_DIR",),
+        observed_version="claude-code v2.1.185",
+        observed_at=_CLAUDE_OBSERVED_AT,
+        schema_notes=(
+            "Claude Code's own derived per-session reflection summaries. The "
+            "readable natural-language fields are `brief_summary`, "
+            "`underlying_goal`, and `friction_detail`; counts and category "
+            "fields are metadata. Derived state, not transcript — inspectable "
+            "opt-in, not searched by default."
+        ),
+        coverage=StoreCoverage.INSPECTABLE,
+        search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="claude.usage_data",
+                adapter_id="claude.usage_facets_json.v1",
+                path_kind="store_file",
+                source_kind="json",
+                home_subpath=("usage-data", "facets"),
+                glob="*.json",
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="claude",
         store_id="claude.projects.session_memory",
         role=StoreRole.PERSISTENT_MEMORY,
         format=StoreFormat.TEXT,
@@ -3634,7 +3663,7 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
 
 
 CATALOG = StoreCatalog(
-    catalog_version=21,
+    catalog_version=22,
     captured_at=_ANTIGRAVITY_OBSERVED_AT,
     stores=(
         *_CLAUDE_STORES,

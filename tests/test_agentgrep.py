@@ -10361,3 +10361,38 @@ def test_parse_antigravity_cli_transcript_emits_turns(tmp_path: pathlib.Path) ->
     assert "retry helper" in records[0].text
     assert records[0].conversation_id == "uuid-1"
     assert records[1].kind == "history"
+
+
+def test_parse_claude_usage_facet_joins_nl_fields(tmp_path: pathlib.Path) -> None:
+    """claude.usage_data facet emits the natural-language fields as one record."""
+    import json as _json
+
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    facet = tmp_path / "abc.json"
+    facet.write_text(
+        _json.dumps(
+            {
+                "session_id": "abc",
+                "brief_summary": "Refactored the parser",
+                "underlying_goal": "make discovery faster",
+                "friction_detail": "flaky fixture",
+                "goal_categories": ["perf"],
+            },
+        ),
+        encoding="utf-8",
+    )
+    source = agentgrep.SourceHandle(
+        agent="claude",
+        store="claude.usage_data",
+        adapter_id="claude.usage_facets_json.v1",
+        path=facet,
+        path_kind="store_file",
+        source_kind="json",
+        search_root=None,
+        mtime_ns=1,
+    )
+    records = list(agentgrep.iter_source_records(source))
+    assert len(records) == 1
+    assert "Refactored the parser" in records[0].text
+    assert "make discovery faster" in records[0].text
+    assert records[0].kind == "history"
