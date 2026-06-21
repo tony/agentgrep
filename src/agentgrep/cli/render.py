@@ -503,18 +503,6 @@ def build_grep_query(args: GrepArgs) -> SearchQuery:
 
 def print_grep_results(records: list[SearchRecord], args: GrepArgs) -> int:
     """Emit grep results and return the rg-style exit code."""
-    if args.invert_match:
-        if args.count_only:
-            print("0" if records else "1")
-            return 1 if records else 0
-        print(
-            "error: --invert-match/-v is supported with -c only; "
-            "engine-level line inversion is tracked at "
-            "https://github.com/tony/agentgrep/issues/8",
-            file=sys.stderr,
-        )
-        return 2
-
     if args.output_mode == "json":
         json_events = list(_iter_grep_json_events(records, args))
         total_match_count = sum(1 for event in json_events if event.get("type") == "match")
@@ -542,26 +530,39 @@ def print_grep_results(records: list[SearchRecord], args: GrepArgs) -> int:
             for record, count in per_record_counts:
                 path = format_display_path(record.path)
                 print(f"{colors.path(path)}:{count}")
+        if args.invert_match:
+            return 0 if any(count > 0 for _record, count in per_record_counts) else 1
         return 0 if records else 1
     if args.files_with_matches:
         seen: set[str] = set()
         for record in records:
+            if args.invert_match and not any(iter_match_lines(record.text, args)):
+                continue
             path = format_display_path(record.path)
             if path not in seen:
                 seen.add(path)
                 print(path)
-        return 0 if records else 1
+        return 0 if seen else 1
 
     if not records:
         if args.output_mode == "text":
             print("No matches found.", file=sys.stderr)
         return 1
+    emitted = False
     for record in records:
-        print(format_grep_record(record, args))
+        text = format_grep_record(record, args)
+        if not text:
+            continue
+        print(text)
+        emitted = True
         if not args.only_matching and (
             args.heading is True or (args.heading is None and sys.stdout.isatty())
         ):
             print()
+    if not emitted:
+        if args.output_mode == "text":
+            print("No matches found.", file=sys.stderr)
+        return 1
     return 0
 
 
