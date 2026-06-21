@@ -878,7 +878,7 @@ def test_executor_submit_preserves_current_trace_context() -> None:
 
 
 def test_pytest_item_span_helper_covers_custom_items() -> None:
-    """The pytest hook wrapper should work for custom non-function items."""
+    """The pytest hook wrapper opens one pytest.test root for custom items."""
     import agentgrep._telemetry as telemetry
     import conftest as root_conftest
 
@@ -893,14 +893,9 @@ def test_pytest_item_span_helper_covers_custom_items() -> None:
     finally:
         telemetry.configure_backend(None)
 
-    assert backend.single_root_trace_ids() == ()
-    assert [span.name for span in backend.finished_spans] == [
-        "agentgrep.pytest.call",
-        "agentgrep.pytest.test",
-    ]
-    call_span, test_span = backend.finished_spans
+    assert [span.name for span in backend.finished_spans] == ["agentgrep.pytest.test"]
+    (test_span,) = backend.finished_spans
     assert test_span.parent_id is None
-    assert call_span.parent_id == test_span.span_id
     assert test_span.attributes["agentgrep_pytest_test"] == FakeItem.nodeid
 
 

@@ -172,8 +172,8 @@ this branch because the goal is to close observability blindspots. If the
 series count becomes a project-threatening problem, reduce cardinality in a
 follow-up with measurement rather than hiding metrics in this PR.
 
-Explicitly instrumented pytest runs add low-cardinality xdist context to
-`agentgrep.pytest.test` and `agentgrep.pytest.call` spans when xdist metadata is
+Explicitly instrumented pytest runs add low-cardinality xdist context to each
+`agentgrep.pytest.test` span when xdist metadata is
 present: worker id, whether xdist is active, and the distribution mode. Default
 pytest remains offline and uninstrumented unless `AGENTGREP_OTEL` is set.
 Each pytest worker is its own process and emits its own roots under the shared
