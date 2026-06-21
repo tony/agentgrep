@@ -836,35 +836,36 @@ def _loki_log_has_trace_link(fields: cabc.Mapping[str, object], value: object) -
 def query_profiles(run_id: str, vcs_identity: dict[str, dict[str, str]]) -> dict[str, object]:
     """Return Pyroscope profile evidence."""
     now_ms = int(time.time() * 1000)
-    service_body = {
-        "start": now_ms - 60 * 60 * 1000,
-        "end": now_ms,
-        "name": "service_name",
-    }
     service_data = http_json(
         "http://localhost:4040/querier.v1.QuerierService/LabelValues",
         method="POST",
-        body=service_body,
+        body=_pyroscope_label_values_body(
+            "service_name",
+            run_id=run_id,
+            vcs_identity=vcs_identity,
+            now_ms=now_ms,
+        ),
     )
-    session_body = {
-        "start": now_ms - 60 * 60 * 1000,
-        "end": now_ms,
-        "name": "agentgrep_debug_session_id",
-    }
     session_data = http_json(
         "http://localhost:4040/querier.v1.QuerierService/LabelValues",
         method="POST",
-        body=session_body,
+        body=_pyroscope_label_values_body(
+            "agentgrep_debug_session_id",
+            run_id=run_id,
+            vcs_identity=vcs_identity,
+            now_ms=now_ms,
+        ),
     )
     vcs_label_data = {
         label: http_json(
             "http://localhost:4040/querier.v1.QuerierService/LabelValues",
             method="POST",
-            body={
-                "start": now_ms - 60 * 60 * 1000,
-                "end": now_ms,
-                "name": label,
-            },
+            body=_pyroscope_label_values_body(
+                label,
+                run_id=run_id,
+                vcs_identity=vcs_identity,
+                now_ms=now_ms,
+            ),
         )
         for label in vcs_identity["labels"]
     }
@@ -872,11 +873,12 @@ def query_profiles(run_id: str, vcs_identity: dict[str, dict[str, str]]) -> dict
         label: http_json(
             "http://localhost:4040/querier.v1.QuerierService/LabelValues",
             method="POST",
-            body={
-                "start": now_ms - 60 * 60 * 1000,
-                "end": now_ms,
-                "name": label,
-            },
+            body=_pyroscope_label_values_body(
+                label,
+                run_id=run_id,
+                vcs_identity=vcs_identity,
+                now_ms=now_ms,
+            ),
         )
         for label in PYROSCOPE_SOURCE_LABELS
     }
@@ -911,6 +913,36 @@ def query_profiles(run_id: str, vcs_identity: dict[str, dict[str, str]]) -> dict
         "session": session_data,
         "source": source_label_data,
         "vcs": vcs_label_data,
+    }
+
+
+def _pyroscope_label_values_body(
+    name: str,
+    *,
+    run_id: str,
+    vcs_identity: dict[str, dict[str, str]],
+    now_ms: int,
+) -> dict[str, object]:
+    """Return a run- and source-scoped Pyroscope LabelValues request body."""
+    matchers: dict[str, str] = {
+        "agentgrep_debug_session_id": run_id,
+        "service_name": "agentgrep",
+    }
+    matchers.update(vcs_identity["labels"])
+    repository = vcs_identity["resource"].get("vcs.repository.url.full")
+    if repository is not None:
+        matchers["service_repository"] = repository
+    git_ref = vcs_identity["resource"].get("vcs.ref.head.revision")
+    if git_ref is not None:
+        matchers["service_git_ref"] = git_ref
+    selector = "{" + ",".join(
+        _label_matcher(key, value) for key, value in sorted(matchers.items())
+    ) + "}"
+    return {
+        "start": now_ms - 60 * 60 * 1000,
+        "end": now_ms,
+        "name": name,
+        "matchers": [selector],
     }
 
 

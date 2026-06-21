@@ -5,9 +5,13 @@
 local inspection, then mounts the Grafana datasource and Pyroscope config files
 from this directory into the stock `grafana/otel-lgtm` image.
 
-The generated source map contains machine-local absolute prefixes so Pyroscope
-can match paths from local Python stack samples. It is intentionally written
-under `.tmp/` and should not be committed.
+The generated source map uses repository- and package-relative prefixes plus
+GitHub source locations. It is intentionally written under `.tmp/` and should
+not be committed.
+
+Grafana profile views can still show labels from older runs when the time
+window is broad. Use the current `agentgrep_debug_session_id` and exact
+`service_git_ref` filters when checking source-link evidence for one run.
 
 Grafana forwards the `pyroscope_git_session` cookie to Pyroscope through
 `grafana-datasources.yaml`. Pyroscope still needs its GitHub OAuth app

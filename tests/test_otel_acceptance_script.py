@@ -343,6 +343,38 @@ def test_query_logs_rejects_label_only_structure(monkeypatch: t.Any) -> None:
         raise AssertionError("query_logs accepted label-only structure")
 
 
+def test_pyroscope_label_values_body_scopes_to_run_and_source_labels() -> None:
+    """Pyroscope label queries should not scan broad historical profile windows."""
+    body = otel_acceptance._pyroscope_label_values_body(
+        "service_git_ref",
+        run_id="run-123",
+        vcs_identity={
+            "labels": {
+                "vcs_ref_head_revision": "abc123",
+                "vcs_repository_url_full": "https://github.com/tony/agentgrep",
+            },
+            "resource": {
+                "vcs.ref.head.revision": "abc123",
+                "vcs.repository.url.full": "https://github.com/tony/agentgrep",
+            },
+        },
+        now_ms=1_782_000_000_000,
+    )
+
+    assert body["name"] == "service_git_ref"
+    assert body["start"] == 1_782_000_000_000 - 60 * 60 * 1000
+    assert body["end"] == 1_782_000_000_000
+    assert body["matchers"] == [
+        (
+            '{agentgrep_debug_session_id="run-123",service_git_ref="abc123",'
+            'service_name="agentgrep",'
+            'service_repository="https://github.com/tony/agentgrep",'
+            'vcs_ref_head_revision="abc123",'
+            'vcs_repository_url_full="https://github.com/tony/agentgrep"}'
+        ),
+    ]
+
+
 def test_lgtm_grafana_datasource_forwards_pyroscope_git_session() -> None:
     """Grafana must forward Pyroscope's GitHub session cookie."""
     content = otel_acceptance.LGTM_GRAFANA_DATASOURCES_CONFIG.read_text(encoding="utf-8")
