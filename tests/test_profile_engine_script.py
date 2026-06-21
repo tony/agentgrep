@@ -590,6 +590,17 @@ def test_profile_query_language_emits_strategy_cost_summary(
     strategy_group_count = root.attributes["agentgrep_strategy_group_count"]
     assert isinstance(strategy_group_count, int)
     assert strategy_group_count >= 1
+    assert root.attributes["agentgrep_root_full_scan_source_count"] == 1
+    assert root.attributes["agentgrep_root_full_scan_source_ratio"] == 1.0
+    assert root.attributes["agentgrep_root_full_scan_records_seen"] == 1
+    assert root.attributes["agentgrep_root_full_scan_matches_seen"] == 1
+    duration_ms = root.attributes["agentgrep_root_full_scan_duration_ms"]
+    assert isinstance(duration_ms, int | float)
+    assert duration_ms >= 0
+    assert root.attributes["agentgrep_dominant_agent"] == "codex"
+    assert root.attributes["agentgrep_dominant_store"] == "codex.sessions"
+    assert root.attributes["agentgrep_dominant_adapter_id"] == "codex.sessions_jsonl.v1"
+    assert root.attributes["agentgrep_dominant_source_strategy"] == "root_full_scan"
     assert "agent:codex" not in str(root.attributes)
     assert "tmux" not in str(root.attributes)
     strategy_log = next(
@@ -600,6 +611,9 @@ def test_profile_query_language_emits_strategy_cost_summary(
     assert strategy_log.trace_id == root.trace_id
     assert strategy_log.span_id == root.span_id
     assert strategy_log.attributes["agentgrep_query_language"] is True
+    assert strategy_log.attributes["agentgrep_root_full_scan_source_ratio"] == 1.0
+    assert strategy_log.attributes["agentgrep_root_full_scan_records_seen"] == 1
+    assert strategy_log.attributes["agentgrep_root_full_scan_matches_seen"] == 1
     assert "agent:codex" not in str(strategy_log.attributes)
     assert "tmux" not in str(strategy_log.attributes)
 

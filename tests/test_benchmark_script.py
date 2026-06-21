@@ -1084,7 +1084,12 @@ def test_build_analysis_report_warns_on_query_language_root_full_scan() -> None:
                         "duration_seconds": 5.0,
                         "attributes": {
                             "agentgrep_source_strategy": "root_full_scan",
+                            "agentgrep_agent": "claude",
+                            "agentgrep_store": "claude.projects",
                             "agentgrep_adapter_id": "claude.projects_jsonl.v1",
+                            "agentgrep_source_kind": "jsonl",
+                            "agentgrep_records_seen": 20,
+                            "agentgrep_matches_seen": 2,
                         },
                     },
                     {
@@ -1111,7 +1116,9 @@ def test_build_analysis_report_warns_on_query_language_root_full_scan() -> None:
     assert report.warnings == [
         (
             "profile-engine-search-all-conversations-query-limit-500 "
-            "query-language conversation profile used root_full_scan for 1 source span(s)"
+            "query-language conversation profile used root_full_scan for 1 source span(s), "
+            "20 record(s), 2 match(es), 5.000s; top=claude/claude.projects/"
+            "claude.projects_jsonl.v1/jsonl/root_full_scan"
         ),
     ]
 

@@ -77,6 +77,21 @@ class StrategyGroupSummary:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class SourceSpanSummary:
+    """One source-level scan sample from profiler collection."""
+
+    component: str
+    agent: str
+    store: str
+    adapter_id: str
+    source_kind: str
+    strategy: str
+    duration_seconds: float
+    records_seen: int
+    matches_seen: int
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class ProfileRunSpec:
     """One profiler component invocation."""
 
@@ -465,6 +480,37 @@ def _strategy_group_summaries(payload: dict[str, object]) -> tuple[StrategyGroup
     )
 
 
+def _source_span_summaries(payload: dict[str, object]) -> tuple[SourceSpanSummary, ...]:
+    """Return source-level scan samples from profiler collection."""
+    summaries: list[SourceSpanSummary] = []
+    for run in _profile_runs(payload):
+        component = run.get("profile_component")
+        component_text = component if isinstance(component, str) else "unknown"
+        for sample in _profile_samples(run):
+            if sample.get("name") != "search.collect.source":
+                continue
+            attributes = sample.get("attributes")
+            if not isinstance(attributes, dict):
+                continue
+            duration = sample.get("duration_seconds")
+            summaries.append(
+                SourceSpanSummary(
+                    component=component_text,
+                    agent=_attr_text(attributes, "agentgrep_agent"),
+                    store=_attr_text(attributes, "agentgrep_store"),
+                    adapter_id=_attr_text(attributes, "agentgrep_adapter_id"),
+                    source_kind=_attr_text(attributes, "agentgrep_source_kind"),
+                    strategy=_attr_text(attributes, "agentgrep_source_strategy"),
+                    duration_seconds=(
+                        float(duration) if isinstance(duration, int | float) else 0.0
+                    ),
+                    records_seen=_attr_int(attributes, "agentgrep_records_seen"),
+                    matches_seen=_attr_int(attributes, "agentgrep_matches_seen"),
+                ),
+            )
+    return tuple(summaries)
+
+
 def _fmt_duration(seconds: float) -> str:
     """Render a duration in seconds."""
     return f"{seconds:.3f}s"
@@ -627,11 +673,21 @@ def _record_query_strategy_summary(
     query_text = " ".join(terms)
     query_hash = hashlib.sha256(query_text.encode("utf-8")).hexdigest()[:16]
     strategy_groups = _strategy_group_summaries(payload)
+    source_spans = _source_span_summaries(payload)
     root_full_scan_count = sum(
         group.source_count for group in strategy_groups if group.strategy == "root_full_scan"
     )
     source_count = sum(group.source_count for group in strategy_groups)
     dominant = max(strategy_groups, key=lambda group: group.source_count, default=None)
+    root_full_scan_spans = [
+        summary for summary in source_spans if summary.strategy == "root_full_scan"
+    ]
+    root_full_scan_records_seen = sum(summary.records_seen for summary in root_full_scan_spans)
+    root_full_scan_matches_seen = sum(summary.matches_seen for summary in root_full_scan_spans)
+    root_full_scan_duration_ms = round(
+        sum(summary.duration_seconds for summary in root_full_scan_spans) * 1000,
+        3,
+    )
     attributes: dict[str, object] = {
         "agentgrep_surface": "profile_engine",
         "agentgrep_operation": "profile_engine.strategy_summary",
@@ -641,8 +697,18 @@ def _record_query_strategy_summary(
         "agentgrep_strategy_group_count": len(strategy_groups),
         "agentgrep_source_count": source_count,
         "agentgrep_root_full_scan_source_count": root_full_scan_count,
+        "agentgrep_root_full_scan_source_ratio": (
+            root_full_scan_count / source_count if source_count else 0.0
+        ),
+        "agentgrep_root_full_scan_records_seen": root_full_scan_records_seen,
+        "agentgrep_root_full_scan_matches_seen": root_full_scan_matches_seen,
+        "agentgrep_root_full_scan_duration_ms": root_full_scan_duration_ms,
     }
     if dominant is not None:
+        attributes["agentgrep_dominant_agent"] = dominant.agent
+        attributes["agentgrep_dominant_store"] = dominant.store
+        attributes["agentgrep_dominant_adapter_id"] = dominant.adapter_id
+        attributes["agentgrep_dominant_source_kind"] = dominant.source_kind
         attributes["agentgrep_dominant_source_strategy"] = dominant.strategy
         attributes["agentgrep_dominant_source_count"] = dominant.source_count
     for key, value in attributes.items():
