@@ -378,9 +378,7 @@ def run_workloads(run_id: str) -> None:
     with tempfile.TemporaryDirectory(prefix="agentgrep-otel-home-") as temp_home:
         temp_home_path = pathlib.Path(temp_home)
         marker = f"{run_id} prompt\nacceptance invert line"
-        session = (
-            temp_home_path / ".codex" / "sessions" / "2026" / "01" / "01" / "session.jsonl"
-        )
+        session = temp_home_path / ".codex" / "sessions" / "2026" / "01" / "01" / "session.jsonl"
         session.parent.mkdir(parents=True)
         session.write_text(
             "\n".join(
@@ -708,9 +706,7 @@ def iter_trace_spans(trace_data: dict[str, object]) -> cabc.Iterator[dict[str, o
 def _orphan_trace_spans(spans: cabc.Sequence[cabc.Mapping[str, object]]) -> list[dict[str, str]]:
     """Return child spans whose parent span id is missing from the trace."""
     span_ids = {
-        str(span_id)
-        for span in spans
-        if (span_id := span.get("spanID") or span.get("spanId"))
+        str(span_id) for span in spans if (span_id := span.get("spanID") or span.get("spanId"))
     }
     orphans: list[dict[str, str]] = []
     for span in spans:
@@ -973,9 +969,9 @@ def _pyroscope_label_values_body(
     git_ref = vcs_identity["resource"].get("vcs.ref.head.revision")
     if git_ref is not None:
         matchers["service_git_ref"] = git_ref
-    selector = "{" + ",".join(
-        _label_matcher(key, value) for key, value in sorted(matchers.items())
-    ) + "}"
+    selector = (
+        "{" + ",".join(_label_matcher(key, value) for key, value in sorted(matchers.items())) + "}"
+    )
     return {
         "start": now_ms - 60 * 60 * 1000,
         "end": now_ms,
