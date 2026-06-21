@@ -220,7 +220,8 @@ def _agentgrep_module_command(*args: str) -> list[str]:
 
 def _grep_parse_error_workload_command(run_id: str) -> list[str]:
     """Return the grep command used to exercise traced parse errors."""
-    return _agentgrep_module_command("grep", "--invert-match", run_id)
+    del run_id
+    return _agentgrep_module_command("grep", "[")
 
 
 def _cli_acceptance_workload_cases(run_id: str) -> tuple[CliAcceptanceWorkloadCase, ...]:
@@ -252,6 +253,12 @@ def _cli_acceptance_workload_cases(run_id: str) -> tuple[CliAcceptanceWorkloadCa
             candidate_id="cli-grep-parse-error",
             command=_grep_parse_error_workload_command(run_id),
             expected_returncode=2,
+        ),
+        CliAcceptanceWorkloadCase(
+            test_id="grep-invert",
+            candidate_id="cli-grep-invert",
+            command=_agentgrep_module_command("grep", "--invert-match", run_id),
+            expected_returncode=0,
         ),
         CliAcceptanceWorkloadCase(
             test_id="find",

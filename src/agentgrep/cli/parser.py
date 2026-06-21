@@ -1123,12 +1123,6 @@ def _build_grep_args(
     invert_match = t.cast("bool", namespace.invert_match)
     count_only = t.cast("bool", namespace.count)
     only_matching = t.cast("bool", namespace.only_matching)
-    if invert_match:
-        with configured_color_environment(color_mode):
-            bundle.grep_parser.error(
-                "--invert-match is not implemented yet "
-                "(see https://github.com/tony/agentgrep/issues/8)",
-            )
     if pattern_mode != "fixed":
         case_sensitive = case_mode == "respect" or (
             case_mode == "smart" and any(any(ch.isupper() for ch in p) for p in patterns_list)

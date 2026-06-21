@@ -136,8 +136,8 @@ def test_lgtm_docker_run_command_keeps_github_env_opt_in() -> None:
     assert "GH_TOKEN" not in command_with_github
 
 
-def test_grep_invert_acceptance_workload_covers_parse_error() -> None:
-    """Acceptance should exercise unsupported ``-v`` as a parse error."""
+def test_grep_parse_error_workload_uses_invalid_regex() -> None:
+    """Acceptance should still exercise traced argparse failures."""
     run_id = "agentgrep-test-run"
 
     assert otel_acceptance._grep_parse_error_workload_command(run_id) == [
@@ -145,8 +145,7 @@ def test_grep_invert_acceptance_workload_covers_parse_error() -> None:
         "-m",
         "agentgrep",
         "grep",
-        "--invert-match",
-        run_id,
+        "[",
     ]
 
 
@@ -158,6 +157,7 @@ def test_cli_acceptance_matrix_covers_short_lived_process_shapes() -> None:
         ("help", 0),
         ("search", 0),
         ("grep-parse-error", 2),
+        ("grep-invert", 0),
         ("find", 0),
         ("json-no-hit", 1),
         ("ui-help", 0),
@@ -166,6 +166,7 @@ def test_cli_acceptance_matrix_covers_short_lived_process_shapes() -> None:
         "cli-help",
         "cli-search",
         "cli-grep-parse-error",
+        "cli-grep-invert",
         "cli-find",
         "cli-json-no-hit",
         "cli-ui-help",
@@ -182,6 +183,7 @@ def test_cli_acceptance_matrix_sets_candidate_env(
         "cli-help": 0,
         "cli-search": 0,
         "cli-grep-parse-error": 2,
+        "cli-grep-invert": 0,
         "cli-find": 0,
         "cli-json-no-hit": 1,
         "cli-ui-help": 0,

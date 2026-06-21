@@ -53,6 +53,7 @@ endpoints must not change CLI, TUI, MCP, pytest, or profiler correctness.
   Pyroscope samples.
 - a candidate-tagged short-lived CLI matrix:
   `python -m agentgrep --help`, `python -m agentgrep search ...`,
+  `python -m agentgrep grep '['` for parse-error traces,
   `python -m agentgrep grep --invert-match ...`,
   `python -m agentgrep find codex --json`,
   `python -m agentgrep search --json ...` for a no-hit exit, and
@@ -126,6 +127,15 @@ Engine scheduling and source scanning emit `agentgrep.otel.cpu_loops` metrics
 for source counts, submitted/completed sources, batches, emitted records, and
 records scanned. These metrics document CPU-impacting work and cost centers;
 they are observability signal, not a performance fix.
+
+Inverted grep (`agentgrep grep --invert-match ...`) deliberately clears the
+positive text terms it sends to the engine and then applies line-level
+inversion after records are parsed. That makes the product surface correct for
+records that contain no positive match, but it also means the candidate scan can
+touch every record allowed by the agent/scope/source predicates. The dispatcher
+emits `agentgrep.grep.candidate.count`, `agentgrep.grep.emitted.count`, and
+`agentgrep.grep.duration` metrics plus one structured completion log so Grafana
+can show the cost without logging raw patterns, argv, prompts, or paths.
 
 Each TUI launch emits one `agentgrep.tui.lifecycle` child span under
 `agentgrep.tui.session`. The span covers app construction and `app.run()`, so
