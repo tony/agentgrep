@@ -269,7 +269,7 @@ answer "which Gemini sessions belong to *this* repo?".
 
 ### Grok CLI
 
-`observed_version`: ``grok-cli v0.1.219`` (observed 2026-05-25).
+`observed_version`: ``grok-cli v0.2.59`` (observed 2026-06-21).
 
 Grok stores data under `${GROK_HOME or ${HOME}/.grok}/sessions/`
 using URL-encoded absolute project paths as directory keys

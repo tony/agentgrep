@@ -4,7 +4,7 @@
 
 Base path: `~/.grok` (env override: `GROK_HOME`).
 
-`observed_version`: `grok-cli v0.1.219` (observed 2026-05-25).
+`observed_version`: `grok-cli v0.2.59` (observed 2026-06-21).
 
 Grok stores data under `~/.grok/sessions/` using URL-encoded project
 paths as directory keys (e.g. `%2Fhome%2Fd%2Fwork%2Fpython%2Fproj`).

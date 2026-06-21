@@ -30,7 +30,7 @@ from agentgrep.stores import (
 )
 
 OBSERVED_AT = datetime.date(2026, 5, 17)
-_GROK_OBSERVED_AT = datetime.date(2026, 5, 25)
+_GROK_OBSERVED_AT = datetime.date(2026, 6, 21)
 _CLAUDE_HISTORY_OBSERVED_AT = datetime.date(2026, 5, 29)
 _CURSOR_CONFIG_OBSERVED_AT = datetime.date(2026, 5, 30)
 _PI_OBSERVED_AT = datetime.date(2026, 5, 30)
@@ -2881,7 +2881,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
             "${GROK_HOME or ${HOME}/.grok}/sessions/<url_encoded_project>/prompt_history.jsonl"
         ),
         env_overrides=("GROK_HOME",),
-        observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
+        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
         observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
             "JSONL per-project user-prompt audit log. Keys: `timestamp` "
@@ -2914,7 +2914,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
             "<url_encoded_project>/<session_uuid>/chat_history.jsonl"
         ),
         env_overrides=("GROK_HOME",),
-        observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
+        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
         observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
             "JSONL full session transcripts. `type` field discriminates "
@@ -2948,7 +2948,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.SQLITE,
         path_pattern="${GROK_HOME or ${HOME}/.grok}/sessions/session_search.sqlite",
         env_overrides=("GROK_HOME",),
-        observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
+        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
         observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
             "SQLite with FTS5. Table `session_docs`: session_id, cwd, "
@@ -2981,7 +2981,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
             "<url_encoded_project>/<session_uuid>/events.jsonl"
         ),
         env_overrides=("GROK_HOME",),
-        observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
+        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
         observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
             "Per-session event stream with turn-level lifecycle events: "
@@ -2999,7 +2999,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
             "<url_encoded_project>/<session_uuid>/summary.json"
         ),
         env_overrides=("GROK_HOME",),
-        observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
+        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
         observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
             "Per-session summary: id, cwd, session_summary, created_at, "
@@ -3014,7 +3014,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.MARKDOWN_FRONTMATTER,
         path_pattern="${GROK_HOME or ${HOME}/.grok}/memory/MEMORY.md",
         env_overrides=("GROK_HOME",),
-        observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
+        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
         observed_at=_GROK_OBSERVED_AT,
         schema_notes="Persistent memory in Markdown; managed by Grok's memory system.",
     ),
@@ -3025,7 +3025,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSONL,
         path_pattern="${GROK_HOME or ${HOME}/.grok}/logs/unified.jsonl",
         env_overrides=("GROK_HOME",),
-        observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
+        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
         observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
             "Structured application logs: ts, src, pid, lvl, msg, ctx. "
@@ -3040,7 +3040,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.SQLITE,
         path_pattern="${GROK_HOME or ${HOME}/.grok}/worktrees.db",
         env_overrides=("GROK_HOME",),
-        observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
+        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
         observed_at=_GROK_OBSERVED_AT,
         schema_notes="SQLite database tracking git worktrees created by Grok.",
         search_by_default=False,
@@ -3052,7 +3052,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${GROK_HOME or ${HOME}/.grok}/config.toml",
         env_overrides=("GROK_HOME",),
-        observed_version="grok-cli v0.1.219 (observed 2026-05-25)",
+        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
         observed_at=_GROK_OBSERVED_AT,
         schema_notes="TOML configuration file.",
         search_by_default=False,
