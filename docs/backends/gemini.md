@@ -37,6 +37,13 @@ metadata at the top level and the full conversation under a
 Flat JSON array of `LogEntry { sessionId, messageId, timestamp,
 type, message }` — user-prompt audit log.
 
+### gemini.memory
+
+`~/.gemini/GEMINI.md` — the global user-authored context/memory file
+injected into Gemini CLI sessions, the analogue of Claude's
+`CLAUDE.md`. Standing instructions rather than chat, so it is
+inspectable (opt-in) rather than searched by default.
+
 ## Path hashing
 
 Gemini hashes project roots with SHA-256 to derive directory names.

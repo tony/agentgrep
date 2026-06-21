@@ -2570,6 +2570,38 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
         schema_notes="Configuration; not chat.",
         search_by_default=False,
     ),
+    StoreDescriptor(
+        agent="gemini",
+        store_id="gemini.memory",
+        role=StoreRole.PERSISTENT_MEMORY,
+        format=StoreFormat.TEXT,
+        path_pattern="${GEMINI_CLI_HOME or ${HOME}/.gemini}/GEMINI.md",
+        env_overrides=("GEMINI_CLI_HOME",),
+        observed_version="gemini-cli v0.47.0 stable",
+        observed_at=_GEMINI_OBSERVED_AT,
+        schema_notes=(
+            "Global user-authored context/memory Markdown injected into Gemini "
+            "CLI sessions — the Gemini analogue of Claude's CLAUDE.md. Standing "
+            "instructions, not chat; inspectable opt-in rather than searched by "
+            "default."
+        ),
+        coverage=StoreCoverage.INSPECTABLE,
+        search_by_default=False,
+        version_strategies=(
+            VersionDetectionStrategy.SHAPE_INFERENCE,
+            VersionDetectionStrategy.CATALOG_OBSERVATION,
+        ),
+        discovery=(
+            DiscoverySpec(
+                store="gemini.memory",
+                adapter_id="gemini.memory_text.v1",
+                data_version="gemini.memory.markdown.v1",
+                path_kind="store_file",
+                source_kind="text",
+                files=("GEMINI.md",),
+            ),
+        ),
+    ),
 )
 
 
@@ -3453,7 +3485,7 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
 
 
 CATALOG = StoreCatalog(
-    catalog_version=15,
+    catalog_version=16,
     captured_at=_ANTIGRAVITY_OBSERVED_AT,
     stores=(
         *_CLAUDE_STORES,

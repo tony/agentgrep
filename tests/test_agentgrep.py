@@ -10308,3 +10308,24 @@ def test_parse_grok_subagents_emits_dispatch_prompt() -> None:
     assert "login sessions are issued" in record.text
     assert record.title == "Map the authentication module"
     assert record.metadata.get("subagent_type") == "code-explorer"
+
+
+def test_parse_gemini_memory_emits_markdown(tmp_path: pathlib.Path) -> None:
+    """gemini.memory (GEMINI.md) is parsed as one inspectable text record."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    md = tmp_path / "GEMINI.md"
+    md.write_text("# Project memory\n\nAlways prefer ripgrep.\n", encoding="utf-8")
+    source = agentgrep.SourceHandle(
+        agent="gemini",
+        store="gemini.memory",
+        adapter_id="gemini.memory_text.v1",
+        path=md,
+        path_kind="store_file",
+        source_kind="text",
+        search_root=None,
+        mtime_ns=1,
+    )
+    records = list(agentgrep.iter_source_records(source))
+    assert len(records) == 1
+    assert "prefer ripgrep" in records[0].text
+    assert records[0].kind == "history"

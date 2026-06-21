@@ -247,6 +247,11 @@ three on-disk shapes:
   `tmp/<project_hash>/logs.json` — a flat JSON array of
   `LogEntry` records (user-prompt audit log).
 
+The `gemini.memory` row covers `~/.gemini/GEMINI.md`, the global
+user-authored context file injected into sessions — the Gemini
+analogue of Claude's `CLAUDE.md`, parsed by `gemini.memory_text.v1` as
+an inspectable (opt-in) store rather than searched by default.
+
 Gemini's
 [`sessionCleanup.ts`](https://github.com/google-gemini/gemini-cli/blob/927170fc/packages/cli/src/utils/sessionCleanup.ts)
 hard-deletes expired sessions via `fs.unlink()` — there is no
