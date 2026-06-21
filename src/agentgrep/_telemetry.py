@@ -123,6 +123,7 @@ class _SpanState:
     parent_id: str | None
     attributes: TelemetryAttributes
     started_at: float
+    status: str = "ok"
 
 
 class TelemetryBackend(t.Protocol):
@@ -139,6 +140,9 @@ class TelemetryBackend(t.Protocol):
 
     def record_exception(self, error: BaseException) -> None:
         """Record an exception on the active backend span."""
+
+    def set_span_status_error(self, description: str) -> None:
+        """Mark the active backend span as errored without an exception."""
 
     def record_metric(
         self,
@@ -210,6 +214,10 @@ class InMemoryTelemetryBackend:
     def record_exception(self, error: BaseException) -> None:
         """Record an exception on the active span."""
         del error
+
+    def set_span_status_error(self, description: str) -> None:
+        """No-op: span status flows through the active span state."""
+        del description
 
     def record_metric(
         self,
@@ -526,6 +534,22 @@ def set_span_attribute(key: str, value: object) -> None:
         backend.set_span_attribute(key, safe_value)
 
 
+def mark_span_error(description: str) -> None:
+    """Mark the active span as errored without raising an exception.
+
+    Use for handled, non-exception failures such as a CLI parse error so the
+    span carries ``StatusCode.ERROR`` and Tempo's error filter selects it.
+    Exception paths already set status through
+    :meth:`TelemetryBackend.record_exception`.
+    """
+    active_span = _CURRENT_SPAN.get()
+    if active_span is not None:
+        active_span.status = "error"
+    backend = _BACKEND.get()
+    if backend is not None:
+        backend.set_span_status_error(description)
+
+
 @contextlib.contextmanager
 def span(name: str, **attributes: object) -> cabc.Iterator[None]:
     """Create a span in the active backend."""
@@ -542,14 +566,13 @@ def span(name: str, **attributes: object) -> cabc.Iterator[None]:
         attributes={key: _safe_attribute_value(value) for key, value in attributes.items()},
         started_at=time.perf_counter(),
     )
-    status = "ok"
     try:
         with backend.start_span(active_span):
             token = _CURRENT_SPAN.set(active_span)
             try:
                 yield
             except BaseException as exc:
-                status = "error"
+                active_span.status = "error"
                 backend.record_exception(exc)
                 raise
             finally:
@@ -557,7 +580,7 @@ def span(name: str, **attributes: object) -> cabc.Iterator[None]:
     finally:
         backend.finish_span(
             active_span,
-            status=status,
+            status=active_span.status,
             duration_seconds=time.perf_counter() - active_span.started_at,
         )
 

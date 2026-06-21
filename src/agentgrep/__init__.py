@@ -506,6 +506,8 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
                         "agentgrep_exit_code",
                         _system_exit_code(exc),
                     )
+                    if _system_exit_code(exc) != 0:
+                        _telemetry.mark_span_error("cli parse error")
             if parse_exit is not None:
                 exit_code = _system_exit_code(parse_exit)
                 command = _command_name_for_argv(argv)
@@ -513,6 +515,8 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
                 _telemetry.set_span_attribute("agentgrep_command", command)
                 _telemetry.set_span_attribute("agentgrep_outcome", outcome)
                 _telemetry.set_span_attribute("agentgrep_exit_code", exit_code)
+                if outcome == "parse_error":
+                    _telemetry.mark_span_error("cli parse error")
                 logger.info(
                     "cli command completed",
                     extra={
