@@ -78,7 +78,8 @@ def test_lgtm_docker_run_command_mounts_source_linking_configs() -> None:
     assert f"agentgrep.lgtm.config={otel_acceptance.LGTM_CONFIG_LABEL}" in command
     assert str(otel_acceptance.LGTM_GRAFANA_DATASOURCES_CONFIG) in " ".join(command)
     assert str(otel_acceptance.LGTM_PYROSCOPE_CONFIG) in " ".join(command)
-    assert command[-1] == "grafana/otel-lgtm:latest"
+    assert str(otel_acceptance.LGTM_OTELCOL_CONFIG) in " ".join(command)
+    assert command[-1] == "grafana/otel-lgtm:0.28.0"
 
 
 def test_start_stack_recreates_container_with_stale_config(monkeypatch: t.Any) -> None:
