@@ -141,6 +141,20 @@ def iter_find_events(
         if limit is not None and emitted >= limit:
             break
 
+    from agentgrep import _telemetry
+
+    _telemetry.record_metric(
+        "agentgrep.find.sources",
+        len(sources),
+        agentgrep_surface="engine",
+        agentgrep_agent_count=len(agents),
+    )
+    _telemetry.record_metric(
+        "agentgrep.find.results",
+        emitted,
+        agentgrep_surface="engine",
+        agentgrep_agent_count=len(agents),
+    )
     yield _events.FindFinished(
         match_count=emitted,
         elapsed_seconds=time.monotonic() - start_time,
