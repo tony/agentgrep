@@ -418,7 +418,13 @@ def _configure_profiles(resource_attributes: _telemetry.TelemetryAttributes) -> 
         pyroscope.configure(
             application_name=str(resource_attributes.get("service.name") or "agentgrep"),
             server_address=server_address,
-            sample_rate=100,
+            # 997 Hz (prime near 1 kHz, avoids aliasing) instead of the 100 Hz
+            # default: a sub-second one-shot CLI run yields ~7 samples at 100 Hz
+            # — too coarse to read — versus ~70+ here. Only opt-in dev/debug/live
+            # modes reach this path, so the extra sampling cost is acceptable.
+            # gil_only stays on, so native GIL-free CPU (rapidfuzz, sqlite) is
+            # still excluded — long-lived surfaces profile that via wall time.
+            sample_rate=997,
             oncpu=True,
             gil_only=True,
             enable_logging=False,
