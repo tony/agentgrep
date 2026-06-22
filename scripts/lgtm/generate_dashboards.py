@@ -191,8 +191,15 @@ class Board:
         metric: str = "agentgrep_span_count_total",
         *,
         include_all: bool = True,
+        label_name: str | None = None,
     ) -> None:
-        """Add a Prometheus ``label_values`` template variable."""
+        """Add a Prometheus ``label_values`` template variable.
+
+        ``label_name`` defaults to ``name`` but can differ when the variable
+        name used in queries (``$scope``) is shorter than the real Prometheus
+        label (``agentgrep_scope``).
+        """
+        queried_label = label_name or name
         self._templates.append(
             {
                 "name": name,
@@ -201,7 +208,7 @@ class Board:
                 "datasource": PROM,
                 "query": {
                     "qryType": 1,
-                    "query": f"label_values({metric}, {name})",
+                    "query": f"label_values({metric}, {queried_label})",
                     "refId": f"var-{name}",
                 },
                 "refresh": 2,
@@ -520,7 +527,7 @@ def build_overview() -> Board:
             "Error rate",
             [
                 target(
-                    f'sum(rate(agentgrep_span_count_total{{{op_sel}, outcome="error"}}[$__rate_interval]))'
+                    f'(sum(rate(agentgrep_span_count_total{{{op_sel}, outcome="error"}}[$__rate_interval])) or vector(0))'
                     f" / clamp_min(sum(rate(agentgrep_span_count_total{{{op_sel}}}[$__rate_interval])), 0.0001)",
                 )
             ],
@@ -654,7 +661,12 @@ def build_search() -> Board:
     )
     b.var_query("service_name", "Service")
     b.var_query("branch", "Branch")
-    b.var_query("scope", "Scope", metric="agentgrep_search_sources_count")
+    b.var_query(
+        "scope",
+        "Scope",
+        metric="agentgrep_search_sources_count",
+        label_name="agentgrep_scope",
+    )
 
     sel = SCOPE_SELECTOR
     eng = f'{sel}, agentgrep_scope=~"$scope"'
