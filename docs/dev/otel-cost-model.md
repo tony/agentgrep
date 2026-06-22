@@ -120,6 +120,12 @@ available, exports OTLP spans/logs/metrics, and flushes providers at shutdown.
 The timeout is intentionally short so a missing collector does not break the
 app.
 
+Pyroscope samples at 997 Hz (`oncpu`, `gil_only`) in the explicit profile modes:
+a sub-second one-shot run then yields tens of CPU samples rather than the ~7 the
+100 Hz default produced, so short CLI profiles are legible. GIL-free native CPU
+(rapidfuzz, sqlite) stays outside `gil_only` sampling; long-lived surfaces (TUI,
+benchmarks) carry the bulk of profile density either way.
+
 The trace→profile pivot is **service-level**: pyroscope-otel tags only root
 spans with `pyroscope.profile.id`, and span id is a per-sample profile
 attribute, not a queryable Pyroscope series label, so Grafana cannot pivot to
