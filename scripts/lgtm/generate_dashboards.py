@@ -1177,8 +1177,13 @@ def build_agentic() -> Board:
             "to traces by the trace_id derived field.",
             "datasource": LOKI,
             "targets": [
+                # Bodies are plain text; the OTel attributes ride in Loki
+                # structured metadata (trace_id, span_id, surface, …), which
+                # the logs panel surfaces automatically and the trace_id
+                # derived field turns into a Tempo link. A `| json` pipe would
+                # error on the non-JSON body, so the selector stays bare.
                 target(
-                    '{service_name=~"$service_name"} | json',
+                    '{service_name=~"$service_name"}',
                     fmt="logs",
                     datasource=LOKI,
                 )
