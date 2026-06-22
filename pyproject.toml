@@ -259,6 +259,9 @@ convention = "numpy"
 # (e.g. the mutually-exclusive-selector message in _select_targets) read
 # more naturally as one line than wrapped.
 "scripts/benchmark.py" = ["B008", "E501"]
+# Dashboard panels embed PromQL expressions as f-strings; E501 is suppressed
+# because the queries read more naturally as single lines than wrapped.
+"scripts/lgtm/generate_dashboards.py" = ["E501"]
 
 [tool.pytest.ini_options]
 addopts = [
