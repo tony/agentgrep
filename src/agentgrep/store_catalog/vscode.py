@@ -1,4 +1,4 @@
-"""vscode store descriptors for the agentgrep catalogue (ADR 0010)."""
+"""vscode store descriptors for the agentgrep catalogue."""
 
 from __future__ import annotations
 

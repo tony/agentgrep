@@ -1,7 +1,4 @@
-"""Shared dated constants and the gemini project-hash helper.
-
-See ADR 0010 (module boundaries and the facade re-export contract).
-"""
+"""Shared dated constants and the gemini project-hash helper."""
 
 from __future__ import annotations
 

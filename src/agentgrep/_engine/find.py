@@ -89,7 +89,7 @@ def iter_find_events(
                 print(event.record.path)
     """
     # Lazy import keeps ``agentgrep.events`` off the eager ``import
-    # agentgrep`` path (ADR 0010 / test_import_time); the facade tail
+    # agentgrep`` path (pinned by tests/test_import_time.py); the facade tail
     # re-exports this module, so a module-level import would load it.
     from agentgrep import events as _events
 

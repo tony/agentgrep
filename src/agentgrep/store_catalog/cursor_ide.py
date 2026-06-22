@@ -1,4 +1,4 @@
-"""cursor_ide store descriptors for the agentgrep catalogue (ADR 0010)."""
+"""cursor_ide store descriptors for the agentgrep catalogue."""
 
 from __future__ import annotations
 

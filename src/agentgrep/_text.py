@@ -4,7 +4,7 @@ Privacy-safe path rendering, query-syntax highlighting (the single source of
 truth consumed by the CLI help, the Textual TUI, and the docs lexer), help-text
 assembly, match highlighting, truncation, and body-format sniffing. Depends only
 on the standard library and Rich; it imports no engine, adapter, or frontend
-module. See ADR 0010.
+module.
 """
 
 from __future__ import annotations

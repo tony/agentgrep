@@ -4,8 +4,7 @@ These helpers compose the statusline, the progress meter, and the
 scanning-detail row from plain numbers and strings. They are dependency-free
 (no Textual, no engine, no factory state) so they can be unit-tested and
 doctested offline, and so the streaming app can import them without pulling
-anything heavier. See ADR 0010 (module boundaries and the facade re-export
-contract).
+anything heavier.
 """
 
 from __future__ import annotations

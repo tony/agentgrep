@@ -73,9 +73,9 @@ except ImportError:
     # .JSONDecodeError; the runtime None check guards the absent case.
     _orjson = None  # ty: ignore[invalid-assignment]
 
-# Records, payloads, and shared vocabulary live in agentgrep.records (ADR 0010).
-# Structural typing shims live in agentgrep._types (ADR 0010).
-# Text-presentation helpers live in agentgrep._text (ADR 0010).
+# Records, payloads, and shared vocabulary live in agentgrep.records.
+# Structural typing shims live in agentgrep._types.
+# Text-presentation helpers live in agentgrep._text.
 from agentgrep._text import (
     ANSI_CSI_RE,
     CLI_DESCRIPTION,
@@ -124,7 +124,7 @@ from agentgrep._types import (
     TextualWidgetsModule,
 )
 
-# Store parsers + record normalization live in agentgrep.adapters (ADR 0010).
+# Store parsers + record normalization live in agentgrep.adapters.
 from agentgrep.adapters import (
     CLAUDE_PASTE_HASH_RE,
     CLAUDE_PASTE_REF_RE,
@@ -195,7 +195,7 @@ from agentgrep.adapters import (
     store_role_for_record,
 )
 
-# Store discovery lives in agentgrep.discovery (ADR 0010).
+# Store discovery lives in agentgrep.discovery.
 from agentgrep.discovery import (
     _catalog_version_detection,
     _claude_project_roots,
@@ -233,7 +233,7 @@ from agentgrep.discovery import (
     resolve_env_root,
 )
 
-# Progress reporting lives in agentgrep.progress (ADR 0010).
+# Progress reporting lives in agentgrep.progress.
 from agentgrep.progress import (
     _SOURCE_PROGRESS_RECORD_INTERVAL,
     AnswerNowInputListener,
@@ -260,7 +260,7 @@ from agentgrep.progress import (
     noop_search_progress,
 )
 
-# Low-level read-only I/O primitives live in agentgrep.readers (ADR 0010).
+# Low-level read-only I/O primitives live in agentgrep.readers.
 from agentgrep.readers import (
     _CODEX_RAW_SKIP_MIN_BYTES,
     _CODEX_SESSION_META_MARKER,

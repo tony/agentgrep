@@ -5,7 +5,7 @@ conversation-summary iteration), JSONL streaming (forward, reverse, and
 raw-line-skip variants with cooperative yields), protobuf text-field
 extraction, and small JSON/text decoders. These are the I/O floor the per-agent
 adapters sit on; they depend only on the standard library, the optional orjson
-accelerator, and record type aliases. See ADR 0010.
+accelerator, and record type aliases.
 """
 
 from __future__ import annotations

@@ -1,7 +1,4 @@
-"""Three-valued source eval and exact record eval for compiled queries.
-
-See ADR 0010 (module boundaries and the facade re-export contract).
-"""
+"""Three-valued source eval and exact record eval for compiled queries."""
 
 from __future__ import annotations
 

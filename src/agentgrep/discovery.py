@@ -4,7 +4,7 @@ Resolves per-agent store roots from the environment and the store catalog,
 runs the storage-version detection from ADR 0001, and yields
 :class:`~agentgrep.records.SourceHandle` objects the adapters then parse. It
 depends on the record types, the store catalog, and the readers; it sits above
-the adapters and below the engine. See ADR 0010.
+the adapters and below the engine.
 """
 
 from __future__ import annotations

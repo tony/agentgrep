@@ -2,7 +2,7 @@
 
 Assembles the per-agent store descriptors into the single :data:`CATALOG`
 that adapters and discovery consume. The per-agent tables live in sibling
-modules; this package facade only aggregates them. See ADR 0010.
+modules; this package facade only aggregates them.
 """
 
 from __future__ import annotations

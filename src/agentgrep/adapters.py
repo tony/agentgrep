@@ -6,7 +6,6 @@ objects. ``iter_source_records`` dispatches a discovered source to the right
 parser by ``adapter_id``; the ``extract_*`` / ``build_search_record`` helpers
 are the shared normalization seam. Depends on the readers (I/O floor), the
 record types, the store catalog, and stdlib; it imports no engine or frontend.
-See ADR 0010.
 """
 
 from __future__ import annotations

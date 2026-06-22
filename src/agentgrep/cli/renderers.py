@@ -1,6 +1,8 @@
-"""Text formatting + snippet/highlight helpers for CLI output (ADR 0010).
+"""Terminal formatting for the grep / search / find output.
 
-See ADR 0010 (module boundaries and the facade re-export contract).
+The match-line, heading, snippet, and relative-time formatters, the ANSI
+highlight application, and the fd-shaped find filters — the building blocks the
+subcommand dispatchers compose into human-readable terminal output.
 """
 
 from __future__ import annotations

@@ -1,7 +1,4 @@
-"""Query compilation errors (ADR 0010 leaf module).
-
-See ADR 0010 (module boundaries and the facade re-export contract).
-"""
+"""Exceptions raised while compiling a parsed query into predicates."""
 
 from __future__ import annotations
 

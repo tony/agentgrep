@@ -3,7 +3,7 @@
 The syntax-colored ``--help`` formatter, its themed-subclass factory, and the
 named-tuple theme. Depends on the text helpers (query highlighting, inline-code
 regex) and the HelpTheme protocol; it is CLI-only and nothing below the CLI
-layer imports it. See ADR 0010.
+layer imports it.
 """
 
 from __future__ import annotations

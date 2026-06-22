@@ -1,7 +1,4 @@
-"""Path-pattern compilation and matching for compiled queries.
-
-See ADR 0010 (module boundaries and the facade re-export contract).
-"""
+"""Path-pattern compilation and matching for compiled queries."""
 
 from __future__ import annotations
 

@@ -4,7 +4,7 @@ Thread-safe search controls, the SearchProgress protocol with its no-op and
 ANSI-console implementations, the progress-line formatters, and the
 pydantic-backed streaming event payloads the TUI consumes. Depends on the text
 presentation layer (AnsiColors, truncation) and the record types; it sits below
-the engine, which drives it, and below the frontends. See ADR 0010.
+the engine, which drives it, and below the frontends.
 """
 
 from __future__ import annotations

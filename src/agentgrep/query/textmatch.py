@@ -1,7 +1,4 @@
-"""Case-insensitive text / wildcard matching for compiled queries.
-
-See ADR 0010 (module boundaries and the facade re-export contract).
-"""
+"""Case-insensitive text / wildcard matching for compiled queries."""
 
 from __future__ import annotations
 

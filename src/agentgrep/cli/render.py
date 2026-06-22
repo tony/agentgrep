@@ -1,11 +1,10 @@
-"""CLI output rendering and subcommand dispatch for agentgrep.
+"""Subcommand dispatch for the agentgrep CLI.
 
-This module owns the rendering paths for the ``grep``, ``find``, and
-``search`` subcommands, plus the dispatcher functions that glue parsed
-arguments to the engine and the chosen output format.
-
-Symbols defined here are re-exported from :mod:`agentgrep` for backward
-compatibility (ADR 0010).
+Routes parsed ``grep`` / ``find`` / ``search`` / ``ui`` arguments to the
+engine and the chosen output mode, picking the streaming or eager path per
+subcommand and handing records to the right formatter. The JSON payload
+serializers live in :mod:`agentgrep.cli.serializers` and the text formatters
+in :mod:`agentgrep.cli.renderers`.
 """
 
 from __future__ import annotations
@@ -149,7 +148,7 @@ def stream_find_results(args: FindArgs) -> int:
     :func:`print_find_results` via :func:`run_find_command` instead.
     """
     # Lazy import: ``agentgrep.events`` stays off the eager ``import
-    # agentgrep`` path (ADR 0010 / test_import_time) — only the running
+    # agentgrep`` path (pinned by tests/test_import_time.py) — only the running
     # subcommand pulls in the event-stream types.
     from agentgrep import events
 
@@ -223,7 +222,7 @@ def run_find_command(args: FindArgs) -> int:
     if not _find_path_is_eager(args):
         return stream_find_results(args)
     # Lazy import keeps ``agentgrep.events`` off the eager ``import
-    # agentgrep`` path (ADR 0010 / test_import_time).
+    # agentgrep`` path (pinned by tests/test_import_time.py).
     from agentgrep import events
 
     # Eager output modes (--json, --list-details) need the full
@@ -559,7 +558,7 @@ def stream_grep_results(args: GrepArgs) -> int:
     and ``-v`` paths that need the full record list up front.
     """
     # Lazy import keeps ``agentgrep.events`` off the eager ``import
-    # agentgrep`` path (ADR 0010 / test_import_time).
+    # agentgrep`` path (pinned by tests/test_import_time.py).
     from agentgrep import events
 
     query = build_grep_query(args)

@@ -1,11 +1,11 @@
-"""Search/find orchestration and record matching, repatriated from the facade.
+"""Search/find orchestration and the record-matching layer.
 
 The query-execution entry points (search_sources, run_search_query,
 plan_search_sources, collect_*), the grep-shaped subprocess helpers, and the
-matching / haystack / dedupe layer. This is the engine logic ADR 0004 says the
-engine owns, so it lives in the _engine package rather than the facade. Depends
-on records, readers, adapters, discovery, progress, and the rest of _engine.
-See ADR 0010.
+matching / haystack / dedupe layer that turn discovered sources into ranked,
+deduplicated records. This is the planning-and-execution core ADR 0004 assigns
+to the engine; it depends on records, readers, adapters, discovery, progress,
+and the rest of _engine.
 """
 
 from __future__ import annotations

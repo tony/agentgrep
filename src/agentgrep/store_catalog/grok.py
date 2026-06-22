@@ -1,4 +1,4 @@
-"""grok store descriptors for the agentgrep catalogue (ADR 0010)."""
+"""grok store descriptors for the agentgrep catalogue."""
 
 from __future__ import annotations
 

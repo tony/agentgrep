@@ -1,6 +1,9 @@
-"""JSON/NDJSON payload serializers for CLI output (ADR 0010).
+"""Serializers for the CLI's JSON and NDJSON output modes.
 
-See ADR 0010 (module boundaries and the facade re-export contract).
+Turn normalized records, source handles, and result envelopes into the
+plain-dict payloads the ``--json`` / ``--ndjson`` paths emit. Prefers the
+pydantic-backed serializers and falls back to hand-written ones when pydantic
+is unavailable, behind ``maybe_build_pydantic``.
 """
 
 from __future__ import annotations
