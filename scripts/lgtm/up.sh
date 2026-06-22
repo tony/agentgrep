@@ -3,7 +3,24 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CONTAINER_NAME="${AGENTGREP_LGTM_CONTAINER:-agentgrep-lgtm}"
-CONFIG_LABEL="source-linking-v1"
+# Pin a known-good otel-lgtm release instead of :latest for reproducible
+# dev/CI stacks; override with AGENTGREP_LGTM_IMAGE. 0.28.0 runs Prometheus
+# 3.11.3 with --web.enable-otlp-receiver and --enable-feature=exemplar-storage,
+# so it ingests the OTLP exemplars the app emits (trace-based filter) and the
+# metric->trace pivot works in Grafana out of the box.
+#
+# Host-port gotcha (Rancher Desktop / WSL): if a host process already listens
+# on :9090 (e.g. a Debian-packaged system Prometheus), the host-side forwarder
+# shadows the container's published port, so a tool hitting host localhost:9090
+# reaches the wrong server and sees no exemplars. Grafana is unaffected — it
+# queries the container's Prometheus internally — so verify exemplars in Grafana
+# or via `docker exec`, not a bare host curl to :9090.
+LGTM_IMAGE="${AGENTGREP_LGTM_IMAGE:-grafana/otel-lgtm:0.28.0}"
+# Bump when the mounted config, image, or run shape changes so an existing
+# container is recreated (docker run) rather than restarted (docker start) —
+# recreation also re-stages the single-file bind mounts cleanly under
+# Rancher Desktop / WSL, where docker start reuses a stale empty mount folder.
+CONFIG_LABEL="prometheus3-exemplars-v1"
 SOURCE_MAP="${AGENTGREP_PYROSCOPE_SOURCE_MAP:-$ROOT/.tmp/lgtm/.pyroscope.yaml}"
 
 if [[ -n "${PYTHON:-}" ]]; then
@@ -38,7 +55,7 @@ for name in GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET GITHUB_SESSION_SECRET; do
     fi
 done
 
-docker_run+=(grafana/otel-lgtm:latest)
+docker_run+=("$LGTM_IMAGE")
 
 if docker inspect "$CONTAINER_NAME" > /dev/null 2>&1; then
     current_config="$(
