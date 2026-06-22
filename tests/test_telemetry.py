@@ -1546,6 +1546,35 @@ def test_cli_help_emits_non_single_trace_without_stderr(
     assert root.attributes["agentgrep_exit_code"] == 0
 
 
+def test_package_version_falls_back_to_pyproject(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Without an installed dist, version comes from the repo pyproject.toml.
+
+    The PEP 723 benchmark harness imports agentgrep off the source tree in an
+    isolated ``uv`` env where ``importlib.metadata.version("agentgrep")`` raises,
+    so the static ``[project].version`` fallback keeps ``service.version`` real
+    instead of ``"0+unknown"``.
+    """
+    from agentgrep import _telemetry as telemetry
+
+    metadata = telemetry.importlib.metadata
+
+    def raise_not_found(_name: str) -> str:
+        raise metadata.PackageNotFoundError(_name)
+
+    monkeypatch.setattr(metadata, "version", raise_not_found)
+
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "agentgrep"\nversion = "9.9.9a1"\n',
+        encoding="utf-8",
+    )
+    assert telemetry.package_version(tmp_path) == "9.9.9a1"
+    assert telemetry.package_version(None) == "0+unknown"
+    assert telemetry.package_version(tmp_path / "missing") == "0+unknown"
+
+
 def test_cli_parse_error_emits_non_single_trace_with_argparse_stderr(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
