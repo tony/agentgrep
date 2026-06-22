@@ -120,6 +120,18 @@ available, exports OTLP spans/logs/metrics, and flushes providers at shutdown.
 The timeout is intentionally short so a missing collector does not break the
 app.
 
+Live mode exports metrics with **delta** temporality so the LGTM collector's
+`deltatocumulative` processor can sum each one-shot process's increment into a
+single climbing cumulative series. Without it, ephemeral CLI / benchmark /
+profile-engine processes each export a fresh cumulative stream that plateaus at
+its in-process total and then dies, so `rate()` / `increase()` read 0 across
+processes. The processor holds one stream of cumulative state per active
+labelset in the long-lived collector, dropped after `max_stale` (5m); it is
+alpha and dev-stack only (`scripts/lgtm/otelcol-config.yaml`, mounted by
+`up.sh`). Exemplars ride each delta point and survive the conversion, so the
+metric→trace pivot is preserved. Passive-local, debug, and debug-console keep
+cumulative temporality.
+
 Pyroscope samples at 997 Hz (`oncpu`, `gil_only`) in the explicit profile modes:
 a sub-second one-shot run then yields tens of CPU samples rather than the ~7 the
 100 Hz default produced, so short CLI profiles are legible. GIL-free native CPU
