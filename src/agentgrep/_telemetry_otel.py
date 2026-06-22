@@ -294,7 +294,7 @@ def build_backend(
         )
         from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
     from opentelemetry.sdk._logs.export import BatchLogRecordProcessor, ConsoleLogRecordExporter
-    from opentelemetry.sdk.metrics import MeterProvider
+    from opentelemetry.sdk.metrics import MeterProvider, TraceBasedExemplarFilter
     from opentelemetry.sdk.metrics.export import (
         ConsoleMetricExporter,
         PeriodicExportingMetricReader,
@@ -346,7 +346,15 @@ def build_backend(
                 export_interval_millis=1_000,
             ),
         )
-    meter_provider = MeterProvider(resource=resource, metric_readers=metric_readers)
+    # Pin the trace-based exemplar filter so histogram/counter points recorded
+    # inside a sampled span carry an exemplar (trace_id + span_id). This is the
+    # SDK default, but pinning it keeps the metric->trace pivot working even if
+    # the default changes or OTEL_METRICS_EXEMPLAR_FILTER is set in the env.
+    meter_provider = MeterProvider(
+        resource=resource,
+        metric_readers=metric_readers,
+        exemplar_filter=TraceBasedExemplarFilter(),
+    )
     metrics.set_meter_provider(meter_provider)
     meter = metrics.get_meter("agentgrep")
     span_counter = meter.create_counter(
