@@ -17,8 +17,25 @@ import subprocess
 import time
 import typing as t
 
+from agentgrep._engine.orchestration import (
+    _source_profile_attributes,
+    collect_search_records_from_plan,
+    discover_sources_for_search,
+)
+from agentgrep.adapters import find_store_roles_for_type_filter
+from agentgrep.discovery import discover_sources
+from agentgrep.progress import SearchControl
+from agentgrep.readers import select_backends
+from agentgrep.records import (
+    AgentName,
+    BackendSelection,
+    FindRecord,
+    SearchQuery,
+    SearchRecord,
+    SourceHandle,
+)
+
 if t.TYPE_CHECKING:
-    import agentgrep
     from agentgrep._engine.planning import PlannerDecision, SourceTask
     from agentgrep._engine.runtime import SearchRuntime
     from agentgrep.query.compile import CompiledQuery
@@ -157,7 +174,7 @@ def _command_family(command: cabc.Sequence[str]) -> str:
 class ProfiledSearchResult:
     """Search results plus phase timings and source counts."""
 
-    records: tuple[agentgrep.SearchRecord, ...]
+    records: tuple[SearchRecord, ...]
     profile: EngineProfile
     discovered_source_count: int
     planned_source_count: int
@@ -182,7 +199,7 @@ class ProfiledSearchResult:
 class ProfiledFindResult:
     """Find results plus phase timings and source counts."""
 
-    records: tuple[agentgrep.FindRecord, ...]
+    records: tuple[FindRecord, ...]
     profile: EngineProfile
     discovered_source_count: int
 
@@ -203,26 +220,25 @@ class ProfiledFindResult:
 
 def profile_search_query(
     home: pathlib.Path,
-    query: agentgrep.SearchQuery,
+    query: SearchQuery,
     *,
-    backends: agentgrep.BackendSelection | None = None,
-    control: agentgrep.SearchControl | None = None,
+    backends: BackendSelection | None = None,
+    control: SearchControl | None = None,
     runtime: SearchRuntime | None = None,
 ) -> ProfiledSearchResult:
     """Run a search query and return engine-only phase timings."""
-    import agentgrep
     from agentgrep._engine.planning import build_physical_search_plan
 
     profiler = EngineProfiler()
-    active_backends = agentgrep.select_backends() if backends is None else backends
-    active_control = agentgrep.SearchControl() if control is None else control
+    active_backends = select_backends() if backends is None else backends
+    active_control = SearchControl() if control is None else control
     with use_engine_profiler(profiler):
         with profiler.span(
             "search.discover",
             agentgrep_scope=query.scope,
             agentgrep_agent_count=len(query.agents),
         ):
-            sources = agentgrep.discover_sources_for_search(
+            sources = discover_sources_for_search(
                 home,
                 query,
                 active_backends,
@@ -248,14 +264,14 @@ def profile_search_query(
         _record_planner_decisions(profiler, plan.decisions)
         _record_source_task_groups(profiler, "search.plan.strategy_group", plan.tasks)
         if active_control.answer_now_requested():
-            records: list[agentgrep.SearchRecord] = []
+            records: list[SearchRecord] = []
         else:
             with profiler.span(
                 "search.collect",
                 agentgrep_scope=query.scope,
                 agentgrep_source_count=len(plan.tasks),
             ):
-                records = agentgrep.collect_search_records_from_plan(
+                records = collect_search_records_from_plan(
                     query,
                     plan,
                     control=active_control,
@@ -271,31 +287,29 @@ def profile_search_query(
 
 def profile_find_query(
     home: pathlib.Path,
-    agents: tuple[agentgrep.AgentName, ...],
+    agents: tuple[AgentName, ...],
     *,
     pattern: str | None,
     limit: int | None,
-    backends: agentgrep.BackendSelection | None = None,
+    backends: BackendSelection | None = None,
     type_filter: FindProfileType = "all",
     compiled: CompiledQuery | None = None,
 ) -> ProfiledFindResult:
     """Run a find query and return engine-only phase timings."""
-    import agentgrep
-
     profiler = EngineProfiler()
-    active_backends = agentgrep.select_backends() if backends is None else backends
+    active_backends = select_backends() if backends is None else backends
     with use_engine_profiler(profiler):
         with profiler.span(
             "find.discover",
             agentgrep_agent_count=len(agents),
             agentgrep_type_filter=type_filter,
         ):
-            sources = agentgrep.discover_sources(
+            sources = discover_sources(
                 home,
                 agents,
                 active_backends,
                 version_detail="none",
-                store_roles=agentgrep.find_store_roles_for_type_filter(type_filter),
+                store_roles=find_store_roles_for_type_filter(type_filter),
             )
         _record_source_groups(profiler, "find.discover.group", sources)
         with profiler.span(
@@ -319,27 +333,25 @@ def profile_find_query(
 
 
 def _profile_find_records(
-    sources: cabc.Sequence[agentgrep.SourceHandle],
+    sources: cabc.Sequence[SourceHandle],
     *,
     pattern: str | None,
     limit: int | None,
     type_filter: FindProfileType,
     compiled: CompiledQuery | None,
     profiler: EngineProfiler,
-) -> list[agentgrep.FindRecord]:
+) -> list[FindRecord]:
     """Build filtered ``find`` records for profiling."""
-    import agentgrep
-
     query = pattern.casefold() if pattern is not None else None
     source_predicate = compiled.source_predicate if compiled is not None else None
-    results: list[agentgrep.FindRecord] = []
+    results: list[FindRecord] = []
     for source in sources:
         started_at = time.perf_counter()
         matched = False
         if source_predicate is not None and not source_predicate(source):
             _record_find_source_sample(profiler, source, started_at, matched=matched)
             continue
-        record = agentgrep.FindRecord(
+        record = FindRecord(
             kind="find",
             agent=source.agent,
             store=source.store,
@@ -365,7 +377,7 @@ def _profile_find_records(
 def _record_source_groups(
     profiler: EngineProfiler,
     name: str,
-    sources: cabc.Sequence[agentgrep.SourceHandle],
+    sources: cabc.Sequence[SourceHandle],
 ) -> None:
     """Record aggregate source discovery groups without source paths."""
     groups: collections.Counter[tuple[str, str, str, str, str]] = collections.Counter(
@@ -460,24 +472,22 @@ def _record_planner_decisions(
 
 def _record_find_source_sample(
     profiler: EngineProfiler,
-    source: agentgrep.SourceHandle,
+    source: SourceHandle,
     started_at: float,
     *,
     matched: bool,
 ) -> None:
     """Record one profiled find-source filter decision."""
-    import agentgrep
-
     profiler.record(
         "find.filter.source",
         time.perf_counter() - started_at,
-        **agentgrep._source_profile_attributes(source),
+        **_source_profile_attributes(source),
         agentgrep_matched=matched,
     )
 
 
 def _find_type_matches(
-    record: agentgrep.FindRecord,
+    record: FindRecord,
     type_filter: FindProfileType,
 ) -> bool:
     """Return whether ``record`` survives the profiling type filter.
@@ -497,7 +507,7 @@ def _find_type_matches(
     return record.path_kind == expected_path_kind
 
 
-def _find_record_haystack(record: agentgrep.FindRecord) -> str:
+def _find_record_haystack(record: FindRecord) -> str:
     """Return the casefolded substring-search surface for a find record."""
     return " ".join(
         (

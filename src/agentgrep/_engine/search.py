@@ -46,15 +46,13 @@ import threading
 import time
 import typing as t
 
-import agentgrep
+from agentgrep._engine.orchestration import discover_sources_for_search
+from agentgrep.progress import SearchControl
+from agentgrep.readers import select_backends
+from agentgrep.records import BackendSelection, SearchQuery
 
 if t.TYPE_CHECKING:
-    from agentgrep import (
-        BackendSelection,
-        SearchControl,
-        SearchQuery,
-        events as _events,
-    )
+    from agentgrep import events as _events
     from agentgrep._engine.runtime import SearchRuntime
 
 
@@ -85,13 +83,13 @@ def iter_search_events(
     home : pathlib.Path
         User home directory passed through to
         :func:`agentgrep.discover_sources`.
-    query : agentgrep.SearchQuery
+    query : SearchQuery
         Compiled query — terms, agents, dedup choice, limit.
-    backends : agentgrep.BackendSelection or None
+    backends : BackendSelection or None
         Override the auto-detected backend selection (mainly used by
         tests). ``None`` selects backends via
         :func:`agentgrep.select_backends`.
-    control : agentgrep.SearchControl or None
+    control : SearchControl or None
         Optional control handle. The generator polls
         :meth:`agentgrep.SearchControl.answer_now_requested` between
         records so consumers can break the scan early.
@@ -101,7 +99,7 @@ def iter_search_events(
 
     Yields
     ------
-    agentgrep.events.SearchEvent
+    _events.SearchEvent
         Discriminated-union events. See module docstring for the
         guaranteed sequence.
 
@@ -110,7 +108,7 @@ def iter_search_events(
     Stream events, collecting matching records::
 
         for event in iter_search_events(pathlib.Path.home(), query):
-            if isinstance(event, agentgrep.events.RecordEmitted):
+            if isinstance(event, _events.RecordEmitted):
                 print(event.record.text)
     """
     from agentgrep import events as _events
@@ -122,11 +120,11 @@ def iter_search_events(
     )
     from agentgrep._engine.planning import build_physical_search_plan
 
-    active_backends = agentgrep.select_backends() if backends is None else backends
-    active_control = agentgrep.SearchControl() if control is None else control
+    active_backends = select_backends() if backends is None else backends
+    active_control = SearchControl() if control is None else control
     start_time = time.monotonic()
 
-    sources = agentgrep.discover_sources_for_search(
+    sources = discover_sources_for_search(
         home,
         query,
         active_backends,
@@ -188,11 +186,11 @@ async def aiter_search_events(
     ----------
     home : pathlib.Path
         User home directory passed through to :func:`iter_search_events`.
-    query : agentgrep.SearchQuery
+    query : SearchQuery
         Compiled query — terms, agents, dedupe choice, limit.
-    backends : agentgrep.BackendSelection or None
+    backends : BackendSelection or None
         Optional backend override, mostly used by tests.
-    control : agentgrep.SearchControl or None
+    control : SearchControl or None
         Optional cooperative cancellation handle.
     runtime : agentgrep.SearchRuntime or None
         Optional reusable runtime state; supplies the source-scan
@@ -202,10 +200,10 @@ async def aiter_search_events(
 
     Yields
     ------
-    agentgrep.events.SearchEvent
+    _events.SearchEvent
         The same event sequence produced by :func:`iter_search_events`.
     """
-    active_control = agentgrep.SearchControl() if control is None else control
+    active_control = SearchControl() if control is None else control
     queue_size = max(1, max_queue_size)
     loop = asyncio.get_running_loop()
     delivery_closed = threading.Event()

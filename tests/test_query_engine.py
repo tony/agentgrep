@@ -21,6 +21,9 @@ import typing as t
 import pytest
 
 import agentgrep
+import agentgrep._engine.find as _rm_find
+import agentgrep._engine.planning as _rm_planning
+import agentgrep._engine.scanning as _rm_scanning
 from agentgrep import events as ag_events
 from agentgrep._engine import orchestration
 from agentgrep.query import compile_query, default_registry, parse_query
@@ -112,8 +115,8 @@ def test_source_predicate_prunes_codex_sources_without_reading_records(
         "plan_search_sources",
         lambda query, sources, backends, **kwargs: list(sources),
     )
-    monkeypatch.setattr(agentgrep, "direct_source_matches", lambda *args, **kwargs: True)
-    monkeypatch.setattr(agentgrep, "iter_source_records", _stub_iter)
+    monkeypatch.setattr(_rm_planning, "direct_source_matches", lambda *args, **kwargs: True)
+    monkeypatch.setattr(_rm_scanning, "iter_source_records", _stub_iter)
 
     compiled = _compile_query("-agent:claude bliss")
     query = agentgrep.SearchQuery(
@@ -169,8 +172,8 @@ def test_record_predicate_filters_after_source_predicate(
         "plan_search_sources",
         lambda query, sources, backends, **kwargs: list(sources),
     )
-    monkeypatch.setattr(agentgrep, "direct_source_matches", lambda *args, **kwargs: True)
-    monkeypatch.setattr(agentgrep, "iter_source_records", _stub_iter)
+    monkeypatch.setattr(_rm_planning, "direct_source_matches", lambda *args, **kwargs: True)
+    monkeypatch.setattr(_rm_scanning, "iter_source_records", _stub_iter)
 
     compiled = _compile_query("agent:codex model:claude bliss")
     query = agentgrep.SearchQuery(
@@ -303,8 +306,8 @@ def test_search_emits_every_or_branch_match(
         "plan_search_sources",
         lambda query, sources, backends, **kwargs: list(sources),
     )
-    monkeypatch.setattr(agentgrep, "direct_source_matches", lambda *args, **kwargs: True)
-    monkeypatch.setattr(agentgrep, "iter_source_records", _stub_iter)
+    monkeypatch.setattr(_rm_planning, "direct_source_matches", lambda *args, **kwargs: True)
+    monkeypatch.setattr(_rm_scanning, "iter_source_records", _stub_iter)
 
     compiled = _compile_query("agent:codex (bliss OR serenity)")
     query = agentgrep.SearchQuery(
@@ -360,8 +363,8 @@ def test_text_matches_finds_needle_in_model_and_path(
         "plan_search_sources",
         lambda query, sources, backends, **kwargs: list(sources),
     )
-    monkeypatch.setattr(agentgrep, "direct_source_matches", lambda *args, **kwargs: True)
-    monkeypatch.setattr(agentgrep, "iter_source_records", _stub_iter)
+    monkeypatch.setattr(_rm_planning, "direct_source_matches", lambda *args, **kwargs: True)
+    monkeypatch.setattr(_rm_scanning, "iter_source_records", _stub_iter)
 
     compiled = _compile_query("agent:codex sonnet")
     query = agentgrep.SearchQuery(
@@ -477,8 +480,8 @@ def test_engine_routes_query_through_predicates(
         "plan_search_sources",
         lambda query, sources, backends, **kwargs: list(sources),
     )
-    monkeypatch.setattr(agentgrep, "direct_source_matches", lambda *args, **kwargs: True)
-    monkeypatch.setattr(agentgrep, "iter_source_records", _stub_iter)
+    monkeypatch.setattr(_rm_planning, "direct_source_matches", lambda *args, **kwargs: True)
+    monkeypatch.setattr(_rm_scanning, "iter_source_records", _stub_iter)
 
     compiled = _compile_query(case.query)
     query = agentgrep.SearchQuery(
@@ -548,7 +551,7 @@ def test_find_pipeline_consumes_compiled_query(
         _make_source(agent="cursor-cli", path="/tmp/cursor/c.jsonl"),
     ]
     monkeypatch.setattr(
-        agentgrep,
+        _rm_find,
         "discover_sources",
         lambda *args, **kwargs: list(sources),
     )
@@ -590,7 +593,7 @@ def test_find_pipeline_matches_home_relative_path_query(
         ),
     ]
     monkeypatch.setattr(
-        agentgrep,
+        _rm_find,
         "discover_sources",
         lambda *args, **kwargs: list(sources),
     )
@@ -619,7 +622,7 @@ def test_find_pipeline_compiled_none_keeps_legacy_path(
     """When ``compiled=None``, iter_find_events takes the existing path."""
     sources = [_make_source(agent="codex", path="/tmp/codex.jsonl")]
     monkeypatch.setattr(
-        agentgrep,
+        _rm_find,
         "discover_sources",
         lambda *args, **kwargs: list(sources),
     )
@@ -703,8 +706,8 @@ def test_eager_search_path_prunes_sources_before_reading(
         "plan_search_sources",
         lambda query, sources_, backends, **kwargs: list(sources_),
     )
-    monkeypatch.setattr(agentgrep, "direct_source_matches", lambda *args, **kwargs: True)
-    monkeypatch.setattr(agentgrep, "iter_source_records", _stub_iter)
+    monkeypatch.setattr(_rm_planning, "direct_source_matches", lambda *args, **kwargs: True)
+    monkeypatch.setattr(_rm_scanning, "iter_source_records", _stub_iter)
 
     compiled = _compile_query(case.query)
     query = agentgrep.SearchQuery(
@@ -775,7 +778,7 @@ def test_find_eager_path_honors_source_predicate(
         for agent in case.source_agents
     ]
     monkeypatch.setattr(
-        agentgrep,
+        _rm_find,
         "discover_sources",
         lambda *args, **kwargs: list(sources),
     )
@@ -843,13 +846,13 @@ def test_fast_entrypoints_request_metadata_free_discovery(
         return [source]
 
     monkeypatch.setattr(orchestration, "discover_sources", fake_discover_sources)
-    monkeypatch.setattr(agentgrep, "discover_sources", fake_discover_sources)
+    monkeypatch.setattr(_rm_find, "discover_sources", fake_discover_sources)
     monkeypatch.setattr(
         orchestration,
         "plan_search_sources",
         lambda query, sources, backends, **kwargs: list(sources),
     )
-    monkeypatch.setattr(agentgrep, "direct_source_matches", lambda *args, **kwargs: True)
+    monkeypatch.setattr(_rm_planning, "direct_source_matches", lambda *args, **kwargs: True)
 
     def iter_no_records(
         _source: agentgrep.SourceHandle,
@@ -857,7 +860,7 @@ def test_fast_entrypoints_request_metadata_free_discovery(
     ) -> t.Iterator[agentgrep.SearchRecord]:
         return iter(())
 
-    monkeypatch.setattr(agentgrep, "iter_source_records", iter_no_records)
+    monkeypatch.setattr(_rm_scanning, "iter_source_records", iter_no_records)
 
     query = agentgrep.SearchQuery(
         terms=("bliss",),
@@ -1391,9 +1394,9 @@ def test_compiled_none_falls_through_to_legacy_path(
         "plan_search_sources",
         lambda query, sources, backends, **kwargs: list(sources),
     )
-    monkeypatch.setattr(agentgrep, "direct_source_matches", lambda *args, **kwargs: True)
+    monkeypatch.setattr(_rm_planning, "direct_source_matches", lambda *args, **kwargs: True)
     monkeypatch.setattr(
-        agentgrep,
+        _rm_scanning,
         "iter_source_records",
         lambda src: iter([record]),
     )

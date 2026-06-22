@@ -16,6 +16,7 @@ import pytest
 
 import agentgrep
 from agentgrep import events as ag_events
+from agentgrep.cli import render as _r_render
 
 
 class FindParseCase(t.NamedTuple):
@@ -544,7 +545,7 @@ def test_stream_find_results_print0_emits_raw_paths(
         yield ag_events.FindRecordEmitted(record=record)
         yield ag_events.FindFinished(match_count=1, elapsed_seconds=0.0)
 
-    monkeypatch.setattr(agentgrep, "iter_find_events", _stub_iter_find_events)
+    monkeypatch.setattr(_r_render, "iter_find_events", _stub_iter_find_events)
     args = _make_find_args(print0=True)
 
     exit_code = agentgrep.stream_find_results(args)

@@ -9,9 +9,17 @@ import queue
 import time
 import typing as t
 
-import agentgrep
 from agentgrep._engine import scanning
+from agentgrep._engine.orchestration import (
+    prompt_history_agents_for_sources,
+    record_dedupe_key,
+    search_record_sort_key,
+    source_matches_scope,
+)
 from agentgrep._engine.planning import PhysicalSearchPlan, SourceTask
+from agentgrep.progress import SearchControl, SearchProgress, noop_search_progress
+from agentgrep.readers import _record_engine_profile_sample
+from agentgrep.records import SearchQuery, SearchRecord, SourceHandle
 
 if t.TYPE_CHECKING:
     from agentgrep._engine.runtime import SearchRuntime
@@ -23,7 +31,7 @@ class ExecutionSourceStarted:
 
     index: int
     total: int
-    source: agentgrep.SourceHandle
+    source: SourceHandle
     task: SourceTask
 
 
@@ -31,7 +39,7 @@ class ExecutionSourceStarted:
 class ExecutionRecordEmitted:
     """Internal event emitted after dedupe admits one matching record."""
 
-    record: agentgrep.SearchRecord
+    record: SearchRecord
     result_count: int
 
 
@@ -41,7 +49,7 @@ class ExecutionSourceFinished:
 
     index: int
     total: int
-    source: agentgrep.SourceHandle
+    source: SourceHandle
     task: SourceTask
     records_seen: int
     matches_seen: int
@@ -70,26 +78,26 @@ class ExecutionDriver(t.Protocol):
 
     def iter_search_plan(
         self,
-        query: agentgrep.SearchQuery,
+        query: SearchQuery,
         plan: PhysicalSearchPlan,
         *,
-        progress: agentgrep.SearchProgress | None = None,
-        control: agentgrep.SearchControl | None = None,
+        progress: SearchProgress | None = None,
+        control: SearchControl | None = None,
         runtime: SearchRuntime | None = None,
     ) -> cabc.Iterator[SearchExecutionEvent]:
         """Yield internal search execution events.
 
         Parameters
         ----------
-        query : agentgrep.SearchQuery
+        query : SearchQuery
             Compiled query — terms, agents, dedup choice, limit.
         plan : PhysicalSearchPlan
             Planned source tasks from
             :func:`agentgrep._engine.planning.build_physical_search_plan`.
-        progress : agentgrep.SearchProgress or None
+        progress : SearchProgress or None
             Progress sink for source and record events. ``None`` uses
             the no-op sink.
-        control : agentgrep.SearchControl or None
+        control : SearchControl or None
             Optional control handle polled between records and source
             tasks so consumers can stop the scan early.
         runtime : SearchRuntime or None
@@ -110,34 +118,32 @@ class InlineExecutionDriver:
 
     def iter_search_plan(
         self,
-        query: agentgrep.SearchQuery,
+        query: SearchQuery,
         plan: PhysicalSearchPlan,
         *,
-        progress: agentgrep.SearchProgress | None = None,
-        control: agentgrep.SearchControl | None = None,
+        progress: SearchProgress | None = None,
+        control: SearchControl | None = None,
         runtime: SearchRuntime | None = None,
     ) -> cabc.Iterator[SearchExecutionEvent]:
         """Yield internal search execution events for ``plan``."""
-        active_progress = agentgrep.noop_search_progress() if progress is None else progress
-        active_control = agentgrep.SearchControl() if control is None else control
+        active_progress = noop_search_progress() if progress is None else progress
+        active_control = SearchControl() if control is None else control
         tasks = plan.tasks
         total = len(tasks)
-        deduped: dict[tuple[str, str, str, str, str], agentgrep.SearchRecord] = {}
+        deduped: dict[tuple[str, str, str, str, str], SearchRecord] = {}
         raw_count = 0
-        prompt_history_agents = agentgrep.prompt_history_agents_for_sources(
-            task.source for task in tasks
-        )
+        prompt_history_agents = prompt_history_agents_for_sources(task.source for task in tasks)
         source_predicate = query.compiled.source_predicate if query.compiled is not None else None
 
         def current_count() -> int:
             return len(deduped) if query.dedupe else raw_count
 
         def accept_matching_record(
-            record: agentgrep.SearchRecord,
+            record: SearchRecord,
         ) -> ExecutionRecordEmitted | None:
             nonlocal raw_count
             if query.dedupe:
-                dedupe_key = agentgrep.record_dedupe_key(record)
+                dedupe_key = record_dedupe_key(record)
                 if dedupe_key in deduped:
                     return None
                 deduped[dedupe_key] = record
@@ -155,7 +161,7 @@ class InlineExecutionDriver:
                 query.limit is not None and current_count() >= query.limit
             ):
                 break
-            if not agentgrep.source_matches_scope(
+            if not source_matches_scope(
                 source,
                 query.scope,
                 prompt_history_agents=prompt_history_agents,
@@ -211,16 +217,16 @@ class FrontierExecutionDriver:
 
     def iter_search_plan(
         self,
-        query: agentgrep.SearchQuery,
+        query: SearchQuery,
         plan: PhysicalSearchPlan,
         *,
-        progress: agentgrep.SearchProgress | None = None,
-        control: agentgrep.SearchControl | None = None,
+        progress: SearchProgress | None = None,
+        control: SearchControl | None = None,
         runtime: SearchRuntime | None = None,
     ) -> cabc.Iterator[SearchExecutionEvent]:
         """Yield internal search events using a bounded source frontier."""
-        active_progress = agentgrep.noop_search_progress() if progress is None else progress
-        active_control = agentgrep.SearchControl() if control is None else control
+        active_progress = noop_search_progress() if progress is None else progress
+        active_control = SearchControl() if control is None else control
         tasks = tuple(_eligible_tasks(query, plan.tasks))
         total = len(tasks)
         if total == 0:
@@ -482,7 +488,7 @@ class FrontierExecutionDriver:
             active_progress.result_added(emitted_count)
             yield ExecutionRecordEmitted(record=record, result_count=emitted_count)
 
-        agentgrep._record_engine_profile_sample(
+        _record_engine_profile_sample(
             "search.collect.scheduler",
             time.perf_counter() - scheduler_started_at,
             agentgrep_execution_driver="frontier",
@@ -512,15 +518,15 @@ class _RunningSourceTask:
     batch_count: int = 0
     records_seen: int = 0
     matches_seen: int = 0
-    records: list[agentgrep.SearchRecord] = dataclasses.field(default_factory=list)
+    records: list[SearchRecord] = dataclasses.field(default_factory=list)
 
 
 def _iter_search_plan_whole_sources(
-    query: agentgrep.SearchQuery,
+    query: SearchQuery,
     tasks: tuple[SourceTask, ...],
     *,
-    progress: agentgrep.SearchProgress,
-    control: agentgrep.SearchControl,
+    progress: SearchProgress,
+    control: SearchControl,
     scheduler_started_at: float,
     max_workers: int,
     runtime: SearchRuntime | None = None,
@@ -630,7 +636,7 @@ def _iter_search_plan_whole_sources(
         progress.result_added(emitted_count)
         yield ExecutionRecordEmitted(record=record, result_count=emitted_count)
 
-    agentgrep._record_engine_profile_sample(
+    _record_engine_profile_sample(
         "search.collect.scheduler",
         time.perf_counter() - scheduler_started_at,
         agentgrep_execution_driver="frontier",
@@ -650,11 +656,11 @@ def _iter_search_plan_whole_sources(
 
 
 def _iter_search_plan_single_worker_batches(
-    query: agentgrep.SearchQuery,
+    query: SearchQuery,
     tasks: tuple[SourceTask, ...],
     *,
-    progress: agentgrep.SearchProgress,
-    control: agentgrep.SearchControl,
+    progress: SearchProgress,
+    control: SearchControl,
     scheduler_started_at: float,
     runtime: SearchRuntime | None = None,
 ) -> cabc.Iterator[SearchExecutionEvent]:
@@ -724,7 +730,7 @@ def _iter_search_plan_single_worker_batches(
         source_batch_count = 0
         records_seen = 0
         matches_seen = 0
-        collected_records: list[agentgrep.SearchRecord] = []
+        collected_records: list[SearchRecord] = []
         for batch in scanning.iter_source_task_batches(
             query,
             task,
@@ -779,7 +785,7 @@ def _iter_search_plan_single_worker_batches(
         progress.result_added(emitted_count)
         yield ExecutionRecordEmitted(record=record, result_count=emitted_count)
 
-    agentgrep._record_engine_profile_sample(
+    _record_engine_profile_sample(
         "search.collect.scheduler",
         time.perf_counter() - scheduler_started_at,
         agentgrep_execution_driver="frontier",
@@ -821,10 +827,10 @@ class _SourceTaskFailed:
 type _QueueItem = scanning.SourceScanBatch | _SourceTaskCompleted | _SourceTaskFailed
 
 
-class _TaskSearchControl(agentgrep.SearchControl):
+class _TaskSearchControl(SearchControl):
     """Search control that honors both user and scheduler cancellation."""
 
-    def __init__(self, parent: agentgrep.SearchControl) -> None:
+    def __init__(self, parent: SearchControl) -> None:
         super().__init__()
         self._parent = parent
 
@@ -834,12 +840,12 @@ class _TaskSearchControl(agentgrep.SearchControl):
 
 
 def _scan_source_task_to_queue(
-    query: agentgrep.SearchQuery,
+    query: SearchQuery,
     task: SourceTask,
     *,
     index: int,
     total: int,
-    control: agentgrep.SearchControl,
+    control: SearchControl,
     batch_queue: queue.Queue[_QueueItem],
 ) -> None:
     """Run one source scan and push batches/completion to the scheduler."""
@@ -875,28 +881,28 @@ def _scan_source_task_to_queue(
 class _FrontierState:
     """Owner-thread state for deterministic top-K result selection."""
 
-    def __init__(self, query: agentgrep.SearchQuery) -> None:
+    def __init__(self, query: SearchQuery) -> None:
         self._query = query
-        self._deduped: dict[tuple[str, str, str, str, str], agentgrep.SearchRecord] = {}
-        self._records: list[agentgrep.SearchRecord] = []
+        self._deduped: dict[tuple[str, str, str, str, str], SearchRecord] = {}
+        self._records: list[SearchRecord] = []
 
-    def add_records(self, records: cabc.Iterable[agentgrep.SearchRecord]) -> None:
+    def add_records(self, records: cabc.Iterable[SearchRecord]) -> None:
         """Merge source-local candidates into the global frontier."""
         if self._query.dedupe:
             for record in records:
-                key = agentgrep.record_dedupe_key(record)
+                key = record_dedupe_key(record)
                 current = self._deduped.get(key)
-                if current is None or agentgrep.search_record_sort_key(
+                if current is None or search_record_sort_key(
                     record,
-                ) > agentgrep.search_record_sort_key(current):
+                ) > search_record_sort_key(current):
                     self._deduped[key] = record
             return
         self._records.extend(records)
 
-    def records(self) -> tuple[agentgrep.SearchRecord, ...]:
+    def records(self) -> tuple[SearchRecord, ...]:
         """Return accepted records in final newest-first order."""
         records = list(self._deduped.values()) if self._query.dedupe else list(self._records)
-        records.sort(key=agentgrep.search_record_sort_key, reverse=True)
+        records.sort(key=search_record_sort_key, reverse=True)
         if self._query.limit is not None:
             records = records[: self._query.limit]
         return tuple(records)
@@ -911,17 +917,15 @@ class _FrontierState:
 
 
 def _eligible_tasks(
-    query: agentgrep.SearchQuery,
+    query: SearchQuery,
     tasks: cabc.Iterable[SourceTask],
 ) -> cabc.Iterator[SourceTask]:
     """Yield plan tasks that still match late-bound query predicates."""
     task_list = tuple(tasks)
-    prompt_history_agents = agentgrep.prompt_history_agents_for_sources(
-        task.source for task in task_list
-    )
+    prompt_history_agents = prompt_history_agents_for_sources(task.source for task in task_list)
     source_predicate = query.compiled.source_predicate if query.compiled is not None else None
     for task in task_list:
-        if not agentgrep.source_matches_scope(
+        if not source_matches_scope(
             task.source,
             query.scope,
             prompt_history_agents=prompt_history_agents,
@@ -933,7 +937,7 @@ def _eligible_tasks(
 
 
 def _frontier_can_skip_remaining(
-    query: agentgrep.SearchQuery,
+    query: SearchQuery,
     frontier: _FrontierState,
     task: SourceTask,
 ) -> bool:
@@ -942,7 +946,7 @@ def _frontier_can_skip_remaining(
 
 
 def select_execution_driver(
-    query: agentgrep.SearchQuery,
+    query: SearchQuery,
     plan: PhysicalSearchPlan,
     *,
     config: ExecutionDriverConfig | None = None,
@@ -951,7 +955,7 @@ def select_execution_driver(
 
     Parameters
     ----------
-    query : agentgrep.SearchQuery
+    query : SearchQuery
         Compiled query — terms, agents, dedup choice, limit.
     plan : PhysicalSearchPlan
         Planned source tasks whose strategies and limit behaviors
@@ -973,7 +977,7 @@ def select_execution_driver(
 
 
 def _should_use_frontier_driver(
-    query: agentgrep.SearchQuery,
+    query: SearchQuery,
     plan: PhysicalSearchPlan,
     *,
     config: ExecutionDriverConfig,

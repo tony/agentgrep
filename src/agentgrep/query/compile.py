@@ -35,7 +35,7 @@ import pathlib
 import re
 import typing as t
 
-import agentgrep
+from agentgrep._engine.orchestration import record_matches_scope
 from agentgrep.query.ast import (
     AndNode,
     FieldCmpNode,
@@ -56,6 +56,7 @@ from agentgrep.query.dates import (
 )
 from agentgrep.query.parser import QueryParseError, parse_query
 from agentgrep.query.registry import FieldRegistry, FieldSpec
+from agentgrep.records import SearchQuery, SearchRecord, SearchScope, SourceHandle
 
 _Trilean = t.Literal["T", "F", "U"]
 """Three-valued logic state used during conservative source eval.
@@ -78,8 +79,8 @@ class CompiledQuery:
     the rg prefilter and matches_text path see the right input.
     """
 
-    source_predicate: t.Callable[[agentgrep.SourceHandle], bool] | None
-    record_predicate: t.Callable[[agentgrep.SearchRecord], bool] | None
+    source_predicate: t.Callable[[SourceHandle], bool] | None
+    record_predicate: t.Callable[[SearchRecord], bool] | None
     text_terms: tuple[str, ...]
     is_pure_text: bool
 
@@ -131,10 +132,10 @@ def compile_query(ast: QueryNode, registry: FieldRegistry) -> CompiledQuery:
     text_terms = tuple(_collect_text_terms(ast))
     path_patterns = _compile_path_patterns(ast)
 
-    def source_predicate(source: agentgrep.SourceHandle) -> bool:
+    def source_predicate(source: SourceHandle) -> bool:
         return _evaluate_source(ast, source, registry, path_patterns) != "F"
 
-    def record_predicate(record: agentgrep.SearchRecord) -> bool:
+    def record_predicate(record: SearchRecord) -> bool:
         return _evaluate_record(ast, record, registry, path_patterns)
 
     return CompiledQuery(
@@ -259,13 +260,13 @@ class QueryBuildResult:
     Frozen so consumers can pass the result across thread boundaries.
     """
 
-    query: agentgrep.SearchQuery | None
+    query: SearchQuery | None
     error: str | None
 
 
 def build_query_from_input(
     text: str,
-    base_query: agentgrep.SearchQuery,
+    base_query: SearchQuery,
     registry: FieldRegistry,
 ) -> QueryBuildResult:
     """Translate a search-input string into a fresh :class:`SearchQuery`.
@@ -366,18 +367,18 @@ def _has_query_syntax(text: str, registry: FieldRegistry) -> bool:
 
 
 def _rebuild(
-    base: agentgrep.SearchQuery,
+    base: SearchQuery,
     *,
     terms: tuple[str, ...],
     compiled: CompiledQuery | None,
-    scope: agentgrep.SearchScope | None = None,
-) -> agentgrep.SearchQuery:
+    scope: SearchScope | None = None,
+) -> SearchQuery:
     """Clone ``base`` with new ``terms`` / ``compiled``; carry the rest forward.
 
     ``scope`` overrides the discovery scope when a ``scope:`` predicate
     widened it; ``None`` keeps ``base.scope``.
     """
-    return agentgrep.SearchQuery(
+    return SearchQuery(
         terms=terms,
         scope=base.scope if scope is None else scope,
         any_term=base.any_term,
@@ -564,7 +565,7 @@ def _dedupe_preserving_order(values: t.Iterable[str]) -> tuple[str, ...]:
 
 def _evaluate_source(
     node: QueryNode,
-    source: agentgrep.SourceHandle,
+    source: SourceHandle,
     registry: FieldRegistry,
     path_patterns: dict[str, _CompiledPathPattern],
 ) -> _Trilean:
@@ -624,7 +625,7 @@ def _evaluate_source(
 
 def _evaluate_record(
     node: QueryNode,
-    record: agentgrep.SearchRecord,
+    record: SearchRecord,
     registry: FieldRegistry,
     path_patterns: dict[str, _CompiledPathPattern],
 ) -> bool:
@@ -663,7 +664,7 @@ def _evaluate_record(
     return False
 
 
-def _field_exists_on_record(field: str, record: agentgrep.SearchRecord) -> bool:
+def _field_exists_on_record(field: str, record: SearchRecord) -> bool:
     """Return whether ``field`` is present and non-empty on ``record``.
 
     Source-derived fields (``agent``/``store``/``adapter_id``/``mtime``) and
@@ -690,7 +691,7 @@ def _field_exists_on_record(field: str, record: agentgrep.SearchRecord) -> bool:
 
 def _field_matches_source(
     node: FieldEqNode | FieldCmpNode | FieldRangeNode,
-    source: agentgrep.SourceHandle,
+    source: SourceHandle,
     spec: FieldSpec,
     path_patterns: dict[str, _CompiledPathPattern],
 ) -> bool:
@@ -713,7 +714,7 @@ def _field_matches_source(
 
 def _field_matches_record(
     node: FieldEqNode,
-    record: agentgrep.SearchRecord,
+    record: SearchRecord,
     spec: FieldSpec,
     path_patterns: dict[str, _CompiledPathPattern],
 ) -> bool:
@@ -722,9 +723,9 @@ def _field_matches_record(
         # Source-level fields can be read off the record too.
         return _field_matches_record_via_source(node, record, spec, path_patterns)
     if spec.name == "scope":
-        return agentgrep.record_matches_scope(
+        return record_matches_scope(
             record,
-            t.cast("agentgrep.SearchScope", node.value),
+            t.cast("SearchScope", node.value),
         )
     if spec.name == "timestamp":
         return _date_predicate_matches(
@@ -746,7 +747,7 @@ def _field_matches_record(
 
 def _field_matches_record_via_source(
     node: FieldEqNode,
-    record: agentgrep.SearchRecord,
+    record: SearchRecord,
     spec: FieldSpec,
     path_patterns: dict[str, _CompiledPathPattern],
 ) -> bool:
@@ -769,7 +770,7 @@ def _field_matches_record_via_source(
 
 def _field_cmp_matches_record(
     node: FieldCmpNode,
-    record: agentgrep.SearchRecord,
+    record: SearchRecord,
     spec: FieldSpec,
 ) -> bool:
     """Decide whether ``record`` satisfies a comparison predicate."""
@@ -791,7 +792,7 @@ def _field_cmp_matches_record(
 
 def _field_range_matches_record(
     node: FieldRangeNode,
-    record: agentgrep.SearchRecord,
+    record: SearchRecord,
     spec: FieldSpec,
 ) -> bool:
     """Decide whether ``record`` satisfies a range predicate."""
@@ -940,7 +941,7 @@ def _path_match(path: str, pattern: _CompiledPathPattern) -> bool:
     return any(variant in path for variant in pattern.variants)
 
 
-def _text_matches(record: agentgrep.SearchRecord, needle: str) -> bool:
+def _text_matches(record: SearchRecord, needle: str) -> bool:
     """Case-insensitive substring match against the record's text fields.
 
     Checks text, title, role, model, and path — the same fields that

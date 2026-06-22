@@ -15,6 +15,8 @@ import pytest
 
 import agentgrep
 import agentgrep._engine.execution as execution
+import agentgrep._engine.orchestration as _rm_orch
+import agentgrep._engine.scanning as _rm_scanning
 import agentgrep._engine.scanning as scanning
 import agentgrep._engine.scheduling as scheduling
 from agentgrep._engine.execution import (
@@ -211,7 +213,7 @@ def test_inline_execution_driver_emits_source_and_record_events_in_order(
     def iter_records(_source: agentgrep.SourceHandle) -> list[agentgrep.SearchRecord]:
         return [older, newer]
 
-    monkeypatch.setattr(agentgrep, "iter_source_records", iter_records)
+    monkeypatch.setattr(_rm_scanning, "iter_source_records", iter_records)
 
     events = list(InlineExecutionDriver().iter_search_plan(query, _plan(query, source)))
 
@@ -440,7 +442,7 @@ def test_raw_text_skip_line_does_not_rebuild_matches_per_line(
     def fail_matches_text(_text: str, _query: agentgrep.SearchQuery) -> bool:
         pytest.fail("literal raw-line skip should not call matches_text")
 
-    monkeypatch.setattr(agentgrep, "matches_text", fail_matches_text)
+    monkeypatch.setattr(_rm_orch, "matches_text", fail_matches_text)
     skip_line = execution.raw_text_skip_line_for_query(query)
 
     assert skip_line('{"content":"bliss"}') is False

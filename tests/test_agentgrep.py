@@ -24,6 +24,10 @@ import typing as t
 import pytest
 
 import agentgrep as _agentgrep_module
+import agentgrep._engine.orchestration as _rm_orch
+import agentgrep._engine.planning as _rm_planning
+import agentgrep._engine.scanning as _rm_scanning
+import agentgrep.readers as _rm_readers
 from agentgrep._engine import orchestration
 
 if t.TYPE_CHECKING:
@@ -303,7 +307,7 @@ def test_list_files_matching_path_qualified_globs_skip_fd(
         message = "path-qualified globs should not spawn fd"
         raise AssertionError(message)
 
-    monkeypatch.setattr(agentgrep, "run_readonly_command", run_readonly_command)
+    monkeypatch.setattr(_rm_orch, "run_readonly_command", run_readonly_command)
 
     paths = agentgrep.list_files_matching(tmp_path, case.pattern, "fd")
 
@@ -984,7 +988,7 @@ def test_unbounded_haystack_search_finds_path_only_matches(
         _ = control
         return set()
 
-    monkeypatch.setattr(agentgrep, "grep_root_paths", grep_root_paths)
+    monkeypatch.setattr(_rm_orch, "grep_root_paths", grep_root_paths)
 
     query = agentgrep.SearchQuery(
         terms=("tmux-proj",),
@@ -1157,7 +1161,7 @@ def test_collect_search_records_calls_record_added_with_each_unique_record(
         yield record
         yield record  # same dedupe key — second insert must not fire record_added
 
-    monkeypatch.setattr(agentgrep, "iter_source_records", iter_records)
+    monkeypatch.setattr(_rm_scanning, "iter_source_records", iter_records)
     progress = CapturingProgress()
 
     records = agentgrep.collect_search_records(query, [source], progress=progress)
@@ -1232,7 +1236,7 @@ def test_collect_search_records_reports_in_source_progress_and_yields_gil(
             )
 
     sleep_calls: list[float] = []
-    monkeypatch.setattr(agentgrep, "iter_source_records", iter_records)
+    monkeypatch.setattr(_rm_scanning, "iter_source_records", iter_records)
     monkeypatch.setattr(agentgrep.time, "sleep", sleep_calls.append)
     progress = CapturingProgress()
 
@@ -1322,7 +1326,7 @@ def loads_impl(
     """
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     if request.param == "stdlib":
-        monkeypatch.setattr(agentgrep, "_orjson", None)
+        monkeypatch.setattr(_rm_readers, "_orjson", None)
     elif agentgrep._orjson is None:
         pytest.skip("orjson accelerator is not installed")
     return t.cast("t.Callable[[str], object]", agentgrep._loads)
@@ -5191,7 +5195,7 @@ def test_collect_search_records_returns_partial_results_on_answer_now(
         control.request_answer_now()
         yield second
 
-    monkeypatch.setattr(agentgrep, "iter_source_records", iter_records)
+    monkeypatch.setattr(_rm_scanning, "iter_source_records", iter_records)
 
     records = agentgrep.collect_search_records(query, [source], control=control)
 
@@ -5269,7 +5273,7 @@ def test_run_search_query_interrupts_progress_on_keyboard_interrupt(
         yield source
 
     progress = RecordingProgress()
-    monkeypatch.setattr(agentgrep, "iter_source_records", raise_interrupt)
+    monkeypatch.setattr(_rm_scanning, "iter_source_records", raise_interrupt)
 
     with pytest.raises(KeyboardInterrupt):
         agentgrep.run_search_query(
@@ -5384,7 +5388,7 @@ def test_plan_search_sources_prunes_chat_sources_from_prompt_scope(
         checked.append(t.cast("t.Any", source).store)
         return True
 
-    monkeypatch.setattr(agentgrep, "direct_source_matches", direct_source_matches)
+    monkeypatch.setattr(_rm_planning, "direct_source_matches", direct_source_matches)
 
     planned = agentgrep.plan_search_sources(
         query,
@@ -5435,7 +5439,7 @@ def test_plan_search_sources_skips_root_prefilter_for_sqlite_sources(
         grep_calls.append((search_root, query))
         return set()
 
-    monkeypatch.setattr(agentgrep, "grep_root_paths", grep_root_paths)
+    monkeypatch.setattr(_rm_orch, "grep_root_paths", grep_root_paths)
 
     planned = agentgrep.plan_search_sources(
         query,
@@ -8642,7 +8646,7 @@ def test_paste_cache_only_terms_survive_grep_backends(
     def grep_misses(*_args: t.Any, **_kwargs: t.Any) -> bool:
         return False
 
-    monkeypatch.setattr(agentgrep, "grep_file_matches", grep_misses)
+    monkeypatch.setattr(_rm_orch, "grep_file_matches", grep_misses)
 
     query = agentgrep.SearchQuery(
         terms=("needle",),

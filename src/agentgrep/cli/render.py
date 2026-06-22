@@ -4,13 +4,8 @@ This module owns the rendering paths for the ``grep``, ``find``, and
 ``search`` subcommands, plus the dispatcher functions that glue parsed
 arguments to the engine and the chosen output format.
 
-Runtime callables (engines, helpers, classes) are accessed through the
-``agentgrep`` namespace at call time rather than imported by name, so
-tests that monkeypatch attributes such as ``agentgrep.run_search_query``
-continue to see their patches honored when the dispatchers run.
-
 Symbols defined here are re-exported from :mod:`agentgrep` for backward
-compatibility.
+compatibility (ADR 0010).
 """
 
 from __future__ import annotations
@@ -25,12 +20,26 @@ import re
 import sys
 import typing as t
 
-import agentgrep
-from agentgrep import (
+from agentgrep import maybe_use_pydantic, run_ui
+from agentgrep._engine import iter_find_events, iter_search_events
+from agentgrep._engine.orchestration import run_search_query
+from agentgrep._text import AnsiColors, format_display_path
+from agentgrep.cli.parser import CaseMode, FindArgs, GrepArgs, SearchArgs, UIArgs
+from agentgrep.progress import (
+    AnswerNowInputListener,
+    ConsoleSearchProgress,
+    SearchControl,
+    SearchProgress,
+    noop_search_progress,
+)
+from agentgrep.records import (
+    AGENT_CHOICES,
+    SCHEMA_VERSION,
     EnvelopeFactory,
     EnvelopePayload,
     FindRecord,
     FindRecordPayload,
+    SearchQuery,
     SearchRecord,
     SearchRecordPayload,
     SourceHandle,
@@ -38,7 +47,6 @@ from agentgrep import (
     SourceVersionDetection,
     SourceVersionDetectionPayload,
 )
-from agentgrep.cli.parser import FindArgs, GrepArgs, SearchArgs, UIArgs
 
 __all__ = [
     "GrepSummary",
@@ -76,7 +84,7 @@ def maybe_build_pydantic() -> tuple[
 ]:
     """Return Pydantic serializers or plain fallbacks."""
     try:
-        return agentgrep.maybe_use_pydantic()
+        return maybe_use_pydantic()
     except ImportError:
         return (
             lambda record: t.cast("dict[str, object]", serialize_search_record(record)),
@@ -91,12 +99,12 @@ def maybe_build_pydantic() -> tuple[
 def serialize_search_record(record: SearchRecord) -> SearchRecordPayload:
     """Serialize a search record to a JSON-compatible mapping."""
     return {
-        "schema_version": agentgrep.SCHEMA_VERSION,
+        "schema_version": SCHEMA_VERSION,
         "kind": record.kind,
         "agent": record.agent,
         "store": record.store,
         "adapter_id": record.adapter_id,
-        "path": agentgrep.format_display_path(record.path),
+        "path": format_display_path(record.path),
         "text": record.text,
         "title": record.title,
         "role": record.role,
@@ -111,12 +119,12 @@ def serialize_search_record(record: SearchRecord) -> SearchRecordPayload:
 def serialize_find_record(record: FindRecord) -> FindRecordPayload:
     """Serialize a find record to a JSON-compatible mapping."""
     return {
-        "schema_version": agentgrep.SCHEMA_VERSION,
+        "schema_version": SCHEMA_VERSION,
         "kind": record.kind,
         "agent": record.agent,
         "store": record.store,
         "adapter_id": record.adapter_id,
-        "path": agentgrep.format_display_path(record.path),
+        "path": format_display_path(record.path),
         "path_kind": record.path_kind,
         "metadata": record.metadata,
     }
@@ -125,11 +133,11 @@ def serialize_find_record(record: FindRecord) -> FindRecordPayload:
 def serialize_source_handle(source: SourceHandle) -> SourceHandlePayload:
     """Serialize a source handle to a JSON-compatible mapping."""
     return {
-        "schema_version": agentgrep.SCHEMA_VERSION,
+        "schema_version": SCHEMA_VERSION,
         "agent": source.agent,
         "store": source.store,
         "adapter_id": source.adapter_id,
-        "path": agentgrep.format_display_path(source.path),
+        "path": format_display_path(source.path),
         "path_kind": source.path_kind,
         "source_kind": source.source_kind,
         "coverage": source.coverage,
@@ -137,7 +145,7 @@ def serialize_source_handle(source: SourceHandle) -> SourceHandlePayload:
         "search_root": (
             None
             if source.search_root is None
-            else agentgrep.format_display_path(source.search_root, directory=True)
+            else format_display_path(source.search_root, directory=True)
         ),
         "mtime_ns": source.mtime_ns,
     }
@@ -165,7 +173,7 @@ def build_envelope(
 ) -> EnvelopePayload:
     """Build a JSON envelope."""
     return {
-        "schema_version": agentgrep.SCHEMA_VERSION,
+        "schema_version": SCHEMA_VERSION,
         "command": command,
         "query": query_data,
         "results": results,
@@ -230,10 +238,10 @@ def _format_find_path(record: FindRecord, args: FindArgs) -> str:
     """Return the find path according to display vs. shell-consumer mode."""
     if args.print0 or args.absolute_path:
         return str(record.path)
-    return agentgrep.format_display_path(record.path)
+    return format_display_path(record.path)
 
 
-def _resolve_find_case_sensitive(pattern: str | None, mode: agentgrep.CaseMode) -> bool:
+def _resolve_find_case_sensitive(pattern: str | None, mode: CaseMode) -> bool:
     """Apply fd's smart-case rule to a find pattern."""
     if mode == "respect":
         return True
@@ -352,6 +360,9 @@ def stream_find_results(args: FindArgs) -> int:
     Eager output modes (``--json`` and ``-l``) route through
     :func:`print_find_results` via :func:`run_find_command` instead.
     """
+    # Lazy import: ``agentgrep.events`` stays off the eager ``import
+    # agentgrep`` path (ADR 0010 / test_import_time) — only the running
+    # subcommand pulls in the event-stream types.
     from agentgrep import events
 
     is_tty = sys.stdout.isatty()
@@ -359,7 +370,7 @@ def stream_find_results(args: FindArgs) -> int:
     serialize_find: t.Callable[[FindRecord], dict[str, object]] | None = None
     if args.output_mode == "ndjson":
         _, serialize_find, _ = maybe_build_pydantic()
-    for event in agentgrep.iter_find_events(
+    for event in iter_find_events(
         pathlib.Path.home(),
         args.agents,
         pattern=None,
@@ -403,7 +414,7 @@ def run_find_command(args: FindArgs) -> int:
     same query semantics, different presentation.
     """
     if args.output_mode == "ui":
-        query = agentgrep.SearchQuery(
+        query = SearchQuery(
             terms=(args.pattern,) if args.pattern else (),
             scope="all",
             any_term=False,
@@ -413,17 +424,20 @@ def run_find_command(args: FindArgs) -> int:
             limit=args.limit,
             compiled=args.compiled,
         )
-        agentgrep.run_ui(
+        run_ui(
             pathlib.Path.home(),
             query,
-            control=agentgrep.SearchControl(),
+            control=SearchControl(),
             initial_search_text=args.raw_query or None,
         )
         return 0
-    from agentgrep import events
 
     if not _find_path_is_eager(args):
         return stream_find_results(args)
+    # Lazy import keeps ``agentgrep.events`` off the eager ``import
+    # agentgrep`` path (ADR 0010 / test_import_time).
+    from agentgrep import events
+
     # Eager output modes (--json, --list-details) need the full
     # record list up front. Drain :func:`agentgrep.iter_find_events`
     # with ``compiled`` so source-level field predicates
@@ -431,7 +445,7 @@ def run_find_command(args: FindArgs) -> int:
     # without it, every agent's sources are returned unfiltered.
     raw_records: list[FindRecord] = [
         event.record
-        for event in agentgrep.iter_find_events(
+        for event in iter_find_events(
             pathlib.Path.home(),
             args.agents,
             pattern=None,
@@ -453,16 +467,16 @@ def run_find_command(args: FindArgs) -> int:
 def run_ui_command(args: UIArgs) -> int:
     """Execute ``agentgrep ui``."""
     initial_terms = tuple(args.initial_query.split()) if args.initial_query else ()
-    query = agentgrep.SearchQuery(
+    query = SearchQuery(
         terms=initial_terms,
         scope="prompts",
         any_term=False,
         regex=False,
         case_sensitive=False,
-        agents=agentgrep.AGENT_CHOICES,
+        agents=AGENT_CHOICES,
         limit=None,
     )
-    agentgrep.run_ui(pathlib.Path.home(), query, control=agentgrep.SearchControl())
+    run_ui(pathlib.Path.home(), query, control=SearchControl())
     return 0
 
 
@@ -478,7 +492,7 @@ def run_search_command(args: SearchArgs) -> int:
     if not args.terms and args.compiled is None and args.output_mode != "ui":
         msg = "search requires at least one term unless --ui is used"
         raise SystemExit(msg)
-    query = agentgrep.SearchQuery(
+    query = SearchQuery(
         terms=args.terms,
         scope=args.scope,
         any_term=False,
@@ -489,16 +503,16 @@ def run_search_command(args: SearchArgs) -> int:
         compiled=args.compiled,
     )
     if args.output_mode == "ui":
-        agentgrep.run_ui(
+        run_ui(
             pathlib.Path.home(),
             query,
-            control=agentgrep.SearchControl(),
+            control=SearchControl(),
             initial_search_text=args.raw_query or None,
         )
         return 0
     if args.output_mode in ("json", "ndjson"):
         return _run_search_eager(args, query)
-    control = agentgrep.SearchControl()
+    control = SearchControl()
     human_output = args.output_mode == "text"
     progress_enabled = args.progress_mode == "always" or (
         args.progress_mode == "auto" and human_output
@@ -509,12 +523,12 @@ def run_search_command(args: SearchArgs) -> int:
         and bool(getattr(sys.stdin, "isatty", lambda: False)())
         and bool(getattr(sys.stderr, "isatty", lambda: False)())
     )
-    listener = agentgrep.AnswerNowInputListener(control) if answer_now_enabled else None
-    progress: agentgrep.SearchProgress
+    listener = AnswerNowInputListener(control) if answer_now_enabled else None
+    progress: SearchProgress
     if not progress_enabled:
-        progress = agentgrep.noop_search_progress()
+        progress = noop_search_progress()
     else:
-        progress = agentgrep.ConsoleSearchProgress(
+        progress = ConsoleSearchProgress(
             enabled=True,
             color_mode=args.color_mode,
             answer_now_hint=answer_now_enabled,
@@ -522,7 +536,7 @@ def run_search_command(args: SearchArgs) -> int:
     if listener is not None:
         listener.start()
     try:
-        records = agentgrep.run_search_query(
+        records = run_search_query(
             pathlib.Path.home(),
             query,
             progress=progress,
@@ -534,7 +548,7 @@ def run_search_command(args: SearchArgs) -> int:
     query_text = " ".join(args.terms)
     answered_early = control.answer_now_requested()
     if args.no_rank or answered_early or not query_text:
-        scored: list[tuple[agentgrep.SearchRecord, float]] = [(r, 0.0) for r in records]
+        scored: list[tuple[SearchRecord, float]] = [(r, 0.0) for r in records]
     else:
         from agentgrep.ranking import rank_search_records
 
@@ -564,11 +578,11 @@ def _compile_search_patterns(args: SearchArgs) -> list[re.Pattern[str]]:
 
 
 def _print_search_text(
-    groups: list[tuple[str | None, list[tuple[agentgrep.SearchRecord, float, int]]]],
+    groups: list[tuple[str | None, list[tuple[SearchRecord, float, int]]]],
     args: SearchArgs,
 ) -> None:
     """Render ranked search results with pretty snippets."""
-    colors = agentgrep.AnsiColors.for_stream(args.color_mode, sys.stdout)
+    colors = AnsiColors.for_stream(args.color_mode, sys.stdout)
     patterns = _compile_search_patterns(args)
     first_group = True
     for session_id, entries in groups:
@@ -589,25 +603,25 @@ def _print_search_text(
             if record.timestamp:
                 provenance_parts.append(format_relative_time(record.timestamp))
             provenance_parts.append(
-                colors.path(agentgrep.format_display_path(record.path)),
+                colors.path(format_display_path(record.path)),
             )
             lines.append(colors.dim(f"  {' · '.join(provenance_parts)}"))
             print("\n".join(lines))
             print()
 
 
-def _run_search_eager(args: SearchArgs, query: agentgrep.SearchQuery) -> int:
+def _run_search_eager(args: SearchArgs, query: SearchQuery) -> int:
     """Eager search for JSON/NDJSON output with ranking but no pairwise dedup."""
-    control = agentgrep.SearchControl()
-    records = agentgrep.run_search_query(
+    control = SearchControl()
+    records = run_search_query(
         pathlib.Path.home(),
         query,
-        progress=agentgrep.noop_search_progress(),
+        progress=noop_search_progress(),
         control=control,
     )
     query_text = " ".join(args.terms)
     if args.no_rank or not query_text:
-        scored: list[tuple[agentgrep.SearchRecord, float]] = [(r, 0.0) for r in records]
+        scored: list[tuple[SearchRecord, float]] = [(r, 0.0) for r in records]
     else:
         from agentgrep.ranking import rank_search_records
 
@@ -741,7 +755,7 @@ def highlight_search_spans(
     text: str,
     patterns: list[re.Pattern[str]],
     *,
-    colors: agentgrep.AnsiColors,
+    colors: AnsiColors,
 ) -> str:
     """Apply warm-amber accent highlighting to match spans.
 
@@ -805,7 +819,7 @@ def format_grep_line(
     line_text: str,
     match_spans: list[tuple[int, int]],
     *,
-    colors: agentgrep.AnsiColors,
+    colors: AnsiColors,
     show_line: bool = False,
     show_column: bool = False,
 ) -> str:
@@ -845,9 +859,9 @@ def format_grep_line(
 
 
 def format_grep_heading(
-    record: agentgrep.SearchRecord,
+    record: SearchRecord,
     *,
-    colors: agentgrep.AnsiColors,
+    colors: AnsiColors,
 ) -> str:
     """Format the per-record heading line for heading-mode grep output.
 
@@ -856,7 +870,7 @@ def format_grep_heading(
     suppressed so synthetic records without one don't carry a stray
     double-space.
     """
-    path = agentgrep.format_display_path(record.path)
+    path = format_display_path(record.path)
     pieces = [colors.muted(record.agent)]
     if record.timestamp:
         pieces.append(colors.muted(record.timestamp))
@@ -864,7 +878,7 @@ def format_grep_heading(
     return "  ".join(pieces)
 
 
-def build_grep_query(args: GrepArgs) -> agentgrep.SearchQuery:
+def build_grep_query(args: GrepArgs) -> SearchQuery:
     r"""Translate :class:`GrepArgs` into a :class:`agentgrep.SearchQuery`.
 
     Encodes rg's smart-case and pattern-mode resolution: ``-i`` forces
@@ -886,7 +900,7 @@ def build_grep_query(args: GrepArgs) -> agentgrep.SearchQuery:
     else:
         terms = args.patterns
 
-    return agentgrep.SearchQuery(
+    return SearchQuery(
         terms=terms,
         scope=args.scope,
         any_term=False,
@@ -901,7 +915,7 @@ def build_grep_query(args: GrepArgs) -> agentgrep.SearchQuery:
 
 
 def serialize_grep_record(
-    record: agentgrep.SearchRecord,
+    record: SearchRecord,
     *,
     line_number: int | None = None,
 ) -> dict[str, object]:
@@ -922,7 +936,7 @@ def serialize_grep_record(
             "agent": record.agent,
             "store": record.store,
             "adapter_id": record.adapter_id,
-            "path": agentgrep.format_display_path(record.path),
+            "path": format_display_path(record.path),
             "line_number": line_number,
             "text": record.text,
             "timestamp": record.timestamp,
@@ -932,7 +946,7 @@ def serialize_grep_record(
     }
 
 
-def serialize_grep_begin(record: agentgrep.SearchRecord) -> dict[str, object]:
+def serialize_grep_begin(record: SearchRecord) -> dict[str, object]:
     """Emit the ``begin`` event that opens each record in ``--json``.
 
     Mirrors rg's per-file ``begin`` envelope, adapted for agentgrep —
@@ -943,7 +957,7 @@ def serialize_grep_begin(record: agentgrep.SearchRecord) -> dict[str, object]:
     return {
         "type": "begin",
         "data": {
-            "path": {"text": agentgrep.format_display_path(record.path)},
+            "path": {"text": format_display_path(record.path)},
             "agent": record.agent,
             "store": record.store,
             "adapter_id": record.adapter_id,
@@ -955,7 +969,7 @@ def serialize_grep_begin(record: agentgrep.SearchRecord) -> dict[str, object]:
 
 
 def serialize_grep_match_line(
-    record: agentgrep.SearchRecord,
+    record: SearchRecord,
     line_number: int,
     line_text: str,
     match_spans: list[tuple[int, int]],
@@ -975,7 +989,7 @@ def serialize_grep_match_line(
     return {
         "type": "match",
         "data": {
-            "path": {"text": agentgrep.format_display_path(record.path)},
+            "path": {"text": format_display_path(record.path)},
             "line_number": line_number,
             "lines": {"text": line_text},
             "submatches": submatches,
@@ -984,7 +998,7 @@ def serialize_grep_match_line(
 
 
 def serialize_grep_end(
-    record: agentgrep.SearchRecord,
+    record: SearchRecord,
     *,
     matched_lines: int,
     matches: int,
@@ -997,7 +1011,7 @@ def serialize_grep_end(
     return {
         "type": "end",
         "data": {
-            "path": {"text": agentgrep.format_display_path(record.path)},
+            "path": {"text": format_display_path(record.path)},
             "stats": {
                 "matched_lines": matched_lines,
                 "matches": matches,
@@ -1007,7 +1021,7 @@ def serialize_grep_end(
 
 
 def _iter_grep_json_events(
-    records: list[agentgrep.SearchRecord],
+    records: list[SearchRecord],
     args: GrepArgs,
 ) -> cabc.Iterator[dict[str, object]]:
     """Yield rg-shaped JSON events for each record in ``records``.
@@ -1057,12 +1071,12 @@ class GrepSummary:
     per_agent: dict[str, int] = dataclasses.field(default_factory=dict)
     elapsed: float = 0.0
 
-    def add(self, record: agentgrep.SearchRecord) -> None:
+    def add(self, record: SearchRecord) -> None:
         """Record one emitted search result."""
         self.total += 1
         self.per_agent[record.agent] = self.per_agent.get(record.agent, 0) + 1
 
-    def format(self, *, colors: agentgrep.AnsiColors) -> str:
+    def format(self, *, colors: AnsiColors) -> str:
         """Format the summary footer line."""
         if self.total == 0:
             return ""
@@ -1076,10 +1090,10 @@ class GrepSummary:
 
 
 def format_grep_record_pretty(
-    record: agentgrep.SearchRecord,
+    record: SearchRecord,
     args: GrepArgs,
     *,
-    colors: agentgrep.AnsiColors,
+    colors: AnsiColors,
 ) -> str:
     """Format one record in snippet-first pretty style.
 
@@ -1100,7 +1114,7 @@ def format_grep_record_pretty(
         provenance_parts.append(format_relative_time(record.timestamp))
     if record.model:
         provenance_parts.append(record.model)
-    display_path = agentgrep.format_display_path(record.path)
+    display_path = format_display_path(record.path)
     provenance_parts.append(colors.path(display_path))
     provenance = " · ".join(provenance_parts)
     lines.append(colors.dim(f"  {provenance}"))
@@ -1108,7 +1122,7 @@ def format_grep_record_pretty(
     return "\n".join(lines)
 
 
-def format_grep_record(record: agentgrep.SearchRecord, args: GrepArgs) -> str:
+def format_grep_record(record: SearchRecord, args: GrepArgs) -> str:
     """Format one matching record for text-mode ``grep`` output.
 
     Default shape (rg-faithful): ``path:text`` on pipe, ``text`` rows
@@ -1119,10 +1133,10 @@ def format_grep_record(record: agentgrep.SearchRecord, args: GrepArgs) -> str:
     multiple rows). ``-o`` / ``--only-matching`` emits only the matched
     substrings; ``-l`` emits just the path.
     """
-    path = agentgrep.format_display_path(record.path)
+    path = format_display_path(record.path)
     if args.files_with_matches:
         return path
-    colors = agentgrep.AnsiColors.for_stream(args.color_mode, sys.stdout)
+    colors = AnsiColors.for_stream(args.color_mode, sys.stdout)
     matches = list(iter_match_lines(record.text, args))
 
     if args.only_matching:
@@ -1168,7 +1182,7 @@ def format_grep_record(record: agentgrep.SearchRecord, args: GrepArgs) -> str:
     return "\n".join(f"{path_prefix}:{row}" for row in line_rows)
 
 
-def print_grep_results(records: list[agentgrep.SearchRecord], args: GrepArgs) -> int:
+def print_grep_results(records: list[SearchRecord], args: GrepArgs) -> int:
     """Emit grep results and return the rg-style exit code."""
     if args.invert_match:
         if args.count_only:
@@ -1183,10 +1197,10 @@ def print_grep_results(records: list[agentgrep.SearchRecord], args: GrepArgs) ->
         return 2
 
     if args.output_mode == "json":
-        events = list(_iter_grep_json_events(records, args))
-        total_match_count = sum(1 for event in events if event.get("type") == "match")
-        events.append({"type": "summary", "data": {"matches": total_match_count}})
-        print(json.dumps({"command": "grep", "events": events}, ensure_ascii=False, indent=2))
+        json_events = list(_iter_grep_json_events(records, args))
+        total_match_count = sum(1 for event in json_events if event.get("type") == "match")
+        json_events.append({"type": "summary", "data": {"matches": total_match_count}})
+        print(json.dumps({"command": "grep", "events": json_events}, ensure_ascii=False, indent=2))
         return 0 if total_match_count > 0 else 1
     if args.output_mode == "ndjson":
         emitted_matches = 0
@@ -1197,8 +1211,8 @@ def print_grep_results(records: list[agentgrep.SearchRecord], args: GrepArgs) ->
         return 0 if emitted_matches > 0 else 1
 
     if args.count_only:
-        colors = agentgrep.AnsiColors.for_stream(args.color_mode, sys.stdout)
-        per_record_counts: list[tuple[agentgrep.SearchRecord, int]] = []
+        colors = AnsiColors.for_stream(args.color_mode, sys.stdout)
+        per_record_counts: list[tuple[SearchRecord, int]] = []
         for record in records:
             count = sum(1 for _ in iter_match_lines(record.text, args))
             per_record_counts.append((record, count))
@@ -1207,13 +1221,13 @@ def print_grep_results(records: list[agentgrep.SearchRecord], args: GrepArgs) ->
             print(per_record_counts[0][1])
         else:
             for record, count in per_record_counts:
-                path = agentgrep.format_display_path(record.path)
+                path = format_display_path(record.path)
                 print(f"{colors.path(path)}:{count}")
         return 0 if records else 1
     if args.files_with_matches:
         seen: set[str] = set()
         for record in records:
-            path = agentgrep.format_display_path(record.path)
+            path = format_display_path(record.path)
             if path not in seen:
                 seen.add(path)
                 print(path)
@@ -1315,15 +1329,17 @@ def stream_grep_results(args: GrepArgs) -> int:
     picks :func:`print_grep_results` for JSON, ``-c``, ``-l``, ``-L``,
     and ``-v`` paths that need the full record list up front.
     """
+    # Lazy import keeps ``agentgrep.events`` off the eager ``import
+    # agentgrep`` path (ADR 0010 / test_import_time).
     from agentgrep import events
 
     query = build_grep_query(args)
-    control = agentgrep.SearchControl()
+    control = SearchControl()
     is_tty = sys.stdout.isatty()
     match_count = 0
     pretty = args.style == "pretty"
     summary = GrepSummary() if pretty else None
-    for event in agentgrep.iter_search_events(
+    for event in iter_search_events(
         pathlib.Path.home(),
         query,
         control=control,
@@ -1349,7 +1365,7 @@ def stream_grep_results(args: GrepArgs) -> int:
         elif isinstance(event, events.SearchFinished) and summary is not None:
             summary.elapsed = event.elapsed_seconds
     if is_tty and summary is not None and summary.total > 0:
-        footer = summary.format(colors=agentgrep.AnsiColors.for_stream(args.color_mode, sys.stderr))
+        footer = summary.format(colors=AnsiColors.for_stream(args.color_mode, sys.stderr))
         if footer:
             print(footer, file=sys.stderr)
     if match_count == 0 and args.output_mode == "text":
@@ -1370,30 +1386,30 @@ def run_grep_command(args: GrepArgs) -> int:
         raise SystemExit(msg)
     query = build_grep_query(args)
     if args.output_mode == "ui":
-        agentgrep.run_ui(
+        run_ui(
             pathlib.Path.home(),
             query,
-            control=agentgrep.SearchControl(),
+            control=SearchControl(),
             initial_search_text=args.raw_query or None,
         )
         return 0
     if not _grep_path_is_eager(args):
         return stream_grep_results(args)
-    control = agentgrep.SearchControl()
+    control = SearchControl()
     human_output = args.output_mode in {"text", "ui"}
     progress_enabled = args.progress_mode == "always" or (
         args.progress_mode == "auto" and human_output
     )
-    progress: agentgrep.SearchProgress
+    progress: SearchProgress
     if not progress_enabled:
-        progress = agentgrep.noop_search_progress()
+        progress = noop_search_progress()
     else:
-        progress = agentgrep.ConsoleSearchProgress(
+        progress = ConsoleSearchProgress(
             enabled=True,
             color_mode=args.color_mode,
             answer_now_hint=False,
         )
-    records = agentgrep.run_search_query(
+    records = run_search_query(
         pathlib.Path.home(),
         query,
         progress=progress,

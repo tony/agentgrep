@@ -39,8 +39,8 @@ from agentgrep.query.help import query_language_summary
 if t.TYPE_CHECKING:
     from fastmcp import FastMCP
 
-    from agentgrep import SearchQuery
     from agentgrep._engine.runtime import SearchRuntime
+    from agentgrep.records import SearchQuery
 
 
 def _page_status(next_cursor: str | None) -> RunStatusModel:

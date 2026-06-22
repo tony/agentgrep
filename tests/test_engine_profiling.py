@@ -11,6 +11,9 @@ import typing as t
 import pytest
 
 import agentgrep
+import agentgrep._engine.orchestration as _rm_orch
+import agentgrep._engine.profiling as _rm_profiling
+import agentgrep._engine.scanning as _rm_scanning
 from agentgrep._engine import orchestration
 from agentgrep._engine.profiling import (
     EnginePhaseSample,
@@ -430,7 +433,7 @@ def test_profile_find_query_pushes_type_filter_into_discovery(
         )
         return []
 
-    monkeypatch.setattr(agentgrep, "discover_sources", discover_sources)
+    monkeypatch.setattr(_rm_profiling, "discover_sources", discover_sources)
 
     _ = profile_find_query(
         tmp_path,
@@ -607,7 +610,7 @@ def test_direct_source_matches_skips_sample_when_aborted(
         assert control is not None
         return None
 
-    monkeypatch.setattr(agentgrep, "grep_file_matches", fake_grep_file_matches)
+    monkeypatch.setattr(_rm_orch, "grep_file_matches", fake_grep_file_matches)
     profiler = EngineProfiler()
     control = _AbortAfterFirstCheckControl()
 
@@ -716,7 +719,7 @@ def test_collect_search_records_does_not_import_profiler_when_inactive(
     def iter_records(_source: agentgrep.SourceHandle) -> t.Iterator[agentgrep.SearchRecord]:
         yield record
 
-    monkeypatch.setattr(agentgrep, "iter_source_records", iter_records)
+    monkeypatch.setattr(_rm_scanning, "iter_source_records", iter_records)
     monkeypatch.delitem(sys.modules, "agentgrep._engine.profiling", raising=False)
 
     records = agentgrep.collect_search_records(query, [source])

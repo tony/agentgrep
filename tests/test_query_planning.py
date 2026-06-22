@@ -8,7 +8,7 @@ import typing as t
 import pytest
 
 import agentgrep
-from agentgrep._engine import orchestration
+from agentgrep._engine import orchestration, planning as _r_planning
 from agentgrep._engine.planning import (
     APPEND_ONLY_JSONL_ADAPTERS,
     RAW_TEXT_PREFILTER_ADAPTERS,
@@ -262,7 +262,7 @@ def test_bounded_text_append_only_jsonl_root_source_uses_lazy_admission(
         _ = progress, control
         pytest.fail("bounded append-only JSONL sources should be admitted lazily")
 
-    monkeypatch.setattr(agentgrep, "prefilter_sources_by_root", fail_prefilter_sources_by_root)
+    monkeypatch.setattr(_r_planning, "prefilter_sources_by_root", fail_prefilter_sources_by_root)
 
     plan = build_physical_search_plan(
         _query(scope="conversations", match_surface="text", limit=1),
@@ -310,7 +310,7 @@ def test_sqlite_root_source_skips_binary_grep_prefilter(
         _ = progress, control
         pytest.fail("SQLite sources should not use binary root grep prefiltering")
 
-    monkeypatch.setattr(agentgrep, "prefilter_sources_by_root", fail_prefilter_sources_by_root)
+    monkeypatch.setattr(_r_planning, "prefilter_sources_by_root", fail_prefilter_sources_by_root)
 
     plan = build_physical_search_plan(
         _query(scope="all", limit=5),
@@ -356,7 +356,7 @@ def test_bounded_haystack_root_source_without_path_match_keeps_eager_prefilter(
         prefetched_sources.extend(sources)
         return list(sources)
 
-    monkeypatch.setattr(agentgrep, "prefilter_sources_by_root", prefilter_sources_by_root)
+    monkeypatch.setattr(_r_planning, "prefilter_sources_by_root", prefilter_sources_by_root)
 
     plan = build_physical_search_plan(
         _query(scope="conversations", match_surface="haystack", limit=1),
@@ -401,7 +401,7 @@ def test_bounded_haystack_root_source_with_path_match_uses_lazy_admission(
         _ = progress, control
         pytest.fail("path-matched haystack sources should be admitted lazily")
 
-    monkeypatch.setattr(agentgrep, "prefilter_sources_by_root", fail_prefilter_sources_by_root)
+    monkeypatch.setattr(_r_planning, "prefilter_sources_by_root", fail_prefilter_sources_by_root)
 
     plan = build_physical_search_plan(
         _query(scope="conversations", match_surface="haystack", limit=1),
@@ -450,7 +450,7 @@ def test_unbounded_haystack_path_match_uses_lazy_admission(
         _ = progress, control
         pytest.fail("path-matched haystack sources should skip content prefiltering")
 
-    monkeypatch.setattr(agentgrep, "prefilter_sources_by_root", fail_prefilter_sources_by_root)
+    monkeypatch.setattr(_r_planning, "prefilter_sources_by_root", fail_prefilter_sources_by_root)
 
     plan = build_physical_search_plan(
         _query(scope="conversations", match_surface="haystack", limit=None),
@@ -489,7 +489,7 @@ def test_regex_haystack_path_match_uses_lazy_admission(
         _ = progress, control
         pytest.fail("path-matched haystack sources should skip content prefiltering")
 
-    monkeypatch.setattr(agentgrep, "prefilter_sources_by_root", fail_prefilter_sources_by_root)
+    monkeypatch.setattr(_r_planning, "prefilter_sources_by_root", fail_prefilter_sources_by_root)
 
     plan = build_physical_search_plan(
         _query(
@@ -529,7 +529,7 @@ def test_bounded_haystack_path_match_admits_stateful_adapter(
         _ = progress, control
         pytest.fail("path-matched haystack sources should skip content prefiltering")
 
-    monkeypatch.setattr(agentgrep, "prefilter_sources_by_root", fail_prefilter_sources_by_root)
+    monkeypatch.setattr(_r_planning, "prefilter_sources_by_root", fail_prefilter_sources_by_root)
 
     plan = build_physical_search_plan(
         _query(match_surface="haystack", limit=5),
@@ -566,7 +566,7 @@ def test_text_surface_path_match_keeps_eager_prefilter(
         prefiltered.extend(sources)
         return list(sources)
 
-    monkeypatch.setattr(agentgrep, "prefilter_sources_by_root", prefilter_sources_by_root)
+    monkeypatch.setattr(_r_planning, "prefilter_sources_by_root", prefilter_sources_by_root)
 
     plan = build_physical_search_plan(
         _query(match_surface="text", limit=None),
@@ -613,7 +613,7 @@ def test_unbounded_root_source_still_uses_eager_prefilter(
         prefetched_sources.extend(sources)
         return [matched]
 
-    monkeypatch.setattr(agentgrep, "prefilter_sources_by_root", prefilter_sources_by_root)
+    monkeypatch.setattr(_r_planning, "prefilter_sources_by_root", prefilter_sources_by_root)
 
     plan = build_physical_search_plan(
         _query(scope="conversations", match_surface="haystack", limit=None),
@@ -832,7 +832,7 @@ def test_physical_plan_selects_source_execution_strategy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Physical planning chooses the cheapest safe source execution strategy."""
-    monkeypatch.setattr(agentgrep, "direct_source_matches", lambda *args, **kwargs: True)
+    monkeypatch.setattr(_r_planning, "direct_source_matches", lambda *args, **kwargs: True)
 
     plan = build_physical_search_plan(
         case.query,
@@ -855,7 +855,7 @@ def test_physical_plan_records_scheduler_metadata(
         store="claude.projects",
         adapter_id="claude.projects_jsonl.v1",
     )
-    monkeypatch.setattr(agentgrep, "direct_source_matches", lambda *args, **kwargs: True)
+    monkeypatch.setattr(_r_planning, "direct_source_matches", lambda *args, **kwargs: True)
 
     plan = build_physical_search_plan(
         _query(scope="conversations", match_surface="haystack", limit=10),

@@ -29,41 +29,42 @@ from rich.console import Group as _RichGroup
 from rich.markdown import Markdown as _RichMarkdown
 from rich.syntax import Syntax as _RichSyntax
 
-from agentgrep import (
+from agentgrep._engine.orchestration import cached_haystack, clear_haystack_cache, run_search_query
+from agentgrep._engine.runtime import SearchRuntime
+from agentgrep._text import (
     DETAIL_BODY_MAX_LINES,
-    FilterCompletedPayload,
-    FilterRequestedPayload,
-    ProgressSnapshot,
+    detect_content_format,
+    find_first_match_line,
+    format_compact_path,
+    highlight_matches,
+    truncate_lines,
+)
+from agentgrep._types import (
     RichTextModule,
     RunnableAppLike,
-    SearchControl,
-    SearchQuery,
-    SearchRecord,
-    SearchRequestedPayload,
-    SearchRuntime,
     StaticLike,
     StreamingAppLike,
-    StreamingRecordsBatch,
-    StreamingSearchFinished,
-    StreamingSearchProgress,
     TextualAppModule,
     TextualBindingModule,
     TextualContainersModule,
     TextualMessageModule,
     TextualOptionListInternalsModule,
     TextualWidgetsModule,
-    cached_haystack,
-    clear_haystack_cache,
-    detect_content_format,
-    find_first_match_line,
-    format_compact_path,
+)
+from agentgrep.discovery import format_timestamp_tig
+from agentgrep.progress import (
+    FilterCompletedPayload,
+    FilterRequestedPayload,
+    ProgressSnapshot,
+    SearchControl,
+    SearchRequestedPayload,
+    StreamingRecordsBatch,
+    StreamingSearchFinished,
+    StreamingSearchProgress,
     format_match_count,
-    format_timestamp_tig,
-    highlight_matches,
-    run_search_query,
-    truncate_lines,
 )
 from agentgrep.query import default_registry
+from agentgrep.records import SearchQuery, SearchRecord
 from agentgrep.ui.completion import (
     QuerySuggester,
     apply_enum_choice,
