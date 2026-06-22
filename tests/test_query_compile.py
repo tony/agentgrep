@@ -978,3 +978,35 @@ def test_find_unsupported_reason(case: FindGuardCase) -> None:
     ast = parse_query(case.query, default_registry())
     reason = find_unsupported_reason(ast, default_registry())
     assert (reason is not None) is case.unsupported
+
+
+def test_compile_module_split_reexports_are_neutral() -> None:
+    """The compile.py shim re-exports its moved helpers byte-stably (ADR 0010).
+
+    ``compile.py`` keeps the public surface; the private evaluation,
+    path-matching, text-matching, and error helpers moved to sibling
+    modules. ``QueryCompileError`` is the one public name that moved
+    (to ``query.errors``) and must stay importable from ``compile``.
+    """
+    from agentgrep.query import compile as compile_mod, errors as errors_mod
+
+    # The moved public exception is the same object via either path.
+    assert compile_mod.QueryCompileError is errors_mod.QueryCompileError
+    assert agentgrep.query.QueryCompileError is errors_mod.QueryCompileError
+
+    # The retained public surface still resolves through compile.py.
+    for name in (
+        "compile_query",
+        "CompiledQuery",
+        "QueryBuildResult",
+        "build_query_from_input",
+        "fields_in_ast",
+        "find_unsupported_reason",
+    ):
+        assert hasattr(compile_mod, name), name
+
+    # Sibling modules layer one direction: textmatch is the leaf.
+    from agentgrep.query import evaluate, pathmatch, textmatch
+
+    assert evaluate._string_match is textmatch._string_match
+    assert evaluate._path_match is pathmatch._path_match
