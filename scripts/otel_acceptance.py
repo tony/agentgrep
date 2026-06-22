@@ -21,9 +21,10 @@ import uuid
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CONTAINER_NAME = "agentgrep-lgtm"
-LGTM_CONFIG_LABEL = "source-linking-v1"
+LGTM_CONFIG_LABEL = "source-linking-deltacumulative-v1"
 LGTM_GRAFANA_DATASOURCES_CONFIG = ROOT / "scripts" / "lgtm" / "grafana-datasources.yaml"
 LGTM_PYROSCOPE_CONFIG = ROOT / "scripts" / "lgtm" / "pyroscope-config.yaml"
+LGTM_OTELCOL_CONFIG = ROOT / "scripts" / "lgtm" / "otelcol-config.yaml"
 LGTM_SOURCE_MAP_GENERATOR = ROOT / "scripts" / "lgtm" / "generate_pyroscope_source_map.py"
 LGTM_SOURCE_MAP = ROOT / ".tmp" / "lgtm" / ".pyroscope.yaml"
 DEFAULT_LOKI_BASE_URL = "http://localhost:3000/api/datasources/proxy/uid/loki"
@@ -161,13 +162,16 @@ def lgtm_docker_run_command(*, env: cabc.Mapping[str, str]) -> list[str]:
         ),
         "-v",
         f"{LGTM_PYROSCOPE_CONFIG}:/otel-lgtm/pyroscope-config.yaml:ro",
+        "-v",
+        f"{LGTM_OTELCOL_CONFIG}:/otel-lgtm/otelcol-config.yaml:ro",
     ]
     for name in ("GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET", "GITHUB_SESSION_SECRET"):
         if env.get(name):
             command.extend(["-e", name])
     # Pinned to match scripts/lgtm/up.sh for a reproducible acceptance stack.
-    # (Through 0.28.0 the image serves Prometheus 2.45 on :9090, which does not
-    # store OTLP exemplars; that pivot needs a real OTLP-exemplar backend.)
+    # 0.28.0 runs Prometheus 3.11.3 with OTLP exemplar storage, and the mounted
+    # collector config adds deltatocumulative so the live-mode delta metrics the
+    # acceptance workloads emit accumulate across one-shot processes.
     command.append(os.environ.get("AGENTGREP_LGTM_IMAGE", "grafana/otel-lgtm:0.28.0"))
     return command
 
