@@ -24,10 +24,13 @@ import pathlib
 import time
 import typing as t
 
-import agentgrep
+from agentgrep.adapters import find_store_roles_for_type_filter
+from agentgrep.discovery import discover_sources
+from agentgrep.readers import select_backends
+from agentgrep.records import AgentName, BackendSelection, FindRecord, FindSourceTypeFilter
 
 if t.TYPE_CHECKING:
-    from agentgrep import AgentName, BackendSelection, FindSourceTypeFilter, events as _events
+    from agentgrep import events as _events
     from agentgrep.query.compile import CompiledQuery
 
 
@@ -48,14 +51,14 @@ def iter_find_events(
     home : pathlib.Path
         User home directory passed through to
         :func:`agentgrep.discover_sources`.
-    agents : tuple[agentgrep.AgentName, ...]
+    agents : tuple[AgentName, ...]
         Agent backends to query.
     pattern : str or None
         Optional case-insensitive substring filter. When ``None`` every
         discovered source qualifies.
     limit : int or None
         Optional cap on the number of records emitted.
-    backends : agentgrep.BackendSelection or None
+    backends : BackendSelection or None
         Override the auto-detected backend selection (mainly used by
         tests). ``None`` selects via :func:`agentgrep.select_backends`.
     compiled : agentgrep.CompiledQuery or None
@@ -73,7 +76,7 @@ def iter_find_events(
 
     Yields
     ------
-    agentgrep.events.FindEvent
+    _events.FindEvent
         Discriminated-union events. See module docstring for the
         guaranteed sequence.
 
@@ -82,20 +85,23 @@ def iter_find_events(
     Iterate events, collecting only the records::
 
         for event in iter_find_events(home, ("codex",), pattern="sessions", limit=None):
-            if isinstance(event, agentgrep.events.FindRecordEmitted):
+            if isinstance(event, _events.FindRecordEmitted):
                 print(event.record.path)
     """
+    # Lazy import keeps ``agentgrep.events`` off the eager ``import
+    # agentgrep`` path (pinned by tests/test_import_time.py); the facade tail
+    # re-exports this module, so a module-level import would load it.
     from agentgrep import events as _events
 
-    active_backends = agentgrep.select_backends() if backends is None else backends
+    active_backends = select_backends() if backends is None else backends
     start_time = time.monotonic()
 
-    sources = agentgrep.discover_sources(
+    sources = discover_sources(
         home,
         agents,
         active_backends,
         version_detail="none",
-        store_roles=agentgrep.find_store_roles_for_type_filter(type_filter),
+        store_roles=find_store_roles_for_type_filter(type_filter),
     )
     yield _events.FindStarted(source_count=len(sources))
 
@@ -109,7 +115,7 @@ def iter_find_events(
         # short-circuits without even building the haystack.
         if source_predicate is not None and not source_predicate(source):
             continue
-        record = agentgrep.FindRecord(
+        record = FindRecord(
             kind="find",
             agent=source.agent,
             store=source.store,

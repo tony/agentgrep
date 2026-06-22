@@ -10,9 +10,24 @@ import threading
 import time
 import typing as t
 
-import agentgrep
 from agentgrep._engine.matching import compile_record_matcher
+from agentgrep._engine.orchestration import (
+    _source_profile_attributes,
+    matches_text,
+    record_dedupe_key,
+    search_record_sort_key,
+)
 from agentgrep._engine.planning import SourceTask
+from agentgrep.adapters import iter_source_records
+from agentgrep.progress import (
+    _SOURCE_PROGRESS_RECORD_INTERVAL,
+    SearchControl,
+    SearchProgress,
+    _report_source_progress,
+    noop_search_progress,
+)
+from agentgrep.readers import _record_engine_profile_sample
+from agentgrep.records import SearchQuery, SearchRecord, SourceHandle
 
 _SOURCE_SCAN_CACHE_MAX_ENTRIES = 512
 
@@ -39,7 +54,7 @@ class _SourceScanCacheKey:
 class _SourceScanCacheEntry:
     """Reusable scan payload without run-specific coordinates."""
 
-    records: tuple[agentgrep.SearchRecord, ...]
+    records: tuple[SearchRecord, ...]
     records_seen: int
     matches_seen: int
     batch_count: int
@@ -145,9 +160,9 @@ class SourceScanResult:
 
     index: int
     total: int
-    source: agentgrep.SourceHandle
+    source: SourceHandle
     task: SourceTask
-    records: tuple[agentgrep.SearchRecord, ...]
+    records: tuple[SearchRecord, ...]
     records_seen: int
     matches_seen: int
     duration_seconds: float
@@ -161,9 +176,9 @@ class SourceScanBatch:
 
     index: int
     total: int
-    source: agentgrep.SourceHandle
+    source: SourceHandle
     task: SourceTask
-    records: tuple[agentgrep.SearchRecord, ...]
+    records: tuple[SearchRecord, ...]
     records_seen: int
     matches_seen: int
     duration_seconds: float
@@ -171,20 +186,20 @@ class SourceScanBatch:
 
 
 def scan_source_task(
-    query: agentgrep.SearchQuery,
+    query: SearchQuery,
     task: SourceTask,
     *,
     index: int,
     total: int,
-    control: agentgrep.SearchControl,
-    progress: agentgrep.SearchProgress | None = None,
+    control: SearchControl,
+    progress: SearchProgress | None = None,
     runtime: SearchRuntime | None = None,
 ) -> SourceScanResult:
     """Scan one source task and return source-local matching candidates.
 
     Parameters
     ----------
-    query : agentgrep.SearchQuery
+    query : SearchQuery
         Compiled query — terms, agents, dedup choice, limit.
     task : SourceTask
         Planned source task naming the execution strategy.
@@ -192,10 +207,10 @@ def scan_source_task(
         One-based position of this source in the plan.
     total : int
         Number of planned sources, used for progress reporting.
-    control : agentgrep.SearchControl
+    control : SearchControl
         Control handle polled between records so the scan can stop
         early.
-    progress : agentgrep.SearchProgress or None
+    progress : SearchProgress or None
         Progress sink for match counts. ``None`` skips per-record
         progress.
     runtime : SearchRuntime or None
@@ -231,7 +246,7 @@ def scan_source_task(
         )
 
     source_started_at = time.perf_counter()
-    matching_records: list[agentgrep.SearchRecord] = []
+    matching_records: list[SearchRecord] = []
     records_seen = 0
     matches_seen = 0
     batch_count = 0
@@ -249,7 +264,7 @@ def scan_source_task(
         matches_seen = batch.matches_seen
 
     if task.limit_behavior == "drain_source":
-        matching_records.sort(key=agentgrep.search_record_sort_key, reverse=True)
+        matching_records.sort(key=search_record_sort_key, reverse=True)
     result = SourceScanResult(
         index=index,
         total=total,
@@ -266,10 +281,10 @@ def scan_source_task(
 
 
 def cached_source_scan_lookup(
-    query: agentgrep.SearchQuery,
+    query: SearchQuery,
     task: SourceTask,
     *,
-    control: agentgrep.SearchControl,
+    control: SearchControl,
     cache: SourceScanCache | None,
 ) -> tuple[_SourceScanCacheKey | None, _SourceScanCacheEntry | None]:
     """Return the scan cache key and any cached entry for one source task.
@@ -296,7 +311,7 @@ def remember_source_scan(
     cache: SourceScanCache | None,
     cache_key: _SourceScanCacheKey | None,
     *,
-    control: agentgrep.SearchControl,
+    control: SearchControl,
     result: SourceScanResult,
 ) -> None:
     """Store a cleanly completed source scan when caching is enabled.
@@ -321,7 +336,7 @@ mtime moving.
 
 
 def _source_scan_cache_key(
-    query: agentgrep.SearchQuery,
+    query: SearchQuery,
     task: SourceTask,
     cache: SourceScanCache | None,
 ) -> _SourceScanCacheKey | None:
@@ -384,10 +399,10 @@ def _record_source_scan_cache_sample(
     duration_seconds: float,
 ) -> None:
     """Record a privacy-safe cache lookup timing sample."""
-    agentgrep._record_engine_profile_sample(
+    _record_engine_profile_sample(
         "search.collect.source_scan_cache",
         duration_seconds,
-        **agentgrep._source_profile_attributes(task.source),
+        **_source_profile_attributes(task.source),
         agentgrep_cache_hit=hit,
         agentgrep_source_strategy=task.strategy,
         agentgrep_source_group=task.source_group,
@@ -396,20 +411,20 @@ def _record_source_scan_cache_sample(
 
 
 def iter_source_task_batches(
-    query: agentgrep.SearchQuery,
+    query: SearchQuery,
     task: SourceTask,
     *,
     index: int,
     total: int,
-    control: agentgrep.SearchControl,
-    progress: agentgrep.SearchProgress | None = None,
+    control: SearchControl,
+    progress: SearchProgress | None = None,
     batch_size: int = 32,
 ) -> cabc.Iterator[SourceScanBatch]:
     """Yield source-local candidate batches for one planned source task.
 
     Parameters
     ----------
-    query : agentgrep.SearchQuery
+    query : SearchQuery
         Compiled query — terms, agents, dedup choice, limit.
     task : SourceTask
         Planned source task naming the execution strategy.
@@ -417,10 +432,10 @@ def iter_source_task_batches(
         One-based position of this source in the plan.
     total : int
         Number of planned sources, used for progress reporting.
-    control : agentgrep.SearchControl
+    control : SearchControl
         Control handle polled between records so the scan can stop
         early.
-    progress : agentgrep.SearchProgress or None
+    progress : SearchProgress or None
         Progress sink for match counts. ``None`` skips per-record
         progress.
     batch_size : int
@@ -432,14 +447,14 @@ def iter_source_task_batches(
         Incremental matching candidates; the final batch is marked
         ``is_final`` and carries the closing counters.
     """
-    active_progress = agentgrep.noop_search_progress() if progress is None else progress
+    active_progress = noop_search_progress() if progress is None else progress
     source_started_at = time.perf_counter()
     records_seen = 0
     matches_seen = 0
     source_match_count = 0
     yielded_final = False
     yielded_batch = False
-    matching_records: list[agentgrep.SearchRecord] = []
+    matching_records: list[SearchRecord] = []
     source_deduped: set[tuple[str, str, str, str, str]] = set()
     matcher = compile_record_matcher(query)
 
@@ -483,7 +498,7 @@ def iter_source_task_batches(
             source_match_count += 1
             matching_records.append(record)
             if query.dedupe:
-                source_deduped.add(agentgrep.record_dedupe_key(record))
+                source_deduped.add(record_dedupe_key(record))
             if source_limit_satisfied():
                 if matching_records:
                     yield emit_batch(is_final=True)
@@ -493,8 +508,8 @@ def iter_source_task_batches(
                 and len(matching_records) >= normalized_batch_size
             ):
                 yield emit_batch(is_final=False)
-        if records_seen % agentgrep._SOURCE_PROGRESS_RECORD_INTERVAL == 0:
-            agentgrep._report_source_progress(
+        if records_seen % _SOURCE_PROGRESS_RECORD_INTERVAL == 0:
+            _report_source_progress(
                 active_progress,
                 index,
                 total,
@@ -510,10 +525,10 @@ def iter_source_task_batches(
 
 def record_source_profile_sample(result: SourceScanResult) -> None:
     """Record one privacy-safe source execution timing sample."""
-    agentgrep._record_engine_profile_sample(
+    _record_engine_profile_sample(
         "search.collect.source",
         result.duration_seconds,
-        **agentgrep._source_profile_attributes(result.source),
+        **_source_profile_attributes(result.source),
         agentgrep_source_strategy=result.task.strategy,
         agentgrep_source_group=result.task.source_group,
         agentgrep_source_cost_hint=result.task.cost_hint,
@@ -526,43 +541,43 @@ def record_source_profile_sample(result: SourceScanResult) -> None:
 
 def iter_source_task_records(
     task: SourceTask,
-    query: agentgrep.SearchQuery,
-) -> cabc.Iterator[agentgrep.SearchRecord]:
+    query: SearchQuery,
+) -> cabc.Iterator[SearchRecord]:
     """Yield records for one source task."""
     if task.strategy == "jsonl_raw_text_prefilter":
-        yield from agentgrep.iter_source_records(
+        yield from iter_source_records(
             task.source,
             raw_skip_line=raw_text_skip_line_for_query(query),
         )
         return
     if task.strategy == "jsonl_bounded_reverse_raw_text_prefilter":
-        yield from agentgrep.iter_source_records(
+        yield from iter_source_records(
             task.source,
             raw_skip_line=raw_text_skip_line_for_query(query),
             reverse=True,
         )
         return
     if task.strategy == "jsonl_bounded_reverse_haystack_raw_text_prefilter":
-        yield from agentgrep.iter_source_records(
+        yield from iter_source_records(
             task.source,
             raw_skip_line=raw_text_skip_line_for_haystack_query(query, task.source),
             reverse=True,
         )
         return
     if task.strategy == "jsonl_bounded_reverse_scan":
-        yield from agentgrep.iter_source_records(task.source, reverse=True)
+        yield from iter_source_records(task.source, reverse=True)
         return
-    yield from agentgrep.iter_source_records(task.source)
+    yield from iter_source_records(task.source)
 
 
 def raw_text_skip_line_for_query(
-    query: agentgrep.SearchQuery,
+    query: SearchQuery,
 ) -> cabc.Callable[[str], bool]:
     """Return a raw JSONL line skip predicate for a text-surface query.
 
     Parameters
     ----------
-    query : agentgrep.SearchQuery
+    query : SearchQuery
         Compiled query whose literal terms gate the raw-line check.
 
     Returns
@@ -576,16 +591,16 @@ def raw_text_skip_line_for_query(
 
 
 def raw_text_skip_line_for_haystack_query(
-    query: agentgrep.SearchQuery,
-    source: agentgrep.SourceHandle,
+    query: SearchQuery,
+    source: SourceHandle,
 ) -> cabc.Callable[[str], bool]:
     """Return a source-aware raw skip predicate for a haystack-surface query.
 
     Parameters
     ----------
-    query : agentgrep.SearchQuery
+    query : SearchQuery
         Compiled query whose literal terms gate the raw-line check.
-    source : agentgrep.SourceHandle
+    source : SourceHandle
         Source whose path metadata may already satisfy part of the
         haystack query; path-matched terms are not required on the
         raw line.
@@ -622,7 +637,7 @@ def raw_text_skip_line_for_haystack_query(
 
 
 def _raw_text_skip_line_for_terms(
-    query: agentgrep.SearchQuery,
+    query: SearchQuery,
     terms: tuple[str, ...],
 ) -> cabc.Callable[[str], bool]:
     """Return a raw JSONL line skip predicate for literal query terms."""
@@ -637,7 +652,7 @@ def _raw_text_skip_line_for_terms(
     if query.regex:
         return lambda raw_line: (
             "\\" not in raw_line
-            and not agentgrep.matches_text(
+            and not matches_text(
                 raw_line,
                 query,
             )

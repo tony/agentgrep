@@ -14,6 +14,7 @@ import typing as t
 import pytest
 
 import agentgrep
+import agentgrep._engine.find as _rm_find
 from agentgrep import events
 
 
@@ -119,7 +120,7 @@ def test_iter_find_events_pushes_type_filter_into_discovery(
         )
         return []
 
-    monkeypatch.setattr(agentgrep, "discover_sources", discover_sources)
+    monkeypatch.setattr(_rm_find, "discover_sources", discover_sources)
 
     _ = list(
         agentgrep.iter_find_events(

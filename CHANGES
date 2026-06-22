@@ -42,6 +42,18 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### Development
+
+#### Layered module architecture behind a stable facade (#75)
+
+The `agentgrep` package facade — which had accumulated the record types,
+per-agent parsers, store discovery, the query compiler, and the search/find
+engine in one module — is now a thin re-export shim over single-responsibility
+modules. The public import surface is unchanged: `import agentgrep;
+agentgrep.SearchRecord` and every documented name resolve exactly as before. An
+explicit `__all__` and a module-boundary guard test keep the layering from
+eroding; see {ref}`adr-module-boundaries-and-facade-re-export-contract`.
+
 ## agentgrep 0.1.0a25 (2026-06-21)
 
 agentgrep 0.1.0a25 adds VS Code's built-in GitHub Copilot Chat as a searchable

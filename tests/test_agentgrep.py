@@ -24,6 +24,11 @@ import typing as t
 import pytest
 
 import agentgrep as _agentgrep_module
+import agentgrep._engine.orchestration as _rm_orch
+import agentgrep._engine.planning as _rm_planning
+import agentgrep._engine.scanning as _rm_scanning
+import agentgrep.readers as _rm_readers
+from agentgrep._engine import orchestration
 
 if t.TYPE_CHECKING:
     import collections.abc as cabc
@@ -302,7 +307,7 @@ def test_list_files_matching_path_qualified_globs_skip_fd(
         message = "path-qualified globs should not spawn fd"
         raise AssertionError(message)
 
-    monkeypatch.setattr(agentgrep, "run_readonly_command", run_readonly_command)
+    monkeypatch.setattr(_rm_orch, "run_readonly_command", run_readonly_command)
 
     paths = agentgrep.list_files_matching(tmp_path, case.pattern, "fd")
 
@@ -983,7 +988,7 @@ def test_unbounded_haystack_search_finds_path_only_matches(
         _ = control
         return set()
 
-    monkeypatch.setattr(agentgrep, "grep_root_paths", grep_root_paths)
+    monkeypatch.setattr(_rm_orch, "grep_root_paths", grep_root_paths)
 
     query = agentgrep.SearchQuery(
         terms=("tmux-proj",),
@@ -1156,7 +1161,7 @@ def test_collect_search_records_calls_record_added_with_each_unique_record(
         yield record
         yield record  # same dedupe key — second insert must not fire record_added
 
-    monkeypatch.setattr(agentgrep, "iter_source_records", iter_records)
+    monkeypatch.setattr(_rm_scanning, "iter_source_records", iter_records)
     progress = CapturingProgress()
 
     records = agentgrep.collect_search_records(query, [source], progress=progress)
@@ -1231,7 +1236,7 @@ def test_collect_search_records_reports_in_source_progress_and_yields_gil(
             )
 
     sleep_calls: list[float] = []
-    monkeypatch.setattr(agentgrep, "iter_source_records", iter_records)
+    monkeypatch.setattr(_rm_scanning, "iter_source_records", iter_records)
     monkeypatch.setattr(agentgrep.time, "sleep", sleep_calls.append)
     progress = CapturingProgress()
 
@@ -1321,7 +1326,7 @@ def loads_impl(
     """
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     if request.param == "stdlib":
-        monkeypatch.setattr(agentgrep, "_orjson", None)
+        monkeypatch.setattr(_rm_readers, "_orjson", None)
     elif agentgrep._orjson is None:
         pytest.skip("orjson accelerator is not installed")
     return t.cast("t.Callable[[str], object]", agentgrep._loads)
@@ -1411,9 +1416,9 @@ def test_iter_message_candidates_skips_text_extraction_without_role(
     """``extract_message_text`` runs only for nodes that carry a role."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     calls: list[object] = []
-    real = agentgrep.extract_message_text
+    real = agentgrep.adapters.extract_message_text
     monkeypatch.setattr(
-        agentgrep,
+        agentgrep.adapters,
         "extract_message_text",
         lambda mapping: calls.append(mapping) or real(mapping),
     )
@@ -1505,7 +1510,7 @@ def test_iter_jsonl_reverse_reads_newest_lines_first(
     if case.trailing_newline:
         text += "\n"
     path.write_text(text, encoding="utf-8")
-    monkeypatch.setattr(agentgrep, "_JSONL_REVERSE_CHUNK_BYTES", case.chunk_bytes)
+    monkeypatch.setattr(agentgrep.readers, "_JSONL_REVERSE_CHUNK_BYTES", case.chunk_bytes)
 
     parsed = list(agentgrep._iter_jsonl(path, reverse=True))
 
@@ -1531,7 +1536,7 @@ def test_iter_jsonl_reverse_raw_skip_avoids_decoding_skipped_lines(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(agentgrep, "_JSONL_REVERSE_CHUNK_BYTES", 9)
+    monkeypatch.setattr(agentgrep.readers, "_JSONL_REVERSE_CHUNK_BYTES", 9)
     decoded_inputs: list[str] = []
     original_loads = agentgrep._loads
 
@@ -1539,7 +1544,7 @@ def test_iter_jsonl_reverse_raw_skip_avoids_decoding_skipped_lines(
         decoded_inputs.append(payload)
         return t.cast("object", original_loads(payload))
 
-    monkeypatch.setattr(agentgrep, "_loads", loads_with_capture)
+    monkeypatch.setattr(agentgrep.readers, "_loads", loads_with_capture)
 
     parsed = list(
         agentgrep._iter_jsonl(
@@ -1597,7 +1602,7 @@ def test_parse_codex_session_skips_function_call_output_before_json_decode(
         decoded_payloads.append(payload)
         return original_loads(payload)
 
-    monkeypatch.setattr(agentgrep, "_loads", tracking_loads)
+    monkeypatch.setattr(agentgrep.readers, "_loads", tracking_loads)
 
     records = list(agentgrep.parse_codex_session_file(source))
 
@@ -1727,7 +1732,7 @@ def test_codex_session_raw_prefilter_keeps_prefix_tool_output_skip(
         discard_calls.append(prefix)
         original_discard(handle, prefix)
 
-    monkeypatch.setattr(agentgrep, "_discard_rest_of_line", tracking_discard)
+    monkeypatch.setattr(agentgrep.readers, "_discard_rest_of_line", tracking_discard)
 
     def raw_skip_line(line: str) -> bool:
         return "bliss" not in line
@@ -1831,7 +1836,7 @@ def test_parse_codex_session_raw_prefilter_preserves_header(
         decoded_payloads.append(payload)
         return original_loads(payload)
 
-    monkeypatch.setattr(agentgrep, "_loads", tracking_loads)
+    monkeypatch.setattr(agentgrep.readers, "_loads", tracking_loads)
 
     def raw_skip_line(line: str) -> bool:
         return "bliss" not in line
@@ -1910,7 +1915,7 @@ def test_parse_pi_session_raw_prefilter_preserves_header(
         decoded_payloads.append(payload)
         return original_loads(payload)
 
-    monkeypatch.setattr(agentgrep, "_loads", tracking_loads)
+    monkeypatch.setattr(agentgrep.readers, "_loads", tracking_loads)
 
     def raw_skip_line(line: str) -> bool:
         return "bliss" not in line
@@ -2229,7 +2234,7 @@ def test_cached_haystack_memoizes_per_record(
         call_count += 1
         return t.cast("str", real_build_search_haystack(rec))
 
-    monkeypatch.setattr(agentgrep, "build_search_haystack", counting_build)
+    monkeypatch.setattr(orchestration, "build_search_haystack", counting_build)
     first = agentgrep.cached_haystack(record)
     second = agentgrep.cached_haystack(record)
     assert first == second
@@ -2267,7 +2272,7 @@ def test_compute_filter_matches_uses_cached_haystack(
         msg = "build_search_haystack must not run after cache is warm"
         raise RuntimeError(msg)
 
-    monkeypatch.setattr(agentgrep, "build_search_haystack", raise_if_called)
+    monkeypatch.setattr(orchestration, "build_search_haystack", raise_if_called)
     matches = agentgrep.compute_filter_matches(records, "alpha")
     assert len(matches) == 3
 
@@ -5190,7 +5195,7 @@ def test_collect_search_records_returns_partial_results_on_answer_now(
         control.request_answer_now()
         yield second
 
-    monkeypatch.setattr(agentgrep, "iter_source_records", iter_records)
+    monkeypatch.setattr(_rm_scanning, "iter_source_records", iter_records)
 
     records = agentgrep.collect_search_records(query, [source], control=control)
 
@@ -5268,7 +5273,7 @@ def test_run_search_query_interrupts_progress_on_keyboard_interrupt(
         yield source
 
     progress = RecordingProgress()
-    monkeypatch.setattr(agentgrep, "iter_source_records", raise_interrupt)
+    monkeypatch.setattr(_rm_scanning, "iter_source_records", raise_interrupt)
 
     with pytest.raises(KeyboardInterrupt):
         agentgrep.run_search_query(
@@ -5326,7 +5331,7 @@ def test_plan_search_sources_prefilters_one_root_once(
         calls.append(command)
         return subprocess.CompletedProcess(command, 0, f"{first}\n", "")
 
-    monkeypatch.setattr(agentgrep, "run_readonly_command", fake_run)
+    monkeypatch.setattr(orchestration, "run_readonly_command", fake_run)
     planned = agentgrep.plan_search_sources(
         query,
         sources,
@@ -5383,7 +5388,7 @@ def test_plan_search_sources_prunes_chat_sources_from_prompt_scope(
         checked.append(t.cast("t.Any", source).store)
         return True
 
-    monkeypatch.setattr(agentgrep, "direct_source_matches", direct_source_matches)
+    monkeypatch.setattr(_rm_planning, "direct_source_matches", direct_source_matches)
 
     planned = agentgrep.plan_search_sources(
         query,
@@ -5434,7 +5439,7 @@ def test_plan_search_sources_skips_root_prefilter_for_sqlite_sources(
         grep_calls.append((search_root, query))
         return set()
 
-    monkeypatch.setattr(agentgrep, "grep_root_paths", grep_root_paths)
+    monkeypatch.setattr(_rm_orch, "grep_root_paths", grep_root_paths)
 
     planned = agentgrep.plan_search_sources(
         query,
@@ -5942,14 +5947,14 @@ def test_cursor_state_parser_skips_irrelevant_blob_values(
     connection.close()
 
     traces: list[str] = []
-    original_open_readonly_sqlite = agentgrep.open_readonly_sqlite
+    original_open_readonly_sqlite = agentgrep.adapters.open_readonly_sqlite
 
     def traced_open_readonly_sqlite(path: pathlib.Path) -> sqlite3.Connection:
         traced_connection = t.cast("sqlite3.Connection", original_open_readonly_sqlite(path))
         traced_connection.set_trace_callback(traces.append)
         return traced_connection
 
-    monkeypatch.setattr(agentgrep, "open_readonly_sqlite", traced_open_readonly_sqlite)
+    monkeypatch.setattr(agentgrep.adapters, "open_readonly_sqlite", traced_open_readonly_sqlite)
 
     sources = agentgrep.discover_sources(
         home,
@@ -7989,7 +7994,7 @@ def test_discover_vscode_wsl_bridge_probes_windows_mount(
     monkeypatch.delenv("VSCODE_APPDATA", raising=False)
     # Force the WSL branch so the bridge is exercised on any host, and point
     # the users-mount root at a fake Windows profile tree.
-    monkeypatch.setattr(agentgrep, "_is_wsl", lambda: True)
+    monkeypatch.setattr(agentgrep.discovery, "_is_wsl", lambda: True)
     users_root = tmp_path / "mnt-c-users"
     monkeypatch.setenv("AGENTGREP_WSL_USERS_ROOT", str(users_root))
     session = (
@@ -8641,7 +8646,7 @@ def test_paste_cache_only_terms_survive_grep_backends(
     def grep_misses(*_args: t.Any, **_kwargs: t.Any) -> bool:
         return False
 
-    monkeypatch.setattr(agentgrep, "grep_file_matches", grep_misses)
+    monkeypatch.setattr(_rm_orch, "grep_file_matches", grep_misses)
 
     query = agentgrep.SearchQuery(
         terms=("needle",),
@@ -10503,7 +10508,7 @@ def test_unix_to_isoformat_edge_cases(
 ) -> None:
     """_unix_to_isoformat handles edge cases without crashing."""
     agentgrep = load_agentgrep_module()
-    result = t.cast("t.Any", agentgrep)._unix_to_isoformat(value)
+    result = t.cast("t.Any", agentgrep).adapters._unix_to_isoformat(value)
     if expected is None:
         assert result is None, f"{test_id}: expected None, got {result!r}"
     else:

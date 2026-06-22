@@ -22,6 +22,7 @@ import pytest
 
 import agentgrep
 from agentgrep import events as ag_events
+from agentgrep.cli import render as _r_render
 
 
 class ParseDefaultsCase(t.NamedTuple):
@@ -495,8 +496,8 @@ def _fake_search_records(
             elapsed_seconds=0.0,
         )
 
-    monkeypatch.setattr(agentgrep, "run_search_query", _stub_list)
-    monkeypatch.setattr(agentgrep, "iter_search_events", _stub_iter)
+    monkeypatch.setattr(_r_render, "run_search_query", _stub_list)
+    monkeypatch.setattr(_r_render, "iter_search_events", _stub_iter)
 
 
 class ExitCodeCase(t.NamedTuple):
@@ -1285,7 +1286,7 @@ def test_run_grep_command_json_still_uses_eager_path(
     ) -> list[agentgrep.SearchRecord]:
         return records
 
-    monkeypatch.setattr(agentgrep, "run_search_query", _eager_stub)
+    monkeypatch.setattr(_r_render, "run_search_query", _eager_stub)
     args = _make_grep_args(patterns=("bliss",), output_mode="json")
     exit_code = agentgrep.run_grep_command(args)
     captured = capsys.readouterr().out
@@ -1366,7 +1367,7 @@ def test_run_grep_command_json_per_line_event_shape(
     ) -> list[agentgrep.SearchRecord]:
         return [record]
 
-    monkeypatch.setattr(agentgrep, "run_search_query", _eager_stub)
+    monkeypatch.setattr(_r_render, "run_search_query", _eager_stub)
     args = _make_grep_args(patterns=(case.pattern,), output_mode="json", color_mode="never")
     _ = agentgrep.run_grep_command(args)
     captured = capsys.readouterr().out

@@ -5,21 +5,22 @@ from __future__ import annotations
 import dataclasses
 import re
 
-import agentgrep
+from agentgrep._engine.orchestration import build_record_match_surface, record_matches_scope
+from agentgrep.records import SearchMatchSurface, SearchQuery, SearchRecord
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class CompiledRecordMatcher:
     """Precomputed record matcher for one search query."""
 
-    query: agentgrep.SearchQuery
+    query: SearchQuery
     needles: tuple[str, ...]
     regexes: tuple[re.Pattern[str], ...]
     use_joined_surface: bool
 
-    def matches(self, record: agentgrep.SearchRecord) -> bool:
+    def matches(self, record: SearchRecord) -> bool:
         """Return whether ``record`` satisfies the compiled query."""
-        if not agentgrep.record_matches_scope(record, self.query.scope):
+        if not record_matches_scope(record, self.query.scope):
             return False
         compiled = self.query.compiled
         if compiled is not None and compiled.record_predicate is not None:
@@ -29,7 +30,7 @@ class CompiledRecordMatcher:
             return compiled.record_predicate(record)
         return self._matches_query_terms(record)
 
-    def _matches_query_terms(self, record: agentgrep.SearchRecord) -> bool:
+    def _matches_query_terms(self, record: SearchRecord) -> bool:
         """Return whether unfielded query terms match ``record``."""
         if not self.query.terms:
             return True
@@ -40,9 +41,9 @@ class CompiledRecordMatcher:
             return self._matches_literal_fields(fields)
         return self._matches_literal_fields(tuple(field.casefold() for field in fields))
 
-    def _matches_joined_surface(self, record: agentgrep.SearchRecord) -> bool:
+    def _matches_joined_surface(self, record: SearchRecord) -> bool:
         """Evaluate terms against the legacy joined text surface."""
-        surface = agentgrep.build_record_match_surface(record, self.query.match_surface)
+        surface = build_record_match_surface(record, self.query.match_surface)
         if self.query.regex:
             results = [regex.search(surface) is not None for regex in self.regexes]
         else:
@@ -56,7 +57,7 @@ class CompiledRecordMatcher:
         return any(results) if self.query.any_term else all(results)
 
 
-def compile_record_matcher(query: agentgrep.SearchQuery) -> CompiledRecordMatcher:
+def compile_record_matcher(query: SearchQuery) -> CompiledRecordMatcher:
     """Compile a reusable matcher for one search query."""
     flags = 0 if query.case_sensitive else re.IGNORECASE
     regexes = tuple(re.compile(term, flags) for term in query.terms) if query.regex else ()
@@ -71,14 +72,14 @@ def compile_record_matcher(query: agentgrep.SearchQuery) -> CompiledRecordMatche
     )
 
 
-def matches_record(record: agentgrep.SearchRecord, query: agentgrep.SearchQuery) -> bool:
+def matches_record(record: SearchRecord, query: SearchQuery) -> bool:
     """Return whether ``record`` matches ``query``."""
     return compile_record_matcher(query).matches(record)
 
 
 def _record_literal_fields(
-    record: agentgrep.SearchRecord,
-    surface: agentgrep.SearchMatchSurface,
+    record: SearchRecord,
+    surface: SearchMatchSurface,
 ) -> tuple[str, ...]:
     """Return literal-match fields for the selected match surface."""
     if surface == "text":

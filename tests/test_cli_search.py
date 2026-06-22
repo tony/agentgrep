@@ -14,6 +14,7 @@ import typing as t
 import pytest
 
 import agentgrep
+from agentgrep.cli import render as _r_render
 from agentgrep.cli.render import run_search_command
 
 # ---------------------------------------------------------------------------
@@ -356,7 +357,7 @@ def test_search_field_only_query_allowed(
     assert parsed.terms == ()
     canned = _canned_records()
     monkeypatch.setattr(
-        agentgrep,
+        _r_render,
         "run_search_query",
         lambda *_args, **_kwargs: canned,
     )
@@ -371,7 +372,7 @@ def test_search_routes_through_ranking(
     """Search dispatches through the ranking pipeline and produces output."""
     canned = _canned_records()
     monkeypatch.setattr(
-        agentgrep,
+        _r_render,
         "run_search_query",
         lambda *_args, **_kwargs: canned,
     )
@@ -389,7 +390,7 @@ def test_search_no_rank_preserves_order(
     """--no-rank skips scoring and preserves discovery order."""
     canned = _canned_records()
     monkeypatch.setattr(
-        agentgrep,
+        _r_render,
         "run_search_query",
         lambda *_args, **_kwargs: canned,
     )
@@ -407,7 +408,7 @@ def test_search_threshold_filters_low_scores(
     """--threshold filters records below the minimum score."""
     canned = _canned_records()
     monkeypatch.setattr(
-        agentgrep,
+        _r_render,
         "run_search_query",
         lambda *_args, **_kwargs: canned,
     )
@@ -425,7 +426,7 @@ def test_search_json_includes_scores(
     """--json output includes score fields."""
     canned = _canned_records()
     monkeypatch.setattr(
-        agentgrep,
+        _r_render,
         "run_search_query",
         lambda *_args, **_kwargs: canned,
     )
@@ -447,7 +448,7 @@ def test_search_ndjson_includes_scores(
     """--ndjson output includes score in each line."""
     canned = _canned_records()
     monkeypatch.setattr(
-        agentgrep,
+        _r_render,
         "run_search_query",
         lambda *_args, **_kwargs: canned,
     )
@@ -467,7 +468,7 @@ def test_search_empty_results_returns_1(
 ) -> None:
     """Search with no matches returns exit code 1."""
     monkeypatch.setattr(
-        agentgrep,
+        _r_render,
         "run_search_query",
         lambda *_args, **_kwargs: [],
     )
@@ -483,7 +484,7 @@ def test_search_limit_caps_results(
     """--limit caps the number of results after ranking."""
     canned = _canned_records()
     monkeypatch.setattr(
-        agentgrep,
+        _r_render,
         "run_search_query",
         lambda *_args, **_kwargs: canned,
     )

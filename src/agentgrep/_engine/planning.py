@@ -15,8 +15,24 @@ import pathlib
 import re
 import typing as t
 
-if t.TYPE_CHECKING:
-    import agentgrep
+from agentgrep._engine.orchestration import (
+    direct_source_matches,
+    prefilter_sources_by_root,
+    prompt_history_agents_for_sources,
+    source_matches_scope,
+    source_order_key,
+)
+from agentgrep.progress import SearchControl, SearchProgress, noop_search_progress
+from agentgrep.records import (
+    CONVERSATION_STORE_ROLES,
+    PROMPT_HISTORY_STORE_ROLES,
+    AgentName,
+    BackendSelection,
+    SearchQuery,
+    SearchScope,
+    SourceHandle,
+)
+from agentgrep.stores import StoreRole
 
 type SourceStrategy = t.Literal[
     "metadata_only",
@@ -111,8 +127,8 @@ class QueryRequest:
     """Immutable frontend-neutral search intent owned by the planner."""
 
     terms: tuple[str, ...]
-    scope: agentgrep.SearchScope
-    agents: tuple[agentgrep.AgentName, ...]
+    scope: SearchScope
+    agents: tuple[AgentName, ...]
     limit: int | None
     dedupe: bool
     any_term: bool
@@ -138,7 +154,7 @@ class LogicalSearchPlan:
     """Normalized search work before concrete source handles exist."""
 
     request: QueryRequest
-    initial_store_roles: frozenset[agentgrep.StoreRole] | None
+    initial_store_roles: frozenset[StoreRole] | None
     expects_prompt_fallback: bool
     source_predicate_available: bool
     text_prefilter_required: bool
@@ -162,7 +178,7 @@ class LimitPolicy:
     def can_skip_remaining(
         self,
         *,
-        query: agentgrep.SearchQuery,
+        query: SearchQuery,
         frontier: LimitFrontier,
     ) -> bool:
         """Return whether queued lower-priority source tasks can be skipped."""
@@ -177,7 +193,7 @@ class LimitPolicy:
 class SourceTask:
     """One executable source scan in a physical search plan."""
 
-    source: agentgrep.SourceHandle
+    source: SourceHandle
     strategy: SourceStrategy
     record_order: SourceRecordOrder
     limit_behavior: SourceLimitBehavior
@@ -199,7 +215,7 @@ class PhysicalSearchPlan:
     decisions: tuple[PlannerDecision, ...]
 
 
-def build_query_request(query: agentgrep.SearchQuery) -> QueryRequest:
+def build_query_request(query: SearchQuery) -> QueryRequest:
     """Build immutable planner intent from a search query."""
     source_predicate = query.compiled.source_predicate if query.compiled is not None else None
     return QueryRequest(
@@ -215,18 +231,16 @@ def build_query_request(query: agentgrep.SearchQuery) -> QueryRequest:
     )
 
 
-def build_logical_search_plan(query: agentgrep.SearchQuery) -> LogicalSearchPlan:
+def build_logical_search_plan(query: SearchQuery) -> LogicalSearchPlan:
     """Build a logical search plan from frontend-neutral query intent."""
-    import agentgrep
-
     if query.scope == "all":
         store_roles = None
         expects_prompt_fallback = False
     elif query.scope == "conversations":
-        store_roles = agentgrep.CONVERSATION_STORE_ROLES
+        store_roles = CONVERSATION_STORE_ROLES
         expects_prompt_fallback = False
     else:
-        store_roles = agentgrep.PROMPT_HISTORY_STORE_ROLES
+        store_roles = PROMPT_HISTORY_STORE_ROLES
         expects_prompt_fallback = True
 
     source_predicate = query.compiled.source_predicate if query.compiled is not None else None
@@ -240,29 +254,29 @@ def build_logical_search_plan(query: agentgrep.SearchQuery) -> LogicalSearchPlan
 
 
 def build_physical_search_plan(
-    query: agentgrep.SearchQuery,
-    sources: t.Iterable[agentgrep.SourceHandle],
-    backends: agentgrep.BackendSelection,
+    query: SearchQuery,
+    sources: t.Iterable[SourceHandle],
+    backends: BackendSelection,
     *,
-    progress: agentgrep.SearchProgress | None = None,
-    control: agentgrep.SearchControl | None = None,
+    progress: SearchProgress | None = None,
+    control: SearchControl | None = None,
 ) -> PhysicalSearchPlan:
     """Build the executable source-task plan for a search query.
 
     Parameters
     ----------
-    query : agentgrep.SearchQuery
+    query : SearchQuery
         Compiled query — terms, agents, dedup choice, limit.
-    sources : Iterable[agentgrep.SourceHandle]
+    sources : Iterable[SourceHandle]
         Discovered candidate sources, before scope pruning and
         prefilter admission.
-    backends : agentgrep.BackendSelection
+    backends : BackendSelection
         Detected external tools; the grep tool gates root
         prefiltering.
-    progress : agentgrep.SearchProgress or None
+    progress : SearchProgress or None
         Progress sink for prefilter phases. ``None`` uses the no-op
         sink.
-    control : agentgrep.SearchControl or None
+    control : SearchControl or None
         Optional control handle polled during prefiltering so
         planning can stop early.
 
@@ -272,17 +286,15 @@ def build_physical_search_plan(
         Ordered source tasks with per-source strategies plus the
         planner decisions that produced them.
     """
-    import agentgrep
-
     logical = build_logical_search_plan(query)
     source_list = list(sources)
-    active_progress = agentgrep.noop_search_progress() if progress is None else progress
-    active_control = agentgrep.SearchControl() if control is None else control
-    prompt_history_agents = agentgrep.prompt_history_agents_for_sources(source_list)
+    active_progress = noop_search_progress() if progress is None else progress
+    active_control = SearchControl() if control is None else control
+    prompt_history_agents = prompt_history_agents_for_sources(source_list)
     scoped_sources = [
         source
         for source in source_list
-        if agentgrep.source_matches_scope(
+        if source_matches_scope(
             source,
             query.scope,
             prompt_history_agents=prompt_history_agents,
@@ -305,10 +317,10 @@ def build_physical_search_plan(
 
     planned_sources = scoped_sources
     if backends.grep_tool is not None:
-        eager_sources: list[agentgrep.SourceHandle] = []
-        lazy_sources: list[agentgrep.SourceHandle] = []
-        path_match_sources: list[agentgrep.SourceHandle] = []
-        sqlite_sources: list[agentgrep.SourceHandle] = []
+        eager_sources: list[SourceHandle] = []
+        lazy_sources: list[SourceHandle] = []
+        path_match_sources: list[SourceHandle] = []
+        sqlite_sources: list[SourceHandle] = []
         path_term_matcher = _compile_path_term_matcher(query)
         for source in scoped_sources:
             if source.source_kind == "sqlite":
@@ -341,7 +353,7 @@ def build_physical_search_plan(
                 ),
             )
         elif planned_sources:
-            planned_sources = agentgrep.prefilter_sources_by_root(
+            planned_sources = prefilter_sources_by_root(
                 query,
                 planned_sources,
                 backends.grep_tool,
@@ -383,16 +395,16 @@ def build_physical_search_plan(
                 ),
             )
 
-    ordered_sources: list[agentgrep.SourceHandle] = []
+    ordered_sources: list[SourceHandle] = []
     for source in planned_sources:
         if active_control.answer_now_requested():
             break
         if source.search_root is not None:
             ordered_sources.append(source)
             continue
-        if agentgrep.direct_source_matches(source, query, backends, active_control):
+        if direct_source_matches(source, query, backends, active_control):
             ordered_sources.append(source)
-    ordered_sources.sort(key=agentgrep.source_order_key)
+    ordered_sources.sort(key=source_order_key)
     decisions.append(
         PlannerDecision(
             name="candidate_order",
@@ -417,7 +429,7 @@ def build_physical_search_plan(
     )
 
 
-def _source_task(source: agentgrep.SourceHandle, strategy: SourceStrategy) -> SourceTask:
+def _source_task(source: SourceHandle, strategy: SourceStrategy) -> SourceTask:
     """Build one physical source task."""
     limit_behavior = _source_limit_behavior(strategy)
     return SourceTask(
@@ -435,8 +447,8 @@ def _source_task(source: agentgrep.SourceHandle, strategy: SourceStrategy) -> So
 
 
 def _source_strategy(
-    query: agentgrep.SearchQuery,
-    source: agentgrep.SourceHandle,
+    query: SearchQuery,
+    source: SourceHandle,
     *,
     source_route: t.Literal["direct", "root"],
 ) -> SourceStrategy:
@@ -455,8 +467,8 @@ def _source_strategy(
 
 
 def _can_use_jsonl_raw_text_prefilter(
-    query: agentgrep.SearchQuery,
-    source: agentgrep.SourceHandle,
+    query: SearchQuery,
+    source: SourceHandle,
 ) -> bool:
     """Return whether raw JSONL filtering preserves query semantics."""
     return (
@@ -470,8 +482,8 @@ def _can_use_jsonl_raw_text_prefilter(
 
 
 def _can_use_jsonl_haystack_raw_text_prefilter(
-    query: agentgrep.SearchQuery,
-    source: agentgrep.SourceHandle,
+    query: SearchQuery,
+    source: SourceHandle,
 ) -> bool:
     """Return whether raw JSONL filtering can safely prefilter haystack queries."""
     return (
@@ -486,8 +498,8 @@ def _can_use_jsonl_haystack_raw_text_prefilter(
 
 
 def _can_use_bounded_reverse_jsonl(
-    query: agentgrep.SearchQuery,
-    source: agentgrep.SourceHandle,
+    query: SearchQuery,
+    source: SourceHandle,
 ) -> bool:
     """Return whether a limited query can read a source newest-first."""
     return (
@@ -500,8 +512,8 @@ def _can_use_bounded_reverse_jsonl(
 
 
 def _can_use_lazy_source_admission(
-    query: agentgrep.SearchQuery,
-    source: agentgrep.SourceHandle,
+    query: SearchQuery,
+    source: SourceHandle,
 ) -> bool:
     """Return whether a bounded root source can skip eager whole-root prefiltering."""
     if source.search_root is None or not _can_use_bounded_reverse_jsonl(query, source):
@@ -510,7 +522,7 @@ def _can_use_lazy_source_admission(
 
 
 def _compile_path_term_matcher(
-    query: agentgrep.SearchQuery,
+    query: SearchQuery,
 ) -> cabc.Callable[[str], bool] | None:
     """Compile a per-query predicate for source-path term matches.
 
@@ -580,11 +592,11 @@ def _source_cost_hint(strategy: SourceStrategy) -> int:
     return 100
 
 
-def _source_group(source: agentgrep.SourceHandle) -> str:
+def _source_group(source: SourceHandle) -> str:
     """Return a stable source group label for scheduler/profiler aggregation."""
     return f"{source.agent}:{source.store}:{source.adapter_id}"
 
 
-def _source_order_key(source: agentgrep.SourceHandle) -> tuple[int, str]:
+def _source_order_key(source: SourceHandle) -> tuple[int, str]:
     """Return the stable task ordering key without importing the whole engine at module load."""
     return (-source.mtime_ns, str(pathlib.Path(source.path)))

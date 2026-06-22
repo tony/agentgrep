@@ -664,14 +664,14 @@ def test_discover_from_catalog_controls_version_detection_detail(
     )
     monkeypatch.setattr(store_catalog, "CATALOG", fake_catalog)
 
-    original_read_json_file = agentgrep.read_json_file
+    original_read_json_file = agentgrep.discovery.read_json_file
     read_json_paths: list[pathlib.Path] = []
 
     def counting_read_json_file(path: pathlib.Path) -> object:
         read_json_paths.append(path)
         return original_read_json_file(path)
 
-    monkeypatch.setattr(agentgrep, "read_json_file", counting_read_json_file)
+    monkeypatch.setattr(agentgrep.discovery, "read_json_file", counting_read_json_file)
 
     sources = agentgrep.discover_from_catalog(
         tmp_path,

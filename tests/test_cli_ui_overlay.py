@@ -5,6 +5,11 @@ its query opened in the Textual explorer instead of the text/JSON
 renderer. The TUI itself is launched by :func:`agentgrep.run_ui`; these
 tests monkeypatch it and assert the dispatcher passes the right
 :class:`agentgrep.SearchQuery` shape.
+
+The dispatcher lives in :mod:`agentgrep.cli.render`, which binds ``run_ui``
+and ``run_search_query`` into its own namespace at import time (ADR 0010).
+Monkeypatches therefore target ``render``'s bindings, not the facade
+re-exports, or the real Textual app would launch and block.
 """
 
 from __future__ import annotations
@@ -14,10 +19,11 @@ import typing as t
 import pytest
 
 import agentgrep
+from agentgrep.cli import render as _r_render
 
 
 def _capture_run_ui(monkeypatch: pytest.MonkeyPatch) -> list[agentgrep.SearchQuery]:
-    """Replace ``agentgrep.run_ui`` with a recorder and return the captured calls."""
+    """Replace the renderer's ``run_ui`` with a recorder; return captured calls."""
     captured: list[agentgrep.SearchQuery] = []
 
     def _record(
@@ -30,7 +36,7 @@ def _capture_run_ui(monkeypatch: pytest.MonkeyPatch) -> list[agentgrep.SearchQue
         del initial_search_text  # accepted for signature compat; not asserted here
         captured.append(query)
 
-    monkeypatch.setattr(agentgrep, "run_ui", _record)
+    monkeypatch.setattr(_r_render, "run_ui", _record)
     return captured
 
 
@@ -46,7 +52,7 @@ def _stub_run_search_query(monkeypatch: pytest.MonkeyPatch) -> None:
     ) -> list[agentgrep.SearchRecord]:
         return []
 
-    monkeypatch.setattr(agentgrep, "run_search_query", _stub)
+    monkeypatch.setattr(_r_render, "run_search_query", _stub)
 
 
 class OverlayCase(t.NamedTuple):
