@@ -666,7 +666,7 @@
         "name": "scope",
         "query": {
           "qryType": 1,
-          "query": "label_values(agentgrep_search_sources_count, scope)",
+          "query": "label_values(agentgrep_search_sources_count, agentgrep_scope)",
           "refId": "var-scope"
         },
         "refresh": 2,
