@@ -120,6 +120,12 @@ available, exports OTLP spans/logs/metrics, and flushes providers at shutdown.
 The timeout is intentionally short so a missing collector does not break the
 app.
 
+The benchmark surface resolves `service.version` from the repo `pyproject.toml`
+when the `agentgrep` dist is not installed in its isolated PEP 723 `uv` env,
+instead of falling back to `0+unknown`; this adds at most one bounded file read
+on the already-failing `PackageNotFoundError` path and only when a repo root is
+known, so packaged users (no repo root, installed dist) pay nothing.
+
 The MCP stdio entrypoint also emits an `agentgrep.mcp.server` root with
 `agentgrep.mcp.server.lifecycle` and `agentgrep.mcp.flush` child spans. The
 flush span calls the active telemetry handle with a 2 second timeout so a very

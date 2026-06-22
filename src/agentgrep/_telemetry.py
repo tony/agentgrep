@@ -20,6 +20,7 @@ import pathlib
 import subprocess
 import threading
 import time
+import tomllib
 import typing as t
 import urllib.parse
 import uuid
@@ -393,7 +394,7 @@ def setup(
         env=active_env,
         repo_root=repo_root,
         service_name=service_name,
-        service_version=service_version or package_version(),
+        service_version=service_version or package_version(repo_root),
     )
     if active_mode == "test":
         backend: TelemetryBackend = InMemoryTelemetryBackend()
@@ -421,12 +422,45 @@ def setup(
     return handle
 
 
-def package_version() -> str:
-    """Return the installed package version."""
+def package_version(repo_root: pathlib.Path | None = None) -> str:
+    """Return the package version.
+
+    Prefers installed distribution metadata. When the ``agentgrep`` dist is not
+    installed in the running environment — as in the PEP 723 benchmark harness,
+    which imports agentgrep off the source tree inside an isolated ``uv`` env —
+    falls back to the static ``[project].version`` in the repo
+    ``pyproject.toml`` so the reported ``service.version`` stays the real package
+    version rather than ``"0+unknown"``.
+
+    Parameters
+    ----------
+    repo_root : pathlib.Path or None
+        Repository root used to locate ``pyproject.toml`` for the fallback.
+        ``None`` (truly uninstalled with no repo) yields ``"0+unknown"``.
+
+    Returns
+    -------
+    str
+        The resolved package version, or ``"0+unknown"`` when neither source
+        is available.
+    """
     try:
         return importlib.metadata.version("agentgrep")
     except importlib.metadata.PackageNotFoundError:
-        return "0+unknown"
+        version = _pyproject_version(repo_root)
+        return version if version is not None else "0+unknown"
+
+
+def _pyproject_version(repo_root: pathlib.Path | None) -> str | None:
+    """Read the static ``[project].version`` from the repo ``pyproject.toml``."""
+    if repo_root is None:
+        return None
+    try:
+        data = tomllib.loads((repo_root / "pyproject.toml").read_text(encoding="utf-8"))
+    except OSError, tomllib.TOMLDecodeError:
+        return None
+    version = data.get("project", {}).get("version")
+    return version if isinstance(version, str) else None
 
 
 def build_resource_attributes(
