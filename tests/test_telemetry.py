@@ -1546,6 +1546,58 @@ def test_cli_help_emits_non_single_trace_without_stderr(
     assert root.attributes["agentgrep_exit_code"] == 0
 
 
+def test_shutdown_skips_pyroscope_when_profiles_not_started(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Backend teardown must match startup: no Pyroscope shutdown if it never started.
+
+    Passive-local (and any ``explicit=False``) backends skip
+    ``pyroscope.configure``; an unconditional ``pyroscope.shutdown()`` then finds
+    no agent to drop and logs "Pyroscope Agent shutdown failed" to stderr via the
+    SDK last-resort handler — user-visible on every ``--help``. The
+    ``profiles_started`` guard keeps the two sides symmetric.
+    """
+    from agentgrep import _telemetry_otel
+
+    shutdown_calls: list[int] = []
+
+    class FakePyroscope:
+        @staticmethod
+        def shutdown() -> None:
+            shutdown_calls.append(1)
+
+    monkeypatch.setitem(sys.modules, "pyroscope", FakePyroscope)
+
+    class _Noop:
+        def force_flush(self, *args: object, **kwargs: object) -> bool:
+            return True
+
+        def shutdown(self) -> None:
+            return None
+
+    noop = _Noop()
+
+    def make_backend(*, profiles_started: bool) -> _telemetry_otel.OtelTelemetryBackend:
+        return _telemetry_otel.OtelTelemetryBackend(
+            tracer=noop,
+            tracer_provider=noop,
+            meter=noop,
+            meter_provider=noop,
+            logger_provider=noop,
+            logging_handler=logging.NullHandler(),
+            span_counter=noop,
+            span_duration=noop,
+            instrumentations=(),
+            profiles_started=profiles_started,
+        )
+
+    make_backend(profiles_started=False).shutdown()
+    assert shutdown_calls == []
+
+    make_backend(profiles_started=True).shutdown()
+    assert shutdown_calls == [1]
+
+
 def test_package_version_falls_back_to_pyproject(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: pathlib.Path,
