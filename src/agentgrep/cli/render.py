@@ -516,7 +516,12 @@ def _record_grep_telemetry(
     """Emit sparse grep dispatcher telemetry."""
     if not args.invert_match:
         return
-    attributes = {
+    # Metric labels must stay low-cardinality: the per-call candidate/emitted
+    # counts and the duration are the recorded VALUES (and unbounded), so they
+    # ride the span and the log but never the metric label set — otherwise every
+    # grep-invert call mints a unique series and rate()/increase() can never
+    # aggregate, leaving the grep dashboard panels empty.
+    metric_attributes = {
         "agentgrep_surface": "cli",
         "agentgrep_operation": "grep.invert",
         "agentgrep_command": "grep",
@@ -524,9 +529,12 @@ def _record_grep_telemetry(
         "agentgrep_output_mode": args.output_mode,
         "agentgrep_grep_invert": True,
         "agentgrep_grep_candidate_strategy": "all_candidates",
+        "agentgrep_outcome": outcome,
+    }
+    attributes = {
+        **metric_attributes,
         "agentgrep_candidate_count": candidate_count,
         "agentgrep_emitted_count": emitted_count,
-        "agentgrep_outcome": outcome,
         "agentgrep_duration_ms": duration_ms,
     }
     _telemetry.set_span_attribute("agentgrep_grep_invert", True)
@@ -537,17 +545,17 @@ def _record_grep_telemetry(
     _telemetry.record_metric(
         "agentgrep.grep.candidate.count",
         candidate_count,
-        **attributes,
+        **metric_attributes,
     )
     _telemetry.record_metric(
         "agentgrep.grep.emitted.count",
         emitted_count,
-        **attributes,
+        **metric_attributes,
     )
     _telemetry.record_metric(
         "agentgrep.grep.duration",
         duration_ms,
-        **attributes,
+        **metric_attributes,
     )
     logger.info("grep invert completed", extra=attributes)
 
