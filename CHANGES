@@ -36,11 +36,21 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a25 (Yet to be released)
+## agentgrep 0.1.0a26 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a25 (2026-06-21)
+
+agentgrep 0.1.0a25 adds VS Code's built-in GitHub Copilot Chat as a searchable
+backend, covering both per-workspace conversation transcripts and inline-edit
+prompt history across the Code, Insiders, VSCodium, and OSS editions; on WSL it
+also reaches chat written by a Windows-host VS Code. It also broadens `find`'s
+storage inventory across the already-supported agents and, for the first time,
+records where Windsurf keeps its data while flagging it unsupported, since its
+Cascade conversations are stored encrypted.
 
 ### What's new
 
