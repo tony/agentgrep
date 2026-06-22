@@ -301,8 +301,14 @@ def build_backend(
         )
         from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
     from opentelemetry.sdk._logs.export import BatchLogRecordProcessor, ConsoleLogRecordExporter
-    from opentelemetry.sdk.metrics import MeterProvider, TraceBasedExemplarFilter
+    from opentelemetry.sdk.metrics import (
+        Counter,
+        Histogram,
+        MeterProvider,
+        TraceBasedExemplarFilter,
+    )
     from opentelemetry.sdk.metrics.export import (
+        AggregationTemporality,
         ConsoleMetricExporter,
         PeriodicExportingMetricReader,
     )
@@ -340,9 +346,26 @@ def build_backend(
         )
     trace.set_tracer_provider(tracer_provider)
 
+    preferred_temporality: dict[type, AggregationTemporality] | None = None
+    if mode == "live":
+        # Live mode targets the LGTM stack, whose collector runs
+        # deltatocumulative. Each one-shot CLI/benchmark/profile-engine process
+        # exports a fresh CUMULATIVE stream that plateaus at its in-process
+        # total and then dies, so rate()/increase() read 0 across processes.
+        # Exporting DELTA lets the long-lived collector sum each process's
+        # increment into one climbing cumulative series. Exemplars attach to
+        # each delta point and survive the conversion (the processor's adder
+        # seeds state from the first delta and never strips exemplars).
+        preferred_temporality = {
+            Counter: AggregationTemporality.DELTA,
+            Histogram: AggregationTemporality.DELTA,
+        }
     metric_readers = [
         PeriodicExportingMetricReader(
-            OTLPMetricExporter(timeout=_timeout_seconds()),
+            OTLPMetricExporter(
+                timeout=_timeout_seconds(),
+                preferred_temporality=preferred_temporality,
+            ),
             export_interval_millis=1_000,
         ),
     ]
