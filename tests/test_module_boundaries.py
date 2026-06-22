@@ -61,3 +61,27 @@ def test_cli_render_split_reexports_are_neutral() -> None:
     # facade re-export points at the same objects
     assert agentgrep.serialize_search_record is serializers.serialize_search_record
     assert agentgrep.format_grep_record is renderers.format_grep_record
+
+
+def test_facade_public_surface_is_explicit() -> None:
+    """The facade declares an explicit, well-formed ``__all__`` (ADR 0010/0006).
+
+    ``__all__`` is the public surface ADR 0006 governs. Every entry must
+    resolve, none may be private, and there are no duplicates. The exact
+    membership is snapshotted by :func:`test_facade_public_surface_snapshot`
+    so any change to the surface is a deliberate edit.
+    """
+    import agentgrep
+
+    assert isinstance(agentgrep.__all__, tuple)
+    missing = [name for name in agentgrep.__all__ if not hasattr(agentgrep, name)]
+    assert not missing, f"__all__ names with no attribute: {missing}"
+    assert not any(name.startswith("_") for name in agentgrep.__all__)
+    assert len(agentgrep.__all__) == len(set(agentgrep.__all__))
+
+
+def test_facade_public_surface_snapshot(snapshot: object) -> None:
+    """Snapshot the sorted public surface so additions/removals are reviewed."""
+    import agentgrep
+
+    assert sorted(agentgrep.__all__) == snapshot
