@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Read-only search for local AI agent prompts and opt-in conversations
-across Codex, Claude Code, Cursor, Gemini, Antigravity, Grok, Pi, and OpenCode.
+across Codex, Claude Code, Cursor, Gemini, Antigravity, Grok, Pi, OpenCode, and VS Code.
 
 `agentgrep` provides a CLI and an MCP server over the same discovery + parsing layer:
 
