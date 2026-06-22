@@ -120,6 +120,12 @@ available, exports OTLP spans/logs/metrics, and flushes providers at shutdown.
 The timeout is intentionally short so a missing collector does not break the
 app.
 
+The trace→profile pivot is **service-level**: pyroscope-otel tags only root
+spans with `pyroscope.profile.id`, and span id is a per-sample profile
+attribute, not a queryable Pyroscope series label, so Grafana cannot pivot to
+one span's profile. This is a fundamental pyroscope-otel limit, not a config
+gap.
+
 Passive-local and any non-profiling backend no longer call `pyroscope.shutdown()`
 at teardown (guarded by `profiles_started`, symmetric with the start side), so
 `--help` and other no-profile runs do not emit the SDK's "Pyroscope Agent
