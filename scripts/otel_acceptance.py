@@ -165,7 +165,10 @@ def lgtm_docker_run_command(*, env: cabc.Mapping[str, str]) -> list[str]:
     for name in ("GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET", "GITHUB_SESSION_SECRET"):
         if env.get(name):
             command.extend(["-e", name])
-    command.append("grafana/otel-lgtm:latest")
+    # Pinned to match scripts/lgtm/up.sh for a reproducible acceptance stack.
+    # (Through 0.28.0 the image serves Prometheus 2.45 on :9090, which does not
+    # store OTLP exemplars; that pivot needs a real OTLP-exemplar backend.)
+    command.append(os.environ.get("AGENTGREP_LGTM_IMAGE", "grafana/otel-lgtm:0.28.0"))
     return command
 
 
