@@ -467,7 +467,7 @@
             "uid": "loki"
           },
           "editorMode": "code",
-          "expr": "{service_name=~\"$service_name\"} | json",
+          "expr": "{service_name=~\"$service_name\"}",
           "format": "logs",
           "instant": false,
           "legendFormat": "__auto",
