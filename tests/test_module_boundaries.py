@@ -41,3 +41,23 @@ def test_engine_does_not_import_the_facade() -> None:
         if _BARE_FACADE_IMPORT.search(path.read_text())
     ]
     assert not offenders, f"_engine imports the facade (ADR 0010): {offenders}"
+
+
+def test_cli_render_split_reexports_are_neutral() -> None:
+    """``cli.render`` re-exports its moved serializers/renderers byte-stably.
+
+    The JSON serializers moved to ``cli.serializers`` and the text
+    formatters to ``cli.renderers``; ``cli.render`` keeps the subcommand
+    dispatchers and re-imports the moved public names so both the facade
+    re-exports and ``cli.render.X`` stay byte-stable (ADR 0010).
+    """
+    import agentgrep
+    from agentgrep.cli import render, renderers, serializers
+
+    assert render.serialize_search_record is serializers.serialize_search_record
+    assert render.build_envelope is serializers.build_envelope
+    assert render.format_grep_record is renderers.format_grep_record
+    assert render.filter_find_records is renderers.filter_find_records
+    # facade re-export points at the same objects
+    assert agentgrep.serialize_search_record is serializers.serialize_search_record
+    assert agentgrep.format_grep_record is renderers.format_grep_record
