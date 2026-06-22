@@ -120,6 +120,11 @@ available, exports OTLP spans/logs/metrics, and flushes providers at shutdown.
 The timeout is intentionally short so a missing collector does not break the
 app.
 
+Passive-local and any non-profiling backend no longer call `pyroscope.shutdown()`
+at teardown (guarded by `profiles_started`, symmetric with the start side), so
+`--help` and other no-profile runs do not emit the SDK's "Pyroscope Agent
+shutdown failed" warning to stderr.
+
 The benchmark surface resolves `service.version` from the repo `pyproject.toml`
 when the `agentgrep` dist is not installed in its isolated PEP 723 `uv` env,
 instead of falling back to `0+unknown`; this adds at most one bounded file read
