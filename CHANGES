@@ -36,11 +36,20 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a26 (Yet to be released)
+## agentgrep 0.1.0a27 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a26 (2026-06-21)
+
+agentgrep 0.1.0a26 is an internal-architecture release with no change to the
+public surface. The package facade that had grown to hold the record types,
+per-agent parsers, store discovery, the query compiler, and the search/find
+engine is now a thin re-export shim over single-responsibility modules, so the
+codebase is easier to navigate and extend without moving any documented import.
+See {ref}`adr-module-boundaries-and-facade-re-export-contract`.
 
 ### Development
 
