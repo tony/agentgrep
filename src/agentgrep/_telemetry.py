@@ -843,9 +843,19 @@ def _git_head_branch(repo_root: pathlib.Path) -> str | None:
             "HEAD",
         )
         branch = _normalize_git_branch_name(candidate)
-        if branch is not None:
+        # ``name-rev`` resolves an arbitrary ref pointing at HEAD; when several
+        # branches share the commit it can pick a throwaway local backup that is
+        # not the checked-out branch (and not on the remote). Skip those so VCS
+        # attribution never points telemetry at an unpushed ``backup/*`` ref.
+        if branch is not None and not _is_throwaway_branch(branch):
             return branch
     return None
+
+
+def _is_throwaway_branch(branch: str) -> bool:
+    """Return whether a branch name looks like a local backup/scratch ref."""
+    leaf = branch.rsplit("/", 1)[-1]
+    return branch.startswith("backup/") or "-backup" in leaf or leaf.startswith("backup")
 
 
 def _normalize_git_branch_name(candidate: str | None) -> str | None:
@@ -871,7 +881,7 @@ def _git_output(repo_root: pathlib.Path, *args: str) -> str | None:
             capture_output=True,
             text=True,
             check=False,
-            timeout=0.5,
+            timeout=2.0,
         )
     except OSError, subprocess.SubprocessError:
         return None
