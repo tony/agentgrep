@@ -278,6 +278,9 @@ convention = "numpy"
 "scripts/benchmark.py" = ["B008", "E501"]
 "scripts/mcp_swap.py" = ["T201"]
 "scripts/otel_acceptance.py" = ["T201"]
+# Dashboard panels embed PromQL expressions as f-strings; E501 is suppressed
+# because the queries read more naturally as single lines than wrapped.
+"scripts/lgtm/generate_dashboards.py" = ["E501", "T201"]
 
 [tool.pytest.ini_options]
 addopts = [

@@ -20,7 +20,7 @@ LGTM_IMAGE="${AGENTGREP_LGTM_IMAGE:-grafana/otel-lgtm:0.28.0}"
 # container is recreated (docker run) rather than restarted (docker start) —
 # recreation also re-stages the single-file bind mounts cleanly under
 # Rancher Desktop / WSL, where docker start reuses a stale empty mount folder.
-CONFIG_LABEL="prometheus3-exemplars-v1"
+CONFIG_LABEL="prometheus3-exemplars-dashboards-v1"
 SOURCE_MAP="${AGENTGREP_PYROSCOPE_SOURCE_MAP:-$ROOT/.tmp/lgtm/.pyroscope.yaml}"
 
 if [[ -n "${PYTHON:-}" ]]; then
@@ -32,6 +32,10 @@ else
 fi
 
 "${python_cmd[@]}" "$ROOT/scripts/lgtm/generate_pyroscope_source_map.py" --output "$SOURCE_MAP"
+
+# Regenerate the provisioned Grafana dashboard suite so a fresh checkout
+# always has the agentgrep boards on startup; the folder is bind-mounted below.
+"${python_cmd[@]}" "$ROOT/scripts/lgtm/generate_dashboards.py" --output "$ROOT/scripts/lgtm/dashboards"
 
 docker_run=(
     run
@@ -46,6 +50,8 @@ docker_run=(
     -p 4318:4318
     -p 9090:9090
     -v "$ROOT/scripts/lgtm/grafana-datasources.yaml:/otel-lgtm/grafana/conf/provisioning/datasources/grafana-datasources.yaml:ro"
+    -v "$ROOT/scripts/lgtm/grafana-dashboards-agentgrep.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/agentgrep.yaml:ro"
+    -v "$ROOT/scripts/lgtm/dashboards:/otel-lgtm/dashboards-agentgrep:ro"
     -v "$ROOT/scripts/lgtm/pyroscope-config.yaml:/otel-lgtm/pyroscope-config.yaml:ro"
 )
 
