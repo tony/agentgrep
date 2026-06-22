@@ -215,12 +215,19 @@ class OtelTelemetryBackend:
             self._meter_provider.shutdown()
         with contextlib.suppress(Exception):
             self._logger_provider.shutdown()
-        with contextlib.suppress(Exception):
-            import pyroscope
+        # Only tear down Pyroscope when this backend actually started it
+        # (mirrors the start-side ``if profiles_started`` guard). Passive-local
+        # and any explicit=False backend never call ``pyroscope.configure``, so
+        # an unconditional ``pyroscope.shutdown()`` here finds no agent to drop
+        # and logs "Pyroscope Agent shutdown failed" to stderr via the SDK's
+        # last-resort handler — user-visible noise on every ``--help``.
+        if self.profiles_started:
+            with contextlib.suppress(Exception):
+                import pyroscope
 
-            shutdown = getattr(pyroscope, "shutdown", None)
-            if shutdown is not None:
-                shutdown()
+                shutdown = getattr(pyroscope, "shutdown", None)
+                if shutdown is not None:
+                    shutdown()
 
 
 def _force_flush_provider(provider: t.Any, *, timeout_millis: int) -> bool:
