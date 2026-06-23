@@ -9,6 +9,12 @@ load Textual. Anyone who imports ``agentgrep.ui`` (or calls
 
 from __future__ import annotations
 
+import logging
+
 from agentgrep.ui.app import build_streaming_ui_app, run_ui
+
+# Library code installs a NullHandler and configures nothing else; the
+# application owns handlers/levels/formatters.
+logging.getLogger(__name__).addHandler(logging.NullHandler())
 
 __all__ = ["build_streaming_ui_app", "run_ui"]

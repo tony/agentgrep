@@ -12,7 +12,6 @@ the moment a UI is actually built.
 
 from __future__ import annotations
 
-import asyncio
 import collections
 import contextlib
 import dataclasses
@@ -174,7 +173,7 @@ def build_streaming_ui_app(
             "RichTextModule",
             t.cast("object", importlib.import_module("rich.text")),
         )
-        from agentgrep.ui import theme as ui_theme
+        from agentgrep.ui import _runtime, theme as ui_theme
     except ImportError as error:
         msg = "Textual is required for --ui. Install with `uv pip install --editable .`."
         raise RuntimeError(msg) from error
@@ -1292,6 +1291,12 @@ def build_streaming_ui_app(
             # Rebuild Rich-baked rows/detail when the user switches palette
             # (e.g. dark <-> light via the command palette).
             self.theme_changed_signal.subscribe(self, self._on_theme_changed)
+            # Bind the pump thread for the non-blocking guards (NB-1/NB-2); when
+            # opted in via AGENTGREP_TUI_WATCHDOG, arm the heartbeat + watchdog.
+            _runtime.bind_pump_thread()
+            if _runtime.watchdog_enabled():
+                self.set_interval(_runtime.HEARTBEAT_INTERVAL, _runtime.record_heartbeat)
+                _runtime.start_pump_watchdog()
             self._apply_responsive_layout()
             if self.query.terms:
                 self._start_search_worker(self.query)
@@ -1305,6 +1310,11 @@ def build_streaming_ui_app(
                 if self._spinner_widget is not None:
                     self._spinner_widget.freeze(" ")
                 self._search_input.focus()
+
+        def on_unmount(self) -> None:
+            """Release pump-thread binding and stop the watchdog on teardown."""
+            _runtime.unbind_pump_thread()
+            _runtime.stop_pump_watchdog()
 
         def _start_search_worker(self, query: SearchQuery) -> None:
             """Reset chrome and spawn a new search worker for ``query``.
@@ -1400,18 +1410,18 @@ def build_streaming_ui_app(
             self._chrome_generation += 1
             generation = self._chrome_generation
             streaming = t.cast("t.Any", self)
-
-            def emit(event: object) -> None:
-                # Runs on the worker thread; the generation check happens
-                # on the main thread inside _apply_streaming_event.
-                streaming.call_from_thread(
-                    self._apply_streaming_event,
-                    generation,
-                    event,
-                )
-
+            # The emitter runs on the worker thread; the generation check
+            # happens on the pump inside _apply_streaming_event. Centralizing it
+            # in make_gated_emitter keeps results off the message bus (NB-3) and
+            # carrying the generation token (NB-10).
+            emit = _runtime.make_gated_emitter(
+                streaming.call_from_thread,
+                self._apply_streaming_event,
+                generation,
+            )
             return StreamingSearchProgress(emit=emit)
 
+        @_runtime.pump_only
         async def _apply_streaming_event(self, generation: int, event: object) -> None:
             """Route one worker event to the chrome, dropping stale generations.
 
@@ -1527,6 +1537,7 @@ def build_streaming_ui_app(
             dropdown.display = False
             target_input.focus()
 
+        @_runtime.offload
         def _run_search(self) -> None:
             progress = self._progress
             if progress is None:
@@ -1607,6 +1618,7 @@ def build_streaming_ui_app(
 
         _APPLY_CHUNK_SIZE: t.ClassVar[int] = 200
 
+        @_runtime.pump_only
         async def _apply_records_batch(
             self,
             records: cabc.Sequence[SearchRecord],
@@ -1614,28 +1626,31 @@ def build_streaming_ui_app(
         ) -> None:
             """Append a streaming records batch — invoked via ``call_from_thread``.
 
-            Runs as a coroutine so the chunked loop can yield to the event
-            loop between each ``_APPLY_CHUNK_SIZE`` slice. ``call_from_thread``
-            blocks the worker for the full duration of this coroutine, which
-            gives natural backpressure (the worker can't queue up batches
-            faster than the UI can apply them) while ``await asyncio.sleep(0)``
-            gives the event loop a chance to process keystrokes, timers, and
-            renders between chunks — so a 5000-record batch can't freeze the
-            UI for the duration of a single apply.
+            Runs as a coroutine so the apply can yield to the event loop between
+            each ``_APPLY_CHUNK_SIZE`` slice. ``call_from_thread`` blocks the
+            worker for the full duration of this coroutine, which gives natural
+            backpressure (the worker can't queue up batches faster than the UI
+            can apply them) while :func:`_runtime.stream_apply` yields between
+            chunks — so a 5000-record batch can't freeze the UI for the duration
+            of a single apply (NB-4).
             """
             self.all_records.extend(records)
             matching = [record for record in records if self._matches_filter(record)]
             if matching and self._results is not None:
                 results = self._results
-                chunk_size = self._APPLY_CHUNK_SIZE
-                for start in range(0, len(matching), chunk_size):
-                    chunk = matching[start : start + chunk_size]
+
+                def _append_chunk(chunk: cabc.Sequence[SearchRecord]) -> None:
                     results.append_records(chunk)
                     self.filtered_records.extend(chunk)
-                    if start + chunk_size < len(matching):
-                        await asyncio.sleep(0)
+
+                await _runtime.stream_apply(
+                    matching,
+                    _append_chunk,
+                    chunk_size=self._APPLY_CHUNK_SIZE,
+                )
             self._refresh_results_status_right()
 
+        @_runtime.pump_only
         def _apply_progress(self, snapshot: ProgressSnapshot) -> None:
             """Feed the meter and detail row — invoked via ``call_from_thread``.
 
@@ -1773,6 +1788,7 @@ def build_streaming_ui_app(
             else:
                 row.remove_class("visible")
 
+        @_runtime.pump_only
         def _apply_finished(
             self,
             outcome: str,
@@ -1916,6 +1932,7 @@ def build_streaming_ui_app(
                 )
             return compile_record_matcher(query)
 
+        @_runtime.offload
         def _run_filter_worker(self, text: str, matcher: t.Any) -> None:
             """Compute the filtered list on a background thread; post a ``FilterCompleted``.
 
@@ -1935,6 +1952,7 @@ def build_streaming_ui_app(
                 ),
             )
 
+        @_runtime.pump_only
         def on_filter_completed(self, message: FilterCompleted) -> None:
             """Apply the worker's filter result if it matches the current input.
 
@@ -2204,6 +2222,7 @@ def build_streaming_ui_app(
             cache_key = self._detail_cache_key(query_terms)
             return cache_key is not None and cache_key in self._detail_body_cache
 
+        @_runtime.offload
         def _build_detail_in_thread(
             self,
             record: SearchRecord,
@@ -2222,6 +2241,7 @@ def build_streaming_ui_app(
                 query_terms,
             )
 
+        @_runtime.pump_only
         def _present_detail(
             self,
             record: SearchRecord,
