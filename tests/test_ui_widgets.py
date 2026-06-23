@@ -81,13 +81,18 @@ def test_completion_dropdown_remembers_target_input() -> None:
 
 
 def test_pane_header_renders_label_and_rule() -> None:
-    """PaneHeader is a Static rendering ``<label> <rule>`` that fills its width."""
+    """PaneHeader renders ``─<label><rule>``: a left label embedded in a rule.
+
+    One leading rule cell precedes the label (the left mirror of the filter
+    input's trailing cap dash); the rule then fills to the widget's width.
+    """
     assert issubclass(PaneHeader, Static)
     header = PaneHeader("results", id="results-header")
-    # No size before mount → just the bold label, no rule (rule_len clamps to 0).
+    # No size before mount → leading rule cell + bold label, no fill (width clamps).
     text = header.render()
-    assert text.plain.startswith("results")
-    assert "─" not in text.plain  # no rule until the widget has a width
+    assert text.plain == "─results"
+    # The label keeps its bold weight; the leading rule cell does not.
+    assert any("bold" in str(span.style) for span in text.spans)
 
 
 def test_inputs_are_input_subclasses() -> None:

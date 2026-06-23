@@ -2421,6 +2421,27 @@ async def test_streaming_ui_result_row_title_not_always_bold(
         assert all("bold" not in str(span.style) for span in rendered.spans)
 
 
+async def test_pane_headers_left_label_embedded_in_rule(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pane headers mirror the filter's rule, left-positioned.
+
+    A leading rule cell precedes the label (the left mirror of the filter's
+    trailing cap dash), then the rule runs to the full width with no trailing
+    margin and no gap spacing.
+    """
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        app._set_empty_state(empty=False)
+        await pilot.pause()
+        plain = app.screen.query_one("#results-header").render().plain
+        assert plain.startswith("─results")  # a rule cell sits before the label
+        assert plain.endswith("─")  # rule fills to the edge — no trailing margin
+        assert "  " not in plain  # no confusing double-space gap
+
+
 async def test_streaming_ui_app_enum_dropdown_opens_and_closes(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

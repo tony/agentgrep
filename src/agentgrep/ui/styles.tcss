@@ -455,14 +455,16 @@ Screen {
     text-style: bold;
 }
 
-/* pi-style section headers (a bold label + width-filling rule) stand in for the
-   pane boxes. The line color is muted at rest and accent on the focused pane;
-   the `-active` class is toggled in Python from the focused widget. */
+/* pi-style section headers (a left label embedded in a full-width rule) stand in
+   for the pane boxes, mirroring the filter input's rule. The line color is muted
+   at rest and accent on the focused pane; the `-active` class is toggled in
+   Python from the focused widget. */
 #results-header, #detail-header {
     height: 1;
     width: 1fr;
-    /* 1 cell of side padding so the label aligns with the padded contents. */
-    padding: 0 1;
+    /* No padding: the rule spans the section's full width like the filter input's
+       rule (no inset, no trailing margin). The leading ─ sits at column 0, so the
+       label still lines up with the 1-cell-inset rows below it. */
     color: $ag-faint;
 }
 #results-header.-active, #detail-header.-active {

@@ -10,6 +10,7 @@ from __future__ import annotations
 import time
 import typing as t
 
+from rich.cells import cell_len
 from rich.text import Text
 from textual.widgets import Static
 
@@ -19,12 +20,13 @@ __all__ = ["MeterWidget", "PaneHeader", "SpinnerWidget"]
 
 
 class PaneHeader(Static):
-    """A pi-style section header: a bold label followed by a width-filling rule.
+    """A pi-style section header: a left-positioned label embedded in a full rule.
 
-    Mirrors pi's ``DynamicBorder`` (``"─".repeat(width)``) sitting under an
-    indented bold label (``tree-selector.ts``), compacted onto one row:
-    ``results ────────────``. The label keeps its bold weight; the line color is
-    driven entirely by CSS (``$ag-muted`` at rest, ``$accent`` via the
+    Mirrors the filter input's rule — a label set into a rule that runs the
+    section's full width — but left-positioned (the filter is right-aligned).
+    One leading ``─`` cell sits before the bold label, then the rule fills to
+    the right edge: ``─results────────``. No trailing margin. The line color is
+    driven entirely by CSS (``$ag-faint`` at rest, ``$accent`` via the
     ``-active`` class), so recoloring the focused pane's header is paint-only —
     no inline color is baked in. The rule length is recomputed on resize.
     """
@@ -38,13 +40,18 @@ class PaneHeader(Static):
         self.refresh()
 
     def render(self) -> Text:
-        """Return ``<label> <rule>`` filling the widget width."""
+        """Return ``─<label><rule>`` filling the widget width.
+
+        The single leading rule cell is the left mirror of the filter input's
+        one trailing cap dash; the remaining rule runs to the full width with
+        no margin.
+        """
         width = int(getattr(self.size, "width", 0) or 0)
-        rule_len = max(0, width - len(self._label) - 1)
+        fill = max(0, width - 1 - cell_len(self._label))
         text = Text(no_wrap=True, overflow="crop")
+        text.append("─")
         text.append(self._label, style="bold")
-        if rule_len:
-            text.append(" " + "─" * rule_len)
+        text.append("─" * fill)
         return text
 
 
