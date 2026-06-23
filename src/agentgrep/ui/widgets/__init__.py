@@ -23,7 +23,12 @@ from agentgrep.ui.widgets.messages import (
     SearchRequested,
 )
 from agentgrep.ui.widgets.results import SearchResultsList
-from agentgrep.ui.widgets.status import MeterWidget, PaneHeader, SpinnerWidget
+from agentgrep.ui.widgets.status import (
+    MeterWidget,
+    PaneHeader,
+    ResultsHeader,
+    SpinnerWidget,
+)
 
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
@@ -36,6 +41,7 @@ __all__ = [
     "FilterRequested",
     "MeterWidget",
     "PaneHeader",
+    "ResultsHeader",
     "ResultsScrollChanged",
     "SearchInput",
     "SearchRequested",

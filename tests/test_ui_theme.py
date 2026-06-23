@@ -163,9 +163,10 @@ async def test_stylesheet_applies_accent_token(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
-        spinner = app.screen.query_one("#status-spinner")
-        # #status-spinner is `color: $accent`; the dark accent is the pi teal.
-        assert spinner.styles.color.hex6.lower() == "#8abeb7"
+        header = app.screen.query_one("#results-header")
+        # The merged header resolves $accent for its spinner/percent/count
+        # spans; the dark accent is the pi teal.
+        assert header._c_accent.lower() == "#8abeb7"
 
 
 async def test_switch_to_light_theme_succeeds(
@@ -179,8 +180,9 @@ async def test_switch_to_light_theme_succeeds(
         app.theme = theme.LIGHT_THEME_NAME
         await pilot.pause()
         assert app.theme == theme.LIGHT_THEME_NAME
-        spinner = app.screen.query_one("#status-spinner")
-        assert spinner.styles.color.hex6.lower() == "#5a8080"
+        header = app.screen.query_one("#results-header")
+        # The theme switch re-resolves the header's payload hexes.
+        assert header._c_accent.lower() == "#5a8080"
 
 
 async def test_switch_to_builtin_theme_does_not_crash(

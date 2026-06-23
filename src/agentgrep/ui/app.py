@@ -1,7 +1,7 @@
 """Streaming Textual app — ``run_ui`` and the app factory.
 
 This module holds the Textual widget classes (``AgentGrepApp``,
-``SpinnerWidget``, ``FilterInput``), their message subclasses, and
+``ResultsHeader``, ``FilterInput``), their message subclasses, and
 the per-record LRU caches that drive the interactive explorer.
 
 Textual is imported lazily inside :func:`build_streaming_ui_app` (via
@@ -68,7 +68,6 @@ from agentgrep.ui.format import (
     format_progress_percent,
     format_scanning_detail,
     scroll_percent,
-    searching_left_text,
 )
 from agentgrep.ui.highlighter import QueryHighlighter
 
@@ -123,7 +122,7 @@ def build_streaming_ui_app(
     Returns the constructed ``AgentGrepApp`` instance (typed ``object`` because
     the actual class is defined dynamically inside this factory). Callers can
     invoke ``.run()`` for a real session or ``.run_test()`` for a Pilot smoke
-    test. The full app body — message subclasses, ``SpinnerWidget``,
+    test. The full app body — message subclasses, ``ResultsHeader``,
     ``FilterInput``, ``AgentGrepApp`` — lives here so the
     Textual imports stay lazy.
 
@@ -166,13 +165,12 @@ def build_streaming_ui_app(
             FilterCompleted,
             FilterInput,
             FilterRequested,
-            MeterWidget,
             PaneHeader,
+            ResultsHeader,
             ResultsScrollChanged,
             SearchInput,
             SearchRequested,
             SearchResultsList,
-            SpinnerWidget,
         )
     except ImportError as error:
         msg = "Textual is required for --ui. Install with `uv pip install --editable .`."
@@ -292,15 +290,8 @@ def build_streaming_ui_app(
             self._last_snapshot: ProgressSnapshot | None = None
             self._results: SearchResultsList | None = None
             self._detail: StaticLike | None = None
-            self._status_widget: StaticLike | None = None
-            self._matches_widget: StaticLike | None = None
-            self._spinner_widget: SpinnerWidget | None = None
-            self._meter_widget: MeterWidget | None = None
             self._detail_row: StaticLike | None = None
-            self._statusline_container: t.Any = None
-            self._elapsed_timer: object | None = None
             self._chrome_generation: int = 0
-            self._last_left_text: str = ""
             self._last_detail_text: str = ""
             self._last_right_text: str = ""
             self._finished_status: tuple[str, str] | None = None
@@ -380,6 +371,8 @@ def build_streaming_ui_app(
             """
             if self._results is not None:
                 self._results.rerender_records()
+            if self._results_header is not None:
+                self._results_header.refresh_theme()
             self._detail_body_cache.clear()
             if self._current_detail_record is not None:
                 self.show_detail(self._current_detail_record)
@@ -422,12 +415,10 @@ def build_streaming_ui_app(
                     # pi-style section header: a bold label + width-filling rule,
                     # in place of a box border. Recolors to accent when the
                     # results pane (filter or list) holds focus.
-                    yield PaneHeader("results", id="results-header")
-                    with horizontal(id="results-statusline"):
-                        yield SpinnerWidget(id="status-spinner")
-                        yield static_type("", id="status-text")
-                        yield MeterWidget(id="status-meter")
-                        yield static_type("", id="status-right")
+                    # The results header folds the live search status (spinner +
+                    # bar + percent + match count) into its rule, so the column
+                    # spends one row instead of a separate statusline.
+                    yield ResultsHeader("results", id="results-header")
                     yield static_type("", id="status-detail")
                     yield FilterInput(
                         placeholder="Filter loaded results",
@@ -473,29 +464,15 @@ def build_streaming_ui_app(
             self._detail_scroll = streaming.query_one("#detail-scroll")
             self._body = streaming.query_one("#body")
             self._detail_column = streaming.query_one("#detail-column")
-            self._results_header = streaming.query_one("#results-header")
+            self._results_header = t.cast(
+                "ResultsHeader",
+                streaming.query_one("#results-header"),
+            )
             self._detail_header = streaming.query_one("#detail-header")
-            self._status_widget = t.cast(
-                "StaticLike",
-                streaming.query_one("#status-text", static_type),
-            )
-            self._matches_widget = t.cast(
-                "StaticLike",
-                streaming.query_one("#status-right", static_type),
-            )
-            self._spinner_widget = t.cast(
-                "SpinnerWidget",
-                streaming.query_one("#status-spinner"),
-            )
-            self._meter_widget = t.cast(
-                "MeterWidget",
-                streaming.query_one("#status-meter"),
-            )
             self._detail_row = t.cast(
                 "StaticLike",
                 streaming.query_one("#status-detail", static_type),
             )
-            self._statusline_container = streaming.query_one("#results-statusline")
             self._detail_statusline = t.cast(
                 "StaticLike",
                 streaming.query_one("#detail-statusline", static_type),
@@ -542,8 +519,8 @@ def build_streaming_ui_app(
                 # behind the centered hint (no status text) and land focus on
                 # the search bar so the user can start typing immediately.
                 self._search_done = True
-                if self._spinner_widget is not None:
-                    self._spinner_widget.freeze(" ")
+                if self._results_header is not None:
+                    self._results_header.go_idle()
                 self._set_empty_state(empty=True)
                 self._search_input.focus()
             self._update_pane_focus()
@@ -603,6 +580,8 @@ def build_streaming_ui_app(
             # canvas), and show the filter now that results will load.
             self._set_empty_state(empty=False)
             self._set_search_rule_state("searching")
+            if self._results_header is not None:
+                self._results_header.begin()
             streaming = t.cast("StreamingAppLike", t.cast("object", self))
             streaming.run_worker(
                 self._run_search,
@@ -641,26 +620,15 @@ def build_streaming_ui_app(
             self._apply_responsive_layout()
             if self._detail is not None:
                 self._detail.update("")
-            if self._matches_widget is not None:
-                self._matches_widget.update("")
             if self._detail_statusline is not None:
                 self._detail_statusline.update("")
-            self._stop_elapsed_timer()
-            self._last_left_text = ""
             self._last_detail_text = ""
             self._last_right_text = ""
             self._finished_status = None
-            if self._status_widget is not None:
-                self._status_widget.update(
-                    searching_left_text(0.0, narrow=self._statusline_narrow()),
-                )
-            if self._spinner_widget is not None:
-                self._spinner_widget.unfreeze()
-                self._set_outcome_classes(self._spinner_widget, "")
-            if self._status_widget is not None:
-                self._set_outcome_classes(self._status_widget, "")
-            if self._meter_widget is not None:
-                self._meter_widget.reset()
+            # The merged results header carries the search status; clear it back
+            # to the plain rule (``_start_search_worker`` re-activates it).
+            if self._results_header is not None:
+                self._results_header.go_idle()
             self._set_search_rule_state("")
             # ``_detail_visible`` is deliberately NOT reset — the Ctrl-\
             # toggle is sticky for the session; only the row's stale
@@ -849,10 +817,9 @@ def build_streaming_ui_app(
             self.control.request_answer_now()
             if not text:
                 # Cleared the box — return to the pi bare canvas + hint.
+                # ``_reset_search_chrome`` already idles the header rule.
                 self._reset_search_chrome()
                 self._search_done = True
-                if self._spinner_widget is not None:
-                    self._spinner_widget.freeze(" ")
                 self._set_empty_state(empty=True)
                 self.query = new_query
                 return
@@ -934,14 +901,13 @@ def build_streaming_ui_app(
 
         @_runtime.pump_only
         def _apply_progress(self, snapshot: ProgressSnapshot) -> None:
-            """Feed the meter and detail row — invoked via ``call_from_thread``.
+            """Feed the header bar and detail row — invoked via ``call_from_thread``.
 
-            The left status text is owned by the 1 Hz elapsed ticker, not
-            this handler: per-source progress events arrive thousands of
-            times per search and would otherwise repaint identical text.
-            Both the meter (internally) and the detail row (here) gate on
-            content change for the same reason. Stale-generation events
-            never reach this handler — :meth:`_apply_streaming_event`
+            Per-source progress events arrive thousands of times per search; the
+            header stores the new fraction without repainting (its 2 Hz spinner
+            timer picks it up on the next frame) and the detail row gates on
+            content change, so neither repaints per event. Stale-generation
+            events never reach this handler — :meth:`_apply_streaming_event`
             drops them.
             """
             # A search is in progress — reveal the chrome (idempotent).
@@ -949,10 +915,6 @@ def build_streaming_ui_app(
             self._last_snapshot = snapshot
             if self._started_at is None:
                 self._started_at = time.monotonic()
-            if self._elapsed_timer is None:
-                self._elapsed_timer = self.set_interval(1.0, self._tick_elapsed)
-                # Paint "(0s)" immediately rather than after the first tick.
-                self._tick_elapsed()
             if (
                 snapshot.phase == "scanning"
                 and snapshot.current is not None
@@ -965,9 +927,9 @@ def build_streaming_ui_app(
                 fraction: float | None = snapshot.current / snapshot.total
             else:
                 fraction = None
-            if self._meter_widget is not None:
-                self._meter_widget.set_narrow(self._statusline_narrow())
-                self._meter_widget.set_progress(fraction, snapshot.phase)
+            if self._results_header is not None:
+                self._results_header.set_narrow(self._statusline_narrow())
+                self._results_header.set_progress(fraction, snapshot.phase)
             if self._detail_visible and self._detail_row is not None:
                 detail = format_scanning_detail(
                     snapshot.phase,
@@ -985,11 +947,11 @@ def build_streaming_ui_app(
                 self._refresh_results_status_right()
 
         def _statusline_narrow(self) -> bool:
-            """Report whether the statusline is too narrow for bar + elapsed."""
-            container = self._statusline_container
-            if container is None:
+            """Report whether the header rule is too narrow to also carry the count."""
+            header = self._results_header
+            if header is None:
                 return False
-            width = int(getattr(container.size, "width", 0) or 0)
+            width = int(getattr(header.size, "width", 0) or 0)
             return 0 < width < self._NARROW_BREAKPOINT
 
         def _apply_responsive_layout(self) -> None:
@@ -1022,28 +984,6 @@ def build_streaming_ui_app(
             # set stranded in a hidden pane.
             collapsed = stacked and not self._detail_opened
             t.cast("t.Any", self._detail_column).set_class(collapsed, "-collapsed")
-
-        def _tick_elapsed(self) -> None:
-            """Repaint the left status text from wall-clock elapsed (1 Hz).
-
-            Uses ``time.monotonic() - self._started_at`` rather than
-            ``ProgressSnapshot.elapsed`` — the snapshot field only advances
-            when the engine emits an event, so one slow source would
-            freeze the displayed time.
-            """
-            if self._search_done or self._status_widget is None or self._started_at is None:
-                return
-            elapsed = time.monotonic() - self._started_at
-            left = searching_left_text(elapsed, narrow=self._statusline_narrow())
-            if left != self._last_left_text:
-                self._last_left_text = left
-                self._status_widget.update(left)
-
-        def _stop_elapsed_timer(self) -> None:
-            """Stop and drop the elapsed ticker (idempotent)."""
-            if self._elapsed_timer is not None:
-                t.cast("t.Any", self._elapsed_timer).stop()
-                self._elapsed_timer = None
 
         def action_toggle_detail_progress(self) -> None:
             r"""``Ctrl-\``: show/hide the verbose scanning detail row (sticky)."""
@@ -1080,25 +1020,15 @@ def build_streaming_ui_app(
             elapsed: float,
             error_message: str | None,
         ) -> None:
-            """Freeze chrome widgets — invoked via ``call_from_thread``.
+            r"""Freeze the header chrome — invoked via ``call_from_thread``.
 
-            Elapsed time is folded into the final status string rather than
-            shown as a live-ticking sibling widget. The status line no
-            longer claims animation budget once a search is done.
+            The header's spinner timer stops and the outcome glyph + bar color
+            hold; the elapsed total is folded into the summary string the ctrl+\
+            detail row shows, not a live-ticking widget.
             """
             # A search ran — its outcome belongs on the (now revealed) chrome.
             self._set_empty_state(empty=False)
             self._search_done = True
-            self._stop_elapsed_timer()
-            glyphs = {"complete": "✓", "interrupted": "■", "error": "✗"}
-            if self._spinner_widget is not None:
-                self._spinner_widget.freeze(glyphs.get(outcome, "·"))
-                self._set_outcome_classes(self._spinner_widget, outcome)
-            if self._meter_widget is not None:
-                self._meter_widget.freeze(outcome)
-            if self._status_widget is not None:
-                self._set_outcome_classes(self._status_widget, outcome)
-            self._set_search_rule_state(outcome)
             if outcome == "error":
                 summary = f"Search failed: {error_message}"
             elif outcome == "interrupted":
@@ -1108,25 +1038,19 @@ def build_streaming_ui_app(
                 )
             else:
                 summary = f"Search complete: {format_match_count(total)} in {elapsed:.1f}s"
+            # Freeze the header: the outcome glyph (✓/■/✗) + bar color carry the
+            # result; errors show their message in the rule, the full summary
+            # lives in the ctrl+\ detail row.
+            if self._results_header is not None:
+                self._results_header.freeze(outcome, message=error_message or "")
+            self._set_search_rule_state(outcome)
             self._finished_status = (outcome, summary)
-            # The data summary lives in the ctrl+\ row, not the statusline.
             self._last_detail_text = summary
             if self._detail_visible and self._detail_row is not None:
                 self._detail_row.update(summary)
-            self._render_finished_status()
             # Recompute the right slot: narrow mode swaps the in-flight
             # search percent for the plain match count once the search ends.
             self._refresh_results_status_right()
-
-        @staticmethod
-        def _set_outcome_classes(widget: object, outcome: str) -> None:
-            """Apply the post-search ``-done`` / ``-stopped`` color class."""
-            classes = {"complete": "-done", "interrupted": "-stopped"}
-            target = t.cast("t.Any", widget)
-            target.remove_class("-done", "-stopped")
-            outcome_class = classes.get(outcome)
-            if outcome_class is not None:
-                target.add_class(outcome_class)
 
         def _set_search_rule_state(self, state: str) -> None:
             """Tint the search input's top/bottom rule by search state.
@@ -1150,31 +1074,6 @@ def build_streaming_ui_app(
             }.get(state)
             if rule_class is not None:
                 target.add_class(rule_class)
-
-        def _render_finished_status(self) -> None:
-            """Paint the post-search left text — the frozen bar is the summary.
-
-            Wide statuslines show no text at all (the colored bar and the
-            right slot carry the outcome); narrow ones, with no room for
-            a bar, say ``Done`` or ``Stopped``. The word also stands in
-            when the meter has no bar to carry the outcome — an interrupt
-            before the first scanning snapshot freezes with no fraction —
-            so a stopped search never collapses to a bare glyph.
-            Failures keep their message at every width — that information
-            has no other home. The full data summary renders in the
-            toggleable detail row.
-            """
-            if self._status_widget is None or self._finished_status is None:
-                return
-            outcome, summary = self._finished_status
-            meter_has_bar = self._meter_widget is not None and self._meter_widget.shows_bar()
-            if outcome == "error":
-                text = summary
-            elif self._statusline_narrow() or not meter_has_bar:
-                text = "Done" if outcome == "complete" else "Stopped"
-            else:
-                text = ""
-            self._status_widget.update(text)
 
         def _sources_label(self) -> str:
             snap = self._last_snapshot
@@ -1358,7 +1257,7 @@ def build_streaming_ui_app(
             explicit values arrive; the change gate keeps repeated
             identical renders from repainting.
             """
-            if self._matches_widget is None:
+            if self._results_header is None:
                 return
             if cursor is None and visible is None and self._results is not None:
                 cursor = t.cast("int | None", getattr(self._results, "highlighted", None))
@@ -1366,7 +1265,7 @@ def build_streaming_ui_app(
             text = self._format_results_right(cursor, visible)
             if text != self._last_right_text:
                 self._last_right_text = text
-                self._matches_widget.update(text)
+                self._results_header.set_matches(text)
 
         def _format_results_right(
             self,
@@ -1750,16 +1649,11 @@ def build_streaming_ui_app(
             # Recompute (not just repaint) the right slot — crossing the
             # narrow breakpoint adds/removes the cursor/visible segment.
             self._refresh_results_status_right()
-            if self._meter_widget is not None:
-                self._meter_widget.set_narrow(self._statusline_narrow())
-                # The change-gate caches the last composed string; a width
-                # change with constant fraction must still repaint the bar.
-                self._meter_widget.invalidate()
-            # Crossing the narrow breakpoint adds/removes the elapsed suffix.
-            self._tick_elapsed()
-            # ... and swaps the post-search summary between its wide and
-            # minimized forms.
-            self._render_finished_status()
+            if self._results_header is not None:
+                # A width change with constant fraction must still repaint the
+                # folded bar (its gap/cap math depends on the new width).
+                self._results_header.set_narrow(self._statusline_narrow())
+                self._results_header.invalidate()
             # Crossing the split breakpoint moves the detail pane between
             # the right side and the bottom.
             self._apply_responsive_layout()

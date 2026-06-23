@@ -4108,7 +4108,7 @@ async def test_results_scroll_changed_updates_status_right(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The app handler updates ``#status-right`` when the OptionList scrolls."""
+    """The app handler updates the header's match slot when the list scrolls."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     records = _seed_records(agentgrep, tmp_path, 5)
@@ -4117,13 +4117,13 @@ async def test_results_scroll_changed_updates_status_right(
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
         updates: list[str] = []
-        real_update = app._matches_widget.update
+        real_set = app._results_header.set_matches
 
-        def spy(content: t.Any = "", *args: t.Any, **kwargs: t.Any) -> None:
-            updates.append(str(content))
-            real_update(content, *args, **kwargs)
+        def spy(text: str) -> None:
+            updates.append(text)
+            real_set(text)
 
-        monkeypatch.setattr(app._matches_widget, "update", spy)
+        monkeypatch.setattr(app._results_header, "set_matches", spy)
         # Pre-seed streaming records so the match count is non-zero.
         app.all_records.extend(records)
         app._results.append_records(records)
@@ -4225,38 +4225,38 @@ def _make_progress_snapshot(agentgrep: t.Any, **overrides: t.Any) -> t.Any:
     return agentgrep.ProgressSnapshot(**fields)
 
 
-async def test_apply_progress_drives_meter_and_left_text(
+async def test_apply_progress_fills_header_bar(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A scanning snapshot fills the ▰▱ meter and paints the elapsed left text."""
+    """A scanning snapshot fills the merged header's ▰▱ bar fraction."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
-    # Wide terminal: the results column must clear the narrow breakpoint
-    # so the bar and the "(0s)" elapsed suffix both render.
+    # Wide terminal: the results column must clear the narrow breakpoint so the
+    # bar renders alongside the match count.
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
         app._search_done = False
+        app._results_header.begin()
         app._apply_progress(_make_progress_snapshot(agentgrep))
         await pilot.pause()
-        assert app._meter_widget._fraction == pytest.approx(5662 / 6748)
-        rendered = app._meter_widget._compose_text()
+        assert app._results_header._fraction == pytest.approx(5662 / 6748)
+        rendered = app._results_header.render().plain
         assert "▰" in rendered
-        assert rendered.endswith("%")
-        # The query itself is not repeated — the search box shows it.
-        assert app._last_left_text.startswith("Searching… (")
+        assert "%" in rendered
 
 
-async def test_meter_indeterminate_before_total_shows_phase_word(
+async def test_header_indeterminate_before_total_shows_no_bar(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Without a source total the meter shows the phase word, not a bar."""
+    """Without a source total the header shows no bar — the spinner carries motion."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
         app._search_done = False
+        app._results_header.begin()
         app._apply_progress(
             _make_progress_snapshot(
                 agentgrep,
@@ -4267,10 +4267,8 @@ async def test_meter_indeterminate_before_total_shows_phase_word(
             ),
         )
         await pilot.pause()
-        assert app._meter_widget._fraction is None
-        rendered = app._meter_widget._compose_text()
-        assert rendered == "discovering"
-        assert "▰" not in rendered
+        assert app._results_header._fraction is None
+        assert "▰" not in app._results_header.render().plain
 
 
 async def test_ctrl_backslash_toggles_scanning_detail_row(
@@ -4329,124 +4327,78 @@ async def test_detail_row_visibility_sticky_across_search_reset(
         assert updates[-1] == ""
 
 
-async def test_elapsed_ticker_starts_on_progress_and_stops_on_finish(
+async def test_finish_complete_freezes_header_check(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The 1 Hz ticker arms on the first snapshot and disarms on finish."""
+    """Finishing freezes the header's check glyph + full bar and stops the timer."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
         app._search_done = False
-        assert app._elapsed_timer is None
+        app._results_header.begin()
         app._apply_progress(_make_progress_snapshot(agentgrep))
         await pilot.pause()
-        assert app._elapsed_timer is not None
-        updates: list[str] = []
-        real_update = app._status_widget.update
-
-        def spy(content: t.Any = "", *args: t.Any, **kwargs: t.Any) -> None:
-            updates.append(str(content))
-            real_update(content, *args, **kwargs)
-
-        monkeypatch.setattr(app._status_widget, "update", spy)
         app._apply_finished("complete", 100, 12.3, None)
         await pilot.pause()
-        assert app._elapsed_timer is None
-        # The frozen bar IS the wide summary: full, green, no left text.
-        assert app._meter_widget._compose_text().endswith("100%")
-        assert app._meter_widget.has_class("-done")
-        assert updates[-1] == ""
-        # The data summary lands in the toggleable detail row instead.
+        header = app._results_header
+        assert header._outcome == "complete"
+        assert header._final_glyph == "✓"
+        assert header.auto_refresh is None  # the spinner timer stopped
+        rendered = header.render().plain
+        assert "✓" in rendered
+        assert "100%" in rendered
+        # The data summary lands in the toggleable detail row.
         assert app._last_detail_text == "Search complete: 100 matches in 12.3s"
 
 
-async def test_search_complete_minimizes_on_narrow_statusline(
-    tmp_path: pathlib.Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A narrow completed search shows just the check glyph and match count."""
-    app = _build_empty_ui_app(tmp_path, monkeypatch)
-    async with app.run_test(size=(40, 24)) as pilot:
-        await pilot.pause()
-        # Reveal the chrome so the statusline has a measurable (narrow) width.
-        app._set_empty_state(empty=False)
-        await pilot.pause()
-        updates: list[str] = []
-        real_update = app._status_widget.update
-
-        def spy(content: t.Any = "", *args: t.Any, **kwargs: t.Any) -> None:
-            updates.append(str(content))
-            real_update(content, *args, **kwargs)
-
-        monkeypatch.setattr(app._status_widget, "update", spy)
-        app._apply_finished("complete", 100, 12.3, None)
-        await pilot.pause()
-        # Narrow has no room for the bar — the green check says it.
-        assert updates[-1] == "Done"
-        assert app._status_widget.has_class("-done")
-
-
 class FinishOutcomeCase(t.NamedTuple):
-    """One post-search outcome-by-width scenario for the statusline."""
+    """One post-search outcome scenario for the merged header."""
 
     test_id: str
     size: tuple[int, int]
     outcome: str
-    expected_left: str
-    expected_class: str
-    meter_shows_bar: bool
+    glyph: str
+    expect_bar: bool
     seed_scanning: bool
 
 
 FINISH_OUTCOME_CASES: tuple[FinishOutcomeCase, ...] = (
     FinishOutcomeCase(
-        test_id="complete-wide-green-full-bar",
+        test_id="complete-wide-check-full-bar",
         size=(160, 24),
         outcome="complete",
-        expected_left="",
-        expected_class="-done",
-        meter_shows_bar=True,
+        glyph="✓",
+        expect_bar=True,
         seed_scanning=True,
     ),
     FinishOutcomeCase(
-        test_id="complete-narrow-says-done",
+        # Complete always fills the bar (freeze sets fraction=1.0), and the bar
+        # still fits a narrow header — the match count is what drops, not the bar.
+        test_id="complete-narrow-check-full-bar",
         size=(40, 24),
         outcome="complete",
-        expected_left="Done",
-        expected_class="-done",
-        meter_shows_bar=False,
+        glyph="✓",
+        expect_bar=True,
         seed_scanning=True,
     ),
     FinishOutcomeCase(
-        test_id="interrupted-wide-gray-partial-bar",
+        test_id="interrupted-wide-square-partial-bar",
         size=(160, 24),
         outcome="interrupted",
-        expected_left="",
-        expected_class="-stopped",
-        meter_shows_bar=True,
+        glyph="■",
+        expect_bar=True,
         seed_scanning=True,
     ),
     FinishOutcomeCase(
-        test_id="interrupted-narrow-says-stopped",
-        size=(40, 24),
-        outcome="interrupted",
-        expected_left="Stopped",
-        expected_class="-stopped",
-        meter_shows_bar=False,
-        seed_scanning=True,
-    ),
-    FinishOutcomeCase(
-        # Interrupted before the first scanning snapshot: no fraction, so
-        # no bar — the wide statusline must still say "Stopped" rather
-        # than collapse to a bare gray glyph.
-        test_id="interrupted-wide-no-bar-says-stopped",
+        # Interrupted before the first scanning snapshot: no fraction, so no bar —
+        # the gray ■ glyph alone carries the stopped outcome.
+        test_id="interrupted-no-scan-square-no-bar",
         size=(160, 24),
         outcome="interrupted",
-        expected_left="Stopped",
-        expected_class="-stopped",
-        meter_shows_bar=False,
+        glyph="■",
+        expect_bar=False,
         seed_scanning=False,
     ),
 )
@@ -4457,50 +4409,40 @@ FINISH_OUTCOME_CASES: tuple[FinishOutcomeCase, ...] = (
     FINISH_OUTCOME_CASES,
     ids=[case.test_id for case in FINISH_OUTCOME_CASES],
 )
-async def test_finish_outcome_freezes_colored_bar(
+async def test_finish_outcome_freezes_header_glyph(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
     case: FinishOutcomeCase,
 ) -> None:
-    """The frozen bar (or its narrow word) carries the search outcome."""
+    """The frozen header glyph (and bar, when there is a fraction) carries the outcome."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=case.size) as pilot:
         await pilot.pause()
-        # Reveal + lay out the chrome so the statusline has a real width before
-        # the narrow/wide outcome is computed.
+        # Reveal + lay out the chrome so the header has a real width before the
+        # narrow/wide payload is computed.
         app._set_empty_state(empty=False)
         await pilot.pause()
         app._search_done = False
-        # Seed matches so the right slot occupies its real-world cells —
-        # narrow meters only lose the bar when the count is present.
         app.all_records.extend(_seed_records(agentgrep, tmp_path, 5))
+        app._results_header.begin()
         if case.seed_scanning:
             app._apply_progress(_make_progress_snapshot(agentgrep))
             await pilot.pause()
-        updates: list[str] = []
-        real_update = app._status_widget.update
-
-        def spy(content: t.Any = "", *args: t.Any, **kwargs: t.Any) -> None:
-            updates.append(str(content))
-            real_update(content, *args, **kwargs)
-
-        monkeypatch.setattr(app._status_widget, "update", spy)
         app._apply_finished(case.outcome, 100, 12.3, None)
         await pilot.pause()
-        assert updates[-1] == case.expected_left
-        for widget in (app._meter_widget, app._status_widget, app._spinner_widget):
-            assert widget.has_class(case.expected_class)
-        rendered = app._meter_widget._compose_text()
-        assert ("▰" in rendered) is case.meter_shows_bar
-        if case.meter_shows_bar and case.outcome == "complete":
-            # Complete fills the bar.
-            assert "▱" not in rendered
-            assert rendered.endswith("100%")
-        if case.meter_shows_bar and case.outcome == "interrupted":
-            # Interrupted freezes at the last fill (5662/6748 → 84%).
-            assert "▱" in rendered
-            assert rendered.endswith("84%")
+        header = app._results_header
+        assert header._outcome == case.outcome
+        assert header._final_glyph == case.glyph
+        rendered = header.render().plain
+        assert case.glyph in rendered
+        assert ("▰" in rendered) is case.expect_bar
+        if case.expect_bar and case.outcome == "complete":
+            assert "▱" not in rendered  # complete fills the bar
+            assert "100%" in rendered
+        if case.expect_bar and case.outcome == "interrupted":
+            assert "▱" in rendered  # interrupted freezes at the last fill (84%)
+            assert "84%" in rendered
 
 
 async def test_detail_row_shows_summary_after_finish(
@@ -4523,29 +4465,31 @@ async def test_detail_row_shows_summary_after_finish(
         assert app._last_detail_text == "Stopped at 2976 matches across 5662/6748 sources in 2.1s"
 
 
-async def test_meter_change_gates_identical_progress(
+async def test_header_progress_setter_does_not_repaint(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The first fraction repaints exactly once; an identical repeat adds none."""
+    """During a search, set_progress stores the fraction without forcing a repaint.
+
+    The 2 Hz spinner timer drives the bar, so the thousands of per-source
+    progress events never thrash the rule with extra refreshes.
+    """
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
-        meter = app._meter_widget
+        header = app._results_header
+        header.begin()  # arms the self-refresh timer (drives repaints)
         refreshes: list[None] = []
-        real_refresh = meter.refresh
+        real_refresh = header.refresh
 
         def spy(*args: t.Any, **kwargs: t.Any) -> t.Any:
             refreshes.append(None)
             return real_refresh(*args, **kwargs)
 
-        monkeypatch.setattr(meter, "refresh", spy)
-        # Mount rendered the idle meter as "" — the first real fraction
-        # must compose a non-empty bar and trigger exactly one repaint.
-        meter.set_progress(0.5, "")
-        assert len(refreshes) == 1
-        meter.set_progress(0.5, "")
-        assert len(refreshes) == 1
+        monkeypatch.setattr(header, "refresh", spy)
+        header.set_progress(0.5, "scanning")
+        header.set_progress(0.6, "scanning")
+        assert refreshes == []  # setters store only; the timer repaints
 
 
 class StaleGenerationCase(t.NamedTuple):
@@ -4600,8 +4544,7 @@ async def test_streaming_events_gated_by_generation(
         await app._apply_streaming_event(generation, _make_progress_snapshot(agentgrep))
         await pilot.pause()
         assert (app._last_snapshot is not None) is case.expect_applied
-        assert (app._elapsed_timer is not None) is case.expect_applied
-        assert (app._meter_widget._fraction is not None) is case.expect_applied
+        assert (app._results_header._fraction is not None) is case.expect_applied
 
 
 async def test_streaming_records_batch_lands_in_results(
@@ -4627,11 +4570,11 @@ async def test_streaming_records_batch_lands_in_results(
         assert len(app._results._records) == 3
 
 
-async def test_narrow_statusline_drops_bar_and_elapsed(
+async def test_narrow_header_drops_match_count_keeps_bar(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Below the breakpoint the elapsed suffix and the ▰▱ bar are dropped."""
+    """Below the breakpoint the header drops the match count but keeps the bar."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(40, 24)) as pilot:
@@ -4639,11 +4582,14 @@ async def test_narrow_statusline_drops_bar_and_elapsed(
         app._set_empty_state(empty=False)
         await pilot.pause()
         app._search_done = False
+        app.all_records.extend(_seed_records(agentgrep, tmp_path, 5))
+        app._results_header.begin()
         app._apply_progress(_make_progress_snapshot(agentgrep))
         await pilot.pause()
         assert app._statusline_narrow() is True
-        assert app._last_left_text == "Searching"
-        assert "▰" not in app._meter_widget._compose_text()
+        rendered = app._results_header.render().plain
+        assert "matches" not in rendered  # the count drops on a narrow header
+        assert "▰" in rendered  # ...but the bar still fits
 
 
 class _FakeHighlight(t.NamedTuple):

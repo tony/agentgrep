@@ -379,45 +379,12 @@ Screen {
     overflow-x: hidden;
     scrollbar-size: 0 0;
 }
-#results-statusline {
-    height: 1;
-    /* One cell from each edge: the spinner aligns with the
-       input border, and the right slot never touches the
-       detail column. */
-    padding: 0 1;
-    layout: horizontal;
-}
-#status-spinner {
-    width: 2;
-    color: $accent;
-}
-#status-text {
-    width: auto;
-    color: $accent;
-    text-style: bold;
-}
-#status-meter {
-    width: 1fr;
-    color: $secondary;
-    margin: 0 1;
-}
-/* Post-search outcome colors: green mirrors the results list's
-   "prompt" kind; muted gray mirrors the detail header's secondary text. */
-#status-spinner.-done, #status-text.-done, #status-meter.-done {
-    color: $success;
-}
-#status-spinner.-stopped, #status-text.-stopped, #status-meter.-stopped {
-    color: $ag-muted;
-}
-#status-right {
-    width: auto;
-    color: $accent;
-    text-style: bold;
-}
+/* The results statusline is folded into #results-header (ResultsHeader): the
+   spinner, bar, percent, and match count render as colored spans inside the
+   header rule, so there is no separate statusline row or per-cell CSS. */
 #status-detail {
     height: 1;
-    /* Statusline left padding (1) + spinner cell (2) so the
-       detail text sits under "Searching". */
+    /* Aligns the verbose ctrl+\ row under the header's payload. */
     padding: 0 1 0 3;
     color: $ag-muted;
     display: none;
@@ -484,7 +451,6 @@ Screen {
     color: $ag-dim;
 }
 #body.-empty #results-header,
-#body.-empty #results-statusline,
 #body.-empty #filter,
 #body.-empty #filter-dropdown,
 #body.-empty #results,

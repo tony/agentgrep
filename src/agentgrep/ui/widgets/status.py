@@ -14,9 +14,10 @@ from rich.cells import cell_len
 from rich.text import Text
 from textual.widgets import Static
 
+from agentgrep.ui import theme as ui_theme
 from agentgrep.ui.format import format_progress_percent, render_progress_meter
 
-__all__ = ["MeterWidget", "PaneHeader", "SpinnerWidget"]
+__all__ = ["MeterWidget", "PaneHeader", "ResultsHeader", "SpinnerWidget"]
 
 
 class PaneHeader(Static):
@@ -53,6 +54,197 @@ class PaneHeader(Static):
         text.append(self._label, style="bold")
         text.append("─" * fill)
         return text
+
+
+class ResultsHeader(PaneHeader):
+    """Results section header with the live search status folded into the rule.
+
+    Extends :class:`PaneHeader`: idle, it renders the plain ``─results────``
+    rule; while a search runs (and after it finishes) it folds the status
+    payload — an animated spinner, a ``▰▱`` progress bar, the percent, and the
+    match count — into the right of the same rule (pi's ``fitBorder`` shape), so
+    the results column spends one row instead of two. The payload is dropped
+    right-to-left (matches, then bar, then percent) as the width tightens; the
+    spinner is always kept.
+
+    The spinner self-drives off ``time.monotonic`` via ``auto_refresh`` while a
+    search is active, so it ticks regardless of event-loop load; the worker
+    thread only calls store-only setters, and the next timer frame repaints.
+    On finish the timer stops and the frozen outcome glyph (``✓``/``■``/``✗``)
+    holds. ``begin``/``freeze``/``go_idle`` mirror the old spinner+meter
+    lifecycle.
+    """
+
+    _FRAMES: t.ClassVar[str] = "·✢✽✻"
+    _SEQUENCE: t.ClassVar[str] = _FRAMES + _FRAMES[::-1]
+    _FPS: t.ClassVar[float] = 2.0
+    _MIN_BAR: t.ClassVar[int] = 4
+    # Cap the bar so the label keeps a visible run of rule before the status,
+    # rather than the bar swallowing the whole width on a wide terminal.
+    _MAX_BAR: t.ClassVar[int] = 16
+
+    def __init__(self, label: str, *, id: str | None = None) -> None:  # noqa: A002 -- Textual ``id`` kwarg
+        super().__init__(label, id=id)
+        self._active = False
+        self._fraction: float | None = None
+        self._matches_text = ""
+        self._final_glyph: str | None = None
+        self._outcome = ""
+        self._error = ""
+        self._narrow = False
+        self._started_at = time.monotonic()
+        self._c_accent = ""
+        self._c_success = ""
+        self._c_muted = ""
+
+    def on_mount(self) -> None:
+        """Resolve the payload colors from the active theme (no timer until active)."""
+        self.refresh_theme()
+
+    def refresh_theme(self) -> None:
+        """Re-resolve the payload hexes (called on theme switch)."""
+        theme_vars = t.cast("t.Any", self.app).theme_variables
+        self._c_accent = ui_theme.resolve(theme_vars, "accent")
+        self._c_success = ui_theme.resolve(theme_vars, "success")
+        self._c_muted = ui_theme.resolve(theme_vars, "ag-muted")
+        self.refresh()
+
+    # --- lifecycle (driven by the app's search flow) ----------------------
+    def begin(self) -> None:
+        """Activate on search start: clear state and arm the spinner timer."""
+        self._active = True
+        self._final_glyph = None
+        self._outcome = ""
+        self._error = ""
+        self._fraction = None
+        self._matches_text = ""
+        self._started_at = time.monotonic()
+        self.auto_refresh = 1.0 / self._FPS
+        self.refresh()
+
+    def set_progress(self, fraction: float | None, phase: str = "") -> None:
+        """Store the bar fraction; the spinner timer repaints it next frame."""
+        del phase  # the phase word is conveyed by the spinner during discovery
+        self._fraction = fraction
+
+    def set_matches(self, text: str) -> None:
+        """Store the right-slot match/cursor text."""
+        self._matches_text = text
+        if self.auto_refresh is None:
+            self.refresh()
+
+    def set_narrow(self, narrow: bool) -> None:
+        """Record whether the row is too narrow to also carry the match count."""
+        self._narrow = narrow
+        if self.auto_refresh is None:
+            self.refresh()
+
+    def freeze(self, outcome: str, message: str = "") -> None:
+        """Search finished: lock the outcome glyph and stop the spinner timer."""
+        self._outcome = outcome
+        self._final_glyph = {"complete": "✓", "interrupted": "■", "error": "✗"}.get(
+            outcome,
+            "·",
+        )
+        self._error = message if outcome == "error" else ""
+        if outcome == "complete":
+            self._fraction = 1.0
+        self.auto_refresh = None
+        self.refresh()
+
+    def go_idle(self) -> None:
+        """Collapse to the clean plain rule (no search active)."""
+        self._active = False
+        self._final_glyph = None
+        self._outcome = ""
+        self._error = ""
+        self._fraction = None
+        self._matches_text = ""
+        self.auto_refresh = None
+        self.refresh()
+
+    def invalidate(self) -> None:
+        """Repaint (e.g. after a resize changed the available width)."""
+        self.refresh()
+
+    # --- rendering --------------------------------------------------------
+    def _spinner(self) -> str:
+        """Return the spinner glyph: the frozen outcome, else the wall-clock frame."""
+        if self._final_glyph is not None:
+            return self._final_glyph
+        elapsed = time.monotonic() - self._started_at
+        return self._SEQUENCE[int(elapsed * self._FPS) % len(self._SEQUENCE)]
+
+    def render(self) -> Text:
+        """Idle → plain ``─results────``; active → fold the payload into the rule."""
+        if not self._active:
+            return super().render()
+        width = int(getattr(self.size, "width", 0) or 0)
+        label_cost = 1 + cell_len(self._label)  # leading ─ + label
+        # Reserve the trailing cap dash and a 2-cell minimum gap; the payload
+        # is fit into whatever remains and right-anchored against the cap.
+        avail = max(0, width - label_cost - 1 - 2)
+        payload = self._payload(avail)
+        gap = max(2, width - label_cost - payload.cell_len - 1)
+        text = Text(no_wrap=True, overflow="crop")
+        text.append("─")
+        text.append(self._label, style="bold")
+        text.append("─" * gap, style=self._c_muted or None)
+        text.append_text(payload)
+        text.append("─", style=self._c_muted or None)
+        return text
+
+    def _payload(self, avail: int) -> Text:
+        """Build the right-of-gap status fragment, fit to ``avail`` cells.
+
+        Layout: ``· ▰▰▰▱▱ 52%  2343 matches``. The spinner is always kept; the
+        match count drops first, then the bar narrows and drops, so the bar and
+        percent — which carry progress — survive a tightening width.
+        """
+        payload = Text(no_wrap=True, overflow="crop")
+        payload.append(" ")
+        payload.append(self._spinner(), style=self._c_accent or None)
+        used = 2
+        if self._error:
+            room = max(0, avail - used - 1)
+            message = self._error
+            if cell_len(message) > room:
+                message = (message[: max(0, room - 1)] + "…") if room > 1 else ""
+            if message:
+                payload.append(" ")
+                payload.append(message, style=self._c_muted or None)
+            return payload
+        percent = format_progress_percent(self._fraction) if self._fraction is not None else ""
+        matches = self._matches_text or ""
+        percent_cost = 1 + cell_len(percent) if percent else 0
+        matches_cost = 2 + cell_len(matches) if matches else 0
+        show_matches = matches_cost > 0 and not self._narrow
+        if not show_matches:
+            matches_cost = 0
+        bar_room = avail - used - percent_cost - matches_cost - 1
+        if bar_room < self._MIN_BAR and show_matches:
+            # Drop the match count to keep a readable bar.
+            show_matches = False
+            matches_cost = 0
+            bar_room = avail - used - percent_cost - 1
+        if bar_room >= self._MIN_BAR and self._fraction is not None:
+            bar_cells = min(bar_room, self._MAX_BAR)
+        else:
+            bar_cells = 0
+        if bar_cells > 0 and self._fraction is not None:
+            bar = render_progress_meter(self._fraction, bar_cells)
+            filled = bar.count("▰")
+            fill_hex = self._c_muted if self._outcome == "interrupted" else self._c_success
+            payload.append(" ")
+            payload.append("▰" * filled, style=fill_hex or None)
+            payload.append("▱" * (len(bar) - filled), style=self._c_muted or None)
+        if percent:
+            payload.append(" ")
+            payload.append(percent, style=self._c_accent or None)
+        if show_matches:
+            payload.append("  ")
+            payload.append(matches, style=f"{self._c_accent} bold".strip())
+        return payload
 
 
 class SpinnerWidget(Static):
