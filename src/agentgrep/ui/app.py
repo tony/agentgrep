@@ -266,6 +266,13 @@ def build_streaming_ui_app(
             self.register_theme(ui_theme.agentgrep_dark())
             self.register_theme(ui_theme.agentgrep_light())
             self.theme = ui_theme.DARK_THEME_NAME
+            # Run with native ANSI background handling so the structural panes
+            # can use ``ansi_default`` (emitted as the terminal's own default
+            # background, SGR 49) instead of a painted color — the only way a
+            # Textual compositor can let the terminal background show through
+            # like pi/claude-code. Truecolor ``#hex`` foregrounds and item
+            # backgrounds are unaffected by this flag, so the pi palette stays.
+            self.ansi_color = True
             self.home = home
             self.query = query
             # The user's launch discovery scope. A ``scope:`` predicate

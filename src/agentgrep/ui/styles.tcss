@@ -32,7 +32,8 @@ Input, MaskedInput, TextArea {
     /* pi runs the text flush to column 0; a single cell of side padding is a
        gentler experiment. Set `padding: 0` for pi-exact flush. */
     padding: 0 1;
-    background: $surface;
+    /* Terminal-default background (see the OptionList rule above). */
+    background: ansi_default;
 }
 Input:focus, MaskedInput:focus, TextArea:focus {
     border: none;
@@ -56,7 +57,11 @@ Input.-boxed:focus, MaskedInput.-boxed:focus, TextArea.-boxed:focus {
    ==================================================================== */
 OptionList, ListView, DataTable, Tree, SelectionList {
     border: round $ag-faint;
-    background: $surface;
+    /* `ansi_default` = the terminal's own background (SGR 49), so the panes are
+       transparent like pi/claude-code rather than a painted surface. Requires
+       App.ansi_color = True (set in app.py); item backgrounds below stay
+       truecolor. */
+    background: ansi_default;
     padding: 0 1;
     /* pi/vim-style: no scrollbar (a terminal column is 1 cell minimum, and pi
        draws none) — scroll position lives in the statusline instead. Scrolling
@@ -195,7 +200,9 @@ HeaderTitle {
     text-style: bold;
 }
 Footer {
-    background: $panel;
+    /* Terminal-default background so the key bar blends with the terminal,
+       pi/claude-code-style; the accent key glyphs carry the contrast. */
+    background: ansi_default;
 }
 Footer > .footer-key--key {
     color: $accent;
