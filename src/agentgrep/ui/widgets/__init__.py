@@ -1,0 +1,43 @@
+"""Textual widgets and messages for the agentgrep explorer.
+
+These widgets and message types subclass Textual classes directly, so each
+module imports Textual at the top. The package is only imported from inside
+``build_streaming_ui_app`` (and the tests), never by the eager ``import
+agentgrep`` path, so ADR 0010's optional-dependency rule holds while the widget
+bodies live outside the app's mega-closure where they are independently
+unit-testable and individually guardable (ADR 0011).
+"""
+
+from __future__ import annotations
+
+import logging
+
+from agentgrep.ui.widgets.detail import DetailScroll
+from agentgrep.ui.widgets.dropdown import CompletionDropdown
+from agentgrep.ui.widgets.inputs import FilterInput, SearchInput
+from agentgrep.ui.widgets.messages import (
+    DetailScrollChanged,
+    FilterCompleted,
+    FilterRequested,
+    ResultsScrollChanged,
+    SearchRequested,
+)
+from agentgrep.ui.widgets.results import SearchResultsList
+from agentgrep.ui.widgets.status import MeterWidget, SpinnerWidget
+
+logging.getLogger(__name__).addHandler(logging.NullHandler())
+
+__all__ = [
+    "CompletionDropdown",
+    "DetailScroll",
+    "DetailScrollChanged",
+    "FilterCompleted",
+    "FilterInput",
+    "FilterRequested",
+    "MeterWidget",
+    "ResultsScrollChanged",
+    "SearchInput",
+    "SearchRequested",
+    "SearchResultsList",
+    "SpinnerWidget",
+]

@@ -1,0 +1,232 @@
+"""The search and filter input widgets.
+
+Both are ``Input`` subclasses. The dual-purpose arrow handling and the debounced
+filter dispatch live here, outside the app closure. Imported from inside the app
+factory (and the tests), never eagerly.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import typing as t
+
+from rich.highlighter import Highlighter
+from textual import events
+from textual.suggester import Suggester
+from textual.timer import Timer
+from textual.widgets import Input
+
+from agentgrep.progress import FilterRequestedPayload, SearchRequestedPayload
+from agentgrep.ui.widgets.messages import FilterRequested, SearchRequested
+
+__all__ = ["FilterInput", "SearchInput"]
+
+
+class FilterInput(Input):
+    """``Input`` subclass with debounced filter + cursor-or-focus arrows.
+
+    The base ``Input.Changed`` event still fires immediately on each
+    keystroke so the cursor, selection, and validation feedback stay
+    instant. The expensive filter operation is deferred onto a
+    :class:`FilterRequested` message which is only posted after 150 ms of
+    typing inactivity, letting a worker run the actual filter without
+    blocking the input itself.
+
+    Up / down arrows are dual-purpose: when there's text in the input
+    they jump the cursor to the start / end; when the input is empty (or
+    the cursor is already at the relevant edge) they release focus to
+    the previous / next widget so the user can navigate into the results
+    table without reaching for Tab.
+    """
+
+    _DEBOUNCE_SECONDS: t.ClassVar[float] = 0.15
+
+    BINDINGS: t.ClassVar[list[tuple[str, str, str]]] = [
+        ("down", "release_down", "Results"),
+    ]
+
+    def __init__(
+        self,
+        *,
+        placeholder: str = "",
+        id: str | None = None,  # noqa: A002 -- forwarded to Textual's ``id`` kwarg
+        suggester: Suggester | None = None,
+        highlighter: Highlighter | None = None,
+    ) -> None:
+        super().__init__(
+            placeholder=placeholder,
+            id=id,
+            suggester=suggester,
+            highlighter=highlighter,
+        )
+        self._debounce_timer: Timer | None = None
+
+    def _watch_value(self, value: str) -> None:
+        """Post normal ``Input.Changed`` and arm a debounced ``FilterRequested``."""
+        super()._watch_value(value)
+        if self._debounce_timer is not None:
+            self._debounce_timer.stop()
+        self._debounce_timer = self.set_timer(
+            self._DEBOUNCE_SECONDS,
+            lambda: self.post_message(
+                FilterRequested(payload=FilterRequestedPayload(text=value)),
+            ),
+        )
+
+    async def _on_key(self, event: events.Key) -> None:
+        """Down/up route between cursor-jump and focus-release per spec."""
+        key = str(getattr(event, "key", ""))
+        cursor = int(getattr(self, "cursor_position", 0))
+        value = str(getattr(self, "value", ""))
+        stop = getattr(event, "stop", None)
+        dropdown = t.cast("t.Any", getattr(self.app, "_filter_dropdown", None))
+        dropdown_open = dropdown is not None and bool(dropdown.display)
+        if dropdown_open and key in {"escape", "ctrl+c"}:
+            # Dismiss the dropdown, keep editing — don't quit.
+            if callable(stop):
+                stop()
+            dropdown.display = False
+            return
+        if dropdown_open and key == "enter":
+            dropdown.display = False
+        if key == "down":
+            if dropdown_open and dropdown.option_count:
+                # An open completion picker captures Down: jump into it.
+                if callable(stop):
+                    stop()
+                dropdown.focus()
+                dropdown.highlighted = 0
+                return
+            if value and cursor < len(value):
+                self.cursor_position = len(value)
+                if callable(stop):
+                    stop()
+                return
+            # Empty or at end — release focus to next widget (DataTable)
+            if callable(stop):
+                stop()
+            self.app.action_focus_next()
+            return
+        if key == "up":
+            if value and cursor > 0:
+                self.cursor_position = 0
+                if callable(stop):
+                    stop()
+                return
+            # Empty or at start — release focus up to the top search bar
+            # so plain ``up`` navigates filter → search without reaching
+            # for Ctrl-K. Mirrors the symmetric ``down`` → results path.
+            if callable(stop):
+                stop()
+            with contextlib.suppress(Exception):
+                self.app.query_one("#search").focus()
+            return
+        if key == "right" and not value:
+            # Empty filter → release focus rightward to the detail pane.
+            # When the filter has text, fall through so the cursor can
+            # walk through it character-by-character. Route through the
+            # app's ``_focus_detail`` so a collapsed stacked pane is
+            # revealed before focus lands.
+            if callable(stop):
+                stop()
+            with contextlib.suppress(Exception):
+                t.cast("t.Any", self.app)._focus_detail()
+            return
+        await super()._on_key(event)
+
+    def action_release_down(self) -> None:
+        """Footer-binding fallback (``_on_key`` handles the real release)."""
+        self.app.action_focus_next()
+
+
+class SearchInput(Input):
+    """``Input`` subclass that fires :class:`SearchRequested` on Enter.
+
+    Keystrokes update the input text immediately so the cursor stays
+    instant, but no backend search runs until the user presses
+    Enter. This makes the search explicit (no surprise dispatches
+    while typing) and gives the cancel-existing-search logic a
+    clean trigger to hang off of — every Enter cancels the prior
+    worker before spawning a fresh one.
+    """
+
+    BINDINGS: t.ClassVar[list[tuple[str, str, str]]] = [
+        ("down", "release_down", "Filter"),
+    ]
+
+    def __init__(
+        self,
+        *,
+        value: str = "",
+        placeholder: str = "",
+        id: str | None = None,  # noqa: A002 -- forwarded to Textual's ``id`` kwarg
+        suggester: Suggester | None = None,
+        highlighter: Highlighter | None = None,
+    ) -> None:
+        super().__init__(
+            value=value,
+            placeholder=placeholder,
+            id=id,
+            suggester=suggester,
+            highlighter=highlighter,
+        )
+
+    def on_input_submitted(self, event: object) -> None:
+        """Enter pressed — dispatch a :class:`SearchRequested` for the current value."""
+        stop = getattr(event, "stop", None)
+        if callable(stop):
+            stop()
+        value = str(getattr(self, "value", ""))
+        self.post_message(
+            SearchRequested(payload=SearchRequestedPayload(text=value)),
+        )
+
+    async def _on_key(self, event: events.Key) -> None:
+        """``down`` releases focus to the filter; ``up`` is a no-op (top widget)."""
+        key = str(getattr(event, "key", ""))
+        cursor = int(getattr(self, "cursor_position", 0))
+        value = str(getattr(self, "value", ""))
+        stop = getattr(event, "stop", None)
+        dropdown = t.cast("t.Any", getattr(self.app, "_enum_dropdown", None))
+        dropdown_open = dropdown is not None and bool(dropdown.display)
+        if dropdown_open and key in {"escape", "ctrl+c"}:
+            # Dismiss the dropdown, keep editing — don't quit or stop search.
+            if callable(stop):
+                stop()
+            dropdown.display = False
+            return
+        if dropdown_open and key == "enter":
+            # Enter without navigating into the dropdown closes it and lets
+            # the normal submit proceed (no auto-accept).
+            dropdown.display = False
+        if key == "down":
+            if dropdown_open and dropdown.option_count:
+                # An open enum picker captures Down: jump into it.
+                if callable(stop):
+                    stop()
+                dropdown.focus()
+                dropdown.highlighted = 0
+                return
+            if value and cursor < len(value):
+                self.cursor_position = len(value)
+                if callable(stop):
+                    stop()
+                return
+            if callable(stop):
+                stop()
+            self.app.action_focus_next()
+            return
+        if key == "up":
+            if value and cursor > 0:
+                self.cursor_position = 0
+                if callable(stop):
+                    stop()
+                return
+            if callable(stop):
+                stop()
+            return
+        await super()._on_key(event)
+
+    def action_release_down(self) -> None:
+        """Footer-binding fallback (``_on_key`` handles the real release)."""
+        self.app.action_focus_next()

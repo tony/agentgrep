@@ -28,8 +28,22 @@ import pytest
 from agentgrep.ui import _runtime, app as ui_app
 from tests.test_agentgrep import _build_empty_ui_app
 
-_APP_SOURCE = pathlib.Path(ui_app.__file__).read_text(encoding="utf-8")
-_APP_TREE = ast.parse(_APP_SOURCE)
+_APP_PATH = pathlib.Path(ui_app.__file__)
+_APP_TREE = ast.parse(_APP_PATH.read_text(encoding="utf-8"))
+
+
+def _ui_source_trees() -> list[ast.AST]:
+    """Parse ``ui/app.py`` plus every extracted ``ui/widgets/*.py`` module.
+
+    The widgets moved out of the app closure into factory modules, so the
+    no-blocking-calls guard must scan their pump methods (``watch_*`` /
+    ``_on_key`` / ``render``) too — not just the app's.
+    """
+    widget_paths = sorted((_APP_PATH.parent / "widgets").glob("*.py"))
+    return [ast.parse(path.read_text(encoding="utf-8")) for path in (_APP_PATH, *widget_paths)]
+
+
+_UI_TREES = _ui_source_trees()
 
 # A method Textual invokes on the pump thread: event/action/watch/compute
 # handlers, render/compose, the input key/value overrides — plus anything
@@ -71,15 +85,16 @@ def _decorator_name(node: ast.expr) -> str:
 
 
 def _all_methods() -> list[_Method]:
-    """Return every method defined on a class in ``ui/app.py``."""
+    """Return every method defined on a class in the app or widget modules."""
     methods: list[_Method] = []
-    for cls in ast.walk(_APP_TREE):
-        if not isinstance(cls, ast.ClassDef):
-            continue
-        for item in cls.body:
-            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                decorators = tuple(_decorator_name(d) for d in item.decorator_list)
-                methods.append(_Method(cls.name, item.name, item, decorators))
+    for tree in _UI_TREES:
+        for cls in ast.walk(tree):
+            if not isinstance(cls, ast.ClassDef):
+                continue
+            for item in cls.body:
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    decorators = tuple(_decorator_name(d) for d in item.decorator_list)
+                    methods.append(_Method(cls.name, item.name, item, decorators))
     return methods
 
 
