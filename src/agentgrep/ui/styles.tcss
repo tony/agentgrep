@@ -34,6 +34,8 @@ OptionList, ListView, DataTable, Tree, SelectionList {
     border: round $ag-faint;
     background: $surface;
     padding: 0 1;
+    /* pi-lite: a thin scrollbar; colors come from the theme's $scrollbar* vars. */
+    scrollbar-size-vertical: 1;
 }
 OptionList:focus, ListView:focus, DataTable:focus,
 Tree:focus, SelectionList:focus {
@@ -225,6 +227,7 @@ Rule {
 }
 Markdown, MarkdownViewer, RichLog, Log {
     background: transparent;
+    scrollbar-size-vertical: 1;
 }
 CollapsibleTitle {
     color: $text;
@@ -302,6 +305,7 @@ Screen {
     height: 1fr;
     overflow-y: auto;
     overflow-x: hidden;
+    scrollbar-size-vertical: 1;
     /* Reserve the border cell up-front (transparent) so toggling
        focus only repaints the perimeter — no layout shift, no
        extra padding when the border appears. Mirrors the
@@ -317,6 +321,7 @@ Screen {
 #results {
     height: 1fr;
     overflow-x: hidden;
+    scrollbar-size-vertical: 1;
 }
 #results-statusline {
     height: 1;

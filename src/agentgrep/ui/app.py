@@ -183,7 +183,6 @@ def build_streaming_ui_app(
     horizontal = textual_containers.Horizontal
     vertical = textual_containers.Vertical
     footer = textual_widgets.Footer
-    header = textual_widgets.Header
     static_type = textual_widgets.Static
 
     # FilterRequested / FilterCompleted stay on the Textual message bus — they
@@ -375,7 +374,7 @@ def build_streaming_ui_app(
                 self.show_detail(self._current_detail_record)
 
         def compose(self) -> cabc.Iterator[object]:
-            """Build the widget tree (header → search → body[results-col, detail-col] → footer).
+            """Build the widget tree (search → body[results-col, detail-col] → footer).
 
             The results column carries its live chrome (spinner + status
             + match count + scroll %) as a header above the filter and
@@ -385,7 +384,6 @@ def build_streaming_ui_app(
             whatever's currently being read, so the natural place to
             glance is the foot of the pane.
             """
-            yield header()
             if self.initial_search_text is not None:
                 initial_search = self.initial_search_text
             else:

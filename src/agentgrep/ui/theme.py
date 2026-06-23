@@ -153,11 +153,19 @@ def _ag_variables(mode: int) -> dict[str, str]:
 
 
 # Built-in Textual variables we override for a flat, pi-accented feel: the
-# selection block cursor and footer key both adopt the accent, with the cursor
-# kept flat (no reverse/bold) the way pi renders its selected rows.
+# selection block cursor and footer key both adopt the accent (cursor kept flat,
+# no reverse/bold, the way pi renders selected rows), and the scrollbars get a
+# pi-lite treatment — a quiet faint thumb on a surface-blended track that brightens
+# to the accent on hover/drag, instead of Textual's default blue bar.
+#: ``surface`` seed per mode (track color), mirrors the Theme ``surface`` values.
+_SURFACE_HEX: tuple[str, str] = ("#1e1e24", "#ffffff")
+
+
 def _builtin_overrides(mode: int) -> dict[str, str]:
     """Return pi-flat overrides for Textual's own widget tokens."""
     accent = _AGENT_HUES["pi"][mode]
+    faint = _TEXT_HUES["ag-faint"][mode]
+    surface = _SURFACE_HEX[mode]
     return {
         "block-cursor-background": accent,
         "block-cursor-foreground": _on(accent),
@@ -165,6 +173,13 @@ def _builtin_overrides(mode: int) -> dict[str, str]:
         "footer-key-foreground": accent,
         "input-cursor-background": accent,
         "input-cursor-foreground": _on(accent),
+        "scrollbar": faint,
+        "scrollbar-hover": accent,
+        "scrollbar-active": accent,
+        "scrollbar-background": surface,
+        "scrollbar-background-hover": surface,
+        "scrollbar-background-active": surface,
+        "scrollbar-corner-color": surface,
     }
 
 
