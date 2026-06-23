@@ -174,6 +174,7 @@ def build_streaming_ui_app(
             "RichTextModule",
             t.cast("object", importlib.import_module("rich.text")),
         )
+        from agentgrep.ui import theme as ui_theme
     except ImportError as error:
         msg = "Textual is required for --ui. Install with `uv pip install --editable .`."
         raise RuntimeError(msg) from error
@@ -539,6 +540,14 @@ def build_streaming_ui_app(
                     [option_type(self._render_record(r), id=str(id(r))) for r in self._records],
                 )
 
+        def rerender_records(self) -> None:
+            """Re-render the existing rows against the current theme tokens.
+
+            The rows bake concrete hex into Rich renderables at build time, so
+            a palette switch needs a full rebuild from the cached records.
+            """
+            self._rebuild_options(self._records)
+
         def clear(self) -> None:
             """Empty the list."""
             self._records = []
@@ -583,33 +592,33 @@ def build_streaming_ui_app(
                 base(highlighted)
             self._post_scroll_changed(cursor=highlighted)
 
-        _AGENT_COLORS: t.ClassVar[dict[str, str]] = {
-            "codex": "cyan",
-            "claude": "magenta",
-            "cursor-cli": "yellow",
-            "cursor-ide": "bright_yellow",
-        }
-        _KIND_COLORS: t.ClassVar[dict[str, str]] = {
-            "prompt": "green",
-            "history": "blue",
-        }
-
         def _render_record(self, record: SearchRecord) -> object:
+            theme_vars = t.cast("t.Any", self.app).theme_variables
+            agent_style = ui_theme.resolve(
+                theme_vars,
+                ui_theme.AGENT_TOKEN_BY_NAME.get(record.agent or ""),
+            )
+            kind_style = ui_theme.resolve(
+                theme_vars,
+                ui_theme.KIND_TOKEN_BY_NAME.get(record.kind or ""),
+            )
+            dim_style = ui_theme.resolve(theme_vars, "ag-dim")
+            muted_style = ui_theme.resolve(theme_vars, "ag-muted")
             agent_text = (record.agent or "").ljust(8)[:8]
             kind_text = (record.kind or "").ljust(10)[:10]
             timestamp_text = format_timestamp_tig(record.timestamp).ljust(22)[:22]
             title_text = (record.title or "").ljust(40)[:40]
             path_text = format_compact_path(record.path, max_width=60)
             text = rich_text.Text(no_wrap=True, overflow="ellipsis")
-            text.append(agent_text, style=self._AGENT_COLORS.get(record.agent or "", ""))
+            text.append(agent_text, style=agent_style)
             text.append("  ")
-            text.append(kind_text, style=self._KIND_COLORS.get(record.kind or "", ""))
+            text.append(kind_text, style=kind_style)
             text.append("  ")
-            text.append(timestamp_text, style="italic")
+            text.append(timestamp_text, style=f"italic {dim_style}".rstrip())
             text.append("  ")
             text.append(title_text, style="bold")
             text.append("  ")
-            text.append(path_text, style="grey50")
+            text.append(path_text, style=muted_style)
             return text
 
         def action_cursor_up(self) -> None:
@@ -979,144 +988,12 @@ def build_streaming_ui_app(
     class AgentGrepApp(app_type):  # ty: ignore[unsupported-base]
         """Streaming read-only explorer for normalized search records."""
 
-        CSS: t.ClassVar[str] = """
-        Screen {
-            layout: vertical;
-        }
-        #search {
-            height: 3;
-        }
-        #enum-dropdown, #filter-dropdown {
-            /* Float over the results just below the input, like Select's popup
-               — no layout space, toggled via .display so re-populating per
-               keystroke never remounts. The x offset is set at runtime to the
-               input's cursor column; ``constrain: inside inside`` shifts it
-               back on-screen when the cursor is near the right edge. */
-            overlay: screen;
-            constrain: inside inside;
-            display: none;
-            width: 32;
-            max-height: 10;
-            border: tall $accent;
-            background: $surface;
-        }
-        #body {
-            height: 1fr;
-        }
-        #results-column {
-            width: 1fr;
-            layout: vertical;
-        }
-        #detail-column {
-            width: 1fr;
-            layout: vertical;
-        }
-        /* Narrow terminals stack the panes: results on top, detail below
-           (tig moves its diff view to the bottom on narrow screens). The
-           ``1fr``/``2fr`` units are per-axis, so the side-by-side width
-           rules above still hold; only the body's layout axis flips. */
-        #body.-stacked {
-            layout: vertical;
-        }
-        #body.-stacked > #results-column {
-            height: 2fr;
-        }
-        #body.-stacked > #detail-column {
-            height: 1fr;
-        }
-        /* Stacked detail stays closed until the user selects a row. */
-        #detail-column.-collapsed {
-            display: none;
-        }
-        #filter {
-            height: 3;
-        }
-        #detail-scroll {
-            height: 1fr;
-            overflow-y: auto;
-            overflow-x: hidden;
-            /* Reserve the border cell up-front (transparent) so toggling
-               focus only repaints the perimeter — no layout shift, no
-               extra padding when the border appears. Mirrors the
-               OptionList default CSS pattern. */
-            border: tall transparent;
-        }
-        #detail-scroll:focus {
-            border: tall $border;
-        }
-        #detail {
-            padding: 0 1 0 0;
-        }
-        #results {
-            height: 1fr;
-            overflow-x: hidden;
-        }
-        #results-statusline {
-            height: 1;
-            /* One cell from each edge: the spinner aligns with the
-               input border, and the right slot never touches the
-               detail column. */
-            padding: 0 1;
-            layout: horizontal;
-        }
-        #status-spinner {
-            width: 2;
-            color: $accent;
-        }
-        #status-text {
-            width: auto;
-            color: ansi_bright_cyan;
-            text-style: bold;
-        }
-        #status-meter {
-            width: 1fr;
-            color: mediumpurple;
-            margin: 0 1;
-        }
-        /* Post-search outcome colors: green mirrors the results list's
-           "prompt" kind; gray mirrors the detail header's Path value
-           (grey50). */
-        #status-spinner.-done, #status-text.-done, #status-meter.-done {
-            color: ansi_green;
-        }
-        #status-spinner.-stopped, #status-text.-stopped, #status-meter.-stopped {
-            color: #808080;
-        }
-        #status-right {
-            width: auto;
-            color: $warning;
-            text-style: bold;
-        }
-        #status-detail {
-            height: 1;
-            /* Statusline left padding (1) + spinner cell (2) so the
-               detail text sits under "Searching". */
-            padding: 0 1 0 3;
-            color: #808080;
-            display: none;
-        }
-        #status-detail.visible {
-            display: block;
-        }
-        #detail-statusline {
-            height: 1;
-            padding: 0;
-            color: #d8d8d8;
-        }
-        /* Keep Textual's OptionList default of "border appears only on focus"
-           (textual/widgets/_option_list.py:154 — ``border: tall $border``).
-           We only cancel the two parts of that focus rule that fight our
-           per-span semantic colors: the ``$foreground 5%`` background-tint
-           and the bright ``$block-cursor-*`` cursor-row recolor. */
-        #results:focus {
-            background-tint: $foreground 0%;
-        }
-        #results:focus > .option-list--option-highlighted {
-            color: $block-cursor-blurred-foreground;
-            background: $block-cursor-blurred-background;
-            text-style: $block-cursor-blurred-text-style;
-        }
-        """
+        # The pi-lite global stylesheet (semantic tokens + all-widget rules)
+        # lives beside this module; ``CSS_PATH`` is resolved relative to
+        # ``app.py`` even for this closure-defined class. The ``$ag-*`` tokens
+        # it references are guaranteed to resolve via
+        # ``get_theme_variable_defaults`` regardless of the active theme.
+        CSS_PATH: t.ClassVar[str] = "styles.tcss"
         # ``priority=True`` on the directional ``ctrl+hjkl`` bindings pushes
         # them into Textual's priority dispatch lane so they win over any
         # widget binding for the same key (e.g. ``Input``'s readline
@@ -1173,6 +1050,14 @@ def build_streaming_ui_app(
             initial_search_text: str | None = None,
         ) -> None:
             super().__init__()
+            # Register and activate the pi-lite themes before the stylesheet
+            # loads (CSS is parsed during startup, before ``on_mount``) so the
+            # ``$ag-*`` tokens it references resolve from the active theme.
+            # ``get_theme_variable_defaults`` is the belt-and-suspenders that
+            # keeps those tokens resolvable even under a built-in theme.
+            self.register_theme(ui_theme.agentgrep_dark())
+            self.register_theme(ui_theme.agentgrep_light())
+            self.theme = ui_theme.DARK_THEME_NAME
             self.home = home
             self.query = query
             # The user's launch discovery scope. A ``scope:`` predicate
@@ -1251,6 +1136,34 @@ def build_streaming_ui_app(
 
         def _get_start_time(self) -> float | None:
             return self._started_at
+
+        def get_theme_variable_defaults(self) -> dict[str, str]:
+            """Add the ``$ag-*`` token defaults so the stylesheet always resolves.
+
+            Returns
+            -------
+            dict[str, str]
+                Textual's defaults merged with :func:`theme.ag_variable_defaults`
+                so a switch to any built-in theme can't leave an ``$ag-*``
+                reference unresolved.
+            """
+            base = t.cast("dict[str, str]", super().get_theme_variable_defaults())
+            return {**base, **ui_theme.ag_variable_defaults()}
+
+        def _on_theme_changed(self, _theme: object) -> None:
+            """Rebuild Rich-baked surfaces when the palette switches.
+
+            The chrome recolors automatically through TCSS, but the results
+            rows and the detail body bake concrete hex into Rich renderables at
+            build time, so they are rebuilt against the new theme's tokens. The
+            detail caches are dropped so the rebuild reads fresh colors.
+            """
+            if self._results is not None:
+                self._results.rerender_records()
+            self._detail_body_cache.clear()
+            self._first_match_cache.clear()
+            if self._current_detail_record is not None:
+                self.show_detail(self._current_detail_record)
 
         def compose(self) -> cabc.Iterator[object]:
             """Build the widget tree (header → search → body[results-col, detail-col] → footer).
@@ -1376,6 +1289,9 @@ def build_streaming_ui_app(
                 typed_input.cursor_blink = False
                 typed_input.select_on_focus = False
             self._progress = self._make_gated_progress()
+            # Rebuild Rich-baked rows/detail when the user switches palette
+            # (e.g. dark <-> light via the command palette).
+            self.theme_changed_signal.subscribe(self, self._on_theme_changed)
             self._apply_responsive_layout()
             if self.query.terms:
                 self._start_search_worker(self.query)
@@ -2221,20 +2137,30 @@ def build_streaming_ui_app(
                 return
             self._current_detail_record = record
             width = max(20, self._detail.size.width or 80)
-            agent_color = SearchResultsList._AGENT_COLORS.get(record.agent or "", "")
-            kind_color = SearchResultsList._KIND_COLORS.get(record.kind or "", "")
+            theme_vars = self.theme_variables
+            agent_color = ui_theme.resolve(
+                theme_vars,
+                ui_theme.AGENT_TOKEN_BY_NAME.get(record.agent or ""),
+            )
+            kind_color = ui_theme.resolve(
+                theme_vars,
+                ui_theme.KIND_TOKEN_BY_NAME.get(record.kind or ""),
+            )
+            dim_color = ui_theme.resolve(theme_vars, "ag-dim")
+            model_color = ui_theme.resolve(theme_vars, "ag-model")
+            path_color = ui_theme.resolve(theme_vars, "ag-muted")
             header = rich_text.Text(no_wrap=False)
             for label, value, value_style in (
                 ("Agent:", record.agent or "", agent_color),
                 ("Kind:", record.kind or "", kind_color),
-                ("Store:", record.store or "", "dim"),
-                ("Adapter:", record.adapter_id or "", "dim"),
-                ("Timestamp:", record.timestamp or "unknown", "dim"),
-                ("Model:", record.model or "unknown", "magenta"),
+                ("Store:", record.store or "", dim_color),
+                ("Adapter:", record.adapter_id or "", dim_color),
+                ("Timestamp:", record.timestamp or "unknown", dim_color),
+                ("Model:", record.model or "unknown", model_color),
                 (
                     "Path:",
                     format_compact_path(record.path, max_width=width - 8),
-                    "grey50",
+                    path_color,
                 ),
             ):
                 header.append(f"{label} ", style="bold")
@@ -2340,15 +2266,44 @@ def build_streaming_ui_app(
                 self._filter_terms,
             )
 
-        _FILTER_HIGHLIGHT_STYLE: t.ClassVar[str] = "bold black on cyan"
+        def _match_style(self, kind: str) -> str:
+            """Build a match-highlight Rich style from ``$ag-match-*`` tokens.
+
+            Search matches (``kind="search"``) render as a calm gold foreground
+            — they recur throughout a body, so a background fill would be
+            noisy. Filter matches (``kind="filter"``) render as a prominent
+            accent background with a contrast-computed foreground. Both adapt to
+            the active palette; either falls back to its former literal style if
+            a token is missing.
+
+            Parameters
+            ----------
+            kind : str
+                ``"search"`` or ``"filter"``.
+
+            Returns
+            -------
+            str
+                A Rich style string.
+            """
+            theme_vars = self.theme_variables
+            if kind == "search":
+                foreground = ui_theme.resolve(theme_vars, "ag-match-search")
+                return f"bold {foreground}".rstrip() if foreground else "bold yellow"
+            background = ui_theme.resolve(theme_vars, "ag-match-filter-bg")
+            foreground = ui_theme.resolve(theme_vars, "ag-match-filter-fg")
+            if background and foreground:
+                return f"bold {foreground} on {background}"
+            return "bold black on cyan"
 
         def _apply_filter_highlight(self, text: t.Any) -> None:
             """Overlay the filter's literal terms onto ``text`` in a distinct color.
 
-            Applied after the (yellow) search-term highlight so filter matches
-            stand out separately. Filter matching is case-insensitive, so the
-            highlight is too; field predicates contribute no literal terms.
+            Applied after the search-term highlight so filter matches stand out
+            separately. Filter matching is case-insensitive, so the highlight is
+            too; field predicates contribute no literal terms.
             """
+            style = self._match_style("filter")
             for term in self._filter_terms:
                 if not term:
                     continue
@@ -2356,7 +2311,7 @@ def build_streaming_ui_app(
                     compiled = re.compile(re.escape(term), re.IGNORECASE)
                 except re.error:
                     continue
-                text.highlight_regex(compiled, style=self._FILTER_HIGHLIGHT_STYLE)
+                text.highlight_regex(compiled, style=style)
 
         def _build_detail_body(
             self,
@@ -2415,6 +2370,7 @@ def build_streaming_ui_app(
                     query_terms,
                     case_sensitive=self.query.case_sensitive,
                     regex=self.query.regex,
+                    style=self._match_style("search"),
                 )
                 self._apply_filter_highlight(highlighted)
                 result = (highlighted, body_text)

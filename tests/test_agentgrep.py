@@ -2453,12 +2453,18 @@ async def test_detail_pane_highlights_filter_terms_distinctly(
         spans = [(s.start, s.end, str(s.style)) for s in renderable.spans]
         biome = body.index("biome")
         mobx = body.index("mobx")
-        # Search term keeps the yellow highlight; filter term gets its own.
+        # Search and filter terms get distinct, theme-aware styles: the search
+        # term carries the gold foreground token, the filter term the accent
+        # background token.
+        search_hex = app.theme_variables["ag-match-search"]
+        filter_bg_hex = app.theme_variables["ag-match-filter-bg"]
         assert any(
-            s == biome and e == biome + len("biome") and "yellow" in style for s, e, style in spans
+            s == biome and e == biome + len("biome") and search_hex in style
+            for s, e, style in spans
         )
         assert any(
-            s == mobx and e == mobx + len("mobx") and "cyan" in style for s, e, style in spans
+            s == mobx and e == mobx + len("mobx") and filter_bg_hex in style
+            for s, e, style in spans
         )
 
 
@@ -5075,7 +5081,7 @@ async def test_show_detail_keeps_text_highlighting_for_plain_body(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Plain-text bodies still get yellow ``highlight_regex`` spans for matches."""
+    """Plain-text bodies still get ``highlight_regex`` spans for search matches."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     rich_text_module = importlib.import_module("rich.text")
     home = tmp_path / "home"
@@ -5115,7 +5121,9 @@ async def test_show_detail_keeps_text_highlighting_for_plain_body(
         ]
         assert text_bodies, "expected the body Text containing 'libtmux'"
         styled = [str(span.style) for span in text_bodies[0].spans]
-        assert any("bold yellow" in style for style in styled)
+        # Search matches carry the theme's gold foreground token, bold.
+        search_hex = app.theme_variables["ag-match-search"]
+        assert any("bold" in style and search_hex in style for style in styled)
 
 
 def test_pydantic_payloads_reject_wrong_types(tmp_path: pathlib.Path) -> None:

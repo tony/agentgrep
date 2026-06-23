@@ -1,0 +1,387 @@
+/* pi-lite global stylesheet for the agentgrep Textual explorer.
+
+   Every rule references theme tokens — Textual seeds ($primary, $surface,
+   $text, $text-muted, $accent, $border, ...) and the $ag-* custom variables
+   from agentgrep.ui.theme — so switching theme re-skins every widget with no
+   rule changes.
+
+   The "lite" feel: thin rounded borders instead of heavy boxes, flat
+   surfaces, one accent for focus/selection, calm muted secondary text, and
+   subtle state tints. `color: auto` lets Textual pick a contrasting text color
+   against any tinted background at paint time.
+
+   Layering: the type-selector rules below are the low-specificity base. The
+   widgets' own DEFAULT_CSS and the id-targeted app-shell rules at the bottom
+   (specificity 1,0,0) refine on top. Equal-specificity ties resolve in favor
+   of this app stylesheet over widget DEFAULT_CSS. */
+
+/* ====================================================================
+   Text entry — Input, MaskedInput, TextArea
+   ==================================================================== */
+Input, MaskedInput, TextArea {
+    border: round $ag-faint;
+    background: $surface;
+}
+Input:focus, MaskedInput:focus, TextArea:focus {
+    border: round $accent;
+}
+
+/* ====================================================================
+   Lists & data — OptionList, ListView, ListItem, DataTable, Tree,
+   DirectoryTree, SelectionList
+   ==================================================================== */
+OptionList, ListView, DataTable, Tree, SelectionList {
+    border: round $ag-faint;
+    background: $surface;
+    padding: 0 1;
+}
+OptionList:focus, ListView:focus, DataTable:focus,
+Tree:focus, SelectionList:focus {
+    border: round $accent;
+}
+.option-list--option-highlighted,
+.datatable--cursor,
+.tree--cursor {
+    background: $ag-state-selected-bg;
+    color: auto;
+}
+.datatable--header {
+    background: $panel;
+    color: $text-muted;
+    text-style: bold;
+}
+.datatable--odd-row {
+    background: $boost;
+}
+.tree--guides {
+    color: $ag-faint;
+}
+.tree--guides-selected {
+    color: $accent;
+}
+ListItem {
+    background: transparent;
+    padding: 0 1;
+}
+ListView > ListItem.--highlight {
+    background: $ag-state-selected-bg;
+}
+
+/* ====================================================================
+   Buttons & toggles — Button, Switch, Checkbox, RadioButton, RadioSet
+   ==================================================================== */
+Button {
+    border: round $ag-faint;
+    background: $surface;
+    color: $text;
+    text-style: none;
+}
+Button:focus {
+    border: round $accent;
+    text-style: bold;
+}
+Button:hover {
+    background: $panel;
+}
+Button.-primary { background: $primary; color: auto; }
+Button.-success { background: $success; color: auto; }
+Button.-warning { background: $warning; color: auto; }
+Button.-error { background: $error; color: auto; }
+
+Switch {
+    border: none;
+    background: transparent;
+}
+Switch > .switch--slider {
+    color: $ag-faint;
+    background: $panel;
+}
+Switch.-on > .switch--slider {
+    color: $accent;
+}
+Switch:focus > .switch--slider {
+    background: $boost;
+}
+
+.toggle--button {
+    color: $ag-faint;
+    text-style: none;
+}
+ToggleButton.-on > .toggle--button {
+    color: $accent;
+}
+RadioButton:focus > .toggle--label,
+Checkbox:focus > .toggle--label {
+    text-style: bold;
+}
+RadioSet {
+    border: round $ag-faint;
+    background: $surface;
+    padding: 0 1;
+}
+RadioSet:focus {
+    border: round $accent;
+}
+
+/* ====================================================================
+   Selection dropdown — Select
+   ==================================================================== */
+Select {
+    border: round $ag-faint;
+    background: $surface;
+}
+Select:focus > SelectCurrent {
+    border: round $accent;
+}
+
+/* ====================================================================
+   Tabs — Tabs, Tab, TabbedContent, TabPane
+   ==================================================================== */
+Tabs {
+    background: transparent;
+}
+Tab {
+    color: $text-muted;
+    text-style: none;
+}
+Tab.-active {
+    color: $accent;
+    text-style: bold;
+}
+Tabs > #tabs-list .underline--bar {
+    color: $accent;
+}
+TabbedContent {
+    background: transparent;
+}
+
+/* ====================================================================
+   Chrome — Header, Footer
+   ==================================================================== */
+Header {
+    background: $panel;
+    color: $text;
+}
+HeaderTitle {
+    color: $text;
+    text-style: bold;
+}
+Footer {
+    background: $panel;
+}
+Footer > .footer-key--key {
+    color: $accent;
+}
+Footer > .footer-key--description {
+    color: $text-muted;
+}
+
+/* ====================================================================
+   Feedback & progress — ProgressBar, LoadingIndicator, Sparkline,
+   Digits, Toast, Tooltip
+   ==================================================================== */
+.bar--bar {
+    color: $accent;
+}
+.bar--complete {
+    color: $success;
+}
+.bar--indeterminate {
+    color: $secondary;
+}
+LoadingIndicator {
+    color: $accent;
+    background: transparent;
+}
+Sparkline > .sparkline--max-color {
+    color: $accent;
+}
+Sparkline > .sparkline--min-color {
+    color: $ag-faint;
+}
+Digits {
+    color: $accent;
+}
+Toast {
+    border: round $ag-faint;
+    background: $panel;
+}
+.toast--title {
+    text-style: bold;
+}
+Tooltip {
+    border: round $ag-faint;
+    background: $panel;
+    color: $text;
+    padding: 0 1;
+}
+
+/* ====================================================================
+   Separators & rich text — Rule, Markdown, MarkdownViewer, RichLog,
+   Log, Collapsible, Link, Pretty
+   ==================================================================== */
+Rule {
+    color: $ag-faint;
+}
+Markdown, MarkdownViewer, RichLog, Log {
+    background: transparent;
+}
+CollapsibleTitle {
+    color: $text;
+}
+CollapsibleTitle:hover {
+    color: $accent;
+}
+Collapsible {
+    border: none;
+}
+Link {
+    color: $accent;
+    text-style: none;
+}
+Link:hover {
+    text-style: underline;
+}
+
+/* ====================================================================
+   App shell (migrated from the former inline CSS, tokenized).
+   id selectors (specificity 1,0,0) win over the type rules above.
+   ==================================================================== */
+Screen {
+    layout: vertical;
+}
+#search {
+    height: 3;
+}
+#enum-dropdown, #filter-dropdown {
+    /* Float over the results just below the input, like Select's popup
+       — no layout space, toggled via .display so re-populating per
+       keystroke never remounts. The x offset is set at runtime to the
+       input's cursor column; ``constrain: inside inside`` shifts it
+       back on-screen when the cursor is near the right edge. */
+    overlay: screen;
+    constrain: inside inside;
+    display: none;
+    width: 32;
+    max-height: 10;
+    border: round $accent;
+    background: $surface;
+}
+#body {
+    height: 1fr;
+}
+#results-column {
+    width: 1fr;
+    layout: vertical;
+}
+#detail-column {
+    width: 1fr;
+    layout: vertical;
+}
+/* Narrow terminals stack the panes: results on top, detail below
+   (tig moves its diff view to the bottom on narrow screens). The
+   ``1fr``/``2fr`` units are per-axis, so the side-by-side width
+   rules above still hold; only the body's layout axis flips. */
+#body.-stacked {
+    layout: vertical;
+}
+#body.-stacked > #results-column {
+    height: 2fr;
+}
+#body.-stacked > #detail-column {
+    height: 1fr;
+}
+/* Stacked detail stays closed until the user selects a row. */
+#detail-column.-collapsed {
+    display: none;
+}
+#filter {
+    height: 3;
+}
+#detail-scroll {
+    height: 1fr;
+    overflow-y: auto;
+    overflow-x: hidden;
+    /* Reserve the border cell up-front (transparent) so toggling
+       focus only repaints the perimeter — no layout shift, no
+       extra padding when the border appears. Mirrors the
+       OptionList default CSS pattern. */
+    border: round transparent;
+}
+#detail-scroll:focus {
+    border: round $accent;
+}
+#detail {
+    padding: 0 1 0 0;
+}
+#results {
+    height: 1fr;
+    overflow-x: hidden;
+}
+#results-statusline {
+    height: 1;
+    /* One cell from each edge: the spinner aligns with the
+       input border, and the right slot never touches the
+       detail column. */
+    padding: 0 1;
+    layout: horizontal;
+}
+#status-spinner {
+    width: 2;
+    color: $accent;
+}
+#status-text {
+    width: auto;
+    color: $accent;
+    text-style: bold;
+}
+#status-meter {
+    width: 1fr;
+    color: $secondary;
+    margin: 0 1;
+}
+/* Post-search outcome colors: green mirrors the results list's
+   "prompt" kind; muted gray mirrors the detail header's secondary text. */
+#status-spinner.-done, #status-text.-done, #status-meter.-done {
+    color: $success;
+}
+#status-spinner.-stopped, #status-text.-stopped, #status-meter.-stopped {
+    color: $ag-muted;
+}
+#status-right {
+    width: auto;
+    color: $accent;
+    text-style: bold;
+}
+#status-detail {
+    height: 1;
+    /* Statusline left padding (1) + spinner cell (2) so the
+       detail text sits under "Searching". */
+    padding: 0 1 0 3;
+    color: $ag-muted;
+    display: none;
+}
+#status-detail.visible {
+    display: block;
+}
+#detail-statusline {
+    height: 1;
+    padding: 0;
+    color: $text-muted;
+}
+/* Keep Textual's OptionList default of "border appears only on focus".
+   We only cancel the two parts of that focus rule that fight our
+   per-span semantic colors: the ``$foreground 5%`` background-tint
+   and the bright ``$block-cursor-*`` cursor-row recolor. */
+#results {
+    border: round transparent;
+}
+#results:focus {
+    border: round $accent;
+    background-tint: $foreground 0%;
+}
+#results:focus > .option-list--option-highlighted {
+    color: $block-cursor-blurred-foreground;
+    background: $block-cursor-blurred-background;
+    text-style: $block-cursor-blurred-text-style;
+}
