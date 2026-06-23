@@ -34,8 +34,10 @@ OptionList, ListView, DataTable, Tree, SelectionList {
     border: round $ag-faint;
     background: $surface;
     padding: 0 1;
-    /* pi-lite: a thin scrollbar; colors come from the theme's $scrollbar* vars. */
-    scrollbar-size-vertical: 1;
+    /* pi/vim-style: no scrollbar (a terminal column is 1 cell minimum, and pi
+       draws none) — scroll position lives in the statusline instead. Scrolling
+       via wheel / j-k / ctrl-d still works. */
+    scrollbar-size: 0 0;
 }
 OptionList:focus, ListView:focus, DataTable:focus,
 Tree:focus, SelectionList:focus {
@@ -227,7 +229,7 @@ Rule {
 }
 Markdown, MarkdownViewer, RichLog, Log {
     background: transparent;
-    scrollbar-size-vertical: 1;
+    scrollbar-size: 0 0;
 }
 CollapsibleTitle {
     color: $text;
@@ -305,7 +307,7 @@ Screen {
     height: 1fr;
     overflow-y: auto;
     overflow-x: hidden;
-    scrollbar-size-vertical: 1;
+    scrollbar-size: 0 0;
     /* Reserve the border cell up-front (transparent) so toggling
        focus only repaints the perimeter — no layout shift, no
        extra padding when the border appears. Mirrors the
@@ -321,7 +323,7 @@ Screen {
 #results {
     height: 1fr;
     overflow-x: hidden;
-    scrollbar-size-vertical: 1;
+    scrollbar-size: 0 0;
 }
 #results-statusline {
     height: 1;

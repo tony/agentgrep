@@ -154,9 +154,11 @@ def _ag_variables(mode: int) -> dict[str, str]:
 
 # Built-in Textual variables we override for a flat, pi-accented feel: the
 # selection block cursor and footer key both adopt the accent (cursor kept flat,
-# no reverse/bold, the way pi renders selected rows), and the scrollbars get a
-# pi-lite treatment — a quiet faint thumb on a surface-blended track that brightens
-# to the accent on hover/drag, instead of Textual's default blue bar.
+# no reverse/bold, the way pi renders selected rows). The scrollbar palette is
+# kept pi-lite (a quiet faint thumb on a surface-blended track, accent on
+# hover/drag) for completeness — Textual generates these for every theme — but
+# the lite layout hides scrollbars entirely (``scrollbar-size: 0`` in styles.tcss,
+# vim/pi-style), so this palette only renders if a scrollbar is re-enabled.
 #: ``surface`` seed per mode (track color), mirrors the Theme ``surface`` values.
 _SURFACE_HEX: tuple[str, str] = ("#1e1e24", "#ffffff")
 
