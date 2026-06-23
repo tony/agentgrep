@@ -16,6 +16,7 @@ from agentgrep.ui.widgets import (
     FilterInput,
     FilterRequested,
     MeterWidget,
+    PaneHeader,
     ResultsScrollChanged,
     SearchInput,
     SearchResultsList,
@@ -77,6 +78,16 @@ def test_completion_dropdown_remembers_target_input() -> None:
     assert issubclass(CompletionDropdown, OptionList)
     dropdown = CompletionDropdown(id="enum-dropdown", target_input_id="filter")
     assert dropdown._target_input_id == "filter"
+
+
+def test_pane_header_renders_label_and_rule() -> None:
+    """PaneHeader is a Static rendering ``<label> <rule>`` that fills its width."""
+    assert issubclass(PaneHeader, Static)
+    header = PaneHeader("results", id="results-header")
+    # No size before mount → just the bold label, no rule (rule_len clamps to 0).
+    text = header.render()
+    assert text.plain.startswith("results")
+    assert "─" not in text.plain  # no rule until the widget has a width
 
 
 def test_inputs_are_input_subclasses() -> None:

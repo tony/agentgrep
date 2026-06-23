@@ -167,6 +167,7 @@ def build_streaming_ui_app(
             FilterInput,
             FilterRequested,
             MeterWidget,
+            PaneHeader,
             ResultsScrollChanged,
             SearchInput,
             SearchRequested,
@@ -324,6 +325,8 @@ def build_streaming_ui_app(
             self._detail_scroll: t.Any = None
             self._body: t.Any = None
             self._detail_column: t.Any = None
+            self._results_header: t.Any = None
+            self._detail_header: t.Any = None
             # Responsive split: True when the detail pane is stacked
             # below the results rather than beside them. ``_detail_opened``
             # is the tig-style "user selected a row" gate that reveals the
@@ -415,6 +418,10 @@ def build_streaming_ui_app(
             detail_classes = "-collapsed" if stacked else ""
             with horizontal(id="body", classes=body_classes):
                 with vertical(id="results-column"):
+                    # pi-style section header: a bold label + width-filling rule,
+                    # in place of a box border. Recolors to accent when the
+                    # results pane (filter or list) holds focus.
+                    yield PaneHeader("results", id="results-header")
                     with horizontal(id="results-statusline"):
                         yield SpinnerWidget(id="status-spinner")
                         yield static_type("", id="status-text")
@@ -435,6 +442,7 @@ def build_streaming_ui_app(
                     )
                     yield SearchResultsList(id="results")
                 with vertical(id="detail-column", classes=detail_classes):
+                    yield PaneHeader("detail", id="detail-header")
                     with DetailScroll(id="detail-scroll"):
                         yield static_type("", id="detail")
                     yield static_type("", id="detail-statusline")
@@ -454,6 +462,8 @@ def build_streaming_ui_app(
             self._detail_scroll = streaming.query_one("#detail-scroll")
             self._body = streaming.query_one("#body")
             self._detail_column = streaming.query_one("#detail-column")
+            self._results_header = streaming.query_one("#results-header")
+            self._detail_header = streaming.query_one("#detail-header")
             self._status_widget = t.cast(
                 "StaticLike",
                 streaming.query_one("#status-text", static_type),
@@ -525,6 +535,33 @@ def build_streaming_ui_app(
                 if self._spinner_widget is not None:
                     self._spinner_widget.freeze(" ")
                 self._search_input.focus()
+            self._update_pane_focus()
+
+        def on_descendant_focus(self, event: object) -> None:
+            """Recolor the active pane's section header when focus moves."""
+            self._update_pane_focus()
+
+        def on_descendant_blur(self, event: object) -> None:
+            """Recolor the active pane's section header when focus leaves."""
+            self._update_pane_focus()
+
+        def _update_pane_focus(self) -> None:
+            """Mark the focused pane's header ``-active`` (paint-only recolor).
+
+            Bound to the focused *widget*, not the column: the results header
+            lights for the filter or the list, the detail header for the detail
+            scroll, and the top search bar lights neither. This avoids the
+            results header glowing while the user types in the filter only if
+            the cue tracked the column — here it intentionally treats the filter
+            as part of the results pane, but never the search bar.
+            """
+            focused_id = getattr(self.focused, "id", None)
+            results_active = focused_id in {"results", "filter"}
+            detail_active = focused_id == "detail-scroll"
+            if self._results_header is not None:
+                t.cast("t.Any", self._results_header).set_class(results_active, "-active")
+            if self._detail_header is not None:
+                t.cast("t.Any", self._detail_header).set_class(detail_active, "-active")
 
         def on_unmount(self) -> None:
             """Release pump-thread binding and stop the watchdog on teardown."""

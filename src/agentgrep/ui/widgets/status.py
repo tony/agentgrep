@@ -10,11 +10,42 @@ from __future__ import annotations
 import time
 import typing as t
 
+from rich.text import Text
 from textual.widgets import Static
 
 from agentgrep.ui.format import format_progress_percent, render_progress_meter
 
-__all__ = ["MeterWidget", "SpinnerWidget"]
+__all__ = ["MeterWidget", "PaneHeader", "SpinnerWidget"]
+
+
+class PaneHeader(Static):
+    """A pi-style section header: a bold label followed by a width-filling rule.
+
+    Mirrors pi's ``DynamicBorder`` (``"─".repeat(width)``) sitting under an
+    indented bold label (``tree-selector.ts``), compacted onto one row:
+    ``results ────────────``. The label keeps its bold weight; the line color is
+    driven entirely by CSS (``$ag-muted`` at rest, ``$accent`` via the
+    ``-active`` class), so recoloring the focused pane's header is paint-only —
+    no inline color is baked in. The rule length is recomputed on resize.
+    """
+
+    def __init__(self, label: str, *, id: str | None = None) -> None:  # noqa: A002 -- Textual ``id`` kwarg
+        super().__init__(id=id)
+        self._label = label
+
+    def on_resize(self) -> None:
+        """Recompute the rule length when the column width changes."""
+        self.refresh()
+
+    def render(self) -> Text:
+        """Return ``<label> <rule>`` filling the widget width."""
+        width = int(getattr(self.size, "width", 0) or 0)
+        rule_len = max(0, width - len(self._label) - 1)
+        text = Text(no_wrap=True, overflow="crop")
+        text.append(self._label, style="bold")
+        if rule_len:
+            text.append(" " + "─" * rule_len)
+        return text
 
 
 class SpinnerWidget(Static):
