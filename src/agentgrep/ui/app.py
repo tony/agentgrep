@@ -347,10 +347,12 @@ def build_streaming_ui_app(
                 tuple[int, tuple[str, ...], bool, bool, tuple[str, ...]],
                 tuple[object, str],
             ] = collections.OrderedDict()
-            self._first_match_cache: collections.OrderedDict[
-                tuple[int, tuple[str, ...], bool, bool, tuple[str, ...]],
-                int | None,
-            ] = collections.OrderedDict()
+            # Per-record detail scroll memory: id(record) -> scroll_y. A
+            # revisited record restores its position; a record opened for the
+            # first time opens at the top. Bounded like the body cache.
+            self._detail_scroll_positions: collections.OrderedDict[int, float] = (
+                collections.OrderedDict()
+            )
 
         def _get_start_time(self) -> float | None:
             return self._started_at
@@ -379,7 +381,6 @@ def build_streaming_ui_app(
             if self._results is not None:
                 self._results.rerender_records()
             self._detail_body_cache.clear()
-            self._first_match_cache.clear()
             if self._current_detail_record is not None:
                 self.show_detail(self._current_detail_record)
 
@@ -441,6 +442,15 @@ def build_streaming_ui_app(
                         target_input_id="filter",
                     )
                     yield SearchResultsList(id="results")
+                    # Shown only in the pre-search bare-canvas state (CSS hides
+                    # it otherwise); a dim, centered hint teaching the query
+                    # language at the moment of highest intent.
+                    yield static_type(
+                        "try a search to begin\n\n"
+                        "agent:claude   model:gpt*   role:user\n"
+                        'timestamp:>2026-01-01   "exact phrase"',
+                        id="empty-hint",
+                    )
                 with vertical(id="detail-column", classes=detail_classes):
                     yield PaneHeader("detail", id="detail-header")
                     with DetailScroll(id="detail-scroll"):
@@ -527,15 +537,25 @@ def build_streaming_ui_app(
                 self._start_search_worker(self.query)
                 self._filter_input.focus()
             else:
-                # No initial query — leave the chrome idle and land focus on
+                # No initial query — pi "bare canvas": hide the body chrome
+                # behind the centered hint (no status text) and land focus on
                 # the search bar so the user can start typing immediately.
                 self._search_done = True
-                if self._status_widget is not None:
-                    self._status_widget.update("Press Enter to search")
                 if self._spinner_widget is not None:
                     self._spinner_widget.freeze(" ")
+                self._set_empty_state(empty=True)
                 self._search_input.focus()
             self._update_pane_focus()
+
+        def _set_empty_state(self, *, empty: bool) -> None:
+            """Toggle the pre-search bare-canvas state on ``#body``.
+
+            When ``empty`` the body chrome (headers, statusline, filter, detail
+            column) is hidden by CSS, leaving the centered ``#empty-hint``; a
+            launched search reveals it.
+            """
+            if self._body is not None:
+                t.cast("t.Any", self._body).set_class(empty, "-empty")
 
         def on_descendant_focus(self, event: object) -> None:
             """Recolor the active pane's section header when focus moves."""
@@ -578,6 +598,9 @@ def build_streaming_ui_app(
             """
             self.query = query
             self._reset_search_chrome()
+            # A search is starting — reveal the body chrome (leave the bare
+            # canvas), and show the filter now that results will load.
+            self._set_empty_state(empty=False)
             streaming = t.cast("StreamingAppLike", t.cast("object", self))
             streaming.run_worker(
                 self._run_search,
@@ -600,7 +623,7 @@ def build_streaming_ui_app(
             self.control = SearchControl()
             clear_haystack_cache()
             self._detail_body_cache.clear()
-            self._first_match_cache.clear()
+            self._detail_scroll_positions.clear()
             self.all_records = []
             self.filtered_records = []
             self._search_done = False
@@ -822,12 +845,12 @@ def build_streaming_ui_app(
             new_query = self._build_search_query(text)
             self.control.request_answer_now()
             if not text:
+                # Cleared the box — return to the pi bare canvas + hint.
                 self._reset_search_chrome()
                 self._search_done = True
-                if self._status_widget is not None:
-                    self._status_widget.update("Press Enter to search")
                 if self._spinner_widget is not None:
                     self._spinner_widget.freeze(" ")
+                self._set_empty_state(empty=True)
                 self.query = new_query
                 return
             self._start_search_worker(new_query)
@@ -887,6 +910,10 @@ def build_streaming_ui_app(
             of a single apply (NB-4).
             """
             self.all_records.extend(records)
+            # Results are arriving — make sure the panes are revealed (a search
+            # launched via _start_search_worker already did this; a batch driven
+            # directly, e.g. in tests, reveals here). Idempotent.
+            self._set_empty_state(empty=False)
             matching = [record for record in records if self._matches_filter(record)]
             if matching and self._results is not None:
                 results = self._results
@@ -914,6 +941,8 @@ def build_streaming_ui_app(
             never reach this handler — :meth:`_apply_streaming_event`
             drops them.
             """
+            # A search is in progress — reveal the chrome (idempotent).
+            self._set_empty_state(empty=False)
             self._last_snapshot = snapshot
             if self._started_at is None:
                 self._started_at = time.monotonic()
@@ -1054,6 +1083,8 @@ def build_streaming_ui_app(
             shown as a live-ticking sibling widget. The status line no
             longer claims animation budget once a search is done.
             """
+            # A search ran — its outcome belongs on the (now revealed) chrome.
+            self._set_empty_state(empty=False)
             self._search_done = True
             self._stop_elapsed_timer()
             glyphs = {"complete": "✓", "interrupted": "■", "error": "✗"}
@@ -1284,8 +1315,9 @@ def build_streaming_ui_app(
             )
 
         def on_detail_scroll_changed(self, message: DetailScrollChanged) -> None:
-            """Re-render the detail status line on detail-pane scroll."""
+            """Re-render the detail status line and remember the scroll position."""
             self._refresh_detail_statusline(message.percent)
+            self._remember_detail_scroll()
 
         def _refresh_results_status_right(
             self,
@@ -1379,11 +1411,6 @@ def build_streaming_ui_app(
                 float(getattr(scroll, "max_scroll_y", 0) or 0),
             )
 
-        # Constant — keep in sync with the label list in ``show_detail`` below.
-        # 7 label rows (Agent / Kind / Store / Adapter / Timestamp / Model / Path)
-        # plus 1 blank separator = 8 lines of header before the body starts.
-        _DETAIL_HEADER_LINES: t.ClassVar[int] = 8
-
         def show_detail(self, record: SearchRecord) -> None:
             """Render ``record`` with colored labels + format-aware body + scroll-to-match.
 
@@ -1398,13 +1425,14 @@ def build_streaming_ui_app(
             * Everything else keeps the existing ``Text`` + ``highlight_regex``
               flow so search-term matches stay bold-yellow.
 
-            If any current query term occurs in the body the pane is scrolled
-            so that line lands vertically centered in the viewport (line index
-            is recomputed against the formatted body for JSON so the jump is
-            still accurate).
+            A record opened for the first time lands at the top; a record
+            viewed before restores the scroll position the user left it at (see
+            :meth:`_restore_detail_scroll`).
             """
             if self._detail is None:
                 return
+            # Showing a record means results exist — leave the bare-canvas state.
+            self._set_empty_state(empty=False)
             self._current_detail_record = record
             width = max(20, self._detail.size.width or 80)
             theme_vars = self.theme_variables
@@ -1509,11 +1537,11 @@ def build_streaming_ui_app(
             """
             if self._detail is None or self._current_detail_record is not record:
                 return
-            body_renderable, body_for_scroll = body
+            body_renderable, _body_for_scroll = body
             self._detail.update(
                 _RichGroup(t.cast("t.Any", header), t.cast("t.Any", body_renderable))
             )
-            self._scroll_detail_to_first_match(body_for_scroll, query_terms)
+            self._restore_detail_scroll(record)
             self._refresh_detail_statusline()
 
         def _detail_cache_key(
@@ -1653,43 +1681,34 @@ def build_streaming_ui_app(
                     self._detail_body_cache.popitem(last=False)
             return result
 
-        def _scroll_detail_to_first_match(
-            self,
-            body_text: str,
-            query_terms: cabc.Sequence[str],
-        ) -> None:
-            """Jump ``_detail_scroll`` so the first match lands at the viewport center.
+        def _restore_detail_scroll(self, record: SearchRecord) -> None:
+            """Open ``record`` at its remembered scroll, or at the top if new.
 
-            Memoizes ``find_first_match_line`` per ``(record, query)`` so a
-            cursor parked on the same record across viewport refreshes does
-            not rescan the body each time.
+            A record viewed before restores the position the user left it at; a
+            record opened for the first time opens at the top (and is recorded
+            at 0 so the next visit is a no-op until the user scrolls).
             """
             if self._detail_scroll is None:
                 return
             scroll: t.Any = self._detail_scroll
-            cache_key = self._detail_cache_key(query_terms)
-            if cache_key is not None and cache_key in self._first_match_cache:
-                match_line = self._first_match_cache[cache_key]
-                self._first_match_cache.move_to_end(cache_key)
-            else:
-                match_line = find_first_match_line(
-                    body_text,
-                    query_terms,
-                    case_sensitive=self.query.case_sensitive,
-                    regex=self.query.regex,
-                )
-                if cache_key is not None:
-                    self._first_match_cache[cache_key] = match_line
-                    self._first_match_cache.move_to_end(cache_key)
-                    if len(self._first_match_cache) > self._DETAIL_CACHE_MAX:
-                        self._first_match_cache.popitem(last=False)
-            if match_line is None:
-                scroll.scroll_to(y=0, animate=False)
+            key = id(record)
+            remembered = self._detail_scroll_positions.get(key)
+            scroll.scroll_to(y=remembered if remembered is not None else 0, animate=False)
+            if remembered is None:
+                self._detail_scroll_positions[key] = 0.0
+                self._detail_scroll_positions.move_to_end(key)
+                if len(self._detail_scroll_positions) > self._DETAIL_CACHE_MAX:
+                    self._detail_scroll_positions.popitem(last=False)
+
+        def _remember_detail_scroll(self) -> None:
+            """Save the current detail scroll position for the on-screen record."""
+            if self._detail_scroll is None or self._current_detail_record is None:
                 return
-            target_line = self._DETAIL_HEADER_LINES + match_line
-            viewport_h = int(getattr(scroll.size, "height", 0) or 0)
-            center_offset = max(0, target_line - viewport_h // 2)
-            scroll.scroll_to(y=center_offset, animate=False)
+            key = id(self._current_detail_record)
+            self._detail_scroll_positions[key] = float(
+                getattr(self._detail_scroll, "scroll_y", 0.0) or 0.0,
+            )
+            self._detail_scroll_positions.move_to_end(key)
 
         def on_resize(self, event: object) -> None:
             """Debounce rapid resize bursts (e.g. tiling-WM live drag)."""

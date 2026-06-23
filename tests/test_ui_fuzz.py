@@ -252,6 +252,8 @@ async def _m_submit_search(pilot: t.Any, app: t.Any, rng: random.Random, ctx: t.
 
 
 async def _m_type_filter(pilot: t.Any, app: t.Any, rng: random.Random, ctx: t.Any) -> None:
+    if not app._filter_input.display:  # hidden until a search loads results
+        return
     app._filter_input.value = rng.choice(_QUERIES)
     await pilot.pause(0.2)  # let the 150 ms debounce + filter worker fire
     await app.workers.wait_for_complete()
@@ -259,6 +261,8 @@ async def _m_type_filter(pilot: t.Any, app: t.Any, rng: random.Random, ctx: t.An
 
 
 async def _m_navigate(pilot: t.Any, app: t.Any, rng: random.Random, ctx: t.Any) -> None:
+    if not app._results.display:  # hidden in the pre-search bare-canvas state
+        return
     app._results.focus()
     await pilot.press(rng.choice(("j", "k", "g", "G", "ctrl+d", "ctrl+u", "down", "up", "tab")))
 
@@ -273,6 +277,8 @@ async def _m_select_row(pilot: t.Any, app: t.Any, rng: random.Random, ctx: t.Any
 
 
 async def _m_scroll_detail(pilot: t.Any, app: t.Any, rng: random.Random, ctx: t.Any) -> None:
+    if not app._detail_scroll.display:  # hidden until the detail pane is revealed
+        return
     app._detail_scroll.focus()
     await pilot.press(rng.choice(("ctrl+d", "ctrl+u", "g", "G", "ctrl+f", "ctrl+b")))
 
@@ -285,7 +291,12 @@ async def _m_resize(pilot: t.Any, app: t.Any, rng: random.Random, ctx: t.Any) ->
 
 
 async def _m_dropdown(pilot: t.Any, app: t.Any, rng: random.Random, ctx: t.Any) -> None:
-    target = rng.choice((app._search_input, app._filter_input))
+    # The filter input is hidden in the pre-search bare-canvas state; only drive
+    # inputs that are currently displayed (the search bar always is).
+    candidates = [w for w in (app._search_input, app._filter_input) if w.display]
+    if not candidates:
+        return
+    target = rng.choice(candidates)
     target.focus()
     target.value = rng.choice(("agent:", "scope:"))
     await pilot.pause()
@@ -332,7 +343,9 @@ def _assert_invariants(app: t.Any, where: str) -> None:
     filtered_ids = {id(record) for record in app.filtered_records}
     assert filtered_ids <= all_ids, f"{where}: filtered_records not a subset of all_records"
     assert len(app._detail_body_cache) <= app._DETAIL_CACHE_MAX, f"{where}: detail cache unbounded"
-    assert len(app._first_match_cache) <= app._DETAIL_CACHE_MAX, f"{where}: match cache unbounded"
+    assert len(app._detail_scroll_positions) <= app._DETAIL_CACHE_MAX, (
+        f"{where}: scroll-memory cache unbounded"
+    )
 
 
 async def _bounded(coro: t.Awaitable[None], budget: float, where: str) -> None:
@@ -426,7 +439,7 @@ def test_fuzz_detects_worker_leak() -> None:
         all_records=[],
         filtered_records=[],
         _detail_body_cache={},
-        _first_match_cache={},
+        _detail_scroll_positions={},
         _DETAIL_CACHE_MAX=1024,
     )
     with pytest.raises(AssertionError, match="worker leak"):

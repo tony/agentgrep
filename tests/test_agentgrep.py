@@ -2318,6 +2318,10 @@ async def test_streaming_ui_app_mounts_cleanly(
     # the detail pane collapses (display: none) and leaves the focus chain.
     async with app.run_test(size=(120, 24)) as pilot:
         await pilot.pause()
+        # Leave the pre-search bare canvas so the body panes are mounted/visible
+        # (they are hidden until a search runs).
+        app._set_empty_state(empty=False)
+        await pilot.pause()
         focus_chain_ids = {getattr(w, "id", None) for w in app.screen.focus_chain}
         assert "results" in focus_chain_ids, f"#results not in focus chain; chain={focus_chain_ids}"
         # Both inputs and the detail pane should be focusable too.
@@ -2769,6 +2773,10 @@ async def test_tab_moves_focus_from_filter_to_results(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test() as pilot:
         await pilot.pause()
+        # Leave the pre-search bare canvas so the body chrome (filter/results)
+        # is present to focus.
+        app._set_empty_state(empty=False)
+        await pilot.pause()
         # On empty initial query the search bar takes initial focus, so
         # manually move focus to the filter input for this test.
         app._filter_input.focus()
@@ -2788,6 +2796,8 @@ async def test_down_at_empty_filter_releases_focus_to_results(
     """``down`` arrow on an empty filter moves focus to the results table."""
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test() as pilot:
+        await pilot.pause()
+        app._set_empty_state(empty=False)
         await pilot.pause()
         app._filter_input.focus()
         await pilot.pause()
@@ -3537,6 +3547,11 @@ async def test_focus_detail_renders_record_when_opening_stacked_streaming_result
         assert app.focused is not None and app.focused.id == "detail-scroll"
         assert app._current_detail_record is expected
         assert not app._detail_column.has_class("-collapsed")
+        # Records open at the top now (per-record scroll memory), so in the
+        # short stacked viewport the matched body line sits below the metadata
+        # header — scroll down to bring it into view before asserting it renders.
+        app._detail_scroll.scroll_end(animate=False)
+        await pilot.pause()
         screenshot = app.export_screenshot(simplify=True)
         assert "VISIBLEPROBE" in screenshot
         assert f"record&#160;{case.expected_index}" in screenshot
@@ -4086,6 +4101,10 @@ async def test_results_status_right_adapts_to_width(
     async with app.run_test(size=case.size) as pilot:
         await pilot.pause()
         app.all_records.extend(records)
+        # Reveal the chrome so the statusline has a measurable width (the narrow
+        # detection drives the right-slot format).
+        app._set_empty_state(empty=False)
+        await pilot.pause()
         if case.searching:
             app._search_done = False
             # 5662/6748 sources scanned rounds to 84%.
@@ -4254,6 +4273,9 @@ async def test_search_complete_minimizes_on_narrow_statusline(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(40, 24)) as pilot:
         await pilot.pause()
+        # Reveal the chrome so the statusline has a measurable (narrow) width.
+        app._set_empty_state(empty=False)
+        await pilot.pause()
         updates: list[str] = []
         real_update = app._status_widget.update
 
@@ -4347,6 +4369,10 @@ async def test_finish_outcome_freezes_colored_bar(
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=case.size) as pilot:
+        await pilot.pause()
+        # Reveal + lay out the chrome so the statusline has a real width before
+        # the narrow/wide outcome is computed.
+        app._set_empty_state(empty=False)
         await pilot.pause()
         app._search_done = False
         # Seed matches so the right slot occupies its real-world cells —
@@ -4512,6 +4538,8 @@ async def test_narrow_statusline_drops_bar_and_elapsed(
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(40, 24)) as pilot:
+        await pilot.pause()
+        app._set_empty_state(empty=False)
         await pilot.pause()
         app._search_done = False
         app._apply_progress(_make_progress_snapshot(agentgrep))
@@ -4866,56 +4894,6 @@ async def test_show_detail_memoizes_body_formatting(
         assert load_calls == 0, "JSON should not be re-parsed for the same record + query"
 
 
-async def test_show_detail_memoizes_first_match_line(
-    tmp_path: pathlib.Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """``find_first_match_line`` is not called twice for the same record + query."""
-    agentgrep = t.cast("t.Any", load_agentgrep_module())
-    home = tmp_path / "home"
-    home.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(
-        agentgrep,
-        "run_search_query",
-        lambda *args, **kwargs: [],
-    )
-    query = agentgrep.SearchQuery(
-        terms=("needle",),
-        scope="prompts",
-        any_term=False,
-        regex=False,
-        case_sensitive=False,
-        agents=("codex",),
-        limit=None,
-    )
-    app = agentgrep.build_streaming_ui_app(home, query, control=agentgrep.SearchControl())
-    body = "\n".join(["padding"] * 5 + ["needle here"] + ["padding"] * 5)
-    record = agentgrep.SearchRecord(
-        kind="prompt",
-        agent="codex",
-        store="codex.sessions",
-        adapter_id="codex.sessions_jsonl.v1",
-        path=tmp_path / "n.jsonl",
-        text=body,
-    )
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        app.show_detail(record)
-        await pilot.pause()
-        match_calls = 0
-        real_match = agentgrep.find_first_match_line
-
-        def counting_match(*args: t.Any, **kwargs: t.Any) -> t.Any:
-            nonlocal match_calls
-            match_calls += 1
-            return real_match(*args, **kwargs)
-
-        monkeypatch.setattr(agentgrep, "find_first_match_line", counting_match)
-        app.show_detail(record)
-        await pilot.pause()
-        assert match_calls == 0, "first_match_line should be cached for repeat views"
-
-
 async def test_reset_search_chrome_invalidates_detail_caches(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -4938,51 +4916,45 @@ async def test_reset_search_chrome_invalidates_detail_caches(
         assert len(app._detail_body_cache) >= 1
         app._reset_search_chrome()
         assert len(app._detail_body_cache) == 0
-        assert len(app._first_match_cache) == 0
+        assert len(app._detail_scroll_positions) == 0
 
 
-async def test_show_detail_scrolls_to_first_match(
+async def test_detail_scroll_memory(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When the record body contains a match, the detail-scroll jumps so the match centers."""
+    """New records open at the top; revisiting a record restores its scroll."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
-    home = tmp_path / "home"
-    home.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(
-        agentgrep,
-        "run_search_query",
-        lambda *args, **kwargs: [],
-    )
-    # Build the app with a query that has terms; default _build_empty_ui_app
-    # uses ``terms=()``, which would make first_match always return None.
-    query = agentgrep.SearchQuery(
-        terms=("needle",),
-        scope="prompts",
-        any_term=False,
-        regex=False,
-        case_sensitive=False,
-        agents=("codex",),
-        limit=None,
-    )
-    control = agentgrep.SearchControl()
-    app = agentgrep.build_streaming_ui_app(home, query, control=control)
-    # Match lands at line 50 of the body; record_at_match.
-    body = "\n".join(["padding"] * 50 + ["this needle is the match"] + ["padding"] * 50)
-    record = agentgrep.SearchRecord(
-        kind="prompt",
-        agent="codex",
-        store="codex.sessions",
-        adapter_id="codex.sessions_jsonl.v1",
-        path=tmp_path / "match.jsonl",
-        text=body,
-    )
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    big = "\n".join(f"line {i}" for i in range(200))
+
+    def _record(name: str) -> t.Any:
+        return agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="codex.sessions",
+            adapter_id="codex.sessions_jsonl.v1",
+            path=tmp_path / f"{name}.jsonl",
+            text=big,
+        )
+
+    rec_a, rec_b = _record("a"), _record("b")
     async with app.run_test(size=(120, 24)) as pilot:
         await pilot.pause()
-        app.show_detail(record)
+        # A fresh record opens at the top.
+        app.show_detail(rec_a)
         await pilot.pause()
-        # Match at body line 50 + 8 header lines = ~line 58; centered into a
-        # multi-row viewport, scroll_y should be > 0.
+        assert app._detail_scroll.scroll_y == 0
+        # Scroll down — the position is remembered for rec_a.
+        app._detail_scroll.scroll_to(y=20, animate=False)
+        await pilot.pause()
+        # A different, never-seen record opens at the top.
+        app.show_detail(rec_b)
+        await pilot.pause()
+        assert app._detail_scroll.scroll_y == 0
+        # Returning to rec_a restores its remembered scroll.
+        app.show_detail(rec_a)
+        await pilot.pause()
         assert app._detail_scroll.scroll_y > 0
 
 

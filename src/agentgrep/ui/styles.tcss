@@ -344,7 +344,8 @@ Screen {
     border: none;
 }
 #detail {
-    padding: 0 1 0 0;
+    /* 1 cell of left (and right) padding so the contents don't hug the seam. */
+    padding: 0 1;
 }
 #results {
     height: 1fr;
@@ -424,8 +425,34 @@ Screen {
 #results-header, #detail-header {
     height: 1;
     width: 1fr;
+    /* 1 cell of side padding so the label aligns with the padded contents. */
+    padding: 0 1;
     color: $ag-faint;
 }
 #results-header.-active, #detail-header.-active {
     color: $accent;
+}
+
+/* Empty / pre-search state (pi "bare canvas + hint"): until a search starts,
+   #body carries the `-empty` class and all of its chrome is hidden, leaving
+   just the search input above a dim centered hint with example queries. The
+   chrome reveals (class removed) the moment a search is launched. */
+#empty-hint {
+    display: none;
+    height: 1fr;
+    width: 1fr;
+    content-align: center middle;
+    text-align: center;
+    color: $ag-dim;
+}
+#body.-empty #results-header,
+#body.-empty #results-statusline,
+#body.-empty #filter,
+#body.-empty #filter-dropdown,
+#body.-empty #results,
+#body.-empty #detail-column {
+    display: none;
+}
+#body.-empty #empty-hint {
+    display: block;
 }

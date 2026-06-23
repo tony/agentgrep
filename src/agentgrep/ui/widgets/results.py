@@ -76,6 +76,12 @@ class SearchResultsList(OptionList, can_focus=True):
         self.add_options(
             [Option(self._render_record(r), id=str(id(r))) for r in records],
         )
+        # Records now exist — leave the app's pre-search bare-canvas state so the
+        # panes are visible (idempotent; the live search flow also does this at
+        # launch).
+        reveal = getattr(self.app, "_set_empty_state", None)
+        if callable(reveal):
+            reveal(empty=False)
 
     def set_records(self, records: cabc.Sequence[SearchRecord]) -> int:
         """Apply a new filter result by patching the existing options.
