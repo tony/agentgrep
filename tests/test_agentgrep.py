@@ -2345,6 +2345,82 @@ async def test_streaming_ui_app_wires_inline_completion(
         assert suggestion == "agent:"
 
 
+async def test_streaming_ui_filter_labels_rule_search_stays_bare(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The filter input carries a pi label-in-the-rule; the search prompt stays bare.
+
+    The top search prompt is the primary entry point and is kept unlabelled;
+    the secondary filter (and the results/detail pane headers) carry a label.
+    """
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        search = app.screen.query_one("#search")
+        filter_input = app.screen.query_one("#filter")
+        assert str(filter_input.border_title) == "filter"
+        # The prompt itself has no border label.
+        assert not search.border_title
+
+
+async def test_streaming_ui_search_rule_state_classes(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The search rule reflects search state as a single ``-`` class on ``#search``.
+
+    Mirrors pi's dynamic editor border: idle (no class), searching, and each
+    finished outcome map to mutually-exclusive classes recolored in TCSS.
+    """
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        search = app.screen.query_one("#search")
+
+        app._set_search_rule_state("searching")
+        assert search.has_class("-searching")
+
+        # Outcomes are mutually exclusive — the prior class is cleared.
+        app._set_search_rule_state("complete")
+        assert search.has_class("-done")
+        assert not search.has_class("-searching")
+
+        app._set_search_rule_state("interrupted")
+        assert search.has_class("-stopped")
+        assert not search.has_class("-done")
+
+        # Empty state returns the rule to idle (no state class).
+        app._set_search_rule_state("")
+        assert not any(search.has_class(c) for c in ("-searching", "-done", "-stopped", "-error"))
+
+
+async def test_streaming_ui_result_row_title_not_always_bold(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rows bake no always-on bold; weight is a selection signal applied via CSS.
+
+    pi reserves bold for the selected line, so the row builder leaves every
+    span at regular weight and the highlighted-row CSS supplies the emphasis.
+    """
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        results = app.screen.query_one("#results")
+        record = _agentgrep_module.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="codex.history",
+            adapter_id="codex.history_jsonl.v1",
+            path=tmp_path / "history.jsonl",
+            text="error handling",
+            title="error handling notes",
+        )
+        rendered = results._render_record(record)
+        assert all("bold" not in str(span.style) for span in rendered.spans)
+
+
 async def test_streaming_ui_app_enum_dropdown_opens_and_closes(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

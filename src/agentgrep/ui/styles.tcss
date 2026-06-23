@@ -289,6 +289,27 @@ Screen {
 #search {
     height: 3;
 }
+/* The top search prompt carries NO border label (it's the primary entry, kept
+   bare); its rule instead acts as a live search-state indicator. Dynamic
+   search-rule color (pi updateEditorBorderColor): the classes are toggled in
+   Python (_set_search_rule_state); id+class specificity (1,1,0) wins over
+   Input:focus (0,1,1) so the state color shows with or without focus. */
+#search.-searching {
+    border-top: solid $accent;
+    border-bottom: solid $accent;
+}
+#search.-done {
+    border-top: solid $success;
+    border-bottom: solid $success;
+}
+#search.-stopped {
+    border-top: solid $ag-muted;
+    border-bottom: solid $ag-muted;
+}
+#search.-error {
+    border-top: solid $error;
+    border-bottom: solid $error;
+}
 #enum-dropdown, #filter-dropdown {
     /* Float over the results just below the input, like Select's popup
        — no layout space, toggled via .display so re-populating per
@@ -333,6 +354,12 @@ Screen {
 }
 #filter {
     height: 3;
+    /* pi label-in-the-rule: the FilterInput's `label` becomes `border_title`,
+       which Textual paints into the existing top rule (no corners, since the
+       side borders are empty) — the `── filter ─` look. Right-aligned and calm
+       so it reads as context, not chrome. */
+    border-title-align: right;
+    border-title-color: $ag-muted;
 }
 #detail-scroll {
     height: 1fr;
@@ -416,7 +443,16 @@ Screen {
 #results:focus > .option-list--option-highlighted {
     color: $block-cursor-blurred-foreground;
     background: $block-cursor-blurred-background;
-    text-style: $block-cursor-blurred-text-style;
+    /* Bold is the selection signal (pi bolds the selected line, not every line).
+       `text-style` only adds the weight flag — it leaves the row's baked per-span
+       hues intact, unlike `color`. The always-on row-title bold was dropped in
+       results.py so this is the single place weight marks the cursor row. */
+    text-style: bold;
+}
+/* The cursor row stays bold even when the list is blurred, so the selection is
+   legible while the user types in the search/filter box above it. */
+#results > .option-list--option-highlighted {
+    text-style: bold;
 }
 
 /* pi-style section headers (a bold label + width-filling rule) stand in for the

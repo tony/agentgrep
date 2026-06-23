@@ -52,6 +52,7 @@ class FilterInput(Input):
         id: str | None = None,  # noqa: A002 -- forwarded to Textual's ``id`` kwarg
         suggester: Suggester | None = None,
         highlighter: Highlighter | None = None,
+        label: str | None = None,
     ) -> None:
         super().__init__(
             placeholder=placeholder,
@@ -60,6 +61,12 @@ class FilterInput(Input):
             highlighter=highlighter,
         )
         self._debounce_timer: Timer | None = None
+        self._label = label
+
+    def on_mount(self) -> None:
+        """Paint the pi label-in-the-rule into the top border (see :class:`SearchInput`)."""
+        if self._label is not None:
+            self.border_title = self._label
 
     def _watch_value(self, value: str) -> None:
         """Post normal ``Input.Changed`` and arm a debounced ``FilterRequested``."""
@@ -162,6 +169,7 @@ class SearchInput(Input):
         id: str | None = None,  # noqa: A002 -- forwarded to Textual's ``id`` kwarg
         suggester: Suggester | None = None,
         highlighter: Highlighter | None = None,
+        label: str | None = None,
     ) -> None:
         super().__init__(
             value=value,
@@ -170,6 +178,22 @@ class SearchInput(Input):
             suggester=suggester,
             highlighter=highlighter,
         )
+        self._label = label
+
+    def on_mount(self) -> None:
+        """Paint ``label`` into the top rule as the pi label-in-the-rule.
+
+        pi embeds a right-aligned context label in an editor's top border
+        (its scroll indicator / footer model name). Textual renders a
+        widget's ``border_title`` on whatever border edge exists, so with
+        the top/bottom-rule-only input styling this lands the label inside
+        the top rule with no corners — the ``── search ─`` look. The label
+        text is a neutral field identifier by default; reassign
+        ``border_title`` at runtime to surface live state (scope, agent,
+        mode) instead. Alignment and color live in ``styles.tcss``.
+        """
+        if self._label is not None:
+            self.border_title = self._label
 
     def on_input_submitted(self, event: object) -> None:
         """Enter pressed — dispatch a :class:`SearchRequested` for the current value."""

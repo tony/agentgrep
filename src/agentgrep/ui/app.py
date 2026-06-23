@@ -434,6 +434,7 @@ def build_streaming_ui_app(
                         id="filter",
                         suggester=self._completion_suggester,
                         highlighter=self._query_highlighter,
+                        label="filter",
                     )
                     # Keyword/term picker for the query-aware filter; floats
                     # over the results just below the filter input.
@@ -601,6 +602,7 @@ def build_streaming_ui_app(
             # A search is starting — reveal the body chrome (leave the bare
             # canvas), and show the filter now that results will load.
             self._set_empty_state(empty=False)
+            self._set_search_rule_state("searching")
             streaming = t.cast("StreamingAppLike", t.cast("object", self))
             streaming.run_worker(
                 self._run_search,
@@ -659,6 +661,7 @@ def build_streaming_ui_app(
                 self._set_outcome_classes(self._status_widget, "")
             if self._meter_widget is not None:
                 self._meter_widget.reset()
+            self._set_search_rule_state("")
             # ``_detail_visible`` is deliberately NOT reset — the Ctrl-\
             # toggle is sticky for the session; only the row's stale
             # content is wiped.
@@ -1095,6 +1098,7 @@ def build_streaming_ui_app(
                 self._meter_widget.freeze(outcome)
             if self._status_widget is not None:
                 self._set_outcome_classes(self._status_widget, outcome)
+            self._set_search_rule_state(outcome)
             if outcome == "error":
                 summary = f"Search failed: {error_message}"
             elif outcome == "interrupted":
@@ -1123,6 +1127,29 @@ def build_streaming_ui_app(
             outcome_class = classes.get(outcome)
             if outcome_class is not None:
                 target.add_class(outcome_class)
+
+        def _set_search_rule_state(self, state: str) -> None:
+            """Tint the search input's top/bottom rule by search state.
+
+            Mirrors pi's ``updateEditorBorderColor``: the input border is a
+            live state indicator, not a static focus pair. ``state`` is one of
+            ``""`` (idle), ``"searching"``, ``"complete"``, ``"interrupted"``,
+            or ``"error"``; each maps to a ``-`` class on ``#search`` whose
+            color lives in ``styles.tcss`` (so this is a paint-only swap that
+            wins over ``Input:focus`` by id+class specificity).
+            """
+            if self._search_input is None:
+                return
+            target = t.cast("t.Any", self._search_input)
+            target.remove_class("-searching", "-done", "-stopped", "-error")
+            rule_class = {
+                "searching": "-searching",
+                "complete": "-done",
+                "interrupted": "-stopped",
+                "error": "-error",
+            }.get(state)
+            if rule_class is not None:
+                target.add_class(rule_class)
 
         def _render_finished_status(self) -> None:
             """Paint the post-search left text — the frozen bar is the summary.

@@ -25,6 +25,12 @@ from agentgrep.ui.widgets.messages import ResultsScrollChanged
 
 __all__ = ["SearchResultsList"]
 
+#: Rich style for a row's title span. Empty (regular weight) by design: bold is a
+#: *selection* signal applied to the highlighted row via CSS (pi bolds the
+#: selected line, not every line), so an always-on bold here would flatten the
+#: agent → title → metadata hierarchy. One knob to dial row title weight.
+_TITLE_STYLE = ""
+
 
 class SearchResultsList(OptionList, can_focus=True):
     """``OptionList`` subclass for streaming agentgrep search records.
@@ -222,7 +228,7 @@ class SearchResultsList(OptionList, can_focus=True):
         text.append("  ")
         text.append(timestamp_text, style=f"italic {dim_style}".rstrip())
         text.append("  ")
-        text.append(title_text, style="bold")
+        text.append(title_text, style=_TITLE_STYLE)
         text.append("  ")
         text.append(path_text, style=muted_style)
         return text

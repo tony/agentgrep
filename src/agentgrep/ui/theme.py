@@ -72,10 +72,13 @@ _KIND_HUES: dict[str, tuple[str, str]] = {
 }
 
 # Muted/dim/faint text trio + the model hue (pi's customMessageLabel purple).
+# This trio is the app-wide contrast dial: muted=paths, dim=timestamps, faint=
+# at-rest input/pane rules. The dark column trends brighter and the light column
+# darker than a bare gray so each tier stays legible against its page.
 _TEXT_HUES: dict[str, tuple[str, str]] = {
-    "ag-muted": ("#808080", "#6c6c6c"),
-    "ag-dim": ("#666666", "#767676"),
-    "ag-faint": ("#505050", "#b0b0b0"),
+    "ag-muted": ("#909090", "#5c5c5c"),
+    "ag-dim": ("#767676", "#666666"),
+    "ag-faint": ("#5a5a5a", "#a0a0a0"),
     "ag-model": ("#9575cd", "#7e57c2"),
 }
 
