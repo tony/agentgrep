@@ -18,11 +18,35 @@
 /* ====================================================================
    Text entry — Input, MaskedInput, TextArea
    ==================================================================== */
+/* pi/vim-style text entry: a thin rule above and below, no side borders, and the
+   text flush to the left edge. Textual's Input defaults to `padding: 0 2` plus a
+   full `tall` box, which insets the text ~3 cells; pi draws only a `─` rule top
+   and bottom (DynamicBorder = "─".repeat(width)) and starts the text at column 0.
+   The focus rule re-resets all edges (`border: none`) before recoloring top and
+   bottom, so Input's own `:focus { border: tall }` default can't reintroduce the
+   side borders. */
 Input, MaskedInput, TextArea {
-    border: round $ag-faint;
+    border: none;
+    border-top: solid $ag-faint;
+    border-bottom: solid $ag-faint;
+    /* pi runs the text flush to column 0; a single cell of side padding is a
+       gentler experiment. Set `padding: 0` for pi-exact flush. */
+    padding: 0 1;
     background: $surface;
 }
 Input:focus, MaskedInput:focus, TextArea:focus {
+    border: none;
+    border-top: solid $accent;
+    border-bottom: solid $accent;
+}
+
+/* Backup variant: the boxed (rounded, all-around) input we shipped first — add
+   the `-boxed` class to an input to opt back into it. */
+Input.-boxed, MaskedInput.-boxed, TextArea.-boxed {
+    border: round $ag-faint;
+    padding: 0 2;
+}
+Input.-boxed:focus, MaskedInput.-boxed:focus, TextArea.-boxed:focus {
     border: round $accent;
 }
 
