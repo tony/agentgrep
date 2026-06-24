@@ -365,6 +365,10 @@ def build_streaming_ui_app(
             # kept so find can re-highlight the body without rebuilding the header.
             self._detail_body_text: str = ""
             self._detail_header_text: t.Any = None
+            # The text the detail body is actually DISPLAYED as — the pretty-
+            # printed JSON for json bodies, the raw body otherwise. Find matches
+            # and scroll work against this so offsets line up with what is shown.
+            self._detail_find_source: str = ""
             # Per-record find memory, mirroring _detail_scroll_positions:
             # id(record) -> (query, match_index, input_cursor_pos). Bounded LRU.
             self._detail_find_state: collections.OrderedDict[
@@ -1551,7 +1555,10 @@ def build_streaming_ui_app(
             """
             if self._detail is None or self._current_detail_record is not record:
                 return
-            body_renderable, _body_for_scroll = body
+            body_renderable, body_for_scroll = body
+            # The displayed text find searches/scrolls against — formatted JSON
+            # for json bodies, the raw body otherwise.
+            self._detail_find_source = body_for_scroll
             self._detail.update(
                 _RichGroup(t.cast("t.Any", header), t.cast("t.Any", body_renderable))
             )
@@ -1787,7 +1794,7 @@ def build_streaming_ui_app(
                 return
             self._detail_find_query = query
             self._detail_find_matches = self._compute_find_matches(
-                self._detail_body_text,
+                self._detail_find_source or self._detail_body_text,
                 query,
             )
             total = len(self._detail_find_matches)
@@ -1829,23 +1836,35 @@ def build_streaming_ui_app(
             return matches
 
         def _present_detail_find(self) -> None:
-            """Render the body as text with search/filter/find highlights overlaid.
+            """Render the body with search/filter/find highlights overlaid.
 
-            While find is active the body renders as highlighted text (search
-            gold, filter accent, all find matches purple, the current match
-            gold) rather than the format-aware renderable, so matches show
-            consistently. Built fresh each time so the body cache stays clean.
+            For JSON the syntax-highlighted (pretty-printed) text is kept and the
+            search/filter/find spans are layered on top, so token colors survive
+            while find is active. Other formats render as plain highlighted text.
+            Built fresh each time (match offsets are against ``_detail_find_source``,
+            the displayed text) so the body cache stays clean.
             """
             if self._detail is None or self._current_detail_record is None:
                 return
-            query_terms = list(self.query.terms)
-            text = highlight_matches(
-                self._detail_body_text,
-                query_terms,
-                case_sensitive=self.query.case_sensitive,
-                regex=self.query.regex,
-                style=self._match_style("search"),
-            )
+            source = self._detail_find_source or self._detail_body_text
+            if detect_content_format(source) == "json":
+                # Keep JSON token colors: highlight via Syntax, then layer spans.
+                text = _RichSyntax(
+                    source,
+                    "json",
+                    theme="ansi_dark",
+                    word_wrap=True,
+                ).highlight(source)
+                text.no_wrap = False
+                self._apply_search_highlight(text)
+            else:
+                text = highlight_matches(
+                    source,
+                    list(self.query.terms),
+                    case_sensitive=self.query.case_sensitive,
+                    regex=self.query.regex,
+                    style=self._match_style("search"),
+                )
             self._apply_filter_highlight(text)
             find_style = self._match_style("find")
             current_style = self._match_style("find-current")
@@ -1855,6 +1874,25 @@ def build_streaming_ui_app(
             self._detail.update(
                 _RichGroup(t.cast("t.Any", self._detail_header_text), t.cast("t.Any", text)),
             )
+
+        def _apply_search_highlight(self, text: t.Any) -> None:
+            """Overlay the active search-query terms onto ``text`` (for the JSON path).
+
+            The plain-text path bakes these via ``highlight_matches``; on the
+            Syntax-highlighted JSON ``Text`` they are layered with the same
+            regex/style so search terms read consistently in both paths.
+            """
+            style = self._match_style("search")
+            for term in self.query.terms:
+                if not term:
+                    continue
+                try:
+                    flags = 0 if self.query.case_sensitive else re.IGNORECASE
+                    pattern = term if self.query.regex else re.escape(term)
+                    compiled = re.compile(pattern, flags)
+                except re.error:
+                    continue
+                text.highlight_regex(compiled, style=style)
 
         def _scroll_to_current_match(self) -> None:
             """Scroll the detail pane so the current find match is near the top.
@@ -1880,7 +1918,7 @@ def build_streaming_ui_app(
             """
             header = self._detail_header_text
             header_text = str(getattr(header, "plain", "")) if header is not None else ""
-            body = self._detail_body_text
+            body = self._detail_find_source or self._detail_body_text
             width = 0
             if self._detail is not None:
                 width = int(getattr(self._detail.content_size, "width", 0) or 0)

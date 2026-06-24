@@ -3643,6 +3643,34 @@ async def test_detail_find_scrolls_wrapped_match_into_view(
         assert any(row in viewport for row in rows)
 
 
+async def test_detail_find_keeps_json_syntax_colors(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Find on a JSON body keeps syntax token colors and layers the find highlight."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    body = '{"role": "user", "needle": "a", "items": [{"needle": "b"}], "x": "no"}'
+    record = _ui_record(agentgrep, tmp_path / "j.jsonl", body, "j")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app._set_empty_state(empty=False)
+        app.show_detail(record)
+        await pilot.pause()
+        # The find source is the pretty-printed (multiline) JSON, so offsets and
+        # matches line up with what is displayed.
+        assert "\n" in app._detail_find_source
+        app.action_open_detail_find()
+        app._detail_find_input.load_query("needle")
+        app._run_detail_find("needle", reset_cursor=True)
+        await pilot.pause()
+        assert len(app._detail_find_matches) == 2
+        body_text = app._detail.content.renderables[1]
+        styles = {str(span.style) for span in body_text.spans}
+        assert any("on " in s for s in styles)  # find-match background spans
+        assert any(s and "on " not in s and s != "none" for s in styles)  # JSON token colors
+
+
 async def test_ctrl_j_from_filter_focuses_results(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
