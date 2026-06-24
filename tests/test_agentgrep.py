@@ -3317,6 +3317,28 @@ DETAIL_FIND_STEP_LIVE_QUERY_CASES = [
 ]
 
 
+class DetailFindPendingRenderCase(t.NamedTuple):
+    """A detail-find query while the selected large record is still rendering."""
+
+    test_id: str
+    query: str
+    expected_matches: int
+
+
+DETAIL_FIND_PENDING_RENDER_CASES = [
+    DetailFindPendingRenderCase(
+        test_id="does-not-search-old-source",
+        query="oldneedle",
+        expected_matches=0,
+    ),
+    DetailFindPendingRenderCase(
+        test_id="searches-new-body-fallback",
+        query="newneedle",
+        expected_matches=1,
+    ),
+]
+
+
 @pytest.mark.parametrize(
     "case",
     DETAIL_FIND_STALE_REQUEST_CASES,
@@ -3381,6 +3403,51 @@ async def test_detail_find_steps_live_query_before_navigation(
         assert app._detail_find_query == "needle"
         assert len(app._detail_find_matches) == 10
         assert app._detail_find_current == case.expected_index
+
+
+@pytest.mark.parametrize(
+    "case",
+    DETAIL_FIND_PENDING_RENDER_CASES,
+    ids=[case.test_id for case in DETAIL_FIND_PENDING_RENDER_CASES],
+)
+async def test_detail_find_uses_new_body_while_large_render_is_pending(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: DetailFindPendingRenderCase,
+) -> None:
+    """Opening find before a large render finishes searches the new record body."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    old_record = _ui_record(
+        agentgrep,
+        tmp_path / "old.jsonl",
+        "oldneedle only lives in the previous record",
+        "old",
+    )
+    new_body = "newneedle lives here\n" + ("x" * (app._DETAIL_ASYNC_BODY_THRESHOLD + 1000))
+    new_record = _ui_record(agentgrep, tmp_path / "new.jsonl", new_body, "new")
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app.show_detail(old_record)
+        await pilot.pause()
+        assert "oldneedle" in app._detail_find_source
+
+        scheduled_workers: list[object] = []
+
+        def capture_worker(worker: object, **_: object) -> None:
+            scheduled_workers.append(worker)
+
+        monkeypatch.setattr(app, "run_worker", capture_worker)
+        app.show_detail(new_record)
+        assert scheduled_workers
+
+        app.action_open_detail_find()
+        app._detail_find_input.load_query(case.query)
+        app._run_detail_find(case.query, reset_cursor=True)
+        await pilot.pause()
+
+        assert len(app._detail_find_matches) == case.expected_matches
 
 
 async def test_detail_find_searches_navigates_and_counts(

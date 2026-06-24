@@ -1478,6 +1478,7 @@ def build_streaming_ui_app(
             # body (without rebuilding the header) and scroll to matches.
             self._detail_header_text = header
             self._detail_body_text = body_truncated
+            self._detail_find_source = ""
             match_styles = _DetailMatchStyles(
                 search=self._match_style("search"),
                 filter=self._match_style("filter"),
