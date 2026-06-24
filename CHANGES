@@ -36,19 +36,31 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a27 (Yet to be released)
+## agentgrep 0.1.0a28 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+## agentgrep 0.1.0a27 (2026-06-24)
+
+agentgrep 0.1.0a27 reworks the interactive explorer (`agentgrep ui`)
+toward a calmer, pi- and Claude-Code-inspired look: the terminal
+background shows through, the window header and visible scrollbars are
+gone, and panes are labelled with lightweight rule headers instead of
+boxes. It also adds an in-record find — press `/` or `ctrl-f` to search
+within an open result, with JSON bodies keeping their syntax colours
+under the highlight — and a staged `ctrl-c` that clears the focused
+input or arms a brief confirm-to-exit prompt instead of quitting the
+explorer outright. See {ref}`tui`.
+
 ### What's new
 
 #### A pi-inspired redesign of the explorer TUI (#77)
 
-The interactive explorer (running `agentgrep` with no query) has been
-reworked toward a calmer, pi- and Claude-Code-inspired aesthetic. The
-terminal background now shows through, the top header bar and visible
+The interactive explorer (`agentgrep ui`) has been reworked toward a
+calmer, pi- and Claude-Code-inspired aesthetic. The terminal background
+now shows through, the top header bar and visible
 scrollbars are gone, panes carry lightweight left-aligned section
 headers instead of boxes, and the search and filter inputs are reduced
 to a single rule. The empty explorer opens on a bare canvas with a short
