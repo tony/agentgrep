@@ -186,6 +186,10 @@ class DetailFindInput(Input):
         doesn't re-run the find (and reset the match cursor) via the debounce.
         """
         self.value = value
+        self.cancel_pending_request()
+
+    def cancel_pending_request(self) -> None:
+        """Cancel the pending debounced find request, if any."""
         if self._debounce_timer is not None:
             self._debounce_timer.stop()
             self._debounce_timer = None
@@ -193,8 +197,7 @@ class DetailFindInput(Input):
     def _watch_value(self, value: str) -> None:
         """Post the normal ``Input.Changed`` and arm a debounced find request."""
         super()._watch_value(value)
-        if self._debounce_timer is not None:
-            self._debounce_timer.stop()
+        self.cancel_pending_request()
         self._debounce_timer = self.set_timer(
             self._DEBOUNCE_SECONDS,
             lambda: self.post_message(DetailFindRequested(text=value)),

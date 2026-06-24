@@ -1757,6 +1757,11 @@ def build_streaming_ui_app(
 
         def on_detail_find_requested(self, message: DetailFindRequested) -> None:
             """Re-run the find from the first match when the (debounced) query changes."""
+            if not self._detail_find_active or self._detail_find_input is None:
+                return
+            live_text = str(getattr(self._detail_find_input, "value", "") or "")
+            if message.text != live_text or message.text == self._detail_find_query:
+                return
             self._run_detail_find(message.text, reset_cursor=True)
 
         def _run_detail_find(self, query: str, *, reset_cursor: bool) -> None:
@@ -1869,7 +1874,9 @@ def build_streaming_ui_app(
             self._detail_find_matches = []
             self._detail_find_current = 0
             if self._detail_find_input is not None:
-                t.cast("t.Any", self._detail_find_input).display = False
+                find_input = t.cast("t.Any", self._detail_find_input)
+                find_input.cancel_pending_request()
+                find_input.display = False
 
         def _close_detail_find(self) -> None:
             """Close + cancel the find: save state, drop highlights, restore focus.

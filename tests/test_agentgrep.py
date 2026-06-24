@@ -3277,6 +3277,65 @@ async def _open_detail_with_find(app: t.Any, record: t.Any, pilot: t.Any) -> Non
     await pilot.pause()
 
 
+class DetailFindStaleRequestCase(t.NamedTuple):
+    """A stale debounced find request scenario."""
+
+    test_id: str
+    live_text: str
+    message_text: str
+    close_first: bool
+
+
+DETAIL_FIND_STALE_REQUEST_CASES = [
+    DetailFindStaleRequestCase(
+        test_id="closed-find-ignores-pending-request",
+        live_text="needle",
+        message_text="needle",
+        close_first=True,
+    ),
+    DetailFindStaleRequestCase(
+        test_id="changed-input-ignores-old-request",
+        live_text="nomatch",
+        message_text="needle",
+        close_first=False,
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "case",
+    DETAIL_FIND_STALE_REQUEST_CASES,
+    ids=[case.test_id for case in DETAIL_FIND_STALE_REQUEST_CASES],
+)
+async def test_detail_find_ignores_stale_debounce_requests(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: DetailFindStaleRequestCase,
+) -> None:
+    """Stale debounced find requests do not repaint hidden or superseded find state."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    from agentgrep.ui.widgets.messages import DetailFindRequested
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = _detail_find_record(agentgrep, tmp_path / "a.jsonl")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await _open_detail_with_find(app, record, pilot)
+        app._detail_find_input.load_query(case.live_text)
+        if case.close_first:
+            app._close_detail_find()
+            await pilot.pause()
+
+        app.on_detail_find_requested(DetailFindRequested(case.message_text))
+        await pilot.pause()
+
+        assert app._detail_find_query == ""
+        assert app._detail_find_matches == []
+        if case.close_first:
+            assert app._detail_find_active is False
+            assert app._detail_find_input.display is False
+
+
 async def test_detail_find_searches_navigates_and_counts(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
