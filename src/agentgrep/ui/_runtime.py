@@ -112,7 +112,8 @@ def bind_pump_thread() -> None:
     Call once from ``App.on_mount`` (which Textual runs on the pump thread) so
     :func:`assert_on_pump` / :func:`assert_off_pump` have a reference identity.
     """
-    global _pump_thread_id
+    global _GUARDS_ENABLED, _pump_thread_id
+    _GUARDS_ENABLED = _compute_guards_enabled()
     _pump_thread_id = threading.get_ident()
 
 

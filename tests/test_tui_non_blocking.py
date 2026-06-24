@@ -258,6 +258,23 @@ def test_offload_raises_on_pump(monkeypatch: pytest.MonkeyPatch) -> None:
         guarded()
 
 
+def test_bind_pump_thread_refreshes_guard_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Binding the app pump enables guards even after an early import."""
+    monkeypatch.setattr(_runtime, "_GUARDS_ENABLED", False)
+    monkeypatch.setenv("PYTEST_CURRENT_TEST", "tests/test_tui_non_blocking.py::case (call)")
+    _runtime.bind_pump_thread()
+
+    @_runtime.offload
+    def guarded() -> str:
+        return "ran"
+
+    try:
+        with pytest.raises(AssertionError):
+            guarded()
+    finally:
+        _runtime.unbind_pump_thread()
+
+
 def test_guards_are_noops_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
     """With guards off, the decorators are transparent passthroughs."""
     monkeypatch.setattr(_runtime, "_GUARDS_ENABLED", False)
