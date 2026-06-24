@@ -398,6 +398,17 @@ Screen {
 #status-detail.visible {
     display: block;
 }
+/* Find-in-detail bar: docked above the detail statusline, hidden until `/` or
+   ctrl+f opens it (with a record loaded). Only a top rule separates it from the
+   detail body above; the global Input:focus accent applies to that rule. */
+#detail-find {
+    height: 2;
+    border-bottom: none;
+    display: none;
+}
+#detail-find:focus {
+    border-bottom: none;
+}
 #detail-statusline {
     height: 1;
     padding: 0;

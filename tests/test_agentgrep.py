@@ -3197,11 +3197,11 @@ async def test_G_on_detail_scrolls_to_bottom(
         assert app._detail_scroll.scroll_y >= app._detail_scroll.max_scroll_y - 0.5
 
 
-async def test_ctrl_f_on_detail_pages_down(
+async def test_ctrl_f_on_detail_opens_find(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``Ctrl-F`` on the detail pane scrolls down by approximately one page."""
+    """``Ctrl-F`` (and ``/``) on the detail pane opens the find-in-detail bar."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     long_body = "\n".join(f"line {idx}" for idx in range(200))
@@ -3223,12 +3223,124 @@ async def test_ctrl_f_on_detail_pages_down(
         await pilot.pause()
         app._detail_scroll.focus()
         await pilot.pause()
-        before = app._detail_scroll.scroll_y
+        assert app._detail_find_input.display is False
         await pilot.press("ctrl+f")
         await pilot.pause()
-        # Scrolled forward; exact delta depends on viewport size, just assert
-        # something happened in the right direction.
+        assert app._detail_find_input.display is True
+        assert app._detail_find_active is True
+        assert getattr(app.focused, "id", None) == "detail-find"
+
+
+def _detail_find_record(agentgrep: t.Any, path: pathlib.Path) -> t.Any:
+    """Build a record whose body has several 'needle' matches across lines."""
+    body = "\n".join(
+        f"line {i} has a needle here" if i % 3 == 0 else f"line {i} is plain" for i in range(30)
+    )
+    return _ui_record(agentgrep, path, body, "find")
+
+
+async def _open_detail_with_find(app: t.Any, record: t.Any, pilot: t.Any) -> None:
+    """Show ``record`` in the detail pane and reveal the find bar."""
+    app._set_empty_state(empty=False)
+    app.show_detail(record)
+    await pilot.pause()
+    app.action_open_detail_find()
+    await pilot.pause()
+
+
+async def test_detail_find_searches_navigates_and_counts(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Typing in the find bar matches the body, counts N/M, and steps the cursor."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = _detail_find_record(agentgrep, tmp_path / "a.jsonl")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await _open_detail_with_find(app, record, pilot)
+        app._detail_find_input.load_query("needle")
+        app._run_detail_find("needle", reset_cursor=True)
+        await pilot.pause()
+        assert len(app._detail_find_matches) == 10
+        assert app._detail_find_current == 0
+        assert "1/10" in str(app._detail_statusline.render())
+        # Next match advances the cursor and scrolls the body.
+        before = app._detail_scroll.scroll_y
+        app._detail_find_step(1)
+        await pilot.pause()
+        assert app._detail_find_current == 1
         assert app._detail_scroll.scroll_y > before
+        # Wrap-around: previous from match 1 -> 0, previous again -> last (9).
+        app._detail_find_step(-1)
+        app._detail_find_step(-1)
+        assert app._detail_find_current == 9
+
+
+async def test_detail_find_only_opens_with_a_record(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The find bar stays hidden when no detail record is loaded (gated)."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        assert app._current_detail_record is None
+        app.action_open_detail_find()
+        await pilot.pause()
+        assert app._detail_find_input.display is False
+        assert app._detail_find_active is False
+
+
+async def test_detail_find_escape_closes_without_quitting(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Esc closes the find bar and refocuses the detail body without exiting."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = _detail_find_record(agentgrep, tmp_path / "a.jsonl")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await _open_detail_with_find(app, record, pilot)
+        assert app._detail_find_input.display is True
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app._detail_find_input.display is False
+        assert app._detail_find_active is False
+        assert getattr(app.focused, "id", None) == "detail-scroll"
+        assert app.is_running  # esc closed find, did not quit the app
+
+
+async def test_detail_find_memory_restores_per_record(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Closing find saves the query+cursor per record; revisiting restores them."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    rec_a = _detail_find_record(agentgrep, tmp_path / "a.jsonl")
+    rec_b = _ui_record(agentgrep, tmp_path / "b.jsonl", "no matches at all\n" * 8, "b")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await _open_detail_with_find(app, rec_a, pilot)
+        app._detail_find_input.load_query("needle")
+        app._run_detail_find("needle", reset_cursor=True)
+        app._detail_find_step(1)  # land on match index 1
+        await pilot.pause()
+        app._close_detail_find()
+        await pilot.pause()
+        assert app._detail_find_state[id(rec_a)][:2] == ("needle", 1)
+        # Visit another record, come back, reopen -> the query + cursor restore.
+        app.show_detail(rec_b)
+        await pilot.pause()
+        app.show_detail(rec_a)
+        await pilot.pause()
+        app.action_open_detail_find()
+        await pilot.pause()
+        assert app._detail_find_input.value == "needle"
+        assert app._detail_find_current == 1
+        assert len(app._detail_find_matches) == 10
 
 
 async def test_ctrl_j_from_filter_focuses_results(

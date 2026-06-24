@@ -22,12 +22,21 @@ from agentgrep.progress import (
 )
 
 __all__ = [
+    "DetailFindRequested",
     "DetailScrollChanged",
     "FilterCompleted",
     "FilterRequested",
     "ResultsScrollChanged",
     "SearchRequested",
 ]
+
+
+class DetailFindRequested(Message):
+    """Debounced find-in-detail text-changed event from :class:`DetailFindInput`."""
+
+    def __init__(self, text: str) -> None:
+        super().__init__()
+        self.text = text
 
 
 class FilterRequested(Message):

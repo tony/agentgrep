@@ -14,8 +14,9 @@ import logging
 
 from agentgrep.ui.widgets.detail import DetailScroll
 from agentgrep.ui.widgets.dropdown import CompletionDropdown
-from agentgrep.ui.widgets.inputs import FilterInput, SearchInput
+from agentgrep.ui.widgets.inputs import DetailFindInput, FilterInput, SearchInput
 from agentgrep.ui.widgets.messages import (
+    DetailFindRequested,
     DetailScrollChanged,
     FilterCompleted,
     FilterRequested,
@@ -34,6 +35,8 @@ logging.getLogger(__name__).addHandler(logging.NullHandler())
 
 __all__ = [
     "CompletionDropdown",
+    "DetailFindInput",
+    "DetailFindRequested",
     "DetailScroll",
     "DetailScrollChanged",
     "FilterCompleted",

@@ -17,9 +17,13 @@ from textual.timer import Timer
 from textual.widgets import Input
 
 from agentgrep.progress import FilterRequestedPayload, SearchRequestedPayload
-from agentgrep.ui.widgets.messages import FilterRequested, SearchRequested
+from agentgrep.ui.widgets.messages import (
+    DetailFindRequested,
+    FilterRequested,
+    SearchRequested,
+)
 
-__all__ = ["FilterInput", "SearchInput"]
+__all__ = ["DetailFindInput", "FilterInput", "SearchInput"]
 
 
 class FilterInput(Input):
@@ -150,6 +154,72 @@ class FilterInput(Input):
     def action_release_down(self) -> None:
         """Footer-binding fallback (``_on_key`` handles the real release)."""
         self.app.action_focus_next()
+
+
+class DetailFindInput(Input):
+    """``Input`` for find-in-detail, docked at the bottom of the detail pane.
+
+    Separate from the search and filter inputs: typing posts a debounced
+    :class:`DetailFindRequested`; ``enter`` / ``down`` step to the next match,
+    ``up`` to the previous; ``escape`` and ``ctrl+c`` close the find and cancel
+    it. The close keys are intercepted here (``event.stop()``) before the app's
+    ``stop_search`` / ``smart_quit`` bindings fire, mirroring the dropdown
+    dismissal in :class:`FilterInput` — so closing the find never quits the app.
+    """
+
+    _DEBOUNCE_SECONDS: t.ClassVar[float] = 0.12
+
+    def __init__(
+        self,
+        *,
+        placeholder: str = "",
+        id: str | None = None,  # noqa: A002 -- forwarded to Textual's ``id`` kwarg
+    ) -> None:
+        super().__init__(placeholder=placeholder, id=id)
+        self._debounce_timer: Timer | None = None
+
+    def load_query(self, value: str) -> None:
+        """Set the value without posting a :class:`DetailFindRequested`.
+
+        Used when restoring a record's remembered find query so the restore
+        doesn't re-run the find (and reset the match cursor) via the debounce.
+        """
+        self.value = value
+        if self._debounce_timer is not None:
+            self._debounce_timer.stop()
+            self._debounce_timer = None
+
+    def _watch_value(self, value: str) -> None:
+        """Post the normal ``Input.Changed`` and arm a debounced find request."""
+        super()._watch_value(value)
+        if self._debounce_timer is not None:
+            self._debounce_timer.stop()
+        self._debounce_timer = self.set_timer(
+            self._DEBOUNCE_SECONDS,
+            lambda: self.post_message(DetailFindRequested(text=value)),
+        )
+
+    async def _on_key(self, event: events.Key) -> None:
+        """``esc``/``ctrl+c`` close; ``enter``/``down`` next match; ``up`` previous."""
+        key = str(getattr(event, "key", ""))
+        stop = getattr(event, "stop", None)
+        app = t.cast("t.Any", self.app)
+        if key in {"escape", "ctrl+c"}:
+            if callable(stop):
+                stop()
+            app._close_detail_find()
+            return
+        if key in {"enter", "down"}:
+            if callable(stop):
+                stop()
+            app._detail_find_step(1)
+            return
+        if key == "up":
+            if callable(stop):
+                stop()
+            app._detail_find_step(-1)
+            return
+        await super()._on_key(event)
 
 
 class SearchInput(Input):

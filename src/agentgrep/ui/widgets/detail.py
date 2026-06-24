@@ -37,9 +37,14 @@ class DetailScroll(VerticalScroll, can_focus=True):
         ("G", "scroll_end", "Bottom"),
         ("ctrl+d", "scroll_half_down", "½ Down"),
         ("ctrl+u", "scroll_half_up", "½ Up"),
-        ("ctrl+f", "page_down", "Pg Down"),
+        ("/", "open_find", "Find"),
+        ("ctrl+f", "open_find", "Find"),
         ("ctrl+b", "page_up", "Pg Up"),
     ]
+
+    def action_open_find(self) -> None:
+        """Open the find-in-detail bar (``/`` or ``ctrl+f``); no-op without a record."""
+        t.cast("t.Any", self.app).action_open_detail_find()
 
     def action_focus_results(self) -> None:
         """Move focus leftward back to the results list (vim-style ``h``)."""

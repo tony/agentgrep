@@ -160,6 +160,8 @@ def build_streaming_ui_app(
         from agentgrep.ui import _runtime, theme as ui_theme
         from agentgrep.ui.widgets import (
             CompletionDropdown,
+            DetailFindInput,
+            DetailFindRequested,
             DetailScroll,
             DetailScrollChanged,
             FilterCompleted,
@@ -344,6 +346,23 @@ def build_streaming_ui_app(
             self._detail_scroll_positions: collections.OrderedDict[int, float] = (
                 collections.OrderedDict()
             )
+            # Find-in-detail state. The find bar is a third input (separate from
+            # #search and #filter), shown only when a detail record is loaded.
+            self._detail_find_input: t.Any = None
+            self._detail_find_active: bool = False
+            self._detail_find_query: str = ""
+            self._detail_find_matches: list[tuple[int, int]] = []
+            self._detail_find_current: int = 0
+            # The current record's truncated body text + built header (Rich Text),
+            # kept so find can re-highlight the body without rebuilding the header.
+            self._detail_body_text: str = ""
+            self._detail_header_text: t.Any = None
+            # Per-record find memory, mirroring _detail_scroll_positions:
+            # id(record) -> (query, match_index, input_cursor_pos). Bounded LRU.
+            self._detail_find_state: collections.OrderedDict[
+                int,
+                tuple[str, int, int],
+            ] = collections.OrderedDict()
 
         def _get_start_time(self) -> float | None:
             return self._started_at
@@ -447,6 +466,9 @@ def build_streaming_ui_app(
                     yield PaneHeader("detail", id="detail-header")
                     with DetailScroll(id="detail-scroll"):
                         yield static_type("", id="detail")
+                    # Find-in-detail bar: hidden until `/` or ctrl+f opens it
+                    # (only with a record loaded); separate from #search/#filter.
+                    yield DetailFindInput(placeholder="Find in detail", id="detail-find")
                     yield static_type("", id="detail-statusline")
             yield footer()
 
@@ -485,6 +507,12 @@ def build_streaming_ui_app(
                 "SearchInput",
                 streaming.query_one("#search"),
             )
+            self._detail_find_input = t.cast(
+                "DetailFindInput",
+                streaming.query_one("#detail-find"),
+            )
+            t.cast("t.Any", self._detail_find_input).display = False
+            t.cast("t.Any", self._detail_find_input).cursor_blink = False
             self._enum_dropdown = t.cast("t.Any", streaming.query_one("#enum-dropdown"))
             self._enum_dropdown.display = False
             self._filter_dropdown = t.cast("t.Any", streaming.query_one("#filter-dropdown"))
@@ -555,7 +583,7 @@ def build_streaming_ui_app(
             """
             focused_id = getattr(self.focused, "id", None)
             results_active = focused_id in {"results", "filter"}
-            detail_active = focused_id == "detail-scroll"
+            detail_active = focused_id in {"detail-scroll", "detail-find"}
             if self._results_header is not None:
                 t.cast("t.Any", self._results_header).set_class(results_active, "-active")
             if self._detail_header is not None:
@@ -605,6 +633,14 @@ def build_streaming_ui_app(
             clear_haystack_cache()
             self._detail_body_cache.clear()
             self._detail_scroll_positions.clear()
+            self._detail_find_state.clear()
+            # A fresh search wipes the detail; close any open find bar.
+            self._detail_find_active = False
+            self._detail_find_query = ""
+            self._detail_find_matches = []
+            self._detail_find_current = 0
+            if self._detail_find_input is not None:
+                t.cast("t.Any", self._detail_find_input).display = False
             self.all_records = []
             self.filtered_records = []
             self._search_done = False
@@ -1323,9 +1359,21 @@ def build_streaming_ui_app(
                 return
             pct = percent if percent is not None else self._current_detail_scroll_percent()
             width = max(20, int(getattr(self._detail_statusline.size, "width", 80)))
-            path_text = format_compact_path(record.path, max_width=max(10, width - 6))
-            pad = max(1, width - len(path_text) - len(f"{pct}%"))
-            self._detail_statusline.update(f"{path_text}{' ' * pad}{pct}%")
+            # When find is active, lead with the match indicator (N/M or "no
+            # matches"); the path then truncates into the remaining room.
+            find_text = ""
+            if self._detail_find_active and self._detail_find_query:
+                total = len(self._detail_find_matches)
+                find_text = (
+                    f"{self._detail_find_current + 1}/{total}  " if total else "no matches  "
+                )
+            right = f"{pct}%"
+            path_text = format_compact_path(
+                record.path,
+                max_width=max(10, width - 6 - len(find_text)),
+            )
+            pad = max(1, width - len(find_text) - len(path_text) - len(right))
+            self._detail_statusline.update(f"{find_text}{path_text}{' ' * pad}{right}")
 
         def _current_detail_scroll_percent(self) -> int:
             """Compute the detail pane's scroll percent on demand."""
@@ -1392,6 +1440,10 @@ def build_streaming_ui_app(
             header.append("\n")
             body_truncated = truncate_lines(record.text, DETAIL_BODY_MAX_LINES)
             query_terms = list(self.query.terms)
+            # Keep the header + body text so find-in-detail can re-highlight the
+            # body (without rebuilding the header) and scroll to matches.
+            self._detail_header_text = header
+            self._detail_body_text = body_truncated
             if (
                 self._detail_body_is_cached(query_terms)
                 or len(body_truncated) <= self._DETAIL_ASYNC_BODY_THRESHOLD
@@ -1516,6 +1568,16 @@ def build_streaming_ui_app(
             if kind == "search":
                 foreground = ui_theme.resolve(theme_vars, "ag-match-search")
                 return f"bold {foreground}".rstrip() if foreground else "bold yellow"
+            if kind == "find":
+                # All find matches: a purple fill, distinct from search-gold and
+                # filter-accent.
+                color = ui_theme.resolve(theme_vars, "ag-model")
+                return f"bold black on {color}" if color else "bold black on magenta"
+            if kind == "find-current":
+                # The match the find cursor is on: a brighter gold fill so it
+                # stands out from the other (purple) find matches.
+                color = ui_theme.resolve(theme_vars, "ag-match-search")
+                return f"bold black on {color}" if color else "bold black on yellow"
             background = ui_theme.resolve(theme_vars, "ag-match-filter-bg")
             foreground = ui_theme.resolve(theme_vars, "ag-match-filter-fg")
             if background and foreground:
@@ -1635,6 +1697,174 @@ def build_streaming_ui_app(
                 getattr(self._detail_scroll, "scroll_y", 0.0) or 0.0,
             )
             self._detail_scroll_positions.move_to_end(key)
+
+        # --- find-in-detail (the `/` or ctrl+f bar) -----------------------
+        def action_open_detail_find(self) -> None:
+            """Open the find bar at the bottom of the detail pane.
+
+            Gated: a no-op unless a detail record is loaded (so the bar only
+            shows with a detail on screen). Restores the record's remembered
+            find query + match cursor, runs the find, and focuses the input.
+            """
+            record = self._current_detail_record
+            if record is None or self._detail_find_input is None:
+                return
+            self._detail_find_active = True
+            find_input = t.cast("t.Any", self._detail_find_input)
+            find_input.display = True
+            query, match_index, cursor = self._detail_find_state.get(
+                id(record),
+                ("", 0, 0),
+            )
+            find_input.load_query(query)
+            find_input.cursor_position = min(cursor, len(query))
+            self._detail_find_current = match_index
+            self._run_detail_find(query, reset_cursor=False)
+            find_input.focus()
+            self._update_pane_focus()
+
+        def on_detail_find_requested(self, message: DetailFindRequested) -> None:
+            """Re-run the find from the first match when the (debounced) query changes."""
+            self._run_detail_find(message.text, reset_cursor=True)
+
+        def _run_detail_find(self, query: str, *, reset_cursor: bool) -> None:
+            """Recompute matches for ``query`` and re-render the highlighted body.
+
+            ``reset_cursor`` jumps to the first match (typing a new query); the
+            restore path keeps the remembered match index.
+            """
+            if self._current_detail_record is None:
+                return
+            self._detail_find_query = query
+            self._detail_find_matches = self._compute_find_matches(
+                self._detail_body_text,
+                query,
+            )
+            total = len(self._detail_find_matches)
+            if reset_cursor or self._detail_find_current >= total:
+                self._detail_find_current = 0
+            self._present_detail_find()
+            self._scroll_to_current_match()
+            self._refresh_detail_statusline()
+
+        def _detail_find_step(self, delta: int) -> None:
+            """Move the find cursor to the next (+1) / previous (-1) match, wrapping."""
+            total = len(self._detail_find_matches)
+            if total == 0:
+                return
+            self._detail_find_current = (self._detail_find_current + delta) % total
+            self._present_detail_find()
+            self._scroll_to_current_match()
+            self._refresh_detail_statusline()
+
+        @staticmethod
+        def _compute_find_matches(body_text: str, query: str) -> list[tuple[int, int]]:
+            """Return up to 1000 ``(start, end)`` spans of ``query`` in ``body_text``.
+
+            Case-insensitive literal search (the find bar is a plain substring
+            find, not the query language). Capped so a one-character query on a
+            huge body can't produce an unbounded match list.
+            """
+            if not query:
+                return []
+            try:
+                pattern = re.compile(re.escape(query), re.IGNORECASE)
+            except re.error:
+                return []
+            matches: list[tuple[int, int]] = []
+            for match in pattern.finditer(body_text):
+                matches.append((match.start(), match.end()))
+                if len(matches) >= 1000:
+                    break
+            return matches
+
+        def _present_detail_find(self) -> None:
+            """Render the body as text with search/filter/find highlights overlaid.
+
+            While find is active the body renders as highlighted text (search
+            gold, filter accent, all find matches purple, the current match
+            gold) rather than the format-aware renderable, so matches show
+            consistently. Built fresh each time so the body cache stays clean.
+            """
+            if self._detail is None or self._current_detail_record is None:
+                return
+            query_terms = list(self.query.terms)
+            text = highlight_matches(
+                self._detail_body_text,
+                query_terms,
+                case_sensitive=self.query.case_sensitive,
+                regex=self.query.regex,
+                style=self._match_style("search"),
+            )
+            self._apply_filter_highlight(text)
+            find_style = self._match_style("find")
+            current_style = self._match_style("find-current")
+            for index, (start, end) in enumerate(self._detail_find_matches):
+                style = current_style if index == self._detail_find_current else find_style
+                text.stylize(style, start, end)
+            self._detail.update(
+                _RichGroup(t.cast("t.Any", self._detail_header_text), t.cast("t.Any", text)),
+            )
+
+        def _scroll_to_current_match(self) -> None:
+            """Scroll the detail pane so the current find match is near the top.
+
+            The line index is the body match's logical line plus the header's
+            line count; with word wrap this is approximate, but the highlight
+            marks the exact match once it's on screen.
+            """
+            if self._detail_scroll is None or not self._detail_find_matches:
+                return
+            start = self._detail_find_matches[self._detail_find_current][0]
+            body_line = self._detail_body_text.count("\n", 0, start)
+            header = self._detail_header_text
+            header_lines = (
+                str(getattr(header, "plain", "")).count("\n") if header is not None else 0
+            )
+            target = max(0, header_lines + body_line - 2)
+            t.cast("t.Any", self._detail_scroll).scroll_to(y=target, animate=False)
+
+        def _close_detail_find(self) -> None:
+            """Close + cancel the find: save state, drop highlights, restore focus.
+
+            esc / ctrl+c land here. The find query + match cursor are saved to
+            per-record memory (so reopening restores them), the body re-renders
+            without find highlights at the current scroll, and focus returns to
+            the detail scroll.
+            """
+            self._remember_detail_find()
+            # Keep the find's scroll position as the record's remembered scroll
+            # so the non-find re-render below doesn't jump away from the match.
+            self._remember_detail_scroll()
+            self._detail_find_active = False
+            if self._detail_find_input is not None:
+                t.cast("t.Any", self._detail_find_input).display = False
+            record = self._current_detail_record
+            if record is not None:
+                query_terms = list(self.query.terms)
+                self._present_detail(
+                    record,
+                    self._detail_header_text,
+                    self._build_detail_body(self._detail_body_text, query_terms),
+                    query_terms,
+                )
+            self._focus_widget_by_id("detail-scroll")
+            self._update_pane_focus()
+
+        def _remember_detail_find(self) -> None:
+            """Save the find query + match cursor for the on-screen record (LRU)."""
+            record = self._current_detail_record
+            if record is None or self._detail_find_input is None:
+                return
+            key = id(record)
+            # Save the input's live value (the debounced _detail_find_query may
+            # lag a pending keystroke); restore clamps the cursor to its matches.
+            query = str(getattr(self._detail_find_input, "value", "") or "")
+            cursor = int(getattr(self._detail_find_input, "cursor_position", 0) or 0)
+            self._detail_find_state[key] = (query, self._detail_find_current, cursor)
+            self._detail_find_state.move_to_end(key)
+            if len(self._detail_find_state) > self._DETAIL_CACHE_MAX:
+                self._detail_find_state.popitem(last=False)
 
         def on_resize(self, event: object) -> None:
             """Debounce rapid resize bursts (e.g. tiling-WM live drag)."""
