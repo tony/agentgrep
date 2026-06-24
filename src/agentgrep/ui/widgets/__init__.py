@@ -27,6 +27,7 @@ from agentgrep.ui.widgets.status import (
     MeterWidget,
     PaneHeader,
     ResultsHeader,
+    SearchingPanel,
     SpinnerWidget,
 )
 
@@ -48,5 +49,6 @@ __all__ = [
     "SearchInput",
     "SearchRequested",
     "SearchResultsList",
+    "SearchingPanel",
     "SpinnerWidget",
 ]

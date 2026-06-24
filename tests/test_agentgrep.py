@@ -2398,6 +2398,67 @@ async def test_streaming_ui_search_rule_state_classes(
         assert not any(search.has_class(c) for c in ("-searching", "-done", "-stopped", "-error"))
 
 
+async def test_streaming_ui_centered_panel_until_first_result(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The centered searching panel owns the canvas until the first result.
+
+    The hybrid lifecycle: while a search runs with no results yet the body
+    carries ``-searching`` and the centered ``#searching-panel`` is shown; the
+    first record batch swaps to the results list and clears ``-searching``.
+    """
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        body = app.screen.query_one("#body")
+        panel = app.screen.query_one("#searching-panel")
+
+        # Enter the searching view (no results yet): the centered panel shows.
+        app._set_results_view("searching")
+        await pilot.pause()
+        assert body.has_class("-searching")
+        assert panel.display
+
+        # The first batch of results collapses to the list view.
+        record = _agentgrep_module.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="codex.history",
+            adapter_id="codex.history_jsonl.v1",
+            path=tmp_path / "history.jsonl",
+            text="tmux pane",
+            title="tmux pane",
+        )
+        await app._apply_records_batch((record,), 1)
+        await pilot.pause()
+        assert not body.has_class("-searching")
+
+
+async def test_streaming_ui_zero_result_search_freezes_centered_panel(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A search that finds nothing keeps the centered panel and freezes it.
+
+    With no results to collapse into, the finished search stays on the
+    centered panel and freezes it into its terminal ``No matches`` state
+    rather than revealing an empty results list.
+    """
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        body = app.screen.query_one("#body")
+        app._set_results_view("searching")
+        await pilot.pause()
+
+        app._apply_finished("complete", 0, 1.2, None)
+        await pilot.pause()
+        assert body.has_class("-searching")
+        panel = app.screen.query_one("#searching-panel")
+        assert "No matches" in panel.render().plain
+
+
 async def test_streaming_ui_result_row_title_not_always_bold(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -4780,6 +4841,10 @@ async def test_apply_progress_fills_header_bar(
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
         app._search_done = False
+        # The folded header rule shows once results stream in; seed one so the
+        # hybrid is past its centered-panel phase and the bar renders.
+        app.all_records.extend(_seed_records(agentgrep, tmp_path, 1))
+        app._set_empty_state(empty=False)
         app._results_header.begin()
         app._apply_progress(_make_progress_snapshot(agentgrep))
         await pilot.pause()
@@ -4799,6 +4864,10 @@ async def test_header_indeterminate_before_total_shows_no_bar(
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
         app._search_done = False
+        # Seed a result so the folded header rule (not the centered panel) is
+        # the visible chrome whose payload we assert on.
+        app.all_records.extend(_seed_records(agentgrep, tmp_path, 1))
+        app._set_empty_state(empty=False)
         app._results_header.begin()
         app._apply_progress(
             _make_progress_snapshot(
@@ -4880,6 +4949,10 @@ async def test_finish_complete_freezes_header_check(
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
         app._search_done = False
+        # Results present → the folded header rule (not the centered panel) is
+        # the chrome that freezes and carries the outcome glyph.
+        app.all_records.extend(_seed_records(agentgrep, tmp_path, 1))
+        app._set_empty_state(empty=False)
         app._results_header.begin()
         app._apply_progress(_make_progress_snapshot(agentgrep))
         await pilot.pause()

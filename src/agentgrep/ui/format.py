@@ -60,6 +60,54 @@ def format_elapsed_compact(seconds: float) -> str:
     return f"{total // 3600}h {(total % 3600) // 60:02d}m"
 
 
+_PHASE_LABELS = {
+    "starting": "Starting",
+    "discovering": "Discovering",
+    "discovered": "Discovered",
+    # ``prefiltering`` is engine-internal jargon; users read "Filtering".
+    "prefiltering": "Filtering",
+    "planning": "Planning",
+    "scanning": "Scanning",
+}
+"""Engine phase string -> user-facing present-continuous verb."""
+
+
+def phase_label(phase: str) -> str:
+    """Map an engine phase string to a user-facing present-continuous verb.
+
+    The engine reports an ordered phase vocabulary (``discovering`` ->
+    ``prefiltering`` -> ``planning`` -> ``scanning``); the explorer shows
+    these words next to its spinner so a stalled-looking dot always carries
+    meaning. Most map to a title-cased form, but ``prefiltering`` is curated
+    to ``Filtering`` so the user never sees the internal term. Unknown phases
+    title-case rather than vanish.
+
+    Parameters
+    ----------
+    phase : str
+        The ``ProgressSnapshot.phase`` string.
+
+    Returns
+    -------
+    str
+        The user-facing verb, or ``""`` for an empty phase.
+
+    Examples
+    --------
+    >>> phase_label("scanning")
+    'Scanning'
+    >>> phase_label("prefiltering")
+    'Filtering'
+    >>> phase_label("widgeting")
+    'Widgeting'
+    >>> phase_label("")
+    ''
+    """
+    if not phase:
+        return ""
+    return _PHASE_LABELS.get(phase, phase[:1].upper() + phase[1:])
+
+
 def render_progress_meter(fraction: float, width: int) -> str:
     """Render a ``▰▱`` progress bar of ``width`` cells.
 
@@ -208,6 +256,7 @@ __all__ = (
     "format_elapsed_compact",
     "format_progress_percent",
     "format_scanning_detail",
+    "phase_label",
     "render_progress_meter",
     "scroll_percent",
     "searching_left_text",

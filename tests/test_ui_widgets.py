@@ -8,20 +8,47 @@ widgets directly (no ``run_test`` Pilot) and assert their pure behavior.
 
 from __future__ import annotations
 
+import re
+import time
+
 from textual.widgets import Input, OptionList, Static
 
-from agentgrep.progress import FilterRequestedPayload
+from agentgrep.progress import FilterRequestedPayload, ProgressSnapshot
+from agentgrep.ui.format import phase_label
 from agentgrep.ui.widgets import (
     CompletionDropdown,
     FilterInput,
     FilterRequested,
     MeterWidget,
     PaneHeader,
+    ResultsHeader,
     ResultsScrollChanged,
+    SearchingPanel,
     SearchInput,
     SearchResultsList,
     SpinnerWidget,
 )
+
+
+def _snapshot(
+    phase: str,
+    *,
+    current: int | None = None,
+    total: int | None = None,
+    matches: int = 0,
+    detail: str | None = None,
+    elapsed: float = 0.0,
+) -> ProgressSnapshot:
+    """Build a ProgressSnapshot for a status-widget render test."""
+    return ProgressSnapshot(
+        query_label="q",
+        phase=phase,
+        current=current,
+        total=total,
+        detail=detail,
+        matches=matches,
+        elapsed=elapsed,
+    )
 
 
 def test_spinner_is_static_subclass_that_animates() -> None:
@@ -100,3 +127,94 @@ def test_inputs_are_input_subclasses() -> None:
     assert issubclass(FilterInput, Input)
     assert issubclass(SearchInput, Input)
     assert FilterInput._DEBOUNCE_SECONDS == 0.15
+
+
+def test_phase_label_curates_engine_jargon() -> None:
+    """``phase_label`` maps engine phase strings to user-facing verbs."""
+    assert phase_label("scanning") == "Scanning"
+    assert phase_label("planning") == "Planning"
+    assert phase_label("discovering") == "Discovering"
+    # 'prefiltering' is internal jargon — curated to a word a user reads.
+    assert phase_label("prefiltering") == "Filtering"
+    # Unknown phases title-case rather than vanish.
+    assert phase_label("widgeting") == "Widgeting"
+    assert phase_label("") == ""
+
+
+def test_results_header_renders_phase_word_left_of_bar() -> None:
+    """An active scanning header shows the verb + N/M count before the bar.
+
+    ``begin()`` is skipped on purpose: it arms a Textual ``auto_refresh``
+    timer that needs a running event loop. These tests exercise the pure
+    ``_payload`` render seam; the timer lifecycle is covered by the app-level
+    integration test.
+    """
+    header = ResultsHeader("results", id="results-header")
+    header.set_progress(0.61, "scanning", "42/68")
+    payload = header._payload(60).plain
+    assert "Scanning" in payload
+    assert "42/68" in payload
+
+
+def test_results_header_curates_prefiltering_phase() -> None:
+    """The header uses the curated 'Filtering' word, never raw 'prefiltering'."""
+    header = ResultsHeader("results", id="results-header")
+    header.set_progress(None, "prefiltering")
+    payload = header._payload(60).plain
+    assert "Filtering" in payload
+    assert "Prefiltering" not in payload
+
+
+def test_results_header_idle_stays_a_plain_rule() -> None:
+    """With no search active the header is still the bare ``─results`` rule."""
+    header = ResultsHeader("results", id="results-header")
+    text = header.render()
+    assert text.plain.startswith("─results")
+    assert "Scanning" not in text.plain
+
+
+def test_results_header_freeze_shows_outcome_word() -> None:
+    """Freezing pairs the outcome glyph with the Done/Stopped/Error word."""
+    for outcome, word in (("complete", "Done"), ("interrupted", "Stopped"), ("error", "Error")):
+        header = ResultsHeader("results", id="results-header")
+        header.freeze(outcome, message="bad query" if outcome == "error" else "", elapsed=4.1)
+        assert word in header._payload(60).plain
+
+
+def test_results_header_shows_elapsed_ticker() -> None:
+    """The header carries a self-driven elapsed seconds token when there is room."""
+    header = ResultsHeader("results", id="results-header")
+    header._started_at = time.monotonic() - 3.4
+    header.set_progress(0.61, "scanning", "42/68")
+    assert re.search(r"\d+s", header._payload(80).plain)
+
+
+def test_searching_panel_is_static_subclass() -> None:
+    """The centered searching panel is a Static subclass."""
+    assert issubclass(SearchingPanel, Static)
+
+
+def test_searching_panel_renders_phase_verb_and_counts() -> None:
+    """An active scanning panel shows the verb, the source N/M, and the match count."""
+    panel = SearchingPanel(id="searching-panel")
+    panel.set_snapshot(_snapshot("scanning", current=42, total=68, matches=2343))
+    text = panel.render().plain
+    assert "Scanning" in text
+    assert "42" in text
+    assert "68" in text
+    assert "2343" in text
+
+
+def test_searching_panel_discovering_phase_has_a_verb() -> None:
+    """The no-count discovery phase still shows a phase verb, not a bare glyph."""
+    panel = SearchingPanel(id="searching-panel")
+    panel.set_snapshot(_snapshot("discovering"))
+    assert "Discovering" in panel.render().plain
+
+
+def test_searching_panel_freeze_zero_results_says_no_matches() -> None:
+    """A completed search with no results freezes the panel into a 'No matches' state."""
+    panel = SearchingPanel(id="searching-panel")
+    panel.set_snapshot(_snapshot("scanning", current=10, total=10, matches=0))
+    panel.freeze("complete", total=0, elapsed=1.2)
+    assert "No matches" in panel.render().plain

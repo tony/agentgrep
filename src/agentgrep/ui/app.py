@@ -178,6 +178,7 @@ def build_streaming_ui_app(
             PaneHeader,
             ResultsHeader,
             ResultsScrollChanged,
+            SearchingPanel,
             SearchInput,
             SearchRequested,
             SearchResultsList,
@@ -298,6 +299,7 @@ def build_streaming_ui_app(
             self._search_done = False
             self._started_at: float | None = None
             self._last_snapshot: ProgressSnapshot | None = None
+            self._searching_panel: SearchingPanel | None = None
             self._results: SearchResultsList | None = None
             self._detail: StaticLike | None = None
             self._detail_row: StaticLike | None = None
@@ -481,6 +483,11 @@ def build_streaming_ui_app(
                         'timestamp:>2026-01-01   "exact phrase"',
                         id="empty-hint",
                     )
+                    # Shown only while a search runs before its first result
+                    # (CSS hides it otherwise): a centered spinner + phase verb
+                    # + counts + elapsed, collapsed to the results list the
+                    # moment records arrive.
+                    yield SearchingPanel(id="searching-panel")
                 with vertical(id="detail-column", classes=detail_classes):
                     yield PaneHeader("detail", id="detail-header")
                     with DetailScroll(id="detail-scroll"):
@@ -511,6 +518,10 @@ def build_streaming_ui_app(
             self._results_header = t.cast(
                 "ResultsHeader",
                 streaming.query_one("#results-header"),
+            )
+            self._searching_panel = t.cast(
+                "SearchingPanel",
+                streaming.query_one("#searching-panel"),
             )
             self._detail_header = streaming.query_one("#detail-header")
             self._detail_row = t.cast(
@@ -579,12 +590,30 @@ def build_streaming_ui_app(
         def _set_empty_state(self, *, empty: bool) -> None:
             """Toggle the pre-search bare-canvas state on ``#body``.
 
-            When ``empty`` the body chrome (headers, statusline, filter, detail
-            column) is hidden by CSS, leaving the centered ``#empty-hint``; a
-            launched search reveals it.
+            Compatibility shim over :meth:`_set_results_view`: ``empty`` is the
+            pre-search bare canvas; not-empty reveals the results chrome. The
+            search flow uses ``_set_results_view`` directly for the intermediate
+            ``searching`` view.
+            """
+            self._set_results_view("empty" if empty else "results")
+
+        def _set_results_view(self, view: str) -> None:
+            """Switch the results region between empty / searching / results.
+
+            ``empty`` is the pre-search bare canvas (centered ``#empty-hint``);
+            ``searching`` is the centered ``#searching-panel`` shown while a
+            search runs before any result arrives; ``results`` reveals the
+            header rule, filter, and list. Mutually-exclusive ``-empty`` /
+            ``-searching`` classes on ``#body`` drive the CSS. The panel's
+            spinner timer is stopped whenever the region leaves the searching
+            view; its ``begin`` is armed by the search flow on entry.
             """
             if self._body is not None:
-                t.cast("t.Any", self._body).set_class(empty, "-empty")
+                body = t.cast("t.Any", self._body)
+                body.set_class(view == "empty", "-empty")
+                body.set_class(view == "searching", "-searching")
+            if view != "searching" and self._searching_panel is not None:
+                self._searching_panel.go_idle()
 
         def on_descendant_focus(self, event: object) -> None:
             """Recolor the active pane's section header when focus moves."""
@@ -629,12 +658,15 @@ def build_streaming_ui_app(
             """
             self.query = query
             self._reset_search_chrome()
-            # A search is starting — reveal the body chrome (leave the bare
-            # canvas), and show the filter now that results will load.
-            self._set_empty_state(empty=False)
+            # A search is starting — give the empty canvas its centered
+            # "searching" moment; the first record batch collapses it to the
+            # results list and the folded header rule carries the phase there.
+            self._set_results_view("searching")
             self._set_search_rule_state("searching")
             if self._results_header is not None:
                 self._results_header.begin()
+            if self._searching_panel is not None:
+                self._searching_panel.begin()
             streaming = t.cast("StreamingAppLike", t.cast("object", self))
             streaming.run_worker(
                 self._run_search,
@@ -685,6 +717,8 @@ def build_streaming_ui_app(
             # to the plain rule (``_start_search_worker`` re-activates it).
             if self._results_header is not None:
                 self._results_header.go_idle()
+            if self._searching_panel is not None:
+                self._searching_panel.go_idle()
             self._set_search_rule_state("")
             # ``_detail_visible`` is deliberately NOT reset — the Ctrl-\
             # toggle is sticky for the session; only the row's stale
@@ -936,10 +970,10 @@ def build_streaming_ui_app(
             of a single apply (NB-4).
             """
             self.all_records.extend(records)
-            # Results are arriving — make sure the panes are revealed (a search
-            # launched via _start_search_worker already did this; a batch driven
-            # directly, e.g. in tests, reveals here). Idempotent.
-            self._set_empty_state(empty=False)
+            # Results are arriving — collapse the centered searching panel to
+            # the results list (idempotent; a batch driven directly, e.g. in
+            # tests, switches here too).
+            self._set_results_view("results")
             matching = [record for record in records if self._matches_filter(record)]
             if matching and self._results is not None:
                 results = self._results
@@ -966,8 +1000,10 @@ def build_streaming_ui_app(
             events never reach this handler — :meth:`_apply_streaming_event`
             drops them.
             """
-            # A search is in progress — reveal the chrome (idempotent).
-            self._set_empty_state(empty=False)
+            # A search is in progress with no results yet — keep the centered
+            # panel up (the batch handler switches to the list on first result).
+            if not self.all_records:
+                self._set_results_view("searching")
             self._last_snapshot = snapshot
             if self._started_at is None:
                 self._started_at = time.monotonic()
@@ -983,9 +1019,18 @@ def build_streaming_ui_app(
                 fraction: float | None = snapshot.current / snapshot.total
             else:
                 fraction = None
+            # The N/M source count rides next to the phase verb (planning and
+            # scanning carry it; discovery/prefilter do not).
+            count = (
+                f"{snapshot.current}/{snapshot.total}"
+                if snapshot.current is not None and snapshot.total is not None
+                else ""
+            )
+            if self._searching_panel is not None:
+                self._searching_panel.set_snapshot(snapshot)
             if self._results_header is not None:
                 self._results_header.set_narrow(self._statusline_narrow())
-                self._results_header.set_progress(fraction, snapshot.phase)
+                self._results_header.set_progress(fraction, snapshot.phase, count)
             if self._detail_visible and self._detail_row is not None:
                 detail = format_scanning_detail(
                     snapshot.phase,
@@ -1082,9 +1127,22 @@ def build_streaming_ui_app(
             hold; the elapsed total is folded into the summary string the ctrl+\
             detail row shows, not a live-ticking widget.
             """
-            # A search ran — its outcome belongs on the (now revealed) chrome.
-            self._set_empty_state(empty=False)
+            # A search ran — show its outcome. With results, collapse to the
+            # list; with none, keep the centered panel and freeze it into its
+            # terminal state instead of revealing an empty list.
             self._search_done = True
+            if self.all_records:
+                self._set_results_view("results")
+            elif self._searching_panel is not None:
+                self._set_results_view("searching")
+                self._searching_panel.freeze(
+                    outcome,
+                    total=total,
+                    elapsed=elapsed,
+                    message=error_message or "",
+                )
+            else:
+                self._set_results_view("results")
             if outcome == "error":
                 summary = f"Search failed: {error_message}"
             elif outcome == "interrupted":
@@ -1094,11 +1152,11 @@ def build_streaming_ui_app(
                 )
             else:
                 summary = f"Search complete: {format_match_count(total)} in {elapsed:.1f}s"
-            # Freeze the header: the outcome glyph (✓/■/✗) + bar color carry the
-            # result; errors show their message in the rule, the full summary
-            # lives in the ctrl+\ detail row.
+            # Freeze the header: the outcome glyph (✓/■/✗) + word + bar color
+            # carry the result; errors show their message in the rule, the full
+            # summary lives in the ctrl+\ detail row.
             if self._results_header is not None:
-                self._results_header.freeze(outcome, message=error_message or "")
+                self._results_header.freeze(outcome, message=error_message or "", elapsed=elapsed)
             self._set_search_rule_state(outcome)
             self._finished_status = (outcome, summary)
             self._last_detail_text = summary

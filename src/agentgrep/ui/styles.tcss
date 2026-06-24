@@ -504,3 +504,27 @@ Screen {
 #body.-empty #empty-hint {
     display: block;
 }
+
+/* Searching state (hybrid centered moment): while a search runs before its
+   first result, the results region hosts the centered #searching-panel in
+   place of the chrome; the first record batch clears `-searching` and the
+   folded #results-header rule carries the phase from there. */
+#searching-panel {
+    display: none;
+    height: 1fr;
+    width: 1fr;
+    content-align: center middle;
+    text-align: center;
+    color: $ag-dim;
+}
+#body.-searching #results-header,
+#body.-searching #status-detail,
+#body.-searching #filter,
+#body.-searching #filter-dropdown,
+#body.-searching #results,
+#body.-searching #detail-column {
+    display: none;
+}
+#body.-searching #searching-panel {
+    display: block;
+}
