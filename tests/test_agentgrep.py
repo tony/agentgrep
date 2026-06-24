@@ -2662,15 +2662,15 @@ async def test_slash_menu_pushes_body_down_and_reflows_back(
         assert body.region.y == y_closed
 
 
-async def test_history_modal_background_is_opaque(
+async def test_history_modal_background_is_transparent(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The recall modal paints an opaque terminal-bg — no explorer bleed-through.
+    """The recall modal screen is transparent, so the explorer shows through.
 
-    Under ``ansi_color=True`` ModalScreen's ``:ansi`` rule would leave the
-    screen transparent (``a == 0``), surfacing the explorer at the edges. The
-    app stylesheet overrides it to ``ansi_default`` (opaque, ``a == 1``).
+    The dialog's own chrome (border + fill) stays crisp, but the screen around
+    it is transparent (``a == 0``) — Textual renders the explorer below via
+    ``app.render``, giving full context behind the modal by preference.
     """
     from agentgrep.ui._history import HistoryEntry
 
@@ -2680,7 +2680,7 @@ async def test_history_modal_background_is_opaque(
         app._history = [HistoryEntry(text="agent:codex refactor", ts=10)]
         app.action_recall_history()
         await pilot.pause()
-        assert app.screen.styles.background.a == 1.0
+        assert app.screen.styles.background.a == 0
         # Close the modal so the screen stack is clean at teardown.
         await pilot.press("escape")
         await pilot.pause()

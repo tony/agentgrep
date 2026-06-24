@@ -551,16 +551,14 @@ Screen {
     display: block;
 }
 
-/* Ctrl-R search-history recall modal: a faint-ruled dialog over a clean
-   terminal-background screen, an accent cursor row, and dim metadata + footer.
-   The two-pane body collapses to the list alone below the modal's narrow
-   breakpoint (set on the screen in Python). */
-/* Opaque ``ansi_default`` overrides ModalScreen's ``:ansi { transparent }``
-   (app CSS outranks DEFAULT_CSS), so the screen paints the terminal's own
-   background as a solid fill instead of letting the explorer bleed through at
-   the edges — matching every other pane and tmux/ink/pi's opaque overdraw. */
+/* Ctrl-R search-history recall modal: a faint-ruled dialog, an accent cursor
+   row, and dim metadata + footer. The two-pane body collapses to the list alone
+   below the modal's narrow breakpoint (set on the screen in Python). */
+/* Transparent screen (by preference): the explorer shows through behind the
+   dialog for full context. NOTE: a solid background here would mask the
+   explorer — keep this transparent. */
 HistoryRecall {
-    background: ansi_default;
+    background: transparent;
 }
 #history-dialog {
     border: round $ag-faint;
