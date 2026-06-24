@@ -59,6 +59,7 @@ from agentgrep.progress import (
 )
 from agentgrep.query import default_registry
 from agentgrep.records import SearchQuery, SearchRecord
+from agentgrep.ui import _history
 from agentgrep.ui.completion import (
     QuerySuggester,
     apply_enum_choice,
@@ -175,6 +176,7 @@ def build_streaming_ui_app(
             FilterCompleted,
             FilterInput,
             FilterRequested,
+            HistoryRecall,
             PaneHeader,
             ResultsHeader,
             ResultsScrollChanged,
@@ -224,6 +226,9 @@ def build_streaming_ui_app(
             ("escape", "stop_search", "Stop search"),
             ("ctrl+backslash", "toggle_detail_progress", "Detail"),
             ("ctrl+c", "smart_quit", "Stop / Quit"),
+            # priority so the focused search Input doesn't swallow it, matching
+            # Textual's own command-palette ctrl+p.
+            binding_type("ctrl+r", "recall_history", "History", priority=True),
             binding_type("ctrl+h", "focus_pane_left", "← Pane", priority=True),
             binding_type("ctrl+j", "focus_pane_down", "↓ Pane", priority=True),
             binding_type("ctrl+k", "focus_pane_up", "↑ Pane", priority=True),
@@ -300,6 +305,15 @@ def build_streaming_ui_app(
             self._started_at: float | None = None
             self._last_snapshot: ProgressSnapshot | None = None
             self._searching_panel: SearchingPanel | None = None
+            # Persisted search-input history (agentgrep's only self-written
+            # state — under XDG_STATE_HOME, never a searched store). Loaded once
+            # at construction; the recall modal reads this in-memory snapshot.
+            self._history_disabled = _history.history_disabled()
+            self._history_path = _history.history_path(home)
+            self._history: list[_history.HistoryEntry] = (
+                [] if self._history_disabled else _history.load_history(self._history_path)
+            )
+            self._last_recorded_text = self._history[0].text if self._history else ""
             self._results: SearchResultsList | None = None
             self._detail: StaticLike | None = None
             self._detail_row: StaticLike | None = None
@@ -913,7 +927,55 @@ def build_streaming_ui_app(
                 self._set_empty_state(empty=True)
                 self.query = new_query
                 return
+            self._record_history(text)
             self._start_search_worker(new_query)
+
+        def _record_history(self, text: str) -> None:
+            """Append a submitted, non-empty query to the persisted history.
+
+            Skips a consecutive duplicate of the last recorded query and updates
+            the in-memory newest-first snapshot the recall modal reads, so a
+            fresh Ctrl-R reflects this search without re-reading the file.
+            """
+            if self._history_disabled:
+                return
+            recorded = _history.append_query(
+                self._history_path,
+                text,
+                scope=self._user_scope,
+                dedup_last=self._last_recorded_text,
+            )
+            if not recorded:
+                return
+            self._last_recorded_text = text
+            entry = _history.HistoryEntry(text=text, ts=int(time.time()), scope=self._user_scope)
+            self._history = [entry, *(e for e in self._history if e.text != text)]
+
+        def action_recall_history(self) -> None:
+            """``Ctrl-R``: open the search-history recall modal (idempotent)."""
+            if isinstance(self.screen, HistoryRecall):
+                return
+            seed = ""
+            if self._search_input is not None:
+                seed = str(getattr(self._search_input, "value", "") or "")
+            streaming = t.cast("t.Any", self)
+            streaming.push_screen(
+                HistoryRecall(self._history, seed=seed),
+                self._apply_recalled_query,
+            )
+
+        def _apply_recalled_query(self, query: str | None) -> None:
+            """Fill the search box with a recalled query — never auto-submit.
+
+            agentgrep's search is explicit (Enter dispatches), so recall seeds
+            the box and focuses it; the user reviews/edits and presses Enter.
+            """
+            if not query or self._search_input is None:
+                return
+            target = t.cast("t.Any", self._search_input)
+            target.value = query
+            target.cursor_position = len(query)
+            target.focus()
 
         def _build_search_query(self, text: str) -> SearchQuery:
             """Build a fresh :class:`SearchQuery` from the search-bar text.

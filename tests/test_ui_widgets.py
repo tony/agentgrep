@@ -129,6 +129,21 @@ def test_inputs_are_input_subclasses() -> None:
     assert FilterInput._DEBOUNCE_SECONDS == 0.15
 
 
+def test_format_relative_time_units() -> None:
+    """``format_relative_time`` renders a compact '<n><unit> ago' label."""
+    from agentgrep.ui.format import format_relative_time
+
+    assert format_relative_time(1000, 1000) == "just now"
+    assert format_relative_time(1000, 1005) == "5s ago"
+    assert format_relative_time(0, 90) == "1m ago"
+    assert format_relative_time(0, 3 * 3600) == "3h ago"
+    assert format_relative_time(0, 86400) == "1d ago"
+    assert format_relative_time(0, 14 * 86400) == "2w ago"
+    assert format_relative_time(0, 400 * 86400) == "1y ago"
+    # Clock skew / future timestamps clamp to "just now" rather than negatives.
+    assert format_relative_time(100, 0) == "just now"
+
+
 def test_phase_label_curates_engine_jargon() -> None:
     """``phase_label`` maps engine phase strings to user-facing verbs."""
     assert phase_label("scanning") == "Scanning"

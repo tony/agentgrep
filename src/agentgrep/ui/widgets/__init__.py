@@ -13,6 +13,7 @@ import logging
 
 from agentgrep.ui.widgets.detail import DetailScroll
 from agentgrep.ui.widgets.dropdown import CompletionDropdown
+from agentgrep.ui.widgets.history import HistoryRecall
 from agentgrep.ui.widgets.inputs import DetailFindInput, FilterInput, SearchInput
 from agentgrep.ui.widgets.messages import (
     DetailFindRequested,
@@ -42,6 +43,7 @@ __all__ = [
     "FilterCompleted",
     "FilterInput",
     "FilterRequested",
+    "HistoryRecall",
     "MeterWidget",
     "PaneHeader",
     "ResultsHeader",

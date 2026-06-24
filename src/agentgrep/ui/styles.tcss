@@ -528,3 +528,48 @@ Screen {
 #body.-searching #searching-panel {
     display: block;
 }
+
+/* Ctrl-R search-history recall modal: a faint-ruled dialog over the dimmed
+   explorer, an accent cursor row, and dim metadata + footer — pi-lite over the
+   terminal's own background. The two-pane body collapses to the list alone
+   below the modal's narrow breakpoint (set on the screen in Python). */
+#history-dialog {
+    border: round $ag-faint;
+    background: ansi_default;
+    padding: 0 1;
+}
+#history-title {
+    color: $accent;
+    text-style: bold;
+}
+#history-list {
+    background: transparent;
+    scrollbar-size: 0 0;
+}
+#history-list:focus {
+    background-tint: $foreground 0%;
+}
+#history-list > .option-list--option-highlighted,
+#history-list:focus > .option-list--option-highlighted {
+    color: $accent;
+    text-style: bold;
+    background: transparent;
+}
+#history-preview-scroll {
+    scrollbar-size: 0 0;
+}
+#history-preview {
+    color: $ag-muted;
+}
+#history-filter {
+    border: none;
+    border-top: solid $ag-faint;
+    background: ansi_default;
+}
+#history-filter:focus {
+    border: none;
+    border-top: solid $accent;
+}
+#history-footer {
+    color: $ag-dim;
+}

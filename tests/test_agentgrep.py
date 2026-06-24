@@ -2285,6 +2285,9 @@ def _build_empty_ui_app(
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     home = tmp_path / "home"
     home.mkdir(parents=True, exist_ok=True)
+    # Isolate the search-history state file under tmp so tests never read or
+    # trim the developer's real ~/.local/state/agentgrep/history.jsonl.
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.setattr(
         agentgrep,
         "run_search_query",
@@ -2457,6 +2460,82 @@ async def test_streaming_ui_zero_result_search_freezes_centered_panel(
         assert body.has_class("-searching")
         panel = app.screen.query_one("#searching-panel")
         assert "No matches" in panel.render().plain
+
+
+async def test_search_submit_records_history(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Submitting a search records the query to history (memory + disk)."""
+    from agentgrep.ui import _history
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app._search_input.focus()
+        await pilot.pause()
+        for char in "tmux":
+            await pilot.press(char)
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        assert any(entry.text == "tmux" for entry in app._history)
+        on_disk = _history.load_history(_history.history_path(app.home))
+        assert any(entry.text == "tmux" for entry in on_disk)
+
+
+async def test_history_opt_out_records_nothing(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With ``AGENTGREP_NO_HISTORY`` set, a submitted search is not recorded."""
+    from agentgrep.ui import _history
+
+    monkeypatch.setenv("AGENTGREP_NO_HISTORY", "1")
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app._search_input.focus()
+        await pilot.pause()
+        for char in "tmux":
+            await pilot.press(char)
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        assert app._history == []
+        assert not _history.history_path(app.home).exists()
+
+
+async def test_ctrl_r_opens_history_modal(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ctrl-R from the focused search box opens the recall modal."""
+    from agentgrep.ui._history import HistoryEntry
+    from agentgrep.ui.widgets.history import HistoryRecall
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app._history = [HistoryEntry(text="agent:codex refactor", ts=10)]
+        app._search_input.focus()
+        await pilot.pause()
+        await pilot.press("ctrl+r")
+        await pilot.pause()
+        assert isinstance(app.screen, HistoryRecall)
+
+
+async def test_apply_recalled_query_fills_box_without_running(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Choosing a history entry fills the search box but does not auto-run it."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app._apply_recalled_query("agent:codex refactor")
+        await pilot.pause()
+        assert app._search_input.value == "agent:codex refactor"
+        # Filling the box is not a submit — no results were loaded.
+        assert app.all_records == []
 
 
 async def test_streaming_ui_result_row_title_not_always_bold(
