@@ -343,7 +343,13 @@ Screen {
     width: 32;
     max-height: 10;
     border: round $accent;
-    background: $surface;
+    /* `ansi_default` (SGR 49, the terminal's own background) matches the panes,
+       inputs, and results list instead of painting a foreign `$surface` slate
+       box over them. It is opaque — unlike `transparent` (alpha 0), it occludes
+       the results text the popup floats over, so the candidates stay legible.
+       (`transparent` would blend against the DOM parent, not this overlay's
+       backdrop.) Requires App.ansi_color = True, set in app.py. */
+    background: ansi_default;
 }
 #body {
     height: 1fr;
