@@ -187,11 +187,15 @@ class ResultsHeader(PaneHeader):
         payload = self._payload(avail)
         gap = max(2, width - label_cost - payload.cell_len - 1)
         text = Text(no_wrap=True, overflow="crop")
+        # The rule frame (leading dash, label, gap dashes, trailing cap) carries
+        # NO inline color so it inherits the widget's CSS `color` — $ag-faint at
+        # rest, $accent via `-active` on focus, like the plain idle rule and the
+        # filter's rule. Only the payload segments get inline hues.
         text.append("─")
         text.append(self._label, style="bold")
-        text.append("─" * gap, style=self._c_muted or None)
+        text.append("─" * gap)
         text.append_text(payload)
-        text.append("─", style=self._c_muted or None)
+        text.append("─")
         return text
 
     def _payload(self, avail: int) -> Text:
