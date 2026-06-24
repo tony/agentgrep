@@ -1,0 +1,506 @@
+/* pi-lite global stylesheet for the agentgrep Textual explorer.
+
+   Every rule references theme tokens — Textual seeds ($primary, $surface,
+   $text, $text-muted, $accent, $border, ...) and the $ag-* custom variables
+   from agentgrep.ui.theme — so switching theme re-skins every widget with no
+   rule changes.
+
+   The "lite" feel: thin rounded borders instead of heavy boxes, flat
+   surfaces, one accent for focus/selection, calm muted secondary text, and
+   subtle state tints. `color: auto` lets Textual pick a contrasting text color
+   against any tinted background at paint time.
+
+   Layering: the type-selector rules below are the low-specificity base. The
+   widgets' own DEFAULT_CSS and the id-targeted app-shell rules at the bottom
+   (specificity 1,0,0) refine on top. Equal-specificity ties resolve in favor
+   of this app stylesheet over widget DEFAULT_CSS. */
+
+/* ====================================================================
+   Text entry — Input, MaskedInput, TextArea
+   ==================================================================== */
+/* pi/vim-style text entry: a thin rule above and below, no side borders, and the
+   text flush to the left edge. Textual's Input defaults to `padding: 0 2` plus a
+   full `tall` box, which insets the text ~3 cells; pi draws only a `─` rule top
+   and bottom (DynamicBorder = "─".repeat(width)) and starts the text at column 0.
+   The focus rule re-resets all edges (`border: none`) before recoloring top and
+   bottom, so Input's own `:focus { border: tall }` default can't reintroduce the
+   side borders. */
+Input, MaskedInput, TextArea {
+    border: none;
+    border-top: solid $ag-faint;
+    border-bottom: solid $ag-faint;
+    /* pi runs the text flush to column 0; a single cell of side padding is a
+       gentler experiment. Set `padding: 0` for pi-exact flush. */
+    padding: 0 1;
+    /* Terminal-default background (see the OptionList rule above). */
+    background: ansi_default;
+}
+Input:focus, MaskedInput:focus, TextArea:focus {
+    border: none;
+    border-top: solid $accent;
+    border-bottom: solid $accent;
+}
+
+/* Backup variant: the boxed (rounded, all-around) input we shipped first — add
+   the `-boxed` class to an input to opt back into it. */
+Input.-boxed, MaskedInput.-boxed, TextArea.-boxed {
+    border: round $ag-faint;
+    padding: 0 2;
+}
+Input.-boxed:focus, MaskedInput.-boxed:focus, TextArea.-boxed:focus {
+    border: round $accent;
+}
+
+/* ====================================================================
+   Lists & data — OptionList, ListView, ListItem, DataTable, Tree,
+   DirectoryTree, SelectionList
+   ==================================================================== */
+OptionList, ListView, DataTable, Tree, SelectionList {
+    border: round $ag-faint;
+    /* `ansi_default` = the terminal's own background (SGR 49), so the panes are
+       transparent like pi/claude-code rather than a painted surface. Requires
+       App.ansi_color = True (set in app.py); item backgrounds below stay
+       truecolor. */
+    background: ansi_default;
+    padding: 0 1;
+    /* pi/vim-style: no scrollbar (a terminal column is 1 cell minimum, and pi
+       draws none) — scroll position lives in the statusline instead. Scrolling
+       via wheel / j-k / ctrl-d still works. */
+    scrollbar-size: 0 0;
+}
+OptionList:focus, ListView:focus, DataTable:focus,
+Tree:focus, SelectionList:focus {
+    border: round $accent;
+}
+.option-list--option-highlighted,
+.datatable--cursor,
+.tree--cursor {
+    background: $ag-state-selected-bg;
+    color: auto;
+}
+.datatable--header {
+    background: $panel;
+    color: $text-muted;
+    text-style: bold;
+}
+.datatable--odd-row {
+    background: $boost;
+}
+.tree--guides {
+    color: $ag-faint;
+}
+.tree--guides-selected {
+    color: $accent;
+}
+ListItem {
+    background: transparent;
+    padding: 0 1;
+}
+ListView > ListItem.--highlight {
+    background: $ag-state-selected-bg;
+}
+
+/* ====================================================================
+   Buttons & toggles — Button, Switch, Checkbox, RadioButton, RadioSet
+   ==================================================================== */
+Button {
+    border: round $ag-faint;
+    background: $surface;
+    color: $text;
+    text-style: none;
+}
+Button:focus {
+    border: round $accent;
+    text-style: bold;
+}
+Button:hover {
+    background: $panel;
+}
+Button.-primary { background: $primary; color: auto; }
+Button.-success { background: $success; color: auto; }
+Button.-warning { background: $warning; color: auto; }
+Button.-error { background: $error; color: auto; }
+
+Switch {
+    border: none;
+    background: transparent;
+}
+Switch > .switch--slider {
+    color: $ag-faint;
+    background: $panel;
+}
+Switch.-on > .switch--slider {
+    color: $accent;
+}
+Switch:focus > .switch--slider {
+    background: $boost;
+}
+
+.toggle--button {
+    color: $ag-faint;
+    text-style: none;
+}
+ToggleButton.-on > .toggle--button {
+    color: $accent;
+}
+RadioButton:focus > .toggle--label,
+Checkbox:focus > .toggle--label {
+    text-style: bold;
+}
+RadioSet {
+    border: round $ag-faint;
+    background: $surface;
+    padding: 0 1;
+}
+RadioSet:focus {
+    border: round $accent;
+}
+
+/* ====================================================================
+   Selection dropdown — Select
+   ==================================================================== */
+Select {
+    border: round $ag-faint;
+    background: $surface;
+}
+Select:focus > SelectCurrent {
+    border: round $accent;
+}
+
+/* ====================================================================
+   Tabs — Tabs, Tab, TabbedContent, TabPane
+   ==================================================================== */
+Tabs {
+    background: transparent;
+}
+Tab {
+    color: $text-muted;
+    text-style: none;
+}
+Tab.-active {
+    color: $accent;
+    text-style: bold;
+}
+Tabs > #tabs-list .underline--bar {
+    color: $accent;
+}
+TabbedContent {
+    background: transparent;
+}
+
+/* ====================================================================
+   Chrome — Header, Footer
+   ==================================================================== */
+Header {
+    background: $panel;
+    color: $text;
+}
+HeaderTitle {
+    color: $text;
+    text-style: bold;
+}
+Footer {
+    /* Terminal-default background so the key bar blends with the terminal,
+       pi/claude-code-style; the accent key glyphs carry the contrast. */
+    background: ansi_default;
+}
+Footer > .footer-key--key {
+    color: $accent;
+}
+Footer > .footer-key--description {
+    color: $text-muted;
+}
+
+/* ====================================================================
+   Feedback & progress — ProgressBar, LoadingIndicator, Sparkline,
+   Digits, Toast, Tooltip
+   ==================================================================== */
+.bar--bar {
+    color: $accent;
+}
+.bar--complete {
+    color: $success;
+}
+.bar--indeterminate {
+    color: $secondary;
+}
+LoadingIndicator {
+    color: $accent;
+    background: transparent;
+}
+Sparkline > .sparkline--max-color {
+    color: $accent;
+}
+Sparkline > .sparkline--min-color {
+    color: $ag-faint;
+}
+Digits {
+    color: $accent;
+}
+Toast {
+    border: round $ag-faint;
+    background: $panel;
+}
+.toast--title {
+    text-style: bold;
+}
+Tooltip {
+    border: round $ag-faint;
+    background: $panel;
+    color: $text;
+    padding: 0 1;
+}
+
+/* ====================================================================
+   Separators & rich text — Rule, Markdown, MarkdownViewer, RichLog,
+   Log, Collapsible, Link, Pretty
+   ==================================================================== */
+Rule {
+    color: $ag-faint;
+}
+Markdown, MarkdownViewer, RichLog, Log {
+    background: transparent;
+    scrollbar-size: 0 0;
+}
+CollapsibleTitle {
+    color: $text;
+}
+CollapsibleTitle:hover {
+    color: $accent;
+}
+Collapsible {
+    border: none;
+}
+Link {
+    color: $accent;
+    text-style: none;
+}
+Link:hover {
+    text-style: underline;
+}
+
+/* ====================================================================
+   App shell (migrated from the former inline CSS, tokenized).
+   id selectors (specificity 1,0,0) win over the type rules above.
+   ==================================================================== */
+Screen {
+    layout: vertical;
+    /* The `flash` layer hosts the transient ctrl-c confirm gutter so it overlays
+       the footer only while shown, without taking layout space. */
+    layers: base flash;
+}
+/* "press ctrl-c again to exit" confirm gutter: hidden until armed, then it
+   overlays the footer's bottom row. Calm pi-lite styling — terminal-transparent
+   background and a plain accent foreground (no fill, no bold), matching the
+   footer's accent keys rather than a loud warning bar. */
+#ctrlc-gutter {
+    layer: flash;
+    dock: bottom;
+    height: 1;
+    width: 1fr;
+    display: none;
+    content-align: center middle;
+    text-align: center;
+    background: ansi_default;
+    color: $accent;
+}
+#ctrlc-gutter.-shown {
+    display: block;
+}
+#search {
+    height: 3;
+}
+/* The top search prompt carries NO border label (it's the primary entry, kept
+   bare); its rule instead acts as a live search-state indicator. Dynamic
+   search-rule color (pi updateEditorBorderColor): the classes are toggled in
+   Python (_set_search_rule_state); id+class specificity (1,1,0) wins over
+   Input:focus (0,1,1) so the state color shows with or without focus. */
+#search.-searching {
+    border-top: solid $accent;
+    border-bottom: solid $accent;
+}
+#search.-done {
+    border-top: solid $success;
+    border-bottom: solid $success;
+}
+#search.-stopped {
+    border-top: solid $ag-muted;
+    border-bottom: solid $ag-muted;
+}
+#search.-error {
+    border-top: solid $error;
+    border-bottom: solid $error;
+}
+#enum-dropdown, #filter-dropdown {
+    /* Float over the results just below the input, like Select's popup
+       — no layout space, toggled via .display so re-populating per
+       keystroke never remounts. The x offset is set at runtime to the
+       input's cursor column; ``constrain: inside inside`` shifts it
+       back on-screen when the cursor is near the right edge. */
+    overlay: screen;
+    constrain: inside inside;
+    display: none;
+    width: 32;
+    max-height: 10;
+    border: round $accent;
+    /* `ansi_default` (SGR 49, the terminal's own background) matches the panes,
+       inputs, and results list instead of painting a foreign `$surface` slate
+       box over them. It is opaque — unlike `transparent` (alpha 0), it occludes
+       the results text the popup floats over, so the candidates stay legible.
+       (`transparent` would blend against the DOM parent, not this overlay's
+       backdrop.) Requires App.ansi_color = True, set in app.py. */
+    background: ansi_default;
+}
+#body {
+    height: 1fr;
+}
+#results-column {
+    width: 1fr;
+    layout: vertical;
+}
+#detail-column {
+    width: 1fr;
+    layout: vertical;
+}
+/* Narrow terminals stack the panes: results on top, detail below
+   (tig moves its diff view to the bottom on narrow screens). The
+   ``1fr``/``2fr`` units are per-axis, so the side-by-side width
+   rules above still hold; only the body's layout axis flips. */
+#body.-stacked {
+    layout: vertical;
+}
+#body.-stacked > #results-column {
+    height: 2fr;
+}
+#body.-stacked > #detail-column {
+    height: 1fr;
+}
+/* Stacked detail stays closed until the user selects a row. */
+#detail-column.-collapsed {
+    display: none;
+}
+#filter {
+    height: 2;
+    /* No top rule: the results-header rule directly above is the filter's top
+       separator, so a top rule here would stack two horizontal lines under the
+       header. Keep only the bottom rule, and move the `filter` label onto it
+       (border_subtitle) so the label survives without the double chrome. */
+    border-top: none;
+    border-subtitle-align: right;
+    border-subtitle-color: $ag-muted;
+}
+#filter:focus {
+    /* Keep the top off even when focused; the bottom rule (accent on focus,
+       from the global Input:focus rule) carries the focus cue. */
+    border-top: none;
+}
+#detail-scroll {
+    height: 1fr;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size: 0 0;
+    /* No box — the pane is delineated by its #detail-header (label + rule).
+       Focus is shown by recoloring that header, not by a border here. */
+    border: none;
+}
+#detail {
+    /* 1 cell of left (and right) padding so the contents don't hug the seam. */
+    padding: 0 1;
+}
+#results {
+    height: 1fr;
+    overflow-x: hidden;
+    scrollbar-size: 0 0;
+}
+/* The results statusline is folded into #results-header (ResultsHeader): the
+   spinner, bar, percent, and match count render as colored spans inside the
+   header rule, so there is no separate statusline row or per-cell CSS. */
+#status-detail {
+    height: 1;
+    /* Aligns the verbose ctrl+\ row under the header's payload. */
+    padding: 0 1 0 3;
+    color: $ag-muted;
+    display: none;
+}
+#status-detail.visible {
+    display: block;
+}
+/* Find-in-detail bar: docked above the detail statusline, hidden until `/` or
+   ctrl+f opens it (with a record loaded). Only a top rule separates it from the
+   detail body above; the global Input:focus accent applies to that rule. */
+#detail-find {
+    height: 2;
+    border-bottom: none;
+    display: none;
+}
+#detail-find:focus {
+    border-bottom: none;
+}
+#detail-statusline {
+    height: 1;
+    padding: 0;
+    color: $text-muted;
+}
+/* No box — the results pane is delineated by its #results-header (label +
+   rule). We still cancel the two parts of OptionList's focus rule that fight
+   our per-span semantic colors: the ``$foreground 5%`` background-tint and the
+   bright ``$block-cursor-*`` cursor-row recolor. */
+#results {
+    border: none;
+}
+#results:focus {
+    background-tint: $foreground 0%;
+}
+#results:focus > .option-list--option-highlighted {
+    color: $block-cursor-blurred-foreground;
+    background: $block-cursor-blurred-background;
+    /* Bold is the selection signal (pi bolds the selected line, not every line).
+       `text-style` only adds the weight flag — it leaves the row's baked per-span
+       hues intact, unlike `color`. The always-on row-title bold was dropped in
+       results.py so this is the single place weight marks the cursor row. */
+    text-style: bold;
+}
+/* The cursor row stays bold even when the list is blurred, so the selection is
+   legible while the user types in the search/filter box above it. */
+#results > .option-list--option-highlighted {
+    text-style: bold;
+}
+
+/* pi-style section headers (a left label embedded in a full-width rule) stand in
+   for the pane boxes, mirroring the filter input's rule. The line color is muted
+   at rest and accent on the focused pane; the `-active` class is toggled in
+   Python from the focused widget. */
+#results-header, #detail-header {
+    height: 1;
+    width: 1fr;
+    /* No padding: the rule spans the section's full width like the filter input's
+       rule (no inset, no trailing margin). The leading ─ sits at column 0, so the
+       label still lines up with the 1-cell-inset rows below it. */
+    color: $ag-faint;
+}
+#results-header.-active, #detail-header.-active {
+    color: $accent;
+}
+
+/* Empty / pre-search state (pi "bare canvas + hint"): until a search starts,
+   #body carries the `-empty` class and all of its chrome is hidden, leaving
+   just the search input above a dim centered hint with example queries. The
+   chrome reveals (class removed) the moment a search is launched. */
+#empty-hint {
+    display: none;
+    height: 1fr;
+    width: 1fr;
+    content-align: center middle;
+    text-align: center;
+    color: $ag-dim;
+}
+#body.-empty #results-header,
+#body.-empty #filter,
+#body.-empty #filter-dropdown,
+#body.-empty #results,
+#body.-empty #detail-column {
+    display: none;
+}
+#body.-empty #empty-hint {
+    display: block;
+}

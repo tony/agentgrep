@@ -2318,6 +2318,10 @@ async def test_streaming_ui_app_mounts_cleanly(
     # the detail pane collapses (display: none) and leaves the focus chain.
     async with app.run_test(size=(120, 24)) as pilot:
         await pilot.pause()
+        # Leave the pre-search bare canvas so the body panes are mounted/visible
+        # (they are hidden until a search runs).
+        app._set_empty_state(empty=False)
+        await pilot.pause()
         focus_chain_ids = {getattr(w, "id", None) for w in app.screen.focus_chain}
         assert "results" in focus_chain_ids, f"#results not in focus chain; chain={focus_chain_ids}"
         # Both inputs and the detail pane should be focusable too.
@@ -2339,6 +2343,106 @@ async def test_streaming_ui_app_wires_inline_completion(
         # The query suggester completes a bare field-name prefix.
         suggestion = await search.suggester.get_suggestion("age")
         assert suggestion == "agent:"
+
+
+async def test_streaming_ui_filter_labels_rule_search_stays_bare(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The filter labels its bottom rule; the search prompt stays bare.
+
+    The filter has no top rule (the results header above is its separator), so
+    its `filter` label lives on the bottom rule (border_subtitle). The top search
+    prompt is the primary entry point and is kept unlabelled.
+    """
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        search = app.screen.query_one("#search")
+        filter_input = app.screen.query_one("#filter")
+        assert str(filter_input.border_subtitle) == "filter"
+        # The label is on the bottom rule, not a (removed) top rule.
+        assert not filter_input.border_title
+        # The prompt itself has no border label.
+        assert not search.border_title
+
+
+async def test_streaming_ui_search_rule_state_classes(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The search rule reflects search state as a single ``-`` class on ``#search``.
+
+    Mirrors pi's dynamic editor border: idle (no class), searching, and each
+    finished outcome map to mutually-exclusive classes recolored in TCSS.
+    """
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        search = app.screen.query_one("#search")
+
+        app._set_search_rule_state("searching")
+        assert search.has_class("-searching")
+
+        # Outcomes are mutually exclusive — the prior class is cleared.
+        app._set_search_rule_state("complete")
+        assert search.has_class("-done")
+        assert not search.has_class("-searching")
+
+        app._set_search_rule_state("interrupted")
+        assert search.has_class("-stopped")
+        assert not search.has_class("-done")
+
+        # Empty state returns the rule to idle (no state class).
+        app._set_search_rule_state("")
+        assert not any(search.has_class(c) for c in ("-searching", "-done", "-stopped", "-error"))
+
+
+async def test_streaming_ui_result_row_title_not_always_bold(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rows bake no always-on bold; weight is a selection signal applied via CSS.
+
+    pi reserves bold for the selected line, so the row builder leaves every
+    span at regular weight and the highlighted-row CSS supplies the emphasis.
+    """
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        results = app.screen.query_one("#results")
+        record = _agentgrep_module.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="codex.history",
+            adapter_id="codex.history_jsonl.v1",
+            path=tmp_path / "history.jsonl",
+            text="error handling",
+            title="error handling notes",
+        )
+        rendered = results._render_record(record)
+        assert all("bold" not in str(span.style) for span in rendered.spans)
+
+
+async def test_pane_headers_left_label_embedded_in_rule(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pane headers mirror the filter's rule, left-positioned.
+
+    A leading rule cell precedes the label (the left mirror of the filter's
+    trailing cap dash), then the rule runs to the full width with no trailing
+    margin and no gap spacing.
+    """
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        app._set_empty_state(empty=False)
+        await pilot.pause()
+        plain = app.screen.query_one("#results-header").render().plain
+        assert plain.startswith("─results")  # a rule cell sits before the label
+        assert plain.endswith("─")  # rule fills to the edge — no trailing margin
+        assert "  " not in plain  # no confusing double-space gap
 
 
 async def test_streaming_ui_app_enum_dropdown_opens_and_closes(
@@ -2453,12 +2557,18 @@ async def test_detail_pane_highlights_filter_terms_distinctly(
         spans = [(s.start, s.end, str(s.style)) for s in renderable.spans]
         biome = body.index("biome")
         mobx = body.index("mobx")
-        # Search term keeps the yellow highlight; filter term gets its own.
+        # Search and filter terms get distinct, theme-aware styles: the search
+        # term carries the gold foreground token, the filter term the accent
+        # background token.
+        search_hex = app.theme_variables["ag-match-search"]
+        filter_bg_hex = app.theme_variables["ag-match-filter-bg"]
         assert any(
-            s == biome and e == biome + len("biome") and "yellow" in style for s, e, style in spans
+            s == biome and e == biome + len("biome") and search_hex in style
+            for s, e, style in spans
         )
         assert any(
-            s == mobx and e == mobx + len("mobx") and "cyan" in style for s, e, style in spans
+            s == mobx and e == mobx + len("mobx") and filter_bg_hex in style
+            for s, e, style in spans
         )
 
 
@@ -2498,6 +2608,35 @@ async def test_large_detail_body_builds_off_thread(
         # The worker built and applied the body off the UI thread.
         assert app._detail_body_is_cached(terms)
         assert len(list(app._detail.content.renderables)) == 2
+
+
+async def test_large_detail_body_resolves_match_styles_on_pump(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A large detail worker uses styles resolved on the pump thread."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        pump_thread_id = threading.get_ident()
+        style_threads: list[int] = []
+
+        def record_style(kind: str) -> str:
+            style_threads.append(threading.get_ident())
+            return "bold yellow" if kind == "search" else "bold black on cyan"
+
+        monkeypatch.setattr(app, "_match_style", record_style)
+        app._filter_terms = ("needle",)
+        big = "needle " + ("x" * (app._DETAIL_ASYNC_BODY_THRESHOLD + 1000))
+        record = _ui_record(agentgrep, tmp_path / "big.jsonl", big, "big")
+
+        app.show_detail(record)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert style_threads
+        assert set(style_threads) == {pump_thread_id}
 
 
 async def test_present_detail_discards_superseded_record(
@@ -2763,6 +2902,10 @@ async def test_tab_moves_focus_from_filter_to_results(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test() as pilot:
         await pilot.pause()
+        # Leave the pre-search bare canvas so the body chrome (filter/results)
+        # is present to focus.
+        app._set_empty_state(empty=False)
+        await pilot.pause()
         # On empty initial query the search bar takes initial focus, so
         # manually move focus to the filter input for this test.
         app._filter_input.focus()
@@ -2782,6 +2925,8 @@ async def test_down_at_empty_filter_releases_focus_to_results(
     """``down`` arrow on an empty filter moves focus to the results table."""
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test() as pilot:
+        await pilot.pause()
+        app._set_empty_state(empty=False)
         await pilot.pause()
         app._filter_input.focus()
         await pilot.pause()
@@ -3081,11 +3226,11 @@ async def test_G_on_detail_scrolls_to_bottom(
         assert app._detail_scroll.scroll_y >= app._detail_scroll.max_scroll_y - 0.5
 
 
-async def test_ctrl_f_on_detail_pages_down(
+async def test_ctrl_f_on_detail_opens_find(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``Ctrl-F`` on the detail pane scrolls down by approximately one page."""
+    """``Ctrl-F`` (and ``/``) on the detail pane opens the find-in-detail bar."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     long_body = "\n".join(f"line {idx}" for idx in range(200))
@@ -3107,12 +3252,523 @@ async def test_ctrl_f_on_detail_pages_down(
         await pilot.pause()
         app._detail_scroll.focus()
         await pilot.pause()
-        before = app._detail_scroll.scroll_y
+        assert app._detail_find_input.display is False
         await pilot.press("ctrl+f")
         await pilot.pause()
-        # Scrolled forward; exact delta depends on viewport size, just assert
-        # something happened in the right direction.
+        assert app._detail_find_input.display is True
+        assert app._detail_find_active is True
+        assert getattr(app.focused, "id", None) == "detail-find"
+
+
+def _detail_find_record(agentgrep: t.Any, path: pathlib.Path) -> t.Any:
+    """Build a record whose body has several 'needle' matches across lines."""
+    body = "\n".join(
+        f"line {i} has a needle here" if i % 3 == 0 else f"line {i} is plain" for i in range(30)
+    )
+    return _ui_record(agentgrep, path, body, "find")
+
+
+async def _open_detail_with_find(app: t.Any, record: t.Any, pilot: t.Any) -> None:
+    """Show ``record`` in the detail pane and reveal the find bar."""
+    app._set_empty_state(empty=False)
+    app.show_detail(record)
+    await pilot.pause()
+    app.action_open_detail_find()
+    await pilot.pause()
+
+
+class DetailFindStaleRequestCase(t.NamedTuple):
+    """A stale debounced find request scenario."""
+
+    test_id: str
+    live_text: str
+    message_text: str
+    close_first: bool
+
+
+DETAIL_FIND_STALE_REQUEST_CASES = [
+    DetailFindStaleRequestCase(
+        test_id="closed-find-ignores-pending-request",
+        live_text="needle",
+        message_text="needle",
+        close_first=True,
+    ),
+    DetailFindStaleRequestCase(
+        test_id="changed-input-ignores-old-request",
+        live_text="nomatch",
+        message_text="needle",
+        close_first=False,
+    ),
+]
+
+
+class DetailFindStepLiveQueryCase(t.NamedTuple):
+    """An immediate find navigation key scenario."""
+
+    test_id: str
+    key: str
+    expected_index: int
+
+
+DETAIL_FIND_STEP_LIVE_QUERY_CASES = [
+    DetailFindStepLiveQueryCase(test_id="enter-steps-live-query", key="enter", expected_index=1),
+    DetailFindStepLiveQueryCase(test_id="down-steps-live-query", key="down", expected_index=1),
+    DetailFindStepLiveQueryCase(test_id="up-steps-live-query", key="up", expected_index=9),
+]
+
+
+class DetailFindPendingRenderCase(t.NamedTuple):
+    """A detail-find query while the selected large record is still rendering."""
+
+    test_id: str
+    query: str
+    expected_matches: int
+
+
+DETAIL_FIND_PENDING_RENDER_CASES = [
+    DetailFindPendingRenderCase(
+        test_id="does-not-search-old-source",
+        query="oldneedle",
+        expected_matches=0,
+    ),
+    DetailFindPendingRenderCase(
+        test_id="searches-new-body-fallback",
+        query="newneedle",
+        expected_matches=1,
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "case",
+    DETAIL_FIND_STALE_REQUEST_CASES,
+    ids=[case.test_id for case in DETAIL_FIND_STALE_REQUEST_CASES],
+)
+async def test_detail_find_ignores_stale_debounce_requests(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: DetailFindStaleRequestCase,
+) -> None:
+    """Stale debounced find requests do not repaint hidden or superseded find state."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    from agentgrep.ui.widgets.messages import DetailFindRequested
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = _detail_find_record(agentgrep, tmp_path / "a.jsonl")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await _open_detail_with_find(app, record, pilot)
+        app._detail_find_input.load_query(case.live_text)
+        if case.close_first:
+            app._close_detail_find()
+            await pilot.pause()
+
+        app.on_detail_find_requested(DetailFindRequested(case.message_text))
+        await pilot.pause()
+
+        assert app._detail_find_query == ""
+        assert app._detail_find_matches == []
+        if case.close_first:
+            assert app._detail_find_active is False
+            assert app._detail_find_input.display is False
+
+
+@pytest.mark.parametrize(
+    "case",
+    DETAIL_FIND_STEP_LIVE_QUERY_CASES,
+    ids=[case.test_id for case in DETAIL_FIND_STEP_LIVE_QUERY_CASES],
+)
+async def test_detail_find_steps_live_query_before_navigation(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: DetailFindStepLiveQueryCase,
+) -> None:
+    """Find navigation keys search the live input before stepping matches."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    from textual import events
+
+    from agentgrep.ui.widgets.messages import DetailFindRequested
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = _detail_find_record(agentgrep, tmp_path / "a.jsonl")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await _open_detail_with_find(app, record, pilot)
+        app._detail_find_input.value = "needle"
+
+        await app._detail_find_input._on_key(events.Key(case.key, None))
+        app.on_detail_find_requested(DetailFindRequested("needle"))
+        await pilot.pause()
+
+        assert app._detail_find_query == "needle"
+        assert len(app._detail_find_matches) == 10
+        assert app._detail_find_current == case.expected_index
+
+
+@pytest.mark.parametrize(
+    "case",
+    DETAIL_FIND_PENDING_RENDER_CASES,
+    ids=[case.test_id for case in DETAIL_FIND_PENDING_RENDER_CASES],
+)
+async def test_detail_find_uses_new_body_while_large_render_is_pending(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: DetailFindPendingRenderCase,
+) -> None:
+    """Opening find before a large render finishes searches the new record body."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    old_record = _ui_record(
+        agentgrep,
+        tmp_path / "old.jsonl",
+        "oldneedle only lives in the previous record",
+        "old",
+    )
+    new_body = "newneedle lives here\n" + ("x" * (app._DETAIL_ASYNC_BODY_THRESHOLD + 1000))
+    new_record = _ui_record(agentgrep, tmp_path / "new.jsonl", new_body, "new")
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app.show_detail(old_record)
+        await pilot.pause()
+        assert "oldneedle" in app._detail_find_source
+
+        scheduled_workers: list[object] = []
+
+        def capture_worker(worker: object, **_: object) -> None:
+            scheduled_workers.append(worker)
+
+        monkeypatch.setattr(app, "run_worker", capture_worker)
+        app.show_detail(new_record)
+        assert scheduled_workers
+
+        app.action_open_detail_find()
+        app._detail_find_input.load_query(case.query)
+        app._run_detail_find(case.query, reset_cursor=True)
+        await pilot.pause()
+
+        assert len(app._detail_find_matches) == case.expected_matches
+
+
+async def test_detail_find_searches_navigates_and_counts(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Typing in the find bar matches the body, counts N/M, and steps the cursor."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = _detail_find_record(agentgrep, tmp_path / "a.jsonl")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await _open_detail_with_find(app, record, pilot)
+        app._detail_find_input.load_query("needle")
+        app._run_detail_find("needle", reset_cursor=True)
+        await pilot.pause()
+        assert len(app._detail_find_matches) == 10
+        assert app._detail_find_current == 0
+        assert "1/10" in str(app._detail_statusline.render())
+        # Next match advances the cursor and scrolls the body.
+        before = app._detail_scroll.scroll_y
+        app._detail_find_step(1)
+        await pilot.pause()
+        assert app._detail_find_current == 1
         assert app._detail_scroll.scroll_y > before
+        # Wrap-around: previous from match 1 -> 0, previous again -> last (9).
+        app._detail_find_step(-1)
+        app._detail_find_step(-1)
+        assert app._detail_find_current == 9
+
+
+async def test_detail_find_only_opens_with_a_record(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The find bar stays hidden when no detail record is loaded (gated)."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        assert app._current_detail_record is None
+        app.action_open_detail_find()
+        await pilot.pause()
+        assert app._detail_find_input.display is False
+        assert app._detail_find_active is False
+
+
+async def test_detail_find_escape_closes_without_quitting(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Esc closes the find bar and refocuses the detail body without exiting."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = _detail_find_record(agentgrep, tmp_path / "a.jsonl")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await _open_detail_with_find(app, record, pilot)
+        assert app._detail_find_input.display is True
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app._detail_find_input.display is False
+        assert app._detail_find_active is False
+        assert getattr(app.focused, "id", None) == "detail-scroll"
+        assert app.is_running  # esc closed find, did not quit the app
+
+
+async def test_detail_find_memory_restores_per_record(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Closing find saves the query+cursor per record; revisiting restores them."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    rec_a = _detail_find_record(agentgrep, tmp_path / "a.jsonl")
+    rec_b = _ui_record(agentgrep, tmp_path / "b.jsonl", "no matches at all\n" * 8, "b")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await _open_detail_with_find(app, rec_a, pilot)
+        app._detail_find_input.load_query("needle")
+        app._run_detail_find("needle", reset_cursor=True)
+        app._detail_find_step(1)  # land on match index 1
+        await pilot.pause()
+        app._close_detail_find()
+        await pilot.pause()
+        assert app._detail_find_state[id(rec_a)][:2] == ("needle", 1)
+        # Visit another record, come back, reopen -> the query + cursor restore.
+        app.show_detail(rec_b)
+        await pilot.pause()
+        app.show_detail(rec_a)
+        await pilot.pause()
+        app.action_open_detail_find()
+        await pilot.pause()
+        assert app._detail_find_input.value == "needle"
+        assert app._detail_find_current == 1
+        assert len(app._detail_find_matches) == 10
+
+
+async def test_detail_find_resets_on_record_switch_while_open(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Switching records with the find bar open closes it (no stale matches/count).
+
+    Regression: leaving the bar open across a record switch otherwise applied
+    the old record's match offsets to the new body and showed a stale N/M. The
+    outgoing record's find is saved, so a revisit restores it.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    rec_a = _detail_find_record(agentgrep, tmp_path / "a.jsonl")
+    rec_b = _ui_record(agentgrep, tmp_path / "b.jsonl", "no matches at all\n" * 8, "b")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await _open_detail_with_find(app, rec_a, pilot)
+        app._detail_find_input.load_query("needle")
+        app._run_detail_find("needle", reset_cursor=True)
+        app._detail_find_step(1)
+        await pilot.pause()
+        # Switch to B WITHOUT closing find first (the bug path).
+        app.show_detail(rec_b)
+        await pilot.pause()
+        assert app._detail_find_active is False
+        assert app._detail_find_input.display is False
+        assert app._detail_find_matches == []
+        # A's find survived in per-record memory for a later revisit.
+        assert app._detail_find_state[id(rec_a)][:2] == ("needle", 1)
+
+
+async def test_detail_find_survives_theme_switch(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A theme switch re-renders the same record but keeps the find active+highlighted."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    from agentgrep.ui import theme as ui_theme
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    rec_a = _detail_find_record(agentgrep, tmp_path / "a.jsonl")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await _open_detail_with_find(app, rec_a, pilot)
+        app._detail_find_input.load_query("needle")
+        app._run_detail_find("needle", reset_cursor=True)
+        await pilot.pause()
+        app.theme = ui_theme.LIGHT_THEME_NAME  # same record re-render
+        await pilot.pause()
+        # Find stays active with valid matches (not closed by the re-render),
+        # and _present_detail re-overlays the highlights via _present_detail_find.
+        assert app._detail_find_active is True
+        assert app._detail_find_input.display is True
+        assert len(app._detail_find_matches) == 10
+
+
+async def test_input_ctrl_c_clears_then_arms_confirm_exit(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ctrl-C in the search input clears the text first, then arms confirm-exit."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(100, 24)) as pilot:
+        await pilot.pause()
+        search = app.screen.query_one("#search")
+        search.focus()
+        search.value = "hello"
+        await pilot.pause()
+        await pilot.press("ctrl+c")  # text present -> clear, no exit, no arm
+        await pilot.pause()
+        assert search.value == ""
+        assert app.is_running
+        assert app._confirm_exit_pending is False
+        await pilot.press("ctrl+c")  # empty box -> arm confirm-exit (gutter shown)
+        await pilot.pause()
+        assert app._confirm_exit_pending is True
+        assert app.is_running
+        assert app._ctrlc_gutter.has_class("-shown")
+        await pilot.press("x")  # any other key disarms
+        await pilot.pause()
+        assert app._confirm_exit_pending is False
+        assert app._ctrlc_gutter.has_class("-shown") is False
+
+
+async def test_input_second_ctrl_c_on_empty_exits(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second ctrl-c on an empty input within the window exits the app."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(100, 24)) as pilot:
+        await pilot.pause()
+        search = app.screen.query_one("#search")
+        search.focus()
+        await pilot.press("ctrl+c")  # arm
+        await pilot.pause()
+        assert app._confirm_exit_pending is True
+        await pilot.press("ctrl+c")  # exit
+        await pilot.pause()
+        assert app.is_running is False
+
+
+async def test_ctrl_c_on_detail_pane_arms_confirm_exit(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ctrl-C with a non-input pane focused arms confirm-exit, like the inputs.
+
+    Regression: the staged "press ctrl-c again to exit" gutter only fired from a
+    focused input; on the detail scroll (a non-input widget) the first ctrl-c
+    quit outright with no warning. ``action_smart_quit`` now routes through the
+    same arm-then-confirm flow.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = _detail_find_record(agentgrep, tmp_path / "a.jsonl")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app._set_empty_state(empty=False)
+        app.show_detail(record)
+        await pilot.pause()
+        app._detail_scroll.focus()
+        await pilot.pause()
+        assert getattr(app.focused, "id", None) == "detail-scroll"
+        assert app._has_active_actions() is False
+        await pilot.press("ctrl+c")  # non-input focus -> arm, do not quit
+        await pilot.pause()
+        assert app.is_running
+        assert app._confirm_exit_pending is True
+        assert app._ctrlc_gutter.has_class("-shown")
+        await pilot.press("ctrl+c")  # second press within the window -> exit
+        await pilot.pause()
+        assert app.is_running is False
+
+
+async def test_find_input_ctrl_c_clears_then_closes_bar(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ctrl-C in the find input clears the query, then closes the bar (never quits)."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = _detail_find_record(agentgrep, tmp_path / "a.jsonl")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await _open_detail_with_find(app, record, pilot)
+        app._detail_find_input.load_query("needle")
+        app._run_detail_find("needle", reset_cursor=True)
+        app._detail_find_input.focus()
+        await pilot.pause()
+        await pilot.press("ctrl+c")  # query present -> clear, bar stays open
+        await pilot.pause()
+        assert app._detail_find_input.value == ""
+        assert app._detail_find_active is True
+        assert app.is_running
+        await pilot.press("ctrl+c")  # empty -> close the bar (not quit)
+        await pilot.pause()
+        assert app._detail_find_active is False
+        assert app._detail_find_input.display is False
+        assert app.is_running
+
+
+async def test_detail_find_scrolls_wrapped_match_into_view(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Scroll-to-match brings a match on a wrapped line into the viewport.
+
+    A logical newline count would land the match far above the viewport when
+    long lines wrap; the wrap-aware row computation puts it on screen.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    body = "\n".join(
+        ["x" * 220 for _ in range(6)] + ["a needle to find"] + ["y" * 220 for _ in range(6)],
+    )
+    record = _ui_record(agentgrep, tmp_path / "wrap.jsonl", body, "wrap")
+    async with app.run_test(size=(140, 24)) as pilot:
+        await pilot.pause()
+        app._set_empty_state(empty=False)
+        app.show_detail(record)
+        await pilot.pause()
+        app.action_open_detail_find()
+        app._detail_find_input.load_query("needle")
+        app._run_detail_find("needle", reset_cursor=True)
+        await pilot.pause()
+        scroll = app._detail_scroll
+        # The match's true visual row (read off the rendered wrap cache) lies in
+        # the scrolled viewport; a logical-line count would land it off-screen.
+        app._detail._render_content()
+        rows = [
+            i for i, strip in enumerate(app._detail._render_cache.lines) if "needle" in strip.text
+        ]
+        assert rows, "match should be in the rendered output"
+        viewport = range(int(scroll.scroll_y), int(scroll.scroll_y) + scroll.size.height)
+        assert any(row in viewport for row in rows)
+
+
+async def test_detail_find_keeps_json_syntax_colors(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Find on a JSON body keeps syntax token colors and layers the find highlight."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    body = '{"role": "user", "needle": "a", "items": [{"needle": "b"}], "x": "no"}'
+    record = _ui_record(agentgrep, tmp_path / "j.jsonl", body, "j")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app._set_empty_state(empty=False)
+        app.show_detail(record)
+        await pilot.pause()
+        # The find source is the pretty-printed (multiline) JSON, so offsets and
+        # matches line up with what is displayed.
+        assert "\n" in app._detail_find_source
+        app.action_open_detail_find()
+        app._detail_find_input.load_query("needle")
+        app._run_detail_find("needle", reset_cursor=True)
+        await pilot.pause()
+        assert len(app._detail_find_matches) == 2
+        body_text = app._detail.content.renderables[1]
+        styles = {str(span.style) for span in body_text.spans}
+        assert any("on " in s for s in styles)  # find-match background spans
+        assert any(s and "on " not in s and s != "none" for s in styles)  # JSON token colors
 
 
 async def test_ctrl_j_from_filter_focuses_results(
@@ -3531,6 +4187,11 @@ async def test_focus_detail_renders_record_when_opening_stacked_streaming_result
         assert app.focused is not None and app.focused.id == "detail-scroll"
         assert app._current_detail_record is expected
         assert not app._detail_column.has_class("-collapsed")
+        # Records open at the top now (per-record scroll memory), so in the
+        # short stacked viewport the matched body line sits below the metadata
+        # header — scroll down to bring it into view before asserting it renders.
+        app._detail_scroll.scroll_end(animate=False)
+        await pilot.pause()
         screenshot = app.export_screenshot(simplify=True)
         assert "VISIBLEPROBE" in screenshot
         assert f"record&#160;{case.expected_index}" in screenshot
@@ -3990,7 +4651,7 @@ async def test_results_scroll_changed_updates_status_right(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The app handler updates ``#status-right`` when the OptionList scrolls."""
+    """The app handler updates the header's match slot when the list scrolls."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     records = _seed_records(agentgrep, tmp_path, 5)
@@ -3999,13 +4660,13 @@ async def test_results_scroll_changed_updates_status_right(
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
         updates: list[str] = []
-        real_update = app._matches_widget.update
+        real_set = app._results_header.set_matches
 
-        def spy(content: t.Any = "", *args: t.Any, **kwargs: t.Any) -> None:
-            updates.append(str(content))
-            real_update(content, *args, **kwargs)
+        def spy(text: str) -> None:
+            updates.append(text)
+            real_set(text)
 
-        monkeypatch.setattr(app._matches_widget, "update", spy)
+        monkeypatch.setattr(app._results_header, "set_matches", spy)
         # Pre-seed streaming records so the match count is non-zero.
         app.all_records.extend(records)
         app._results.append_records(records)
@@ -4080,6 +4741,10 @@ async def test_results_status_right_adapts_to_width(
     async with app.run_test(size=case.size) as pilot:
         await pilot.pause()
         app.all_records.extend(records)
+        # Reveal the chrome so the statusline has a measurable width (the narrow
+        # detection drives the right-slot format).
+        app._set_empty_state(empty=False)
+        await pilot.pause()
         if case.searching:
             app._search_done = False
             # 5662/6748 sources scanned rounds to 84%.
@@ -4103,38 +4768,38 @@ def _make_progress_snapshot(agentgrep: t.Any, **overrides: t.Any) -> t.Any:
     return agentgrep.ProgressSnapshot(**fields)
 
 
-async def test_apply_progress_drives_meter_and_left_text(
+async def test_apply_progress_fills_header_bar(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A scanning snapshot fills the ▰▱ meter and paints the elapsed left text."""
+    """A scanning snapshot fills the merged header's ▰▱ bar fraction."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
-    # Wide terminal: the results column must clear the narrow breakpoint
-    # so the bar and the "(0s)" elapsed suffix both render.
+    # Wide terminal: the results column must clear the narrow breakpoint so the
+    # bar renders alongside the match count.
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
         app._search_done = False
+        app._results_header.begin()
         app._apply_progress(_make_progress_snapshot(agentgrep))
         await pilot.pause()
-        assert app._meter_widget._fraction == pytest.approx(5662 / 6748)
-        rendered = app._meter_widget._compose_text()
+        assert app._results_header._fraction == pytest.approx(5662 / 6748)
+        rendered = app._results_header.render().plain
         assert "▰" in rendered
-        assert rendered.endswith("%")
-        # The query itself is not repeated — the search box shows it.
-        assert app._last_left_text.startswith("Searching… (")
+        assert "%" in rendered
 
 
-async def test_meter_indeterminate_before_total_shows_phase_word(
+async def test_header_indeterminate_before_total_shows_no_bar(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Without a source total the meter shows the phase word, not a bar."""
+    """Without a source total the header shows no bar — the spinner carries motion."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
         app._search_done = False
+        app._results_header.begin()
         app._apply_progress(
             _make_progress_snapshot(
                 agentgrep,
@@ -4145,10 +4810,8 @@ async def test_meter_indeterminate_before_total_shows_phase_word(
             ),
         )
         await pilot.pause()
-        assert app._meter_widget._fraction is None
-        rendered = app._meter_widget._compose_text()
-        assert rendered == "discovering"
-        assert "▰" not in rendered
+        assert app._results_header._fraction is None
+        assert "▰" not in app._results_header.render().plain
 
 
 async def test_ctrl_backslash_toggles_scanning_detail_row(
@@ -4207,121 +4870,78 @@ async def test_detail_row_visibility_sticky_across_search_reset(
         assert updates[-1] == ""
 
 
-async def test_elapsed_ticker_starts_on_progress_and_stops_on_finish(
+async def test_finish_complete_freezes_header_check(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The 1 Hz ticker arms on the first snapshot and disarms on finish."""
+    """Finishing freezes the header's check glyph + full bar and stops the timer."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
         app._search_done = False
-        assert app._elapsed_timer is None
+        app._results_header.begin()
         app._apply_progress(_make_progress_snapshot(agentgrep))
         await pilot.pause()
-        assert app._elapsed_timer is not None
-        updates: list[str] = []
-        real_update = app._status_widget.update
-
-        def spy(content: t.Any = "", *args: t.Any, **kwargs: t.Any) -> None:
-            updates.append(str(content))
-            real_update(content, *args, **kwargs)
-
-        monkeypatch.setattr(app._status_widget, "update", spy)
         app._apply_finished("complete", 100, 12.3, None)
         await pilot.pause()
-        assert app._elapsed_timer is None
-        # The frozen bar IS the wide summary: full, green, no left text.
-        assert app._meter_widget._compose_text().endswith("100%")
-        assert app._meter_widget.has_class("-done")
-        assert updates[-1] == ""
-        # The data summary lands in the toggleable detail row instead.
+        header = app._results_header
+        assert header._outcome == "complete"
+        assert header._final_glyph == "✓"
+        assert header.auto_refresh is None  # the spinner timer stopped
+        rendered = header.render().plain
+        assert "✓" in rendered
+        assert "100%" in rendered
+        # The data summary lands in the toggleable detail row.
         assert app._last_detail_text == "Search complete: 100 matches in 12.3s"
 
 
-async def test_search_complete_minimizes_on_narrow_statusline(
-    tmp_path: pathlib.Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A narrow completed search shows just the check glyph and match count."""
-    app = _build_empty_ui_app(tmp_path, monkeypatch)
-    async with app.run_test(size=(40, 24)) as pilot:
-        await pilot.pause()
-        updates: list[str] = []
-        real_update = app._status_widget.update
-
-        def spy(content: t.Any = "", *args: t.Any, **kwargs: t.Any) -> None:
-            updates.append(str(content))
-            real_update(content, *args, **kwargs)
-
-        monkeypatch.setattr(app._status_widget, "update", spy)
-        app._apply_finished("complete", 100, 12.3, None)
-        await pilot.pause()
-        # Narrow has no room for the bar — the green check says it.
-        assert updates[-1] == "Done"
-        assert app._status_widget.has_class("-done")
-
-
 class FinishOutcomeCase(t.NamedTuple):
-    """One post-search outcome-by-width scenario for the statusline."""
+    """One post-search outcome scenario for the merged header."""
 
     test_id: str
     size: tuple[int, int]
     outcome: str
-    expected_left: str
-    expected_class: str
-    meter_shows_bar: bool
+    glyph: str
+    expect_bar: bool
     seed_scanning: bool
 
 
 FINISH_OUTCOME_CASES: tuple[FinishOutcomeCase, ...] = (
     FinishOutcomeCase(
-        test_id="complete-wide-green-full-bar",
+        test_id="complete-wide-check-full-bar",
         size=(160, 24),
         outcome="complete",
-        expected_left="",
-        expected_class="-done",
-        meter_shows_bar=True,
+        glyph="✓",
+        expect_bar=True,
         seed_scanning=True,
     ),
     FinishOutcomeCase(
-        test_id="complete-narrow-says-done",
+        # Complete always fills the bar (freeze sets fraction=1.0), and the bar
+        # still fits a narrow header — the match count is what drops, not the bar.
+        test_id="complete-narrow-check-full-bar",
         size=(40, 24),
         outcome="complete",
-        expected_left="Done",
-        expected_class="-done",
-        meter_shows_bar=False,
+        glyph="✓",
+        expect_bar=True,
         seed_scanning=True,
     ),
     FinishOutcomeCase(
-        test_id="interrupted-wide-gray-partial-bar",
+        test_id="interrupted-wide-square-partial-bar",
         size=(160, 24),
         outcome="interrupted",
-        expected_left="",
-        expected_class="-stopped",
-        meter_shows_bar=True,
+        glyph="■",
+        expect_bar=True,
         seed_scanning=True,
     ),
     FinishOutcomeCase(
-        test_id="interrupted-narrow-says-stopped",
-        size=(40, 24),
-        outcome="interrupted",
-        expected_left="Stopped",
-        expected_class="-stopped",
-        meter_shows_bar=False,
-        seed_scanning=True,
-    ),
-    FinishOutcomeCase(
-        # Interrupted before the first scanning snapshot: no fraction, so
-        # no bar — the wide statusline must still say "Stopped" rather
-        # than collapse to a bare gray glyph.
-        test_id="interrupted-wide-no-bar-says-stopped",
+        # Interrupted before the first scanning snapshot: no fraction, so no bar —
+        # the gray ■ glyph alone carries the stopped outcome.
+        test_id="interrupted-no-scan-square-no-bar",
         size=(160, 24),
         outcome="interrupted",
-        expected_left="Stopped",
-        expected_class="-stopped",
-        meter_shows_bar=False,
+        glyph="■",
+        expect_bar=False,
         seed_scanning=False,
     ),
 )
@@ -4332,46 +4952,40 @@ FINISH_OUTCOME_CASES: tuple[FinishOutcomeCase, ...] = (
     FINISH_OUTCOME_CASES,
     ids=[case.test_id for case in FINISH_OUTCOME_CASES],
 )
-async def test_finish_outcome_freezes_colored_bar(
+async def test_finish_outcome_freezes_header_glyph(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
     case: FinishOutcomeCase,
 ) -> None:
-    """The frozen bar (or its narrow word) carries the search outcome."""
+    """The frozen header glyph (and bar, when there is a fraction) carries the outcome."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=case.size) as pilot:
         await pilot.pause()
+        # Reveal + lay out the chrome so the header has a real width before the
+        # narrow/wide payload is computed.
+        app._set_empty_state(empty=False)
+        await pilot.pause()
         app._search_done = False
-        # Seed matches so the right slot occupies its real-world cells —
-        # narrow meters only lose the bar when the count is present.
         app.all_records.extend(_seed_records(agentgrep, tmp_path, 5))
+        app._results_header.begin()
         if case.seed_scanning:
             app._apply_progress(_make_progress_snapshot(agentgrep))
             await pilot.pause()
-        updates: list[str] = []
-        real_update = app._status_widget.update
-
-        def spy(content: t.Any = "", *args: t.Any, **kwargs: t.Any) -> None:
-            updates.append(str(content))
-            real_update(content, *args, **kwargs)
-
-        monkeypatch.setattr(app._status_widget, "update", spy)
         app._apply_finished(case.outcome, 100, 12.3, None)
         await pilot.pause()
-        assert updates[-1] == case.expected_left
-        for widget in (app._meter_widget, app._status_widget, app._spinner_widget):
-            assert widget.has_class(case.expected_class)
-        rendered = app._meter_widget._compose_text()
-        assert ("▰" in rendered) is case.meter_shows_bar
-        if case.meter_shows_bar and case.outcome == "complete":
-            # Complete fills the bar.
-            assert "▱" not in rendered
-            assert rendered.endswith("100%")
-        if case.meter_shows_bar and case.outcome == "interrupted":
-            # Interrupted freezes at the last fill (5662/6748 → 84%).
-            assert "▱" in rendered
-            assert rendered.endswith("84%")
+        header = app._results_header
+        assert header._outcome == case.outcome
+        assert header._final_glyph == case.glyph
+        rendered = header.render().plain
+        assert case.glyph in rendered
+        assert ("▰" in rendered) is case.expect_bar
+        if case.expect_bar and case.outcome == "complete":
+            assert "▱" not in rendered  # complete fills the bar
+            assert "100%" in rendered
+        if case.expect_bar and case.outcome == "interrupted":
+            assert "▱" in rendered  # interrupted freezes at the last fill (84%)
+            assert "84%" in rendered
 
 
 async def test_detail_row_shows_summary_after_finish(
@@ -4394,29 +5008,31 @@ async def test_detail_row_shows_summary_after_finish(
         assert app._last_detail_text == "Stopped at 2976 matches across 5662/6748 sources in 2.1s"
 
 
-async def test_meter_change_gates_identical_progress(
+async def test_header_progress_setter_does_not_repaint(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The first fraction repaints exactly once; an identical repeat adds none."""
+    """During a search, set_progress stores the fraction without forcing a repaint.
+
+    The 2 Hz spinner timer drives the bar, so the thousands of per-source
+    progress events never thrash the rule with extra refreshes.
+    """
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
-        meter = app._meter_widget
+        header = app._results_header
+        header.begin()  # arms the self-refresh timer (drives repaints)
         refreshes: list[None] = []
-        real_refresh = meter.refresh
+        real_refresh = header.refresh
 
         def spy(*args: t.Any, **kwargs: t.Any) -> t.Any:
             refreshes.append(None)
             return real_refresh(*args, **kwargs)
 
-        monkeypatch.setattr(meter, "refresh", spy)
-        # Mount rendered the idle meter as "" — the first real fraction
-        # must compose a non-empty bar and trigger exactly one repaint.
-        meter.set_progress(0.5, "")
-        assert len(refreshes) == 1
-        meter.set_progress(0.5, "")
-        assert len(refreshes) == 1
+        monkeypatch.setattr(header, "refresh", spy)
+        header.set_progress(0.5, "scanning")
+        header.set_progress(0.6, "scanning")
+        assert refreshes == []  # setters store only; the timer repaints
 
 
 class StaleGenerationCase(t.NamedTuple):
@@ -4471,8 +5087,7 @@ async def test_streaming_events_gated_by_generation(
         await app._apply_streaming_event(generation, _make_progress_snapshot(agentgrep))
         await pilot.pause()
         assert (app._last_snapshot is not None) is case.expect_applied
-        assert (app._elapsed_timer is not None) is case.expect_applied
-        assert (app._meter_widget._fraction is not None) is case.expect_applied
+        assert (app._results_header._fraction is not None) is case.expect_applied
 
 
 async def test_streaming_records_batch_lands_in_results(
@@ -4498,21 +5113,26 @@ async def test_streaming_records_batch_lands_in_results(
         assert len(app._results._records) == 3
 
 
-async def test_narrow_statusline_drops_bar_and_elapsed(
+async def test_narrow_header_drops_match_count_keeps_bar(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Below the breakpoint the elapsed suffix and the ▰▱ bar are dropped."""
+    """Below the breakpoint the header drops the match count but keeps the bar."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(40, 24)) as pilot:
         await pilot.pause()
+        app._set_empty_state(empty=False)
+        await pilot.pause()
         app._search_done = False
+        app.all_records.extend(_seed_records(agentgrep, tmp_path, 5))
+        app._results_header.begin()
         app._apply_progress(_make_progress_snapshot(agentgrep))
         await pilot.pause()
         assert app._statusline_narrow() is True
-        assert app._last_left_text == "Searching"
-        assert "▰" not in app._meter_widget._compose_text()
+        rendered = app._results_header.render().plain
+        assert "matches" not in rendered  # the count drops on a narrow header
+        assert "▰" in rendered  # ...but the bar still fits
 
 
 class _FakeHighlight(t.NamedTuple):
@@ -4860,56 +5480,6 @@ async def test_show_detail_memoizes_body_formatting(
         assert load_calls == 0, "JSON should not be re-parsed for the same record + query"
 
 
-async def test_show_detail_memoizes_first_match_line(
-    tmp_path: pathlib.Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """``find_first_match_line`` is not called twice for the same record + query."""
-    agentgrep = t.cast("t.Any", load_agentgrep_module())
-    home = tmp_path / "home"
-    home.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(
-        agentgrep,
-        "run_search_query",
-        lambda *args, **kwargs: [],
-    )
-    query = agentgrep.SearchQuery(
-        terms=("needle",),
-        scope="prompts",
-        any_term=False,
-        regex=False,
-        case_sensitive=False,
-        agents=("codex",),
-        limit=None,
-    )
-    app = agentgrep.build_streaming_ui_app(home, query, control=agentgrep.SearchControl())
-    body = "\n".join(["padding"] * 5 + ["needle here"] + ["padding"] * 5)
-    record = agentgrep.SearchRecord(
-        kind="prompt",
-        agent="codex",
-        store="codex.sessions",
-        adapter_id="codex.sessions_jsonl.v1",
-        path=tmp_path / "n.jsonl",
-        text=body,
-    )
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        app.show_detail(record)
-        await pilot.pause()
-        match_calls = 0
-        real_match = agentgrep.find_first_match_line
-
-        def counting_match(*args: t.Any, **kwargs: t.Any) -> t.Any:
-            nonlocal match_calls
-            match_calls += 1
-            return real_match(*args, **kwargs)
-
-        monkeypatch.setattr(agentgrep, "find_first_match_line", counting_match)
-        app.show_detail(record)
-        await pilot.pause()
-        assert match_calls == 0, "first_match_line should be cached for repeat views"
-
-
 async def test_reset_search_chrome_invalidates_detail_caches(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -4932,51 +5502,45 @@ async def test_reset_search_chrome_invalidates_detail_caches(
         assert len(app._detail_body_cache) >= 1
         app._reset_search_chrome()
         assert len(app._detail_body_cache) == 0
-        assert len(app._first_match_cache) == 0
+        assert len(app._detail_scroll_positions) == 0
 
 
-async def test_show_detail_scrolls_to_first_match(
+async def test_detail_scroll_memory(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When the record body contains a match, the detail-scroll jumps so the match centers."""
+    """New records open at the top; revisiting a record restores its scroll."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
-    home = tmp_path / "home"
-    home.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(
-        agentgrep,
-        "run_search_query",
-        lambda *args, **kwargs: [],
-    )
-    # Build the app with a query that has terms; default _build_empty_ui_app
-    # uses ``terms=()``, which would make first_match always return None.
-    query = agentgrep.SearchQuery(
-        terms=("needle",),
-        scope="prompts",
-        any_term=False,
-        regex=False,
-        case_sensitive=False,
-        agents=("codex",),
-        limit=None,
-    )
-    control = agentgrep.SearchControl()
-    app = agentgrep.build_streaming_ui_app(home, query, control=control)
-    # Match lands at line 50 of the body; record_at_match.
-    body = "\n".join(["padding"] * 50 + ["this needle is the match"] + ["padding"] * 50)
-    record = agentgrep.SearchRecord(
-        kind="prompt",
-        agent="codex",
-        store="codex.sessions",
-        adapter_id="codex.sessions_jsonl.v1",
-        path=tmp_path / "match.jsonl",
-        text=body,
-    )
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    big = "\n".join(f"line {i}" for i in range(200))
+
+    def _record(name: str) -> t.Any:
+        return agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="codex.sessions",
+            adapter_id="codex.sessions_jsonl.v1",
+            path=tmp_path / f"{name}.jsonl",
+            text=big,
+        )
+
+    rec_a, rec_b = _record("a"), _record("b")
     async with app.run_test(size=(120, 24)) as pilot:
         await pilot.pause()
-        app.show_detail(record)
+        # A fresh record opens at the top.
+        app.show_detail(rec_a)
         await pilot.pause()
-        # Match at body line 50 + 8 header lines = ~line 58; centered into a
-        # multi-row viewport, scroll_y should be > 0.
+        assert app._detail_scroll.scroll_y == 0
+        # Scroll down — the position is remembered for rec_a.
+        app._detail_scroll.scroll_to(y=20, animate=False)
+        await pilot.pause()
+        # A different, never-seen record opens at the top.
+        app.show_detail(rec_b)
+        await pilot.pause()
+        assert app._detail_scroll.scroll_y == 0
+        # Returning to rec_a restores its remembered scroll.
+        app.show_detail(rec_a)
+        await pilot.pause()
         assert app._detail_scroll.scroll_y > 0
 
 
@@ -5075,7 +5639,7 @@ async def test_show_detail_keeps_text_highlighting_for_plain_body(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Plain-text bodies still get yellow ``highlight_regex`` spans for matches."""
+    """Plain-text bodies still get ``highlight_regex`` spans for search matches."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     rich_text_module = importlib.import_module("rich.text")
     home = tmp_path / "home"
@@ -5115,7 +5679,9 @@ async def test_show_detail_keeps_text_highlighting_for_plain_body(
         ]
         assert text_bodies, "expected the body Text containing 'libtmux'"
         styled = [str(span.style) for span in text_bodies[0].spans]
-        assert any("bold yellow" in style for style in styled)
+        # Search matches carry the theme's gold foreground token, bold.
+        search_hex = app.theme_variables["ag-match-search"]
+        assert any("bold" in style and search_hex in style for style in styled)
 
 
 def test_pydantic_payloads_reject_wrong_types(tmp_path: pathlib.Path) -> None:
