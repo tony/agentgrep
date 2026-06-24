@@ -27,6 +27,29 @@ from agentgrep.ui.widgets.messages import (
 __all__ = ["DetailFindInput", "FilterInput", "SearchInput"]
 
 
+def _staged_ctrl_c(widget: Input, event: events.Key) -> bool:
+    """Route a ctrl+c keypress through the app's staged-exit handler.
+
+    Returns ``True`` (and stops the event) when the key was ctrl+c so the
+    caller returns without falling through to the app quit binding. The
+    staging itself — clear the input text first, then confirm-exit (or close
+    the find bar) on an empty box — lives on the app
+    (:meth:`_handle_input_ctrl_c`) so the rule is written once.
+    """
+    if str(getattr(event, "key", "")) != "ctrl+c":
+        return False
+    stop = getattr(event, "stop", None)
+    if callable(stop):
+        stop()
+    t.cast("t.Any", widget.app)._handle_input_ctrl_c(widget)
+    return True
+
+
+def _disarm_confirm_exit(widget: Input) -> None:
+    """Clear any pending confirm-exit when the user presses a non-ctrl+c key."""
+    t.cast("t.Any", widget.app)._disarm_confirm_exit()
+
+
 class FilterInput(Input):
     """``Input`` subclass with debounced filter + cursor-or-focus arrows.
 
@@ -105,6 +128,10 @@ class FilterInput(Input):
                 stop()
             dropdown.display = False
             return
+        if _staged_ctrl_c(self, event):
+            return
+        # Any other key cancels a pending "press ctrl-c again to exit".
+        _disarm_confirm_exit(self)
         if dropdown_open and key == "enter":
             dropdown.display = False
         if key == "down":
@@ -204,14 +231,18 @@ class DetailFindInput(Input):
         )
 
     async def _on_key(self, event: events.Key) -> None:
-        """``esc``/``ctrl+c`` close; ``enter``/``down`` next match; ``up`` previous."""
+        """``esc`` closes; ``ctrl+c`` clears then closes; ``enter``/``down``/``up`` step."""
         key = str(getattr(event, "key", ""))
         stop = getattr(event, "stop", None)
         app = t.cast("t.Any", self.app)
-        if key in {"escape", "ctrl+c"}:
+        if key == "escape":
             if callable(stop):
                 stop()
             app._close_detail_find()
+            return
+        # Staged ctrl+c: clear the query first; an empty box closes the bar
+        # (the find's "exit" is closing, not quitting — see _handle_input_ctrl_c).
+        if _staged_ctrl_c(self, event):
             return
         if key in {"enter", "down", "up"}:
             if callable(stop):
@@ -298,6 +329,10 @@ class SearchInput(Input):
                 stop()
             dropdown.display = False
             return
+        if _staged_ctrl_c(self, event):
+            return
+        # Any other key cancels a pending "press ctrl-c again to exit".
+        _disarm_confirm_exit(self)
         if dropdown_open and key == "enter":
             # Enter without navigating into the dropdown closes it and lets
             # the normal submit proceed (no auto-accept).

@@ -3534,6 +3534,79 @@ async def test_detail_find_survives_theme_switch(
         assert len(app._detail_find_matches) == 10
 
 
+async def test_input_ctrl_c_clears_then_arms_confirm_exit(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ctrl-C in the search input clears the text first, then arms confirm-exit."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(100, 24)) as pilot:
+        await pilot.pause()
+        search = app.screen.query_one("#search")
+        search.focus()
+        search.value = "hello"
+        await pilot.pause()
+        await pilot.press("ctrl+c")  # text present -> clear, no exit, no arm
+        await pilot.pause()
+        assert search.value == ""
+        assert app.is_running
+        assert app._confirm_exit_pending is False
+        await pilot.press("ctrl+c")  # empty box -> arm confirm-exit (gutter shown)
+        await pilot.pause()
+        assert app._confirm_exit_pending is True
+        assert app.is_running
+        assert app._ctrlc_gutter.has_class("-shown")
+        await pilot.press("x")  # any other key disarms
+        await pilot.pause()
+        assert app._confirm_exit_pending is False
+        assert app._ctrlc_gutter.has_class("-shown") is False
+
+
+async def test_input_second_ctrl_c_on_empty_exits(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second ctrl-c on an empty input within the window exits the app."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(100, 24)) as pilot:
+        await pilot.pause()
+        search = app.screen.query_one("#search")
+        search.focus()
+        await pilot.press("ctrl+c")  # arm
+        await pilot.pause()
+        assert app._confirm_exit_pending is True
+        await pilot.press("ctrl+c")  # exit
+        await pilot.pause()
+        assert app.is_running is False
+
+
+async def test_find_input_ctrl_c_clears_then_closes_bar(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ctrl-C in the find input clears the query, then closes the bar (never quits)."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = _detail_find_record(agentgrep, tmp_path / "a.jsonl")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await _open_detail_with_find(app, record, pilot)
+        app._detail_find_input.load_query("needle")
+        app._run_detail_find("needle", reset_cursor=True)
+        app._detail_find_input.focus()
+        await pilot.pause()
+        await pilot.press("ctrl+c")  # query present -> clear, bar stays open
+        await pilot.pause()
+        assert app._detail_find_input.value == ""
+        assert app._detail_find_active is True
+        assert app.is_running
+        await pilot.press("ctrl+c")  # empty -> close the bar (not quit)
+        await pilot.pause()
+        assert app._detail_find_active is False
+        assert app._detail_find_input.display is False
+        assert app.is_running
+
+
 async def test_ctrl_j_from_filter_focuses_results(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -371,6 +371,13 @@ def build_streaming_ui_app(
                 int,
                 tuple[str, int, int],
             ] = collections.OrderedDict()
+            # Staged ctrl-c in inputs: clear the text first, then (on an empty
+            # box) a first ctrl-c arms "press ctrl-c again to exit" in the gutter
+            # and a second within the window quits. The gutter is a flash-layer
+            # Static docked at the bottom.
+            self._confirm_exit_pending: bool = False
+            self._confirm_exit_timer: object | None = None
+            self._ctrlc_gutter: t.Any = None
 
         def _get_start_time(self) -> float | None:
             return self._started_at
@@ -479,6 +486,9 @@ def build_streaming_ui_app(
                     yield DetailFindInput(placeholder="Find in detail", id="detail-find")
                     yield static_type("", id="detail-statusline")
             yield footer()
+            # Transient gutter for the "press ctrl-c again to exit" confirm; a
+            # flash-layer Static that overlays the footer only while shown.
+            yield static_type("", id="ctrlc-gutter")
 
         def on_mount(self) -> None:
             """Cache widget references, start the worker, and seed the chrome."""
@@ -521,6 +531,7 @@ def build_streaming_ui_app(
             )
             t.cast("t.Any", self._detail_find_input).display = False
             t.cast("t.Any", self._detail_find_input).cursor_blink = False
+            self._ctrlc_gutter = t.cast("t.Any", streaming.query_one("#ctrlc-gutter"))
             self._enum_dropdown = t.cast("t.Any", streaming.query_one("#enum-dropdown"))
             self._enum_dropdown.display = False
             self._filter_dropdown = t.cast("t.Any", streaming.query_one("#filter-dropdown"))
@@ -573,6 +584,8 @@ def build_streaming_ui_app(
 
         def on_descendant_focus(self, event: object) -> None:
             """Recolor the active pane's section header when focus moves."""
+            # A focus change cancels a pending "press ctrl-c again to exit".
+            self._disarm_confirm_exit()
             self._update_pane_focus()
 
         def on_descendant_blur(self, event: object) -> None:
@@ -1943,11 +1956,60 @@ def build_streaming_ui_app(
             self._cancel_active_action()
 
         def action_smart_quit(self) -> None:
-            """``Ctrl-C``: cancel the topmost in-flight action; quit if there are none."""
+            """``Ctrl-C`` outside an input: cancel an in-flight action; else quit.
+
+            Inputs intercept ctrl+c first for the staged clear/confirm-exit flow
+            (:meth:`_handle_input_ctrl_c`), so this only fires when focus is on a
+            non-input widget (results list, detail scroll).
+            """
             if self._has_active_actions():
                 self._cancel_active_action()
             else:
                 self.exit()
+
+        # --- staged ctrl-c in the inputs --------------------------------
+        def _handle_input_ctrl_c(self, widget: object) -> None:
+            """Staged ctrl-c from a focused input.
+
+            With text, clear the box. On an empty box: the find input closes (its
+            "exit" is closing the bar); the search/filter inputs arm a "press
+            ctrl-c again to exit" gutter on the first press and quit on a second
+            press within the window.
+            """
+            target = t.cast("t.Any", widget)
+            if str(getattr(target, "value", "")):
+                target.value = ""
+                self._disarm_confirm_exit()
+                return
+            if widget is self._detail_find_input:
+                self._close_detail_find()
+                return
+            if self._confirm_exit_pending:
+                self.exit()
+                return
+            self._confirm_exit_pending = True
+            self._set_ctrlc_gutter("press ctrl-c again to exit")
+            if self._confirm_exit_timer is not None:
+                t.cast("t.Any", self._confirm_exit_timer).stop()
+            self._confirm_exit_timer = self.set_timer(2.0, self._disarm_confirm_exit)
+
+        def _disarm_confirm_exit(self) -> None:
+            """Cancel a pending confirm-exit and hide the gutter (idempotent)."""
+            if not self._confirm_exit_pending:
+                return
+            self._confirm_exit_pending = False
+            if self._confirm_exit_timer is not None:
+                t.cast("t.Any", self._confirm_exit_timer).stop()
+                self._confirm_exit_timer = None
+            self._set_ctrlc_gutter("")
+
+        def _set_ctrlc_gutter(self, message: str) -> None:
+            """Show ``message`` in the bottom gutter, or hide it when empty."""
+            if self._ctrlc_gutter is None:
+                return
+            gutter = t.cast("t.Any", self._ctrlc_gutter)
+            gutter.update(message)
+            gutter.set_class(bool(message), "-shown")
 
         # Directional pane focus (tmux-style ``ctrl+hjkl``). Routing is
         # layout-aware: side-by-side the detail pane sits to the right of
