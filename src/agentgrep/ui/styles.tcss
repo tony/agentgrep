@@ -353,13 +353,19 @@ Screen {
     display: none;
 }
 #filter {
-    height: 3;
-    /* pi label-in-the-rule: the FilterInput's `label` becomes `border_title`,
-       which Textual paints into the existing top rule (no corners, since the
-       side borders are empty) — the `── filter ─` look. Right-aligned and calm
-       so it reads as context, not chrome. */
-    border-title-align: right;
-    border-title-color: $ag-muted;
+    height: 2;
+    /* No top rule: the results-header rule directly above is the filter's top
+       separator, so a top rule here would stack two horizontal lines under the
+       header. Keep only the bottom rule, and move the `filter` label onto it
+       (border_subtitle) so the label survives without the double chrome. */
+    border-top: none;
+    border-subtitle-align: right;
+    border-subtitle-color: $ag-muted;
+}
+#filter:focus {
+    /* Keep the top off even when focused; the bottom rule (accent on focus,
+       from the global Input:focus rule) carries the focus cue. */
+    border-top: none;
 }
 #detail-scroll {
     height: 1fr;

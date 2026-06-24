@@ -64,9 +64,15 @@ class FilterInput(Input):
         self._label = label
 
     def on_mount(self) -> None:
-        """Paint the pi label-in-the-rule into the top border (see :class:`SearchInput`)."""
+        """Paint ``label`` into the BOTTOM rule (``border_subtitle``).
+
+        The filter has no top rule — the results-header rule directly above it is
+        its separator, so a top rule here would stack two horizontal lines under
+        the header (the double-chrome pi/ink avoid). The label therefore lives on
+        the filter's only rule, the bottom one.
+        """
         if self._label is not None:
-            self.border_title = self._label
+            self.border_subtitle = self._label
 
     def _watch_value(self, value: str) -> None:
         """Post normal ``Input.Changed`` and arm a debounced ``FilterRequested``."""

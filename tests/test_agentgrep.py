@@ -2349,17 +2349,20 @@ async def test_streaming_ui_filter_labels_rule_search_stays_bare(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The filter input carries a pi label-in-the-rule; the search prompt stays bare.
+    """The filter labels its bottom rule; the search prompt stays bare.
 
-    The top search prompt is the primary entry point and is kept unlabelled;
-    the secondary filter (and the results/detail pane headers) carry a label.
+    The filter has no top rule (the results header above is its separator), so
+    its `filter` label lives on the bottom rule (border_subtitle). The top search
+    prompt is the primary entry point and is kept unlabelled.
     """
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(120, 24)) as pilot:
         await pilot.pause()
         search = app.screen.query_one("#search")
         filter_input = app.screen.query_one("#filter")
-        assert str(filter_input.border_title) == "filter"
+        assert str(filter_input.border_subtitle) == "filter"
+        # The label is on the bottom rule, not a (removed) top rule.
+        assert not filter_input.border_title
         # The prompt itself has no border label.
         assert not search.border_title
 
