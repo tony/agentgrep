@@ -213,15 +213,14 @@ class DetailFindInput(Input):
                 stop()
             app._close_detail_find()
             return
-        if key in {"enter", "down"}:
+        if key in {"enter", "down", "up"}:
             if callable(stop):
                 stop()
-            app._detail_find_step(1)
-            return
-        if key == "up":
-            if callable(stop):
-                stop()
-            app._detail_find_step(-1)
+            self.cancel_pending_request()
+            value = str(getattr(self, "value", "") or "")
+            if value != app._detail_find_query:
+                app._run_detail_find(value, reset_cursor=True)
+            app._detail_find_step(1 if key in {"enter", "down"} else -1)
             return
         await super()._on_key(event)
 

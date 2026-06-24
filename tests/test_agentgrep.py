@@ -3302,6 +3302,21 @@ DETAIL_FIND_STALE_REQUEST_CASES = [
 ]
 
 
+class DetailFindStepLiveQueryCase(t.NamedTuple):
+    """An immediate find navigation key scenario."""
+
+    test_id: str
+    key: str
+    expected_index: int
+
+
+DETAIL_FIND_STEP_LIVE_QUERY_CASES = [
+    DetailFindStepLiveQueryCase(test_id="enter-steps-live-query", key="enter", expected_index=1),
+    DetailFindStepLiveQueryCase(test_id="down-steps-live-query", key="down", expected_index=1),
+    DetailFindStepLiveQueryCase(test_id="up-steps-live-query", key="up", expected_index=9),
+]
+
+
 @pytest.mark.parametrize(
     "case",
     DETAIL_FIND_STALE_REQUEST_CASES,
@@ -3334,6 +3349,38 @@ async def test_detail_find_ignores_stale_debounce_requests(
         if case.close_first:
             assert app._detail_find_active is False
             assert app._detail_find_input.display is False
+
+
+@pytest.mark.parametrize(
+    "case",
+    DETAIL_FIND_STEP_LIVE_QUERY_CASES,
+    ids=[case.test_id for case in DETAIL_FIND_STEP_LIVE_QUERY_CASES],
+)
+async def test_detail_find_steps_live_query_before_navigation(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: DetailFindStepLiveQueryCase,
+) -> None:
+    """Find navigation keys search the live input before stepping matches."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    from textual import events
+
+    from agentgrep.ui.widgets.messages import DetailFindRequested
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = _detail_find_record(agentgrep, tmp_path / "a.jsonl")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await _open_detail_with_find(app, record, pilot)
+        app._detail_find_input.value = "needle"
+
+        await app._detail_find_input._on_key(events.Key(case.key, None))
+        app.on_detail_find_requested(DetailFindRequested("needle"))
+        await pilot.pause()
+
+        assert app._detail_find_query == "needle"
+        assert len(app._detail_find_matches) == 10
+        assert app._detail_find_current == case.expected_index
 
 
 async def test_detail_find_searches_navigates_and_counts(
