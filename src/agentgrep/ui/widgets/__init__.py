@@ -3,9 +3,8 @@
 These widgets and message types subclass Textual classes directly, so each
 module imports Textual at the top. The package is only imported from inside
 ``build_streaming_ui_app`` (and the tests), never by the eager ``import
-agentgrep`` path, so ADR 0010's optional-dependency rule holds while the widget
-bodies live outside the app's mega-closure where they are independently
-unit-testable and individually guardable (ADR 0011).
+agentgrep`` path, so ADR 0010's optional-dependency rule holds; each widget is
+independently unit-testable and guardable (ADR 0011).
 """
 
 from __future__ import annotations

@@ -1,9 +1,9 @@
 """The streaming results list widget.
 
 ``SearchResultsList`` is an ``OptionList`` subclass that renders normalized
-records as colored rows. It imports Textual at the top but is only loaded from
-inside ``build_streaming_ui_app`` (and the tests), so the body lives outside the
-app closure and is unit-testable in isolation.
+records as colored rows. It imports Textual at the top but is imported only from
+inside ``build_streaming_ui_app`` (and the tests), so ``import agentgrep`` stays
+free of Textual (ADR 0010); the widget is unit-testable in isolation.
 """
 
 from __future__ import annotations

@@ -2,8 +2,8 @@
 
 These subclass Textual's ``Message`` directly. The module imports Textual at the
 top, but is only imported from inside ``build_streaming_ui_app`` (and the tests),
-never by the eager ``import agentgrep`` path — so the optional-dependency rule
-holds (ADR 0010) while the message bodies live outside the app closure.
+never by the eager ``import agentgrep`` path, so the optional-dependency rule
+holds (ADR 0010).
 
 ``FilterRequested`` / ``SearchRequested`` / ``FilterCompleted`` cross the message
 bus at typing speed (debounced); ``ResultsScrollChanged`` / ``DetailScrollChanged``

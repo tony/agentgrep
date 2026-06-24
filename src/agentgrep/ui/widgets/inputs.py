@@ -1,8 +1,9 @@
 """The search and filter input widgets.
 
-Both are ``Input`` subclasses. The dual-purpose arrow handling and the debounced
-filter dispatch live here, outside the app closure. Imported from inside the app
-factory (and the tests), never eagerly.
+These are ``Input`` subclasses. The dual-purpose arrow handling and the debounced
+filter/find dispatch live here. Imported only from inside
+``build_streaming_ui_app`` (and the tests), never eagerly, so ``import
+agentgrep`` stays free of Textual (ADR 0010).
 """
 
 from __future__ import annotations

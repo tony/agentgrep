@@ -3372,6 +3372,62 @@ async def test_detail_find_memory_restores_per_record(
         assert len(app._detail_find_matches) == 10
 
 
+async def test_detail_find_resets_on_record_switch_while_open(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Switching records with the find bar open closes it (no stale matches/count).
+
+    Regression: leaving the bar open across a record switch otherwise applied
+    the old record's match offsets to the new body and showed a stale N/M. The
+    outgoing record's find is saved, so a revisit restores it.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    rec_a = _detail_find_record(agentgrep, tmp_path / "a.jsonl")
+    rec_b = _ui_record(agentgrep, tmp_path / "b.jsonl", "no matches at all\n" * 8, "b")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await _open_detail_with_find(app, rec_a, pilot)
+        app._detail_find_input.load_query("needle")
+        app._run_detail_find("needle", reset_cursor=True)
+        app._detail_find_step(1)
+        await pilot.pause()
+        # Switch to B WITHOUT closing find first (the bug path).
+        app.show_detail(rec_b)
+        await pilot.pause()
+        assert app._detail_find_active is False
+        assert app._detail_find_input.display is False
+        assert app._detail_find_matches == []
+        # A's find survived in per-record memory for a later revisit.
+        assert app._detail_find_state[id(rec_a)][:2] == ("needle", 1)
+
+
+async def test_detail_find_survives_theme_switch(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A theme switch re-renders the same record but keeps the find active+highlighted."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    from agentgrep.ui import theme as ui_theme
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    rec_a = _detail_find_record(agentgrep, tmp_path / "a.jsonl")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await _open_detail_with_find(app, rec_a, pilot)
+        app._detail_find_input.load_query("needle")
+        app._run_detail_find("needle", reset_cursor=True)
+        await pilot.pause()
+        app.theme = ui_theme.LIGHT_THEME_NAME  # same record re-render
+        await pilot.pause()
+        # Find stays active with valid matches (not closed by the re-render),
+        # and _present_detail re-overlays the highlights via _present_detail_find.
+        assert app._detail_find_active is True
+        assert app._detail_find_input.display is True
+        assert len(app._detail_find_matches) == 10
+
+
 async def test_ctrl_j_from_filter_focuses_results(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

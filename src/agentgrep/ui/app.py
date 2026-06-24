@@ -1,8 +1,9 @@
 """Streaming Textual app — ``run_ui`` and the app factory.
 
-This module holds the Textual widget classes (``AgentGrepApp``,
-``ResultsHeader``, ``FilterInput``), their message subclasses, and
-the per-record LRU caches that drive the interactive explorer.
+This module defines the ``AgentGrepApp`` Textual app and the per-record LRU
+caches that drive the interactive explorer. The widgets it composes
+(``ResultsHeader``, ``FilterInput``, ``DetailFindInput``, ...) and their message
+types live in ``agentgrep.ui.widgets``.
 
 Textual is imported lazily inside :func:`build_streaming_ui_app` (via
 ``importlib.import_module``) so importing this module by itself does
@@ -129,9 +130,9 @@ def build_streaming_ui_app(
     Returns the constructed ``AgentGrepApp`` instance (typed ``object`` because
     the actual class is defined dynamically inside this factory). Callers can
     invoke ``.run()`` for a real session or ``.run_test()`` for a Pilot smoke
-    test. The full app body — message subclasses, ``ResultsHeader``,
-    ``FilterInput``, ``AgentGrepApp`` — lives here so the
-    Textual imports stay lazy.
+    test. ``AgentGrepApp`` is defined inside this factory (rather than at module
+    scope) so the Textual imports stay lazy; the widgets and message types it
+    composes are imported from ``agentgrep.ui.widgets``.
 
     Parameters
     ----------
@@ -642,12 +643,7 @@ def build_streaming_ui_app(
             self._detail_scroll_positions.clear()
             self._detail_find_state.clear()
             # A fresh search wipes the detail; close any open find bar.
-            self._detail_find_active = False
-            self._detail_find_query = ""
-            self._detail_find_matches = []
-            self._detail_find_current = 0
-            if self._detail_find_input is not None:
-                t.cast("t.Any", self._detail_find_input).display = False
+            self._reset_detail_find_state()
             self.all_records = []
             self.filtered_records = []
             self._search_done = False
@@ -1412,6 +1408,20 @@ def build_streaming_ui_app(
             """
             if self._detail is None:
                 return
+            # A record switch while the find bar is open would leave a stale
+            # match list + N/M count and apply the outgoing body's offsets to
+            # the new body. Save the outgoing record's find state (a revisit +
+            # reopen restores it from _detail_find_state) and reset the bar
+            # before the new body replaces _detail_body_text. No re-render or
+            # refocus here — a switch comes from the results list, which keeps
+            # focus; this is state only (see _close_detail_find for the esc path).
+            if (
+                self._detail_find_active
+                and self._current_detail_record is not None
+                and self._current_detail_record is not record
+            ):
+                self._remember_detail_find()
+                self._reset_detail_find_state()
             # Showing a record means results exist — leave the bare-canvas state.
             self._set_empty_state(empty=False)
             self._current_detail_record = record
@@ -1534,6 +1544,11 @@ def build_streaming_ui_app(
             )
             self._restore_detail_scroll(record)
             self._refresh_detail_statusline()
+            if self._detail_find_active:
+                # A same-record re-render (e.g. a theme switch re-renders the
+                # current record) with find open just painted the plain body;
+                # re-overlay the find highlights so they survive the re-render.
+                self._present_detail_find()
 
         def _detail_cache_key(
             self,
@@ -1841,6 +1856,21 @@ def build_streaming_ui_app(
             target = max(0, header_lines + body_line - 2)
             t.cast("t.Any", self._detail_scroll).scroll_to(y=target, animate=False)
 
+        def _reset_detail_find_state(self) -> None:
+            """Clear the find state and hide the bar (no re-render, no refocus).
+
+            The pure state half of closing the find — used both by
+            :meth:`_close_detail_find` (which adds the re-render + refocus) and by
+            :meth:`show_detail` when a record switch happens with the bar open
+            (which must not steal focus from the results list driving the switch).
+            """
+            self._detail_find_active = False
+            self._detail_find_query = ""
+            self._detail_find_matches = []
+            self._detail_find_current = 0
+            if self._detail_find_input is not None:
+                t.cast("t.Any", self._detail_find_input).display = False
+
         def _close_detail_find(self) -> None:
             """Close + cancel the find: save state, drop highlights, restore focus.
 
@@ -1853,18 +1883,14 @@ def build_streaming_ui_app(
             # Keep the find's scroll position as the record's remembered scroll
             # so the non-find re-render below doesn't jump away from the match.
             self._remember_detail_scroll()
-            self._detail_find_active = False
-            if self._detail_find_input is not None:
-                t.cast("t.Any", self._detail_find_input).display = False
+            self._reset_detail_find_state()
             record = self._current_detail_record
             if record is not None:
-                query_terms = list(self.query.terms)
-                self._present_detail(
-                    record,
-                    self._detail_header_text,
-                    self._build_detail_body(self._detail_body_text, query_terms),
-                    query_terms,
-                )
+                # Re-render via show_detail so a large uncached body offloads to a
+                # worker instead of building inline on the pump (ADR 0011 NB-9),
+                # and the match-style snapshot contract is honored. The scroll
+                # was just remembered, so show_detail's restore won't jump.
+                self.show_detail(record)
             self._focus_widget_by_id("detail-scroll")
             self._update_pane_focus()
 
