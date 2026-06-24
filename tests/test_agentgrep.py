@@ -3607,6 +3607,42 @@ async def test_find_input_ctrl_c_clears_then_closes_bar(
         assert app.is_running
 
 
+async def test_detail_find_scrolls_wrapped_match_into_view(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Scroll-to-match brings a match on a wrapped line into the viewport.
+
+    A logical newline count would land the match far above the viewport when
+    long lines wrap; the wrap-aware row computation puts it on screen.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    body = "\n".join(
+        ["x" * 220 for _ in range(6)] + ["a needle to find"] + ["y" * 220 for _ in range(6)],
+    )
+    record = _ui_record(agentgrep, tmp_path / "wrap.jsonl", body, "wrap")
+    async with app.run_test(size=(140, 24)) as pilot:
+        await pilot.pause()
+        app._set_empty_state(empty=False)
+        app.show_detail(record)
+        await pilot.pause()
+        app.action_open_detail_find()
+        app._detail_find_input.load_query("needle")
+        app._run_detail_find("needle", reset_cursor=True)
+        await pilot.pause()
+        scroll = app._detail_scroll
+        # The match's true visual row (read off the rendered wrap cache) lies in
+        # the scrolled viewport; a logical-line count would land it off-screen.
+        app._detail._render_content()
+        rows = [
+            i for i, strip in enumerate(app._detail._render_cache.lines) if "needle" in strip.text
+        ]
+        assert rows, "match should be in the rendered output"
+        viewport = range(int(scroll.scroll_y), int(scroll.scroll_y) + scroll.size.height)
+        assert any(row in viewport for row in rows)
+
+
 async def test_ctrl_j_from_filter_focuses_results(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

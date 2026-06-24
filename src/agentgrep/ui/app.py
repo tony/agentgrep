@@ -1859,20 +1859,54 @@ def build_streaming_ui_app(
         def _scroll_to_current_match(self) -> None:
             """Scroll the detail pane so the current find match is near the top.
 
-            The line index is the body match's logical line plus the header's
-            line count; with word wrap this is approximate, but the highlight
-            marks the exact match once it's on screen.
+            Maps the match's character offset to its VISUAL (post-wrap) row so
+            it lands on screen even when long lines wrap — a logical newline
+            count is wrong under word wrap (a match on logical line 8 can sit at
+            visual row 48). Falls back to the logical-line estimate if the wrap
+            helper is unavailable.
             """
             if self._detail_scroll is None or not self._detail_find_matches:
                 return
             start = self._detail_find_matches[self._detail_find_current][0]
-            body_line = self._detail_body_text.count("\n", 0, start)
+            target = self._match_visual_row(start)
+            t.cast("t.Any", self._detail_scroll).scroll_to(y=max(0, target - 2), animate=False)
+
+        def _match_visual_row(self, offset: int) -> int:
+            """Return the visual (post-wrap) row of body char ``offset``.
+
+            Uses Rich's own line-divider (the same one Textual wraps with) at the
+            Static's rendered content width; falls back to a logical-line count
+            if that private helper is unavailable.
+            """
             header = self._detail_header_text
-            header_lines = (
-                str(getattr(header, "plain", "")).count("\n") if header is not None else 0
-            )
-            target = max(0, header_lines + body_line - 2)
-            t.cast("t.Any", self._detail_scroll).scroll_to(y=target, animate=False)
+            header_text = str(getattr(header, "plain", "")) if header is not None else ""
+            body = self._detail_body_text
+            width = 0
+            if self._detail is not None:
+                width = int(getattr(self._detail.content_size, "width", 0) or 0)
+            width = max(1, width)
+            try:
+                return self._wrap_aware_row(offset, width, header_text, body)
+            except Exception:
+                return header_text.count("\n") + body.count("\n", 0, offset)
+
+        @staticmethod
+        def _wrap_aware_row(offset: int, width: int, header_text: str, body: str) -> int:
+            """Count header wrapped rows, then body wrapped rows up to ``offset``."""
+            from rich._wrap import divide_line
+
+            def rows(line: str) -> int:
+                return len(divide_line(line, width)) + 1
+
+            row = sum(rows(line) for line in header_text.split("\n"))
+            pos = 0
+            for line in body.split("\n"):
+                if pos + len(line) >= offset:
+                    col = offset - pos
+                    return row + sum(1 for brk in divide_line(line, width) if brk <= col)
+                row += rows(line)
+                pos += len(line) + 1
+            return row
 
         def _reset_detail_find_state(self) -> None:
             """Clear the find state and hide the bar (no re-render, no refocus).
