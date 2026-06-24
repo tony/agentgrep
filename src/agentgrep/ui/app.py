@@ -72,6 +72,13 @@ from agentgrep.ui.format import (
 from agentgrep.ui.highlighter import QueryHighlighter
 
 
+class _DetailMatchStyles(t.NamedTuple):
+    """Rich styles resolved on the pump before optional detail offload."""
+
+    search: str
+    filter: str
+
+
 def run_ui(
     home: pathlib.Path,
     query: SearchQuery,
@@ -1444,6 +1451,10 @@ def build_streaming_ui_app(
             # body (without rebuilding the header) and scroll to matches.
             self._detail_header_text = header
             self._detail_body_text = body_truncated
+            match_styles = _DetailMatchStyles(
+                search=self._match_style("search"),
+                filter=self._match_style("filter"),
+            )
             if (
                 self._detail_body_is_cached(query_terms)
                 or len(body_truncated) <= self._DETAIL_ASYNC_BODY_THRESHOLD
@@ -1451,7 +1462,7 @@ def build_streaming_ui_app(
                 self._present_detail(
                     record,
                     header,
-                    self._build_detail_body(body_truncated, query_terms),
+                    self._build_detail_body(body_truncated, query_terms, match_styles),
                     query_terms,
                 )
                 return
@@ -1468,6 +1479,7 @@ def build_streaming_ui_app(
                     header,
                     body_truncated,
                     query_terms,
+                    match_styles,
                 ),
                 name="detail",
                 group="detail",
@@ -1487,9 +1499,10 @@ def build_streaming_ui_app(
             header: object,
             body_truncated: str,
             query_terms: cabc.Sequence[str],
+            match_styles: _DetailMatchStyles,
         ) -> None:
             """Build the detail body off the UI thread, then apply it on the loop."""
-            body = self._build_detail_body(body_truncated, query_terms)
+            body = self._build_detail_body(body_truncated, query_terms, match_styles)
             streaming = t.cast("StreamingAppLike", t.cast("object", self))
             streaming.call_from_thread(
                 self._present_detail,
@@ -1584,14 +1597,14 @@ def build_streaming_ui_app(
                 return f"bold {foreground} on {background}"
             return "bold black on cyan"
 
-        def _apply_filter_highlight(self, text: t.Any) -> None:
+        def _apply_filter_highlight(self, text: t.Any, style: str | None = None) -> None:
             """Overlay the filter's literal terms onto ``text`` in a distinct color.
 
             Applied after the search-term highlight so filter matches stand out
             separately. Filter matching is case-insensitive, so the highlight is
             too; field predicates contribute no literal terms.
             """
-            style = self._match_style("filter")
+            style = style if style is not None else self._match_style("filter")
             for term in self._filter_terms:
                 if not term:
                     continue
@@ -1605,6 +1618,7 @@ def build_streaming_ui_app(
             self,
             body_text: str,
             query_terms: cabc.Sequence[str],
+            match_styles: _DetailMatchStyles | None = None,
         ) -> tuple[object, str]:
             """Return ``(renderable, body_text_for_match_search)`` for ``body_text``.
 
@@ -1658,9 +1672,12 @@ def build_streaming_ui_app(
                     query_terms,
                     case_sensitive=self.query.case_sensitive,
                     regex=self.query.regex,
-                    style=self._match_style("search"),
+                    style=match_styles.search if match_styles else self._match_style("search"),
                 )
-                self._apply_filter_highlight(highlighted)
+                self._apply_filter_highlight(
+                    highlighted,
+                    match_styles.filter if match_styles else None,
+                )
                 result = (highlighted, body_text)
             if cache_key is not None:
                 self._detail_body_cache[cache_key] = result

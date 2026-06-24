@@ -2610,6 +2610,35 @@ async def test_large_detail_body_builds_off_thread(
         assert len(list(app._detail.content.renderables)) == 2
 
 
+async def test_large_detail_body_resolves_match_styles_on_pump(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A large detail worker uses styles resolved on the pump thread."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        pump_thread_id = threading.get_ident()
+        style_threads: list[int] = []
+
+        def record_style(kind: str) -> str:
+            style_threads.append(threading.get_ident())
+            return "bold yellow" if kind == "search" else "bold black on cyan"
+
+        monkeypatch.setattr(app, "_match_style", record_style)
+        app._filter_terms = ("needle",)
+        big = "needle " + ("x" * (app._DETAIL_ASYNC_BODY_THRESHOLD + 1000))
+        record = _ui_record(agentgrep, tmp_path / "big.jsonl", big, "big")
+
+        app.show_detail(record)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert style_threads
+        assert set(style_threads) == {pump_thread_id}
+
+
 async def test_present_detail_discards_superseded_record(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
