@@ -52,6 +52,9 @@ class HistoryRecall(ModalScreen[t.Optional[str]]):  # noqa: UP045 -- Textual gen
 
     BINDINGS: t.ClassVar[list[Binding]] = [
         Binding("escape", "cancel", "Cancel", priority=True, show=False),
+        # priority so ctrl+c stages here (clear/close) instead of the app's
+        # ctrl+c -> smart_quit firing and quitting out from under the modal.
+        Binding("ctrl+c", "filter_clear_or_cancel", "Clear / Cancel", priority=True, show=False),
         Binding("up", "nav_up", show=False),
         Binding("down", "nav_down", show=False),
         Binding("pageup", "nav_page_up", show=False),
@@ -255,4 +258,18 @@ class HistoryRecall(ModalScreen[t.Optional[str]]):  # noqa: UP045 -- Textual gen
 
     def action_cancel(self) -> None:
         """Escape cancels: dismiss with ``None`` so the search box is left as-is."""
+        self.dismiss(None)
+
+    def action_filter_clear_or_cancel(self) -> None:
+        """Staged ctrl-c: clear the filter if it has text, else close the modal.
+
+        Mirrors the app's input ctrl-c (text → clear; empty → close), but the
+        modal's "exit" is closing itself. Setting ``value = ""`` re-fires
+        ``Input.Changed`` → :meth:`on_input_changed` → ``_refilter("")``, so the
+        full list repaints with no manual re-trigger.
+        """
+        filter_input = self.query_one("#history-filter", Input)
+        if filter_input.value:
+            filter_input.value = ""
+            return
         self.dismiss(None)

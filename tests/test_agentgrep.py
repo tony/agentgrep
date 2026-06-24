@@ -2523,6 +2523,61 @@ async def test_ctrl_r_opens_history_modal(
         assert isinstance(app.screen, HistoryRecall)
 
 
+async def test_history_modal_background_is_opaque(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The recall modal paints an opaque terminal-bg — no explorer bleed-through.
+
+    Under ``ansi_color=True`` ModalScreen's ``:ansi`` rule would leave the
+    screen transparent (``a == 0``), surfacing the explorer at the edges. The
+    app stylesheet overrides it to ``ansi_default`` (opaque, ``a == 1``).
+    """
+    from agentgrep.ui._history import HistoryEntry
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app._history = [HistoryEntry(text="agent:codex refactor", ts=10)]
+        app.action_recall_history()
+        await pilot.pause()
+        assert app.screen.styles.background.a == 1.0
+        # Close the modal so the screen stack is clean at teardown.
+        await pilot.press("escape")
+        await pilot.pause()
+
+
+async def test_ctrl_c_in_history_modal_does_not_quit_app(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ctrl-C inside the modal clears then closes it — it never quits the app."""
+    from textual.widgets import Input
+
+    from agentgrep.ui._history import HistoryEntry
+    from agentgrep.ui.widgets.history import HistoryRecall
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app._history = [HistoryEntry(text="agent:codex refactor", ts=10)]
+        app.action_recall_history()
+        await pilot.pause()
+        modal = app.screen
+        assert isinstance(modal, HistoryRecall)
+        modal.query_one("#history-filter", Input).value = "zzz"
+        await pilot.pause()
+        # First Ctrl-C clears (does not quit the app via smart_quit).
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+        assert modal.query_one("#history-filter", Input).value == ""
+        assert isinstance(app.screen, HistoryRecall)
+        # Second Ctrl-C closes the modal back to the explorer — app still alive.
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+        assert not isinstance(app.screen, HistoryRecall)
+
+
 async def test_apply_recalled_query_fills_box_without_running(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

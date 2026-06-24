@@ -9,7 +9,7 @@ preview) is driven through a tiny host ``App`` and ``Pilot`` — the modal is a
 from __future__ import annotations
 
 from textual.app import App
-from textual.widgets import OptionList, Static
+from textual.widgets import Input, OptionList, Static
 
 from agentgrep.ui._history import HistoryEntry
 from agentgrep.ui.widgets.history import HistoryRecall
@@ -120,6 +120,28 @@ async def test_modal_empty_history_shows_hint() -> None:
         assert option_list.option_count == 1  # the disabled hint row
         # Enter on the empty hint cancels rather than accepting a bogus value.
         await pilot.press("enter")
+        await pilot.pause()
+        assert app.result is None
+
+
+async def test_modal_ctrl_c_clears_filter_then_closes() -> None:
+    """Ctrl-C clears a non-empty filter; a second Ctrl-C on empty closes the modal."""
+    app = _HistoryHostApp(_entries())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        for char in "tmux":
+            await pilot.press(char)
+        await pilot.pause()
+        filter_input = app.screen.query_one("#history-filter", Input)
+        assert filter_input.value == "tmux"
+        # First Ctrl-C clears the filter and repaints the full list; still open.
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+        assert filter_input.value == ""
+        assert app.result == "UNSET"
+        assert app.screen.query_one("#history-list", OptionList).option_count == 2
+        # Second Ctrl-C on the empty filter closes the modal.
+        await pilot.press("ctrl+c")
         await pilot.pause()
         assert app.result is None
 
