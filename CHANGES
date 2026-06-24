@@ -42,6 +42,34 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### What's new
+
+#### A pi-inspired redesign of the explorer TUI (#77)
+
+The interactive explorer (running `agentgrep` with no query) has been
+reworked toward a calmer, pi- and Claude-Code-inspired aesthetic. The
+terminal background now shows through, the top header bar and visible
+scrollbars are gone, panes carry lightweight left-aligned section
+headers instead of boxes, and the search and filter inputs are reduced
+to a single rule. The empty explorer opens on a bare canvas with a short
+hint instead of empty chrome, and it stays responsive while a large
+record renders. See {ref}`tui` and {ref}`adr-non-blocking-tui-invariants`.
+
+#### Find within an open record (#77)
+
+The detail pane gains an in-record find: press `/` or `ctrl-f` to open a
+find bar, type to highlight matches, and step through them with the
+current hit kept scrolled into view — correctly, even when long lines
+wrap. JSON records keep their syntax colours underneath the find
+highlight.
+
+#### Staged ctrl-c in the TUI inputs (#77)
+
+Inside the search, filter, and find inputs, `ctrl-c` now clears the
+field first; on an already-empty field it arms a brief "press ctrl-c
+again to exit" prompt before quitting, so a reflexive `ctrl-c` no longer
+drops you out of the explorer by surprise.
+
 ## agentgrep 0.1.0a26 (2026-06-21)
 
 agentgrep 0.1.0a26 is an internal-architecture release with no change to the
