@@ -2523,6 +2523,145 @@ async def test_ctrl_r_opens_history_modal(
         assert isinstance(app.screen, HistoryRecall)
 
 
+def _search_requested(text: str) -> object:
+    """Build a ``SearchRequested`` message carrying ``text`` (Enter-submit stand-in)."""
+    from agentgrep.progress import SearchRequestedPayload
+    from agentgrep.ui.widgets import SearchRequested
+
+    return SearchRequested(payload=SearchRequestedPayload(text=text))
+
+
+async def test_slash_opens_and_filters_command_menu(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Typing ``/`` opens the command menu; typing more prefix-filters it."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app._search_input.focus()
+        await pilot.pause()
+        await pilot.press("/")
+        await pilot.pause()
+        dropdown = app._enum_dropdown
+        assert dropdown.display is True
+        assert {cmd.name for cmd in app._command_matches} == {"clear", "exit", "help"}
+        assert dropdown.option_count == len(app._command_matches)
+        await pilot.press("c")  # value is now "/c"
+        await pilot.pause()
+        assert [cmd.name for cmd in app._command_matches] == ["clear"]
+        assert dropdown.option_count == 1
+
+
+async def test_slash_clear_resets_and_is_not_recorded(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``/clear`` returns the explorer to the bare canvas and is not recorded."""
+    from agentgrep.ui import _history
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        # A real search first: records history, leaves a non-empty state.
+        app._search_input.focus()
+        await pilot.pause()
+        for char in "tmux":
+            await pilot.press(char)
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        # Now dispatch /clear.
+        app._search_input.value = "/clear"
+        app.on_search_requested(_search_requested("/clear"))
+        await pilot.pause()
+        assert app.screen.query_one("#body").has_class("-empty")
+        assert app._search_input.value == ""
+        on_disk = _history.load_history(_history.history_path(app.home))
+        assert all(entry.text != "/clear" for entry in on_disk)
+        assert any(entry.text == "tmux" for entry in on_disk)
+
+
+async def test_slash_help_notifies_the_command_list(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``/help`` shows the registry as a notification."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        notes: list[tuple[tuple[object, ...], dict[str, object]]] = []
+        monkeypatch.setattr(app, "notify", lambda *a, **k: notes.append((a, k)))
+        app.on_search_requested(_search_requested("/help"))
+        await pilot.pause()
+        assert len(notes) == 1
+        message = str(notes[0][0][0])
+        assert "/clear" in message
+        assert "/help" in message
+
+
+async def test_slash_exit_quits_the_app(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``/exit`` (and its ``/quit`` alias) quits the app."""
+    for text in ("/exit", "/quit"):
+        app = _build_empty_ui_app(tmp_path, monkeypatch)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            exits: list[object] = []
+            monkeypatch.setattr(app, "exit", lambda *a, _sink=exits, **k: _sink.append((a, k)))
+            app.on_search_requested(_search_requested(text))
+            await pilot.pause()
+            assert len(exits) == 1, f"{text} should quit"
+
+
+async def test_unknown_slash_command_flashes_error_and_does_not_search(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unknown ``/foo`` flags the search rule and notifies — it runs no search."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        notes: list[tuple[tuple[object, ...], dict[str, object]]] = []
+        monkeypatch.setattr(app, "notify", lambda *a, **k: notes.append((a, k)))
+        app.on_search_requested(_search_requested("/foo"))
+        await pilot.pause()
+        assert app._search_input.has_class("-error")
+        assert len(notes) == 1
+        assert "/foo" in str(notes[0][0][0])
+        assert app.all_records == []
+
+
+async def test_slash_menu_pushes_body_down_and_reflows_back(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The command menu is in-flow (``overlay: none``): it pushes the body down.
+
+    Unlike the keyword picker (which floats via ``overlay: screen``), the slash
+    menu takes real layout height, reflowing the content below it — the pi/ink
+    way — and the body returns when the slash is cleared.
+    """
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(100, 24)) as pilot:
+        await pilot.pause()
+        app._set_empty_state(empty=False)
+        await pilot.pause()
+        body = app.screen.query_one("#body")
+        app._search_input.focus()
+        await pilot.pause()
+        y_closed = body.region.y
+        await pilot.press("/")
+        await pilot.pause()
+        assert app._enum_dropdown.styles.overlay == "none"
+        assert body.region.y > y_closed
+        # Clearing the slash collapses the menu and reflows the body back.
+        await pilot.press("backspace")
+        await pilot.pause()
+        assert body.region.y == y_closed
+
+
 async def test_history_modal_background_is_opaque(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

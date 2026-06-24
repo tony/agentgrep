@@ -59,7 +59,7 @@ from agentgrep.progress import (
 )
 from agentgrep.query import default_registry
 from agentgrep.records import SearchQuery, SearchRecord
-from agentgrep.ui import _history
+from agentgrep.ui import _history, commands
 from agentgrep.ui.completion import (
     QuerySuggester,
     apply_enum_choice,
@@ -314,6 +314,9 @@ def build_streaming_ui_app(
                 [] if self._history_disabled else _history.load_history(self._history_path)
             )
             self._last_recorded_text = self._history[0].text if self._history else ""
+            # The slash commands currently shown in the search dropdown, parallel
+            # to its option rows; empty when the dropdown isn't in command mode.
+            self._command_matches: tuple[commands.SlashCommand, ...] = ()
             self._results: SearchResultsList | None = None
             self._detail: StaticLike | None = None
             self._detail_row: StaticLike | None = None
@@ -798,15 +801,64 @@ def build_streaming_ui_app(
             input_id = getattr(source, "id", None)
             value = str(getattr(event, "value", ""))
             if input_id == "search":
+                # Typing clears a lingering unknown-command error border.
+                if self._search_input is not None and t.cast(
+                    "t.Any",
+                    self._search_input,
+                ).has_class("-error"):
+                    self._set_search_rule_state("")
                 self._update_search_dropdown(value)
             elif input_id == "filter":
                 self._update_filter_dropdown(value)
 
         def _update_search_dropdown(self, value: str) -> None:
-            """Populate and show/hide the search bar's keyword dropdown."""
+            """Populate the search dropdown — slash commands, else keyword completion."""
+            if value.lstrip().startswith("/"):
+                self._update_command_dropdown(value)
+                return
+            self._command_matches = ()
+            if self._enum_dropdown is not None:
+                t.cast("t.Any", self._enum_dropdown).remove_class("-commands")
             values = keyword_completion_candidates(value, default_registry()) or ()
             self._enum_values = values
             self._populate_dropdown(self._enum_dropdown, self._search_input, values)
+
+        def _update_command_dropdown(self, value: str) -> None:
+            """Show the pi-style slash-command menu, prefix-filtered by the typed token.
+
+            Rows are an aligned ``name`` column + a dim description (no inline
+            aliases, which bloat the row); the ``-commands`` class swaps the
+            bordered keyword picker for pi's flush, borderless list. The rows are
+            stored in ``self._command_matches`` parallel to the option list so
+            :meth:`on_option_list_option_selected` can dispatch the chosen one.
+            """
+            from textual.content import Content
+            from textual.widgets.option_list import Option
+
+            token, _args = commands.parse_command(value)
+            matches = commands.command_matches(token)
+            self._command_matches = matches
+            dropdown = self._enum_dropdown
+            if dropdown is None:
+                return
+            if not matches:
+                dropdown.display = False
+                return
+            t.cast("t.Any", dropdown).add_class("-commands")
+            dropdown.clear_options()
+            # Pad the name column so the dim descriptions line up (pi's padEnd).
+            name_width = max(len(command.name) for command in matches) + 2
+            for command in matches:
+                prompt = Content.assemble(
+                    (command.name.ljust(name_width), ""),
+                    (command.description, "dim"),
+                )
+                dropdown.add_option(Option(prompt))
+            # The menu lists whole commands, so anchor it at the input's left edge
+            # rather than the cursor column (unlike a token completion).
+            dropdown.styles.offset = (0, 0)
+            dropdown.display = True
+            dropdown.highlighted = 0
 
         def _update_filter_dropdown(self, value: str) -> None:
             """Populate and show/hide the filter box's keyword dropdown."""
@@ -846,10 +898,13 @@ def build_streaming_ui_app(
             dropdown.styles.offset = (max(cursor_x - 1, 0), 0)
 
         def on_option_list_option_selected(self, event: object) -> None:
-            """Accept a completion-dropdown choice into the originating input."""
+            """Accept a completion choice — or run a slash command — from the dropdown."""
             option_list = getattr(event, "option_list", None)
             index = int(getattr(event, "option_index", 0) or 0)
             if option_list is self._enum_dropdown:
+                if self._command_matches:
+                    self._run_command_at(index)
+                    return
                 self._accept_dropdown_choice(
                     self._search_input,
                     self._enum_dropdown,
@@ -917,8 +972,13 @@ def build_streaming_ui_app(
             resets the UI to an idle state without spawning a worker.
             """
             text = message.payload.text.strip()
-            new_query = self._build_search_query(text)
             self.control.request_answer_now()
+            if text.startswith("/"):
+                # A slash command runs a handler instead of a search — no query
+                # is built and nothing is recorded to history.
+                self._dispatch_slash_command(text)
+                return
+            new_query = self._build_search_query(text)
             if not text:
                 # Cleared the box — return to the pi bare canvas + hint.
                 # ``_reset_search_chrome`` already idles the header rule.
@@ -929,6 +989,33 @@ def build_streaming_ui_app(
                 return
             self._record_history(text)
             self._start_search_worker(new_query)
+
+        def _dispatch_slash_command(self, text: str) -> None:
+            """Resolve and run a ``/command`` from the search box, or flag if unknown."""
+            token, args = commands.parse_command(text)
+            command = commands.resolve_command(token)
+            if self._enum_dropdown is not None:
+                self._enum_dropdown.display = False
+            self._command_matches = ()
+            if command is None:
+                self._flash_unknown_command(token)
+                return
+            command.run(self, args)
+
+        def _run_command_at(self, index: int) -> None:
+            """Dispatch the slash command at ``index`` in the open command menu."""
+            if not (0 <= index < len(self._command_matches)):
+                return
+            command = self._command_matches[index]
+            if self._enum_dropdown is not None:
+                self._enum_dropdown.display = False
+            self._command_matches = ()
+            command.run(self, "")
+
+        def _flash_unknown_command(self, token: str) -> None:
+            """Flag an unknown ``/token`` on the search rule and notify (non-fatal)."""
+            self._set_search_rule_state("error")
+            self.notify(f"unknown command: /{token}", severity="warning", title="agentgrep")
 
         def _record_history(self, text: str) -> None:
             """Append a submitted, non-empty query to the persisted history.

@@ -351,6 +351,28 @@ Screen {
        backdrop.) Requires App.ansi_color = True, set in app.py. */
     background: ansi_default;
 }
+/* Slash-command menu (the search dropdown in command mode): pi's flush,
+   borderless list — an aligned name column + dim descriptions — instead of the
+   bordered keyword picker. `width: auto` sizes to the widest row so the
+   descriptions never wrap; the selected row is accent text on the transparent
+   background (matching the results list and the Ctrl-R modal), not a block. */
+#enum-dropdown.-commands {
+    border: none;
+    /* `overlay: none` (the default in-flow mode, vs the keyword picker's
+       `overlay: screen` float) makes the menu take real layout height, so it
+       pushes the body below it down and reflows back when dismissed — the
+       way pi and ink (flexbox `position: static`) lay out their completions. */
+    overlay: none;
+    width: auto;
+    max-width: 90%;
+    height: auto;
+    padding: 0 1;
+}
+#enum-dropdown.-commands > .option-list--option-highlighted {
+    color: $accent;
+    text-style: bold;
+    background: transparent;
+}
 #body {
     height: 1fr;
 }
