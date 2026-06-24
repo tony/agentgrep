@@ -2029,16 +2029,18 @@ def build_streaming_ui_app(
             self._cancel_active_action()
 
         def action_smart_quit(self) -> None:
-            """``Ctrl-C`` outside an input: cancel an in-flight action; else quit.
+            """``Ctrl-C`` outside an input: cancel an in-flight action; else stage exit.
 
             Inputs intercept ctrl+c first for the staged clear/confirm-exit flow
-            (:meth:`_handle_input_ctrl_c`), so this only fires when focus is on a
-            non-input widget (results list, detail scroll).
+            (:meth:`_handle_input_ctrl_c`); this fires when focus is on a non-input
+            widget (results list, detail scroll). With an action in flight the first
+            press cancels it; otherwise it arms the same "press ctrl-c again to exit"
+            gutter as the inputs, so the warning shows whichever pane holds focus.
             """
             if self._has_active_actions():
                 self._cancel_active_action()
-            else:
-                self.exit()
+                return
+            self._arm_or_confirm_exit()
 
         # --- staged ctrl-c in the inputs --------------------------------
         def _handle_input_ctrl_c(self, widget: object) -> None:
@@ -2057,6 +2059,17 @@ def build_streaming_ui_app(
             if widget is self._detail_find_input:
                 self._close_detail_find()
                 return
+            self._arm_or_confirm_exit()
+
+        def _arm_or_confirm_exit(self) -> None:
+            """Arm the confirm-exit gutter, or quit if it is already armed.
+
+            Shared by the focused-input path (:meth:`_handle_input_ctrl_c`) and the
+            non-input binding (:meth:`action_smart_quit`) so the "press ctrl-c again
+            to exit" gutter behaves identically in every pane. The first call shows
+            the gutter and starts a 2 s disarm timer; a second call within that
+            window exits.
+            """
             if self._confirm_exit_pending:
                 self.exit()
                 return

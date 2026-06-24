@@ -3647,6 +3647,39 @@ async def test_input_second_ctrl_c_on_empty_exits(
         assert app.is_running is False
 
 
+async def test_ctrl_c_on_detail_pane_arms_confirm_exit(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ctrl-C with a non-input pane focused arms confirm-exit, like the inputs.
+
+    Regression: the staged "press ctrl-c again to exit" gutter only fired from a
+    focused input; on the detail scroll (a non-input widget) the first ctrl-c
+    quit outright with no warning. ``action_smart_quit`` now routes through the
+    same arm-then-confirm flow.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = _detail_find_record(agentgrep, tmp_path / "a.jsonl")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app._set_empty_state(empty=False)
+        app.show_detail(record)
+        await pilot.pause()
+        app._detail_scroll.focus()
+        await pilot.pause()
+        assert getattr(app.focused, "id", None) == "detail-scroll"
+        assert app._has_active_actions() is False
+        await pilot.press("ctrl+c")  # non-input focus -> arm, do not quit
+        await pilot.pause()
+        assert app.is_running
+        assert app._confirm_exit_pending is True
+        assert app._ctrlc_gutter.has_class("-shown")
+        await pilot.press("ctrl+c")  # second press within the window -> exit
+        await pilot.pause()
+        assert app.is_running is False
+
+
 async def test_find_input_ctrl_c_clears_then_closes_bar(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
