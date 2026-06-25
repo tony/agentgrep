@@ -233,9 +233,9 @@ def format_scanning_detail(
     r"""Compose the verbose scanning detail for the toggleable ``Ctrl-\`` row.
 
     The row carries the per-source counts the compact header omits — phase,
-    scanned/total sources, and in-source record/match counts — over two lines:
-    the phase + ``N/M sources`` heading on the first, the in-source detail on
-    the second. The phase word is capitalized to open the row as a sentence.
+    scanned/total sources, and in-source record/match counts — on up to two
+    lines: the phase + ``N/M sources`` heading, then the in-source detail when
+    present. The phase word is capitalized to open the row as a sentence.
 
     Parameters
     ----------
