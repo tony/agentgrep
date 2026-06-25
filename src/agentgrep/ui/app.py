@@ -430,6 +430,8 @@ def build_streaming_ui_app(
                 self._results.rerender_records()
             if self._results_header is not None:
                 self._results_header.refresh_theme()
+            if self._searching_panel is not None:
+                self._searching_panel.refresh_theme()
             self._detail_body_cache.clear()
             if self._current_detail_record is not None:
                 self.show_detail(self._current_detail_record)

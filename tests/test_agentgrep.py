@@ -4060,6 +4060,23 @@ async def test_detail_find_survives_theme_switch(
         assert len(app._detail_find_matches) == 10
 
 
+async def test_theme_switch_refreshes_the_searching_panel(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A theme switch re-bakes the SearchingPanel's hex spans, like the header."""
+    from agentgrep.ui import theme as ui_theme
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        calls: list[int] = []
+        monkeypatch.setattr(app._searching_panel, "refresh_theme", lambda: calls.append(1))
+        app.theme = ui_theme.LIGHT_THEME_NAME
+        await pilot.pause()
+        assert calls == [1]
+
+
 async def test_input_ctrl_c_clears_then_arms_confirm_exit(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
