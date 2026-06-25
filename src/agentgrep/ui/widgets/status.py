@@ -72,19 +72,18 @@ class ResultsHeader(PaneHeader):
     """Results section header with the live search status folded into the rule.
 
     Extends :class:`PaneHeader`: idle, it renders the plain ``─results────``
-    rule; while a search runs (and after it finishes) it folds the status
-    payload — an animated spinner, a ``▰▱`` progress bar, the percent, and the
-    match count — into the right of the same rule (pi's ``fitBorder`` shape), so
-    the results column spends one row instead of two. The payload is dropped
-    right-to-left (matches, then bar, then percent) as the width tightens; the
-    spinner is always kept.
+    rule; while a search runs it folds a compact status — a spinner, the phase
+    verb, a ``▰▱`` bar, and the percent — into the right of the same rule (pi's
+    ``fitBorder`` shape), so the results column spends one row instead of two.
+    The verbose source count and per-source detail live in the toggleable detail
+    row, not here; segments shed right-to-left as the width tightens.
 
     The spinner self-drives off ``time.monotonic`` via ``auto_refresh`` while a
     search is active, so it ticks regardless of event-loop load; the worker
-    thread only calls store-only setters, and the next timer frame repaints.
-    On finish the timer stops and the frozen outcome glyph (``✓``/``■``/``✗``)
-    holds. ``begin``/``freeze``/``go_idle`` mirror the old spinner+meter
-    lifecycle.
+    thread only calls store-only setters, and the next timer frame repaints. On
+    finish the timer stops: a complete scan reads as a full bar (no glyph), and
+    ``■``/``✗`` mark a stopped/failed scan. ``begin``/``freeze``/``go_idle``
+    mirror the lifecycle.
     """
 
     _FRAMES: t.ClassVar[str] = "·✢✽✻"
