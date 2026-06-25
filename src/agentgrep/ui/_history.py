@@ -154,7 +154,12 @@ def _parse_line(line: str) -> HistoryEntry | None:
     if not isinstance(text, str) or not text:
         return None
     raw_ts = obj.get("ts", 0)
-    ts = int(raw_ts) if isinstance(raw_ts, (int, float)) and not isinstance(raw_ts, bool) else 0
+    ts = 0
+    if isinstance(raw_ts, (int, float)) and not isinstance(raw_ts, bool):
+        try:
+            ts = int(raw_ts)
+        except ValueError, OverflowError:
+            ts = 0
     raw_scope = obj.get("scope", "")
     scope = raw_scope if isinstance(raw_scope, str) else ""
     return HistoryEntry(text=text, ts=ts, scope=scope)

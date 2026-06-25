@@ -11,12 +11,12 @@ from __future__ import annotations
 import stat
 import typing as t
 
+import pytest
+
 from agentgrep.ui import _history
 
 if t.TYPE_CHECKING:
     import pathlib
-
-    import pytest
 
 
 def test_history_path_uses_xdg_state_home(
@@ -79,6 +79,42 @@ def test_load_tolerates_corruption(tmp_path: pathlib.Path) -> None:
     )
     entries = _history.load_history(path)
     assert [e.text for e in entries] == ["good", "ok"]
+
+
+class CorruptTimestampCase(t.NamedTuple):
+    """History timestamp token accepted by JSON but invalid for ``int()``."""
+
+    test_id: str
+    raw_ts: str
+
+
+CORRUPT_TIMESTAMP_CASES = (
+    CorruptTimestampCase(test_id="nan", raw_ts="NaN"),
+    CorruptTimestampCase(test_id="positive-infinity", raw_ts="Infinity"),
+    CorruptTimestampCase(test_id="negative-infinity", raw_ts="-Infinity"),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    CORRUPT_TIMESTAMP_CASES,
+    ids=[case.test_id for case in CORRUPT_TIMESTAMP_CASES],
+)
+def test_load_tolerates_non_finite_timestamp(
+    case: CorruptTimestampCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """A non-finite numeric timestamp falls back to zero, not startup failure."""
+    path = tmp_path / "h.jsonl"
+    path.write_text(
+        f'{{"text": "bad", "ts": {case.raw_ts}}}\n{{"text": "ok", "ts": 5}}\n',
+        encoding="utf-8",
+    )
+    entries = _history.load_history(path)
+    by_text = {entry.text: entry for entry in entries}
+    assert [entry.text for entry in entries] == ["ok", "bad"]
+    assert by_text["ok"].ts == 5
+    assert by_text["bad"].ts == 0
 
 
 def test_load_missing_file_is_empty(tmp_path: pathlib.Path) -> None:
