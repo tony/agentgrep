@@ -230,12 +230,12 @@ def format_scanning_detail(
     total: int | None,
     detail: str | None,
 ) -> str:
-    r"""Compose the verbose scanning line for the toggleable detail row.
+    r"""Compose the verbose scanning detail for the toggleable ``Ctrl-\`` row.
 
-    The ``Ctrl-\`` row carries the per-source counts the compact
-    statusline omits — phase, scanned/total sources, and in-source
-    record/match counts — with the phase word capitalized to open the
-    row as a sentence.
+    The row carries the per-source counts the compact header omits — phase,
+    scanned/total sources, and in-source record/match counts — over two lines:
+    the phase + ``N/M sources`` heading on the first, the in-source detail on
+    the second. The phase word is capitalized to open the row as a sentence.
 
     Parameters
     ----------
@@ -251,28 +251,25 @@ def format_scanning_detail(
     Returns
     -------
     str
-        The composed detail line; segments with unknown inputs are
-        omitted.
+        The composed detail; the heading and the in-source detail are joined by
+        a newline, and segments with unknown inputs are omitted.
 
     Examples
     --------
     >>> format_scanning_detail(
     ...     "scanning", 5662, 6748, "2176 records, 354 source matches",
     ... )
-    'Scanning 5662/6748 sources | 2176 records, 354 source matches'
+    'Scanning 5662/6748 sources\n2176 records, 354 source matches'
     >>> format_scanning_detail("prefiltering", None, None, "~/.codex/sessions/")
-    'Prefiltering ~/.codex/sessions/'
+    'Prefiltering\n~/.codex/sessions/'
     >>> format_scanning_detail("discovering", None, None, None)
     'Discovering'
     """
     heading = phase[:1].upper() + phase[1:]
     if current is not None and total is not None:
-        line = f"{heading} {current}/{total} sources"
-        if detail:
-            line = f"{line} | {detail}"
-        return line
+        heading = f"{heading} {current}/{total} sources"
     if detail:
-        return f"{heading} {detail}"
+        return f"{heading}\n{detail}"
     return heading
 
 

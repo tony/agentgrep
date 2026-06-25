@@ -438,8 +438,9 @@ Screen {
    spinner, bar, percent, and match count render as colored spans inside the
    header rule, so there is no separate statusline row or per-cell CSS. */
 #status-detail {
-    height: 1;
-    /* Aligns the verbose ctrl+\ row under the header's payload. */
+    /* Two lines: the phase + N/M sources heading, then the in-source detail
+       moved off the compact header. Aligned under the header's payload. */
+    height: 2;
     padding: 0 1 0 3;
     color: $ag-muted;
     display: none;

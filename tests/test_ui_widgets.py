@@ -8,9 +8,6 @@ widgets directly (no ``run_test`` Pilot) and assert their pure behavior.
 
 from __future__ import annotations
 
-import re
-import time
-
 from textual.widgets import Input, OptionList, Static
 
 from agentgrep.progress import FilterRequestedPayload, ProgressSnapshot
@@ -156,19 +153,23 @@ def test_phase_label_curates_engine_jargon() -> None:
     assert phase_label("") == ""
 
 
-def test_results_header_renders_phase_word_left_of_bar() -> None:
-    """An active scanning header shows the verb + N/M count before the bar.
+def test_results_header_scanning_shows_verb_and_bar_only() -> None:
+    r"""An active scanning header shows the verb + bar, but not the N/M count.
 
     ``begin()`` is skipped on purpose: it arms a Textual ``auto_refresh``
     timer that needs a running event loop. These tests exercise the pure
     ``_payload`` render seam; the timer lifecycle is covered by the app-level
-    integration test.
+    integration test. The verbose ``N/M`` source count moved to the Ctrl-\ row.
     """
     header = ResultsHeader("results", id="results-header")
-    header.set_progress(0.61, "scanning", "42/68")
+    header.set_progress(0.61, "scanning")
+    header.set_matches("180 matches")
     payload = header._payload(60).plain
     assert "Scanning" in payload
-    assert "42/68" in payload
+    assert "▰" in payload  # the bar (the "scrollbar") is kept
+    assert "61%" in payload
+    assert "42/68" not in payload  # N/M source count -> Ctrl-\
+    assert "180 matches" not in payload  # match count hidden while scanning
 
 
 def test_results_header_curates_prefiltering_phase() -> None:
@@ -188,20 +189,41 @@ def test_results_header_idle_stays_a_plain_rule() -> None:
     assert "Scanning" not in text.plain
 
 
-def test_results_header_freeze_shows_outcome_word() -> None:
-    """Freezing pairs the outcome glyph with the Done/Stopped/Error word."""
-    for outcome, word in (("complete", "Done"), ("interrupted", "Stopped"), ("error", "Error")):
-        header = ResultsHeader("results", id="results-header")
-        header.freeze(outcome, message="bad query" if outcome == "error" else "", elapsed=4.1)
-        assert word in header._payload(60).plain
-
-
-def test_results_header_shows_elapsed_ticker() -> None:
-    """The header carries a self-driven elapsed seconds token when there is room."""
+def test_results_header_complete_drops_glyph_and_word() -> None:
+    """A completed scan reads as a full 100%% bar — no ✓ glyph and no 'Done' word."""
     header = ResultsHeader("results", id="results-header")
-    header._started_at = time.monotonic() - 3.4
-    header.set_progress(0.61, "scanning", "42/68")
-    assert re.search(r"\d+s", header._payload(80).plain)
+    header.set_progress(0.6, "scanning")
+    header.freeze("complete")
+    payload = header._payload(60).plain
+    assert "100%" in payload
+    assert "▰" in payload
+    assert "✓" not in payload
+    assert "Done" not in payload
+    assert "Scanning" not in payload  # the verb drops once frozen
+
+
+def test_results_header_interrupted_and_error_keep_a_marker() -> None:
+    """Stopped/error aren't self-evident from the bar, so they keep a marker."""
+    stopped = ResultsHeader("results", id="results-header")
+    stopped.set_progress(0.84, "scanning")
+    stopped.freeze("interrupted")
+    assert "■" in stopped._payload(60).plain
+
+    errored = ResultsHeader("results", id="results-header")
+    errored.freeze("error", message="bad query")
+    payload = errored._payload(60).plain
+    assert "✗" in payload
+    assert "bad query" in payload
+
+
+def test_results_header_shows_match_count_only_once_finished() -> None:
+    """The match/cursor count appears after the scan, never during it."""
+    header = ResultsHeader("results", id="results-header")
+    header.set_progress(0.6, "scanning")
+    header.set_matches("3/180")
+    assert "3/180" not in header._payload(60).plain  # hidden while scanning
+    header.freeze("complete")
+    assert "3/180" in header._payload(60).plain  # shown once finished
 
 
 def test_searching_panel_is_static_subclass() -> None:

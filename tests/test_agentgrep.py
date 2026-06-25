@@ -5174,8 +5174,9 @@ async def test_ctrl_backslash_toggles_scanning_detail_row(
         await pilot.pause()
         assert app._detail_visible is True
         assert detail_row.has_class("visible")
+        # Two lines: the phase + N/M sources heading, then the in-source detail.
         assert (
-            app._last_detail_text == "Scanning 5662/6748 sources | 2176 records, 354 source matches"
+            app._last_detail_text == "Scanning 5662/6748 sources\n2176 records, 354 source matches"
         )
         await pilot.press("ctrl+backslash")
         await pilot.pause()
@@ -5212,18 +5213,18 @@ async def test_detail_row_visibility_sticky_across_search_reset(
         assert updates[-1] == ""
 
 
-async def test_finish_complete_freezes_header_check(
+async def test_finish_complete_freezes_header_full_bar(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Finishing freezes the header's check glyph + full bar and stops the timer."""
+    """Finishing freezes the header to a full 100%% bar (no glyph) and stops the timer."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
         app._search_done = False
         # Results present → the folded header rule (not the centered panel) is
-        # the chrome that freezes and carries the outcome glyph.
+        # the chrome that freezes and carries the outcome.
         app.all_records.extend(_seed_records(agentgrep, tmp_path, 1))
         app._set_empty_state(empty=False)
         app._results_header.begin()
@@ -5233,11 +5234,11 @@ async def test_finish_complete_freezes_header_check(
         await pilot.pause()
         header = app._results_header
         assert header._outcome == "complete"
-        assert header._final_glyph == "✓"
         assert header.auto_refresh is None  # the spinner timer stopped
         rendered = header.render().plain
-        assert "✓" in rendered
         assert "100%" in rendered
+        assert "✓" not in rendered  # complete drops the glyph — the full bar says it
+        assert "Done" not in rendered
         # The data summary lands in the toggleable detail row.
         assert app._last_detail_text == "Search complete: 100 matches in 12.3s"
 
@@ -5248,27 +5249,29 @@ class FinishOutcomeCase(t.NamedTuple):
     test_id: str
     size: tuple[int, int]
     outcome: str
-    glyph: str
+    glyph: str  # the frozen marker stored on the widget
+    marker: str  # the marker actually rendered ("" when complete renders none)
     expect_bar: bool
     seed_scanning: bool
 
 
 FINISH_OUTCOME_CASES: tuple[FinishOutcomeCase, ...] = (
     FinishOutcomeCase(
-        test_id="complete-wide-check-full-bar",
+        # Complete renders no glyph or word — a full 100% bar says it.
+        test_id="complete-wide-full-bar-no-glyph",
         size=(160, 24),
         outcome="complete",
         glyph="✓",
+        marker="",
         expect_bar=True,
         seed_scanning=True,
     ),
     FinishOutcomeCase(
-        # Complete always fills the bar (freeze sets fraction=1.0), and the bar
-        # still fits a narrow header — the match count is what drops, not the bar.
-        test_id="complete-narrow-check-full-bar",
+        test_id="complete-narrow-full-bar-no-glyph",
         size=(40, 24),
         outcome="complete",
         glyph="✓",
+        marker="",
         expect_bar=True,
         seed_scanning=True,
     ),
@@ -5277,16 +5280,18 @@ FINISH_OUTCOME_CASES: tuple[FinishOutcomeCase, ...] = (
         size=(160, 24),
         outcome="interrupted",
         glyph="■",
+        marker="■",
         expect_bar=True,
         seed_scanning=True,
     ),
     FinishOutcomeCase(
         # Interrupted before the first scanning snapshot: no fraction, so no bar —
-        # the gray ■ glyph alone carries the stopped outcome.
+        # the gray ■ marker alone carries the stopped outcome.
         test_id="interrupted-no-scan-square-no-bar",
         size=(160, 24),
         outcome="interrupted",
         glyph="■",
+        marker="■",
         expect_bar=False,
         seed_scanning=False,
     ),
@@ -5303,7 +5308,7 @@ async def test_finish_outcome_freezes_header_glyph(
     monkeypatch: pytest.MonkeyPatch,
     case: FinishOutcomeCase,
 ) -> None:
-    """The frozen header glyph (and bar, when there is a fraction) carries the outcome."""
+    """The frozen header carries the outcome via the bar (and a marker when needed)."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=case.size) as pilot:
@@ -5324,7 +5329,10 @@ async def test_finish_outcome_freezes_header_glyph(
         assert header._outcome == case.outcome
         assert header._final_glyph == case.glyph
         rendered = header.render().plain
-        assert case.glyph in rendered
+        if case.marker:
+            assert case.marker in rendered
+        else:
+            assert "✓" not in rendered  # complete renders no glyph
         assert ("▰" in rendered) is case.expect_bar
         if case.expect_bar and case.outcome == "complete":
             assert "▱" not in rendered  # complete fills the bar

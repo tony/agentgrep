@@ -1168,18 +1168,11 @@ def build_streaming_ui_app(
                 fraction: float | None = snapshot.current / snapshot.total
             else:
                 fraction = None
-            # The N/M source count rides next to the phase verb (planning and
-            # scanning carry it; discovery/prefilter do not).
-            count = (
-                f"{snapshot.current}/{snapshot.total}"
-                if snapshot.current is not None and snapshot.total is not None
-                else ""
-            )
             if self._searching_panel is not None:
                 self._searching_panel.set_snapshot(snapshot)
             if self._results_header is not None:
                 self._results_header.set_narrow(self._statusline_narrow())
-                self._results_header.set_progress(fraction, snapshot.phase, count)
+                self._results_header.set_progress(fraction, snapshot.phase)
             if self._detail_visible and self._detail_row is not None:
                 detail = format_scanning_detail(
                     snapshot.phase,
@@ -1301,11 +1294,11 @@ def build_streaming_ui_app(
                 )
             else:
                 summary = f"Search complete: {format_match_count(total)} in {elapsed:.1f}s"
-            # Freeze the header: the outcome glyph (✓/■/✗) + word + bar color
-            # carry the result; errors show their message in the rule, the full
-            # summary lives in the ctrl+\ detail row.
+            # Freeze the header: a complete scan reads as a full 100% bar; the
+            # stopped/error marker carries the other outcomes, the error message
+            # shows in the rule, and the full summary lives in the ctrl+\ row.
             if self._results_header is not None:
-                self._results_header.freeze(outcome, message=error_message or "", elapsed=elapsed)
+                self._results_header.freeze(outcome, message=error_message or "")
             self._set_search_rule_state(outcome)
             self._finished_status = (outcome, summary)
             self._last_detail_text = summary
