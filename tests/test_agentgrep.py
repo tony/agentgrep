@@ -2538,9 +2538,20 @@ class PassiveSlashCommandCase(t.NamedTuple):
     text: str
 
 
-PASSIVE_SLASH_COMMAND_CASES = (
-    PassiveSlashCommandCase(test_id="help", text="/help"),
-    PassiveSlashCommandCase(test_id="unknown", text="/foo"),
+PASSIVE_SLASH_COMMAND_CASES = (PassiveSlashCommandCase(test_id="help", text="/help"),)
+
+
+class LiteralSlashSearchCase(t.NamedTuple):
+    """Leading-slash text that should remain a normal search."""
+
+    test_id: str
+    text: str
+
+
+LITERAL_SLASH_SEARCH_CASES = (
+    LiteralSlashSearchCase(test_id="absolute-path", text="/usr/local/bin"),
+    LiteralSlashSearchCase(test_id="unknown-token", text="/foo"),
+    LiteralSlashSearchCase(test_id="command-plus-args", text="/help find prompts"),
 )
 
 
@@ -2702,22 +2713,34 @@ async def test_slash_exit_quits_the_app(
             assert len(exits) == 1, f"{text} should quit"
 
 
-async def test_unknown_slash_command_flashes_error_and_does_not_search(
+@pytest.mark.parametrize(
+    "case",
+    LITERAL_SLASH_SEARCH_CASES,
+    ids=[case.test_id for case in LITERAL_SLASH_SEARCH_CASES],
+)
+async def test_literal_leading_slash_text_runs_search(
+    case: LiteralSlashSearchCase,
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An unknown ``/foo`` flags the search rule and notifies — it runs no search."""
+    """A leading slash is a command only for exact registered command tokens."""
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
+        spawned: list[dict[str, object]] = []
         notes: list[tuple[tuple[object, ...], dict[str, object]]] = []
+        monkeypatch.setattr(
+            app,
+            "run_worker",
+            lambda *a, **k: spawned.append({"args": a, "kwargs": k}),
+        )
         monkeypatch.setattr(app, "notify", lambda *a, **k: notes.append((a, k)))
-        app.on_search_requested(_search_requested("/foo"))
+        app.on_search_requested(_search_requested(case.text))
         await pilot.pause()
-        assert app._search_input.has_class("-error")
-        assert len(notes) == 1
-        assert "/foo" in str(notes[0][0][0])
-        assert app.all_records == []
+        assert len(spawned) == 1
+        assert notes == []
+        assert not app._search_input.has_class("-error")
+        assert app.query.terms == tuple(case.text.split())
 
 
 @pytest.mark.parametrize(

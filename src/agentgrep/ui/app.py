@@ -972,10 +972,12 @@ def build_streaming_ui_app(
             """
             text = message.payload.text.strip()
             if text.startswith("/"):
-                # A slash command runs a handler instead of a search — no query
-                # is built and nothing is recorded to history.
-                self._dispatch_slash_command(text)
-                return
+                token, args = commands.parse_command(text)
+                if not args and commands.resolve_command(token) is not None:
+                    # Exact slash commands run handlers; other leading-slash
+                    # text remains searchable prompt/path text.
+                    self._dispatch_slash_command(text)
+                    return
             new_query = self._build_search_query(text)
             self.control.request_answer_now()
             if not text:
