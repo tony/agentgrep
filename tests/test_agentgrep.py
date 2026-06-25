@@ -2544,6 +2544,53 @@ PASSIVE_SLASH_COMMAND_CASES = (
 )
 
 
+class EnterCommandCase(t.NamedTuple):
+    """A partial slash input and the command Enter should run from the menu."""
+
+    test_id: str
+    typed: str
+    expected: str
+
+
+ENTER_COMMAND_CASES = (
+    EnterCommandCase(test_id="clear-prefix", typed="/c", expected="clear"),
+    EnterCommandCase(test_id="exit-prefix", typed="/e", expected="exit"),
+    EnterCommandCase(test_id="help-prefix", typed="/h", expected="help"),
+    EnterCommandCase(test_id="alias-prefix", typed="/re", expected="clear"),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    ENTER_COMMAND_CASES,
+    ids=[case.test_id for case in ENTER_COMMAND_CASES],
+)
+async def test_enter_runs_highlighted_slash_command(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: EnterCommandCase,
+) -> None:
+    """Enter on a partial command runs the highlighted command, not the literal text."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        ran: list[str] = []
+        monkeypatch.setattr(
+            app,
+            "_run_command_at",
+            lambda index: ran.append(app._command_matches[index].name),
+        )
+        app._search_input.focus()
+        await pilot.pause()
+        for char in case.typed:
+            await pilot.press(char)
+        await pilot.pause()
+        assert app._enum_dropdown.display is True
+        await pilot.press("enter")
+        await pilot.pause()
+        assert ran == [case.expected]
+
+
 async def test_slash_opens_and_filters_command_menu(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
