@@ -2531,6 +2531,19 @@ def _search_requested(text: str) -> object:
     return SearchRequested(payload=SearchRequestedPayload(text=text))
 
 
+class PassiveSlashCommandCase(t.NamedTuple):
+    """Passive slash command that must not interrupt an active search."""
+
+    test_id: str
+    text: str
+
+
+PASSIVE_SLASH_COMMAND_CASES = (
+    PassiveSlashCommandCase(test_id="help", text="/help"),
+    PassiveSlashCommandCase(test_id="unknown", text="/foo"),
+)
+
+
 async def test_slash_opens_and_filters_command_menu(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2631,6 +2644,44 @@ async def test_unknown_slash_command_flashes_error_and_does_not_search(
         assert len(notes) == 1
         assert "/foo" in str(notes[0][0][0])
         assert app.all_records == []
+
+
+@pytest.mark.parametrize(
+    "case",
+    PASSIVE_SLASH_COMMAND_CASES,
+    ids=[case.test_id for case in PASSIVE_SLASH_COMMAND_CASES],
+)
+async def test_passive_slash_command_preserves_active_search(
+    case: PassiveSlashCommandCase,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Help and unknown commands do not cancel or replace an active search."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    spawned: list[dict[str, object]] = []
+
+    def fake_worker(*args: object, **kwargs: object) -> None:
+        spawned.append({"args": args, "kwargs": kwargs})
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        monkeypatch.setattr(app, "run_worker", fake_worker)
+        notes: list[tuple[tuple[object, ...], dict[str, object]]] = []
+        monkeypatch.setattr(app, "notify", lambda *a, **k: notes.append((a, k)))
+        app._search_input.focus()
+        await pilot.pause()
+        app._search_input.value = "tmux"
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        first_control = app.control
+        assert first_control.answer_now_requested() is False
+        assert len(spawned) == 1
+        app.on_search_requested(_search_requested(case.text))
+        await pilot.pause()
+        assert app.control is first_control
+        assert first_control.answer_now_requested() is False
+        assert len(spawned) == 1
+        assert len(notes) == 1
 
 
 async def test_slash_menu_pushes_body_down_and_reflows_back(

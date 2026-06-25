@@ -972,13 +972,13 @@ def build_streaming_ui_app(
             resets the UI to an idle state without spawning a worker.
             """
             text = message.payload.text.strip()
-            self.control.request_answer_now()
             if text.startswith("/"):
                 # A slash command runs a handler instead of a search — no query
                 # is built and nothing is recorded to history.
                 self._dispatch_slash_command(text)
                 return
             new_query = self._build_search_query(text)
+            self.control.request_answer_now()
             if not text:
                 # Cleared the box — return to the pi bare canvas + hint.
                 # ``_reset_search_chrome`` already idles the header rule.
