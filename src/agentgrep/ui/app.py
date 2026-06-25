@@ -696,12 +696,9 @@ def build_streaming_ui_app(
         def _reset_search_chrome(self) -> None:
             """Wipe per-search state and chrome before a fresh search starts.
 
-            Swap ``self.control`` for a fresh :class:`SearchControl`
-            instead of resetting the existing one — any worker thread
-            still holding the previous reference will continue to see
-            its cancel flag set (signaled by ``on_search_requested``
-            before this call) and bail out cooperatively, while the
-            new worker starts with a clean slate.
+            Swap ``self.control`` for a fresh :class:`SearchControl`;
+            callers that replace or clear a running search must signal the
+            old control first so the new worker starts with a clean slate.
             """
             self.control = SearchControl()
             clear_haystack_cache()

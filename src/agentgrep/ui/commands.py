@@ -50,7 +50,8 @@ def _run_clear(app: t.Any, args: str) -> None:
     Mirrors the no-text branch of ``on_search_requested`` (the "select-all +
     delete + Enter" reset) but reachable as a named command, plus emptying the
     ``#search`` box and hiding the command menu. Not recorded to history —
-    dispatch returns before ``_record_history`` runs.
+    dispatch returns before ``_record_history`` runs. Signal the active control
+    before resetting so menu selection cancels the same as a typed reset.
     """
     del args
     if app._search_input is not None:
@@ -59,6 +60,7 @@ def _run_clear(app: t.Any, args: str) -> None:
     if app._enum_dropdown is not None:
         app._enum_dropdown.display = False
     app._command_matches = ()
+    app.control.request_answer_now()
     app._reset_search_chrome()
     app._search_done = True
     app._set_empty_state(empty=True)

@@ -2594,6 +2594,33 @@ async def test_slash_clear_resets_and_is_not_recorded(
         assert any(entry.text == "tmux" for entry in on_disk)
 
 
+async def test_slash_menu_clear_cancels_active_search(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Selecting ``clear`` from the slash menu signals the old search control."""
+    from agentgrep.ui import commands
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        monkeypatch.setattr(app, "run_worker", lambda *a, **kw: None)
+        app._search_input.focus()
+        await pilot.pause()
+        app._search_input.value = "tmux"
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        first_control = app.control
+        clear = commands.resolve_command("clear")
+        assert clear is not None
+        app._command_matches = (clear,)
+        app._run_command_at(0)
+        await pilot.pause()
+        assert first_control.answer_now_requested() is True
+        assert app.control is not first_control
+        assert app.control.answer_now_requested() is False
+
+
 async def test_slash_help_notifies_the_command_list(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
