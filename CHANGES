@@ -42,6 +42,27 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### What's new
+
+#### Search-history recall with Ctrl-R (#78)
+
+The explorer's search box now keeps a history of what you searched.
+Press `Ctrl-R` to open a recall modal and pick an earlier query back into
+the search box, ready to run — no retyping. See {ref}`tui`.
+
+#### Slash commands in the search box (#78)
+
+Type `/` in the search box to open a command menu — `/clear`, `/help`,
+`/exit`, plus aliases like `/new` and `/quit` — and run the highlighted
+command with Enter.
+
+#### Slimmer scanning progress (#78)
+
+While a search runs, the results header folds the live status into its
+rule — a spinner, the phase verb (Scanning, Planning, Filtering), and a
+compact bar with percent — so the results column spends one row instead
+of two; the verbose per-source counts move to the toggleable detail row.
+
 ## agentgrep 0.1.0a27 (2026-06-24)
 
 agentgrep 0.1.0a27 reworks the interactive explorer (`agentgrep ui`)
