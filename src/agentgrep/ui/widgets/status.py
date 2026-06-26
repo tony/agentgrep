@@ -196,9 +196,7 @@ class ResultsHeader(PaneHeader):
 
     # --- rendering --------------------------------------------------------
     def _spinner(self) -> str:
-        """Return the spinner glyph: the frozen outcome, else the wall-clock frame."""
-        if self._final_glyph is not None:
-            return self._final_glyph
+        """Return the wall-clock spinner frame."""
         elapsed = time.monotonic() - self._started_at
         return self._SEQUENCE[int(elapsed * self._FPS) % len(self._SEQUENCE)]
 
