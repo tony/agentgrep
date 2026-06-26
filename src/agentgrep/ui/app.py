@@ -973,10 +973,11 @@ def build_streaming_ui_app(
             text = message.payload.text.strip()
             if text.startswith("/"):
                 token, args = commands.parse_command(text)
-                if not args and commands.resolve_command(token) is not None:
+                command = commands.resolve_command(token)
+                if not args and command is not None:
                     # Exact slash commands run handlers; other leading-slash
                     # text remains searchable prompt/path text.
-                    self._dispatch_slash_command(text)
+                    self._dispatch_slash_command(command, args)
                     return
             new_query = self._build_search_query(text)
             self.control.request_answer_now()
@@ -991,16 +992,11 @@ def build_streaming_ui_app(
             self._record_history(text)
             self._start_search_worker(new_query)
 
-        def _dispatch_slash_command(self, text: str) -> None:
-            """Resolve and run a ``/command`` from the search box, or flag if unknown."""
-            token, args = commands.parse_command(text)
-            command = commands.resolve_command(token)
+        def _dispatch_slash_command(self, command: commands.SlashCommand, args: str) -> None:
+            """Run an already-resolved ``/command`` from the search box."""
             if self._enum_dropdown is not None:
                 self._enum_dropdown.display = False
             self._command_matches = ()
-            if command is None:
-                self._flash_unknown_command(token)
-                return
             command.run(self, args)
 
         def _run_command_at(self, index: int) -> None:
@@ -1012,11 +1008,6 @@ def build_streaming_ui_app(
                 self._enum_dropdown.display = False
             self._command_matches = ()
             command.run(self, "")
-
-        def _flash_unknown_command(self, token: str) -> None:
-            """Flag an unknown ``/token`` on the search rule and notify (non-fatal)."""
-            self._set_search_rule_state("error")
-            self.notify(f"unknown command: /{token}", severity="warning", title="agentgrep")
 
         def _record_history(self, text: str) -> None:
             """Append a submitted, non-empty query to the persisted history.
