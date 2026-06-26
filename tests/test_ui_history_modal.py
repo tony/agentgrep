@@ -8,6 +8,9 @@ preview) is driven through a tiny host ``App`` and ``Pilot`` — the modal is a
 
 from __future__ import annotations
 
+import typing as t
+
+import pytest
 from textual.app import App
 from textual.widgets import Input, OptionList, Static
 
@@ -156,3 +159,36 @@ async def test_modal_seed_filters_on_open() -> None:
         await pilot.press("enter")
         await pilot.pause()
         assert app.result == "tmux pane capture"
+
+
+class SeededOpenCase(t.NamedTuple):
+    """A modal open and the single ``_refilter`` query it should trigger."""
+
+    test_id: str
+    seed: str
+    expected_calls: list[str]
+
+
+SEEDED_OPEN_CASES = (
+    SeededOpenCase(test_id="seeded", seed="tmux", expected_calls=["tmux"]),
+    SeededOpenCase(test_id="unseeded", seed="", expected_calls=[""]),
+)
+
+
+@pytest.mark.parametrize("case", SEEDED_OPEN_CASES, ids=[c.test_id for c in SEEDED_OPEN_CASES])
+async def test_modal_filters_once_on_open(
+    case: SeededOpenCase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Opening filters once: seeded via ``Input.Changed``, else one direct call."""
+    calls: list[str] = []
+    original = HistoryRecall._refilter
+
+    def spy(self: HistoryRecall, query: str) -> None:
+        calls.append(query)
+        original(self, query)
+
+    monkeypatch.setattr(HistoryRecall, "_refilter", spy)
+    app = _HistoryHostApp(_entries(), seed=case.seed)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert calls == case.expected_calls

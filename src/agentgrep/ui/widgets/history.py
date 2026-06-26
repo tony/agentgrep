@@ -120,8 +120,11 @@ class HistoryRecall(ModalScreen[t.Optional[str]]):  # noqa: UP045 -- Textual gen
         if accent:
             self._match_style = f"{accent} bold"
         if self._seed:
+            # Setting the value fires ``Input.Changed`` -> ``_refilter``; only
+            # refilter directly when there is no seed to drive that event.
             self.query_one("#history-filter", Input).value = self._seed
-        self._refilter(self._seed)
+        else:
+            self._refilter("")
 
     def _resolve_accent(self) -> str:
         """Return the theme's accent hex, or ``""`` when it cannot be resolved."""
@@ -142,9 +145,9 @@ class HistoryRecall(ModalScreen[t.Optional[str]]):  # noqa: UP045 -- Textual gen
             self._matches = list(self._entries)
         else:
             scored = [
-                (matcher.match(entry.text), entry)
+                (score, entry)
                 for entry in self._entries
-                if matcher.match(entry.text) > 0
+                if (score := matcher.match(entry.text)) > 0
             ]
             # Stable sort by score keeps newest-first among equal scores.
             scored.sort(key=lambda pair: pair[0], reverse=True)
