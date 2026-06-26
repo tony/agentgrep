@@ -217,9 +217,12 @@ def _run_worker_calls() -> list[ast.Call]:
 
 
 def test_workers_are_thread_exclusive_and_grouped() -> None:
-    """Every worker is ``thread=True`` with a group; supersedable groups are
-    ``exclusive=True`` (NB-6). The ``history`` append group is the sole
-    exception: each append must complete, never supersede an earlier one."""
+    """Every worker is ``thread=True`` and grouped (NB-6).
+
+    Supersedable groups are ``exclusive=True``; the ``history`` append group is
+    the sole exception — each append must complete, never supersede an earlier
+    one.
+    """
     calls = _run_worker_calls()
     assert calls, "expected at least one run_worker call"
     for call in calls:
