@@ -28,6 +28,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
 
+from agentgrep.ui import theme as ui_theme
 from agentgrep.ui.format import format_relative_time
 
 if t.TYPE_CHECKING:
@@ -128,8 +129,6 @@ class HistoryRecall(ModalScreen[t.Optional[str]]):  # noqa: UP045 -- Textual gen
 
     def _resolve_accent(self) -> str:
         """Return the theme's accent hex, or ``""`` when it cannot be resolved."""
-        from agentgrep.ui import theme as ui_theme
-
         try:
             return ui_theme.resolve(t.cast("t.Any", self.app).theme_variables, "accent")
         except AttributeError, KeyError, TypeError:
