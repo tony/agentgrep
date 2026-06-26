@@ -2462,13 +2462,74 @@ async def test_streaming_ui_zero_result_search_freezes_centered_panel(
         assert "No matches" in panel.render().plain
 
 
+class HistoryWriteOffloadCase(t.NamedTuple):
+    """Search-history append that must run outside the pump thread."""
+
+    test_id: str
+    text: str
+
+
+HISTORY_WRITE_OFFLOAD_CASES = (HistoryWriteOffloadCase(test_id="plain-query", text="tmux"),)
+
+
+async def _wait_for_history_text(home: pathlib.Path, text: str) -> None:
+    """Wait until ``text`` is visible in the persisted search history."""
+    from agentgrep.ui import _history
+
+    path = _history.history_path(home)
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        entries = await asyncio.to_thread(_history.load_history, path)
+        if any(entry.text == text for entry in entries):
+            return
+        await asyncio.sleep(0.01)
+    pytest.fail(f"history entry was not persisted: {text!r}")
+
+
+@pytest.mark.parametrize(
+    "case",
+    HISTORY_WRITE_OFFLOAD_CASES,
+    ids=[case.test_id for case in HISTORY_WRITE_OFFLOAD_CASES],
+)
+async def test_search_history_append_runs_off_pump(
+    case: HistoryWriteOffloadCase,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """History persistence uses a worker instead of blocking the pump."""
+    from agentgrep.ui import _history, _runtime
+
+    appended = threading.Event()
+    calls: list[tuple[pathlib.Path, str, str]] = []
+
+    def append_query(
+        path: pathlib.Path,
+        text: str,
+        *,
+        scope: str = "",
+        now: float | None = None,
+        dedup_last: str = "",
+    ) -> bool:
+        _runtime.assert_off_pump("history append")
+        calls.append((path, text, scope))
+        appended.set()
+        return True
+
+    monkeypatch.setattr(_history, "append_query", append_query)
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app._record_history(case.text)
+        assert await asyncio.to_thread(appended.wait, 2.0)
+        assert calls == [(_history.history_path(app.home), case.text, app._user_scope)]
+        assert any(entry.text == case.text for entry in app._history)
+
+
 async def test_search_submit_records_history(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Submitting a search records the query to history (memory + disk)."""
-    from agentgrep.ui import _history
-
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
@@ -2477,10 +2538,9 @@ async def test_search_submit_records_history(
         for char in "tmux":
             await pilot.press(char)
         await pilot.press("enter")
-        await pilot.pause(0.1)
+        await pilot.pause()
         assert any(entry.text == "tmux" for entry in app._history)
-        on_disk = _history.load_history(_history.history_path(app.home))
-        assert any(entry.text == "tmux" for entry in on_disk)
+        await _wait_for_history_text(app.home, "tmux")
 
 
 async def test_history_opt_out_records_nothing(
@@ -2727,17 +2787,18 @@ async def test_literal_leading_slash_text_runs_search(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
-        spawned: list[dict[str, object]] = []
+        spawned: list[tuple[tuple[object, ...], dict[str, object]]] = []
         notes: list[tuple[tuple[object, ...], dict[str, object]]] = []
         monkeypatch.setattr(
             app,
             "run_worker",
-            lambda *a, **k: spawned.append({"args": a, "kwargs": k}),
+            lambda *a, **k: spawned.append((a, k)),
         )
         monkeypatch.setattr(app, "notify", lambda *a, **k: notes.append((a, k)))
         app.on_search_requested(_search_requested(case.text))
         await pilot.pause()
-        assert len(spawned) == 1
+        search_workers = [kwargs for _, kwargs in spawned if kwargs.get("name") == "search"]
+        assert len(search_workers) == 1
         assert notes == []
         assert not app._search_input.has_class("-error")
         assert app.query.terms == tuple(case.text.split())
@@ -2753,12 +2814,12 @@ async def test_passive_slash_command_preserves_active_search(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Help and unknown commands do not cancel or replace an active search."""
+    """Passive commands do not cancel or replace an active search."""
     app = _build_empty_ui_app(tmp_path, monkeypatch)
-    spawned: list[dict[str, object]] = []
+    spawned: list[tuple[tuple[object, ...], dict[str, object]]] = []
 
     def fake_worker(*args: object, **kwargs: object) -> None:
-        spawned.append({"args": args, "kwargs": kwargs})
+        spawned.append((args, kwargs))
 
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
@@ -2772,12 +2833,14 @@ async def test_passive_slash_command_preserves_active_search(
         await pilot.pause(0.1)
         first_control = app.control
         assert first_control.answer_now_requested() is False
-        assert len(spawned) == 1
+        search_workers = [kwargs for _, kwargs in spawned if kwargs.get("name") == "search"]
+        assert len(search_workers) == 1
         app.on_search_requested(_search_requested(case.text))
         await pilot.pause()
         assert app.control is first_control
         assert first_control.answer_now_requested() is False
-        assert len(spawned) == 1
+        search_workers = [kwargs for _, kwargs in spawned if kwargs.get("name") == "search"]
+        assert len(search_workers) == 1
         assert len(notes) == 1
 
 

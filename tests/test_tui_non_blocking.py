@@ -56,7 +56,7 @@ _PUMP_EXACT = {"render", "compose", "_on_key"}
 _FORBIDDEN_CALL_NAMES = {"open", "run_search_query"}
 _FORBIDDEN_ATTRS = {"read_text", "read_bytes"}
 _FORBIDDEN_DOTTED_ROOTS = {"subprocess", "sqlite3"}
-_FORBIDDEN_DOTTED = {"time.sleep"}
+_FORBIDDEN_DOTTED = {"os.close", "os.open", "os.write", "time.sleep"}
 
 #: The single method allowed to call ``json.loads`` / ``json.dumps`` (NB-9):
 #: the inline-bounded / worker detail-body builder. A new offender must be
@@ -175,11 +175,22 @@ def test_forbidden_call_detector_flags_blocking_calls() -> None:
         "def handler(self):\n"
         "    subprocess.run(['rg'])\n"
         "    open('x')\n"
+        "    fd = os.open('x', os.O_RDONLY)\n"
+        "    os.write(fd, b'x')\n"
+        "    os.close(fd)\n"
         "    self.path.read_text()\n"
         "    time.sleep(1)\n",
     )
     clean = ast.parse("def handler(self):\n    self.refresh()\n    await asyncio.sleep(0)\n")
-    assert set(_forbidden_calls(blocking)) >= {"subprocess.run", "open", "read_text", "time.sleep"}
+    assert set(_forbidden_calls(blocking)) >= {
+        "subprocess.run",
+        "open",
+        "os.open",
+        "os.write",
+        "os.close",
+        "read_text",
+        "time.sleep",
+    }
     assert _forbidden_calls(clean) == []
 
 

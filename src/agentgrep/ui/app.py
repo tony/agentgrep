@@ -1027,17 +1027,45 @@ def build_streaming_ui_app(
             """
             if self._history_disabled:
                 return
-            recorded = _history.append_query(
+            stripped = text.strip()
+            if not stripped or stripped == self._last_recorded_text:
+                return
+            now = time.time()
+            dedup_last = self._last_recorded_text
+            self._last_recorded_text = stripped
+            entry = _history.HistoryEntry(text=stripped, ts=int(now), scope=self._user_scope)
+            self._history = [entry, *(e for e in self._history if e.text != stripped)]
+            streaming = t.cast("StreamingAppLike", t.cast("object", self))
+            streaming.run_worker(
+                functools.partial(
+                    self._write_history_entry,
+                    stripped,
+                    self._user_scope,
+                    now,
+                    dedup_last,
+                ),
+                name="history",
+                group="history",
+                thread=True,
+                exclusive=True,
+            )
+
+        @_runtime.offload
+        def _write_history_entry(
+            self,
+            text: str,
+            scope: str,
+            now: float,
+            dedup_last: str,
+        ) -> None:
+            """Persist one search-history row from a worker thread."""
+            _history.append_query(
                 self._history_path,
                 text,
-                scope=self._user_scope,
-                dedup_last=self._last_recorded_text,
+                scope=scope,
+                now=now,
+                dedup_last=dedup_last,
             )
-            if not recorded:
-                return
-            self._last_recorded_text = text
-            entry = _history.HistoryEntry(text=text, ts=int(time.time()), scope=self._user_scope)
-            self._history = [entry, *(e for e in self._history if e.text != text)]
 
         def action_recall_history(self) -> None:
             """``Ctrl-R``: open the search-history recall modal (idempotent)."""
