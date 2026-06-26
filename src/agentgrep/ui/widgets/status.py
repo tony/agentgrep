@@ -79,8 +79,8 @@ class ResultsHeader(PaneHeader):
     row, not here; segments shed right-to-left as the width tightens.
 
     The spinner self-drives off ``time.monotonic`` via ``auto_refresh`` while a
-    search is active, so it ticks regardless of event-loop load; the worker
-    thread only calls store-only setters, and the next timer frame repaints. On
+    search is active, so it ticks regardless of event-loop load; progress
+    updates only store while it runs, and the next timer frame repaints. On
     finish the timer stops: a complete scan reads as a full bar (no glyph), and
     ``■``/``✗`` mark a stopped/failed scan. ``begin``/``freeze``/``go_idle``
     mirror the lifecycle.
