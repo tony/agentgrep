@@ -1047,7 +1047,9 @@ def build_streaming_ui_app(
                 name="history",
                 group="history",
                 thread=True,
-                exclusive=True,
+                # Not exclusive: unlike search/filter/detail, a later submit
+                # must not cancel an earlier append before it reaches disk.
+                exclusive=False,
             )
 
         @_runtime.offload

@@ -217,16 +217,21 @@ def _run_worker_calls() -> list[ast.Call]:
 
 
 def test_workers_are_thread_exclusive_and_grouped() -> None:
-    """Every worker launch is ``thread=True, exclusive=True`` with a group (NB-6)."""
+    """Every worker is ``thread=True`` with a group; supersedable groups are
+    ``exclusive=True`` (NB-6). The ``history`` append group is the sole
+    exception: each append must complete, never supersede an earlier one."""
     calls = _run_worker_calls()
     assert calls, "expected at least one run_worker call"
     for call in calls:
         kwargs = {kw.arg: kw.value for kw in call.keywords if kw.arg}
         thread = kwargs.get("thread")
         exclusive = kwargs.get("exclusive")
+        group = kwargs.get("group")
         assert isinstance(thread, ast.Constant) and thread.value is True
-        assert isinstance(exclusive, ast.Constant) and exclusive.value is True
         assert "group" in kwargs, "worker launch missing a stable group="
+        # The history-append group is non-supersedable; all others are exclusive.
+        non_supersedable = isinstance(group, ast.Constant) and group.value == "history"
+        assert isinstance(exclusive, ast.Constant) and exclusive.value is not non_supersedable
 
 
 def test_apply_records_batch_uses_bounded_stream_apply() -> None:
