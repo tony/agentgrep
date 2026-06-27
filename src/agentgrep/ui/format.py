@@ -9,6 +9,8 @@ anything heavier.
 
 from __future__ import annotations
 
+import time
+
 
 def scroll_percent(scroll_y: float, max_scroll_y: float) -> int:
     """Return an integer scroll percent clamped to ``[0, 100]``.
@@ -58,6 +60,108 @@ def format_elapsed_compact(seconds: float) -> str:
     if total < 3600:
         return f"{total // 60}m {total % 60}s"
     return f"{total // 3600}h {(total % 3600) // 60:02d}m"
+
+
+_PHASE_LABELS = {
+    "starting": "Starting",
+    "discovering": "Discovering",
+    "discovered": "Discovered",
+    # ``prefiltering`` is engine-internal jargon; users read "Filtering".
+    "prefiltering": "Filtering",
+    "planning": "Planning",
+    "scanning": "Scanning",
+}
+"""Engine phase string -> user-facing present-continuous verb."""
+
+
+_RELATIVE_UNITS = (
+    (31536000, "y"),
+    (604800, "w"),
+    (86400, "d"),
+    (3600, "h"),
+    (60, "m"),
+    (1, "s"),
+)
+"""Descending (seconds, single-letter-unit) pairs for relative-time labels."""
+
+
+def format_relative_time(ts: float, now: float | None = None) -> str:
+    """Format a unix timestamp as a compact ``"<n><unit> ago"`` label.
+
+    Used by the search-history modal's left column. The largest whole unit
+    wins (single-letter ``y/w/d/h/m/s``), matching the narrow relative-time
+    style of a history picker. Future timestamps (clock skew) and the current
+    second clamp to ``"just now"`` rather than emitting a negative or ``0s``.
+
+    Parameters
+    ----------
+    ts : float
+        The entry's unix timestamp (seconds).
+    now : float or None
+        The reference time; defaults to :func:`time.time` when omitted.
+
+    Returns
+    -------
+    str
+        e.g. ``"5m ago"``, ``"1d ago"``, ``"2w ago"``, or ``"just now"``.
+
+    Examples
+    --------
+    >>> format_relative_time(0, 90)
+    '1m ago'
+    >>> format_relative_time(0, 86400)
+    '1d ago'
+    >>> format_relative_time(0, 14 * 86400)
+    '2w ago'
+    >>> format_relative_time(5, 5)
+    'just now'
+    >>> format_relative_time(100, 0)
+    'just now'
+    """
+    current = time.time() if now is None else now
+    diff = int(current - ts)
+    if diff < 1:
+        return "just now"
+    for secs, unit in _RELATIVE_UNITS:
+        if diff >= secs:
+            return f"{diff // secs}{unit} ago"
+    return "just now"
+
+
+def phase_label(phase: str) -> str:
+    """Map an engine phase string to a user-facing present-continuous verb.
+
+    The engine reports an ordered phase vocabulary (``discovering`` ->
+    ``prefiltering`` -> ``planning`` -> ``scanning``); the explorer shows
+    these words next to its spinner so a stalled-looking dot always carries
+    meaning. Most map to a title-cased form, but ``prefiltering`` is curated
+    to ``Filtering`` so the user never sees the internal term. Unknown phases
+    title-case rather than vanish.
+
+    Parameters
+    ----------
+    phase : str
+        The ``ProgressSnapshot.phase`` string.
+
+    Returns
+    -------
+    str
+        The user-facing verb, or ``""`` for an empty phase.
+
+    Examples
+    --------
+    >>> phase_label("scanning")
+    'Scanning'
+    >>> phase_label("prefiltering")
+    'Filtering'
+    >>> phase_label("widgeting")
+    'Widgeting'
+    >>> phase_label("")
+    ''
+    """
+    if not phase:
+        return ""
+    return _PHASE_LABELS.get(phase, phase[:1].upper() + phase[1:])
 
 
 def render_progress_meter(fraction: float, width: int) -> str:
@@ -126,12 +230,12 @@ def format_scanning_detail(
     total: int | None,
     detail: str | None,
 ) -> str:
-    r"""Compose the verbose scanning line for the toggleable detail row.
+    r"""Compose the verbose scanning detail for the toggleable ``Ctrl-\`` row.
 
-    The ``Ctrl-\`` row carries the per-source counts the compact
-    statusline omits — phase, scanned/total sources, and in-source
-    record/match counts — with the phase word capitalized to open the
-    row as a sentence.
+    The row carries the per-source counts the compact header omits — phase,
+    scanned/total sources, and in-source record/match counts — on up to two
+    lines: the phase + ``N/M sources`` heading, then the in-source detail when
+    present. The phase word is capitalized to open the row as a sentence.
 
     Parameters
     ----------
@@ -147,28 +251,25 @@ def format_scanning_detail(
     Returns
     -------
     str
-        The composed detail line; segments with unknown inputs are
-        omitted.
+        The composed detail; the heading and the in-source detail are joined by
+        a newline, and segments with unknown inputs are omitted.
 
     Examples
     --------
     >>> format_scanning_detail(
     ...     "scanning", 5662, 6748, "2176 records, 354 source matches",
     ... )
-    'Scanning 5662/6748 sources | 2176 records, 354 source matches'
+    'Scanning 5662/6748 sources\n2176 records, 354 source matches'
     >>> format_scanning_detail("prefiltering", None, None, "~/.codex/sessions/")
-    'Prefiltering ~/.codex/sessions/'
+    'Prefiltering\n~/.codex/sessions/'
     >>> format_scanning_detail("discovering", None, None, None)
     'Discovering'
     """
     heading = phase[:1].upper() + phase[1:]
     if current is not None and total is not None:
-        line = f"{heading} {current}/{total} sources"
-        if detail:
-            line = f"{line} | {detail}"
-        return line
+        heading = f"{heading} {current}/{total} sources"
     if detail:
-        return f"{heading} {detail}"
+        return f"{heading}\n{detail}"
     return heading
 
 
@@ -207,7 +308,9 @@ def searching_left_text(elapsed: float, *, narrow: bool) -> str:
 __all__ = (
     "format_elapsed_compact",
     "format_progress_percent",
+    "format_relative_time",
     "format_scanning_detail",
+    "phase_label",
     "render_progress_meter",
     "scroll_percent",
     "searching_left_text",

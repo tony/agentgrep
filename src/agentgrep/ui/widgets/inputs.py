@@ -334,8 +334,15 @@ class SearchInput(Input):
         # Any other key cancels a pending "press ctrl-c again to exit".
         _disarm_confirm_exit(self)
         if dropdown_open and key == "enter":
-            # Enter without navigating into the dropdown closes it and lets
-            # the normal submit proceed (no auto-accept).
+            app = t.cast("t.Any", self.app)
+            if getattr(app, "_command_matches", ()):
+                # Command menu: run the highlighted command rather than submit
+                # the partial "/c" (which would flash an unknown-command error).
+                if callable(stop):
+                    stop()
+                app._run_command_at(int(getattr(dropdown, "highlighted", 0) or 0))
+                return
+            # Keyword completion: close the picker; the normal submit proceeds.
             dropdown.display = False
         if key == "down":
             if dropdown_open and dropdown.option_count:

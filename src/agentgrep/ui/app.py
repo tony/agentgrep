@@ -59,6 +59,7 @@ from agentgrep.progress import (
 )
 from agentgrep.query import default_registry
 from agentgrep.records import SearchQuery, SearchRecord
+from agentgrep.ui import _history, commands
 from agentgrep.ui.completion import (
     QuerySuggester,
     apply_enum_choice,
@@ -175,9 +176,11 @@ def build_streaming_ui_app(
             FilterCompleted,
             FilterInput,
             FilterRequested,
+            HistoryRecall,
             PaneHeader,
             ResultsHeader,
             ResultsScrollChanged,
+            SearchingPanel,
             SearchInput,
             SearchRequested,
             SearchResultsList,
@@ -223,6 +226,9 @@ def build_streaming_ui_app(
             ("escape", "stop_search", "Stop search"),
             ("ctrl+backslash", "toggle_detail_progress", "Detail"),
             ("ctrl+c", "smart_quit", "Stop / Quit"),
+            # priority so the focused search Input doesn't swallow it, matching
+            # Textual's own command-palette ctrl+p.
+            binding_type("ctrl+r", "recall_history", "History", priority=True),
             binding_type("ctrl+h", "focus_pane_left", "← Pane", priority=True),
             binding_type("ctrl+j", "focus_pane_down", "↓ Pane", priority=True),
             binding_type("ctrl+k", "focus_pane_up", "↑ Pane", priority=True),
@@ -298,6 +304,19 @@ def build_streaming_ui_app(
             self._search_done = False
             self._started_at: float | None = None
             self._last_snapshot: ProgressSnapshot | None = None
+            self._searching_panel: SearchingPanel | None = None
+            # Persisted search-input history (agentgrep's only self-written
+            # state — under XDG_STATE_HOME, never a searched store). Loaded once
+            # at construction; the recall modal reads this in-memory snapshot.
+            self._history_disabled = _history.history_disabled()
+            self._history_path = _history.history_path(home)
+            self._history: list[_history.HistoryEntry] = (
+                [] if self._history_disabled else _history.load_history(self._history_path)
+            )
+            self._last_recorded_text = self._history[0].text if self._history else ""
+            # The slash commands currently shown in the search dropdown, parallel
+            # to its option rows; empty when the dropdown isn't in command mode.
+            self._command_matches: tuple[commands.SlashCommand, ...] = ()
             self._results: SearchResultsList | None = None
             self._detail: StaticLike | None = None
             self._detail_row: StaticLike | None = None
@@ -411,6 +430,8 @@ def build_streaming_ui_app(
                 self._results.rerender_records()
             if self._results_header is not None:
                 self._results_header.refresh_theme()
+            if self._searching_panel is not None:
+                self._searching_panel.refresh_theme()
             self._detail_body_cache.clear()
             if self._current_detail_record is not None:
                 self.show_detail(self._current_detail_record)
@@ -481,6 +502,11 @@ def build_streaming_ui_app(
                         'timestamp:>2026-01-01   "exact phrase"',
                         id="empty-hint",
                     )
+                    # Shown only while a search runs before its first result
+                    # (CSS hides it otherwise): a centered spinner + phase verb
+                    # + counts + elapsed, collapsed to the results list the
+                    # moment records arrive.
+                    yield SearchingPanel(id="searching-panel")
                 with vertical(id="detail-column", classes=detail_classes):
                     yield PaneHeader("detail", id="detail-header")
                     with DetailScroll(id="detail-scroll"):
@@ -511,6 +537,10 @@ def build_streaming_ui_app(
             self._results_header = t.cast(
                 "ResultsHeader",
                 streaming.query_one("#results-header"),
+            )
+            self._searching_panel = t.cast(
+                "SearchingPanel",
+                streaming.query_one("#searching-panel"),
             )
             self._detail_header = streaming.query_one("#detail-header")
             self._detail_row = t.cast(
@@ -579,12 +609,30 @@ def build_streaming_ui_app(
         def _set_empty_state(self, *, empty: bool) -> None:
             """Toggle the pre-search bare-canvas state on ``#body``.
 
-            When ``empty`` the body chrome (headers, statusline, filter, detail
-            column) is hidden by CSS, leaving the centered ``#empty-hint``; a
-            launched search reveals it.
+            Compatibility shim over :meth:`_set_results_view`: ``empty`` is the
+            pre-search bare canvas; not-empty reveals the results chrome. The
+            search flow uses ``_set_results_view`` directly for the intermediate
+            ``searching`` view.
+            """
+            self._set_results_view("empty" if empty else "results")
+
+        def _set_results_view(self, view: str) -> None:
+            """Switch the results region between empty / searching / results.
+
+            ``empty`` is the pre-search bare canvas (centered ``#empty-hint``);
+            ``searching`` is the centered ``#searching-panel`` shown while a
+            search runs before any result arrives; ``results`` reveals the
+            header rule, filter, and list. Mutually-exclusive ``-empty`` /
+            ``-searching`` classes on ``#body`` drive the CSS. The panel's
+            spinner timer is stopped whenever the region leaves the searching
+            view; its ``begin`` is armed by the search flow on entry.
             """
             if self._body is not None:
-                t.cast("t.Any", self._body).set_class(empty, "-empty")
+                body = t.cast("t.Any", self._body)
+                body.set_class(view == "empty", "-empty")
+                body.set_class(view == "searching", "-searching")
+            if view != "searching" and self._searching_panel is not None:
+                self._searching_panel.go_idle()
 
         def on_descendant_focus(self, event: object) -> None:
             """Recolor the active pane's section header when focus moves."""
@@ -606,6 +654,10 @@ def build_streaming_ui_app(
             the cue tracked the column — here it intentionally treats the filter
             as part of the results pane, but never the search bar.
             """
+            if not self.screen_stack:
+                # No active screen (teardown / between screens): nothing to
+                # recolor, and ``self.focused`` would raise ScreenStackError.
+                return
             focused_id = getattr(self.focused, "id", None)
             results_active = focused_id in {"results", "filter"}
             detail_active = focused_id in {"detail-scroll", "detail-find"}
@@ -629,12 +681,15 @@ def build_streaming_ui_app(
             """
             self.query = query
             self._reset_search_chrome()
-            # A search is starting — reveal the body chrome (leave the bare
-            # canvas), and show the filter now that results will load.
-            self._set_empty_state(empty=False)
+            # A search is starting — give the empty canvas its centered
+            # "searching" moment; the first record batch collapses it to the
+            # results list and the folded header rule carries the phase there.
+            self._set_results_view("searching")
             self._set_search_rule_state("searching")
             if self._results_header is not None:
                 self._results_header.begin()
+            if self._searching_panel is not None:
+                self._searching_panel.begin()
             streaming = t.cast("StreamingAppLike", t.cast("object", self))
             streaming.run_worker(
                 self._run_search,
@@ -647,12 +702,9 @@ def build_streaming_ui_app(
         def _reset_search_chrome(self) -> None:
             """Wipe per-search state and chrome before a fresh search starts.
 
-            Swap ``self.control`` for a fresh :class:`SearchControl`
-            instead of resetting the existing one — any worker thread
-            still holding the previous reference will continue to see
-            its cancel flag set (signaled by ``on_search_requested``
-            before this call) and bail out cooperatively, while the
-            new worker starts with a clean slate.
+            Swap ``self.control`` for a fresh :class:`SearchControl`;
+            callers that replace or clear a running search must signal the
+            old control first so the new worker starts with a clean slate.
             """
             self.control = SearchControl()
             clear_haystack_cache()
@@ -685,6 +737,8 @@ def build_streaming_ui_app(
             # to the plain rule (``_start_search_worker`` re-activates it).
             if self._results_header is not None:
                 self._results_header.go_idle()
+            if self._searching_panel is not None:
+                self._searching_panel.go_idle()
             self._set_search_rule_state("")
             # ``_detail_visible`` is deliberately NOT reset — the Ctrl-\
             # toggle is sticky for the session; only the row's stale
@@ -750,15 +804,67 @@ def build_streaming_ui_app(
             input_id = getattr(source, "id", None)
             value = str(getattr(event, "value", ""))
             if input_id == "search":
+                # Typing clears a lingering unknown-command error border.
+                if self._search_input is not None and t.cast(
+                    "t.Any",
+                    self._search_input,
+                ).has_class("-error"):
+                    self._set_search_rule_state("")
                 self._update_search_dropdown(value)
             elif input_id == "filter":
                 self._update_filter_dropdown(value)
 
         def _update_search_dropdown(self, value: str) -> None:
-            """Populate and show/hide the search bar's keyword dropdown."""
+            """Populate the search dropdown — slash commands, else keyword completion."""
+            if value.lstrip().startswith("/"):
+                self._update_command_dropdown(value)
+                return
+            self._command_matches = ()
+            if self._enum_dropdown is not None:
+                t.cast("t.Any", self._enum_dropdown).remove_class("-commands")
             values = keyword_completion_candidates(value, default_registry()) or ()
             self._enum_values = values
             self._populate_dropdown(self._enum_dropdown, self._search_input, values)
+
+        def _update_command_dropdown(self, value: str) -> None:
+            """Show the pi-style slash-command menu, prefix-filtered by the typed token.
+
+            Rows are an aligned ``name`` column + a dim description (no inline
+            aliases, which bloat the row); the ``-commands`` class swaps the
+            bordered keyword picker for pi's flush, borderless list. The rows are
+            stored in ``self._command_matches`` parallel to the option list so
+            :meth:`on_option_list_option_selected` can dispatch the chosen one.
+            """
+            from textual.content import Content
+            from textual.widgets.option_list import Option
+
+            token, args = commands.parse_command(value)
+            # A command takes no args; "/help find prompts" is literal search
+            # text, so leave the menu empty and let Enter fall through to
+            # on_search_requested rather than running the matched command.
+            matches = () if args else commands.command_matches(token)
+            self._command_matches = matches
+            dropdown = self._enum_dropdown
+            if dropdown is None:
+                return
+            if not matches:
+                dropdown.display = False
+                return
+            t.cast("t.Any", dropdown).add_class("-commands")
+            dropdown.clear_options()
+            # Pad the name column so the dim descriptions line up (pi's padEnd).
+            name_width = max(len(command.name) for command in matches) + 2
+            for command in matches:
+                prompt = Content.assemble(
+                    (command.name.ljust(name_width), ""),
+                    (command.description, "dim"),
+                )
+                dropdown.add_option(Option(prompt))
+            # The menu lists whole commands, so anchor it at the input's left edge
+            # rather than the cursor column (unlike a token completion).
+            dropdown.styles.offset = (0, 0)
+            dropdown.display = True
+            dropdown.highlighted = 0
 
         def _update_filter_dropdown(self, value: str) -> None:
             """Populate and show/hide the filter box's keyword dropdown."""
@@ -798,10 +904,13 @@ def build_streaming_ui_app(
             dropdown.styles.offset = (max(cursor_x - 1, 0), 0)
 
         def on_option_list_option_selected(self, event: object) -> None:
-            """Accept a completion-dropdown choice into the originating input."""
+            """Accept a completion choice — or run a slash command — from the dropdown."""
             option_list = getattr(event, "option_list", None)
             index = int(getattr(event, "option_index", 0) or 0)
             if option_list is self._enum_dropdown:
+                if self._command_matches:
+                    self._run_command_at(index)
+                    return
                 self._accept_dropdown_choice(
                     self._search_input,
                     self._enum_dropdown,
@@ -869,6 +978,14 @@ def build_streaming_ui_app(
             resets the UI to an idle state without spawning a worker.
             """
             text = message.payload.text.strip()
+            if text.startswith("/"):
+                token, args = commands.parse_command(text)
+                command = commands.resolve_command(token)
+                if not args and command is not None:
+                    # Exact slash commands run handlers; other leading-slash
+                    # text remains searchable prompt/path text.
+                    self._dispatch_slash_command(command, args)
+                    return
             new_query = self._build_search_query(text)
             self.control.request_answer_now()
             if not text:
@@ -879,7 +996,102 @@ def build_streaming_ui_app(
                 self._set_empty_state(empty=True)
                 self.query = new_query
                 return
+            self._record_history(text)
             self._start_search_worker(new_query)
+
+        def _dispatch_slash_command(self, command: commands.SlashCommand, args: str) -> None:
+            """Run an already-resolved ``/command`` from the search box."""
+            if self._enum_dropdown is not None:
+                self._enum_dropdown.display = False
+            self._command_matches = ()
+            command.run(self, args)
+
+        def _run_command_at(self, index: int) -> None:
+            """Dispatch the slash command at ``index`` in the open command menu."""
+            if not (0 <= index < len(self._command_matches)):
+                return
+            command = self._command_matches[index]
+            if self._enum_dropdown is not None:
+                self._enum_dropdown.display = False
+            self._command_matches = ()
+            command.run(self, "")
+
+        def _record_history(self, text: str) -> None:
+            """Append a submitted, non-empty query to the persisted history.
+
+            Skips a consecutive duplicate of the last recorded query and updates
+            the in-memory newest-first snapshot the recall modal reads, so a
+            fresh Ctrl-R reflects this search without re-reading the file.
+            """
+            if self._history_disabled:
+                return
+            stripped = text.strip()
+            if not stripped or stripped == self._last_recorded_text:
+                return
+            now = time.time()
+            dedup_last = self._last_recorded_text
+            self._last_recorded_text = stripped
+            entry = _history.HistoryEntry(text=stripped, ts=now, scope=self._user_scope)
+            self._history = [entry, *(e for e in self._history if e.text != stripped)]
+            streaming = t.cast("StreamingAppLike", t.cast("object", self))
+            streaming.run_worker(
+                functools.partial(
+                    self._write_history_entry,
+                    stripped,
+                    self._user_scope,
+                    now,
+                    dedup_last,
+                ),
+                name="history",
+                group="history",
+                thread=True,
+                # Not exclusive: unlike search/filter/detail, a later submit
+                # must not cancel an earlier append before it reaches disk.
+                exclusive=False,
+            )
+
+        @_runtime.offload
+        def _write_history_entry(
+            self,
+            text: str,
+            scope: str,
+            now: float,
+            dedup_last: str,
+        ) -> None:
+            """Persist one search-history row from a worker thread."""
+            _history.append_query(
+                self._history_path,
+                text,
+                scope=scope,
+                now=now,
+                dedup_last=dedup_last,
+            )
+
+        def action_recall_history(self) -> None:
+            """``Ctrl-R``: open the search-history recall modal (idempotent)."""
+            if isinstance(self.screen, HistoryRecall):
+                return
+            seed = ""
+            if self._search_input is not None:
+                seed = str(getattr(self._search_input, "value", "") or "")
+            streaming = t.cast("t.Any", self)
+            streaming.push_screen(
+                HistoryRecall(self._history, seed=seed),
+                self._apply_recalled_query,
+            )
+
+        def _apply_recalled_query(self, query: str | None) -> None:
+            """Fill the search box with a recalled query — never auto-submit.
+
+            agentgrep's search is explicit (Enter dispatches), so recall seeds
+            the box and focuses it; the user reviews/edits and presses Enter.
+            """
+            if not query or self._search_input is None:
+                return
+            target = t.cast("t.Any", self._search_input)
+            target.value = query
+            target.cursor_position = len(query)
+            target.focus()
 
         def _build_search_query(self, text: str) -> SearchQuery:
             """Build a fresh :class:`SearchQuery` from the search-bar text.
@@ -936,10 +1148,10 @@ def build_streaming_ui_app(
             of a single apply (NB-4).
             """
             self.all_records.extend(records)
-            # Results are arriving — make sure the panes are revealed (a search
-            # launched via _start_search_worker already did this; a batch driven
-            # directly, e.g. in tests, reveals here). Idempotent.
-            self._set_empty_state(empty=False)
+            # Results are arriving — collapse the centered searching panel to
+            # the results list (idempotent; a batch driven directly, e.g. in
+            # tests, switches here too).
+            self._set_results_view("results")
             matching = [record for record in records if self._matches_filter(record)]
             if matching and self._results is not None:
                 results = self._results
@@ -966,8 +1178,10 @@ def build_streaming_ui_app(
             events never reach this handler — :meth:`_apply_streaming_event`
             drops them.
             """
-            # A search is in progress — reveal the chrome (idempotent).
-            self._set_empty_state(empty=False)
+            # A search is in progress with no results yet — keep the centered
+            # panel up (the batch handler switches to the list on first result).
+            if not self.all_records:
+                self._set_results_view("searching")
             self._last_snapshot = snapshot
             if self._started_at is None:
                 self._started_at = time.monotonic()
@@ -983,6 +1197,8 @@ def build_streaming_ui_app(
                 fraction: float | None = snapshot.current / snapshot.total
             else:
                 fraction = None
+            if self._searching_panel is not None:
+                self._searching_panel.set_snapshot(snapshot)
             if self._results_header is not None:
                 self._results_header.set_narrow(self._statusline_narrow())
                 self._results_header.set_progress(fraction, snapshot.phase)
@@ -1082,9 +1298,22 @@ def build_streaming_ui_app(
             hold; the elapsed total is folded into the summary string the ctrl+\
             detail row shows, not a live-ticking widget.
             """
-            # A search ran — its outcome belongs on the (now revealed) chrome.
-            self._set_empty_state(empty=False)
+            # A search ran — show its outcome. With results, collapse to the
+            # list; with none, keep the centered panel and freeze it into its
+            # terminal state instead of revealing an empty list.
             self._search_done = True
+            if self.all_records:
+                self._set_results_view("results")
+            elif self._searching_panel is not None:
+                self._set_results_view("searching")
+                self._searching_panel.freeze(
+                    outcome,
+                    total=total,
+                    elapsed=elapsed,
+                    message=error_message or "",
+                )
+            else:
+                self._set_results_view("results")
             if outcome == "error":
                 summary = f"Search failed: {error_message}"
             elif outcome == "interrupted":
@@ -1094,9 +1323,9 @@ def build_streaming_ui_app(
                 )
             else:
                 summary = f"Search complete: {format_match_count(total)} in {elapsed:.1f}s"
-            # Freeze the header: the outcome glyph (✓/■/✗) + bar color carry the
-            # result; errors show their message in the rule, the full summary
-            # lives in the ctrl+\ detail row.
+            # Freeze the header: a complete scan reads as a full 100% bar; the
+            # stopped/error marker carries the other outcomes, the error message
+            # shows in the rule, and the full summary lives in the ctrl+\ row.
             if self._results_header is not None:
                 self._results_header.freeze(outcome, message=error_message or "")
             self._set_search_rule_state(outcome)

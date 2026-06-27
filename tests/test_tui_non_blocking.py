@@ -56,7 +56,7 @@ _PUMP_EXACT = {"render", "compose", "_on_key"}
 _FORBIDDEN_CALL_NAMES = {"open", "run_search_query"}
 _FORBIDDEN_ATTRS = {"read_text", "read_bytes"}
 _FORBIDDEN_DOTTED_ROOTS = {"subprocess", "sqlite3"}
-_FORBIDDEN_DOTTED = {"time.sleep"}
+_FORBIDDEN_DOTTED = {"os.close", "os.open", "os.write", "time.sleep"}
 
 #: The single method allowed to call ``json.loads`` / ``json.dumps`` (NB-9):
 #: the inline-bounded / worker detail-body builder. A new offender must be
@@ -175,11 +175,22 @@ def test_forbidden_call_detector_flags_blocking_calls() -> None:
         "def handler(self):\n"
         "    subprocess.run(['rg'])\n"
         "    open('x')\n"
+        "    fd = os.open('x', os.O_RDONLY)\n"
+        "    os.write(fd, b'x')\n"
+        "    os.close(fd)\n"
         "    self.path.read_text()\n"
         "    time.sleep(1)\n",
     )
     clean = ast.parse("def handler(self):\n    self.refresh()\n    await asyncio.sleep(0)\n")
-    assert set(_forbidden_calls(blocking)) >= {"subprocess.run", "open", "read_text", "time.sleep"}
+    assert set(_forbidden_calls(blocking)) >= {
+        "subprocess.run",
+        "open",
+        "os.open",
+        "os.write",
+        "os.close",
+        "read_text",
+        "time.sleep",
+    }
     assert _forbidden_calls(clean) == []
 
 
@@ -206,16 +217,24 @@ def _run_worker_calls() -> list[ast.Call]:
 
 
 def test_workers_are_thread_exclusive_and_grouped() -> None:
-    """Every worker launch is ``thread=True, exclusive=True`` with a group (NB-6)."""
+    """Every worker is ``thread=True`` and grouped (NB-6).
+
+    Supersedable groups are ``exclusive=True``; the ``history`` append group is
+    the sole exception — each append must complete, never supersede an earlier
+    one.
+    """
     calls = _run_worker_calls()
     assert calls, "expected at least one run_worker call"
     for call in calls:
         kwargs = {kw.arg: kw.value for kw in call.keywords if kw.arg}
         thread = kwargs.get("thread")
         exclusive = kwargs.get("exclusive")
+        group = kwargs.get("group")
         assert isinstance(thread, ast.Constant) and thread.value is True
-        assert isinstance(exclusive, ast.Constant) and exclusive.value is True
         assert "group" in kwargs, "worker launch missing a stable group="
+        # The history-append group is non-supersedable; all others are exclusive.
+        non_supersedable = isinstance(group, ast.Constant) and group.value == "history"
+        assert isinstance(exclusive, ast.Constant) and exclusive.value is not non_supersedable
 
 
 def test_apply_records_batch_uses_bounded_stream_apply() -> None:

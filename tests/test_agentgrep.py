@@ -2285,6 +2285,9 @@ def _build_empty_ui_app(
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     home = tmp_path / "home"
     home.mkdir(parents=True, exist_ok=True)
+    # Isolate the search-history state file under tmp so tests never read or
+    # trim the developer's real ~/.local/state/agentgrep/history.jsonl.
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.setattr(
         agentgrep,
         "run_search_query",
@@ -2398,6 +2401,595 @@ async def test_streaming_ui_search_rule_state_classes(
         assert not any(search.has_class(c) for c in ("-searching", "-done", "-stopped", "-error"))
 
 
+async def test_streaming_ui_centered_panel_until_first_result(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The centered searching panel owns the canvas until the first result.
+
+    The hybrid lifecycle: while a search runs with no results yet the body
+    carries ``-searching`` and the centered ``#searching-panel`` is shown; the
+    first record batch swaps to the results list and clears ``-searching``.
+    """
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        body = app.screen.query_one("#body")
+        panel = app.screen.query_one("#searching-panel")
+
+        # Enter the searching view (no results yet): the centered panel shows.
+        app._set_results_view("searching")
+        await pilot.pause()
+        assert body.has_class("-searching")
+        assert panel.display
+
+        # The first batch of results collapses to the list view.
+        record = _agentgrep_module.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="codex.history",
+            adapter_id="codex.history_jsonl.v1",
+            path=tmp_path / "history.jsonl",
+            text="tmux pane",
+            title="tmux pane",
+        )
+        await app._apply_records_batch((record,), 1)
+        await pilot.pause()
+        assert not body.has_class("-searching")
+
+
+async def test_streaming_ui_zero_result_search_freezes_centered_panel(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A search that finds nothing keeps the centered panel and freezes it.
+
+    With no results to collapse into, the finished search stays on the
+    centered panel and freezes it into its terminal ``No matches`` state
+    rather than revealing an empty results list.
+    """
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        body = app.screen.query_one("#body")
+        app._set_results_view("searching")
+        await pilot.pause()
+
+        app._apply_finished("complete", 0, 1.2, None)
+        await pilot.pause()
+        assert body.has_class("-searching")
+        panel = app.screen.query_one("#searching-panel")
+        assert "No matches" in panel.render().plain
+
+
+class HistoryWriteOffloadCase(t.NamedTuple):
+    """Search-history append that must run outside the pump thread."""
+
+    test_id: str
+    text: str
+
+
+HISTORY_WRITE_OFFLOAD_CASES = (HistoryWriteOffloadCase(test_id="plain-query", text="tmux"),)
+
+
+async def _wait_for_history_text(home: pathlib.Path, text: str) -> None:
+    """Wait until ``text`` is visible in the persisted search history."""
+    from agentgrep.ui import _history
+
+    path = _history.history_path(home)
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        entries = await asyncio.to_thread(_history.load_history, path)
+        if any(entry.text == text for entry in entries):
+            return
+        await asyncio.sleep(0.01)
+    pytest.fail(f"history entry was not persisted: {text!r}")
+
+
+@pytest.mark.parametrize(
+    "case",
+    HISTORY_WRITE_OFFLOAD_CASES,
+    ids=[case.test_id for case in HISTORY_WRITE_OFFLOAD_CASES],
+)
+async def test_search_history_append_runs_off_pump(
+    case: HistoryWriteOffloadCase,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """History persistence uses a worker instead of blocking the pump."""
+    from agentgrep.ui import _history, _runtime
+
+    appended = threading.Event()
+    calls: list[tuple[pathlib.Path, str, str]] = []
+
+    def append_query(
+        path: pathlib.Path,
+        text: str,
+        *,
+        scope: str = "",
+        now: float | None = None,
+        dedup_last: str = "",
+    ) -> bool:
+        _runtime.assert_off_pump("history append")
+        calls.append((path, text, scope))
+        appended.set()
+        return True
+
+    monkeypatch.setattr(_history, "append_query", append_query)
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app._record_history(case.text)
+        assert await asyncio.to_thread(appended.wait, 2.0)
+        assert calls == [(_history.history_path(app.home), case.text, app._user_scope)]
+        assert any(entry.text == case.text for entry in app._history)
+
+
+async def test_search_submit_records_history(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Submitting a search records the query to history (memory + disk)."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app._search_input.focus()
+        await pilot.pause()
+        for char in "tmux":
+            await pilot.press(char)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert any(entry.text == "tmux" for entry in app._history)
+        await _wait_for_history_text(app.home, "tmux")
+
+
+async def test_history_opt_out_records_nothing(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With ``AGENTGREP_NO_HISTORY`` set, a submitted search is not recorded."""
+    from agentgrep.ui import _history
+
+    monkeypatch.setenv("AGENTGREP_NO_HISTORY", "1")
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app._search_input.focus()
+        await pilot.pause()
+        for char in "tmux":
+            await pilot.press(char)
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        assert app._history == []
+        assert not _history.history_path(app.home).exists()
+
+
+async def test_ctrl_r_opens_history_modal(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ctrl-R from the focused search box opens the recall modal."""
+    from agentgrep.ui._history import HistoryEntry
+    from agentgrep.ui.widgets.history import HistoryRecall
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app._history = [HistoryEntry(text="agent:codex refactor", ts=10)]
+        app._search_input.focus()
+        await pilot.pause()
+        await pilot.press("ctrl+r")
+        await pilot.pause()
+        assert isinstance(app.screen, HistoryRecall)
+
+
+def _search_requested(text: str) -> object:
+    """Build a ``SearchRequested`` message carrying ``text`` (Enter-submit stand-in)."""
+    from agentgrep.progress import SearchRequestedPayload
+    from agentgrep.ui.widgets import SearchRequested
+
+    return SearchRequested(payload=SearchRequestedPayload(text=text))
+
+
+class PassiveSlashCommandCase(t.NamedTuple):
+    """Passive slash command that must not interrupt an active search."""
+
+    test_id: str
+    text: str
+
+
+PASSIVE_SLASH_COMMAND_CASES = (PassiveSlashCommandCase(test_id="help", text="/help"),)
+
+
+class LiteralSlashSearchCase(t.NamedTuple):
+    """Leading-slash text that should remain a normal search."""
+
+    test_id: str
+    text: str
+
+
+LITERAL_SLASH_SEARCH_CASES = (
+    LiteralSlashSearchCase(test_id="absolute-path", text="/usr/local/bin"),
+    LiteralSlashSearchCase(test_id="unknown-token", text="/foo"),
+    LiteralSlashSearchCase(test_id="command-plus-args", text="/help find prompts"),
+)
+
+
+class EnterCommandCase(t.NamedTuple):
+    """A partial slash input and the command Enter should run from the menu."""
+
+    test_id: str
+    typed: str
+    expected: str
+
+
+ENTER_COMMAND_CASES = (
+    EnterCommandCase(test_id="clear-prefix", typed="/c", expected="clear"),
+    EnterCommandCase(test_id="exit-prefix", typed="/e", expected="exit"),
+    EnterCommandCase(test_id="help-prefix", typed="/h", expected="help"),
+    EnterCommandCase(test_id="alias-prefix", typed="/re", expected="clear"),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    ENTER_COMMAND_CASES,
+    ids=[case.test_id for case in ENTER_COMMAND_CASES],
+)
+async def test_enter_runs_highlighted_slash_command(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: EnterCommandCase,
+) -> None:
+    """Enter on a partial command runs the highlighted command, not the literal text."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        ran: list[str] = []
+        monkeypatch.setattr(
+            app,
+            "_run_command_at",
+            lambda index: ran.append(app._command_matches[index].name),
+        )
+        app._search_input.focus()
+        await pilot.pause()
+        for char in case.typed:
+            await pilot.press(char)
+        await pilot.pause()
+        assert app._enum_dropdown.display is True
+        await pilot.press("enter")
+        await pilot.pause()
+        assert ran == [case.expected]
+
+
+class CommandPlusArgsCase(t.NamedTuple):
+    """A command token followed by args that must run a literal search."""
+
+    test_id: str
+    typed: str
+
+
+COMMAND_PLUS_ARGS_CASES = (
+    CommandPlusArgsCase(test_id="help-with-args", typed="/help find prompts"),
+    CommandPlusArgsCase(test_id="clear-with-args", typed="/clear stale"),
+    CommandPlusArgsCase(test_id="alias-with-args", typed="/quit now"),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    COMMAND_PLUS_ARGS_CASES,
+    ids=[case.test_id for case in COMMAND_PLUS_ARGS_CASES],
+)
+async def test_command_with_args_runs_literal_search(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: CommandPlusArgsCase,
+) -> None:
+    """A command token plus args is literal text — Enter searches, not runs it."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        ran: list[str] = []
+        searches: list[object] = []
+        monkeypatch.setattr(
+            app,
+            "_run_command_at",
+            lambda index: ran.append(app._command_matches[index].name),
+        )
+        monkeypatch.setattr(app, "_start_search_worker", searches.append)
+        app._search_input.focus()
+        await pilot.pause()
+        app._search_input.value = case.typed
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert ran == []
+        assert len(searches) == 1
+        assert app._enum_dropdown.display is False
+
+
+async def test_slash_opens_and_filters_command_menu(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Typing ``/`` opens the command menu; typing more prefix-filters it."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app._search_input.focus()
+        await pilot.pause()
+        await pilot.press("/")
+        await pilot.pause()
+        dropdown = app._enum_dropdown
+        assert dropdown.display is True
+        assert {cmd.name for cmd in app._command_matches} == {"clear", "exit", "help"}
+        assert dropdown.option_count == len(app._command_matches)
+        await pilot.press("c")  # value is now "/c"
+        await pilot.pause()
+        assert [cmd.name for cmd in app._command_matches] == ["clear"]
+        assert dropdown.option_count == 1
+
+
+async def test_slash_clear_resets_and_is_not_recorded(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``/clear`` returns the explorer to the bare canvas and is not recorded."""
+    from agentgrep.ui import _history
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        # A real search first: records history, leaves a non-empty state.
+        app._search_input.focus()
+        await pilot.pause()
+        for char in "tmux":
+            await pilot.press(char)
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        # Now dispatch /clear.
+        app._search_input.value = "/clear"
+        app.on_search_requested(_search_requested("/clear"))
+        await pilot.pause()
+        assert app.screen.query_one("#body").has_class("-empty")
+        assert app._search_input.value == ""
+        on_disk = _history.load_history(_history.history_path(app.home))
+        assert all(entry.text != "/clear" for entry in on_disk)
+        assert any(entry.text == "tmux" for entry in on_disk)
+
+
+async def test_slash_menu_clear_cancels_active_search(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Selecting ``clear`` from the slash menu signals the old search control."""
+    from agentgrep.ui import commands
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        monkeypatch.setattr(app, "run_worker", lambda *a, **kw: None)
+        app._search_input.focus()
+        await pilot.pause()
+        app._search_input.value = "tmux"
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        first_control = app.control
+        clear = commands.resolve_command("clear")
+        assert clear is not None
+        app._command_matches = (clear,)
+        app._run_command_at(0)
+        await pilot.pause()
+        assert first_control.answer_now_requested() is True
+        assert app.control is not first_control
+        assert app.control.answer_now_requested() is False
+
+
+async def test_slash_help_notifies_the_command_list(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``/help`` shows the registry as a notification."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        notes: list[tuple[tuple[object, ...], dict[str, object]]] = []
+        monkeypatch.setattr(app, "notify", lambda *a, **k: notes.append((a, k)))
+        app.on_search_requested(_search_requested("/help"))
+        await pilot.pause()
+        assert len(notes) == 1
+        message = str(notes[0][0][0])
+        assert "/clear" in message
+        assert "/help" in message
+
+
+async def test_slash_exit_quits_the_app(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``/exit`` (and its ``/quit`` alias) quits the app."""
+    for text in ("/exit", "/quit"):
+        app = _build_empty_ui_app(tmp_path, monkeypatch)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            exits: list[object] = []
+            monkeypatch.setattr(app, "exit", lambda *a, _sink=exits, **k: _sink.append((a, k)))
+            app.on_search_requested(_search_requested(text))
+            await pilot.pause()
+            assert len(exits) == 1, f"{text} should quit"
+
+
+@pytest.mark.parametrize(
+    "case",
+    LITERAL_SLASH_SEARCH_CASES,
+    ids=[case.test_id for case in LITERAL_SLASH_SEARCH_CASES],
+)
+async def test_literal_leading_slash_text_runs_search(
+    case: LiteralSlashSearchCase,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A leading slash is a command only for exact registered command tokens."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        spawned: list[tuple[tuple[object, ...], dict[str, object]]] = []
+        notes: list[tuple[tuple[object, ...], dict[str, object]]] = []
+        monkeypatch.setattr(
+            app,
+            "run_worker",
+            lambda *a, **k: spawned.append((a, k)),
+        )
+        monkeypatch.setattr(app, "notify", lambda *a, **k: notes.append((a, k)))
+        app.on_search_requested(_search_requested(case.text))
+        await pilot.pause()
+        search_workers = [kwargs for _, kwargs in spawned if kwargs.get("name") == "search"]
+        assert len(search_workers) == 1
+        assert notes == []
+        assert not app._search_input.has_class("-error")
+        assert app.query.terms == tuple(case.text.split())
+
+
+@pytest.mark.parametrize(
+    "case",
+    PASSIVE_SLASH_COMMAND_CASES,
+    ids=[case.test_id for case in PASSIVE_SLASH_COMMAND_CASES],
+)
+async def test_passive_slash_command_preserves_active_search(
+    case: PassiveSlashCommandCase,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Passive commands do not cancel or replace an active search."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    spawned: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def fake_worker(*args: object, **kwargs: object) -> None:
+        spawned.append((args, kwargs))
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        monkeypatch.setattr(app, "run_worker", fake_worker)
+        notes: list[tuple[tuple[object, ...], dict[str, object]]] = []
+        monkeypatch.setattr(app, "notify", lambda *a, **k: notes.append((a, k)))
+        app._search_input.focus()
+        await pilot.pause()
+        app._search_input.value = "tmux"
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        first_control = app.control
+        assert first_control.answer_now_requested() is False
+        search_workers = [kwargs for _, kwargs in spawned if kwargs.get("name") == "search"]
+        assert len(search_workers) == 1
+        app.on_search_requested(_search_requested(case.text))
+        await pilot.pause()
+        assert app.control is first_control
+        assert first_control.answer_now_requested() is False
+        search_workers = [kwargs for _, kwargs in spawned if kwargs.get("name") == "search"]
+        assert len(search_workers) == 1
+        assert len(notes) == 1
+
+
+async def test_slash_menu_pushes_body_down_and_reflows_back(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The command menu is in-flow (``overlay: none``): it pushes the body down.
+
+    Unlike the keyword picker (which floats via ``overlay: screen``), the slash
+    menu takes real layout height, reflowing the content below it — the pi/ink
+    way — and the body returns when the slash is cleared.
+    """
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(100, 24)) as pilot:
+        await pilot.pause()
+        app._set_empty_state(empty=False)
+        await pilot.pause()
+        body = app.screen.query_one("#body")
+        app._search_input.focus()
+        await pilot.pause()
+        y_closed = body.region.y
+        await pilot.press("/")
+        await pilot.pause()
+        assert app._enum_dropdown.styles.overlay == "none"
+        assert body.region.y > y_closed
+        # Clearing the slash collapses the menu and reflows the body back.
+        await pilot.press("backspace")
+        await pilot.pause()
+        assert body.region.y == y_closed
+
+
+async def test_history_modal_background_is_transparent(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The recall modal screen is transparent, so the explorer shows through.
+
+    The dialog's own chrome (border + fill) stays crisp, but the screen around
+    it is transparent (``a == 0``) — Textual renders the explorer below via
+    ``app.render``, giving full context behind the modal by preference.
+    """
+    from agentgrep.ui._history import HistoryEntry
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app._history = [HistoryEntry(text="agent:codex refactor", ts=10)]
+        app.action_recall_history()
+        await pilot.pause()
+        assert app.screen.styles.background.a == 0
+        # Close the modal so the screen stack is clean at teardown.
+        await pilot.press("escape")
+        await pilot.pause()
+
+
+async def test_ctrl_c_in_history_modal_does_not_quit_app(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ctrl-C inside the modal clears then closes it — it never quits the app."""
+    from textual.widgets import Input
+
+    from agentgrep.ui._history import HistoryEntry
+    from agentgrep.ui.widgets.history import HistoryRecall
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app._history = [HistoryEntry(text="agent:codex refactor", ts=10)]
+        app.action_recall_history()
+        await pilot.pause()
+        modal = app.screen
+        assert isinstance(modal, HistoryRecall)
+        modal.query_one("#history-filter", Input).value = "zzz"
+        await pilot.pause()
+        # First Ctrl-C clears (does not quit the app via smart_quit).
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+        assert modal.query_one("#history-filter", Input).value == ""
+        assert isinstance(app.screen, HistoryRecall)
+        # Second Ctrl-C closes the modal back to the explorer — app still alive.
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+        assert not isinstance(app.screen, HistoryRecall)
+
+
+async def test_apply_recalled_query_fills_box_without_running(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Choosing a history entry fills the search box but does not auto-run it."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app._apply_recalled_query("agent:codex refactor")
+        await pilot.pause()
+        assert app._search_input.value == "agent:codex refactor"
+        # Filling the box is not a submit — no results were loaded.
+        assert app.all_records == []
+
+
 async def test_streaming_ui_result_row_title_not_always_bold(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2443,6 +3035,21 @@ async def test_pane_headers_left_label_embedded_in_rule(
         assert plain.startswith("─results")  # a rule cell sits before the label
         assert plain.endswith("─")  # rule fills to the edge — no trailing margin
         assert "  " not in plain  # no confusing double-space gap
+
+
+def test_update_pane_focus_without_active_screen_is_safe(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pane-focus recolor must no-op when no screen is on the stack.
+
+    On teardown a descendant blur fires ``on_descendant_blur`` ->
+    ``_update_pane_focus``; once the screen stack is empty ``self.focused``
+    raises ``ScreenStackError``, so the handler must guard against it. An
+    un-run app reproduces the empty-stack state deterministically.
+    """
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    app._update_pane_focus()  # must not raise ScreenStackError
 
 
 async def test_streaming_ui_app_enum_dropdown_opens_and_closes(
@@ -3599,6 +4206,23 @@ async def test_detail_find_survives_theme_switch(
         assert app._detail_find_active is True
         assert app._detail_find_input.display is True
         assert len(app._detail_find_matches) == 10
+
+
+async def test_theme_switch_refreshes_the_searching_panel(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A theme switch re-bakes the SearchingPanel's hex spans, like the header."""
+    from agentgrep.ui import theme as ui_theme
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        calls: list[int] = []
+        monkeypatch.setattr(app._searching_panel, "refresh_theme", lambda: calls.append(1))
+        app.theme = ui_theme.LIGHT_THEME_NAME
+        await pilot.pause()
+        assert calls == [1]
 
 
 async def test_input_ctrl_c_clears_then_arms_confirm_exit(
@@ -4780,6 +5404,10 @@ async def test_apply_progress_fills_header_bar(
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
         app._search_done = False
+        # The folded header rule shows once results stream in; seed one so the
+        # hybrid is past its centered-panel phase and the bar renders.
+        app.all_records.extend(_seed_records(agentgrep, tmp_path, 1))
+        app._set_empty_state(empty=False)
         app._results_header.begin()
         app._apply_progress(_make_progress_snapshot(agentgrep))
         await pilot.pause()
@@ -4799,6 +5427,10 @@ async def test_header_indeterminate_before_total_shows_no_bar(
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
         app._search_done = False
+        # Seed a result so the folded header rule (not the centered panel) is
+        # the visible chrome whose payload we assert on.
+        app.all_records.extend(_seed_records(agentgrep, tmp_path, 1))
+        app._set_empty_state(empty=False)
         app._results_header.begin()
         app._apply_progress(
             _make_progress_snapshot(
@@ -4832,8 +5464,9 @@ async def test_ctrl_backslash_toggles_scanning_detail_row(
         await pilot.pause()
         assert app._detail_visible is True
         assert detail_row.has_class("visible")
+        # Two lines: the phase + N/M sources heading, then the in-source detail.
         assert (
-            app._last_detail_text == "Scanning 5662/6748 sources | 2176 records, 354 source matches"
+            app._last_detail_text == "Scanning 5662/6748 sources\n2176 records, 354 source matches"
         )
         await pilot.press("ctrl+backslash")
         await pilot.pause()
@@ -4870,16 +5503,20 @@ async def test_detail_row_visibility_sticky_across_search_reset(
         assert updates[-1] == ""
 
 
-async def test_finish_complete_freezes_header_check(
+async def test_finish_complete_freezes_header_full_bar(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Finishing freezes the header's check glyph + full bar and stops the timer."""
+    """Finishing freezes the header to a full 100%% bar (no glyph) and stops the timer."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
         app._search_done = False
+        # Results present → the folded header rule (not the centered panel) is
+        # the chrome that freezes and carries the outcome.
+        app.all_records.extend(_seed_records(agentgrep, tmp_path, 1))
+        app._set_empty_state(empty=False)
         app._results_header.begin()
         app._apply_progress(_make_progress_snapshot(agentgrep))
         await pilot.pause()
@@ -4887,11 +5524,11 @@ async def test_finish_complete_freezes_header_check(
         await pilot.pause()
         header = app._results_header
         assert header._outcome == "complete"
-        assert header._final_glyph == "✓"
         assert header.auto_refresh is None  # the spinner timer stopped
         rendered = header.render().plain
-        assert "✓" in rendered
         assert "100%" in rendered
+        assert "✓" not in rendered  # complete drops the glyph — the full bar says it
+        assert "Done" not in rendered
         # The data summary lands in the toggleable detail row.
         assert app._last_detail_text == "Search complete: 100 matches in 12.3s"
 
@@ -4902,27 +5539,29 @@ class FinishOutcomeCase(t.NamedTuple):
     test_id: str
     size: tuple[int, int]
     outcome: str
-    glyph: str
+    glyph: str  # the frozen marker stored on the widget
+    marker: str  # the marker actually rendered ("" when complete renders none)
     expect_bar: bool
     seed_scanning: bool
 
 
 FINISH_OUTCOME_CASES: tuple[FinishOutcomeCase, ...] = (
     FinishOutcomeCase(
-        test_id="complete-wide-check-full-bar",
+        # Complete renders no glyph or word — a full 100% bar says it.
+        test_id="complete-wide-full-bar-no-glyph",
         size=(160, 24),
         outcome="complete",
         glyph="✓",
+        marker="",
         expect_bar=True,
         seed_scanning=True,
     ),
     FinishOutcomeCase(
-        # Complete always fills the bar (freeze sets fraction=1.0), and the bar
-        # still fits a narrow header — the match count is what drops, not the bar.
-        test_id="complete-narrow-check-full-bar",
+        test_id="complete-narrow-full-bar-no-glyph",
         size=(40, 24),
         outcome="complete",
         glyph="✓",
+        marker="",
         expect_bar=True,
         seed_scanning=True,
     ),
@@ -4931,16 +5570,18 @@ FINISH_OUTCOME_CASES: tuple[FinishOutcomeCase, ...] = (
         size=(160, 24),
         outcome="interrupted",
         glyph="■",
+        marker="■",
         expect_bar=True,
         seed_scanning=True,
     ),
     FinishOutcomeCase(
         # Interrupted before the first scanning snapshot: no fraction, so no bar —
-        # the gray ■ glyph alone carries the stopped outcome.
+        # the gray ■ marker alone carries the stopped outcome.
         test_id="interrupted-no-scan-square-no-bar",
         size=(160, 24),
         outcome="interrupted",
         glyph="■",
+        marker="■",
         expect_bar=False,
         seed_scanning=False,
     ),
@@ -4957,7 +5598,7 @@ async def test_finish_outcome_freezes_header_glyph(
     monkeypatch: pytest.MonkeyPatch,
     case: FinishOutcomeCase,
 ) -> None:
-    """The frozen header glyph (and bar, when there is a fraction) carries the outcome."""
+    """The frozen header carries the outcome via the bar (and a marker when needed)."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=case.size) as pilot:
@@ -4978,7 +5619,10 @@ async def test_finish_outcome_freezes_header_glyph(
         assert header._outcome == case.outcome
         assert header._final_glyph == case.glyph
         rendered = header.render().plain
-        assert case.glyph in rendered
+        if case.marker:
+            assert case.marker in rendered
+        else:
+            assert "✓" not in rendered  # complete renders no glyph
         assert ("▰" in rendered) is case.expect_bar
         if case.expect_bar and case.outcome == "complete":
             assert "▱" not in rendered  # complete fills the bar
