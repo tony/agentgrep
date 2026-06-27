@@ -106,22 +106,24 @@ required by this enforcement.
 
 ## Coverage limits and the runtime complement
 
-The static guard prevents a *decidable* subset: a denylisted call written
-directly inside a name-classified pump method. "Blocks the pump" is a semantic,
-Rice-undecidable property, so that syntactic proxy is sound in neither direction.
-Three limits are load-bearing and point to a runtime complement rather than an
-ever-larger denylist:
+The static guard prevents a *decidable* subset of blocking calls reachable from a
+classified pump entrypoint. "Blocks the pump" is a semantic, Rice-undecidable
+property, so that syntactic proxy is sound in neither direction. Three limits are
+load-bearing and point to a runtime complement rather than an ever-larger
+denylist:
 
 - **Enumerate pump entrypoints; do not classify by name prefix.** Textual also
   runs user code on the pump through `@on(...)`-decorated handlers (arbitrary
   names), inline reactive `watch_` / `validate_` / `compute_` (which bypass the
   message queue *and* Textual's own `SLOW_THRESHOLD`), `render` / `__rich__` /
   `get_content_*`, and the callables passed to `set_timer` / `set_interval` /
-  `call_from_thread` / `subscribe`. The prefix classifier cannot see these; a new
-  pump helper carries `@pump_only` so both the classifier and the runtime assert
-  cover it.
-- **Interprocedural and CPU blind spots.** A denylisted call one helper hop below
-  a pump method is invisible to the intraprocedural scan, and pure-CPU blocking
+  `call_from_thread` / `subscribe`. The guard seeds the `@on` and *named*
+  scheduler / `call_from_thread` / `subscribe` targets; a `lambda` / `partial`
+  target or a new helper still carries `@pump_only` so both the classifier and
+  the runtime assert cover it.
+- **Interprocedural and CPU blind spots.** The guard follows same-class
+  `self.helper()` calls, so a denylisted call one hop below a pump method is
+  caught — but cross-module or dynamic dispatch is not, and pure-CPU blocking
   (an unbounded casefold / sort / regex, `Syntax(...).highlight` on a full body)
   has no call signature to denylist at all.
 - **Prevention vs. detection.** The decidable subset is *prevented* at merge; the

@@ -34,22 +34,25 @@ pure styling/`.tcss` edits with no Python.
 
 ## The trap: why a denylist lint feels like enough and isn't
 
-The existing static guard is an **intraprocedural, name-classified, hardcoded
-denylist**. It catches "a denylisted call written *directly inside* a method
-whose *name* matches a pump prefix." Four structural holes let blocking slip —
-each has already shipped a real hang:
+The static guard now follows same-class `self.helper()` calls, classifies `@on`
+handlers and the callables named at `set_timer`/`set_interval`/
+`call_from_thread`/`subscribe` sites, and resolves import aliases against an
+expanded denylist. But it still cannot be *complete* — by Rice's theorem no
+denylist can. Four holes remain, each the shape of a real hang this repo has
+shipped:
 
-1. **Intraprocedural only.** Extract the blocking call into a helper and the
-   scan can't follow it. The natural refactor defeats the whole layer. (The
-   `os.write` history-write hang shipped this way — commit `8b26d8a3`.)
-2. **Name-prefix classifier.** Textual invokes pump code through **five**
-   mechanisms (see catalog). `@on(...)` handlers, inline reactive
-   `watch_`/`validate_`/`compute_`, `render`/`__rich__`/`get_content_*`, and
-   `set_timer`/`set_interval`/`call_from_thread`/`subscribe` callbacks have
-   arbitrary names the `on_*` classifier never sees.
-3. **Finite literal denylist.** Defeated by `import subprocess as sp` /
-   `from time import sleep`; omits whole families (network, fs-walk, locks,
-   `futures.result`, `json.load`).
+1. **Closure is same-class only.** It follows `self.helper()` within a class, but
+   a blocking call reached through *cross-module* dispatch, a stored callable, or
+   `getattr` is still invisible. (The `os.write` history-write hang — commit
+   `8b26d8a3` — was the intra-class version this now catches.)
+2. **Classification needs a name or a seed.** It sees `@on` handlers and the
+   callables *named* at scheduler / `call_from_thread` / `subscribe` sites, but a
+   `lambda` or `functools.partial` handed to a scheduler — and inline reactive
+   `validate_`/`compute_` reached dynamically — still slip.
+3. **The denylist is import-aware but finite.** It resolves `import subprocess as
+   sp` / `from time import sleep` and covers network / fs-walk / `json.load` /
+   `input`, but generic-attr blocking (`Lock.acquire` / `Queue.get` /
+   `Future.result` — no type to match on) is unrepresentable.
 4. **Pure-CPU blocking has no call signature at all.** An unbounded
    `casefold`/`sort`/`regex` over the result set, or `Syntax(...).highlight` on a
    full body, cannot be denylisted. This is the undecidable core.
@@ -69,13 +72,13 @@ cover it) and route its heavy work off the pump.
 
 | Family | Entrypoints | Classifier sees it? |
 |---|---|---|
-| Message handlers | `on_*`, `_on_*`, **any `@on(...)`-decorated method (any name)** | prefix: partial; `@on`: **no** |
+| Message handlers | `on_*`, `_on_*`, **any `@on(...)`-decorated method (any name)** | prefix: partial; `@on`: **seeded** |
 | Reactivity (inline, sync) | `watch_*`, `validate_*`, `compute_*` — bypass the message queue *and* Textual's own SLOW_THRESHOLD | partial |
 | Render/layout (compositor) | `render`, `render_line`, `__rich__`, `get_content_width/height`, `pre_layout` | partial |
 | Actions | `action_*`, `_action_*` (key bindings, links) | partial |
-| Scheduled callbacks | `set_timer`, `set_interval`, `call_later`, `call_next`, `call_after_refresh` targets — **arbitrary names** | **no** |
-| Cross-thread callees (NB-8) | anything passed to `call_from_thread(fn, …)` — **arbitrary names** | **no** |
-| Signals | `subscribe(self, fn)` callbacks (e.g. theme-changed) | **no** |
+| Scheduled callbacks | `set_timer`, `set_interval`, `call_later`, `call_next`, `call_after_refresh` targets — **arbitrary names** | **seeded** (named targets) |
+| Cross-thread callees (NB-8) | anything passed to `call_from_thread(fn, …)` — **arbitrary names** | **seeded** (named targets) |
+| Signals | `subscribe(self, fn)` callbacks (e.g. theme-changed) | **seeded** |
 | Startup | `compose`, `on_mount` (run before the loop, on the pump) | exact/prefix: yes |
 | Async `@work` **without** `thread=True` | the coroutine body runs *on the loop* — CPU without `await` freezes it | n/a |
 
@@ -164,15 +167,16 @@ or stale-event paths. These are the judgment calls a reviewer/agent must make:
 5. Lock it with a Pilot regression test; if it's a stall, add a fuzz/watchdog
    assertion.
 
-## Known live gaps in this repo (verified)
+## What the static guard still can't catch
 
-- **Filter rebuild:** `on_filter_completed → set_records → _rebuild_options`
-  (`ui/widgets/results.py`) loops `cached_haystack` + builds all `Option`s in one
-  pass on a filter re-apply — unbounded, in a *different class* than the NB-4
-  guard checks.
-- **Find-in-detail:** `_present_detail_find` re-highlights the full JSON body
-  (`Syntax(...).highlight`) inline on every find keystroke/step, with none of
-  `show_detail`'s threshold/offload protection.
+Two historical CPU stalls here — the filter rebuild
+(`on_filter_completed → set_records → _rebuild_options`) and the find-in-detail
+re-highlight (`_present_detail_find`) — are now bounded by an id-keyed row-render
+cache and a cached syntax base. The *static* residue is the four holes above plus
+pure-CPU spin: cross-module/dynamic dispatch, `lambda`/`partial` scheduler
+targets, generic-attr blocking, and unbounded loops. The watchdog is the runtime
+backstop for all of them; profile a suspected stall (synthetic records, timings
+only) before reaching for a structural fix.
 
 ## Residual risks (state these honestly; do not claim 100%)
 
