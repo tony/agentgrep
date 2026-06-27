@@ -36,11 +36,20 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a28 (Yet to be released)
+## agentgrep 0.1.0a29 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a28 (2026-06-27)
+
+agentgrep 0.1.0a28 builds on the explorer redesign with three additions
+to the interactive TUI (`agentgrep ui`): the search box now keeps a
+history you can recall with `Ctrl-R`, accepts pi-style slash commands
+such as `/clear` and `/help`, and folds a running search's progress onto
+a single header line so the results column stays one row tall. See
+{ref}`tui`.
 
 ### What's new
 
