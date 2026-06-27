@@ -196,7 +196,7 @@ class ResultsHeader(PaneHeader):
 
     # --- rendering --------------------------------------------------------
     def _spinner(self) -> str:
-        """Return the wall-clock spinner frame."""
+        """Return the wall-clock spinner frame (called only while not frozen)."""
         elapsed = time.monotonic() - self._started_at
         return self._SEQUENCE[int(elapsed * self._FPS) % len(self._SEQUENCE)]
 
