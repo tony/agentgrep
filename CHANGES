@@ -36,11 +36,33 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a29 (Yet to be released)
+## agentgrep 0.1.0a30 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a29 (2026-06-27)
+
+agentgrep 0.1.0a29 is an internal architecture release: the interactive
+explorer (`agentgrep ui`) behaves exactly as before, but its controller
+has been lifted out of a factory closure into an independently testable
+structure behind a narrow search-engine seam. See
+{ref}`adr-reusable-tui-widget-architecture`.
+
+### Development
+
+#### Reusable TUI widget architecture (#83)
+
+The explorer's controller logic — previously an oversized App object
+defined inside the `build_streaming_ui_app` factory closure — is now a
+module-level class reached through a narrow `SearchInvoker` engine seam,
+with `agentgrep.ui.app` reduced to a thin lazy-importing facade so the
+eager `import agentgrep` path stays Textual-free. The change is
+behavior-preserving and pinned by characterization tests. ADR 0012 also
+maps the capabilities of richer terminal UIs (pi, ink) onto Textual and
+concludes that Textual supplies every primitive agentgrep needs, so no
+native code is adopted; see {ref}`adr-reusable-tui-widget-architecture`.
 
 ## agentgrep 0.1.0a28 (2026-06-27)
 
