@@ -108,10 +108,9 @@ class ExplorerApp(_APP_BASE):
     """Streaming read-only explorer for normalized search records."""
 
     # The pi-lite global stylesheet (semantic tokens + all-widget rules)
-    # lives beside this module; ``CSS_PATH`` is resolved relative to
-    # ``app.py`` even for this closure-defined class. The ``$ag-*`` tokens
-    # it references are guaranteed to resolve via
-    # ``get_theme_variable_defaults`` regardless of the active theme.
+    # lives beside this module. The ``$ag-*`` tokens it references are
+    # guaranteed to resolve via ``get_theme_variable_defaults`` regardless
+    # of the active theme.
     CSS_PATH: t.ClassVar[str] = "styles.tcss"
     # ``priority=True`` on the directional ``ctrl+hjkl`` bindings pushes
     # them into Textual's priority dispatch lane so they win over any
