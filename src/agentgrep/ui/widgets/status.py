@@ -166,8 +166,9 @@ class ResultsHeader(PaneHeader):
         error message), since those outcomes aren't self-evident from the bar.
         """
         self._outcome = outcome
-        # ``_final_glyph`` only flags "frozen"; the rendered marker is chosen
-        # from ``_outcome`` in ``_payload`` (complete shows none).
+        # ``_final_glyph`` is only a "frozen" flag; its glyph value is unused —
+        # ``_payload`` derives the rendered marker from ``_outcome`` (complete
+        # shows none).
         self._final_glyph = {"complete": "✓", "interrupted": "■", "error": "✗"}.get(
             outcome,
             "·",
