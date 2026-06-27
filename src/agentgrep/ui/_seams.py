@@ -3,7 +3,7 @@
 The app shell calls :class:`SearchInvoker` instead of importing
 ``agentgrep._engine``, ``agentgrep.query``, or ``agentgrep.stores`` directly, so
 the UI layer stays engine-agnostic and testable with a fake. The concrete
-adapter lives here and is the only place in the UI that imports the engine.
+adapter lives here and is the only place the UI runs a search through the engine.
 """
 
 from __future__ import annotations
