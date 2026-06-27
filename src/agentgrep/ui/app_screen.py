@@ -633,7 +633,7 @@ class ExplorerApp(_APP_BASE):
         self._detail_opened = False
         self._pending_autohighlights = 0
         if self._results is not None:
-            self._results.set_records([])
+            self._results.clear()
         self._apply_responsive_layout()
         if self._detail is not None:
             self._detail.update("")

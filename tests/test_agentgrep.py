@@ -4125,6 +4125,28 @@ async def test_detail_find_step_reuses_syntax_base(
         assert syntax_calls == after_find  # the step reused the cached base
 
 
+async def test_new_search_clears_results_render_cache(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fresh search releases rendered rows so a reused record id can't go stale.
+
+    The row cache is keyed by ``id(record)`` (like cached_haystack); when a new
+    search empties ``all_records`` the rows must be released with them.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = [
+        _ui_record(agentgrep, tmp_path / f"r{i}.jsonl", f"row {i}", f"s{i}") for i in range(6)
+    ]
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app._results.set_records(records)  # renders rows -> cache populated
+        assert app._results._render_cache  # non-empty
+        app._reset_search_chrome()  # a fresh search releases the old records
+        assert app._results._render_cache == {}  # cache released with them
+
+
 async def test_detail_find_only_opens_with_a_record(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
