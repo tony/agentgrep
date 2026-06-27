@@ -46,22 +46,28 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 #### Search-history recall with Ctrl-R (#78)
 
-The explorer's search box now keeps a history of what you searched.
-Press `Ctrl-R` to open a recall modal and pick an earlier query back into
-the search box, ready to run — no retyping. See {ref}`tui`.
+The explorer's search box now remembers what you've searched. Press
+`Ctrl-R` to open a recall panel, filter past queries as you type,
+preview the highlighted one, and drop it back into the box ready to
+run — no retyping. History persists across sessions; set
+`AGENTGREP_NO_HISTORY` to turn it off. See {ref}`tui`.
 
 #### Slash commands in the search box (#78)
 
-Type `/` in the search box to open a command menu — `/clear`, `/help`,
-`/exit`, plus aliases like `/new` and `/quit` — and run the highlighted
-command with Enter.
+Type `/` in the search box to open a command menu: `/clear` resets the
+search and results, `/help` lists the commands, and `/exit` quits —
+with aliases like `/new` and `/quit`. Anything that isn't an exact
+command, such as a slash-prefixed path or a command followed by text,
+is searched as typed. See {ref}`tui`.
 
 #### Slimmer scanning progress (#78)
 
-While a search runs, the results header folds the live status into its
-rule — a spinner, the phase verb (Scanning, Planning, Filtering), and a
-compact bar with percent — so the results column spends one row instead
-of two; the verbose per-source counts move to the toggleable detail row.
+A running search now reports progress on a single line in the results
+header — a spinner, the current phase, and a compact percentage bar —
+instead of a multi-line status block, with the detailed per-source
+counts a keystroke away on the `Ctrl-\` detail row. Before the first
+match lands, the results area shows a centered searching indicator.
+See {ref}`tui`.
 
 ## agentgrep 0.1.0a27 (2026-06-24)
 
