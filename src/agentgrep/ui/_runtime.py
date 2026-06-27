@@ -28,6 +28,7 @@ import functools
 import inspect
 import logging
 import os
+import sys
 import threading
 import time
 import typing as t
@@ -37,10 +38,15 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "HEARTBEAT_INTERVAL",
     "STALL_THRESHOLD_MS",
+    "BlockingOnPumpError",
+    "arm_pump_audit",
     "assert_off_pump",
     "assert_on_pump",
+    "audit_hook_enabled",
     "bind_pump_thread",
+    "disarm_pump_audit",
     "guards_enabled",
+    "install_pump_audit_hook",
     "make_gated_emitter",
     "offload",
     "pump_only",
@@ -65,24 +71,69 @@ def _truthy(value: str | None) -> bool:
     return bool(value) and value.strip().lower() not in {"", "0", "false", "no", "off"}
 
 
+def _stdout_isatty() -> bool:
+    """Return whether stdout is an interactive terminal."""
+    try:
+        return bool(sys.stdout.isatty())
+    except AttributeError, ValueError:  # detached / closed stream
+        return False
+
+
+def _watchdog_explicitly_enabled() -> bool:
+    """Return whether ``AGENTGREP_TUI_WATCHDOG`` is set to a truthy value."""
+    return _truthy(os.environ.get("AGENTGREP_TUI_WATCHDOG"))
+
+
 def watchdog_enabled() -> bool:
-    """Return whether the opt-in heartbeat watchdog should run.
+    """Return whether the heartbeat watchdog should run.
+
+    The watchdog is log-only (it never raises), so it defaults *on* for an
+    interactive terminal session — the case where a frozen pump actually hurts a
+    user. ``AGENTGREP_TUI_WATCHDOG`` is an explicit override in either direction;
+    set it to a falsey value to force the watchdog off. It never auto-starts
+    under pytest (tests opt in explicitly), so a captured-stdout run stays quiet.
+
+    Returns
+    -------
+    bool
+        ``True`` when ``AGENTGREP_TUI_WATCHDOG`` is truthy, or — when the
+        variable is unset and not under pytest — when stdout is a TTY.
+    """
+    raw = os.environ.get("AGENTGREP_TUI_WATCHDOG")
+    if raw is not None:
+        return _truthy(raw)
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return False
+    return _stdout_isatty()
+
+
+def audit_hook_enabled() -> bool:
+    """Return whether the pump audit hook should be installed and armed.
+
+    Opt-in via ``AGENTGREP_TUI_WATCHDOG`` (the same debug switch as the heartbeat
+    watchdog). It is *not* enabled for a bare interactive run: the audit hook is
+    process-wide and, under pytest, escalates a pump-thread blocking-I/O
+    initiation to a raised :class:`BlockingOnPumpError`, so a normal user's
+    session is never converted into an exception.
 
     Returns
     -------
     bool
         ``True`` when ``AGENTGREP_TUI_WATCHDOG`` is truthy.
     """
-    return _truthy(os.environ.get("AGENTGREP_TUI_WATCHDOG"))
+    return _watchdog_explicitly_enabled()
 
 
 def _compute_guards_enabled() -> bool:
     """Return whether the pump-thread assertions should fire.
 
-    Active under pytest (so violations fail CI) or when the watchdog env var is
-    set; off otherwise so production pays only a boolean check.
+    Active under pytest (so violations fail CI) or when ``AGENTGREP_TUI_WATCHDOG``
+    is explicitly truthy; off otherwise so production pays only a boolean check.
+    Deliberately *not* tied to :func:`watchdog_enabled`: the assertions can raise,
+    so a bare interactive TTY (where the watchdog runs log-only) must not arm
+    them and risk crashing a user on a latent violation.
     """
-    return bool(os.environ.get("PYTEST_CURRENT_TEST")) or watchdog_enabled()
+    return bool(os.environ.get("PYTEST_CURRENT_TEST")) or _watchdog_explicitly_enabled()
 
 
 _GUARDS_ENABLED: bool = _compute_guards_enabled()
@@ -375,3 +426,105 @@ def stop_pump_watchdog(timeout: float = 1.0) -> None:
         _watchdog_thread.join(timeout=timeout)
     _watchdog_thread = None
     _watchdog_stop = None
+
+
+# --- pump-thread audit hook ------------------------------------------------
+#
+# ``sys.addaudithook`` (PEP 578) fires synchronously on the *acting* thread, so
+# a hook can detect — and, by raising, abort — a blocking I/O *initiation* on
+# the pump thread regardless of how the call was spelled, aliased, or
+# dynamically dispatched. This is the denylist-free complement to the static
+# AST guard: it sees the event, not the source text. It is blind to pure CPU
+# spin, byte-transfer on already-open handles (``socket.recv``, ``cursor.execute``
+# on a live connection), and native code that issues syscalls without
+# ``PySys_Audit`` — the heartbeat watchdog is the cause-agnostic backstop for
+# that residue (ADR 0011).
+
+
+class BlockingOnPumpError(RuntimeError):
+    """A blocking-I/O initiation was attempted on the pump thread (NB-1)."""
+
+
+#: Audit events that signal a blocking I/O *initiation*. Deliberately excludes
+#: ``open`` and ``import`` — Textual/Rich read theme and syntax files on the
+#: pump during render and lazy imports are legitimate — and byte-transfer events
+#: (``socket.recv`` etc. carry no audit event at all).
+_AUDIT_BLOCKING_EVENTS = frozenset(
+    {
+        "socket.connect",
+        "socket.getaddrinfo",
+        "subprocess.Popen",
+        "os.system",
+        "os.exec",
+        "os.spawn",
+        "time.sleep",
+        "sqlite3.connect",
+    },
+)
+
+_audit_hook_installed: bool = False
+_audit_armed: bool = False
+_audit_raises: bool = False
+
+
+def _pump_audit_hook(event: str, _args: tuple[object, ...]) -> None:
+    """Flag a blocking-I/O initiation on the pump thread.
+
+    Installed process-wide but inert unless :func:`arm_pump_audit` has armed it.
+    On the bound pump thread it logs a warning carrying
+    ``agentgrep_pump_blocking_event``; when armed in raising mode it additionally
+    raises :class:`BlockingOnPumpError`, aborting the syscall before it runs.
+    """
+    if not _audit_armed:
+        return
+    pump_id = _pump_thread_id
+    if pump_id is None or threading.get_ident() != pump_id:
+        return
+    if event not in _AUDIT_BLOCKING_EVENTS:
+        return
+    logger.warning(
+        "blocking io initiated on pump",
+        extra={
+            "agentgrep_pump_blocking_event": event,
+            "agentgrep_pump_thread_id": pump_id,
+        },
+    )
+    if _audit_raises:
+        msg = f"{event} initiated on the pump thread (NB-1)"
+        raise BlockingOnPumpError(msg)
+
+
+def install_pump_audit_hook() -> None:
+    """Install the process-wide pump audit hook (idempotent).
+
+    ``sys.addaudithook`` cannot be removed, so the hook stays installed for the
+    process lifetime; it is a single boolean check per audit event until
+    :func:`arm_pump_audit` arms it.
+    """
+    global _audit_hook_installed
+    if _audit_hook_installed:
+        return
+    sys.addaudithook(_pump_audit_hook)
+    _audit_hook_installed = True
+
+
+def arm_pump_audit(*, raising: bool | None = None) -> None:
+    """Arm the pump audit hook, installing it first if needed.
+
+    Parameters
+    ----------
+    raising : bool, optional
+        Whether a flagged event raises :class:`BlockingOnPumpError`. Defaults to
+        raising under pytest (so a violation fails CI) and logging only otherwise
+        (so an interactive session is not converted into a crash).
+    """
+    global _audit_armed, _audit_raises
+    install_pump_audit_hook()
+    _audit_raises = bool(os.environ.get("PYTEST_CURRENT_TEST")) if raising is None else raising
+    _audit_armed = True
+
+
+def disarm_pump_audit() -> None:
+    """Make the pump audit hook inert (the hook itself stays installed)."""
+    global _audit_armed
+    _audit_armed = False

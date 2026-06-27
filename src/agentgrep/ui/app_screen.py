@@ -484,12 +484,16 @@ class ExplorerApp(_APP_BASE):
         # Rebuild Rich-baked rows/detail when the user switches palette
         # (e.g. dark <-> light via the command palette).
         self.theme_changed_signal.subscribe(self, self._on_theme_changed)
-        # Bind the pump thread for the non-blocking guards (NB-1/NB-2); when
-        # opted in via AGENTGREP_TUI_WATCHDOG, arm the heartbeat + watchdog.
+        # Bind the pump thread for the non-blocking guards (NB-1/NB-2). The
+        # heartbeat watchdog runs by default for an interactive terminal
+        # (log-only); the denylist-free audit hook is opt-in via
+        # AGENTGREP_TUI_WATCHDOG because it can abort a blocking syscall.
         _runtime.bind_pump_thread()
         if _runtime.watchdog_enabled():
             self.set_interval(_runtime.HEARTBEAT_INTERVAL, _runtime.record_heartbeat)
             _runtime.start_pump_watchdog()
+        if _runtime.audit_hook_enabled():
+            _runtime.arm_pump_audit()
         self._apply_responsive_layout()
         if self.query.terms:
             self._start_search_worker(self.query)
@@ -569,6 +573,7 @@ class ExplorerApp(_APP_BASE):
         """Release pump-thread binding and stop the watchdog on teardown."""
         _runtime.unbind_pump_thread()
         _runtime.stop_pump_watchdog()
+        _runtime.disarm_pump_audit()
 
     def _start_search_worker(self, query: SearchQuery) -> None:
         """Reset chrome and spawn a new search worker for ``query``.

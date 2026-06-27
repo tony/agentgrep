@@ -405,3 +405,108 @@ async def test_watchdog_not_started_without_env(
         await pilot.pause()
         names = {thread.name for thread in threading.enumerate()}
         assert "agentgrep-pump-watchdog" not in names
+
+
+# --- pump audit hook (denylist-free I/O-initiation guard) ------------------
+
+
+class _AuditCase(t.NamedTuple):
+    """One ``_pump_audit_hook`` scenario: inputs and the expected reaction."""
+
+    test_id: str
+    on_pump: bool
+    armed: bool
+    raising: bool
+    event: str
+    expect_raise: bool
+    expect_log: bool
+
+
+_AUDIT_CASES = (
+    _AuditCase("raises_on_blocking_event", True, True, True, "subprocess.Popen", True, True),
+    _AuditCase("ignores_non_blocking_event", True, True, True, "object.__getattr__", False, False),
+    _AuditCase("ignores_off_pump_thread", False, True, True, "subprocess.Popen", False, False),
+    _AuditCase("logs_without_raising", True, True, False, "sqlite3.connect", False, True),
+    _AuditCase("inert_when_disarmed", True, False, True, "subprocess.Popen", False, False),
+)
+
+
+@pytest.mark.parametrize("case", _AUDIT_CASES, ids=lambda c: c.test_id)
+def test_pump_audit_hook_behavior(
+    case: _AuditCase,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The hook flags a blocking-I/O initiation only when armed and on the pump.
+
+    A non-I/O event — and a pure CPU spin, which emits no audit event — never
+    trips it: the I/O-vs-CPU split of ADR 0011.
+    """
+    pump_id = threading.get_ident() if case.on_pump else -1
+    monkeypatch.setattr(_runtime, "_pump_thread_id", pump_id)
+    monkeypatch.setattr(_runtime, "_audit_armed", case.armed)
+    monkeypatch.setattr(_runtime, "_audit_raises", case.raising)
+    with caplog.at_level(logging.WARNING, logger="agentgrep.ui._runtime"):
+        if case.expect_raise:
+            with pytest.raises(_runtime.BlockingOnPumpError, match=case.event.split(".")[0]):
+                _runtime._pump_audit_hook(case.event, ())
+        else:
+            _runtime._pump_audit_hook(case.event, ())
+    logged = [r for r in caplog.records if hasattr(r, "agentgrep_pump_blocking_event")]
+    assert bool(logged) is case.expect_log
+    if case.expect_log:
+        assert t.cast("str", logged[0].agentgrep_pump_blocking_event) == case.event
+
+
+def test_arm_pump_audit_installs_and_disarms(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Arming installs and enables the hook; disarming makes it inert again."""
+    monkeypatch.setattr(_runtime, "_audit_armed", False)
+    monkeypatch.setattr(_runtime, "_audit_raises", False)
+    _runtime.arm_pump_audit(raising=True)
+    assert _runtime._audit_armed is True
+    assert _runtime._audit_raises is True
+    assert _runtime._audit_hook_installed is True
+    _runtime.disarm_pump_audit()
+    assert _runtime._audit_armed is False
+
+
+# --- watchdog / guards / audit enable-predicate truth-table ----------------
+
+
+class _PredicateCase(t.NamedTuple):
+    """Inputs and the expected, decoupled outputs of the three enable predicates."""
+
+    test_id: str
+    env: str | None
+    under_pytest: bool
+    isatty: bool
+    watchdog: bool
+    guards: bool
+    audit: bool
+
+
+_PREDICATE_CASES = (
+    # bare TTY: the watchdog runs but the (raising) asserts stay off — decoupled.
+    _PredicateCase("bare_tty", None, False, True, True, False, False),
+    _PredicateCase("bare_non_tty", None, False, False, False, False, False),
+    _PredicateCase("env_off_overrides_tty", "0", False, True, False, False, False),
+    _PredicateCase("env_on_arms_all", "1", False, False, True, True, True),
+    _PredicateCase("under_pytest_no_env", None, True, True, False, True, False),
+)
+
+
+@pytest.mark.parametrize("case", _PREDICATE_CASES, ids=lambda c: c.test_id)
+def test_runtime_enable_predicates(case: _PredicateCase, monkeypatch: pytest.MonkeyPatch) -> None:
+    """watchdog_enabled / guard-asserts / audit_hook_enabled decouple over env, pytest, TTY."""
+    if case.env is None:
+        monkeypatch.delenv("AGENTGREP_TUI_WATCHDOG", raising=False)
+    else:
+        monkeypatch.setenv("AGENTGREP_TUI_WATCHDOG", case.env)
+    if case.under_pytest:
+        monkeypatch.setenv("PYTEST_CURRENT_TEST", "tests/x.py::y (call)")
+    else:
+        monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.setattr(_runtime, "_stdout_isatty", lambda: case.isatty)
+    assert _runtime.watchdog_enabled() is case.watchdog
+    assert _runtime._compute_guards_enabled() is case.guards
+    assert _runtime.audit_hook_enabled() is case.audit
