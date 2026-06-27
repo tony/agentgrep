@@ -66,7 +66,7 @@ _JSON_EXEMPT = {"_build_detail_body"}
 
 
 class _Method(t.NamedTuple):
-    """A class method discovered in ``ui/app_screen.py``."""
+    """A class method discovered in an app or widget module."""
 
     cls: str
     name: str
