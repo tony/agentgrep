@@ -36,5 +36,5 @@ use `agentgrep.run_ui()` without reaching into `agentgrep.ui.app`.
 .. autofunction:: agentgrep.clear_haystack_cache
 .. autofunction:: agentgrep.compute_filter_matches
 .. autofunction:: agentgrep.format_timestamp_tig
-.. autofunction:: agentgrep.ui.app.scroll_percent
+.. autofunction:: agentgrep.ui.format.scroll_percent
 ```

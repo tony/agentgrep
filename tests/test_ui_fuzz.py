@@ -33,7 +33,7 @@ import typing as t
 
 import pytest
 
-from agentgrep.ui import app as ui_app
+from agentgrep._engine import orchestration
 from tests.test_agentgrep import _build_empty_ui_app, load_agentgrep_module
 
 # Tight per-move budgets (seconds). A real wedge blows these; legitimate work
@@ -383,7 +383,7 @@ async def test_fuzz_session_stays_responsive(
     """No random move sequence wedges the pump or breaks a liveness invariant."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     engine = _FuzzEngine()
-    monkeypatch.setattr(ui_app, "run_search_query", engine)
+    monkeypatch.setattr(orchestration, "run_search_query", engine)
     ctx = _Ctx(engine, _record_pool(agentgrep, tmp_path), _large_pool(agentgrep, tmp_path))
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     await _run_session(app, ctx, seed=seed, moves=_MOVES_PER_SESSION)
@@ -402,7 +402,7 @@ async def test_fuzz_detects_blocking_handler(
     # fires once (one sleep), keeping teardown fast while still tripping the
     # budget.
     engine.drive = _drive_zero
-    monkeypatch.setattr(ui_app, "run_search_query", engine)
+    monkeypatch.setattr(orchestration, "run_search_query", engine)
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
