@@ -2,9 +2,10 @@
 
 Three layers guard the rules:
 
-- An AST scan of ``ui/app_screen.py`` proves no pump-thread method contains a blocking
-  call (NB-1/NB-8) and that JSON parsing is confined to the one bounded
-  fast-path method (NB-9), that every worker launch is exclusive and grouped
+- An AST scan of ``ui/app_screen.py`` and every ``ui/widgets/*.py`` module
+  proves no pump-thread method contains a blocking call (NB-1/NB-8) and that
+  JSON parsing is confined to the one bounded fast-path method (NB-9). A scan
+  of ``ui/app_screen.py`` proves every worker launch is exclusive and grouped
   (NB-6), and that the batch applier routes through the bounded ``stream_apply``
   (NB-4).
 - Unit tests of the ``@pump_only`` / ``@offload`` guards and ``stream_apply``
