@@ -16,6 +16,7 @@ sphinx-gp-llms = false
 sphinx-autodoc-argparse = false
 sphinx-ux-autodoc-layout = false
 sphinx-ux-badges = false
+gp-libs = false
 sphinx-autodoc-docutils = false
 gp-furo-theme = false
 sphinx-gp-sitemap = false
@@ -545,15 +546,15 @@ wheels = [
 
 [[package]]
 name = "gp-libs"
-version = "0.0.17"
+version = "0.0.18"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "docutils" },
     { name = "myst-parser" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/61/38/00b2d342ee47102225054c0a3e9507e99a988bd6a89da3948f21bad4ddb0/gp_libs-0.0.17.tar.gz", hash = "sha256:e7f0fa2913f79d0403ae9c38468d02d28d8348edccba949de40dba8e72c419ce", size = 15159, upload-time = "2025-12-07T22:44:49.618Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/23/10/155b50d9aefeef98c590e605334864b069cfb14453a3d3d7395e05129c54/gp_libs-0.0.18.tar.gz", hash = "sha256:cd718110e156eee0efd0ec1c4016332d5839b077bc4fa9a56ca233a5dc232d5e", size = 15743, upload-time = "2026-06-27T16:35:18.345Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/18/f9/5d78d1dda9cb0f27d6f2305e95a58edbff935a62d53ec3227a3518cb4f72/gp_libs-0.0.17-py3-none-any.whl", hash = "sha256:7ce96d5e09980c0dc82062ab3e3b911600bd44da97a64fb78379f1af9a79d4d3", size = 16157, upload-time = "2025-12-07T22:44:48.036Z" },
+    { url = "https://files.pythonhosted.org/packages/10/02/b5b58549a9f48740359260dc74dec6e8d506dfb70c0a91e641293ab70c39/gp_libs-0.0.18-py3-none-any.whl", hash = "sha256:7e59ef4644366f33517a580e827b9f7837e3c02ce470af8bb9995ba87c86a20f", size = 16371, upload-time = "2026-06-27T16:35:17.003Z" },
 ]
 
 [[package]]
