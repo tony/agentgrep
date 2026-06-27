@@ -1,0 +1,4 @@
+# serializer version: 1
+# name: test_results_streamed_row_is_pinned
+  'codex     prompt                                                                        s1.jsonl'
+# ---

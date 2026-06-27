@@ -8,12 +8,17 @@ widgets directly (no ``run_test`` Pilot) and assert their pure behavior.
 
 from __future__ import annotations
 
+import pathlib
+import typing as t
+
 from textual.widgets import Input, OptionList, Static
 
 from agentgrep.progress import FilterRequestedPayload, ProgressSnapshot
+from agentgrep.records import SearchQuery, SearchRecord
 from agentgrep.ui.format import phase_label
 from agentgrep.ui.widgets import (
     CompletionDropdown,
+    DetailScroll,
     FilterInput,
     FilterRequested,
     MeterWidget,
@@ -25,6 +30,33 @@ from agentgrep.ui.widgets import (
     SearchResultsList,
     SpinnerWidget,
 )
+
+
+def _make_record(text: str = "bliss") -> SearchRecord:
+    """Build a minimal valid prompt record for widget tests."""
+    return SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex-cli",
+        adapter_id="codex",
+        path=pathlib.Path("s1.jsonl"),
+        text=text,
+        role="user",
+        session_id="s1",
+    )
+
+
+def _make_query(*terms: str) -> SearchQuery:
+    """Build a minimal valid prompts-scope query (empty terms = browse)."""
+    return SearchQuery(
+        terms=tuple(terms),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=(),
+        limit=None,
+    )
 
 
 def _snapshot(
@@ -255,3 +287,57 @@ def test_searching_panel_freeze_zero_results_says_no_matches() -> None:
     panel.set_snapshot(_snapshot("scanning", current=10, total=10, matches=0))
     panel.freeze("complete", total=0, elapsed=1.2)
     assert "No matches" in panel.render().plain
+
+
+# --- ADR 0012 characterization pins (Task 0) -------------------------------
+
+
+def test_results_list_constructs_empty() -> None:
+    """A bare results list starts empty; an empty append early-returns (pure).
+
+    ``append_records`` reads ``self.app`` for a non-empty batch, so only the
+    empty path is exercisable without a mounted app; the rendered-row path is
+    pinned by ``test_results_streamed_row_is_pinned`` against the real app.
+    """
+    results = SearchResultsList(id="results")
+    assert results._records == []
+    results.append_records([])  # early-returns before touching self.app
+    assert results.option_count == 0
+
+
+async def test_results_streamed_row_is_pinned(
+    snapshot,
+    tmp_path: pathlib.Path,
+) -> None:
+    """A streamed row's rendered text is pinned against the real app theme.
+
+    ``_render_record`` resolves ``self.app.theme_variables`` for the ``ag-*``
+    palette, so the row is rendered inside the real app (empty ``tmp_path``
+    home → discovery finds nothing).
+    """
+    from agentgrep.progress import SearchControl
+    from agentgrep.ui.app import build_streaming_ui_app
+
+    # build_streaming_ui_app returns ``object`` (the App class is closure-defined);
+    # cast to Any for run_test/query_one, mirroring the test_agentgrep.py pattern.
+    app = t.cast("t.Any", build_streaming_ui_app(tmp_path, _make_query(), control=SearchControl()))
+    async with app.run_test():
+        results = app.query_one(SearchResultsList)
+        results.append_records([_make_record()])
+        assert results.option_count == 1
+        assert results._render_record(_make_record()).plain == snapshot
+
+
+def test_detail_scroll_is_focusable_vertical_scroll() -> None:
+    """DetailScroll is a focusable VerticalScroll exposing the vim scroll keys.
+
+    The record and per-record scroll memory live on the app today, not the
+    widget (ADR 0012 moves them onto the widget in a later task); this pins the
+    current widget surface so that move is an observable, intentional change.
+    """
+    from textual.containers import VerticalScroll
+
+    assert issubclass(DetailScroll, VerticalScroll)
+    assert DetailScroll.can_focus is True
+    binding_keys = {binding[0] for binding in DetailScroll.BINDINGS}
+    assert {"j", "k", "h"} <= binding_keys
