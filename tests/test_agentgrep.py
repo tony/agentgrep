@@ -3037,6 +3037,21 @@ async def test_pane_headers_left_label_embedded_in_rule(
         assert "  " not in plain  # no confusing double-space gap
 
 
+def test_update_pane_focus_without_active_screen_is_safe(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pane-focus recolor must no-op when no screen is on the stack.
+
+    On teardown a descendant blur fires ``on_descendant_blur`` ->
+    ``_update_pane_focus``; once the screen stack is empty ``self.focused``
+    raises ``ScreenStackError``, so the handler must guard against it. An
+    un-run app reproduces the empty-stack state deterministically.
+    """
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    app._update_pane_focus()  # must not raise ScreenStackError
+
+
 async def test_streaming_ui_app_enum_dropdown_opens_and_closes(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

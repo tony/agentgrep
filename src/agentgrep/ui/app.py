@@ -654,6 +654,10 @@ def build_streaming_ui_app(
             the cue tracked the column — here it intentionally treats the filter
             as part of the results pane, but never the search bar.
             """
+            if not self.screen_stack:
+                # No active screen (teardown / between screens): nothing to
+                # recolor, and ``self.focused`` would raise ScreenStackError.
+                return
             focused_id = getattr(self.focused, "id", None)
             results_active = focused_id in {"results", "filter"}
             detail_active = focused_id in {"detail-scroll", "detail-find"}
