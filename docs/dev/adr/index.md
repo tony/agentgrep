@@ -19,4 +19,5 @@ multiple adapters or public payloads.
 0009-cross-host-discovery
 0010-module-boundaries-and-facade-re-export-contract
 0011-non-blocking-tui-invariants
+0012-reusable-tui-widget-architecture
 ```
