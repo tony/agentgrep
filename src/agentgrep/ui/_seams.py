@@ -1,9 +1,9 @@
-"""Narrow ``Protocol`` seams between the TUI and the search engine (ADR 0012 RW-1).
+"""Narrow ``Protocol`` seam between the TUI and the search engine (ADR 0012 RW-1).
 
-The app shell calls these instead of importing ``agentgrep._engine``,
-``agentgrep.query``, or ``agentgrep.stores`` directly, so the UI layer stays
-engine-agnostic and testable with fakes. The concrete adapters live here and are
-the only place in the UI that imports the engine.
+The app shell calls :class:`SearchInvoker` instead of importing
+``agentgrep._engine``, ``agentgrep.query``, or ``agentgrep.stores`` directly, so
+the UI layer stays engine-agnostic and testable with a fake. The concrete
+adapter lives here and is the only place in the UI that imports the engine.
 """
 
 from __future__ import annotations
@@ -32,26 +32,21 @@ class SearchInvoker(t.Protocol):
         ...
 
 
-class PreviewProvider(t.Protocol):
-    """Resolve a selectable item to a preview body string."""
-
-    def fetch(self, item: object) -> str:
-        """Return the preview body for ``item``."""
-        ...
-
-
 class EngineSearchInvoker:
     """Concrete :class:`SearchInvoker` wrapping the headless search engine.
 
     ``run_search_query`` has no ``emit`` parameter — streaming flows through a
     :class:`~agentgrep.progress.StreamingSearchProgress` passed as ``progress``.
-    This adapter reproduces the call the explorer makes today (``progress`` plus
-    ``control`` plus the source-scan-cache ``runtime``), so routing the app
-    through it is behavior-preserving.
+    This adapter wraps ``emit`` in that reporter and owns the source-scan-cache
+    ``runtime``, created once and reused across searches so the explorer keeps a
+    single warm cache for the session.
     """
 
     def __init__(self, home: pathlib.Path) -> None:
+        from agentgrep._engine.runtime import SearchRuntime
+
         self._home = home
+        self._runtime = SearchRuntime.with_source_scan_cache()
 
     def run(
         self,
@@ -62,7 +57,6 @@ class EngineSearchInvoker:
     ) -> None:
         """Run ``query`` against the engine, forwarding events to ``emit``."""
         from agentgrep._engine.orchestration import run_search_query
-        from agentgrep._engine.runtime import SearchRuntime
         from agentgrep.progress import StreamingSearchProgress
 
         run_search_query(
@@ -70,5 +64,5 @@ class EngineSearchInvoker:
             query,
             progress=StreamingSearchProgress(emit=emit),
             control=control,
-            runtime=SearchRuntime.with_source_scan_cache(),
+            runtime=self._runtime,
         )

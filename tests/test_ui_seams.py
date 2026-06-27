@@ -12,7 +12,7 @@ import pathlib
 
 from agentgrep.progress import SearchControl
 from agentgrep.records import SearchQuery
-from agentgrep.ui._seams import EngineSearchInvoker, PreviewProvider, SearchInvoker
+from agentgrep.ui._seams import EngineSearchInvoker, SearchInvoker
 
 
 def _make_query() -> SearchQuery:
@@ -58,17 +58,3 @@ def test_engine_invoker_satisfies_protocol() -> None:
     """EngineSearchInvoker is structurally a SearchInvoker (not run here)."""
     invoker: SearchInvoker = EngineSearchInvoker(pathlib.Path("/nonexistent"))
     assert callable(invoker.run)
-
-
-class _FakePreview:
-    """A test double that echoes the item into a preview body."""
-
-    def fetch(self, item: object) -> str:
-        """Return a deterministic preview body for ``item``."""
-        return f"preview:{item}"
-
-
-def test_fake_satisfies_preview_provider_protocol() -> None:
-    """A structural fake is accepted as a PreviewProvider."""
-    provider: PreviewProvider = _FakePreview()
-    assert provider.fetch("x") == "preview:x"

@@ -83,6 +83,7 @@ def build_streaming_ui_app(
         ``query.terms`` when ``None``.
     """
     try:
+        from agentgrep.ui._seams import EngineSearchInvoker
         from agentgrep.ui.app_screen import ExplorerApp
     except ImportError as error:
         msg = "Textual is required for --ui. Install with `uv pip install --editable .`."
@@ -91,5 +92,6 @@ def build_streaming_ui_app(
         home=home,
         query=query,
         control=control,
+        invoker=EngineSearchInvoker(home),
         initial_search_text=initial_search_text,
     )

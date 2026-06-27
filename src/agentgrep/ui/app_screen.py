@@ -28,8 +28,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Footer, Static
 
-from agentgrep._engine.orchestration import clear_haystack_cache, run_search_query
-from agentgrep._engine.runtime import SearchRuntime
+from agentgrep._engine.orchestration import clear_haystack_cache
 from agentgrep._text import (
     DETAIL_BODY_MAX_LINES,
     detect_content_format,
@@ -48,12 +47,12 @@ from agentgrep.progress import (
     SearchControl,
     StreamingRecordsBatch,
     StreamingSearchFinished,
-    StreamingSearchProgress,
     format_match_count,
 )
 from agentgrep.query import default_registry
 from agentgrep.records import SearchQuery, SearchRecord
 from agentgrep.ui import _history, _runtime, commands, theme as ui_theme
+from agentgrep.ui._seams import SearchInvoker
 from agentgrep.ui.completion import (
     QuerySuggester,
     apply_enum_choice,
@@ -170,6 +169,7 @@ class ExplorerApp(_APP_BASE):
         home: pathlib.Path,
         query: SearchQuery,
         control: SearchControl,
+        invoker: SearchInvoker,
         initial_search_text: str | None = None,
     ) -> None:
         super().__init__()
@@ -196,11 +196,11 @@ class ExplorerApp(_APP_BASE):
         # widening never persists across searches.
         self._user_scope = query.scope
         self.control = control
-        self._runtime = SearchRuntime.with_source_scan_cache()
+        self._invoker = invoker
         self.initial_search_text: str | None = initial_search_text
         self.all_records = []
         self.filtered_records = []
-        self._progress: StreamingSearchProgress | None = None
+        self._search_emit: cabc.Callable[[object], None] | None = None
         self._search_done = False
         self._started_at: float | None = None
         self._last_snapshot: ProgressSnapshot | None = None
@@ -481,7 +481,7 @@ class ExplorerApp(_APP_BASE):
             typed_input = t.cast("t.Any", _input)
             typed_input.cursor_blink = False
             typed_input.select_on_focus = False
-        self._progress = self._make_gated_progress()
+        self._search_emit = self._make_gated_emit()
         # Rebuild Rich-baked rows/detail when the user switches palette
         # (e.g. dark <-> light via the command palette).
         self.theme_changed_signal.subscribe(self, self._on_theme_changed)
@@ -645,10 +645,10 @@ class ExplorerApp(_APP_BASE):
         # content is wiped.
         if self._detail_row is not None:
             self._detail_row.update("")
-        self._progress = self._make_gated_progress()
+        self._search_emit = self._make_gated_emit()
 
-    def _make_gated_progress(self) -> StreamingSearchProgress:
-        """Build a progress reporter whose events die with its generation.
+    def _make_gated_emit(self) -> cabc.Callable[[object], None]:
+        """Build a worker-thread emit callback whose events die with its generation.
 
         ``call_from_thread`` schedules the callback directly on the
         event loop rather than enqueuing a ``Message`` — so
@@ -670,12 +670,11 @@ class ExplorerApp(_APP_BASE):
         # happens on the pump inside _apply_streaming_event. Centralizing it
         # in make_gated_emitter keeps results off the message bus (NB-3) and
         # carrying the generation token (NB-10).
-        emit = _runtime.make_gated_emitter(
+        return _runtime.make_gated_emitter(
             streaming.call_from_thread,
             self._apply_streaming_event,
             generation,
         )
-        return StreamingSearchProgress(emit=emit)
 
     @_runtime.pump_only
     async def _apply_streaming_event(self, generation: int, event: object) -> None:
@@ -850,17 +849,11 @@ class ExplorerApp(_APP_BASE):
 
     @_runtime.offload
     def _run_search(self) -> None:
-        progress = self._progress
-        if progress is None:
+        emit = self._search_emit
+        if emit is None:
             return
         try:
-            run_search_query(
-                self.home,
-                self.query,
-                progress=progress,
-                control=self.control,
-                runtime=self._runtime,
-            )
+            self._invoker.run(self.query, control=self.control, emit=emit)
         except BaseException as exc:
             streaming = t.cast("StreamingAppLike", t.cast("object", self))
             streaming.call_from_thread(

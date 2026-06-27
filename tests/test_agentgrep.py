@@ -3371,7 +3371,7 @@ def test_streaming_ui_app_passes_runtime_to_search_worker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The TUI owns one runtime and passes it to backend searches."""
-    from agentgrep.ui import app_screen
+    from agentgrep._engine import orchestration
 
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     runtimes: list[object] = []
@@ -3380,8 +3380,8 @@ def test_streaming_ui_app_passes_runtime_to_search_worker(
         runtimes.append(kwargs.get("runtime"))
         return []
 
-    # ``run_search_query`` is called from ``ExplorerApp`` in ui/app_screen.py.
-    monkeypatch.setattr(app_screen, "run_search_query", record_runtime)
+    # ``run_search_query`` is called from ``EngineSearchInvoker`` (ui/_seams.py).
+    monkeypatch.setattr(orchestration, "run_search_query", record_runtime)
     home = tmp_path / "home"
     home.mkdir(parents=True, exist_ok=True)
     query = agentgrep.SearchQuery(
