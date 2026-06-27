@@ -242,6 +242,59 @@ def _forbidden_calls(node: ast.AST, imports: dict[str, str] | None = None) -> li
     return found
 
 
+def _self_call_targets(node: ast.AST) -> set[str]:
+    """Return method names invoked as ``self.<name>(...)`` under ``node``."""
+    targets: set[str] = set()
+    for call in ast.walk(node):
+        if (
+            isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Attribute)
+            and isinstance(call.func.value, ast.Name)
+            and call.func.value.id == "self"
+        ):
+            targets.add(call.func.attr)
+    return targets
+
+
+def _class_method_map() -> dict[str, dict[str, ast.FunctionDef | ast.AsyncFunctionDef]]:
+    """Map each class name to its ``{method name: node}`` for closure lookups."""
+    mapping: dict[str, dict[str, ast.FunctionDef | ast.AsyncFunctionDef]] = {}
+    for tree in _UI_TREES:
+        for cls in ast.walk(tree):
+            if not isinstance(cls, ast.ClassDef):
+                continue
+            methods = mapping.setdefault(cls.name, {})
+            for item in cls.body:
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    methods[item.name] = item
+    return mapping
+
+
+def _closure_forbidden_calls(
+    method: _Method,
+    class_methods: dict[str, ast.FunctionDef | ast.AsyncFunctionDef],
+    imports: dict[str, str],
+) -> list[str]:
+    """Forbidden calls reachable from ``method`` via same-class ``self.<helper>()``.
+
+    Closes the dominant gap: a blocking call extracted into a helper is invisible
+    to an intraprocedural scan. ``@offload`` worker bodies are *passed* to
+    ``run_worker`` rather than called as ``self.x()``, so the closure does not
+    follow into them (their I/O is correctly off the pump).
+    """
+    found: list[str] = []
+    visited: set[str] = {method.name}
+    stack: list[ast.AST] = [method.node]
+    while stack:
+        node = stack.pop()
+        found.extend(_forbidden_calls(node, imports))
+        for target in _self_call_targets(node):
+            if target not in visited and target in class_methods:
+                visited.add(target)
+                stack.append(class_methods[target])
+    return found
+
+
 def _json_calls(node: ast.AST) -> bool:
     """Return whether ``node`` calls ``json.loads`` or ``json.dumps``."""
     for call in ast.walk(node):
@@ -262,13 +315,15 @@ def _json_calls(node: ast.AST) -> bool:
 
 
 def test_pump_methods_have_no_blocking_calls() -> None:
-    """No pump-thread method opens files, spawns processes, or sleeps (NB-1)."""
+    """No pump method — or a same-class helper it calls — opens/spawns/sleeps (NB-1)."""
+    class_methods = _class_method_map()
     offenders = {
         f"{m.cls}.{m.name}": calls
         for m in _all_methods()
-        if _is_pump_method(m) and (calls := _forbidden_calls(m.node, dict(m.imports)))
+        if _is_pump_method(m)
+        and (calls := _closure_forbidden_calls(m, class_methods.get(m.cls, {}), dict(m.imports)))
     }
-    assert not offenders, f"blocking calls in pump methods (NB-1/NB-8): {offenders}"
+    assert not offenders, f"blocking calls reachable from pump methods (NB-1/NB-8): {offenders}"
 
 
 def test_forbidden_call_detector_flags_blocking_calls() -> None:
@@ -329,6 +384,24 @@ def test_classifier_sees_scheduled_callables_and_on_handlers() -> None:
     assert _is_pump_method(_Method("A", "_after_resize", node, (), ()))  # set_timer target
     assert _is_pump_method(_Method("W", "_handle", node, ("on",), ()))  # @on handler
     assert not _is_pump_method(_Method("W", "_helper", node, (), ()))  # plain helper
+
+
+def test_closure_follows_self_helpers() -> None:
+    """The NB-1 closure follows ``self.<helper>()`` into a same-class helper."""
+    tree = ast.parse(
+        "class W:\n"
+        "    def watch_x(self):\n"
+        "        self._do_io()\n"
+        "    def _do_io(self):\n"
+        "        open('x')\n",
+    )
+    cls = next(n for n in ast.walk(tree) if isinstance(n, ast.ClassDef))
+    methods = {
+        m.name: m for m in cls.body if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    watch = _Method("W", "watch_x", methods["watch_x"], (), ())
+    assert _forbidden_calls(watch.node) == []  # intraprocedural sees nothing
+    assert "open" in _closure_forbidden_calls(watch, methods, {})  # the closure does
 
 
 def test_json_parsing_confined_to_detail_body() -> None:
