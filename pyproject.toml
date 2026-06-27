@@ -117,6 +117,7 @@ build-backend = "hatchling.build"
 # committing a date that would age into the lockfile. Mirrors the
 # pattern at libtmux-mcp/pyproject.toml.
 gp-furo-theme = false
+gp-libs = false
 gp-sphinx = false
 sphinx-autodoc-api-style = false
 sphinx-autodoc-argparse = false
