@@ -70,6 +70,46 @@ def test_load_dedups_by_text_keeping_newest(tmp_path: pathlib.Path) -> None:
     assert entries[0].ts == 3
 
 
+class HistoryOrderCase(t.NamedTuple):
+    """Physical append order ``(text, ts)`` and the expected newest-first text."""
+
+    test_id: str
+    writes: tuple[tuple[str, float], ...]
+    expected: tuple[str, ...]
+
+
+HISTORY_ORDER_CASES = (
+    HistoryOrderCase(
+        test_id="out-of-order-write",
+        writes=(("newer", 200.0), ("older", 100.0)),
+        expected=("newer", "older"),
+    ),
+    HistoryOrderCase(
+        test_id="subsecond-race",
+        writes=(("late", 100.6), ("early", 100.2)),
+        expected=("late", "early"),
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    HISTORY_ORDER_CASES,
+    ids=[case.test_id for case in HISTORY_ORDER_CASES],
+)
+def test_load_history_orders_by_submit_time_not_write_order(
+    case: HistoryOrderCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Recency follows submit-time ts even when appends land out of order."""
+    path = tmp_path / "h.jsonl"
+    prev = ""
+    for text, ts in case.writes:
+        assert _history.append_query(path, text, now=ts, dedup_last=prev) is True
+        prev = text
+    assert tuple(e.text for e in _history.load_history(path)) == case.expected
+
+
 def test_load_tolerates_corruption(tmp_path: pathlib.Path) -> None:
     """A half-written or foreign line is skipped, not fatal."""
     path = tmp_path / "h.jsonl"
@@ -82,7 +122,7 @@ def test_load_tolerates_corruption(tmp_path: pathlib.Path) -> None:
 
 
 class CorruptTimestampCase(t.NamedTuple):
-    """History timestamp token accepted by JSON but invalid for ``int()``."""
+    """History timestamp token accepted by JSON but not a finite number."""
 
     test_id: str
     raw_ts: str

@@ -1027,7 +1027,7 @@ def build_streaming_ui_app(
             now = time.time()
             dedup_last = self._last_recorded_text
             self._last_recorded_text = stripped
-            entry = _history.HistoryEntry(text=stripped, ts=int(now), scope=self._user_scope)
+            entry = _history.HistoryEntry(text=stripped, ts=now, scope=self._user_scope)
             self._history = [entry, *(e for e in self._history if e.text != stripped)]
             streaming = t.cast("StreamingAppLike", t.cast("object", self))
             streaming.run_worker(

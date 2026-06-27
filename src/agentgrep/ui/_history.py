@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import math
 import os
 import pathlib
 import tempfile
@@ -45,7 +46,7 @@ class HistoryEntry(t.NamedTuple):
     """One recalled search query: the raw text, its unix ts, and launch scope."""
 
     text: str
-    ts: int
+    ts: float
     scope: str = ""
 
 
@@ -90,7 +91,7 @@ def append_query(
     if not stripped or stripped == dedup_last:
         return False
     line = json.dumps(
-        {"text": stripped, "ts": int(time.time() if now is None else now), "scope": scope},
+        {"text": stripped, "ts": time.time() if now is None else now, "scope": scope},
         ensure_ascii=False,
     )
     try:
@@ -132,7 +133,13 @@ def load_history(path: pathlib.Path, *, limit: int = DISPLAY_LIMIT) -> list[Hist
             parsed.append(entry)
     seen: set[str] = set()
     result: list[HistoryEntry] = []
-    for entry in reversed(parsed):
+    # Order by submit-time ts, not physical write order: concurrent history
+    # workers (exclusive=False) can append out of order. Ties (equal or legacy
+    # whole-second ts) fall back to file order with the later line newest,
+    # matching the previous reversed() behaviour.
+    order = sorted(range(len(parsed)), key=lambda i: (parsed[i].ts, i), reverse=True)
+    for i in order:
+        entry = parsed[i]
         if entry.text in seen:
             continue
         seen.add(entry.text)
@@ -154,12 +161,15 @@ def _parse_line(line: str) -> HistoryEntry | None:
     if not isinstance(text, str) or not text:
         return None
     raw_ts = obj.get("ts", 0)
-    ts = 0
+    ts = 0.0
     if isinstance(raw_ts, (int, float)) and not isinstance(raw_ts, bool):
         try:
-            ts = int(raw_ts)
+            ts = float(raw_ts)
         except ValueError, OverflowError:
-            ts = 0
+            ts = 0.0
+        if not math.isfinite(ts):
+            # NaN/±inf sort pathologically against real timestamps; drop to 0.
+            ts = 0.0
     raw_scope = obj.get("scope", "")
     scope = raw_scope if isinstance(raw_scope, str) else ""
     return HistoryEntry(text=text, ts=ts, scope=scope)
