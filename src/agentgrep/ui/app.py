@@ -834,8 +834,11 @@ def build_streaming_ui_app(
             from textual.content import Content
             from textual.widgets.option_list import Option
 
-            token, _args = commands.parse_command(value)
-            matches = commands.command_matches(token)
+            token, args = commands.parse_command(value)
+            # A command takes no args; "/help find prompts" is literal search
+            # text, so leave the menu empty and let Enter fall through to
+            # on_search_requested rather than running the matched command.
+            matches = () if args else commands.command_matches(token)
             self._command_matches = matches
             dropdown = self._enum_dropdown
             if dropdown is None:

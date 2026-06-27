@@ -2662,6 +2662,53 @@ async def test_enter_runs_highlighted_slash_command(
         assert ran == [case.expected]
 
 
+class CommandPlusArgsCase(t.NamedTuple):
+    """A command token followed by args that must run a literal search."""
+
+    test_id: str
+    typed: str
+
+
+COMMAND_PLUS_ARGS_CASES = (
+    CommandPlusArgsCase(test_id="help-with-args", typed="/help find prompts"),
+    CommandPlusArgsCase(test_id="clear-with-args", typed="/clear stale"),
+    CommandPlusArgsCase(test_id="alias-with-args", typed="/quit now"),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    COMMAND_PLUS_ARGS_CASES,
+    ids=[case.test_id for case in COMMAND_PLUS_ARGS_CASES],
+)
+async def test_command_with_args_runs_literal_search(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: CommandPlusArgsCase,
+) -> None:
+    """A command token plus args is literal text — Enter searches, not runs it."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        ran: list[str] = []
+        searches: list[object] = []
+        monkeypatch.setattr(
+            app,
+            "_run_command_at",
+            lambda index: ran.append(app._command_matches[index].name),
+        )
+        monkeypatch.setattr(app, "_start_search_worker", searches.append)
+        app._search_input.focus()
+        await pilot.pause()
+        app._search_input.value = case.typed
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert ran == []
+        assert len(searches) == 1
+        assert app._enum_dropdown.display is False
+
+
 async def test_slash_opens_and_filters_command_menu(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
