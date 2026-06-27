@@ -47,22 +47,104 @@ def _ui_source_trees() -> list[ast.AST]:
 _UI_TREES = _ui_source_trees()
 
 # A method Textual invokes on the pump thread: event/action/watch/compute
-# handlers, render/compose, the input key/value overrides — plus anything
-# explicitly tagged @pump_only.
+# handlers, render/compose, the input key/value overrides, @on-decorated
+# handlers (any name), the callables handed to a scheduler/cross-thread/signal
+# site (see _SCHEDULED_PUMP_NAMES), plus anything explicitly tagged @pump_only.
 _PUMP_PREFIXES = ("on_", "action_", "watch_", "compute_", "_watch_")
 _PUMP_EXACT = {"render", "compose", "_on_key"}
 
+# Calls that hand a callable to the pump thread; their target methods run there
+# even though their names match no prefix (NB-1/NB-8).
+_SCHEDULER_FUNCS = {
+    "set_timer",
+    "set_interval",
+    "call_later",
+    "call_next",
+    "call_after_refresh",
+    "call_from_thread",
+    "subscribe",
+}
+
 # Blocking calls forbidden in a pump-thread body (NB-1). JSON parsing is checked
-# separately (NB-9) because it has one sanctioned, bounded home.
-_FORBIDDEN_CALL_NAMES = {"open", "run_search_query"}
-_FORBIDDEN_ATTRS = {"read_text", "read_bytes"}
-_FORBIDDEN_DOTTED_ROOTS = {"subprocess", "sqlite3"}
-_FORBIDDEN_DOTTED = {"os.close", "os.open", "os.write", "time.sleep"}
+# separately (NB-9) because it has one sanctioned, bounded home. Generic attrs
+# (.get/.join/.wait/.acquire/.result/.read) are deliberately absent — carrying no
+# type, they would false-positive on dicts/strings/futures; the wall-clock
+# watchdog is the backstop for those (ADR 0011 coverage limits).
+_FORBIDDEN_CALL_NAMES = {"open", "input", "run_search_query"}
+_FORBIDDEN_ATTRS = {"read_text", "read_bytes", "iterdir", "rglob"}
+_FORBIDDEN_DOTTED_ROOTS = {
+    "subprocess",
+    "sqlite3",
+    "socket",
+    "urllib",
+    "requests",
+    "httpx",
+    "ftplib",
+}
+_FORBIDDEN_DOTTED = {
+    "os.close",
+    "os.open",
+    "os.write",
+    "os.read",
+    "os.walk",
+    "os.listdir",
+    "os.scandir",
+    "os.stat",
+    "time.sleep",
+    "json.load",
+    "json.dump",
+}
 
 #: The single method allowed to call ``json.loads`` / ``json.dumps`` (NB-9):
 #: the inline-bounded / worker detail-body builder. A new offender must be
 #: added here deliberately, with a bound, not silently.
 _JSON_EXEMPT = {"_build_detail_body"}
+
+
+def _import_map(tree: ast.AST) -> dict[str, str]:
+    """Map each imported name/alias to its canonical dotted target.
+
+    Resolves alias/from-import evasion: ``import subprocess as sp`` → sp:
+    subprocess; ``from time import sleep`` → sleep: time.sleep.
+    """
+    mapping: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                mapping[alias.asname or alias.name] = alias.name
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            for alias in node.names:
+                mapping[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+    return mapping
+
+
+def _scheduled_pump_names() -> frozenset[str]:
+    """Return method names handed to a scheduler/cross-thread/signal call site.
+
+    Textual runs these on the pump thread even though their names match no
+    prefix (e.g. ``set_timer(0.05, self._after_resize)``); the name classifier
+    cannot see them, so seed them from the call sites (NB-8).
+    """
+    names: set[str] = set()
+    for tree in _UI_TREES:
+        for call in ast.walk(tree):
+            if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Attribute):
+                continue
+            if call.func.attr not in _SCHEDULER_FUNCS:
+                continue
+            for arg in call.args:
+                if (
+                    isinstance(arg, ast.Attribute)
+                    and isinstance(arg.value, ast.Name)
+                    and arg.value.id == "self"
+                ):
+                    names.add(arg.attr)
+                elif isinstance(arg, ast.Name):
+                    names.add(arg.id)
+    return frozenset(names)
+
+
+_SCHEDULED_PUMP_NAMES = _scheduled_pump_names()
 
 
 class _Method(t.NamedTuple):
@@ -72,6 +154,7 @@ class _Method(t.NamedTuple):
     name: str
     node: ast.FunctionDef | ast.AsyncFunctionDef
     decorators: tuple[str, ...]
+    imports: tuple[tuple[str, str], ...]  # the module's import map, as sorted items
 
 
 def _decorator_name(node: ast.expr) -> str:
@@ -89,21 +172,22 @@ def _all_methods() -> list[_Method]:
     """Return every method defined on a class in the app or widget modules."""
     methods: list[_Method] = []
     for tree in _UI_TREES:
+        imports = tuple(sorted(_import_map(tree).items()))
         for cls in ast.walk(tree):
             if not isinstance(cls, ast.ClassDef):
                 continue
             for item in cls.body:
                 if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     decorators = tuple(_decorator_name(d) for d in item.decorator_list)
-                    methods.append(_Method(cls.name, item.name, item, decorators))
+                    methods.append(_Method(cls.name, item.name, item, decorators, imports))
     return methods
 
 
 def _is_pump_method(method: _Method) -> bool:
     """Classify whether Textual would invoke ``method`` on the pump thread."""
-    if "pump_only" in method.decorators:
+    if "pump_only" in method.decorators or "on" in method.decorators:
         return True
-    if method.name in _PUMP_EXACT:
+    if method.name in _PUMP_EXACT or method.name in _SCHEDULED_PUMP_NAMES:
         return True
     return method.name.startswith(_PUMP_PREFIXES)
 
@@ -118,22 +202,43 @@ def _dotted(node: ast.expr) -> str:
     return ""
 
 
-def _forbidden_calls(node: ast.AST) -> list[str]:
-    """Return the blocking-call names found anywhere under ``node`` (NB-1)."""
+def _forbidden_calls(node: ast.AST, imports: dict[str, str] | None = None) -> list[str]:
+    """Return the blocking-call names found anywhere under ``node`` (NB-1).
+
+    ``imports`` (a module's :func:`_import_map`) resolves alias / from-import
+    evasion to canonical dotted names before matching.
+    """
+    resolve = imports or {}
     found: list[str] = []
     for call in ast.walk(node):
         if not isinstance(call, ast.Call):
             continue
         func = call.func
-        if isinstance(func, ast.Name) and func.id in _FORBIDDEN_CALL_NAMES:
-            found.append(func.id)
+        if isinstance(func, ast.Name):
+            if func.id in _FORBIDDEN_CALL_NAMES:
+                found.append(func.id)
+                continue
+            canonical = resolve.get(func.id, func.id)
+            if (
+                canonical in _FORBIDDEN_DOTTED
+                or canonical.split(".", 1)[0] in _FORBIDDEN_DOTTED_ROOTS
+            ):
+                found.append(canonical)
         elif isinstance(func, ast.Attribute):
             if func.attr in _FORBIDDEN_ATTRS:
                 found.append(func.attr)
             dotted = _dotted(func)
-            root = dotted.split(".", 1)[0]
-            if root in _FORBIDDEN_DOTTED_ROOTS or dotted in _FORBIDDEN_DOTTED:
-                found.append(dotted)
+            if not dotted:
+                continue
+            root, _, rest = dotted.partition(".")
+            canonical_root = resolve.get(root, root)
+            canonical = canonical_root + ("." + rest if rest else "")
+            if (
+                canonical_root in _FORBIDDEN_DOTTED_ROOTS
+                or canonical in _FORBIDDEN_DOTTED
+                or dotted in _FORBIDDEN_DOTTED
+            ):
+                found.append(canonical)
     return found
 
 
@@ -161,7 +266,7 @@ def test_pump_methods_have_no_blocking_calls() -> None:
     offenders = {
         f"{m.cls}.{m.name}": calls
         for m in _all_methods()
-        if _is_pump_method(m) and (calls := _forbidden_calls(m.node))
+        if _is_pump_method(m) and (calls := _forbidden_calls(m.node, dict(m.imports)))
     }
     assert not offenders, f"blocking calls in pump methods (NB-1/NB-8): {offenders}"
 
@@ -193,6 +298,37 @@ def test_forbidden_call_detector_flags_blocking_calls() -> None:
         "time.sleep",
     }
     assert _forbidden_calls(clean) == []
+
+
+def test_forbidden_call_detector_resolves_aliases_and_families() -> None:
+    """Import-aware: alias / from-import evasion and the NB-1 families are flagged."""
+    tree = ast.parse(
+        "import subprocess as sp\n"
+        "from time import sleep\n"
+        "from subprocess import run\n"
+        "def handler(self):\n"
+        "    sp.run(['rg'])\n"
+        "    sleep(1)\n"
+        "    run(['rg'])\n"
+        "    input()\n"
+        "    os.walk('/')\n"
+        "    self.path.iterdir()\n"
+        "    json.load(fh)\n"
+        "    socket.create_connection(addr)\n",
+    )
+    handler = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef))
+    found = set(_forbidden_calls(handler, _import_map(tree)))
+    assert {"subprocess.run", "time.sleep", "input", "os.walk", "iterdir", "json.load"} <= found
+    assert any(name.startswith("socket") for name in found)
+
+
+def test_classifier_sees_scheduled_callables_and_on_handlers() -> None:
+    """Scheduler / call_from_thread targets and @on handlers classify as pump."""
+    assert {"_after_resize", "_on_theme_changed"} <= _SCHEDULED_PUMP_NAMES  # real sites
+    node = t.cast("ast.FunctionDef", ast.parse("def f(self): ...").body[0])
+    assert _is_pump_method(_Method("A", "_after_resize", node, (), ()))  # set_timer target
+    assert _is_pump_method(_Method("W", "_handle", node, ("on",), ()))  # @on handler
+    assert not _is_pump_method(_Method("W", "_helper", node, (), ()))  # plain helper
 
 
 def test_json_parsing_confined_to_detail_body() -> None:
