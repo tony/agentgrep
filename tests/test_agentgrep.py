@@ -4087,6 +4087,44 @@ async def test_detail_find_searches_navigates_and_counts(
         assert app._detail_find_current == 9
 
 
+async def test_detail_find_step_reuses_syntax_base(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stepping find matches must not re-tokenize the JSON body each press (NB-9).
+
+    ``_present_detail_find`` re-overlays only the find-match spans; the
+    syntax+search+filter base is identical across a find session, so a cached
+    base keeps the per-keystroke cost off a full-body ``Syntax`` re-highlight.
+    """
+    from agentgrep.ui import app_screen
+
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    body = json.dumps({"notes": [f"needle {i}" for i in range(12)]}, indent=2)
+    record = _ui_record(agentgrep, tmp_path / "j.jsonl", body, "json")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        syntax_calls = 0
+        real_syntax = app_screen._RichSyntax
+
+        def counting_syntax(*args: t.Any, **kwargs: t.Any) -> t.Any:  # forwarding spy
+            nonlocal syntax_calls
+            syntax_calls += 1
+            return real_syntax(*args, **kwargs)
+
+        monkeypatch.setattr(app_screen, "_RichSyntax", counting_syntax)
+        await _open_detail_with_find(app, record, pilot)
+        app._run_detail_find("needle", reset_cursor=True)
+        await pilot.pause()
+        assert app._detail_find_matches  # the JSON body really was matched
+        after_find = syntax_calls
+        assert after_find >= 1  # the JSON base was tokenized at least once
+        app._detail_find_step(1)
+        await pilot.pause()
+        assert syntax_calls == after_find  # the step reused the cached base
+
+
 async def test_detail_find_only_opens_with_a_record(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
