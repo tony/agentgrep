@@ -92,6 +92,9 @@ class _DetailMatchStyles(t.NamedTuple):
     filter: str
 
 
+_DetailFindBaseKey = tuple[str, tuple[str, ...], bool, bool, tuple[str, ...]]
+
+
 #: Textual's ``App`` is the runtime base. It is kept opaque to the type checker
 #: exactly as it was inside the former ``build_streaming_ui_app`` closure (whose
 #: base came through a ``type[object]`` module Protocol, so the class body was
@@ -288,10 +291,10 @@ class ExplorerApp(_APP_BASE):
         # and scroll work against this so offsets line up with what is shown.
         self._detail_find_source: str = ""
         # Cached syntax+search+filter find body; the find-match overlay changes
-        # per keystroke but this base does not, so it is built once per render
-        # and copied (invalidated in _present_detail).
+        # per keystroke but this base does not, so it is built once per
+        # highlight state and copied (invalidated in _present_detail).
         self._detail_find_base: Text | None = None
-        self._detail_find_base_source: str = ""
+        self._detail_find_base_key: _DetailFindBaseKey | None = None
         # Per-record find memory, mirroring _detail_scroll_positions:
         # id(record) -> (query, match_index, input_cursor_pos). Bounded LRU.
         self._detail_find_state: collections.OrderedDict[
@@ -1690,6 +1693,7 @@ class ExplorerApp(_APP_BASE):
         # for json bodies, the raw body otherwise.
         self._detail_find_source = body_for_scroll
         self._detail_find_base = None  # a fresh body invalidates the find base
+        self._detail_find_base_key = None
         self._detail.update(_RichGroup(t.cast("t.Any", header), t.cast("t.Any", body_renderable)))
         self._restore_detail_scroll(record)
         self._refresh_detail_statusline()
@@ -1985,7 +1989,7 @@ class ExplorerApp(_APP_BASE):
         )
 
     def _detail_find_base_for(self, source: str) -> Text:
-        """Return the syntax+search+filter body for ``source``, cached per render.
+        """Return the syntax+search+filter body for ``source`` and highlight state.
 
         For JSON the body is syntax-highlighted via :class:`rich.syntax.Syntax`
         so token colors survive find; other formats use ``highlight_matches``.
@@ -1993,8 +1997,15 @@ class ExplorerApp(_APP_BASE):
         not, so building it once and copying keeps the per-keystroke cost off a
         full-body ``Syntax`` re-highlight. Invalidated in :meth:`_present_detail`.
         """
+        key = (
+            source,
+            tuple(self.query.terms),
+            self.query.case_sensitive,
+            self.query.regex,
+            self._filter_terms,
+        )
         cached = self._detail_find_base
-        if cached is not None and self._detail_find_base_source == source:
+        if cached is not None and self._detail_find_base_key == key:
             return cached
         if detect_content_format(source) == "json":
             text = _RichSyntax(source, "json", theme="ansi_dark", word_wrap=True).highlight(source)
@@ -2010,7 +2021,7 @@ class ExplorerApp(_APP_BASE):
             )
         self._apply_filter_highlight(text)
         self._detail_find_base = text
-        self._detail_find_base_source = source
+        self._detail_find_base_key = key
         return text
 
     def _apply_search_highlight(self, text: t.Any) -> None:

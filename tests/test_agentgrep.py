@@ -4125,6 +4125,77 @@ async def test_detail_find_step_reuses_syntax_base(
         assert syntax_calls == after_find  # the step reused the cached base
 
 
+class DetailFindFilterRefreshCase(t.NamedTuple):
+    """A same-record filter change while detail find stays open."""
+
+    test_id: str
+    initial_filter: str
+    updated_filter: str
+    find_query: str
+
+
+DETAIL_FIND_FILTER_REFRESH_CASES: tuple[DetailFindFilterRefreshCase, ...] = (
+    DetailFindFilterRefreshCase(
+        test_id="same-record-filter-change",
+        initial_filter="before",
+        updated_filter="after",
+        find_query="needle",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    DETAIL_FIND_FILTER_REFRESH_CASES,
+    ids=[case.test_id for case in DETAIL_FIND_FILTER_REFRESH_CASES],
+)
+async def test_detail_find_base_refreshes_filter_highlights_when_filter_changes(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: DetailFindFilterRefreshCase,
+) -> None:
+    """A same-record filter change refreshes the cached find-highlight base."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    body = f"{case.initial_filter} {case.find_query} {case.updated_filter}"
+    record = _ui_record(agentgrep, tmp_path / "filter.jsonl", body, "filter")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await _open_detail_with_find(app, record, pilot)
+        app._filter_terms = (case.initial_filter,)
+        app._detail_find_input.load_query(case.find_query)
+        app._run_detail_find(case.find_query, reset_cursor=True)
+        await pilot.pause()
+
+        app._filter_terms = (case.updated_filter,)
+        app._filter_input.value = case.updated_filter
+        payload = agentgrep.FilterCompletedPayload(
+            text=case.updated_filter,
+            matching=(record,),
+        )
+        app.on_filter_completed(_FakeFilterCompleted(payload=payload))
+        app._detail_find_step(1)
+        await pilot.pause()
+
+        detail_body = app._detail.content.renderables[1]
+        spans = [(span.start, span.end, str(span.style)) for span in detail_body.spans]
+        filter_bg = app.theme_variables["ag-match-filter-bg"]
+        initial_start = body.index(case.initial_filter)
+        updated_start = body.index(case.updated_filter)
+        assert not any(
+            start == initial_start
+            and end == initial_start + len(case.initial_filter)
+            and filter_bg in style
+            for start, end, style in spans
+        )
+        assert any(
+            start == updated_start
+            and end == updated_start + len(case.updated_filter)
+            and filter_bg in style
+            for start, end, style in spans
+        )
+
+
 async def test_new_search_clears_results_render_cache(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
