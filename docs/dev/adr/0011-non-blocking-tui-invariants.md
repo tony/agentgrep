@@ -104,6 +104,44 @@ messages that name the NB rule. The widgets still live inside the
 `ui/widgets/` modules (a strangler-fig follow-up) strengthens but is not
 required by this enforcement.
 
+## Coverage limits and the runtime complement
+
+The static guard prevents a *decidable* subset: a denylisted call written
+directly inside a name-classified pump method. "Blocks the pump" is a semantic,
+Rice-undecidable property, so that syntactic proxy is sound in neither direction.
+Three limits are load-bearing and point to a runtime complement rather than an
+ever-larger denylist:
+
+- **Enumerate pump entrypoints; do not classify by name prefix.** Textual also
+  runs user code on the pump through `@on(...)`-decorated handlers (arbitrary
+  names), inline reactive `watch_` / `validate_` / `compute_` (which bypass the
+  message queue *and* Textual's own `SLOW_THRESHOLD`), `render` / `__rich__` /
+  `get_content_*`, and the callables passed to `set_timer` / `set_interval` /
+  `call_from_thread` / `subscribe`. The prefix classifier cannot see these; a new
+  pump helper carries `@pump_only` so both the classifier and the runtime assert
+  cover it.
+- **Interprocedural and CPU blind spots.** A denylisted call one helper hop below
+  a pump method is invisible to the intraprocedural scan, and pure-CPU blocking
+  (an unbounded casefold / sort / regex, `Syntax(...).highlight` on a full body)
+  has no call signature to denylist at all.
+- **Prevention vs. detection.** The decidable subset is *prevented* at merge; the
+  undecidable residue is *detected* at runtime by the heartbeat watchdog. An
+  opt-in `sys.addaudithook` scoped to the pump thread adds denylist-free
+  *prevention* of CPython-instrumented blocking-I/O *initiation* (socket.connect,
+  getaddrinfo, subprocess, time.sleep, sqlite3.connect): it fires
+  on the acting thread and aborts the syscall regardless of how the call was
+  spelled or dispatched. It is blind to CPU spin, byte-transfer on already-open
+  handles, and native syscalls that skip `PySys_Audit`; the wall-clock watchdog
+  is the cause-agnostic backstop for that residue.
+
+Two sites currently reach heavy work the guard does not cover: the filter
+re-apply (`on_filter_completed` → `set_records` → `_rebuild_options`, an unbounded
+pump rebuild living in a different class than the NB-4 check) and the
+find-in-detail re-highlight (`_present_detail_find`, a full-body
+`Syntax.highlight` inline with no threshold or offload). The
+`textual-non-blocking-pump` skill carries the full pump-entrypoint catalog and
+the per-change review rules.
+
 ## Final position
 
 The NB-1..NB-10 catalog is the source of truth for TUI concurrency. New TUI work
