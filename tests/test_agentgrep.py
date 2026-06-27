@@ -3371,7 +3371,7 @@ def test_streaming_ui_app_passes_runtime_to_search_worker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The TUI owns one runtime and passes it to backend searches."""
-    from agentgrep.ui import app as ui_app
+    from agentgrep.ui import app_screen
 
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     runtimes: list[object] = []
@@ -3380,7 +3380,8 @@ def test_streaming_ui_app_passes_runtime_to_search_worker(
         runtimes.append(kwargs.get("runtime"))
         return []
 
-    monkeypatch.setattr(ui_app, "run_search_query", record_runtime)
+    # ``run_search_query`` is called from ``ExplorerApp`` in ui/app_screen.py.
+    monkeypatch.setattr(app_screen, "run_search_query", record_runtime)
     home = tmp_path / "home"
     home.mkdir(parents=True, exist_ok=True)
     query = agentgrep.SearchQuery(
@@ -5196,14 +5197,14 @@ async def test_set_records_majority_removal_falls_back_to_rebuild(
 
 def test_scroll_percent_returns_full_when_nothing_scrolls() -> None:
     """A pane that fits its viewport reports ``100%`` (tig convention)."""
-    from agentgrep.ui.app import scroll_percent
+    from agentgrep.ui.format import scroll_percent
 
     assert scroll_percent(0.0, 0.0) == 100
 
 
 def test_scroll_percent_clamps_to_bounds() -> None:
     """Scroll percent is clamped to ``[0, 100]`` even for nonsense inputs."""
-    from agentgrep.ui.app import scroll_percent
+    from agentgrep.ui.format import scroll_percent
 
     assert scroll_percent(0.0, 100.0) == 0
     assert scroll_percent(50.0, 100.0) == 50

@@ -2,7 +2,7 @@
 
 Three layers guard the rules:
 
-- An AST scan of ``ui/app.py`` proves no pump-thread method contains a blocking
+- An AST scan of ``ui/app_screen.py`` proves no pump-thread method contains a blocking
   call (NB-1/NB-8) and that JSON parsing is confined to the one bounded
   fast-path method (NB-9), that every worker launch is exclusive and grouped
   (NB-6), and that the batch applier routes through the bounded ``stream_apply``
@@ -25,15 +25,15 @@ import typing as t
 
 import pytest
 
-from agentgrep.ui import _runtime, app as ui_app
+from agentgrep.ui import _runtime, app_screen
 from tests.test_agentgrep import _build_empty_ui_app
 
-_APP_PATH = pathlib.Path(ui_app.__file__)
+_APP_PATH = pathlib.Path(app_screen.__file__)
 _APP_TREE = ast.parse(_APP_PATH.read_text(encoding="utf-8"))
 
 
 def _ui_source_trees() -> list[ast.AST]:
-    """Parse ``ui/app.py`` plus every extracted ``ui/widgets/*.py`` module.
+    """Parse ``ui/app_screen.py`` plus every extracted ``ui/widgets/*.py`` module.
 
     The widgets moved out of the app closure into factory modules, so the
     no-blocking-calls guard must scan their pump methods (``watch_*`` /
@@ -65,7 +65,7 @@ _JSON_EXEMPT = {"_build_detail_body"}
 
 
 class _Method(t.NamedTuple):
-    """A class method discovered in ``ui/app.py``."""
+    """A class method discovered in ``ui/app_screen.py``."""
 
     cls: str
     name: str
@@ -206,7 +206,7 @@ def test_json_parsing_confined_to_detail_body() -> None:
 
 
 def _run_worker_calls() -> list[ast.Call]:
-    """Return every ``*.run_worker(...)`` call in ``ui/app.py``."""
+    """Return every ``*.run_worker(...)`` call in ``ui/app_screen.py``."""
     return [
         node
         for node in ast.walk(_APP_TREE)
