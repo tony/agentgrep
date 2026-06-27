@@ -112,10 +112,10 @@ the I/O-vs-CPU asymmetry:
   cannot abort a thread mid-C-syscall — only kill the process). This is the
   asyncio `slow_callback_duration` model.
 
-**Today both guards are opt-in and off in production** (`_GUARDS_ENABLED` is false
-unless `PYTEST_CURRENT_TEST` or `AGENTGREP_TUI_WATCHDOG`). Real users get zero
-enforcement — a net that's off catches nothing. Defaulting the heartbeat watchdog
-on for interactive TTY runs is the cheapest way to protect them.
+**The `@pump_only`/`@offload` asserts and the audit hook stay opt-in**
+(`PYTEST_CURRENT_TEST` or `AGENTGREP_TUI_WATCHDOG`), since both can raise. The
+log-only heartbeat watchdog **defaults on for an interactive TTY**, so real users
+get the cause-agnostic backstop without risking a crash on a latent violation.
 
 ## Review rules (apply on EVERY ui/ change)
 

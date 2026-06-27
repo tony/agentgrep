@@ -10,14 +10,16 @@ silently drop:
   chunks that yield between slices, so an unbounded apply is impossible (NB-4).
 - :func:`make_gated_emitter` centralizes the "results bypass the message bus and
   carry a generation token" transport (NB-3, NB-10).
-- An opt-in heartbeat watchdog (:func:`start_pump_watchdog`) logs when the pump
-  stalls past a threshold — the oracle the fuzz harness asserts on.
+- A heartbeat watchdog (:func:`start_pump_watchdog`), default-on for an
+  interactive TTY, logs when the pump stalls past a threshold — the oracle the
+  fuzz harness asserts on.
 
 It is Textual-free and imports only the standard library, so it sits below
 ``app.py`` in the layering (ADR 0010) and the guard/unit tests can reach it
-without entering ``build_streaming_ui_app``'s closure. The guards and watchdog
-are no-ops unless enabled (under pytest, or when ``AGENTGREP_TUI_WATCHDOG`` is
-truthy), so production pays at most one boolean check per guarded call.
+without entering ``build_streaming_ui_app``'s closure. The guards are no-ops
+unless enabled (under pytest, or when ``AGENTGREP_TUI_WATCHDOG`` is truthy), so
+production pays at most one boolean check per guarded call; the log-only
+watchdog additionally defaults on for an interactive TTY.
 """
 
 from __future__ import annotations
