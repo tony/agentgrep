@@ -1679,3 +1679,127 @@ async def test_mcp_search_tool_serves_cached_records_under_require(
     data = t.cast("SearchToolDataLike", result.data)
     assert len(data.results) == 1
     assert data.results[0].text == "serve this straight from the cache"
+
+
+def test_insight_listing_tools_use_readonly_and_close(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both listing helpers open read-only and close their connections."""
+    import sqlite3
+
+    from agentgrep import db as agentgrep_db
+    from agentgrep.mcp.tools import insight_tools
+
+    db_path = tmp_path / "agentgrep.sqlite"
+    agentgrep_db.DbRuntime.open(db_path).close()
+    opened: list[agentgrep_db.DbRuntime] = []
+    real_open_readonly = agentgrep_db.DbRuntime.open_readonly
+
+    def capturing_open_readonly(
+        db_path: pathlib.Path | str | None = None,
+    ) -> agentgrep_db.DbRuntime:
+        runtime = real_open_readonly(db_path)
+        opened.append(runtime)
+        return runtime
+
+    monkeypatch.setattr(agentgrep_db.DbRuntime, "open_readonly", capturing_open_readonly)
+
+    insights = insight_tools._insights_list_sync(str(db_path))
+    suggestions = insight_tools._suggestions_list_sync(str(db_path))
+
+    assert insights.variant_edges_total == 0
+    assert suggestions.suggestions == []
+    assert len(opened) == 2
+    for runtime in opened:
+        with pytest.raises(sqlite3.ProgrammingError):
+            _ = runtime.store.connection.execute("SELECT 1")
+
+
+def test_mcp_suggestions_list_returns_bounded_page_with_totals(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The suggestions_list helper bounds rows and reports totals."""
+    import agentgrep.db as agentgrep_db
+    from agentgrep.insights import InsightEngine
+    from agentgrep.mcp.tools import insight_tools
+    from agentgrep.suggestions import SuggestionEngine
+
+    db_path = tmp_path / "agentgrep.sqlite"
+    source_path = tmp_path / "session.jsonl"
+    target_path = tmp_path / "AGENTS.md"
+    source_path.write_text("{}", encoding="utf-8")
+    target_path.write_text("Run pytest before committing.\n", encoding="utf-8")
+    runtime = agentgrep_db.DbRuntime.open(db_path)
+    source = source_handle(source_path)
+    records = tuple(
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent=source.agent,
+            store=source.store,
+            adapter_id=source.adapter_id,
+            path=source.path,
+            text=text,
+            timestamp="2026-06-05T12:00:00Z",
+            session_id=f"session-{index}",
+        )
+        for index, text in enumerate(
+            ("Run ruff check before committing.", "Run ty check before committing."),
+        )
+    )
+    _ = runtime.sync_records(((source, records),), features_mode="inline")
+    insights = InsightEngine(runtime.store)
+    _ = insights.run_omissions(target_path=target_path, target_text=target_path.read_text())
+    created = SuggestionEngine(runtime.store).create_from_omissions(target_path=target_path)
+    runtime.close()
+    assert len(created) >= 2
+
+    payload = insight_tools._suggestions_list_sync(str(db_path), limit=1)
+
+    assert payload.limit == 1
+    assert payload.suggestions_total >= 2
+    assert payload.suggestions_truncated is True
+    assert len(payload.suggestions) == 1
+
+
+class InsightForeignFileCase(t.NamedTuple):
+    """Named case for insight listing tools on non-database files."""
+
+    test_id: str
+    tool: t.Literal["insights", "suggestions"]
+
+
+INSIGHT_FOREIGN_FILE_CASES: tuple[InsightForeignFileCase, ...] = (
+    InsightForeignFileCase(test_id="insights-list-degrades", tool="insights"),
+    InsightForeignFileCase(test_id="suggestions-list-degrades", tool="suggestions"),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    INSIGHT_FOREIGN_FILE_CASES,
+    ids=[case.test_id for case in INSIGHT_FOREIGN_FILE_CASES],
+)
+def test_insight_listing_tools_report_empty_for_foreign_file(
+    case: InsightForeignFileCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """A non-database file yields the same empty payload as a missing one.
+
+    Mirrors db_status and the CLI read surfaces: read-only SQLite
+    connects are lazy, so the error must be handled at the listing
+    call, not surfaced as a raw tool error.
+    """
+    from agentgrep.mcp.tools import insight_tools
+
+    db_path = tmp_path / "not-a-db.sqlite"
+    db_path.write_text("plain text", encoding="utf-8")
+
+    if case.tool == "insights":
+        insights = insight_tools._insights_list_sync(str(db_path))
+        assert insights.variant_edges_total == 0
+        assert insights.omission_findings == []
+    else:
+        suggestions = insight_tools._suggestions_list_sync(str(db_path))
+        assert suggestions.suggestions_total == 0
+        assert suggestions.suggestions == []

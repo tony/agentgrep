@@ -26,7 +26,9 @@ from agentgrep._text import (
     DB_DESCRIPTION,
     FIND_DESCRIPTION,
     GREP_DESCRIPTION,
+    INSIGHTS_DESCRIPTION,
     SEARCH_DESCRIPTION,
+    SUGGESTIONS_DESCRIPTION,
     UI_DESCRIPTION,
 )
 from agentgrep.cli.help_theme import create_themed_formatter
@@ -49,7 +51,13 @@ PatternMode = t.Literal["regex", "fixed", "word"]
 FindPatternMode = t.Literal["regex", "glob", "fixed", "exact"]
 FindTypeFilter = t.Literal["prompts", "history", "sessions", "all"]
 DbAction = t.Literal["sync", "status", "explain"]
+DbFeatureMode = t.Literal["defer", "inline"]
+InsightsAction = t.Literal["analyze", "list", "explain"]
+InsightsKind = t.Literal["similarity", "omissions", "all"]
+SuggestionsAction = t.Literal["list", "show", "render"]
 
+DEFAULT_INSIGHTS_LIST_LIMIT = 50
+DEFAULT_SUGGESTIONS_LIST_LIMIT = 50
 
 __all__ = [
     "CaseMode",
@@ -58,9 +66,11 @@ __all__ = [
     "FindPatternMode",
     "FindTypeFilter",
     "GrepArgs",
+    "InsightsArgs",
     "ParserBundle",
     "PatternMode",
     "SearchArgs",
+    "SuggestionsArgs",
     "UIArgs",
     "add_cache_options",
     "add_common_agent_options",
@@ -183,7 +193,35 @@ class DbArgs:
     color_mode: ColorMode
     progress_mode: ProgressMode
     limit_sources: int | None = None
+    features_mode: DbFeatureMode = "defer"
     force: bool = False
+
+
+@dataclasses.dataclass(slots=True)
+class InsightsArgs:
+    """Typed arguments for ``agentgrep insights`` subcommands."""
+
+    action: InsightsAction
+    db_path: str | None
+    kind: InsightsKind
+    target: str | None
+    output_mode: OutputMode
+    color_mode: ColorMode = "auto"
+    progress_mode: ProgressMode = "never"
+    limit: int = DEFAULT_INSIGHTS_LIST_LIMIT
+
+
+@dataclasses.dataclass(slots=True)
+class SuggestionsArgs:
+    """Typed arguments for ``agentgrep suggestions`` subcommands."""
+
+    action: SuggestionsAction
+    db_path: str | None
+    suggestion_id: str | None
+    target: str | None
+    output_mode: OutputMode
+    color_mode: ColorMode = "auto"
+    limit: int = DEFAULT_SUGGESTIONS_LIST_LIMIT
 
 
 @dataclasses.dataclass(slots=True)
@@ -195,6 +233,8 @@ class ParserBundle:
     grep_parser: argparse.ArgumentParser
     search_parser: argparse.ArgumentParser
     db_parser: argparse.ArgumentParser
+    insights_parser: argparse.ArgumentParser
+    suggestions_parser: argparse.ArgumentParser
 
 
 class _GrepLimitAction(argparse.Action):
@@ -645,6 +685,12 @@ def create_parser(
         help="Limit the number of sources synced",
     )
     _ = db_sync_parser.add_argument(
+        "--features",
+        choices=["defer", "inline"],
+        default="defer",
+        help="Feature generation mode: defer expensive features or build inline",
+    )
+    _ = db_sync_parser.add_argument(
         "--force",
         action="store_true",
         help="Resync unchanged sources instead of using source_state freshness checks",
@@ -682,12 +728,117 @@ def create_parser(
     _ = db_explain_parser.add_argument("--db", dest="db_path", help="agentgrep db path")
     add_output_mode_options(db_explain_parser, allow_ui=False)
 
+    insights_parser = subparsers.add_parser(
+        "insights",
+        help="Run and inspect deterministic agentic-data insights",
+        description=INSIGHTS_DESCRIPTION,
+        formatter_class=formatter_class,
+        color=color_mode != "never",
+    )
+    insights_subparsers = insights_parser.add_subparsers(dest="insights_action")
+    insights_analyze_parser = insights_subparsers.add_parser(
+        "analyze",
+        help="Analyze deterministic insights over the agentgrep db",
+        formatter_class=formatter_class,
+        color=color_mode != "never",
+    )
+    _ = insights_analyze_parser.add_argument("--db", dest="db_path", help="agentgrep db path")
+    _ = insights_analyze_parser.add_argument(
+        "--kind",
+        choices=["similarity", "omissions", "all"],
+        default="all",
+        help="Insight family to analyze",
+    )
+    _ = insights_analyze_parser.add_argument("--target", help="Target file for omission insights")
+    _ = insights_analyze_parser.add_argument(
+        "--progress",
+        choices=["auto", "always", "never"],
+        default="auto",
+        help="Show insight analysis progress on stderr",
+    )
+    _ = insights_analyze_parser.add_argument(
+        "--no-progress",
+        dest="progress",
+        action="store_const",
+        const="never",
+        help="Silence the stderr progress spinner (alias for --progress=never)",
+    )
+    add_output_mode_options(insights_analyze_parser, allow_ui=False)
+
+    insights_list_parser = insights_subparsers.add_parser(
+        "list",
+        help="List persisted insights",
+        formatter_class=formatter_class,
+        color=color_mode != "never",
+    )
+    _ = insights_list_parser.add_argument("--db", dest="db_path", help="agentgrep db path")
+    _ = insights_list_parser.add_argument(
+        "--kind",
+        choices=["similarity", "omissions", "all"],
+        default="all",
+        help="Insight family to list",
+    )
+    _ = insights_list_parser.add_argument(
+        "--limit",
+        type=int,
+        default=DEFAULT_INSIGHTS_LIST_LIMIT,
+        help=f"Maximum rows to return per insight family (default: {DEFAULT_INSIGHTS_LIST_LIMIT})",
+    )
+    add_output_mode_options(insights_list_parser, allow_ui=False)
+
+    insights_explain_parser = insights_subparsers.add_parser(
+        "explain",
+        help="Explain persisted insight counters",
+        formatter_class=formatter_class,
+        color=color_mode != "never",
+    )
+    _ = insights_explain_parser.add_argument("--db", dest="db_path", help="agentgrep db path")
+    add_output_mode_options(insights_explain_parser, allow_ui=False)
+
+    suggestions_parser = subparsers.add_parser(
+        "suggestions",
+        help="Render review-only instruction suggestions",
+        description=SUGGESTIONS_DESCRIPTION,
+        formatter_class=formatter_class,
+        color=color_mode != "never",
+    )
+    suggestions_subparsers = suggestions_parser.add_subparsers(
+        dest="suggestions_action",
+    )
+    suggestions_list_parser = suggestions_subparsers.add_parser(
+        "list",
+        help="List persisted suggestions",
+        formatter_class=formatter_class,
+        color=color_mode != "never",
+    )
+    _ = suggestions_list_parser.add_argument("--db", dest="db_path", help="agentgrep db path")
+    _ = suggestions_list_parser.add_argument("--target", help="Create suggestions for a target")
+    _ = suggestions_list_parser.add_argument(
+        "--limit",
+        type=int,
+        default=DEFAULT_SUGGESTIONS_LIST_LIMIT,
+        help=f"Maximum suggestions to return (default: {DEFAULT_SUGGESTIONS_LIST_LIMIT})",
+    )
+    add_output_mode_options(suggestions_list_parser, allow_ui=False)
+    for action in ("show", "render"):
+        suggestion_parser = suggestions_subparsers.add_parser(
+            action,
+            help=f"{action.title()} one persisted suggestion",
+            formatter_class=formatter_class,
+            color=color_mode != "never",
+        )
+        _ = suggestion_parser.add_argument("suggestion_id")
+        _ = suggestion_parser.add_argument("--db", dest="db_path", help="agentgrep db path")
+        add_output_mode_options(suggestion_parser, allow_ui=False)
+
     return ParserBundle(
         parser=parser,
         find_parser=find_parser,
         grep_parser=grep_parser,
         search_parser=search_parser,
         db_parser=db_parser,
+        insights_parser=insights_parser,
+        suggestions_parser=suggestions_parser,
     )
 
 
@@ -946,7 +1097,7 @@ def _check_for_mangled_field_predicate(
 
 def parse_args(
     argv: cabc.Sequence[str] | None = None,
-) -> DbArgs | FindArgs | GrepArgs | SearchArgs | UIArgs | None:
+) -> DbArgs | FindArgs | GrepArgs | InsightsArgs | SearchArgs | SuggestionsArgs | UIArgs | None:
     """Parse CLI arguments into typed dataclasses."""
     color_mode = normalize_color_mode(argv)
     effective_argv = list(argv) if argv is not None else list(sys.argv[1:])
@@ -976,6 +1127,20 @@ def parse_args(
                 bundle.db_parser.print_help()
             return None
         return _build_db_args(namespace, color_mode=color_mode, bundle=bundle)
+
+    if command == "insights":
+        if getattr(namespace, "insights_action", None) is None:
+            with configured_color_environment(color_mode):
+                bundle.insights_parser.print_help()
+            return None
+        return _build_insights_args(namespace, color_mode=color_mode, bundle=bundle)
+
+    if command == "suggestions":
+        if getattr(namespace, "suggestions_action", None) is None:
+            with configured_color_environment(color_mode):
+                bundle.suggestions_parser.print_help()
+            return None
+        return _build_suggestions_args(namespace, color_mode=color_mode, bundle=bundle)
 
     agents = parse_agents(t.cast("list[str]", namespace.agent))
     output_mode = parse_output_mode(namespace)
@@ -1082,7 +1247,60 @@ def _build_db_args(
         color_mode=color_mode,
         progress_mode=t.cast("ProgressMode", getattr(namespace, "progress", "never")),
         limit_sources=limit_sources,
+        features_mode=t.cast("DbFeatureMode", getattr(namespace, "features", "defer")),
         force=t.cast("bool", getattr(namespace, "force", False)),
+    )
+
+
+def _build_insights_args(
+    namespace: argparse.Namespace,
+    *,
+    color_mode: ColorMode,
+    bundle: ParserBundle,
+) -> InsightsArgs:
+    """Build :class:`InsightsArgs` from a parsed argparse namespace."""
+    action = t.cast("InsightsAction", namespace.insights_action)
+    kind = t.cast("InsightsKind", getattr(namespace, "kind", "all"))
+    target = t.cast("str | None", getattr(namespace, "target", None))
+    if action == "analyze" and kind == "omissions" and target is None:
+        with configured_color_environment(color_mode):
+            bundle.insights_parser.error("--target is required for omission insight analysis")
+    limit = t.cast("int", getattr(namespace, "limit", DEFAULT_INSIGHTS_LIST_LIMIT))
+    if action == "list" and limit < 1:
+        with configured_color_environment(color_mode):
+            bundle.insights_parser.error("--limit must be greater than 0")
+    return InsightsArgs(
+        action=action,
+        db_path=t.cast("str | None", getattr(namespace, "db_path", None)),
+        kind=kind,
+        target=target,
+        output_mode=parse_output_mode(namespace),
+        color_mode=color_mode,
+        progress_mode=t.cast("ProgressMode", getattr(namespace, "progress", "never")),
+        limit=limit,
+    )
+
+
+def _build_suggestions_args(
+    namespace: argparse.Namespace,
+    *,
+    color_mode: ColorMode,
+    bundle: ParserBundle,
+) -> SuggestionsArgs:
+    """Build :class:`SuggestionsArgs` from a parsed argparse namespace."""
+    action = t.cast("SuggestionsAction", namespace.suggestions_action)
+    limit = t.cast("int", getattr(namespace, "limit", DEFAULT_SUGGESTIONS_LIST_LIMIT))
+    if action == "list" and limit < 1:
+        with configured_color_environment(color_mode):
+            bundle.suggestions_parser.error("--limit must be greater than 0")
+    return SuggestionsArgs(
+        action=action,
+        db_path=t.cast("str | None", getattr(namespace, "db_path", None)),
+        suggestion_id=t.cast("str | None", getattr(namespace, "suggestion_id", None)),
+        target=t.cast("str | None", getattr(namespace, "target", None)),
+        output_mode=parse_output_mode(namespace),
+        color_mode=color_mode,
+        limit=limit,
     )
 
 
