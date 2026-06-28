@@ -500,7 +500,10 @@ def test_temp_home_sandbox_redirects_uvx_agentgrep_to_local_checkout(
     )[0]
 
     result = ConsoleCommandEvaluator(
-        sandbox=TempHomeSandbox(project_root=_REPO_ROOT),
+        # This case deliberately exercises the cold-build uvx->local redirect:
+        # a real `uv run agentgrep` resolve+build runs here (no shared env).
+        # Allow ample time so it does not flake under parallel CPU contention.
+        sandbox=TempHomeSandbox(project_root=_REPO_ROOT, timeout=120.0),
     ).evaluate(example)
 
     assert result.status is EvaluationStatus.PASSED
