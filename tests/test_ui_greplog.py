@@ -8,6 +8,7 @@ mirroring the HUD's ``_apply_records_batch`` tests.
 
 from __future__ import annotations
 
+import asyncio
 import pathlib
 import typing as t
 
@@ -288,6 +289,61 @@ async def test_greplog_streaming_batches_respect_active_filter(
         await pilot.pause(0.2)
         assert len(layout._records) == case.expected_records
         assert len(layout.query_one("#greplog").lines) == case.expected_lines
+
+
+class InterleavedFilterCase(t.NamedTuple):
+    """A filter that lands while an unfiltered batch apply is yielding."""
+
+    test_id: str
+    filter_text: str
+    matching_records: int
+    plain_records: int
+
+
+INTERLEAVED_FILTER_CASES = (
+    InterleavedFilterCase("filter-stops-old-raw-apply", "needle", 200, 200),
+)
+
+
+@pytest.mark.parametrize("case", INTERLEAVED_FILTER_CASES, ids=lambda case: case.test_id)
+async def test_greplog_filter_interrupts_unfiltered_batch_apply(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: InterleavedFilterCase,
+) -> None:
+    """A filter repaint must not be followed by stale unfiltered batch rows."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    matching = [
+        _record(tmp_path, i, f"{case.filter_text} row {i}") for i in range(case.matching_records)
+    ]
+    plain = [
+        _record(tmp_path, case.matching_records + i, f"plain row {i}")
+        for i in range(case.plain_records)
+    ]
+    records = [*matching, *plain]
+
+    def no_worker(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        layout = await _mount_greplog(app, pilot)
+        monkeypatch.setattr(layout, "run_worker", no_worker)
+        task = asyncio.create_task(
+            layout._apply_event(
+                layout._generation,
+                StreamingRecordsBatch(records=tuple(records), total=len(records)),
+            ),
+        )
+        await asyncio.sleep(0)
+        layout.filter_loaded(case.filter_text)
+        await layout._apply_log_filter(layout._filter_generation, tuple(matching))
+        await task
+        await pilot.pause()
+        lines = tuple(str(line) for line in layout.query_one("#greplog").lines)
+        assert len(layout._records) == len(records)
+        assert len(lines) == case.matching_records
+        assert all("plain row" not in line for line in lines)
 
 
 async def test_greplog_search_input_does_not_crash_on_keys(

@@ -17,6 +17,7 @@ the HUD. Imported only from inside the app factory (and tests), never eagerly
 
 from __future__ import annotations
 
+import asyncio
 import typing as t
 from collections import abc as cabc
 
@@ -219,10 +220,10 @@ class GrepLogLayout(LayoutScreen):
             if self._filter_matcher is not None:
                 self._refresh_filter_log(self._filter_matcher)
                 return
-            await _runtime.stream_apply(
+            await self._write_unfiltered_records(
+                generation,
+                self._filter_generation,
                 event.records,
-                self._write_chunk,
-                chunk_size=_APPLY_CHUNK_SIZE,
             )
         elif isinstance(event, ProgressSnapshot):
             if not self._search_done and self._status is not None:
@@ -253,6 +254,24 @@ class GrepLogLayout(LayoutScreen):
             self._status.update(f"stopped at {format_match_count(total)} in {elapsed:.1f}s")
         else:
             self._status.update(f"{format_match_count(total)} in {elapsed:.1f}s")
+
+    @_runtime.pump_only
+    async def _write_unfiltered_records(
+        self,
+        generation: int,
+        filter_generation: int,
+        records: cabc.Sequence[SearchRecord],
+    ) -> None:
+        """Append unfiltered records until search or filter state changes."""
+        for start in range(0, len(records), _APPLY_CHUNK_SIZE):
+            if generation != self._generation or filter_generation != self._filter_generation:
+                return
+            if self._filter_matcher is not None:
+                self._refresh_filter_log(self._filter_matcher)
+                return
+            self._write_chunk(records[start : start + _APPLY_CHUNK_SIZE])
+            if start + _APPLY_CHUNK_SIZE < len(records):
+                await asyncio.sleep(0)
 
     def _write_chunk(self, chunk: cabc.Sequence[SearchRecord]) -> None:
         """Append one bounded slice of records to the log (pump-side)."""
