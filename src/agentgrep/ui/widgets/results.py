@@ -221,6 +221,7 @@ class SearchResultsList(OptionList, can_focus=True):
         return row
 
     def _build_row(self, record: SearchRecord) -> rich_text.Text:
+        """Build the colored row renderable for ``record`` (the uncached path)."""
         theme_vars = t.cast("t.Any", self.app).theme_variables
         agent_style = ui_theme.resolve(
             theme_vars,
