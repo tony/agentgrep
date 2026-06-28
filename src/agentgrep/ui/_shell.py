@@ -69,8 +69,9 @@ class ExplorerApp(App[None]):
         is actually run.
         """
         from agentgrep.ui.layouts.hud import HudLayout
+        from agentgrep.ui.workflows import SearchWorkflow
 
-        return t.cast("Screen", HudLayout(self._ctx))
+        return t.cast("Screen", HudLayout(self._ctx, SearchWorkflow()))
 
     def on_mount(self) -> None:
         """Bind the pump thread for the non-blocking guards (ADR 0011 NB-1/NB-8).

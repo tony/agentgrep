@@ -84,6 +84,9 @@ from agentgrep.ui.widgets import (
     SearchResultsList,
 )
 
+if t.TYPE_CHECKING:
+    from agentgrep.ui.workflows import Workflow
+
 
 class _DetailMatchStyles(t.NamedTuple):
     """Rich styles resolved on the pump before optional detail offload."""
@@ -148,8 +151,8 @@ class HudLayout(LayoutScreen):
     # breakpoint above, which measures the results column alone.
     _SPLIT_BREAKPOINT: t.ClassVar[int] = 100
 
-    def __init__(self, ctx: UiContext) -> None:
-        super().__init__(ctx)
+    def __init__(self, ctx: UiContext, workflow: Workflow) -> None:
+        super().__init__(ctx, workflow)
         self.home = ctx.home
         self.search_query = ctx.query
         # The user's launch discovery scope. A ``scope:`` predicate
@@ -441,17 +444,14 @@ class HudLayout(LayoutScreen):
         # and watchdog are owned by the App shell (it owns the pump).
         self.app.theme_changed_signal.subscribe(self, self._on_theme_changed)
         self._apply_responsive_layout()
+        # Attach the workflow (base.on_mount): it seeds the initial dispatch —
+        # a launch search or the idle bare canvas — now that the widgets exist.
+        super().on_mount()
+        # Focus the filter when a search is running, else the search box so the
+        # user can start typing immediately.
         if self.search_query.terms:
-            self._start_search_worker(self.search_query)
             self._filter_input.focus()
         else:
-            # No initial query — pi "bare canvas": hide the body chrome
-            # behind the centered hint (no status text) and land focus on
-            # the search bar so the user can start typing immediately.
-            self._search_done = True
-            if self._results_header is not None:
-                self._results_header.go_idle()
-            self._set_empty_state(empty=True)
             self._search_input.focus()
         self._update_pane_focus()
 
@@ -806,10 +806,11 @@ class HudLayout(LayoutScreen):
             )
 
     def on_search_requested(self, message: SearchRequested) -> None:
-        """User changed the top search input; relaunch the backend search.
+        """Primary input submitted: run a slash command, else route to the workflow.
 
-        Treats whitespace-only / empty input as "no search" and just
-        resets the UI to an idle state without spawning a worker.
+        Leading-slash text that resolves to an exact command runs a handler;
+        anything else (including ``/path`` text and empty input) is handed to the
+        active workflow, which decides whether to search, filter, or reset.
         """
         text = message.payload.text.strip()
         if text.startswith("/"):
@@ -820,18 +821,31 @@ class HudLayout(LayoutScreen):
                 # text remains searchable prompt/path text.
                 self._dispatch_slash_command(command, args)
                 return
-        new_query = self._build_search_query(text)
-        self.control.request_answer_now()
-        if not text:
-            # Cleared the box — return to the pi bare canvas + hint.
-            # ``_reset_search_chrome`` already idles the header rule.
-            self._reset_search_chrome()
-            self._search_done = True
-            self._set_empty_state(empty=True)
-            self.search_query = new_query
-            return
+        self._workflow.on_query(self, text)
+
+    # --- WorkflowHost surface: the active workflow drives the layout here -----
+    def build_query(self, text: str) -> SearchQuery:
+        """Parse ``text`` into a query at the user's launch scope (host surface)."""
+        return self._build_search_query(text)
+
+    def run_search(self, query: SearchQuery) -> None:
+        """Reset the chrome and stream ``query`` through the engine (host surface)."""
+        self._start_search_worker(query)
+
+    def reset_view(self) -> None:
+        """Return to the idle bare-canvas state without a search (host surface)."""
+        self._reset_search_chrome()
+        self._search_done = True
+        self._set_empty_state(empty=True)
+        self.search_query = self._build_search_query("")
+
+    def record_history(self, text: str) -> None:
+        """Persist ``text`` to the search-input history (host surface)."""
         self._record_history(text)
-        self._start_search_worker(new_query)
+
+    def request_cancel(self) -> None:
+        """Cooperatively signal the in-flight search to wrap up (host surface)."""
+        self.control.request_answer_now()
 
     def _dispatch_slash_command(self, command: commands.SlashCommand, args: str) -> None:
         """Run an already-resolved ``/command`` from the search box."""
@@ -1200,8 +1214,15 @@ class HudLayout(LayoutScreen):
         return f"{snap.current}/{snap.total}"
 
     def on_filter_requested(self, message: FilterRequested) -> None:
-        """Spawn a worker to recompute the filter; exclusive cancels any in-flight one."""
-        text = message.payload.text
+        """Narrow the loaded records when the #filter box changes."""
+        self.filter_loaded(message.payload.text)
+
+    def filter_loaded(self, text: str) -> None:
+        """Recompute the in-memory filter on a worker (host surface).
+
+        ``exclusive`` cancels any in-flight filter; the same matcher is reused
+        for streaming records so a live search stays query-aware (NB-6).
+        """
         matcher = self._build_filter_matcher(text)
         # Streaming records use the same matcher so a live search keeps the
         # filtered list query-aware as records arrive.
