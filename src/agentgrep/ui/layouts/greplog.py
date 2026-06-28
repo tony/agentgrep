@@ -159,6 +159,7 @@ class GrepLogLayout(LayoutScreen):
             self._log.clear()
         if self._status is not None:
             self._status.update("")
+        self._search_emit = self._make_gated_emit()
 
     def record_history(self, text: str) -> None:
         """No-op: the grep log does not persist its own input history."""

@@ -11,12 +11,11 @@ from __future__ import annotations
 import pathlib
 import typing as t
 
-from agentgrep.progress import StreamingRecordsBatch
+import pytest
+
+from agentgrep.progress import StreamingRecordsBatch, StreamingSearchFinished
 from agentgrep.records import SearchRecord
 from tests.test_agentgrep import _build_empty_ui_app
-
-if t.TYPE_CHECKING:
-    import pytest
 
 
 def _record(tmp_path: pathlib.Path, idx: int, text: str) -> SearchRecord:
@@ -119,3 +118,46 @@ async def test_greplog_stale_generation_is_dropped(
         await pilot.pause()
         assert layout._records == []
         assert len(layout.query_one("#greplog").lines) == 0
+
+
+class ResetStaleEventCase(t.NamedTuple):
+    """A stale worker event that arrives after reset."""
+
+    test_id: str
+    event_kind: t.Literal["records", "finished"]
+
+
+RESET_STALE_EVENT_CASES = (
+    ResetStaleEventCase("records-batch", "records"),
+    ResetStaleEventCase("finished-event", "finished"),
+)
+
+
+@pytest.mark.parametrize("case", RESET_STALE_EVENT_CASES, ids=lambda case: case.test_id)
+async def test_greplog_reset_drops_stale_search_events(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: ResetStaleEventCase,
+) -> None:
+    """Search events from before reset must not repaint the cleared log."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = [_record(tmp_path, 0, "old row")]
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        layout = await _mount_greplog(app, pilot)
+        old_generation = layout._generation
+        layout.reset_view()
+        if case.event_kind == "records":
+            await layout._apply_event(
+                old_generation,
+                StreamingRecordsBatch(records=tuple(records), total=1),
+            )
+        else:
+            await layout._apply_event(
+                old_generation,
+                StreamingSearchFinished(outcome="complete", total=9, elapsed=0.1),
+            )
+        await pilot.pause()
+        assert layout._records == []
+        assert len(layout.query_one("#greplog").lines) == 0
+        assert str(layout.query_one("#greplog-status").render()) == ""
