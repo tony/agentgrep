@@ -133,6 +133,23 @@ async def test_f2_cycles_through_layouts(
         assert type(app.screen).__name__ == "HudLayout"
 
 
+async def test_f2_resumes_launch_layout(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Switching back to the launch layout resumes its existing screen."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        hud = app.screen
+        await pilot.press("f2")
+        await pilot.pause()
+        assert type(app.screen).__name__ == "GrepLogLayout"
+        await pilot.press("f2")
+        await pilot.pause()
+        assert app.screen is hud
+
+
 async def test_f3_cycles_through_workflows(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

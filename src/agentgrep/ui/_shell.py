@@ -65,6 +65,10 @@ class ExplorerApp(App[None]):
         self._ctx = ctx
         self._layout_name = layout
         self._workflow_name = workflow
+        for name in registry.layout_names():
+            self.add_mode(name, self._mode_factory(name))
+        self._screen_stacks.setdefault(layout, [])
+        self._current_mode = layout
 
     def get_theme_variable_defaults(self) -> dict[str, str]:
         """Merge the ``$ag-*`` token defaults so the stylesheet always resolves.
@@ -120,10 +124,6 @@ class ExplorerApp(App[None]):
             _runtime.start_pump_watchdog()
         if _runtime.audit_hook_enabled():
             _runtime.arm_pump_audit()
-        # Register every layout as a switchable mode (F2). The launch layout is
-        # already mounted via get_default_screen, so this only enables switching.
-        for name in registry.layout_names():
-            self.add_mode(name, self._mode_factory(name))
         self._update_subtitle()
 
     def on_unmount(self) -> None:
