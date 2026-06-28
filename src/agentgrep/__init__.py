@@ -418,6 +418,8 @@ def run_ui(
     *,
     control: SearchControl,
     initial_search_text: str | None = None,
+    layout: str | None = None,
+    workflow: str | None = None,
 ) -> None:
     """Launch the streaming Textual explorer for ``query``.
 
@@ -429,15 +431,22 @@ def run_ui(
     launch like ``agentgrep search --ui agent:codex bliss`` shows the
     full query string (not just the text terms). ``None`` falls back
     to the space-joined ``query.terms`` for compatibility with the
-    pre-query-language callers.
+    pre-query-language callers. ``layout`` / ``workflow`` select the
+    pluggable surface; ``None`` uses the registry defaults.
     """
     from agentgrep.ui.app import run_ui as _run_ui
 
+    selection: dict[str, str] = {}
+    if layout is not None:
+        selection["layout"] = layout
+    if workflow is not None:
+        selection["workflow"] = workflow
     _run_ui(
         home,
         query,
         control=control,
         initial_search_text=initial_search_text,
+        **selection,
     )
 
 
@@ -447,20 +456,29 @@ def build_streaming_ui_app(
     *,
     control: SearchControl,
     initial_search_text: str | None = None,
+    layout: str | None = None,
+    workflow: str | None = None,
 ) -> object:
     """Construct the streaming Textual app without entering its run loop.
 
     Thin wrapper that imports the real factory from :mod:`agentgrep.ui.app`
     lazily — Textual is only required at the moment the UI is actually
-    built, never at import time of the top-level package.
+    built, never at import time of the top-level package. ``layout`` /
+    ``workflow`` select the pluggable surface; ``None`` uses the defaults.
     """
     from agentgrep.ui.app import build_streaming_ui_app as _build
 
+    selection: dict[str, str] = {}
+    if layout is not None:
+        selection["layout"] = layout
+    if workflow is not None:
+        selection["workflow"] = workflow
     return _build(
         home,
         query,
         control=control,
         initial_search_text=initial_search_text,
+        **selection,
     )
 
 

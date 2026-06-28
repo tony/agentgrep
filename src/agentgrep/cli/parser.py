@@ -104,6 +104,8 @@ class UIArgs:
 
     initial_query: str
     color_mode: ColorMode
+    layout: str = "hud"
+    workflow: str = "search"
 
 
 @dataclasses.dataclass(slots=True)
@@ -525,6 +527,21 @@ def create_parser(
         default="",
         help="Optional initial search text to populate the search bar",
     )
+    # Textual-free name catalog (no Textual import on the cold --help path).
+    from agentgrep.ui import registry as _ui_registry
+
+    _ = ui_parser.add_argument(
+        "--layout",
+        choices=_ui_registry.layout_names(),
+        default=_ui_registry.DEFAULT_LAYOUT,
+        help="TUI layout to launch (default: %(default)s)",
+    )
+    _ = ui_parser.add_argument(
+        "--workflow",
+        choices=_ui_registry.workflow_names(),
+        default=_ui_registry.DEFAULT_WORKFLOW,
+        help="Interaction workflow to drive it (default: %(default)s)",
+    )
     search_parser = subparsers.add_parser(
         "search",
         help="Smart search with relevance ranking and deduplication",
@@ -873,6 +890,8 @@ def parse_args(
         return UIArgs(
             initial_query=t.cast("str", namespace.initial_query),
             color_mode=color_mode,
+            layout=t.cast("str", namespace.layout),
+            workflow=t.cast("str", namespace.workflow),
         )
 
     agents = parse_agents(t.cast("list[str]", namespace.agent))

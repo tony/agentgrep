@@ -89,7 +89,7 @@ class SearchResultsList(OptionList, can_focus=True):
         # Records now exist — leave the app's pre-search bare-canvas state so the
         # panes are visible (idempotent; the live search flow also does this at
         # launch).
-        reveal = getattr(self.app, "_set_empty_state", None)
+        reveal = getattr(self.screen, "_set_empty_state", None)
         if callable(reveal):
             reveal(empty=False)
 
@@ -265,7 +265,7 @@ class SearchResultsList(OptionList, can_focus=True):
         directly would move focus into a ``display: none`` pane that
         never appears.
         """
-        t.cast("t.Any", self.app)._focus_detail()
+        t.cast("t.Any", self.screen)._focus_detail()
 
     def action_cursor_top(self) -> None:
         """Jump the highlight to the first row (vim-style ``g``)."""

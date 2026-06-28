@@ -263,7 +263,13 @@ def run_ui_command(args: UIArgs) -> int:
         agents=AGENT_CHOICES,
         limit=None,
     )
-    run_ui(pathlib.Path.home(), query, control=SearchControl())
+    run_ui(
+        pathlib.Path.home(),
+        query,
+        control=SearchControl(),
+        layout=args.layout,
+        workflow=args.workflow,
+    )
     return 0
 
 

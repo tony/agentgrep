@@ -41,13 +41,13 @@ def _staged_ctrl_c(widget: Input, event: events.Key) -> bool:
     stop = getattr(event, "stop", None)
     if callable(stop):
         stop()
-    t.cast("t.Any", widget.app)._handle_input_ctrl_c(widget)
+    t.cast("t.Any", widget.screen)._handle_input_ctrl_c(widget)
     return True
 
 
 def _disarm_confirm_exit(widget: Input) -> None:
     """Clear any pending confirm-exit when the user presses a non-ctrl+c key."""
-    t.cast("t.Any", widget.app)._disarm_confirm_exit()
+    t.cast("t.Any", widget.screen)._disarm_confirm_exit()
 
 
 class FilterInput(Input):
@@ -120,7 +120,7 @@ class FilterInput(Input):
         cursor = int(getattr(self, "cursor_position", 0))
         value = str(getattr(self, "value", ""))
         stop = getattr(event, "stop", None)
-        dropdown = t.cast("t.Any", getattr(self.app, "_filter_dropdown", None))
+        dropdown = t.cast("t.Any", getattr(self.screen, "_filter_dropdown", None))
         dropdown_open = dropdown is not None and bool(dropdown.display)
         if dropdown_open and key in {"escape", "ctrl+c"}:
             # Dismiss the dropdown, keep editing — don't quit.
@@ -175,7 +175,7 @@ class FilterInput(Input):
             if callable(stop):
                 stop()
             with contextlib.suppress(Exception):
-                t.cast("t.Any", self.app)._focus_detail()
+                t.cast("t.Any", self.screen)._focus_detail()
             return
         await super()._on_key(event)
 
@@ -234,7 +234,7 @@ class DetailFindInput(Input):
         """``esc`` closes; ``ctrl+c`` clears then closes; ``enter``/``down``/``up`` step."""
         key = str(getattr(event, "key", ""))
         stop = getattr(event, "stop", None)
-        app = t.cast("t.Any", self.app)
+        app = t.cast("t.Any", self.screen)
         if key == "escape":
             if callable(stop):
                 stop()
@@ -321,7 +321,7 @@ class SearchInput(Input):
         cursor = int(getattr(self, "cursor_position", 0))
         value = str(getattr(self, "value", ""))
         stop = getattr(event, "stop", None)
-        dropdown = t.cast("t.Any", getattr(self.app, "_enum_dropdown", None))
+        dropdown = t.cast("t.Any", getattr(self.screen, "_enum_dropdown", None))
         dropdown_open = dropdown is not None and bool(dropdown.display)
         if dropdown_open and key in {"escape", "ctrl+c"}:
             # Dismiss the dropdown, keep editing — don't quit or stop search.
@@ -334,7 +334,7 @@ class SearchInput(Input):
         # Any other key cancels a pending "press ctrl-c again to exit".
         _disarm_confirm_exit(self)
         if dropdown_open and key == "enter":
-            app = t.cast("t.Any", self.app)
+            app = t.cast("t.Any", self.screen)
             if getattr(app, "_command_matches", ()):
                 # Command menu: run the highlighted command rather than submit
                 # the partial "/c" (which would flash an unknown-command error).

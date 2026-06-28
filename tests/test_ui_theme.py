@@ -210,10 +210,10 @@ async def test_theme_switch_rerenders_rows(
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
         record = _ui_record(agentgrep, tmp_path / "r.jsonl", "codex prompt body", "r")
-        app._results._rebuild_options([record])
+        app.screen._results._rebuild_options([record])
 
         def agent_span_styles() -> list[str]:
-            option = app._results.get_option_at_index(0)
+            option = app.screen._results.get_option_at_index(0)
             return [str(span.style) for span in option.prompt.spans]
 
         assert any("#00d7ff" in style for style in agent_span_styles())

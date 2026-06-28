@@ -64,7 +64,7 @@ def _run_clear(app: t.Any, args: str) -> None:
     app._reset_search_chrome()
     app._search_done = True
     app._set_empty_state(empty=True)
-    app.query = app._build_search_query("")
+    app.search_query = app._build_search_query("")
     if app._search_input is not None:
         app._search_input.focus()
 
@@ -72,7 +72,7 @@ def _run_clear(app: t.Any, args: str) -> None:
 def _run_exit(app: t.Any, args: str) -> None:
     """Quit the explorer."""
     del args
-    app.exit()
+    app.app.exit()
 
 
 def _run_help(app: t.Any, args: str) -> None:

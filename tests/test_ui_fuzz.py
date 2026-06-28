@@ -236,7 +236,7 @@ class _Move(t.NamedTuple):
 
 
 async def _m_type_search(pilot: t.Any, app: t.Any, rng: random.Random, ctx: t.Any) -> None:
-    app._search_input.value = rng.choice(_QUERIES)
+    app.screen._search_input.value = rng.choice(_QUERIES)
     await pilot.pause()
 
 
@@ -244,42 +244,42 @@ async def _m_submit_search(pilot: t.Any, app: t.Any, rng: random.Random, ctx: t.
     shape = rng.choice(_STREAM_SHAPES)
     ctx.engine.drive = shape.drive
     ctx.engine.records = ctx.large_pool if shape.test_id == "massive" else ctx.pool
-    app._search_input.focus()
-    app._search_input.value = rng.choice(_NONEMPTY_QUERIES)
+    app.screen._search_input.focus()
+    app.screen._search_input.value = rng.choice(_NONEMPTY_QUERIES)
     await pilot.press("enter")
     await app.workers.wait_for_complete()
     await pilot.pause()
 
 
 async def _m_type_filter(pilot: t.Any, app: t.Any, rng: random.Random, ctx: t.Any) -> None:
-    if not app._filter_input.display:  # hidden until a search loads results
+    if not app.screen._filter_input.display:  # hidden until a search loads results
         return
-    app._filter_input.value = rng.choice(_QUERIES)
+    app.screen._filter_input.value = rng.choice(_QUERIES)
     await pilot.pause(0.2)  # let the 150 ms debounce + filter worker fire
     await app.workers.wait_for_complete()
     await pilot.pause()
 
 
 async def _m_navigate(pilot: t.Any, app: t.Any, rng: random.Random, ctx: t.Any) -> None:
-    if not app._results.display:  # hidden in the pre-search bare-canvas state
+    if not app.screen._results.display:  # hidden in the pre-search bare-canvas state
         return
-    app._results.focus()
+    app.screen._results.focus()
     await pilot.press(rng.choice(("j", "k", "g", "G", "ctrl+d", "ctrl+u", "down", "up", "tab")))
 
 
 async def _m_select_row(pilot: t.Any, app: t.Any, rng: random.Random, ctx: t.Any) -> None:
-    count = app._results.option_count
+    count = app.screen._results.option_count
     if count:
-        app._results.highlighted = rng.randrange(count)
+        app.screen._results.highlighted = rng.randrange(count)
         await pilot.pause()
         await app.workers.wait_for_complete()  # off-thread detail build for big bodies
         await pilot.pause()
 
 
 async def _m_scroll_detail(pilot: t.Any, app: t.Any, rng: random.Random, ctx: t.Any) -> None:
-    if not app._detail_scroll.display:  # hidden until the detail pane is revealed
+    if not app.screen._detail_scroll.display:  # hidden until the detail pane is revealed
         return
-    app._detail_scroll.focus()
+    app.screen._detail_scroll.focus()
     await pilot.press(rng.choice(("ctrl+d", "ctrl+u", "g", "G", "ctrl+f", "ctrl+b")))
 
 
@@ -293,7 +293,7 @@ async def _m_resize(pilot: t.Any, app: t.Any, rng: random.Random, ctx: t.Any) ->
 async def _m_dropdown(pilot: t.Any, app: t.Any, rng: random.Random, ctx: t.Any) -> None:
     # The filter input is hidden in the pre-search bare-canvas state; only drive
     # inputs that are currently displayed (the search bar always is).
-    candidates = [w for w in (app._search_input, app._filter_input) if w.display]
+    candidates = [w for w in (app.screen._search_input, app.screen._filter_input) if w.display]
     if not candidates:
         return
     target = rng.choice(candidates)
@@ -339,11 +339,13 @@ def _assert_invariants(app: t.Any, where: str) -> None:
     if focused is not None:
         # Never strand focus on a hidden widget (the collapsed stacked detail).
         assert focused.display, f"{where}: focus on a non-displayed widget {focused.id}"
-    all_ids = {id(record) for record in app.all_records}
-    filtered_ids = {id(record) for record in app.filtered_records}
+    all_ids = {id(record) for record in app.screen.all_records}
+    filtered_ids = {id(record) for record in app.screen.filtered_records}
     assert filtered_ids <= all_ids, f"{where}: filtered_records not a subset of all_records"
-    assert len(app._detail_body_cache) <= app._DETAIL_CACHE_MAX, f"{where}: detail cache unbounded"
-    assert len(app._detail_scroll_positions) <= app._DETAIL_CACHE_MAX, (
+    assert len(app.screen._detail_body_cache) <= app.screen._DETAIL_CACHE_MAX, (
+        f"{where}: detail cache unbounded"
+    )
+    assert len(app.screen._detail_scroll_positions) <= app.screen._DETAIL_CACHE_MAX, (
         f"{where}: scroll-memory cache unbounded"
     )
 
@@ -371,7 +373,7 @@ async def _run_session(app: t.Any, ctx: _Ctx, *, seed: int, moves: int) -> None:
         await _bounded(app.workers.wait_for_complete(), _HEAVY_BUDGET, f"seed={seed} drain")
         await _bounded(pilot.pause(), _LIGHT_BUDGET, f"seed={seed} settle")
         # After a full drain the visible list matches the filtered model.
-        assert app._results.option_count == len(app.filtered_records)
+        assert app.screen._results.option_count == len(app.screen.filtered_records)
 
 
 @pytest.mark.parametrize("seed", _SEEDS, ids=[f"seed-{s}" for s in _SEEDS])
@@ -407,8 +409,8 @@ async def test_fuzz_detects_blocking_handler(
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
         # Wedge the pump: a synchronous sleep inside a call_from_thread callee.
-        monkeypatch.setattr(app, "_apply_progress", lambda _snapshot: time.sleep(1.5))
-        app._search_input.value = "bliss"
+        monkeypatch.setattr(app.screen, "_apply_progress", lambda _snapshot: time.sleep(1.5))
+        app.screen._search_input.value = "bliss"
         with pytest.raises((UiHangError, TimeoutError)):
             await _bounded(_drive_then_wait(pilot, app), 1.0, "blocking-handler")
 
