@@ -1,10 +1,11 @@
-"""Module-level ``ExplorerApp`` Textual app — the explorer's view shell.
+"""The default heads-up layout: search -> results | detail -> status.
 
-``ExplorerApp`` was lifted out of ``build_streaming_ui_app``'s closure (ADR
-0012): a module that imports Textual at the top is fine as long as it is
-imported only from inside the factory (and the tests), never by the eager
-``import agentgrep`` path, so ADR 0010's optional-dependency rule holds. The
-widgets and message types it composes live in ``agentgrep.ui.widgets``.
+``HudLayout`` is the explorer's first pluggable layout (ADR 0013), relocated
+from the former fused ``ExplorerApp``: the App-lifecycle concerns moved to the
+thin :class:`~agentgrep.ui.app.ExplorerApp` shell and this is now a
+:class:`~agentgrep.ui.layouts._base.LayoutScreen`. It imports Textual at the
+top but is only reached from inside the factory (and the tests), so
+``import agentgrep`` stays Textual-free (ADR 0010).
 """
 
 from __future__ import annotations
@@ -13,7 +14,6 @@ import collections
 import dataclasses
 import functools
 import json
-import pathlib
 import re
 import time
 import typing as t
@@ -23,7 +23,6 @@ from rich.console import Group as _RichGroup
 from rich.markdown import Markdown as _RichMarkdown
 from rich.syntax import Syntax as _RichSyntax
 from rich.text import Text
-from textual.app import App
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Footer, Static
@@ -52,7 +51,7 @@ from agentgrep.progress import (
 from agentgrep.query import default_registry
 from agentgrep.records import SearchQuery, SearchRecord
 from agentgrep.ui import _history, _runtime, commands, theme as ui_theme
-from agentgrep.ui._seams import SearchInvoker
+from agentgrep.ui._context import UiContext
 from agentgrep.ui.completion import (
     QuerySuggester,
     apply_enum_choice,
@@ -65,6 +64,7 @@ from agentgrep.ui.format import (
     scroll_percent,
 )
 from agentgrep.ui.highlighter import QueryHighlighter
+from agentgrep.ui.layouts._base import LayoutScreen
 from agentgrep.ui.widgets import (
     CompletionDropdown,
     DetailFindInput,
@@ -95,26 +95,9 @@ class _DetailMatchStyles(t.NamedTuple):
 _DetailFindBaseKey = tuple[str, tuple[str, ...], bool, bool, tuple[str, ...]]
 
 
-#: Textual's ``App`` is the runtime base. It is kept opaque to the type checker
-#: exactly as it was inside the former ``build_streaming_ui_app`` closure (whose
-#: base came through a ``type[object]`` module Protocol, so the class body was
-#: never statically typed against ``App``). Lifting the class to module scope
-#: would otherwise expose ``App.query`` — the DOM query method — colliding with
-#: this view's ``self.query: SearchQuery`` attribute, plus dozens of latent
-#: imprecisions. Fully typing this large view class against ``App`` is a separate
-#: follow-up (ADR 0012 widget normalization); until then the lift stays a pure
-#: relocation by preserving the prior, un-typed posture.
-_APP_BASE: t.Any = App
+class HudLayout(LayoutScreen):
+    """Search box, streaming results list, detail pane, and status chrome."""
 
-
-class ExplorerApp(_APP_BASE):
-    """Streaming read-only explorer for normalized search records."""
-
-    # The pi-lite global stylesheet (semantic tokens + all-widget rules)
-    # lives beside this module. The ``$ag-*`` tokens it references are
-    # guaranteed to resolve via ``get_theme_variable_defaults`` regardless
-    # of the active theme.
-    CSS_PATH: t.ClassVar[str] = "styles.tcss"
     # ``priority=True`` on the directional ``ctrl+hjkl`` bindings pushes
     # them into Textual's priority dispatch lane so they win over any
     # widget binding for the same key (e.g. ``Input``'s readline
@@ -122,8 +105,8 @@ class ExplorerApp(_APP_BASE):
     # request: filter loses ``ctrl+k``; ``ctrl+u`` and ``ctrl+w`` are
     # untouched and remain readline-compatible.
     BINDINGS: t.ClassVar[list[t.Any]] = [
-        ("tab", "focus_next", "Switch focus"),
-        ("q", "quit", "Quit"),
+        ("tab", "app.focus_next", "Switch focus"),
+        ("q", "app.quit", "Quit"),
         ("escape", "stop_search", "Stop search"),
         ("ctrl+backslash", "toggle_detail_progress", "Detail"),
         ("ctrl+c", "smart_quit", "Stop / Quit"),
@@ -165,41 +148,18 @@ class ExplorerApp(_APP_BASE):
     # breakpoint above, which measures the results column alone.
     _SPLIT_BREAKPOINT: t.ClassVar[int] = 100
 
-    def __init__(
-        self,
-        *,
-        home: pathlib.Path,
-        query: SearchQuery,
-        control: SearchControl,
-        invoker: SearchInvoker,
-        initial_search_text: str | None = None,
-    ) -> None:
-        super().__init__()
-        # Register and activate the pi-lite themes before the stylesheet
-        # loads (CSS is parsed during startup, before ``on_mount``) so the
-        # ``$ag-*`` tokens it references resolve from the active theme.
-        # ``get_theme_variable_defaults`` is the belt-and-suspenders that
-        # keeps those tokens resolvable even under a built-in theme.
-        self.register_theme(ui_theme.agentgrep_dark())
-        self.register_theme(ui_theme.agentgrep_light())
-        self.theme = ui_theme.DARK_THEME_NAME
-        # Run with native ANSI background handling so the structural panes
-        # can use ``ansi_default`` (emitted as the terminal's own default
-        # background, SGR 49) instead of a painted color — the only way a
-        # Textual compositor can let the terminal background show through
-        # like pi/claude-code. Truecolor ``#hex`` foregrounds and item
-        # backgrounds are unaffected by this flag, so the pi palette stays.
-        self.ansi_color = True
-        self.home = home
-        self.query = query
+    def __init__(self, ctx: UiContext) -> None:
+        super().__init__(ctx)
+        self.home = ctx.home
+        self.search_query = ctx.query
         # The user's launch discovery scope. A ``scope:`` predicate
         # widens the per-search scope to "all"; this stable base is what
         # a search without a ``scope:`` predicate reverts to, so the
         # widening never persists across searches.
-        self._user_scope = query.scope
-        self.control = control
-        self._invoker = invoker
-        self.initial_search_text: str | None = initial_search_text
+        self._user_scope = ctx.query.scope
+        self.control = ctx.control
+        self._invoker = ctx.invoker
+        self.initial_search_text: str | None = ctx.initial_search_text
         self.all_records = []
         self.filtered_records = []
         self._search_emit: cabc.Callable[[object], None] | None = None
@@ -211,7 +171,7 @@ class ExplorerApp(_APP_BASE):
         # state — under XDG_STATE_HOME, never a searched store). Loaded once
         # at construction; the recall modal reads this in-memory snapshot.
         self._history_disabled = _history.history_disabled()
-        self._history_path = _history.history_path(home)
+        self._history_path = _history.history_path(self.home)
         self._history: list[_history.HistoryEntry] = (
             [] if self._history_disabled else _history.load_history(self._history_path)
         )
@@ -312,19 +272,6 @@ class ExplorerApp(_APP_BASE):
     def _get_start_time(self) -> float | None:
         return self._started_at
 
-    def get_theme_variable_defaults(self) -> dict[str, str]:
-        """Add the ``$ag-*`` token defaults so the stylesheet always resolves.
-
-        Returns
-        -------
-        dict[str, str]
-            Textual's defaults merged with :func:`theme.ag_variable_defaults`
-            so a switch to any built-in theme can't leave an ``$ag-*``
-            reference unresolved.
-        """
-        base = t.cast("dict[str, str]", super().get_theme_variable_defaults())
-        return {**base, **ui_theme.ag_variable_defaults()}
-
     def _on_theme_changed(self, _theme: object) -> None:
         """Rebuild Rich-baked surfaces when the palette switches.
 
@@ -357,7 +304,7 @@ class ExplorerApp(_APP_BASE):
         if self.initial_search_text is not None:
             initial_search = self.initial_search_text
         else:
-            initial_search = " ".join(self.query.terms) if self.query.terms else ""
+            initial_search = " ".join(self.search_query.terms) if self.search_query.terms else ""
         yield SearchInput(
             value=initial_search,
             placeholder="Search prompts",
@@ -490,21 +437,12 @@ class ExplorerApp(_APP_BASE):
             typed_input.select_on_focus = False
         self._search_emit = self._make_gated_emit()
         # Rebuild Rich-baked rows/detail when the user switches palette
-        # (e.g. dark <-> light via the command palette).
-        self.theme_changed_signal.subscribe(self, self._on_theme_changed)
-        # Bind the pump thread for the non-blocking guards (NB-1/NB-2). The
-        # heartbeat watchdog runs by default for an interactive terminal
-        # (log-only); the denylist-free audit hook is opt-in via
-        # AGENTGREP_TUI_WATCHDOG because it can abort a blocking syscall.
-        _runtime.bind_pump_thread()
-        if _runtime.watchdog_enabled():
-            self.set_interval(_runtime.HEARTBEAT_INTERVAL, _runtime.record_heartbeat)
-            _runtime.start_pump_watchdog()
-        if _runtime.audit_hook_enabled():
-            _runtime.arm_pump_audit()
+        # (e.g. dark <-> light via the command palette). The pump-thread bind
+        # and watchdog are owned by the App shell (it owns the pump).
+        self.app.theme_changed_signal.subscribe(self, self._on_theme_changed)
         self._apply_responsive_layout()
-        if self.query.terms:
-            self._start_search_worker(self.query)
+        if self.search_query.terms:
+            self._start_search_worker(self.search_query)
             self._filter_input.focus()
         else:
             # No initial query — pi "bare canvas": hide the body chrome
@@ -565,9 +503,8 @@ class ExplorerApp(_APP_BASE):
         the cue tracked the column — here it intentionally treats the filter
         as part of the results pane, but never the search bar.
         """
-        if not self.screen_stack:
-            # No active screen (teardown / between screens): nothing to
-            # recolor, and ``self.focused`` would raise ScreenStackError.
+        if not self.is_mounted:
+            # Teardown / between screens: nothing to recolor.
             return
         focused_id = getattr(self.focused, "id", None)
         results_active = focused_id in {"results", "filter"}
@@ -577,12 +514,6 @@ class ExplorerApp(_APP_BASE):
         if self._detail_header is not None:
             t.cast("t.Any", self._detail_header).set_class(detail_active, "-active")
 
-    def on_unmount(self) -> None:
-        """Release pump-thread binding and stop the watchdog on teardown."""
-        _runtime.unbind_pump_thread()
-        _runtime.stop_pump_watchdog()
-        _runtime.disarm_pump_audit()
-
     def _start_search_worker(self, query: SearchQuery) -> None:
         """Reset chrome and spawn a new search worker for ``query``.
 
@@ -591,7 +522,7 @@ class ExplorerApp(_APP_BASE):
         is the canonical Textual pattern for "fire a backend search on
         every debounced keystroke without piling up cancellations."
         """
-        self.query = query
+        self.search_query = query
         self._reset_search_chrome()
         # A search is starting — give the empty canvas its centered
         # "searching" moment; the first record batch collapses it to the
@@ -677,13 +608,12 @@ class ExplorerApp(_APP_BASE):
         """
         self._chrome_generation += 1
         generation = self._chrome_generation
-        streaming = t.cast("t.Any", self)
         # The emitter runs on the worker thread; the generation check
         # happens on the pump inside _apply_streaming_event. Centralizing it
         # in make_gated_emitter keeps results off the message bus (NB-3) and
         # carrying the generation token (NB-10).
         return _runtime.make_gated_emitter(
-            streaming.call_from_thread,
+            self.app.call_from_thread,
             self._apply_streaming_event,
             generation,
         )
@@ -865,10 +795,9 @@ class ExplorerApp(_APP_BASE):
         if emit is None:
             return
         try:
-            self._invoker.run(self.query, control=self.control, emit=emit)
+            self._invoker.run(self.search_query, control=self.control, emit=emit)
         except BaseException as exc:
-            streaming = t.cast("StreamingAppLike", t.cast("object", self))
-            streaming.call_from_thread(
+            self.app.call_from_thread(
                 self._apply_finished,
                 "error",
                 len(self.all_records),
@@ -899,7 +828,7 @@ class ExplorerApp(_APP_BASE):
             self._reset_search_chrome()
             self._search_done = True
             self._set_empty_state(empty=True)
-            self.query = new_query
+            self.search_query = new_query
             return
         self._record_history(text)
         self._start_search_worker(new_query)
@@ -979,8 +908,7 @@ class ExplorerApp(_APP_BASE):
         seed = ""
         if self._search_input is not None:
             seed = str(getattr(self._search_input, "value", "") or "")
-        streaming = t.cast("t.Any", self)
-        streaming.push_screen(
+        self.app.push_screen(
             HistoryRecall(self._history, seed=seed),
             self._apply_recalled_query,
         )
@@ -1015,7 +943,7 @@ class ExplorerApp(_APP_BASE):
         # search's ``scope:``-widened "all" never feeds back as the base —
         # otherwise a follow-up query with no ``scope:`` predicate would
         # keep scanning conversations invisibly.
-        base = dataclasses.replace(self.query, scope=self._user_scope)
+        base = dataclasses.replace(self.search_query, scope=self._user_scope)
         result = build_query_from_input(text, base, default_registry())
         if result.query is not None:
             return result.query
@@ -1025,13 +953,13 @@ class ExplorerApp(_APP_BASE):
         terms = tuple(text.split()) if text else ()
         return SearchQuery(
             terms=terms,
-            scope=self.query.scope,
-            any_term=self.query.any_term,
-            regex=self.query.regex,
-            case_sensitive=self.query.case_sensitive,
-            agents=self.query.agents,
-            limit=self.query.limit,
-            dedupe=self.query.dedupe,
+            scope=self.search_query.scope,
+            any_term=self.search_query.any_term,
+            regex=self.search_query.regex,
+            case_sensitive=self.search_query.case_sensitive,
+            agents=self.search_query.agents,
+            limit=self.search_query.limit,
+            dedupe=self.search_query.dedupe,
         )
 
     _APPLY_CHUNK_SIZE: t.ClassVar[int] = 200
@@ -1314,7 +1242,7 @@ class ExplorerApp(_APP_BASE):
             any_term=False,
             regex=False,
             case_sensitive=False,
-            agents=self.query.agents,
+            agents=self.search_query.agents,
             limit=None,
         )
         result = build_query_from_input(stripped, base, default_registry())
@@ -1326,7 +1254,7 @@ class ExplorerApp(_APP_BASE):
                 any_term=False,
                 regex=False,
                 case_sensitive=False,
-                agents=self.query.agents,
+                agents=self.search_query.agents,
                 limit=None,
             )
         return compile_record_matcher(query)
@@ -1575,7 +1503,7 @@ class ExplorerApp(_APP_BASE):
         self._set_empty_state(empty=False)
         self._current_detail_record = record
         width = max(20, self._detail.size.width or 80)
-        theme_vars = self.theme_variables
+        theme_vars = self.app.theme_variables
         agent_color = ui_theme.resolve(
             theme_vars,
             ui_theme.AGENT_TOKEN_BY_NAME.get(record.agent or ""),
@@ -1605,7 +1533,7 @@ class ExplorerApp(_APP_BASE):
             header.append(f"{value}\n", style=value_style)
         header.append("\n")
         body_truncated = truncate_lines(record.text, DETAIL_BODY_MAX_LINES)
-        query_terms = list(self.query.terms)
+        query_terms = list(self.search_query.terms)
         # Keep the header + body text so find-in-detail can re-highlight the
         # body (without rebuilding the header) and scroll to matches.
         self._detail_header_text = header
@@ -1663,8 +1591,7 @@ class ExplorerApp(_APP_BASE):
     ) -> None:
         """Build the detail body off the UI thread, then apply it on the loop."""
         body = self._build_detail_body(body_truncated, query_terms, match_styles)
-        streaming = t.cast("StreamingAppLike", t.cast("object", self))
-        streaming.call_from_thread(
+        self.app.call_from_thread(
             self._present_detail,
             record,
             header,
@@ -1720,8 +1647,8 @@ class ExplorerApp(_APP_BASE):
         return (
             id(record),
             tuple(query_terms),
-            self.query.case_sensitive,
-            self.query.regex,
+            self.search_query.case_sensitive,
+            self.search_query.regex,
             self._filter_terms,
         )
 
@@ -1745,7 +1672,7 @@ class ExplorerApp(_APP_BASE):
         str
             A Rich style string.
         """
-        theme_vars = self.theme_variables
+        theme_vars = self.app.theme_variables
         if kind == "search":
             foreground = ui_theme.resolve(theme_vars, "ag-match-search")
             return f"bold {foreground}".rstrip() if foreground else "bold yellow"
@@ -1817,8 +1744,8 @@ class ExplorerApp(_APP_BASE):
             match_line = find_first_match_line(
                 formatted,
                 query_terms,
-                case_sensitive=self.query.case_sensitive,
-                regex=self.query.regex,
+                case_sensitive=self.search_query.case_sensitive,
+                regex=self.search_query.regex,
             )
             highlight_lines = {match_line + 1} if match_line is not None else None
             syntax = _RichSyntax(
@@ -1838,8 +1765,8 @@ class ExplorerApp(_APP_BASE):
             highlighted = highlight_matches(
                 body_text,
                 query_terms,
-                case_sensitive=self.query.case_sensitive,
-                regex=self.query.regex,
+                case_sensitive=self.search_query.case_sensitive,
+                regex=self.search_query.regex,
                 style=match_styles.search if match_styles else self._match_style("search"),
             )
             self._apply_filter_highlight(
@@ -1999,9 +1926,9 @@ class ExplorerApp(_APP_BASE):
         """
         key = (
             source,
-            tuple(self.query.terms),
-            self.query.case_sensitive,
-            self.query.regex,
+            tuple(self.search_query.terms),
+            self.search_query.case_sensitive,
+            self.search_query.regex,
             self._filter_terms,
         )
         cached = self._detail_find_base
@@ -2014,9 +1941,9 @@ class ExplorerApp(_APP_BASE):
         else:
             text = highlight_matches(
                 source,
-                list(self.query.terms),
-                case_sensitive=self.query.case_sensitive,
-                regex=self.query.regex,
+                list(self.search_query.terms),
+                case_sensitive=self.search_query.case_sensitive,
+                regex=self.search_query.regex,
                 style=self._match_style("search"),
             )
         self._apply_filter_highlight(text)
@@ -2032,12 +1959,12 @@ class ExplorerApp(_APP_BASE):
         regex/style so search terms read consistently in both paths.
         """
         style = self._match_style("search")
-        for term in self.query.terms:
+        for term in self.search_query.terms:
             if not term:
                 continue
             try:
-                flags = 0 if self.query.case_sensitive else re.IGNORECASE
-                pattern = term if self.query.regex else re.escape(term)
+                flags = 0 if self.search_query.case_sensitive else re.IGNORECASE
+                pattern = term if self.search_query.regex else re.escape(term)
                 compiled = re.compile(pattern, flags)
             except re.error:
                 continue
@@ -2219,7 +2146,7 @@ class ExplorerApp(_APP_BASE):
         window exits.
         """
         if self._confirm_exit_pending:
-            self.exit()
+            self.app.exit()
             return
         self._confirm_exit_pending = True
         self._set_ctrlc_gutter("press ctrl-c again to exit")

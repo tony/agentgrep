@@ -2,11 +2,11 @@
 
 Three layers guard the rules:
 
-- An AST scan of ``ui/app_screen.py`` and every ``ui/widgets/*.py`` module
+- An AST scan of ``ui/layouts/hud.py`` and every ``ui/widgets/*.py`` module
   proves no pump-thread method contains a blocking call (NB-1/NB-8), that JSON
   parsing is confined to the one bounded fast-path method (NB-9), and that the
   batch applier routes through the bounded ``stream_apply`` (NB-4). A scan of
-  ``ui/app_screen.py`` proves every worker launch is exclusive and grouped
+  ``ui/layouts/hud.py`` proves every worker launch is exclusive and grouped
   (NB-6).
 - Unit tests of the ``@pump_only`` / ``@offload`` guards and ``stream_apply``
   confirm the runtime assertions and the chunk cap.
@@ -26,22 +26,29 @@ import typing as t
 
 import pytest
 
-from agentgrep.ui import _runtime, app_screen
+from agentgrep.ui import _runtime
+from agentgrep.ui.layouts import hud
 from tests.test_agentgrep import _build_empty_ui_app
 
-_APP_PATH = pathlib.Path(app_screen.__file__)
+#: The HUD layout holds every worker launch and ``_apply_records_batch`` (NB-4/NB-6).
+_APP_PATH = pathlib.Path(hud.__file__)
 _APP_TREE = ast.parse(_APP_PATH.read_text(encoding="utf-8"))
 
 
 def _ui_source_trees() -> list[ast.AST]:
-    """Parse ``ui/app_screen.py`` plus every extracted ``ui/widgets/*.py`` module.
+    """Parse the HUD layout, the App shell, and every ``ui/widgets/*.py`` module.
 
-    The widgets moved out of the app closure into factory modules, so the
-    no-blocking-calls guard must scan their pump methods (``watch_*`` /
-    ``_on_key`` / ``render``) too — not just the app's.
+    The HUD body lives in ``ui/layouts/hud.py``, the App-lifecycle shell in
+    ``ui/_shell.py``, the layout base in ``ui/layouts/_base.py``, and the leaf
+    widgets in ``ui/widgets/``; the no-blocking-calls guard scans the pump
+    methods (``watch_*`` / ``_on_key`` / ``on_mount`` / ``render``) of all of them.
     """
-    widget_paths = sorted((_APP_PATH.parent / "widgets").glob("*.py"))
-    return [ast.parse(path.read_text(encoding="utf-8")) for path in (_APP_PATH, *widget_paths)]
+    ui_dir = _APP_PATH.parent.parent
+    extra = [ui_dir / "_shell.py", _APP_PATH.parent / "_base.py"]
+    widget_paths = sorted((ui_dir / "widgets").glob("*.py"))
+    return [
+        ast.parse(path.read_text(encoding="utf-8")) for path in (_APP_PATH, *extra, *widget_paths)
+    ]
 
 
 _UI_TREES = _ui_source_trees()
@@ -419,7 +426,7 @@ def test_json_parsing_confined_to_detail_body() -> None:
 
 
 def _run_worker_calls() -> list[ast.Call]:
-    """Return every ``*.run_worker(...)`` call in ``ui/app_screen.py``."""
+    """Return every ``*.run_worker(...)`` call in ``ui/layouts/hud.py``."""
     return [
         node
         for node in ast.walk(_APP_TREE)
@@ -575,13 +582,13 @@ async def test_stop_search_requests_cooperative_cancel(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
-        app._search_done = False
-        old_control = app.control
-        app.action_stop_search()
-        assert app.control.answer_now_requested()
-        app._reset_search_chrome()
-        assert app.control is not old_control
-        assert not app.control.answer_now_requested()
+        app.screen._search_done = False
+        old_control = app.screen.control
+        app.screen.action_stop_search()
+        assert app.screen.control.answer_now_requested()
+        app.screen._reset_search_chrome()
+        assert app.screen.control is not old_control
+        assert not app.screen.control.answer_now_requested()
 
 
 # --- heartbeat watchdog ----------------------------------------------------

@@ -318,11 +318,11 @@ async def test_results_streamed_row_is_pinned(
     from agentgrep.progress import SearchControl
     from agentgrep.ui.app import build_streaming_ui_app
 
-    # build_streaming_ui_app returns ``object`` (app.py stays Textual-free);
+    # build_streaming_ui_app returns ``object`` (app.screen.py stays Textual-free);
     # cast to Any for run_test/query_one, mirroring the test_agentgrep.py pattern.
     app = t.cast("t.Any", build_streaming_ui_app(tmp_path, _make_query(), control=SearchControl()))
     async with app.run_test():
-        results = app.query_one(SearchResultsList)
+        results = app.screen.query_one(SearchResultsList)
         results.append_records([_make_record()])
         assert results.option_count == 1
         assert results._render_record(_make_record()).plain == snapshot
@@ -340,7 +340,7 @@ async def test_filter_rebuild_reuses_cached_row_renders(tmp_path: pathlib.Path) 
 
     app = t.cast("t.Any", build_streaming_ui_app(tmp_path, _make_query(), control=SearchControl()))
     async with app.run_test():
-        results = app.query_one(SearchResultsList)
+        results = app.screen.query_one(SearchResultsList)
         records = [_make_record(f"row {i}") for i in range(8)]
         results.set_records(records)  # initial render populates the row cache
         before = [results.get_option_at_index(i).prompt for i in range(results.option_count)]

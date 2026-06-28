@@ -2323,7 +2323,7 @@ async def test_streaming_ui_app_mounts_cleanly(
         await pilot.pause()
         # Leave the pre-search bare canvas so the body panes are mounted/visible
         # (they are hidden until a search runs).
-        app._set_empty_state(empty=False)
+        app.screen._set_empty_state(empty=False)
         await pilot.pause()
         focus_chain_ids = {getattr(w, "id", None) for w in app.screen.focus_chain}
         assert "results" in focus_chain_ids, f"#results not in focus chain; chain={focus_chain_ids}"
@@ -2384,20 +2384,20 @@ async def test_streaming_ui_search_rule_state_classes(
         await pilot.pause()
         search = app.screen.query_one("#search")
 
-        app._set_search_rule_state("searching")
+        app.screen._set_search_rule_state("searching")
         assert search.has_class("-searching")
 
         # Outcomes are mutually exclusive — the prior class is cleared.
-        app._set_search_rule_state("complete")
+        app.screen._set_search_rule_state("complete")
         assert search.has_class("-done")
         assert not search.has_class("-searching")
 
-        app._set_search_rule_state("interrupted")
+        app.screen._set_search_rule_state("interrupted")
         assert search.has_class("-stopped")
         assert not search.has_class("-done")
 
         # Empty state returns the rule to idle (no state class).
-        app._set_search_rule_state("")
+        app.screen._set_search_rule_state("")
         assert not any(search.has_class(c) for c in ("-searching", "-done", "-stopped", "-error"))
 
 
@@ -2418,7 +2418,7 @@ async def test_streaming_ui_centered_panel_until_first_result(
         panel = app.screen.query_one("#searching-panel")
 
         # Enter the searching view (no results yet): the centered panel shows.
-        app._set_results_view("searching")
+        app.screen._set_results_view("searching")
         await pilot.pause()
         assert body.has_class("-searching")
         assert panel.display
@@ -2433,7 +2433,7 @@ async def test_streaming_ui_centered_panel_until_first_result(
             text="tmux pane",
             title="tmux pane",
         )
-        await app._apply_records_batch((record,), 1)
+        await app.screen._apply_records_batch((record,), 1)
         await pilot.pause()
         assert not body.has_class("-searching")
 
@@ -2452,10 +2452,10 @@ async def test_streaming_ui_zero_result_search_freezes_centered_panel(
     async with app.run_test(size=(120, 24)) as pilot:
         await pilot.pause()
         body = app.screen.query_one("#body")
-        app._set_results_view("searching")
+        app.screen._set_results_view("searching")
         await pilot.pause()
 
-        app._apply_finished("complete", 0, 1.2, None)
+        app.screen._apply_finished("complete", 0, 1.2, None)
         await pilot.pause()
         assert body.has_class("-searching")
         panel = app.screen.query_one("#searching-panel")
@@ -2519,10 +2519,12 @@ async def test_search_history_append_runs_off_pump(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
-        app._record_history(case.text)
+        app.screen._record_history(case.text)
         assert await asyncio.to_thread(appended.wait, 2.0)
-        assert calls == [(_history.history_path(app.home), case.text, app._user_scope)]
-        assert any(entry.text == case.text for entry in app._history)
+        assert calls == [
+            (_history.history_path(app.screen.home), case.text, app.screen._user_scope)
+        ]
+        assert any(entry.text == case.text for entry in app.screen._history)
 
 
 async def test_search_submit_records_history(
@@ -2533,14 +2535,14 @@ async def test_search_submit_records_history(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
-        app._search_input.focus()
+        app.screen._search_input.focus()
         await pilot.pause()
         for char in "tmux":
             await pilot.press(char)
         await pilot.press("enter")
         await pilot.pause()
-        assert any(entry.text == "tmux" for entry in app._history)
-        await _wait_for_history_text(app.home, "tmux")
+        assert any(entry.text == "tmux" for entry in app.screen._history)
+        await _wait_for_history_text(app.screen.home, "tmux")
 
 
 async def test_history_opt_out_records_nothing(
@@ -2554,14 +2556,14 @@ async def test_history_opt_out_records_nothing(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
-        app._search_input.focus()
+        app.screen._search_input.focus()
         await pilot.pause()
         for char in "tmux":
             await pilot.press(char)
         await pilot.press("enter")
         await pilot.pause(0.1)
-        assert app._history == []
-        assert not _history.history_path(app.home).exists()
+        assert app.screen._history == []
+        assert not _history.history_path(app.screen.home).exists()
 
 
 async def test_ctrl_r_opens_history_modal(
@@ -2575,8 +2577,8 @@ async def test_ctrl_r_opens_history_modal(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
-        app._history = [HistoryEntry(text="agent:codex refactor", ts=10)]
-        app._search_input.focus()
+        app.screen._history = [HistoryEntry(text="agent:codex refactor", ts=10)]
+        app.screen._search_input.focus()
         await pilot.pause()
         await pilot.press("ctrl+r")
         await pilot.pause()
@@ -2647,16 +2649,16 @@ async def test_enter_runs_highlighted_slash_command(
         await pilot.pause()
         ran: list[str] = []
         monkeypatch.setattr(
-            app,
+            app.screen,
             "_run_command_at",
-            lambda index: ran.append(app._command_matches[index].name),
+            lambda index: ran.append(app.screen._command_matches[index].name),
         )
-        app._search_input.focus()
+        app.screen._search_input.focus()
         await pilot.pause()
         for char in case.typed:
             await pilot.press(char)
         await pilot.pause()
-        assert app._enum_dropdown.display is True
+        assert app.screen._enum_dropdown.display is True
         await pilot.press("enter")
         await pilot.pause()
         assert ran == [case.expected]
@@ -2693,20 +2695,20 @@ async def test_command_with_args_runs_literal_search(
         ran: list[str] = []
         searches: list[object] = []
         monkeypatch.setattr(
-            app,
+            app.screen,
             "_run_command_at",
-            lambda index: ran.append(app._command_matches[index].name),
+            lambda index: ran.append(app.screen._command_matches[index].name),
         )
-        monkeypatch.setattr(app, "_start_search_worker", searches.append)
-        app._search_input.focus()
+        monkeypatch.setattr(app.screen, "_start_search_worker", searches.append)
+        app.screen._search_input.focus()
         await pilot.pause()
-        app._search_input.value = case.typed
+        app.screen._search_input.value = case.typed
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
         assert ran == []
         assert len(searches) == 1
-        assert app._enum_dropdown.display is False
+        assert app.screen._enum_dropdown.display is False
 
 
 async def test_slash_opens_and_filters_command_menu(
@@ -2717,17 +2719,17 @@ async def test_slash_opens_and_filters_command_menu(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
-        app._search_input.focus()
+        app.screen._search_input.focus()
         await pilot.pause()
         await pilot.press("/")
         await pilot.pause()
-        dropdown = app._enum_dropdown
+        dropdown = app.screen._enum_dropdown
         assert dropdown.display is True
-        assert {cmd.name for cmd in app._command_matches} == {"clear", "exit", "help"}
-        assert dropdown.option_count == len(app._command_matches)
+        assert {cmd.name for cmd in app.screen._command_matches} == {"clear", "exit", "help"}
+        assert dropdown.option_count == len(app.screen._command_matches)
         await pilot.press("c")  # value is now "/c"
         await pilot.pause()
-        assert [cmd.name for cmd in app._command_matches] == ["clear"]
+        assert [cmd.name for cmd in app.screen._command_matches] == ["clear"]
         assert dropdown.option_count == 1
 
 
@@ -2742,19 +2744,19 @@ async def test_slash_clear_resets_and_is_not_recorded(
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
         # A real search first: records history, leaves a non-empty state.
-        app._search_input.focus()
+        app.screen._search_input.focus()
         await pilot.pause()
         for char in "tmux":
             await pilot.press(char)
         await pilot.press("enter")
         await pilot.pause(0.1)
         # Now dispatch /clear.
-        app._search_input.value = "/clear"
-        app.on_search_requested(_search_requested("/clear"))
+        app.screen._search_input.value = "/clear"
+        app.screen.on_search_requested(_search_requested("/clear"))
         await pilot.pause()
         assert app.screen.query_one("#body").has_class("-empty")
-        assert app._search_input.value == ""
-        on_disk = _history.load_history(_history.history_path(app.home))
+        assert app.screen._search_input.value == ""
+        on_disk = _history.load_history(_history.history_path(app.screen.home))
         assert all(entry.text != "/clear" for entry in on_disk)
         assert any(entry.text == "tmux" for entry in on_disk)
 
@@ -2769,21 +2771,21 @@ async def test_slash_menu_clear_cancels_active_search(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
-        monkeypatch.setattr(app, "run_worker", lambda *a, **kw: None)
-        app._search_input.focus()
+        monkeypatch.setattr(app.screen, "run_worker", lambda *a, **kw: None)
+        app.screen._search_input.focus()
         await pilot.pause()
-        app._search_input.value = "tmux"
+        app.screen._search_input.value = "tmux"
         await pilot.press("enter")
         await pilot.pause(0.1)
-        first_control = app.control
+        first_control = app.screen.control
         clear = commands.resolve_command("clear")
         assert clear is not None
-        app._command_matches = (clear,)
-        app._run_command_at(0)
+        app.screen._command_matches = (clear,)
+        app.screen._run_command_at(0)
         await pilot.pause()
         assert first_control.answer_now_requested() is True
-        assert app.control is not first_control
-        assert app.control.answer_now_requested() is False
+        assert app.screen.control is not first_control
+        assert app.screen.control.answer_now_requested() is False
 
 
 async def test_slash_help_notifies_the_command_list(
@@ -2795,8 +2797,8 @@ async def test_slash_help_notifies_the_command_list(
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
         notes: list[tuple[tuple[object, ...], dict[str, object]]] = []
-        monkeypatch.setattr(app, "notify", lambda *a, **k: notes.append((a, k)))
-        app.on_search_requested(_search_requested("/help"))
+        monkeypatch.setattr(app.screen, "notify", lambda *a, **k: notes.append((a, k)))
+        app.screen.on_search_requested(_search_requested("/help"))
         await pilot.pause()
         assert len(notes) == 1
         message = str(notes[0][0][0])
@@ -2815,7 +2817,7 @@ async def test_slash_exit_quits_the_app(
             await pilot.pause()
             exits: list[object] = []
             monkeypatch.setattr(app, "exit", lambda *a, _sink=exits, **k: _sink.append((a, k)))
-            app.on_search_requested(_search_requested(text))
+            app.screen.on_search_requested(_search_requested(text))
             await pilot.pause()
             assert len(exits) == 1, f"{text} should quit"
 
@@ -2837,18 +2839,18 @@ async def test_literal_leading_slash_text_runs_search(
         spawned: list[tuple[tuple[object, ...], dict[str, object]]] = []
         notes: list[tuple[tuple[object, ...], dict[str, object]]] = []
         monkeypatch.setattr(
-            app,
+            app.screen,
             "run_worker",
             lambda *a, **k: spawned.append((a, k)),
         )
-        monkeypatch.setattr(app, "notify", lambda *a, **k: notes.append((a, k)))
-        app.on_search_requested(_search_requested(case.text))
+        monkeypatch.setattr(app.screen, "notify", lambda *a, **k: notes.append((a, k)))
+        app.screen.on_search_requested(_search_requested(case.text))
         await pilot.pause()
         search_workers = [kwargs for _, kwargs in spawned if kwargs.get("name") == "search"]
         assert len(search_workers) == 1
         assert notes == []
-        assert not app._search_input.has_class("-error")
-        assert app.query.terms == tuple(case.text.split())
+        assert not app.screen._search_input.has_class("-error")
+        assert app.screen.search_query.terms == tuple(case.text.split())
 
 
 @pytest.mark.parametrize(
@@ -2870,21 +2872,21 @@ async def test_passive_slash_command_preserves_active_search(
 
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
-        monkeypatch.setattr(app, "run_worker", fake_worker)
+        monkeypatch.setattr(app.screen, "run_worker", fake_worker)
         notes: list[tuple[tuple[object, ...], dict[str, object]]] = []
-        monkeypatch.setattr(app, "notify", lambda *a, **k: notes.append((a, k)))
-        app._search_input.focus()
+        monkeypatch.setattr(app.screen, "notify", lambda *a, **k: notes.append((a, k)))
+        app.screen._search_input.focus()
         await pilot.pause()
-        app._search_input.value = "tmux"
+        app.screen._search_input.value = "tmux"
         await pilot.press("enter")
         await pilot.pause(0.1)
-        first_control = app.control
+        first_control = app.screen.control
         assert first_control.answer_now_requested() is False
         search_workers = [kwargs for _, kwargs in spawned if kwargs.get("name") == "search"]
         assert len(search_workers) == 1
-        app.on_search_requested(_search_requested(case.text))
+        app.screen.on_search_requested(_search_requested(case.text))
         await pilot.pause()
-        assert app.control is first_control
+        assert app.screen.control is first_control
         assert first_control.answer_now_requested() is False
         search_workers = [kwargs for _, kwargs in spawned if kwargs.get("name") == "search"]
         assert len(search_workers) == 1
@@ -2904,15 +2906,15 @@ async def test_slash_menu_pushes_body_down_and_reflows_back(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(100, 24)) as pilot:
         await pilot.pause()
-        app._set_empty_state(empty=False)
+        app.screen._set_empty_state(empty=False)
         await pilot.pause()
         body = app.screen.query_one("#body")
-        app._search_input.focus()
+        app.screen._search_input.focus()
         await pilot.pause()
         y_closed = body.region.y
         await pilot.press("/")
         await pilot.pause()
-        assert app._enum_dropdown.styles.overlay == "none"
+        assert app.screen._enum_dropdown.styles.overlay == "none"
         assert body.region.y > y_closed
         # Clearing the slash collapses the menu and reflows the body back.
         await pilot.press("backspace")
@@ -2935,8 +2937,8 @@ async def test_history_modal_background_is_transparent(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
-        app._history = [HistoryEntry(text="agent:codex refactor", ts=10)]
-        app.action_recall_history()
+        app.screen._history = [HistoryEntry(text="agent:codex refactor", ts=10)]
+        app.screen.action_recall_history()
         await pilot.pause()
         assert app.screen.styles.background.a == 0
         # Close the modal so the screen stack is clean at teardown.
@@ -2957,8 +2959,8 @@ async def test_ctrl_c_in_history_modal_does_not_quit_app(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
-        app._history = [HistoryEntry(text="agent:codex refactor", ts=10)]
-        app.action_recall_history()
+        app.screen._history = [HistoryEntry(text="agent:codex refactor", ts=10)]
+        app.screen.action_recall_history()
         await pilot.pause()
         modal = app.screen
         assert isinstance(modal, HistoryRecall)
@@ -2983,11 +2985,11 @@ async def test_apply_recalled_query_fills_box_without_running(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
-        app._apply_recalled_query("agent:codex refactor")
+        app.screen._apply_recalled_query("agent:codex refactor")
         await pilot.pause()
-        assert app._search_input.value == "agent:codex refactor"
+        assert app.screen._search_input.value == "agent:codex refactor"
         # Filling the box is not a submit — no results were loaded.
-        assert app.all_records == []
+        assert app.screen.all_records == []
 
 
 async def test_streaming_ui_result_row_title_not_always_bold(
@@ -3029,7 +3031,7 @@ async def test_pane_headers_left_label_embedded_in_rule(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(120, 24)) as pilot:
         await pilot.pause()
-        app._set_empty_state(empty=False)
+        app.screen._set_empty_state(empty=False)
         await pilot.pause()
         plain = app.screen.query_one("#results-header").render().plain
         assert plain.startswith("─results")  # a rule cell sits before the label
@@ -3049,7 +3051,7 @@ def test_update_pane_focus_without_active_screen_is_safe(
     un-run app reproduces the empty-stack state deterministically.
     """
     app = _build_empty_ui_app(tmp_path, monkeypatch)
-    app._update_pane_focus()  # must not raise ScreenStackError
+    app.get_default_screen()._update_pane_focus()  # must not raise (unmounted layout)
 
 
 async def test_streaming_ui_app_enum_dropdown_opens_and_closes(
@@ -3107,18 +3109,18 @@ async def test_streaming_ui_app_filter_dropdown_and_query_aware(
         filter_input.cursor_position = len("agent")
         await pilot.pause()
         assert dropdown.display is True
-        assert app._filter_dropdown_values[0] == "agent:"
+        assert app.screen._filter_dropdown_values[0] == "agent:"
 
         # A field token lists the enum values.
         filter_input.value = "scope:"
         filter_input.cursor_position = len("scope:")
         await pilot.pause()
-        assert app._filter_dropdown_values == ("prompts", "conversations", "all")
+        assert app.screen._filter_dropdown_values == ("prompts", "conversations", "all")
 
         # The filter executes the query language: a predicate compiles to a
         # matcher; empty/whitespace yields no matcher (all records pass).
-        assert app._build_filter_matcher("agent:codex") is not None
-        assert app._build_filter_matcher("   ") is None
+        assert app.screen._build_filter_matcher("agent:codex") is not None
+        assert app.screen._build_filter_matcher("   ") is None
 
         # A free-text term that isn't a keyword shows no dropdown.
         filter_input.value = "zzznomatch"
@@ -3139,9 +3141,11 @@ async def test_dropdown_accept_leaves_cursor_at_end_without_selecting(
         search.value = "agent:co"
         search.cursor_position = len("agent:co")
         await pilot.pause()
-        assert app._enum_values == ("codex",)
+        assert app.screen._enum_values == ("codex",)
 
-        app._accept_dropdown_choice(search, app._enum_dropdown, app._enum_values, 0)
+        app.screen._accept_dropdown_choice(
+            search, app.screen._enum_dropdown, app.screen._enum_values, 0
+        )
         await pilot.pause()
 
         assert search.value == "agent:codex"
@@ -3157,9 +3161,9 @@ async def test_detail_pane_highlights_filter_terms_distinctly(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
-        app._filter_terms = ("mobx",)
+        app.screen._filter_terms = ("mobx",)
         body = "use biome and mobx here"
-        renderable, _ = app._build_detail_body(body, ("biome",))
+        renderable, _ = app.screen._build_detail_body(body, ("biome",))
 
         spans = [(s.start, s.end, str(s.style)) for s in renderable.spans]
         biome = body.index("biome")
@@ -3201,20 +3205,20 @@ async def test_large_detail_body_builds_off_thread(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
-        big = "x" * (app._DETAIL_ASYNC_BODY_THRESHOLD + 1000)
+        big = "x" * (app.screen._DETAIL_ASYNC_BODY_THRESHOLD + 1000)
         record = _ui_record(agentgrep, tmp_path / "big.jsonl", big, "big")
-        terms = list(app.query.terms)
+        terms = list(app.screen.search_query.terms)
 
-        app.show_detail(record)
+        app.screen.show_detail(record)
         # show_detail returns immediately; the heavy body is deferred.
-        assert not app._detail_body_is_cached(terms)
+        assert not app.screen._detail_body_is_cached(terms)
 
         await app.workers.wait_for_complete()
         await pilot.pause()
 
         # The worker built and applied the body off the UI thread.
-        assert app._detail_body_is_cached(terms)
-        assert len(list(app._detail.content.renderables)) == 2
+        assert app.screen._detail_body_is_cached(terms)
+        assert len(list(app.screen._detail.content.renderables)) == 2
 
 
 async def test_large_detail_body_resolves_match_styles_on_pump(
@@ -3233,12 +3237,12 @@ async def test_large_detail_body_resolves_match_styles_on_pump(
             style_threads.append(threading.get_ident())
             return "bold yellow" if kind == "search" else "bold black on cyan"
 
-        monkeypatch.setattr(app, "_match_style", record_style)
-        app._filter_terms = ("needle",)
-        big = "needle " + ("x" * (app._DETAIL_ASYNC_BODY_THRESHOLD + 1000))
+        monkeypatch.setattr(app.screen, "_match_style", record_style)
+        app.screen._filter_terms = ("needle",)
+        big = "needle " + ("x" * (app.screen._DETAIL_ASYNC_BODY_THRESHOLD + 1000))
         record = _ui_record(agentgrep, tmp_path / "big.jsonl", big, "big")
 
-        app.show_detail(record)
+        app.screen.show_detail(record)
         await app.workers.wait_for_complete()
         await pilot.pause()
 
@@ -3257,14 +3261,18 @@ async def test_present_detail_discards_superseded_record(
         await pilot.pause()
         current = _ui_record(agentgrep, tmp_path / "cur.jsonl", "current body", "cur")
         stale = _ui_record(agentgrep, tmp_path / "old.jsonl", "stale body", "old")
-        app._current_detail_record = current
+        app.screen._current_detail_record = current
         updates: list[object] = []
-        monkeypatch.setattr(app._detail, "update", updates.append)
+        monkeypatch.setattr(app.screen._detail, "update", updates.append)
 
-        app._present_detail(stale, "HEADER", app._build_detail_body("stale body", ()), ())
+        app.screen._present_detail(
+            stale, "HEADER", app.screen._build_detail_body("stale body", ()), ()
+        )
         assert updates == []  # superseded record is dropped
 
-        app._present_detail(current, "HEADER", app._build_detail_body("current body", ()), ())
+        app.screen._present_detail(
+            current, "HEADER", app.screen._build_detail_body("current body", ()), ()
+        )
         assert len(updates) == 1  # current record is rendered
 
 
@@ -3326,7 +3334,7 @@ async def test_empty_query_focuses_search_input_and_marks_search_done(
         await pilot.pause()
         assert app.focused is not None
         assert app.focused.id == "search"
-        assert app._search_done is True
+        assert app.screen._search_done is True
 
 
 async def test_search_and_filter_inputs_carry_query_highlighter(
@@ -3356,13 +3364,14 @@ def test_scope_predicate_widening_does_not_persist(
     used to inherit the widened "all" and keep scanning conversations.
     """
     app = _build_empty_ui_app(tmp_path, monkeypatch)
-    assert app.query.scope == "prompts"
+    hud = app.get_default_screen()
+    assert hud.search_query.scope == "prompts"
 
-    widened = app._build_search_query("scope:conversations bliss")
+    widened = hud._build_search_query("scope:conversations bliss")
     assert widened.scope == "all"
-    app.query = widened
+    hud.search_query = widened
 
-    reverted = app._build_search_query("bliss")
+    reverted = hud._build_search_query("bliss")
     assert reverted.scope == "prompts"
 
 
@@ -3395,9 +3404,10 @@ def test_streaming_ui_app_passes_runtime_to_search_worker(
     )
     app = agentgrep.build_streaming_ui_app(home, query, control=agentgrep.SearchControl())
 
-    app._reset_search_chrome()
-    app._run_search()
-    app._run_search()
+    hud = app.get_default_screen()
+    hud._search_emit = lambda _event: None
+    hud._run_search()
+    hud._run_search()
 
     assert len(runtimes) == 2
     assert isinstance(runtimes[0], agentgrep.SearchRuntime)
@@ -3421,9 +3431,9 @@ async def test_search_input_posts_search_requested_only_on_enter(
 
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search_input.focus()
+        app.screen._search_input.focus()
         await pilot.pause()
-        original_post_message = app._search_input.post_message
+        original_post_message = app.screen._search_input.post_message
 
         def capture(message: object) -> bool:
             payload = getattr(message, "payload", None)
@@ -3431,7 +3441,7 @@ async def test_search_input_posts_search_requested_only_on_enter(
                 posts.append(payload.text)
             return original_post_message(message)
 
-        monkeypatch.setattr(app._search_input, "post_message", capture)
+        monkeypatch.setattr(app.screen._search_input, "post_message", capture)
         await pilot.press("b")
         await pilot.press("l")
         await pilot.press("i")
@@ -3455,10 +3465,10 @@ async def test_search_input_dispatch_spawns_search_group_worker(
 
     async with app.run_test() as pilot:
         await pilot.pause()
-        monkeypatch.setattr(app, "run_worker", fake_worker)
-        app._search_input.focus()
+        monkeypatch.setattr(app.screen, "run_worker", fake_worker)
+        app.screen._search_input.focus()
         await pilot.pause()
-        app._search_input.value = "bliss"
+        app.screen._search_input.value = "bliss"
         await pilot.pause(0.1)
         assert spawned == [], f"value change alone should not spawn; got {spawned}"
         await pilot.press("enter")
@@ -3482,22 +3492,22 @@ async def test_search_input_enter_replaces_control_to_cancel_prior_search(
     async with app.run_test() as pilot:
         await pilot.pause()
         # Stub run_worker so the app's worker bookkeeping doesn't fight us.
-        monkeypatch.setattr(app, "run_worker", lambda *a, **kw: None)
-        app._search_input.focus()
+        monkeypatch.setattr(app.screen, "run_worker", lambda *a, **kw: None)
+        app.screen._search_input.focus()
         await pilot.pause()
-        app._search_input.value = "first"
+        app.screen._search_input.value = "first"
         await pilot.press("enter")
         await pilot.pause(0.1)
-        first_control = app.control
+        first_control = app.screen.control
         assert first_control.answer_now_requested() is False
-        app._search_input.value = "second"
+        app.screen._search_input.value = "second"
         await pilot.press("enter")
         await pilot.pause(0.1)
-        assert app.control is not first_control, "control should be replaced on new search"
+        assert app.screen.control is not first_control, "control should be replaced on new search"
         assert first_control.answer_now_requested() is True, (
             "prior control should be signaled to cancel"
         )
-        assert app.control.answer_now_requested() is False, (
+        assert app.screen.control.answer_now_requested() is False, (
             "fresh control should not carry over the cancel flag"
         )
 
@@ -3512,11 +3522,11 @@ async def test_tab_moves_focus_from_filter_to_results(
         await pilot.pause()
         # Leave the pre-search bare canvas so the body chrome (filter/results)
         # is present to focus.
-        app._set_empty_state(empty=False)
+        app.screen._set_empty_state(empty=False)
         await pilot.pause()
         # On empty initial query the search bar takes initial focus, so
         # manually move focus to the filter input for this test.
-        app._filter_input.focus()
+        app.screen._filter_input.focus()
         await pilot.pause()
         assert app.focused is not None
         assert app.focused.id == "filter"
@@ -3534,9 +3544,9 @@ async def test_down_at_empty_filter_releases_focus_to_results(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._set_empty_state(empty=False)
+        app.screen._set_empty_state(empty=False)
         await pilot.pause()
-        app._filter_input.focus()
+        app.screen._filter_input.focus()
         await pilot.pause()
         assert app.focused is not None and app.focused.id == "filter"
         await pilot.press("down")
@@ -3562,18 +3572,18 @@ async def test_up_at_results_top_row_releases_focus_to_filter(
     async with app.run_test() as pilot:
         await pilot.pause()
         # Seed one record so the list has a row 0 to be on.
-        app.all_records.append(record)
-        app.filtered_records.append(record)
-        app._results.append_records([record])
+        app.screen.all_records.append(record)
+        app.screen.filtered_records.append(record)
+        app.screen._results.append_records([record])
         await pilot.pause()
         # Land focus on the filter and tab to the results.
-        app._filter_input.focus()
+        app.screen._filter_input.focus()
         await pilot.pause()
         await pilot.press("tab")
         await pilot.pause()
         assert app.focused is not None and app.focused.id == "results"
         # Ensure highlight is on row 0 before pressing up.
-        assert app._results.highlighted in (None, 0)
+        assert app.screen._results.highlighted in (None, 0)
         await pilot.press("up")
         await pilot.pause()
         assert app.focused is not None and app.focused.id == "filter"
@@ -3596,11 +3606,11 @@ async def test_l_from_results_focuses_detail_pane(
     )
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.all_records.append(record)
-        app.filtered_records.append(record)
-        app._results.append_records([record])
+        app.screen.all_records.append(record)
+        app.screen.filtered_records.append(record)
+        app.screen._results.append_records([record])
         await pilot.pause()
-        app._filter_input.focus()
+        app.screen._filter_input.focus()
         await pilot.pause()
         await pilot.press("tab")
         await pilot.pause()
@@ -3627,15 +3637,15 @@ async def test_k_at_detail_top_focuses_filter_input(
     )
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.all_records.append(record)
-        app.filtered_records.append(record)
-        app._results.append_records([record])
+        app.screen.all_records.append(record)
+        app.screen.filtered_records.append(record)
+        app.screen._results.append_records([record])
         await pilot.pause()
-        app._detail_scroll.focus()
+        app.screen._detail_scroll.focus()
         await pilot.pause()
         assert app.focused is not None and app.focused.id == "detail-scroll"
         # Pre-condition: at the top of the (short) detail body.
-        assert app._detail_scroll.scroll_y <= 0
+        assert app.screen._detail_scroll.scroll_y <= 0
         await pilot.press("k")
         await pilot.pause()
         assert app.focused is not None and app.focused.id == "filter"
@@ -3658,12 +3668,12 @@ async def test_h_from_detail_focuses_results_pane(
     )
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.all_records.append(record)
-        app.filtered_records.append(record)
-        app._results.append_records([record])
+        app.screen.all_records.append(record)
+        app.screen.filtered_records.append(record)
+        app.screen._results.append_records([record])
         await pilot.pause()
         # Focus the detail-scroll widget directly, then bounce back via ``h``.
-        app._detail_scroll.focus()
+        app.screen._detail_scroll.focus()
         await pilot.pause()
         assert app.focused is not None and app.focused.id == "detail-scroll"
         await pilot.press("h")
@@ -3700,20 +3710,20 @@ async def test_g_on_results_jumps_to_top(
     records = _seed_records(agentgrep, tmp_path, 5)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.all_records.extend(records)
-        app.filtered_records.extend(records)
-        app._results.append_records(records)
+        app.screen.all_records.extend(records)
+        app.screen.filtered_records.extend(records)
+        app.screen._results.append_records(records)
         await pilot.pause()
-        app._filter_input.focus()
+        app.screen._filter_input.focus()
         await pilot.pause()
         await pilot.press("tab")
         await pilot.pause()
-        app._results.highlighted = 3
+        app.screen._results.highlighted = 3
         await pilot.pause()
-        assert app._results.highlighted == 3
+        assert app.screen._results.highlighted == 3
         await pilot.press("g")
         await pilot.pause()
-        assert app._results.highlighted == 0
+        assert app.screen._results.highlighted == 0
 
 
 async def test_G_on_results_jumps_to_bottom(
@@ -3726,17 +3736,17 @@ async def test_G_on_results_jumps_to_bottom(
     records = _seed_records(agentgrep, tmp_path, 5)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.all_records.extend(records)
-        app.filtered_records.extend(records)
-        app._results.append_records(records)
+        app.screen.all_records.extend(records)
+        app.screen.filtered_records.extend(records)
+        app.screen._results.append_records(records)
         await pilot.pause()
-        app._filter_input.focus()
+        app.screen._filter_input.focus()
         await pilot.pause()
         await pilot.press("tab")
         await pilot.pause()
         await pilot.press("G")
         await pilot.pause()
-        assert app._results.highlighted == 4
+        assert app.screen._results.highlighted == 4
 
 
 async def test_ctrl_d_on_results_advances_half_page(
@@ -3749,24 +3759,24 @@ async def test_ctrl_d_on_results_advances_half_page(
     records = _seed_records(agentgrep, tmp_path, 20)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.all_records.extend(records)
-        app.filtered_records.extend(records)
-        app._results.append_records(records)
+        app.screen.all_records.extend(records)
+        app.screen.filtered_records.extend(records)
+        app.screen._results.append_records(records)
         await pilot.pause()
-        app._filter_input.focus()
+        app.screen._filter_input.focus()
         await pilot.pause()
         await pilot.press("tab")
         await pilot.pause()
-        app._results.highlighted = 0
+        app.screen._results.highlighted = 0
         await pilot.pause()
         await pilot.press("ctrl+d")
         await pilot.pause()
         # Robust against tiny viewports during ``run_test`` — half-page may be
         # as small as 1 if the simulated screen is shallow. Either way, the
         # cursor must have moved forward and stayed within bounds.
-        assert app._results.highlighted is not None
-        assert app._results.highlighted > 0
-        assert app._results.highlighted <= len(records) - 1
+        assert app.screen._results.highlighted is not None
+        assert app.screen._results.highlighted > 0
+        assert app.screen._results.highlighted <= len(records) - 1
 
 
 async def test_g_on_detail_scrolls_to_top(
@@ -3787,20 +3797,20 @@ async def test_g_on_detail_scrolls_to_top(
     )
     async with app.run_test(size=(120, 24)) as pilot:
         await pilot.pause()
-        app.all_records.append(record)
-        app.filtered_records.append(record)
-        app._results.append_records([record])
+        app.screen.all_records.append(record)
+        app.screen.filtered_records.append(record)
+        app.screen._results.append_records([record])
         await pilot.pause()
-        app.show_detail(record)
+        app.screen.show_detail(record)
         await pilot.pause()
-        app._detail_scroll.scroll_to(y=50, animate=False)
+        app.screen._detail_scroll.scroll_to(y=50, animate=False)
         await pilot.pause()
-        assert app._detail_scroll.scroll_y > 0
-        app._detail_scroll.focus()
+        assert app.screen._detail_scroll.scroll_y > 0
+        app.screen._detail_scroll.focus()
         await pilot.pause()
         await pilot.press("g")
         await pilot.pause()
-        assert app._detail_scroll.scroll_y == 0
+        assert app.screen._detail_scroll.scroll_y == 0
 
 
 async def test_G_on_detail_scrolls_to_bottom(
@@ -3821,17 +3831,17 @@ async def test_G_on_detail_scrolls_to_bottom(
     )
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.all_records.append(record)
-        app.filtered_records.append(record)
-        app._results.append_records([record])
+        app.screen.all_records.append(record)
+        app.screen.filtered_records.append(record)
+        app.screen._results.append_records([record])
         await pilot.pause()
-        app.show_detail(record)
+        app.screen.show_detail(record)
         await pilot.pause()
-        app._detail_scroll.focus()
+        app.screen._detail_scroll.focus()
         await pilot.pause()
         await pilot.press("G")
         await pilot.pause()
-        assert app._detail_scroll.scroll_y >= app._detail_scroll.max_scroll_y - 0.5
+        assert app.screen._detail_scroll.scroll_y >= app.screen._detail_scroll.max_scroll_y - 0.5
 
 
 async def test_ctrl_f_on_detail_opens_find(
@@ -3852,19 +3862,19 @@ async def test_ctrl_f_on_detail_opens_find(
     )
     async with app.run_test(size=(120, 24)) as pilot:
         await pilot.pause()
-        app.all_records.append(record)
-        app.filtered_records.append(record)
-        app._results.append_records([record])
+        app.screen.all_records.append(record)
+        app.screen.filtered_records.append(record)
+        app.screen._results.append_records([record])
         await pilot.pause()
-        app.show_detail(record)
+        app.screen.show_detail(record)
         await pilot.pause()
-        app._detail_scroll.focus()
+        app.screen._detail_scroll.focus()
         await pilot.pause()
-        assert app._detail_find_input.display is False
+        assert app.screen._detail_find_input.display is False
         await pilot.press("ctrl+f")
         await pilot.pause()
-        assert app._detail_find_input.display is True
-        assert app._detail_find_active is True
+        assert app.screen._detail_find_input.display is True
+        assert app.screen._detail_find_active is True
         assert getattr(app.focused, "id", None) == "detail-find"
 
 
@@ -3878,10 +3888,10 @@ def _detail_find_record(agentgrep: t.Any, path: pathlib.Path) -> t.Any:
 
 async def _open_detail_with_find(app: t.Any, record: t.Any, pilot: t.Any) -> None:
     """Show ``record`` in the detail pane and reveal the find bar."""
-    app._set_empty_state(empty=False)
-    app.show_detail(record)
+    app.screen._set_empty_state(empty=False)
+    app.screen.show_detail(record)
     await pilot.pause()
-    app.action_open_detail_find()
+    app.screen.action_open_detail_find()
     await pilot.pause()
 
 
@@ -3966,19 +3976,19 @@ async def test_detail_find_ignores_stale_debounce_requests(
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
         await _open_detail_with_find(app, record, pilot)
-        app._detail_find_input.load_query(case.live_text)
+        app.screen._detail_find_input.load_query(case.live_text)
         if case.close_first:
-            app._close_detail_find()
+            app.screen._close_detail_find()
             await pilot.pause()
 
-        app.on_detail_find_requested(DetailFindRequested(case.message_text))
+        app.screen.on_detail_find_requested(DetailFindRequested(case.message_text))
         await pilot.pause()
 
-        assert app._detail_find_query == ""
-        assert app._detail_find_matches == []
+        assert app.screen._detail_find_query == ""
+        assert app.screen._detail_find_matches == []
         if case.close_first:
-            assert app._detail_find_active is False
-            assert app._detail_find_input.display is False
+            assert app.screen._detail_find_active is False
+            assert app.screen._detail_find_input.display is False
 
 
 @pytest.mark.parametrize(
@@ -4002,15 +4012,15 @@ async def test_detail_find_steps_live_query_before_navigation(
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
         await _open_detail_with_find(app, record, pilot)
-        app._detail_find_input.value = "needle"
+        app.screen._detail_find_input.value = "needle"
 
-        await app._detail_find_input._on_key(events.Key(case.key, None))
-        app.on_detail_find_requested(DetailFindRequested("needle"))
+        await app.screen._detail_find_input._on_key(events.Key(case.key, None))
+        app.screen.on_detail_find_requested(DetailFindRequested("needle"))
         await pilot.pause()
 
-        assert app._detail_find_query == "needle"
-        assert len(app._detail_find_matches) == 10
-        assert app._detail_find_current == case.expected_index
+        assert app.screen._detail_find_query == "needle"
+        assert len(app.screen._detail_find_matches) == 10
+        assert app.screen._detail_find_current == case.expected_index
 
 
 @pytest.mark.parametrize(
@@ -4032,30 +4042,32 @@ async def test_detail_find_uses_new_body_while_large_render_is_pending(
         "oldneedle only lives in the previous record",
         "old",
     )
-    new_body = "newneedle lives here\n" + ("x" * (app._DETAIL_ASYNC_BODY_THRESHOLD + 1000))
+    new_body = "newneedle lives here\n" + (
+        "x" * (app.get_default_screen()._DETAIL_ASYNC_BODY_THRESHOLD + 1000)
+    )
     new_record = _ui_record(agentgrep, tmp_path / "new.jsonl", new_body, "new")
 
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
-        app.show_detail(old_record)
+        app.screen.show_detail(old_record)
         await pilot.pause()
-        assert "oldneedle" in app._detail_find_source
+        assert "oldneedle" in app.screen._detail_find_source
 
         scheduled_workers: list[object] = []
 
         def capture_worker(worker: object, **_: object) -> None:
             scheduled_workers.append(worker)
 
-        monkeypatch.setattr(app, "run_worker", capture_worker)
-        app.show_detail(new_record)
+        monkeypatch.setattr(app.screen, "run_worker", capture_worker)
+        app.screen.show_detail(new_record)
         assert scheduled_workers
 
-        app.action_open_detail_find()
-        app._detail_find_input.load_query(case.query)
-        app._run_detail_find(case.query, reset_cursor=True)
+        app.screen.action_open_detail_find()
+        app.screen._detail_find_input.load_query(case.query)
+        app.screen._run_detail_find(case.query, reset_cursor=True)
         await pilot.pause()
 
-        assert len(app._detail_find_matches) == case.expected_matches
+        assert len(app.screen._detail_find_matches) == case.expected_matches
 
 
 async def test_detail_find_searches_navigates_and_counts(
@@ -4069,22 +4081,22 @@ async def test_detail_find_searches_navigates_and_counts(
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
         await _open_detail_with_find(app, record, pilot)
-        app._detail_find_input.load_query("needle")
-        app._run_detail_find("needle", reset_cursor=True)
+        app.screen._detail_find_input.load_query("needle")
+        app.screen._run_detail_find("needle", reset_cursor=True)
         await pilot.pause()
-        assert len(app._detail_find_matches) == 10
-        assert app._detail_find_current == 0
-        assert "1/10" in str(app._detail_statusline.render())
+        assert len(app.screen._detail_find_matches) == 10
+        assert app.screen._detail_find_current == 0
+        assert "1/10" in str(app.screen._detail_statusline.render())
         # Next match advances the cursor and scrolls the body.
-        before = app._detail_scroll.scroll_y
-        app._detail_find_step(1)
+        before = app.screen._detail_scroll.scroll_y
+        app.screen._detail_find_step(1)
         await pilot.pause()
-        assert app._detail_find_current == 1
-        assert app._detail_scroll.scroll_y > before
+        assert app.screen._detail_find_current == 1
+        assert app.screen._detail_scroll.scroll_y > before
         # Wrap-around: previous from match 1 -> 0, previous again -> last (9).
-        app._detail_find_step(-1)
-        app._detail_find_step(-1)
-        assert app._detail_find_current == 9
+        app.screen._detail_find_step(-1)
+        app.screen._detail_find_step(-1)
+        assert app.screen._detail_find_current == 9
 
 
 async def test_detail_find_step_reuses_syntax_base(
@@ -4097,7 +4109,7 @@ async def test_detail_find_step_reuses_syntax_base(
     syntax+search+filter base is identical across a find session, so a cached
     base keeps the per-keystroke cost off a full-body ``Syntax`` re-highlight.
     """
-    from agentgrep.ui import app_screen
+    from agentgrep.ui.layouts import hud
 
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
@@ -4106,21 +4118,21 @@ async def test_detail_find_step_reuses_syntax_base(
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
         syntax_calls = 0
-        real_syntax = app_screen._RichSyntax
+        real_syntax = hud._RichSyntax
 
         def counting_syntax(*args: t.Any, **kwargs: t.Any) -> t.Any:  # forwarding spy
             nonlocal syntax_calls
             syntax_calls += 1
             return real_syntax(*args, **kwargs)
 
-        monkeypatch.setattr(app_screen, "_RichSyntax", counting_syntax)
+        monkeypatch.setattr(hud, "_RichSyntax", counting_syntax)
         await _open_detail_with_find(app, record, pilot)
-        app._run_detail_find("needle", reset_cursor=True)
+        app.screen._run_detail_find("needle", reset_cursor=True)
         await pilot.pause()
-        assert app._detail_find_matches  # the JSON body really was matched
+        assert app.screen._detail_find_matches  # the JSON body really was matched
         after_find = syntax_calls
         assert after_find >= 1  # the JSON base was tokenized at least once
-        app._detail_find_step(1)
+        app.screen._detail_find_step(1)
         await pilot.pause()
         assert syntax_calls == after_find  # the step reused the cached base
 
@@ -4162,22 +4174,22 @@ async def test_detail_find_base_refreshes_filter_highlights_when_filter_changes(
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
         await _open_detail_with_find(app, record, pilot)
-        app._filter_terms = (case.initial_filter,)
-        app._detail_find_input.load_query(case.find_query)
-        app._run_detail_find(case.find_query, reset_cursor=True)
+        app.screen._filter_terms = (case.initial_filter,)
+        app.screen._detail_find_input.load_query(case.find_query)
+        app.screen._run_detail_find(case.find_query, reset_cursor=True)
         await pilot.pause()
 
-        app._filter_terms = (case.updated_filter,)
-        app._filter_input.value = case.updated_filter
+        app.screen._filter_terms = (case.updated_filter,)
+        app.screen._filter_input.value = case.updated_filter
         payload = agentgrep.FilterCompletedPayload(
             text=case.updated_filter,
             matching=(record,),
         )
-        app.on_filter_completed(_FakeFilterCompleted(payload=payload))
-        app._detail_find_step(1)
+        app.screen.on_filter_completed(_FakeFilterCompleted(payload=payload))
+        app.screen._detail_find_step(1)
         await pilot.pause()
 
-        detail_body = app._detail.content.renderables[1]
+        detail_body = app.screen._detail.content.renderables[1]
         spans = [(span.start, span.end, str(span.style)) for span in detail_body.spans]
         filter_bg = app.theme_variables["ag-match-filter-bg"]
         initial_start = body.index(case.initial_filter)
@@ -4212,10 +4224,10 @@ async def test_new_search_clears_results_render_cache(
     ]
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
-        app._results.set_records(records)  # renders rows -> cache populated
-        assert app._results._render_cache  # non-empty
-        app._reset_search_chrome()  # a fresh search releases the old records
-        assert app._results._render_cache == {}  # cache released with them
+        app.screen._results.set_records(records)  # renders rows -> cache populated
+        assert app.screen._results._render_cache  # non-empty
+        app.screen._reset_search_chrome()  # a fresh search releases the old records
+        assert app.screen._results._render_cache == {}  # cache released with them
 
 
 async def test_detail_find_only_opens_with_a_record(
@@ -4226,11 +4238,11 @@ async def test_detail_find_only_opens_with_a_record(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
-        assert app._current_detail_record is None
-        app.action_open_detail_find()
+        assert app.screen._current_detail_record is None
+        app.screen.action_open_detail_find()
         await pilot.pause()
-        assert app._detail_find_input.display is False
-        assert app._detail_find_active is False
+        assert app.screen._detail_find_input.display is False
+        assert app.screen._detail_find_active is False
 
 
 async def test_detail_find_escape_closes_without_quitting(
@@ -4244,11 +4256,11 @@ async def test_detail_find_escape_closes_without_quitting(
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
         await _open_detail_with_find(app, record, pilot)
-        assert app._detail_find_input.display is True
+        assert app.screen._detail_find_input.display is True
         await pilot.press("escape")
         await pilot.pause()
-        assert app._detail_find_input.display is False
-        assert app._detail_find_active is False
+        assert app.screen._detail_find_input.display is False
+        assert app.screen._detail_find_active is False
         assert getattr(app.focused, "id", None) == "detail-scroll"
         assert app.is_running  # esc closed find, did not quit the app
 
@@ -4265,23 +4277,23 @@ async def test_detail_find_memory_restores_per_record(
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
         await _open_detail_with_find(app, rec_a, pilot)
-        app._detail_find_input.load_query("needle")
-        app._run_detail_find("needle", reset_cursor=True)
-        app._detail_find_step(1)  # land on match index 1
+        app.screen._detail_find_input.load_query("needle")
+        app.screen._run_detail_find("needle", reset_cursor=True)
+        app.screen._detail_find_step(1)  # land on match index 1
         await pilot.pause()
-        app._close_detail_find()
+        app.screen._close_detail_find()
         await pilot.pause()
-        assert app._detail_find_state[id(rec_a)][:2] == ("needle", 1)
+        assert app.screen._detail_find_state[id(rec_a)][:2] == ("needle", 1)
         # Visit another record, come back, reopen -> the query + cursor restore.
-        app.show_detail(rec_b)
+        app.screen.show_detail(rec_b)
         await pilot.pause()
-        app.show_detail(rec_a)
+        app.screen.show_detail(rec_a)
         await pilot.pause()
-        app.action_open_detail_find()
+        app.screen.action_open_detail_find()
         await pilot.pause()
-        assert app._detail_find_input.value == "needle"
-        assert app._detail_find_current == 1
-        assert len(app._detail_find_matches) == 10
+        assert app.screen._detail_find_input.value == "needle"
+        assert app.screen._detail_find_current == 1
+        assert len(app.screen._detail_find_matches) == 10
 
 
 async def test_detail_find_resets_on_record_switch_while_open(
@@ -4301,18 +4313,18 @@ async def test_detail_find_resets_on_record_switch_while_open(
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
         await _open_detail_with_find(app, rec_a, pilot)
-        app._detail_find_input.load_query("needle")
-        app._run_detail_find("needle", reset_cursor=True)
-        app._detail_find_step(1)
+        app.screen._detail_find_input.load_query("needle")
+        app.screen._run_detail_find("needle", reset_cursor=True)
+        app.screen._detail_find_step(1)
         await pilot.pause()
         # Switch to B WITHOUT closing find first (the bug path).
-        app.show_detail(rec_b)
+        app.screen.show_detail(rec_b)
         await pilot.pause()
-        assert app._detail_find_active is False
-        assert app._detail_find_input.display is False
-        assert app._detail_find_matches == []
+        assert app.screen._detail_find_active is False
+        assert app.screen._detail_find_input.display is False
+        assert app.screen._detail_find_matches == []
         # A's find survived in per-record memory for a later revisit.
-        assert app._detail_find_state[id(rec_a)][:2] == ("needle", 1)
+        assert app.screen._detail_find_state[id(rec_a)][:2] == ("needle", 1)
 
 
 async def test_detail_find_survives_theme_switch(
@@ -4328,16 +4340,16 @@ async def test_detail_find_survives_theme_switch(
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
         await _open_detail_with_find(app, rec_a, pilot)
-        app._detail_find_input.load_query("needle")
-        app._run_detail_find("needle", reset_cursor=True)
+        app.screen._detail_find_input.load_query("needle")
+        app.screen._run_detail_find("needle", reset_cursor=True)
         await pilot.pause()
         app.theme = ui_theme.LIGHT_THEME_NAME  # same record re-render
         await pilot.pause()
         # Find stays active with valid matches (not closed by the re-render),
         # and _present_detail re-overlays the highlights via _present_detail_find.
-        assert app._detail_find_active is True
-        assert app._detail_find_input.display is True
-        assert len(app._detail_find_matches) == 10
+        assert app.screen._detail_find_active is True
+        assert app.screen._detail_find_input.display is True
+        assert len(app.screen._detail_find_matches) == 10
 
 
 async def test_theme_switch_refreshes_the_searching_panel(
@@ -4351,7 +4363,7 @@ async def test_theme_switch_refreshes_the_searching_panel(
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
         calls: list[int] = []
-        monkeypatch.setattr(app._searching_panel, "refresh_theme", lambda: calls.append(1))
+        monkeypatch.setattr(app.screen._searching_panel, "refresh_theme", lambda: calls.append(1))
         app.theme = ui_theme.LIGHT_THEME_NAME
         await pilot.pause()
         assert calls == [1]
@@ -4373,16 +4385,16 @@ async def test_input_ctrl_c_clears_then_arms_confirm_exit(
         await pilot.pause()
         assert search.value == ""
         assert app.is_running
-        assert app._confirm_exit_pending is False
+        assert app.screen._confirm_exit_pending is False
         await pilot.press("ctrl+c")  # empty box -> arm confirm-exit (gutter shown)
         await pilot.pause()
-        assert app._confirm_exit_pending is True
+        assert app.screen._confirm_exit_pending is True
         assert app.is_running
-        assert app._ctrlc_gutter.has_class("-shown")
+        assert app.screen._ctrlc_gutter.has_class("-shown")
         await pilot.press("x")  # any other key disarms
         await pilot.pause()
-        assert app._confirm_exit_pending is False
-        assert app._ctrlc_gutter.has_class("-shown") is False
+        assert app.screen._confirm_exit_pending is False
+        assert app.screen._ctrlc_gutter.has_class("-shown") is False
 
 
 async def test_input_second_ctrl_c_on_empty_exits(
@@ -4397,7 +4409,7 @@ async def test_input_second_ctrl_c_on_empty_exits(
         search.focus()
         await pilot.press("ctrl+c")  # arm
         await pilot.pause()
-        assert app._confirm_exit_pending is True
+        assert app.screen._confirm_exit_pending is True
         await pilot.press("ctrl+c")  # exit
         await pilot.pause()
         assert app.is_running is False
@@ -4419,18 +4431,18 @@ async def test_ctrl_c_on_detail_pane_arms_confirm_exit(
     record = _detail_find_record(agentgrep, tmp_path / "a.jsonl")
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
-        app._set_empty_state(empty=False)
-        app.show_detail(record)
+        app.screen._set_empty_state(empty=False)
+        app.screen.show_detail(record)
         await pilot.pause()
-        app._detail_scroll.focus()
+        app.screen._detail_scroll.focus()
         await pilot.pause()
         assert getattr(app.focused, "id", None) == "detail-scroll"
-        assert app._has_active_actions() is False
+        assert app.screen._has_active_actions() is False
         await pilot.press("ctrl+c")  # non-input focus -> arm, do not quit
         await pilot.pause()
         assert app.is_running
-        assert app._confirm_exit_pending is True
-        assert app._ctrlc_gutter.has_class("-shown")
+        assert app.screen._confirm_exit_pending is True
+        assert app.screen._ctrlc_gutter.has_class("-shown")
         await pilot.press("ctrl+c")  # second press within the window -> exit
         await pilot.pause()
         assert app.is_running is False
@@ -4447,19 +4459,19 @@ async def test_find_input_ctrl_c_clears_then_closes_bar(
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
         await _open_detail_with_find(app, record, pilot)
-        app._detail_find_input.load_query("needle")
-        app._run_detail_find("needle", reset_cursor=True)
-        app._detail_find_input.focus()
+        app.screen._detail_find_input.load_query("needle")
+        app.screen._run_detail_find("needle", reset_cursor=True)
+        app.screen._detail_find_input.focus()
         await pilot.pause()
         await pilot.press("ctrl+c")  # query present -> clear, bar stays open
         await pilot.pause()
-        assert app._detail_find_input.value == ""
-        assert app._detail_find_active is True
+        assert app.screen._detail_find_input.value == ""
+        assert app.screen._detail_find_active is True
         assert app.is_running
         await pilot.press("ctrl+c")  # empty -> close the bar (not quit)
         await pilot.pause()
-        assert app._detail_find_active is False
-        assert app._detail_find_input.display is False
+        assert app.screen._detail_find_active is False
+        assert app.screen._detail_find_input.display is False
         assert app.is_running
 
 
@@ -4480,19 +4492,21 @@ async def test_detail_find_scrolls_wrapped_match_into_view(
     record = _ui_record(agentgrep, tmp_path / "wrap.jsonl", body, "wrap")
     async with app.run_test(size=(140, 24)) as pilot:
         await pilot.pause()
-        app._set_empty_state(empty=False)
-        app.show_detail(record)
+        app.screen._set_empty_state(empty=False)
+        app.screen.show_detail(record)
         await pilot.pause()
-        app.action_open_detail_find()
-        app._detail_find_input.load_query("needle")
-        app._run_detail_find("needle", reset_cursor=True)
+        app.screen.action_open_detail_find()
+        app.screen._detail_find_input.load_query("needle")
+        app.screen._run_detail_find("needle", reset_cursor=True)
         await pilot.pause()
-        scroll = app._detail_scroll
+        scroll = app.screen._detail_scroll
         # The match's true visual row (read off the rendered wrap cache) lies in
         # the scrolled viewport; a logical-line count would land it off-screen.
-        app._detail._render_content()
+        app.screen._detail._render_content()
         rows = [
-            i for i, strip in enumerate(app._detail._render_cache.lines) if "needle" in strip.text
+            i
+            for i, strip in enumerate(app.screen._detail._render_cache.lines)
+            if "needle" in strip.text
         ]
         assert rows, "match should be in the rendered output"
         viewport = range(int(scroll.scroll_y), int(scroll.scroll_y) + scroll.size.height)
@@ -4510,18 +4524,18 @@ async def test_detail_find_keeps_json_syntax_colors(
     record = _ui_record(agentgrep, tmp_path / "j.jsonl", body, "j")
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
-        app._set_empty_state(empty=False)
-        app.show_detail(record)
+        app.screen._set_empty_state(empty=False)
+        app.screen.show_detail(record)
         await pilot.pause()
         # The find source is the pretty-printed (multiline) JSON, so offsets and
         # matches line up with what is displayed.
-        assert "\n" in app._detail_find_source
-        app.action_open_detail_find()
-        app._detail_find_input.load_query("needle")
-        app._run_detail_find("needle", reset_cursor=True)
+        assert "\n" in app.screen._detail_find_source
+        app.screen.action_open_detail_find()
+        app.screen._detail_find_input.load_query("needle")
+        app.screen._run_detail_find("needle", reset_cursor=True)
         await pilot.pause()
-        assert len(app._detail_find_matches) == 2
-        body_text = app._detail.content.renderables[1]
+        assert len(app.screen._detail_find_matches) == 2
+        body_text = app.screen._detail.content.renderables[1]
         styles = {str(span.style) for span in body_text.spans}
         assert any("on " in s for s in styles)  # find-match background spans
         assert any(s and "on " not in s and s != "none" for s in styles)  # JSON token colors
@@ -4537,11 +4551,11 @@ async def test_ctrl_j_from_filter_focuses_results(
     records = _seed_records(agentgrep, tmp_path, 3)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.all_records.extend(records)
-        app.filtered_records.extend(records)
-        app._results.append_records(records)
+        app.screen.all_records.extend(records)
+        app.screen.filtered_records.extend(records)
+        app.screen._results.append_records(records)
         await pilot.pause()
-        app._filter_input.focus()
+        app.screen._filter_input.focus()
         await pilot.pause()
         assert app.focused is not None and app.focused.id == "filter"
         await pilot.press("ctrl+j")
@@ -4559,11 +4573,11 @@ async def test_ctrl_l_from_results_focuses_detail(
     records = _seed_records(agentgrep, tmp_path, 3)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.all_records.extend(records)
-        app.filtered_records.extend(records)
-        app._results.append_records(records)
+        app.screen.all_records.extend(records)
+        app.screen.filtered_records.extend(records)
+        app.screen._results.append_records(records)
         await pilot.pause()
-        app._filter_input.focus()
+        app.screen._filter_input.focus()
         await pilot.pause()
         await pilot.press("tab")
         await pilot.pause()
@@ -4583,11 +4597,11 @@ async def test_ctrl_h_from_detail_focuses_results(
     records = _seed_records(agentgrep, tmp_path, 3)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.all_records.extend(records)
-        app.filtered_records.extend(records)
-        app._results.append_records(records)
+        app.screen.all_records.extend(records)
+        app.screen.filtered_records.extend(records)
+        app.screen._results.append_records(records)
         await pilot.pause()
-        app._detail_scroll.focus()
+        app.screen._detail_scroll.focus()
         await pilot.pause()
         assert app.focused is not None and app.focused.id == "detail-scroll"
         await pilot.press("ctrl+h")
@@ -4605,11 +4619,11 @@ async def test_ctrl_k_from_results_focuses_filter(
     records = _seed_records(agentgrep, tmp_path, 3)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.all_records.extend(records)
-        app.filtered_records.extend(records)
-        app._results.append_records(records)
+        app.screen.all_records.extend(records)
+        app.screen.filtered_records.extend(records)
+        app.screen._results.append_records(records)
         await pilot.pause()
-        app._filter_input.focus()
+        app.screen._filter_input.focus()
         await pilot.pause()
         await pilot.press("tab")
         await pilot.pause()
@@ -4629,11 +4643,11 @@ async def test_ctrl_k_from_detail_focuses_filter(
     records = _seed_records(agentgrep, tmp_path, 3)
     async with app.run_test(size=(120, 24)) as pilot:
         await pilot.pause()
-        app.all_records.extend(records)
-        app.filtered_records.extend(records)
-        app._results.append_records(records)
+        app.screen.all_records.extend(records)
+        app.screen.filtered_records.extend(records)
+        app.screen._results.append_records(records)
         await pilot.pause()
-        app._detail_scroll.focus()
+        app.screen._detail_scroll.focus()
         await pilot.pause()
         await pilot.press("ctrl+k")
         await pilot.pause()
@@ -4650,11 +4664,11 @@ async def test_backspace_from_detail_focuses_results(
     records = _seed_records(agentgrep, tmp_path, 3)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.all_records.extend(records)
-        app.filtered_records.extend(records)
-        app._results.append_records(records)
+        app.screen.all_records.extend(records)
+        app.screen.filtered_records.extend(records)
+        app.screen._results.append_records(records)
         await pilot.pause()
-        app._detail_scroll.focus()
+        app.screen._detail_scroll.focus()
         await pilot.pause()
         await pilot.press("backspace")
         await pilot.pause()
@@ -4669,18 +4683,18 @@ async def test_backspace_in_filter_still_deletes_a_character(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._filter_input.focus()
+        app.screen._filter_input.focus()
         await pilot.pause()
         assert app.focused is not None and app.focused.id == "filter"
         await pilot.press("a")
         await pilot.press("b")
         await pilot.press("c")
         await pilot.pause()
-        assert app._filter_input.value == "abc"
+        assert app.screen._filter_input.value == "abc"
         await pilot.press("backspace")
         await pilot.pause()
         # Backspace deleted the last character; focus stayed on filter.
-        assert app._filter_input.value == "ab"
+        assert app.screen._filter_input.value == "ab"
         assert app.focused.id == "filter"
 
 
@@ -4694,11 +4708,11 @@ async def test_ctrl_h_from_filter_is_a_noop(
     records = _seed_records(agentgrep, tmp_path, 3)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.all_records.extend(records)
-        app.filtered_records.extend(records)
-        app._results.append_records(records)
+        app.screen.all_records.extend(records)
+        app.screen.filtered_records.extend(records)
+        app.screen._results.append_records(records)
         await pilot.pause()
-        app._filter_input.focus()
+        app.screen._filter_input.focus()
         await pilot.pause()
         assert app.focused is not None and app.focused.id == "filter"
         await pilot.press("ctrl+h")
@@ -4714,7 +4728,7 @@ async def test_up_on_empty_filter_releases_focus_to_search(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._filter_input.focus()
+        app.screen._filter_input.focus()
         await pilot.pause()
         assert app.focused is not None and app.focused.id == "filter"
         await pilot.press("up")
@@ -4731,11 +4745,11 @@ async def test_up_on_filter_with_cursor_at_start_releases_focus_to_search(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._filter_input.focus()
+        app.screen._filter_input.focus()
         await pilot.pause()
         # Type something, then move cursor back to start.
-        app._filter_input.value = "abc"
-        app._filter_input.cursor_position = 0
+        app.screen._filter_input.value = "abc"
+        app.screen._filter_input.cursor_position = 0
         await pilot.pause()
         await pilot.press("up")
         await pilot.pause()
@@ -4777,16 +4791,16 @@ async def test_right_on_empty_filter_focuses_and_opens_detail(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=case.size) as pilot:
         await pilot.pause()
-        app._filter_input.focus()
+        app.screen._filter_input.focus()
         await pilot.pause()
-        assert app._filter_input.value == ""
+        assert app.screen._filter_input.value == ""
         await pilot.press("right")
         await pilot.pause()
         assert app.focused is not None and app.focused.id == "detail-scroll"
-        assert not app._detail_column.has_class("-collapsed")
+        assert not app.screen._detail_column.has_class("-collapsed")
         # Explicit detail focus records the user's reader intent even when
         # wide mode already has the pane visible.
-        assert app._detail_opened is case.expect_opened
+        assert app.screen._detail_opened is case.expect_opened
 
 
 class DetailFocusResizeCase(t.NamedTuple):
@@ -4819,24 +4833,24 @@ async def test_explicit_wide_detail_focus_survives_narrow_resize(
     records = _seed_records(agentgrep, tmp_path, 5)
     async with app.run_test(size=(120, 24)) as pilot:
         await pilot.pause()
-        app.all_records.extend(records)
-        app.filtered_records = list(records)
-        app._results.set_records(records)
-        app._apply_responsive_layout()
-        app._results.focus()
+        app.screen.all_records.extend(records)
+        app.screen.filtered_records = list(records)
+        app.screen._results.set_records(records)
+        app.screen._apply_responsive_layout()
+        app.screen._results.focus()
         await pilot.pause()
 
         await pilot.press(case.key)
         await pilot.pause()
-        assert app._stacked is False
+        assert app.screen._stacked is False
         assert app.focused is not None and app.focused.id == "detail-scroll"
-        assert app._detail_opened is True
+        assert app.screen._detail_opened is True
 
         await pilot.resize_terminal(80, 24)
         await pilot.pause(0.1)
-        assert app._stacked is True
-        assert app._detail_opened is True
-        assert not app._detail_column.has_class("-collapsed")
+        assert app.screen._stacked is True
+        assert app.screen._detail_opened is True
+        assert not app.screen._detail_column.has_class("-collapsed")
         assert app.focused is not None and app.focused.id == "detail-scroll"
 
 
@@ -4850,19 +4864,19 @@ async def test_l_from_results_opens_stacked_detail(
     records = _seed_records(agentgrep, tmp_path, 5)
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        app.all_records.extend(records)
-        app.filtered_records = list(records)
-        app._results.set_records(records)
-        app._apply_responsive_layout()
+        app.screen.all_records.extend(records)
+        app.screen.filtered_records = list(records)
+        app.screen._results.set_records(records)
+        app.screen._apply_responsive_layout()
         await pilot.pause()
-        assert app._detail_column.has_class("-collapsed")
-        app._results.focus()
+        assert app.screen._detail_column.has_class("-collapsed")
+        app.screen._results.focus()
         await pilot.pause()
         await pilot.press("l")
         await pilot.pause()
         assert app.focused is not None and app.focused.id == "detail-scroll"
-        assert not app._detail_column.has_class("-collapsed")
-        assert app._detail_opened is True
+        assert not app.screen._detail_column.has_class("-collapsed")
+        assert app.screen._detail_opened is True
 
 
 class FocusDetailRenderCase(t.NamedTuple):
@@ -4900,15 +4914,6 @@ async def test_focus_detail_renders_record_when_opening_stacked_streaming_result
     """Opening a stacked streaming result renders a readable detail body."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
-    app.query = agentgrep.SearchQuery(
-        terms=("VISIBLEPROBE",),
-        scope="prompts",
-        any_term=False,
-        regex=False,
-        case_sensitive=False,
-        agents=("codex",),
-        limit=None,
-    )
     records = [
         agentgrep.SearchRecord(
             kind="prompt",
@@ -4922,31 +4927,31 @@ async def test_focus_detail_renders_record_when_opening_stacked_streaming_result
     ]
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        app.all_records.extend(records)
-        app.filtered_records = list(records)
-        app._results.append_records(records)
+        app.screen.all_records.extend(records)
+        app.screen.filtered_records = list(records)
+        app.screen._results.append_records(records)
         if case.highlighted is not None:
             # Seed Textual's reactive storage directly so this case can
             # model a highlighted row without dispatching the same genuine
             # cursor-move event that normally opens the stacked detail.
-            app._results._reactive_highlighted = case.highlighted
-            app._current_detail_record = records[0]
-            app._detail_opened = False
-        app._apply_responsive_layout()
+            app.screen._results._reactive_highlighted = case.highlighted
+            app.screen._current_detail_record = records[0]
+            app.screen._detail_opened = False
+        app.screen._apply_responsive_layout()
         await pilot.pause()
-        assert app._detail_column.has_class("-collapsed")
-        app._results.focus()
+        assert app.screen._detail_column.has_class("-collapsed")
+        app.screen._results.focus()
         await pilot.pause()
         await pilot.press("l")
         await pilot.pause()
         expected = records[case.expected_index]
         assert app.focused is not None and app.focused.id == "detail-scroll"
-        assert app._current_detail_record is expected
-        assert not app._detail_column.has_class("-collapsed")
+        assert app.screen._current_detail_record is expected
+        assert not app.screen._detail_column.has_class("-collapsed")
         # Records open at the top now (per-record scroll memory), so in the
         # short stacked viewport the matched body line sits below the metadata
         # header — scroll down to bring it into view before asserting it renders.
-        app._detail_scroll.scroll_end(animate=False)
+        app.screen._detail_scroll.scroll_end(animate=False)
         await pilot.pause()
         screenshot = app.export_screenshot(simplify=True)
         assert "VISIBLEPROBE" in screenshot
@@ -5017,18 +5022,18 @@ async def test_filter_completion_counts_only_queued_autohighlights(
     records = _seed_records(agentgrep, tmp_path, case.record_count)
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        app.all_records.extend(records)
-        app.filtered_records = list(records)
-        app._results.append_records(records)
+        app.screen.all_records.extend(records)
+        app.screen.filtered_records = list(records)
+        app.screen._results.append_records(records)
         if case.initial_highlighted is not None:
-            app._results._reactive_highlighted = case.initial_highlighted
-        app._pending_autohighlights = 99
+            app.screen._results._reactive_highlighted = case.initial_highlighted
+        app.screen._pending_autohighlights = 99
         payload = agentgrep.FilterCompletedPayload(
             text="",
             matching=tuple(records[: case.matching_count]),
         )
-        app.on_filter_completed(_FakeFilterCompleted(payload=payload))
-        assert app._pending_autohighlights == case.expect_pending
+        app.screen.on_filter_completed(_FakeFilterCompleted(payload=payload))
+        assert app.screen._pending_autohighlights == case.expect_pending
 
 
 class FilterUserMoveCase(t.NamedTuple):
@@ -5089,30 +5094,30 @@ async def test_filter_completion_does_not_swallow_first_real_cursor_move(
     records = _seed_records(agentgrep, tmp_path, case.record_count)
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        app.all_records.extend(records)
-        app.filtered_records = list(records)
-        app._results.append_records(records)
+        app.screen.all_records.extend(records)
+        app.screen.filtered_records = list(records)
+        app.screen._results.append_records(records)
         if case.initial_highlighted is not None:
-            app._results._reactive_highlighted = case.initial_highlighted
-        app._detail_opened = False
-        app._apply_responsive_layout()
-        app._results.focus()
+            app.screen._results._reactive_highlighted = case.initial_highlighted
+        app.screen._detail_opened = False
+        app.screen._apply_responsive_layout()
+        app.screen._results.focus()
         await pilot.pause()
 
         payload = agentgrep.FilterCompletedPayload(
             text="",
             matching=tuple(records[: case.matching_count]),
         )
-        app.on_filter_completed(_FakeFilterCompleted(payload=payload))
+        app.screen.on_filter_completed(_FakeFilterCompleted(payload=payload))
         await pilot.pause()
         await pilot.pause()
-        assert app._detail_opened is False
-        assert app._detail_column.has_class("-collapsed")
+        assert app.screen._detail_opened is False
+        assert app.screen._detail_column.has_class("-collapsed")
 
         await pilot.press(case.first_user_key)
         await pilot.pause()
-        assert app._detail_opened is True
-        assert not app._detail_column.has_class("-collapsed")
+        assert app.screen._detail_opened is True
+        assert not app.screen._detail_column.has_class("-collapsed")
 
 
 async def test_right_on_non_empty_filter_moves_cursor(
@@ -5123,16 +5128,16 @@ async def test_right_on_non_empty_filter_moves_cursor(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._filter_input.focus()
+        app.screen._filter_input.focus()
         await pilot.pause()
-        app._filter_input.value = "abc"
-        app._filter_input.cursor_position = 0
+        app.screen._filter_input.value = "abc"
+        app.screen._filter_input.cursor_position = 0
         await pilot.pause()
         await pilot.press("right")
         await pilot.pause()
         # Focus stays on the filter; cursor advances by one.
         assert app.focused is not None and app.focused.id == "filter"
-        assert app._filter_input.cursor_position == 1
+        assert app.screen._filter_input.cursor_position == 1
 
 
 async def test_search_results_list_append_under_load(
@@ -5163,10 +5168,10 @@ async def test_search_results_list_append_under_load(
     async with app.run_test() as pilot:
         await pilot.pause()
         start = time.monotonic()
-        app._results.append_records(records)
+        app.screen._results.append_records(records)
         elapsed = time.monotonic() - start
         await pilot.pause()
-        assert len(app._results._records) == 1000
+        assert len(app.screen._results._records) == 1000
         assert elapsed < 2.0, f"append_records(1000) took {elapsed:.3f}s; expected < 2.0s"
 
 
@@ -5190,23 +5195,23 @@ async def test_set_records_narrowing_avoids_clear_options(
     ]
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._results.append_records(records)
+        app.screen._results.append_records(records)
         await pilot.pause()
         clear_count = 0
-        original_clear = app._results.clear_options
+        original_clear = app.screen._results.clear_options
 
         def counting_clear() -> object:
             nonlocal clear_count
             clear_count += 1
             return original_clear()
 
-        monkeypatch.setattr(app._results, "clear_options", counting_clear)
+        monkeypatch.setattr(app.screen._results, "clear_options", counting_clear)
         # Narrow to the first 7 records (drop 3). 3 / 10 <= 50% → delta path.
-        app._results.set_records(records[:7])
+        app.screen._results.set_records(records[:7])
         await pilot.pause()
         assert clear_count == 0
-        assert len(app._results._records) == 7
-        assert [id(r) for r in app._results._records] == [id(r) for r in records[:7]]
+        assert len(app.screen._results._records) == 7
+        assert [id(r) for r in app.screen._results._records] == [id(r) for r in records[:7]]
 
 
 async def test_set_records_widening_triggers_full_rebuild(
@@ -5229,22 +5234,22 @@ async def test_set_records_widening_triggers_full_rebuild(
     ]
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._results.append_records(records[:3])
+        app.screen._results.append_records(records[:3])
         await pilot.pause()
         clear_count = 0
-        original_clear = app._results.clear_options
+        original_clear = app.screen._results.clear_options
 
         def counting_clear() -> object:
             nonlocal clear_count
             clear_count += 1
             return original_clear()
 
-        monkeypatch.setattr(app._results, "clear_options", counting_clear)
+        monkeypatch.setattr(app.screen._results, "clear_options", counting_clear)
         # Widen to all 5 records — two of them weren't shown before.
-        app._results.set_records(records)
+        app.screen._results.set_records(records)
         await pilot.pause()
         assert clear_count == 1, "widening must rebuild to preserve record order"
-        assert len(app._results._records) == 5
+        assert len(app.screen._results._records) == 5
 
 
 async def test_apply_records_batch_yields_between_chunks(
@@ -5254,7 +5259,7 @@ async def test_apply_records_batch_yields_between_chunks(
     """Applying a large batch yields to the event loop every chunk_size records."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
-    chunk = app._APPLY_CHUNK_SIZE
+    chunk = app.get_default_screen()._APPLY_CHUNK_SIZE
     # Three chunks worth — should yield twice (between chunk 0/1 and 1/2).
     record_count = chunk * 3
     records = [
@@ -5280,12 +5285,12 @@ async def test_apply_records_batch_yields_between_chunks(
             await real_sleep(delay)
 
         monkeypatch.setattr(asyncio, "sleep", counting_sleep)
-        await app._apply_records_batch(records, record_count)
+        await app.screen._apply_records_batch(records, record_count)
         assert sleep_calls >= 2, (
             f"expected >= 2 yields for {record_count} records in chunks of {chunk}, "
             f"got {sleep_calls}"
         )
-        assert len(app._results._records) == record_count
+        assert len(app.screen._results._records) == record_count
 
 
 async def test_set_records_majority_removal_falls_back_to_rebuild(
@@ -5308,22 +5313,22 @@ async def test_set_records_majority_removal_falls_back_to_rebuild(
     ]
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._results.append_records(records)
+        app.screen._results.append_records(records)
         await pilot.pause()
         clear_count = 0
-        original_clear = app._results.clear_options
+        original_clear = app.screen._results.clear_options
 
         def counting_clear() -> object:
             nonlocal clear_count
             clear_count += 1
             return original_clear()
 
-        monkeypatch.setattr(app._results, "clear_options", counting_clear)
+        monkeypatch.setattr(app.screen._results, "clear_options", counting_clear)
         # Drop 8 of 10 — well over the 50% threshold.
-        app._results.set_records(records[:2])
+        app.screen._results.set_records(records[:2])
         await pilot.pause()
         assert clear_count == 1, "majority-removal must take the rebuild path"
-        assert len(app._results._records) == 2
+        assert len(app.screen._results._records) == 2
 
 
 def test_scroll_percent_returns_full_when_nothing_scrolls() -> None:
@@ -5361,13 +5366,13 @@ async def test_results_status_right_shows_position_or_count(
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
         # No streaming results yet — empty right slot regardless of args.
-        assert app._format_results_right(cursor=None, visible=None) == ""
+        assert app.screen._format_results_right(cursor=None, visible=None) == ""
         # Seed streaming totals so the match count segment renders.
-        app.all_records.extend(_seed_records(agentgrep, tmp_path, 10))
+        app.screen.all_records.extend(_seed_records(agentgrep, tmp_path, 10))
         # No cursor yet — bare match count.
-        assert app._format_results_right(cursor=None, visible=10) == "10 matches"
+        assert app.screen._format_results_right(cursor=None, visible=10) == "10 matches"
         # Cursor at row 0 of all 10 — position only, no restated count.
-        assert app._format_results_right(cursor=0, visible=10) == "1/10"
+        assert app.screen._format_results_right(cursor=0, visible=10) == "1/10"
 
 
 async def test_detail_statusline_shows_path_and_scroll_percent(
@@ -5388,14 +5393,14 @@ async def test_detail_statusline_shows_path_and_scroll_percent(
     async with app.run_test() as pilot:
         await pilot.pause()
         updates: list[str] = []
-        real_update = app._detail_statusline.update
+        real_update = app.screen._detail_statusline.update
 
         def spy(content: t.Any = "", *args: t.Any, **kwargs: t.Any) -> None:
             updates.append(str(content))
             real_update(content, *args, **kwargs)
 
-        monkeypatch.setattr(app._detail_statusline, "update", spy)
-        app.show_detail(record)
+        monkeypatch.setattr(app.screen._detail_statusline, "update", spy)
+        app.screen.show_detail(record)
         await pilot.pause()
         # Latest update should carry both the path's basename and a trailing ``%``.
         rendered = updates[-1] if updates else ""
@@ -5416,22 +5421,22 @@ async def test_results_scroll_changed_updates_status_right(
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
         updates: list[str] = []
-        real_set = app._results_header.set_matches
+        real_set = app.screen._results_header.set_matches
 
         def spy(text: str) -> None:
             updates.append(text)
             real_set(text)
 
-        monkeypatch.setattr(app._results_header, "set_matches", spy)
+        monkeypatch.setattr(app.screen._results_header, "set_matches", spy)
         # Pre-seed streaming records so the match count is non-zero.
-        app.all_records.extend(records)
-        app._results.append_records(records)
+        app.screen.all_records.extend(records)
+        app.screen._results.append_records(records)
         await pilot.pause()
         # Explicitly land focus and move cursor to row 0 — the reactive
         # ``highlighted`` watcher fires on change, so set it directly.
-        app._results.focus()
+        app.screen._results.focus()
         await pilot.pause()
-        app._results.highlighted = 0
+        app.screen._results.highlighted = 0
         await pilot.pause()
         # The ``highlighted`` watcher posts ``ResultsScrollChanged`` which
         # the app handler renders as the cursor position ``1/5``.
@@ -5496,17 +5501,17 @@ async def test_results_status_right_adapts_to_width(
     records = _seed_records(agentgrep, tmp_path, 5)
     async with app.run_test(size=case.size) as pilot:
         await pilot.pause()
-        app.all_records.extend(records)
+        app.screen.all_records.extend(records)
         # Reveal the chrome so the statusline has a measurable width (the narrow
         # detection drives the right-slot format).
-        app._set_empty_state(empty=False)
+        app.screen._set_empty_state(empty=False)
         await pilot.pause()
         if case.searching:
-            app._search_done = False
+            app.screen._search_done = False
             # 5662/6748 sources scanned rounds to 84%.
-            app._apply_progress(_make_progress_snapshot(agentgrep))
+            app.screen._apply_progress(_make_progress_snapshot(agentgrep))
             await pilot.pause()
-        assert app._format_results_right(case.cursor, 5) == case.expected
+        assert app.screen._format_results_right(case.cursor, 5) == case.expected
 
 
 def _make_progress_snapshot(agentgrep: t.Any, **overrides: t.Any) -> t.Any:
@@ -5535,16 +5540,16 @@ async def test_apply_progress_fills_header_bar(
     # bar renders alongside the match count.
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
-        app._search_done = False
+        app.screen._search_done = False
         # The folded header rule shows once results stream in; seed one so the
         # hybrid is past its centered-panel phase and the bar renders.
-        app.all_records.extend(_seed_records(agentgrep, tmp_path, 1))
-        app._set_empty_state(empty=False)
-        app._results_header.begin()
-        app._apply_progress(_make_progress_snapshot(agentgrep))
+        app.screen.all_records.extend(_seed_records(agentgrep, tmp_path, 1))
+        app.screen._set_empty_state(empty=False)
+        app.screen._results_header.begin()
+        app.screen._apply_progress(_make_progress_snapshot(agentgrep))
         await pilot.pause()
-        assert app._results_header._fraction == pytest.approx(5662 / 6748)
-        rendered = app._results_header.render().plain
+        assert app.screen._results_header._fraction == pytest.approx(5662 / 6748)
+        rendered = app.screen._results_header.render().plain
         assert "▰" in rendered
         assert "%" in rendered
 
@@ -5558,13 +5563,13 @@ async def test_header_indeterminate_before_total_shows_no_bar(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
-        app._search_done = False
+        app.screen._search_done = False
         # Seed a result so the folded header rule (not the centered panel) is
         # the visible chrome whose payload we assert on.
-        app.all_records.extend(_seed_records(agentgrep, tmp_path, 1))
-        app._set_empty_state(empty=False)
-        app._results_header.begin()
-        app._apply_progress(
+        app.screen.all_records.extend(_seed_records(agentgrep, tmp_path, 1))
+        app.screen._set_empty_state(empty=False)
+        app.screen._results_header.begin()
+        app.screen._apply_progress(
             _make_progress_snapshot(
                 agentgrep,
                 phase="discovering",
@@ -5574,8 +5579,8 @@ async def test_header_indeterminate_before_total_shows_no_bar(
             ),
         )
         await pilot.pause()
-        assert app._results_header._fraction is None
-        assert "▰" not in app._results_header.render().plain
+        assert app.screen._results_header._fraction is None
+        assert "▰" not in app.screen._results_header.render().plain
 
 
 async def test_ctrl_backslash_toggles_scanning_detail_row(
@@ -5587,22 +5592,23 @@ async def test_ctrl_backslash_toggles_scanning_detail_row(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
-        app._search_done = False
-        app._apply_progress(_make_progress_snapshot(agentgrep))
+        app.screen._search_done = False
+        app.screen._apply_progress(_make_progress_snapshot(agentgrep))
         await pilot.pause()
         detail_row = app.screen.query_one("#status-detail")
         assert not detail_row.has_class("visible")
         await pilot.press("ctrl+backslash")
         await pilot.pause()
-        assert app._detail_visible is True
+        assert app.screen._detail_visible is True
         assert detail_row.has_class("visible")
         # Two lines: the phase + N/M sources heading, then the in-source detail.
         assert (
-            app._last_detail_text == "Scanning 5662/6748 sources\n2176 records, 354 source matches"
+            app.screen._last_detail_text
+            == "Scanning 5662/6748 sources\n2176 records, 354 source matches"
         )
         await pilot.press("ctrl+backslash")
         await pilot.pause()
-        assert app._detail_visible is False
+        assert app.screen._detail_visible is False
         assert not detail_row.has_class("visible")
 
 
@@ -5615,23 +5621,23 @@ async def test_detail_row_visibility_sticky_across_search_reset(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
-        app._search_done = False
-        app._apply_progress(_make_progress_snapshot(agentgrep))
+        app.screen._search_done = False
+        app.screen._apply_progress(_make_progress_snapshot(agentgrep))
         await pilot.pause()
         await pilot.press("ctrl+backslash")
         await pilot.pause()
-        assert app._detail_visible is True
+        assert app.screen._detail_visible is True
         updates: list[str] = []
-        real_update = app._detail_row.update
+        real_update = app.screen._detail_row.update
 
         def spy(content: t.Any = "", *args: t.Any, **kwargs: t.Any) -> None:
             updates.append(str(content))
             real_update(content, *args, **kwargs)
 
-        monkeypatch.setattr(app._detail_row, "update", spy)
-        app._reset_search_chrome()
+        monkeypatch.setattr(app.screen._detail_row, "update", spy)
+        app.screen._reset_search_chrome()
         await pilot.pause()
-        assert app._detail_visible is True
+        assert app.screen._detail_visible is True
         assert updates[-1] == ""
 
 
@@ -5644,17 +5650,17 @@ async def test_finish_complete_freezes_header_full_bar(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
-        app._search_done = False
+        app.screen._search_done = False
         # Results present → the folded header rule (not the centered panel) is
         # the chrome that freezes and carries the outcome.
-        app.all_records.extend(_seed_records(agentgrep, tmp_path, 1))
-        app._set_empty_state(empty=False)
-        app._results_header.begin()
-        app._apply_progress(_make_progress_snapshot(agentgrep))
+        app.screen.all_records.extend(_seed_records(agentgrep, tmp_path, 1))
+        app.screen._set_empty_state(empty=False)
+        app.screen._results_header.begin()
+        app.screen._apply_progress(_make_progress_snapshot(agentgrep))
         await pilot.pause()
-        app._apply_finished("complete", 100, 12.3, None)
+        app.screen._apply_finished("complete", 100, 12.3, None)
         await pilot.pause()
-        header = app._results_header
+        header = app.screen._results_header
         assert header._outcome == "complete"
         assert header.auto_refresh is None  # the spinner timer stopped
         rendered = header.render().plain
@@ -5662,7 +5668,7 @@ async def test_finish_complete_freezes_header_full_bar(
         assert "✓" not in rendered  # complete drops the glyph — the full bar says it
         assert "Done" not in rendered
         # The data summary lands in the toggleable detail row.
-        assert app._last_detail_text == "Search complete: 100 matches in 12.3s"
+        assert app.screen._last_detail_text == "Search complete: 100 matches in 12.3s"
 
 
 class FinishOutcomeCase(t.NamedTuple):
@@ -5737,17 +5743,17 @@ async def test_finish_outcome_freezes_header_glyph(
         await pilot.pause()
         # Reveal + lay out the chrome so the header has a real width before the
         # narrow/wide payload is computed.
-        app._set_empty_state(empty=False)
+        app.screen._set_empty_state(empty=False)
         await pilot.pause()
-        app._search_done = False
-        app.all_records.extend(_seed_records(agentgrep, tmp_path, 5))
-        app._results_header.begin()
+        app.screen._search_done = False
+        app.screen.all_records.extend(_seed_records(agentgrep, tmp_path, 5))
+        app.screen._results_header.begin()
         if case.seed_scanning:
-            app._apply_progress(_make_progress_snapshot(agentgrep))
+            app.screen._apply_progress(_make_progress_snapshot(agentgrep))
             await pilot.pause()
-        app._apply_finished(case.outcome, 100, 12.3, None)
+        app.screen._apply_finished(case.outcome, 100, 12.3, None)
         await pilot.pause()
-        header = app._results_header
+        header = app.screen._results_header
         assert header._outcome == case.outcome
         assert header._final_glyph == case.glyph
         rendered = header.render().plain
@@ -5773,15 +5779,18 @@ async def test_detail_row_shows_summary_after_finish(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
-        app._search_done = False
-        app._apply_progress(_make_progress_snapshot(agentgrep))
+        app.screen._search_done = False
+        app.screen._apply_progress(_make_progress_snapshot(agentgrep))
         await pilot.pause()
-        app._apply_finished("interrupted", 2976, 2.1, None)
+        app.screen._apply_finished("interrupted", 2976, 2.1, None)
         await pilot.pause()
         await pilot.press("ctrl+backslash")
         await pilot.pause()
-        assert app._detail_visible is True
-        assert app._last_detail_text == "Stopped at 2976 matches across 5662/6748 sources in 2.1s"
+        assert app.screen._detail_visible is True
+        assert (
+            app.screen._last_detail_text
+            == "Stopped at 2976 matches across 5662/6748 sources in 2.1s"
+        )
 
 
 async def test_header_progress_setter_does_not_repaint(
@@ -5796,7 +5805,7 @@ async def test_header_progress_setter_does_not_repaint(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
-        header = app._results_header
+        header = app.screen._results_header
         header.begin()  # arms the self-refresh timer (drives repaints)
         refreshes: list[None] = []
         real_refresh = header.refresh
@@ -5853,17 +5862,19 @@ async def test_streaming_events_gated_by_generation(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
-        app._search_done = False
-        stale_generation = app._chrome_generation
+        app.screen._search_done = False
+        stale_generation = app.screen._chrome_generation
         # A new search bumps the generation; the old reporter's events
         # still carry the previous one.
-        app._reset_search_chrome()
+        app.screen._reset_search_chrome()
         await pilot.pause()
-        generation = app._chrome_generation if case.use_current_generation else stale_generation
-        await app._apply_streaming_event(generation, _make_progress_snapshot(agentgrep))
+        generation = (
+            app.screen._chrome_generation if case.use_current_generation else stale_generation
+        )
+        await app.screen._apply_streaming_event(generation, _make_progress_snapshot(agentgrep))
         await pilot.pause()
-        assert (app._last_snapshot is not None) is case.expect_applied
-        assert (app._results_header._fraction is not None) is case.expect_applied
+        assert (app.screen._last_snapshot is not None) is case.expect_applied
+        assert (app.screen._results_header._fraction is not None) is case.expect_applied
 
 
 async def test_streaming_records_batch_lands_in_results(
@@ -5881,12 +5892,12 @@ async def test_streaming_records_batch_lands_in_results(
     records = _seed_records(agentgrep, tmp_path, 3)
     async with app.run_test(size=(160, 24)) as pilot:
         await pilot.pause()
-        app._search_done = False
+        app.screen._search_done = False
         batch = agentgrep.StreamingRecordsBatch(records=tuple(records), total=3)
-        await app._apply_streaming_event(app._chrome_generation, batch)
+        await app.screen._apply_streaming_event(app.screen._chrome_generation, batch)
         await pilot.pause()
-        assert len(app.all_records) == 3
-        assert len(app._results._records) == 3
+        assert len(app.screen.all_records) == 3
+        assert len(app.screen._results._records) == 3
 
 
 async def test_narrow_header_drops_match_count_keeps_bar(
@@ -5898,15 +5909,15 @@ async def test_narrow_header_drops_match_count_keeps_bar(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(40, 24)) as pilot:
         await pilot.pause()
-        app._set_empty_state(empty=False)
+        app.screen._set_empty_state(empty=False)
         await pilot.pause()
-        app._search_done = False
-        app.all_records.extend(_seed_records(agentgrep, tmp_path, 5))
-        app._results_header.begin()
-        app._apply_progress(_make_progress_snapshot(agentgrep))
+        app.screen._search_done = False
+        app.screen.all_records.extend(_seed_records(agentgrep, tmp_path, 5))
+        app.screen._results_header.begin()
+        app.screen._apply_progress(_make_progress_snapshot(agentgrep))
         await pilot.pause()
-        assert app._statusline_narrow() is True
-        rendered = app._results_header.render().plain
+        assert app.screen._statusline_narrow() is True
+        rendered = app.screen._results_header.render().plain
         assert "matches" not in rendered  # the count drops on a narrow header
         assert "▰" in rendered  # ...but the bar still fits
 
@@ -5945,8 +5956,8 @@ async def test_body_stacks_below_split_breakpoint(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=case.size) as pilot:
         await pilot.pause()
-        assert app._stacked is case.expect_stacked
-        assert app._body.has_class("-stacked") is case.expect_stacked
+        assert app.screen._stacked is case.expect_stacked
+        assert app.screen._body.has_class("-stacked") is case.expect_stacked
 
 
 async def test_narrow_detail_opens_on_user_selection_not_autohighlight(
@@ -5959,26 +5970,26 @@ async def test_narrow_detail_opens_on_user_selection_not_autohighlight(
     records = _seed_records(agentgrep, tmp_path, 5)
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        app.all_records.extend(records)
-        app.filtered_records = list(records)
-        app._results.set_records(records)
-        app._apply_responsive_layout()
+        app.screen.all_records.extend(records)
+        app.screen.filtered_records = list(records)
+        app.screen._results.set_records(records)
+        app.screen._apply_responsive_layout()
         await pilot.pause()
         # Narrow + nothing opened → detail collapsed.
-        assert app._stacked is True
-        assert app._detail_column.has_class("-collapsed")
+        assert app.screen._stacked is True
+        assert app.screen._detail_column.has_class("-collapsed")
         # The programmatic row-0 highlight must NOT open it.
-        app._pending_autohighlights = 1
-        app.on_option_list_option_highlighted(_FakeHighlight(0))
+        app.screen._pending_autohighlights = 1
+        app.screen.on_option_list_option_highlighted(_FakeHighlight(0))
         await pilot.pause()
-        assert app._pending_autohighlights == 0
-        assert app._detail_opened is False
-        assert app._detail_column.has_class("-collapsed")
+        assert app.screen._pending_autohighlights == 0
+        assert app.screen._detail_opened is False
+        assert app.screen._detail_column.has_class("-collapsed")
         # A real cursor move opens it and keeps it open.
-        app.on_option_list_option_highlighted(_FakeHighlight(1))
+        app.screen.on_option_list_option_highlighted(_FakeHighlight(1))
         await pilot.pause()
-        assert app._detail_opened is True
-        assert not app._detail_column.has_class("-collapsed")
+        assert app.screen._detail_opened is True
+        assert not app.screen._detail_column.has_class("-collapsed")
 
 
 async def test_wide_detail_always_visible(
@@ -5991,19 +6002,19 @@ async def test_wide_detail_always_visible(
     records = _seed_records(agentgrep, tmp_path, 5)
     async with app.run_test(size=(120, 24)) as pilot:
         await pilot.pause()
-        app.all_records.extend(records)
-        app.filtered_records = list(records)
-        app._apply_responsive_layout()
+        app.screen.all_records.extend(records)
+        app.screen.filtered_records = list(records)
+        app.screen._apply_responsive_layout()
         await pilot.pause()
-        assert app._stacked is False
+        assert app.screen._stacked is False
         # Visible before any selection.
-        assert app._detail_opened is False
-        assert not app._detail_column.has_class("-collapsed")
+        assert app.screen._detail_opened is False
+        assert not app.screen._detail_column.has_class("-collapsed")
         # ...and still visible after a genuine selection (the "regardless
         # of selection" property the docstring promises).
-        app.on_option_list_option_highlighted(_FakeHighlight(0))
+        app.screen.on_option_list_option_highlighted(_FakeHighlight(0))
         await pilot.pause()
-        assert not app._detail_column.has_class("-collapsed")
+        assert not app.screen._detail_column.has_class("-collapsed")
 
 
 async def test_new_search_recollapses_narrow_detail(
@@ -6016,17 +6027,17 @@ async def test_new_search_recollapses_narrow_detail(
     records = _seed_records(agentgrep, tmp_path, 5)
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        app.all_records.extend(records)
-        app.filtered_records = list(records)
-        app._results.set_records(records)
-        app._detail_opened = True
-        app._apply_responsive_layout()
+        app.screen.all_records.extend(records)
+        app.screen.filtered_records = list(records)
+        app.screen._results.set_records(records)
+        app.screen._detail_opened = True
+        app.screen._apply_responsive_layout()
         await pilot.pause()
-        assert not app._detail_column.has_class("-collapsed")
-        app._reset_search_chrome()
+        assert not app.screen._detail_column.has_class("-collapsed")
+        app.screen._reset_search_chrome()
         await pilot.pause()
-        assert app._detail_opened is False
-        assert app._detail_column.has_class("-collapsed")
+        assert app.screen._detail_opened is False
+        assert app.screen._detail_column.has_class("-collapsed")
 
 
 async def test_stacked_focus_routes_results_and_detail_vertically(
@@ -6039,20 +6050,20 @@ async def test_stacked_focus_routes_results_and_detail_vertically(
     records = _seed_records(agentgrep, tmp_path, 5)
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        app.all_records.extend(records)
-        app.filtered_records = list(records)
-        app._results.set_records(records)
-        app._apply_responsive_layout()
+        app.screen.all_records.extend(records)
+        app.screen.filtered_records = list(records)
+        app.screen._results.set_records(records)
+        app.screen._apply_responsive_layout()
         await pilot.pause()
-        app._results.focus()
+        app.screen._results.focus()
         await pilot.pause()
         # Down from results opens + focuses the detail below.
-        app.action_focus_pane_down()
+        app.screen.action_focus_pane_down()
         await pilot.pause()
-        assert app._detail_opened is True
+        assert app.screen._detail_opened is True
         assert app.focused is not None and app.focused.id == "detail-scroll"
         # Up from the detail returns to the results.
-        app.action_focus_pane_up()
+        app.screen.action_focus_pane_up()
         await pilot.pause()
         assert app.focused is not None and app.focused.id == "results"
 
@@ -6134,11 +6145,11 @@ async def test_show_detail_caps_body_at_max_lines(
     )
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.show_detail(record)
+        app.screen.show_detail(record)
         await pilot.pause()
         # ``Static.content`` is the original Group we passed to update().
         # For this plain-text body, the body renderable is a ``Text``.
-        group = app._detail.content
+        group = app.screen._detail.content
         body_text = next(
             item
             for item in group.renderables
@@ -6239,7 +6250,7 @@ async def test_show_detail_memoizes_body_formatting(
     )
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.show_detail(record)
+        app.screen.show_detail(record)
         await pilot.pause()
         # Replace json.loads so a real cache miss would explode loudly.
         load_calls = 0
@@ -6251,7 +6262,7 @@ async def test_show_detail_memoizes_body_formatting(
             return real_loads(*args, **kwargs)
 
         monkeypatch.setattr(json, "loads", counting_loads)
-        app.show_detail(record)
+        app.screen.show_detail(record)
         await pilot.pause()
         assert load_calls == 0, "JSON should not be re-parsed for the same record + query"
 
@@ -6273,12 +6284,12 @@ async def test_reset_search_chrome_invalidates_detail_caches(
     )
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.show_detail(record)
+        app.screen.show_detail(record)
         await pilot.pause()
-        assert len(app._detail_body_cache) >= 1
-        app._reset_search_chrome()
-        assert len(app._detail_body_cache) == 0
-        assert len(app._detail_scroll_positions) == 0
+        assert len(app.screen._detail_body_cache) >= 1
+        app.screen._reset_search_chrome()
+        assert len(app.screen._detail_body_cache) == 0
+        assert len(app.screen._detail_scroll_positions) == 0
 
 
 async def test_detail_scroll_memory(
@@ -6304,20 +6315,20 @@ async def test_detail_scroll_memory(
     async with app.run_test(size=(120, 24)) as pilot:
         await pilot.pause()
         # A fresh record opens at the top.
-        app.show_detail(rec_a)
+        app.screen.show_detail(rec_a)
         await pilot.pause()
-        assert app._detail_scroll.scroll_y == 0
+        assert app.screen._detail_scroll.scroll_y == 0
         # Scroll down — the position is remembered for rec_a.
-        app._detail_scroll.scroll_to(y=20, animate=False)
+        app.screen._detail_scroll.scroll_to(y=20, animate=False)
         await pilot.pause()
         # A different, never-seen record opens at the top.
-        app.show_detail(rec_b)
+        app.screen.show_detail(rec_b)
         await pilot.pause()
-        assert app._detail_scroll.scroll_y == 0
+        assert app.screen._detail_scroll.scroll_y == 0
         # Returning to rec_a restores its remembered scroll.
-        app.show_detail(rec_a)
+        app.screen.show_detail(rec_a)
         await pilot.pause()
-        assert app._detail_scroll.scroll_y > 0
+        assert app.screen._detail_scroll.scroll_y > 0
 
 
 def test_detect_content_format_recognizes_json() -> None:
@@ -6379,9 +6390,9 @@ async def test_show_detail_renders_json_with_syntax(
     )
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.show_detail(record)
+        app.screen.show_detail(record)
         await pilot.pause()
-        rendered = app._detail.content
+        rendered = app.screen._detail.content
         renderables = list(rendered.renderables)
         assert any(isinstance(item, rich_syntax.Syntax) for item in renderables)
 
@@ -6404,9 +6415,9 @@ async def test_show_detail_renders_markdown_with_markdown(
     )
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.show_detail(record)
+        app.screen.show_detail(record)
         await pilot.pause()
-        rendered = app._detail.content
+        rendered = app.screen._detail.content
         renderables = list(rendered.renderables)
         assert any(isinstance(item, rich_markdown.Markdown) for item in renderables)
 
@@ -6442,9 +6453,9 @@ async def test_show_detail_keeps_text_highlighting_for_plain_body(
     )
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.show_detail(record)
+        app.screen.show_detail(record)
         await pilot.pause()
-        rendered = app._detail.content
+        rendered = app.screen._detail.content
         renderables = list(rendered.renderables)
         # Two Text instances: the header and the body. The body is the one
         # carrying the highlight spans (header is bold labels only).

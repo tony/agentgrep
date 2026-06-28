@@ -24,7 +24,7 @@ async def test_ctrl_jk_traverses_panes_vertically(
     """Ctrl-J walks search -> filter -> results; Ctrl-K reverses the path."""
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test() as pilot:
-        app._search_input.focus()
+        app.screen._search_input.focus()
         await pilot.pause()
         assert app.focused.id == "search"
         await pilot.press("ctrl+j")
@@ -44,7 +44,7 @@ async def test_recall_modal_restores_focus_on_escape(
     """Ctrl-R opens the recall modal; Escape pops it and restores prior focus."""
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test() as pilot:
-        app._search_input.focus()
+        app.screen._search_input.focus()
         await pilot.pause()
         await pilot.press("ctrl+r")
         await pilot.pause()
