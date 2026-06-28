@@ -1,11 +1,10 @@
 """The default heads-up layout: search -> results | detail -> status.
 
-``HudLayout`` is the explorer's first pluggable layout (ADR 0013), relocated
-from the former fused ``ExplorerApp``: the App-lifecycle concerns moved to the
-thin :class:`~agentgrep.ui.app.ExplorerApp` shell and this is now a
-:class:`~agentgrep.ui.layouts._base.LayoutScreen`. It imports Textual at the
-top but is only reached from inside the factory (and the tests), so
-``import agentgrep`` stays Textual-free (ADR 0010).
+``HudLayout`` is the explorer's default pluggable layout (ADR 0013): a
+:class:`~agentgrep.ui.layouts._base.LayoutScreen` that composes the search bar,
+the streaming results list, and the detail pane, driven by the active workflow.
+It imports Textual at the top but is only reached from inside the factory (and
+the tests), so ``import agentgrep`` stays Textual-free (ADR 0010).
 """
 
 from __future__ import annotations
