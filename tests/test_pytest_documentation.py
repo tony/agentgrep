@@ -369,6 +369,43 @@ def test_literal_shell_evaluator_uses_temp_home_and_preserves_real_home(
     assert result.stderr == ""
 
 
+def test_sandbox_isolates_uv_build_env_by_default(tmp_path: pathlib.Path) -> None:
+    """By default the sandbox builds an isolated uv cache and project venv."""
+    sandbox = TempHomeSandbox(project_root=tmp_path)
+    sandbox_root, home, project, shim_bin = sandbox._ensure_world()
+
+    env = sandbox._build_env(home, sandbox_root=sandbox_root, project=project, shim_bin=shim_bin)
+
+    assert env["UV_CACHE_DIR"] == str(sandbox_root / "uv-cache")
+    assert env["UV_PROJECT_ENVIRONMENT"] == str(project / ".venv-docs-sandbox")
+    assert "UV_NO_SYNC" not in env
+
+
+def test_sandbox_reuses_shared_uv_build_env_when_configured(tmp_path: pathlib.Path) -> None:
+    """A configured shared uv cache and project env are reused read-only.
+
+    HOME stays isolated regardless; only the build artifacts (cache, venv)
+    are shared, and UV_NO_SYNC marks the shared env read-only so parallel
+    workers cannot race a sync.
+    """
+    shared_cache = tmp_path / "shared-uv-cache"
+    shared_env = tmp_path / "shared-venv"
+    sandbox = TempHomeSandbox(
+        project_root=tmp_path,
+        uv_cache_dir=shared_cache,
+        uv_project_environment=shared_env,
+    )
+    sandbox_root, home, project, shim_bin = sandbox._ensure_world()
+
+    env = sandbox._build_env(home, sandbox_root=sandbox_root, project=project, shim_bin=shim_bin)
+
+    assert env["UV_CACHE_DIR"] == str(shared_cache)
+    assert env["UV_PROJECT_ENVIRONMENT"] == str(shared_env)
+    assert env["UV_NO_SYNC"] == "1"
+    # HOME isolation is preserved even when build artifacts are shared.
+    assert env["HOME"] == str(home)
+
+
 def test_literal_shell_evaluator_fails_unsupported_cli_option(tmp_path: pathlib.Path) -> None:
     """Command examples are executed literally, so real CLI failures are reported."""
     path = tmp_path / "README.md"

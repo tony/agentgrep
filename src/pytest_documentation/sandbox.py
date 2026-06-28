@@ -63,7 +63,9 @@ class TempHomeSandbox:
     """Run shell examples under a temporary home and cwd.
 
     This protects developer data by redirecting user/config roots. It is not a
-    hostile-code security boundary.
+    hostile-code security boundary. When set, ``uv_cache_dir`` /
+    ``uv_project_environment`` pass their absolute (possibly home-derived)
+    paths into the child environment by design, to share a warm cache.
     """
 
     _ROOT_ENV_VARS = (
@@ -100,6 +102,8 @@ class TempHomeSandbox:
         seeds: t.Iterable[SandboxSeed] = (),
         extra_env: t.Mapping[str, str] | None = None,
         blocked_words: t.Iterable[str] | None = None,
+        uv_cache_dir: pathlib.Path | None = None,
+        uv_project_environment: pathlib.Path | None = None,
     ) -> None:
         """Create a temporary-home sandbox.
 
@@ -119,6 +123,15 @@ class TempHomeSandbox:
             Environment overrides applied after the redirected roots.
         blocked_words : t.Iterable[str] | None
             Substrings that reject a script. ``None`` uses the defaults.
+        uv_cache_dir : pathlib.Path | None
+            Shared uv cache to reuse instead of a cold per-sandbox cache.
+            ``None`` (default) isolates the cache under the sandbox root.
+        uv_project_environment : pathlib.Path | None
+            Prebuilt uv project environment to reuse read-only. When set,
+            ``UV_NO_SYNC`` marks it read-only so concurrent runs cannot race
+            a sync. ``None`` (default) builds a fresh venv per sandbox.
+            HOME isolation is preserved regardless: only these build
+            artifacts (cache, venv) are shared, never the agent-data roots.
         """
         self.project_root = (project_root or pathlib.Path.cwd()).expanduser().resolve()
         self.timeout = timeout
@@ -129,6 +142,14 @@ class TempHomeSandbox:
             self.blocked_words = self._BLOCKED_WORDS
         else:
             self.blocked_words = frozenset(blocked_words)
+        self.uv_cache_dir = (
+            uv_cache_dir.expanduser().resolve() if uv_cache_dir is not None else None
+        )
+        self.uv_project_environment = (
+            uv_project_environment.expanduser().resolve()
+            if uv_project_environment is not None
+            else None
+        )
         self._temporary_directory: tempfile.TemporaryDirectory[str] | None = None
 
     def run_script(
@@ -481,8 +502,18 @@ class TempHomeSandbox:
         env["PIP_CACHE_DIR"] = str(sandbox_root / "pip-cache")
         env["PYTHONPYCACHEPREFIX"] = str(sandbox_root / "pycache")
         env["PYTEST_DOCUMENTATION_SANDBOX"] = "1"
-        env["UV_CACHE_DIR"] = str(sandbox_root / "uv-cache")
-        env["UV_PROJECT_ENVIRONMENT"] = str(project / ".venv-docs-sandbox")
+        if self.uv_cache_dir is not None:
+            env["UV_CACHE_DIR"] = str(self.uv_cache_dir)
+        else:
+            env["UV_CACHE_DIR"] = str(sandbox_root / "uv-cache")
+        if self.uv_project_environment is not None:
+            # Reuse a prebuilt environment read-only so parallel workers
+            # skip the cold per-sandbox venv build (the xdist timeout cause)
+            # and cannot race a sync against the shared environment.
+            env["UV_PROJECT_ENVIRONMENT"] = str(self.uv_project_environment)
+            env["UV_NO_SYNC"] = "1"
+        else:
+            env["UV_PROJECT_ENVIRONMENT"] = str(project / ".venv-docs-sandbox")
         env["PATH"] = os.pathsep.join((str(shim_bin), env.get("PATH", "")))
         env.update(self.extra_env)
         return env
