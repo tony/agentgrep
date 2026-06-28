@@ -42,6 +42,17 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### Development
+
+#### Faster, parallel-capable test suite (#86)
+
+The suite drops redundant work — the documentation-widget tests share a
+single Sphinx build, and the import-chain regression test shares one
+interpreter snapshot — and gains an opt-in `just test-fast` that runs it
+across cores with pytest-xdist. The documentation-example sandbox now reuses
+a warm, read-only environment so those parallel runs stay green instead of
+cold-building a virtualenv per worker.
+
 ## agentgrep 0.1.0a30 (2026-06-27)
 
 agentgrep 0.1.0a30 stops the interactive explorer (`agentgrep ui`) from
