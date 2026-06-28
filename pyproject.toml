@@ -69,6 +69,10 @@ dev = [
   "pytest-asyncio",
   "pytest-rerunfailures>=16.2",
   "pytest-watcher",
+  # pytest-xdist powers the opt-in parallel `just test-fast` path. The docs
+  # sandbox reuses the project venv read-only (UV_NO_SYNC) so workers skip
+  # the cold per-process `uv run` build that otherwise times out in parallel.
+  "pytest-xdist>=3.8.0",
   "syrupy>=5.1.0",
   # orjson is the optional JSON-decode accelerator (the `speedups` extra).
   # Installed in dev so the shared json/orjson behavioral tests exercise the

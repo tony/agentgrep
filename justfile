@@ -17,6 +17,13 @@ default:
 test *args:
     uv run py.test {{ args }}
 
+# Run tests in parallel across cores with pytest-xdist (opt-in fast path).
+# --dist=load (default) is fastest here; grouping (loadfile/loadscope) would
+# serialize the largest file, so session/module fixtures rebuild per worker.
+[group: 'test']
+test-fast *args:
+    uv run py.test -n auto {{ args }}
+
 # Run tests then start continuous testing with pytest-watcher
 [group: 'test']
 start:

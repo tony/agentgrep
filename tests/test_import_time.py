@@ -39,24 +39,45 @@ DEFERRED_CASES: tuple[DeferredImportCase, ...] = tuple(
 )
 
 
+@pytest.fixture(scope="module")
+def modules_after_bare_import() -> frozenset[str]:
+    """Modules present in ``sys.modules`` after a bare ``import agentgrep``.
+
+    Captured once, in a single fresh interpreter, and shared across the
+    per-module assertions below — one subprocess spawn instead of one per
+    parametrized case. A fresh interpreter is required (you cannot un-import
+    to re-test in-process), but all cases interrogate the *same* post-import
+    snapshot, so one spawn suffices.
+
+    Returns
+    -------
+    frozenset[str]
+        The names in ``sys.modules`` after ``import agentgrep``.
+    """
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import agentgrep, sys; print('\\n'.join(sorted(sys.modules)))",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return frozenset(result.stdout.split())
+
+
 @pytest.mark.parametrize(
     "case",
     DEFERRED_CASES,
     ids=[c.test_id for c in DEFERRED_CASES],
 )
-def test_import_agentgrep_does_not_eagerly_load(case: DeferredImportCase) -> None:
+def test_import_agentgrep_does_not_eagerly_load(
+    case: DeferredImportCase,
+    modules_after_bare_import: frozenset[str],
+) -> None:
     """``import agentgrep`` must not pull in heavy submodules at startup."""
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            (f"import agentgrep, sys; exit(0 if {case.module!r} not in sys.modules else 1)"),
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode == 0, (
+    assert case.module not in modules_after_bare_import, (
         f"{case.module} was eagerly imported by `import agentgrep`; "
         f"it should be deferred to first use. "
         f"Check for top-level `from {case.module} import ...` in the "

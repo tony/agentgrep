@@ -369,6 +369,43 @@ def test_literal_shell_evaluator_uses_temp_home_and_preserves_real_home(
     assert result.stderr == ""
 
 
+def test_sandbox_isolates_uv_build_env_by_default(tmp_path: pathlib.Path) -> None:
+    """By default the sandbox builds an isolated uv cache and project venv."""
+    sandbox = TempHomeSandbox(project_root=tmp_path)
+    sandbox_root, home, project, shim_bin = sandbox._ensure_world()
+
+    env = sandbox._build_env(home, sandbox_root=sandbox_root, project=project, shim_bin=shim_bin)
+
+    assert env["UV_CACHE_DIR"] == str(sandbox_root / "uv-cache")
+    assert env["UV_PROJECT_ENVIRONMENT"] == str(project / ".venv-docs-sandbox")
+    assert "UV_NO_SYNC" not in env
+
+
+def test_sandbox_reuses_shared_uv_build_env_when_configured(tmp_path: pathlib.Path) -> None:
+    """A configured shared uv cache and project env are reused read-only.
+
+    HOME stays isolated regardless; only the build artifacts (cache, venv)
+    are shared, and UV_NO_SYNC marks the shared env read-only so parallel
+    workers cannot race a sync.
+    """
+    shared_cache = tmp_path / "shared-uv-cache"
+    shared_env = tmp_path / "shared-venv"
+    sandbox = TempHomeSandbox(
+        project_root=tmp_path,
+        uv_cache_dir=shared_cache,
+        uv_project_environment=shared_env,
+    )
+    sandbox_root, home, project, shim_bin = sandbox._ensure_world()
+
+    env = sandbox._build_env(home, sandbox_root=sandbox_root, project=project, shim_bin=shim_bin)
+
+    assert env["UV_CACHE_DIR"] == str(shared_cache)
+    assert env["UV_PROJECT_ENVIRONMENT"] == str(shared_env)
+    assert env["UV_NO_SYNC"] == "1"
+    # HOME isolation is preserved even when build artifacts are shared.
+    assert env["HOME"] == str(home)
+
+
 def test_literal_shell_evaluator_fails_unsupported_cli_option(tmp_path: pathlib.Path) -> None:
     """Command examples are executed literally, so real CLI failures are reported."""
     path = tmp_path / "README.md"
@@ -463,7 +500,10 @@ def test_temp_home_sandbox_redirects_uvx_agentgrep_to_local_checkout(
     )[0]
 
     result = ConsoleCommandEvaluator(
-        sandbox=TempHomeSandbox(project_root=_REPO_ROOT),
+        # This case deliberately exercises the cold-build uvx->local redirect:
+        # a real `uv run agentgrep` resolve+build runs here (no shared env).
+        # Allow ample time so it does not flake under parallel CPU contention.
+        sandbox=TempHomeSandbox(project_root=_REPO_ROOT, timeout=120.0),
     ).evaluate(example)
 
     assert result.status is EvaluationStatus.PASSED
@@ -884,6 +924,57 @@ def test_sandbox_blocks_real_home_only_at_path_boundaries(
             sandbox._check_policy(script)
     else:
         sandbox._check_policy(script)
+
+
+class UvMutationCase(t.NamedTuple):
+    """One script for the project-mutating-uv policy in the docs sandbox."""
+
+    test_id: str
+    script: str
+    blocked: bool
+
+
+UV_MUTATION_CASES: tuple[UvMutationCase, ...] = (
+    UvMutationCase(test_id="compound-uv-sync", script="cd agentgrep && uv sync", blocked=True),
+    UvMutationCase(
+        test_id="compound-uv-pip-install", script="cd x && uv pip install p", blocked=True
+    ),
+    UvMutationCase(test_id="bare-uv-venv", script="uv venv .venv", blocked=True),
+    UvMutationCase(test_id="bare-uv-add", script="uv add agentgrep", blocked=True),
+    UvMutationCase(
+        test_id="bare-uv-pip-uninstall", script="uv pip uninstall agentgrep", blocked=True
+    ),
+    UvMutationCase(test_id="uv-run-allowed", script="uv run agentgrep find foo", blocked=False),
+    UvMutationCase(
+        test_id="leading-uv-sync-rewritten", script="uv sync --all-groups", blocked=False
+    ),
+    UvMutationCase(test_id="echo-mentions-uv-sync", script='echo "uv sync"', blocked=False),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    UV_MUTATION_CASES,
+    ids=[case.test_id for case in UV_MUTATION_CASES],
+)
+def test_sandbox_blocks_project_mutating_uv_commands(
+    tmp_path: pathlib.Path,
+    case: UvMutationCase,
+) -> None:
+    """Unhandled project-mutating uv commands are rejected before they execute.
+
+    Leading ``uv sync`` / ``uv pip install`` are rewritten to dry runs and
+    stay allowed; a compound or otherwise-unhandled mutator (which would write
+    the shared read-only environment) is blocked at the literal-exec fallback.
+    """
+    sandbox = TempHomeSandbox(project_root=tmp_path)
+    sandbox_root, _home, project, _shim = sandbox._ensure_world()
+
+    if case.blocked:
+        with pytest.raises(subprocess.SubprocessError, match="blocked command"):
+            sandbox._plan_script(case.script, sandbox_root=sandbox_root, project=project)
+    else:
+        sandbox._plan_script(case.script, sandbox_root=sandbox_root, project=project)
 
 
 def test_console_evaluator_classifies_data_dependent_empty_results(

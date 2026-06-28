@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import pathlib
 
 from pytest_documentation import (
@@ -27,9 +28,39 @@ def _sample_seed(source: pathlib.Path, target: str) -> SandboxSeed:
     return SandboxSeed(source=source, target=pathlib.Path(target))
 
 
+def _real_uv_cache_dir() -> pathlib.Path:
+    """Resolve the developer's real (warm) uv cache, mirroring uv's defaults.
+
+    Resolved before the sandbox rewrites ``XDG_CACHE_HOME`` to a temp home,
+    so documentation commands hit a warm wheel cache instead of a cold
+    per-sandbox one.
+
+    Returns
+    -------
+    pathlib.Path
+        ``$UV_CACHE_DIR``, else ``$XDG_CACHE_HOME/uv``, else ``~/.cache/uv``.
+    """
+    explicit = os.environ.get("UV_CACHE_DIR")
+    if explicit:
+        return pathlib.Path(explicit)
+    xdg = os.environ.get("XDG_CACHE_HOME")
+    base = pathlib.Path(xdg) if xdg else pathlib.Path.home() / ".cache"
+    return base / "uv"
+
+
+# Reuse the project's prebuilt venv (read-only) and the warm uv cache so doc
+# examples skip the cold per-sandbox `uv run` build. This is what lets the
+# docs suite run under pytest-xdist (`just test-fast`) without timing out; it
+# also speeds serial runs. Falls back to per-sandbox isolation when the venv
+# is absent. HOME / agent-data roots stay isolated either way.
+_PROJECT_VENV = _REPO_ROOT / ".venv"
+_SHARED_PROJECT_ENV = _PROJECT_VENV if _PROJECT_VENV.is_dir() else None
+
 _DOCS_SANDBOX = TempHomeSandbox(
     project_root=_REPO_ROOT,
     cwd=_REPO_ROOT,
+    uv_cache_dir=_real_uv_cache_dir(),
+    uv_project_environment=_SHARED_PROJECT_ENV,
     seeds=(
         _sample_seed(
             _SAMPLES_ROOT / "docs" / "codex-history.jsonl",
