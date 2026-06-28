@@ -88,14 +88,17 @@ class EngineProfiler:
     ) -> cabc.Iterator[None]:
         """Record elapsed time for a named phase."""
         start = time.perf_counter()
-        try:
-            yield
-        finally:
-            self.record(
-                name,
-                time.perf_counter() - start,
-                **attributes,
-            )
+        from agentgrep import _telemetry
+
+        with _telemetry.span(name, **attributes):
+            try:
+                yield
+            finally:
+                self.record(
+                    name,
+                    time.perf_counter() - start,
+                    **attributes,
+                )
 
     def record(
         self,

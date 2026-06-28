@@ -154,6 +154,26 @@ description = "Profiling: engine-only Cursor IDE SQLite prompt-source enumeratio
 command = "{venv}/bin/python scripts/profile_engine.py find-prompts --agent cursor-ide --limit 500 --format json"
 default_query = ""
 
+[bench.profile-engine-search-cursor-ide-fixture-prompts-limit-500]
+description = "Profiling: engine-only Cursor IDE SQLite fixture prompt search, sanitized JSON profile, limit 500"
+command = "{venv}/bin/python scripts/profile_engine.py search-prompts --agent cursor-ide --fixture cursor-ide-state-vscdb --limit 500 --format json {query}"
+default_query = "agentgrep-cursor-fixture-token"
+
+[bench.profile-engine-search-cursor-ide-fixture-conversations-limit-500]
+description = "Profiling: engine-only Cursor IDE SQLite fixture conversation search, sanitized JSON profile, limit 500"
+command = "{venv}/bin/python scripts/profile_engine.py search-conversations --agent cursor-ide --fixture cursor-ide-state-vscdb --limit 500 --format json {query}"
+default_query = "agentgrep-cursor-fixture-token"
+
+[bench.profile-engine-grep-cursor-ide-fixture-prompts-max-count-500]
+description = "Profiling: engine-only Cursor IDE SQLite fixture prompt grep, sanitized JSON profile, max-count 500"
+command = "{venv}/bin/python scripts/profile_engine.py grep-prompts --agent cursor-ide --fixture cursor-ide-state-vscdb --max-count 500 --format json {query}"
+default_query = "agentgrep-cursor-fixture-token"
+
+[bench.profile-engine-grep-cursor-ide-fixture-conversations-max-count-500]
+description = "Profiling: engine-only Cursor IDE SQLite fixture conversation grep, sanitized JSON profile, max-count 500"
+command = "{venv}/bin/python scripts/profile_engine.py grep-conversations --agent cursor-ide --fixture cursor-ide-state-vscdb --max-count 500 --format json {query}"
+default_query = "agentgrep-cursor-fixture-token"
+
 [bench.import-time]
 description = "Cold-start CLI import + arg parse only"
 command = "{venv}/bin/agentgrep --help"

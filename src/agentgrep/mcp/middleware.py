@@ -11,23 +11,50 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import pathlib
 import time
 import typing as t
 
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 
+from agentgrep import _telemetry
+
 _SENSITIVE_ARG_NAMES: frozenset[str] = frozenset(
-    {"terms", "pattern", "sample_text", "cursor"},
+    {"terms", "pattern", "query", "sample_text", "cursor"},
 )
 """Tool argument names whose values get redacted before logging.
 
 ``terms`` and ``pattern`` can carry user secrets when an agent searches its
 own history for tokens; page ``cursor`` values encode those same inputs;
-``sample_text`` is the validate-query payload and may contain anything the
-caller pastes in.
+``query`` and ``sample_text`` are diagnostic payloads and may contain anything
+the caller pastes in.
 """
 
 _MAX_LOGGED_STR_LEN: int = 200
+
+logger = logging.getLogger(__name__)
+
+
+def _inbound_otel_context() -> object | None:
+    """Return the inbound traceparent context from the MCP request meta, if any.
+
+    None unless the caller propagated a W3C ``traceparent`` in request meta;
+    stock MCP clients (including agentgrep's CLI) do not.
+    """
+    try:
+        from mcp.server.lowlevel.server import request_ctx
+
+        meta = getattr(request_ctx.get(), "meta", None)
+    except Exception:
+        return None
+    if not meta:
+        return None
+    try:
+        from fastmcp.telemetry import extract_trace_context
+
+        return extract_trace_context(dict(meta))
+    except Exception:
+        return None
 
 
 def _redact_digest(value: str) -> dict[str, t.Any]:
@@ -49,13 +76,28 @@ def _redact_digest(value: str) -> dict[str, t.Any]:
     }
 
 
+def _redact_path(value: str) -> dict[str, t.Any]:
+    """Return path-shaped metadata without the path value."""
+    redacted = _redact_digest(value)
+    redacted["kind"] = "path"
+    redacted["is_absolute"] = pathlib.PurePath(value).is_absolute()
+    return redacted
+
+
+def _is_path_arg_name(key: str) -> bool:
+    """Return whether an MCP argument name is expected to hold a path."""
+    key_folded = key.casefold()
+    return key_folded == "path" or key_folded.endswith("_path")
+
+
 def _summarize_args(args: dict[str, t.Any]) -> dict[str, t.Any]:
     """Summarize tool arguments for audit logging.
 
     Sensitive scalars get replaced by a digest dict. Sensitive list payloads
     (e.g. ``terms`` is ``list[str]``) get each element digested. Long
-    non-sensitive strings get truncated with a marker. Everything else passes
-    through as-is.
+    non-sensitive strings get truncated with a marker. Path-named string
+    payloads get path-shaped metadata without the path value. Everything else
+    passes through as-is.
 
     Examples
     --------
@@ -82,6 +124,11 @@ def _summarize_args(args: dict[str, t.Any]) -> dict[str, t.Any]:
 
     >>> _summarize_args({"cursor": "agcur1:secret"})["cursor"]["len"]
     13
+
+    Path-shaped arguments are redacted before logs or spans see them:
+
+    >>> _summarize_args({"source_path": "/tmp/agentgrep/history.json"})["source_path"]["kind"]
+    'path'
     """
     summary: dict[str, t.Any] = {}
     for key, value in args.items():
@@ -91,11 +138,87 @@ def _summarize_args(args: dict[str, t.Any]) -> dict[str, t.Any]:
             summary[key] = [
                 _redact_digest(str(item)) if isinstance(item, str) else item for item in value
             ]
+        elif _is_path_arg_name(key) and isinstance(value, str):
+            summary[key] = _redact_path(value)
         elif isinstance(value, str) and len(value) > _MAX_LOGGED_STR_LEN:
             summary[key] = value[:_MAX_LOGGED_STR_LEN] + "...<truncated>"
         else:
             summary[key] = value
     return summary
+
+
+def _context_ids(context: MiddlewareContext[t.Any]) -> dict[str, object]:
+    """Return safe FastMCP request identifiers when available."""
+    attributes: dict[str, object] = {}
+    if context.fastmcp_context is None:
+        return attributes
+    client_id = getattr(context.fastmcp_context, "client_id", None)
+    request_id = getattr(context.fastmcp_context, "request_id", None)
+    if client_id is not None:
+        attributes["agentgrep_client_id"] = client_id
+    if request_id is not None:
+        attributes["agentgrep_request_id"] = request_id
+    return attributes
+
+
+class AgentgrepTelemetryMiddleware(Middleware):
+    """Open an app-level span per observable FastMCP request."""
+
+    async def on_request(
+        self,
+        context: MiddlewareContext[t.Any],
+        call_next: t.Callable[[MiddlewareContext[t.Any]], t.Awaitable[t.Any]],
+    ) -> t.Any:
+        """Wrap an observable MCP request in its app-level span."""
+        method = context.method or "unknown"
+        if method == "initialize":
+            return await call_next(context)
+        start = time.monotonic()
+        attributes: dict[str, object] = {
+            "agentgrep_surface": "mcp",
+            "agentgrep_operation": "mcp.request",
+            "agentgrep_mcp_method": method,
+        }
+        attributes.update(_context_ids(context))
+        inbound = _inbound_otel_context()
+        detach = _telemetry.attach_otel_context(inbound)
+        try:
+            with _telemetry.span(
+                "mcp.server.request",
+                inherit_otel_context=inbound is not None,
+                **attributes,
+            ):
+                try:
+                    result = await call_next(context)
+                except Exception as exc:
+                    duration_ms = (time.monotonic() - start) * 1000.0
+                    _telemetry.set_span_attribute("agentgrep_outcome", "error")
+                    _telemetry.set_span_attribute("agentgrep_error_type", type(exc).__name__)
+                    _telemetry.set_span_attribute("agentgrep_duration_ms", duration_ms)
+                    logger.info(
+                        "mcp request failed",
+                        extra={
+                            **attributes,
+                            "agentgrep_outcome": "error",
+                            "agentgrep_error_type": type(exc).__name__,
+                            "agentgrep_duration_ms": duration_ms,
+                        },
+                    )
+                    raise
+                duration_ms = (time.monotonic() - start) * 1000.0
+                _telemetry.set_span_attribute("agentgrep_outcome", "ok")
+                _telemetry.set_span_attribute("agentgrep_duration_ms", duration_ms)
+                logger.info(
+                    "mcp request completed",
+                    extra={
+                        **attributes,
+                        "agentgrep_outcome": "ok",
+                        "agentgrep_duration_ms": duration_ms,
+                    },
+                )
+                return result
+        finally:
+            detach()
 
 
 class AgentgrepAuditMiddleware(Middleware):
@@ -134,34 +257,56 @@ class AgentgrepAuditMiddleware(Middleware):
             client_id = getattr(context.fastmcp_context, "client_id", None)
             request_id = getattr(context.fastmcp_context, "request_id", None)
 
-        try:
-            result = await call_next(context)
-        except Exception as exc:
+        span_attributes: dict[str, object] = {
+            "agentgrep_surface": "mcp",
+            "agentgrep_tool": tool_name,
+        }
+        if client_id is not None:
+            span_attributes["agentgrep_client_id"] = client_id
+        if request_id is not None:
+            span_attributes["agentgrep_request_id"] = request_id
+        span_attributes.update(
+            _telemetry.flatten_safe_attributes("agentgrep_mcp_args", args_summary),
+        )
+
+        with _telemetry.span("mcp.server.tool", **span_attributes):
+            try:
+                result = await call_next(context)
+            except Exception as exc:
+                duration_ms = (time.monotonic() - start) * 1000.0
+                _telemetry.set_span_attribute("agentgrep_outcome", "error")
+                _telemetry.set_span_attribute("agentgrep_error_type", type(exc).__name__)
+                _telemetry.set_span_attribute("agentgrep_duration_ms", duration_ms)
+                self._logger.info(
+                    "tool call failed",
+                    extra={
+                        "agentgrep_surface": "mcp",
+                        "agentgrep_operation": "mcp.tool",
+                        "agentgrep_tool": tool_name,
+                        "agentgrep_outcome": "error",
+                        "agentgrep_error_type": type(exc).__name__,
+                        "agentgrep_duration_ms": duration_ms,
+                        "agentgrep_client_id": client_id,
+                        "agentgrep_request_id": request_id,
+                        "agentgrep_args_summary": args_summary,
+                    },
+                )
+                raise
+
             duration_ms = (time.monotonic() - start) * 1000.0
+            _telemetry.set_span_attribute("agentgrep_outcome", "ok")
+            _telemetry.set_span_attribute("agentgrep_duration_ms", duration_ms)
             self._logger.info(
-                "tool call failed",
+                "tool call completed",
                 extra={
+                    "agentgrep_surface": "mcp",
+                    "agentgrep_operation": "mcp.tool",
                     "agentgrep_tool": tool_name,
-                    "agentgrep_outcome": "error",
-                    "agentgrep_error_type": type(exc).__name__,
+                    "agentgrep_outcome": "ok",
                     "agentgrep_duration_ms": duration_ms,
                     "agentgrep_client_id": client_id,
                     "agentgrep_request_id": request_id,
                     "agentgrep_args_summary": args_summary,
                 },
             )
-            raise
-
-        duration_ms = (time.monotonic() - start) * 1000.0
-        self._logger.info(
-            "tool call completed",
-            extra={
-                "agentgrep_tool": tool_name,
-                "agentgrep_outcome": "ok",
-                "agentgrep_duration_ms": duration_ms,
-                "agentgrep_client_id": client_id,
-                "agentgrep_request_id": request_id,
-                "agentgrep_args_summary": args_summary,
-            },
-        )
-        return result
+            return result

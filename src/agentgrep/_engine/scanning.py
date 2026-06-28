@@ -10,6 +10,7 @@ import threading
 import time
 import typing as t
 
+from agentgrep import _telemetry
 from agentgrep._engine.matching import compile_record_matcher
 from agentgrep._engine.orchestration import (
     _source_profile_attributes,
@@ -536,6 +537,13 @@ def record_source_profile_sample(result: SourceScanResult) -> None:
         agentgrep_matches_seen=result.matches_seen,
         agentgrep_batch_count=result.batch_count,
         agentgrep_source_scan_cache_hit=result.cache_hit,
+    )
+    _telemetry.record_work_metric(
+        result.records_seen,
+        work_kind="source_records_scanned",
+        agentgrep_surface="engine",
+        agentgrep_source_strategy=result.task.strategy,
+        agentgrep_source_cost_hint=result.task.cost_hint,
     )
 
 

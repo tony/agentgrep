@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import collections.abc as cabc
+import contextlib
 import os
 import pathlib
+import typing as t
+
+import pytest
 
 from pytest_documentation import (
     ConsoleCommandEvaluator,
@@ -99,6 +104,90 @@ _DOCS_SUITE.register_evaluator("fastmcp-config", FastMCPConfigEvaluator(project_
 _DOCS_SUITE.register_evaluator("just-recipe", SphinxDoctestEvaluator(project_root=_REPO_ROOT))
 
 pytest_collect_file = _DOCS_SUITE.pytest_collect_file
+
+_AGENTGREP_OTEL_PYTEST_HANDLE: object | None = None
+_AGENTGREP_OTEL_PYTEST_SESSION: contextlib.AbstractContextManager[None] | None = None
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    """Configure OTel and open the session root for instrumented runs."""
+    del session
+    global _AGENTGREP_OTEL_PYTEST_HANDLE, _AGENTGREP_OTEL_PYTEST_SESSION
+    if "AGENTGREP_OTEL" not in os.environ:
+        return
+    from agentgrep import _telemetry
+
+    _AGENTGREP_OTEL_PYTEST_HANDLE = _telemetry.setup(
+        repo_root=_REPO_ROOT,
+        service_name="agentgrep-pytest",
+    )
+    session_span = _telemetry.root_span("agentgrep.pytest.session", agentgrep_surface="pytest")
+    session_span.__enter__()
+    _AGENTGREP_OTEL_PYTEST_SESSION = session_span
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Close the session root and flush OTel after an instrumented run."""
+    del session, exitstatus
+    global _AGENTGREP_OTEL_PYTEST_HANDLE, _AGENTGREP_OTEL_PYTEST_SESSION
+    session_span = _AGENTGREP_OTEL_PYTEST_SESSION
+    _AGENTGREP_OTEL_PYTEST_SESSION = None
+    if session_span is not None:
+        session_span.__exit__(None, None, None)
+    handle = _AGENTGREP_OTEL_PYTEST_HANDLE
+    _AGENTGREP_OTEL_PYTEST_HANDLE = None
+    if handle is not None:
+        t.cast("t.Any", handle).shutdown()
+
+
+def _agentgrep_pytest_span_attributes(item: object) -> dict[str, object]:
+    """Return low-cardinality pytest span attributes."""
+    attributes: dict[str, object] = {
+        "agentgrep_surface": "pytest",
+        "agentgrep_pytest_test": getattr(item, "nodeid", "<unknown>"),
+    }
+    config = getattr(item, "config", None)
+    workerinput = getattr(config, "workerinput", None)
+    option = getattr(config, "option", None)
+    dist = getattr(option, "dist", None)
+    worker_id = os.environ.get("PYTEST_XDIST_WORKER")
+    if worker_id is None and isinstance(workerinput, cabc.Mapping):
+        raw_worker_id = workerinput.get("workerid")
+        if isinstance(raw_worker_id, str):
+            worker_id = raw_worker_id
+    xdist_active = bool(worker_id or workerinput or dist)
+    attributes["agentgrep_pytest_xdist"] = xdist_active
+    if worker_id:
+        attributes["agentgrep_pytest_worker_id"] = worker_id
+    if dist:
+        attributes["agentgrep_pytest_dist"] = str(dist)
+    return attributes
+
+
+@contextlib.contextmanager
+def _agentgrep_otel_pytest_item_span(item: object) -> cabc.Iterator[None]:
+    """Open one ``agentgrep.pytest.test`` root span for a collected item."""
+    from agentgrep import _telemetry
+
+    if _telemetry.active_backend() is None:
+        yield
+        return
+    with _telemetry.root_span("agentgrep.pytest.test", **_agentgrep_pytest_span_attributes(item)):
+        yield
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_protocol(
+    item: pytest.Item,
+    nextitem: pytest.Item | None,
+) -> cabc.Iterator[None]:
+    """Wrap every collected item, including custom documentation items."""
+    del nextitem
+    if _AGENTGREP_OTEL_PYTEST_HANDLE is None:
+        yield
+        return
+    with _agentgrep_otel_pytest_item_span(item):
+        yield
 
 
 def pytest_ignore_collect(collection_path: pathlib.Path, config: object) -> bool | None:

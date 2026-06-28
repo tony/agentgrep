@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import pathlib
+
 import pytest
+
+from pytest_documentation import DocumentationExample, ExampleLocation, TempHomeSandbox
 
 pytest_plugins = ("pytester",)
 
@@ -157,3 +161,54 @@ def test_plugin_entrypoint_is_dormant_without_configured_suite(pytester: pytest.
     result = pytester.runpytest(*_NESTED_RUN_ARGS)
 
     result.assert_outcomes()
+
+
+def test_temp_home_sandbox_emits_subprocess_telemetry(tmp_path: pathlib.Path) -> None:
+    """Documentation subprocesses should report cost without raw command text."""
+    import agentgrep._telemetry as telemetry
+
+    example_path = tmp_path / "docs.md"
+    example_path.write_text("```console\n$ python -c 'print(123)'\n```\n")
+    example = DocumentationExample(
+        kind="fence",
+        language="console",
+        source="python -c 'print(123)'",
+        raw_source="$ python -c 'print(123)'",
+        location=ExampleLocation(
+            path=example_path,
+            display_path="docs.md",
+            start_line=1,
+            end_line=3,
+            start_index=0,
+            end_index=36,
+        ),
+    )
+    backend = telemetry.InMemoryTelemetryBackend()
+    telemetry.configure_backend(backend)
+    try:
+        with telemetry.span("agentgrep.pytest.test", agentgrep_surface="pytest"):
+            execution = TempHomeSandbox(project_root=tmp_path).run_script(
+                "python -c 'print(123)'",
+                example=example,
+            )
+    finally:
+        telemetry.configure_backend(None)
+
+    assert execution.completed.returncode == 0
+    subprocess_span = next(
+        span
+        for span in backend.finished_spans
+        if span.name == "agentgrep.pytest.documentation.subprocess"
+    )
+    assert subprocess_span.parent_id is not None
+    assert subprocess_span.attributes["agentgrep_subprocess_kind"] == "documentation_example"
+    assert "print(123)" not in str(subprocess_span.attributes)
+    metric_names = {
+        metric.name
+        for metric in backend.metric_records
+        if metric.attributes.get("agentgrep_subprocess_kind") == "documentation_example"
+    }
+    assert metric_names >= {
+        "agentgrep.pytest.documentation.subprocess.count",
+        "agentgrep.pytest.documentation.subprocess.duration",
+    }

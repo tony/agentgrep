@@ -107,7 +107,7 @@ NDJSON output emit each match as the engine finds it, then flush so
 your terminal sees rows live. On a slow store the first matches
 appear within milliseconds, not after the whole scan finishes.
 
-The eager output modes (`--json`, `-c`, `-l`, `-v`) buffer
+The eager output modes (`--json`, `-c`, `-l`) buffer
 because their output shape needs the final tally or cross-record
 deduplication.
 
@@ -194,20 +194,19 @@ agentgrep grep: error: pattern cannot be empty
 The check applies to every term — a valid pattern followed by an
 empty one (`agentgrep grep foo ''`) still fails.
 
-`-v` / `--invert-match` for plain text output is not yet
-implemented and is refused at parse time:
+`-v` / `--invert-match` selects lines that do not match the pattern.
+Because a nonmatching record cannot be found by a positive text
+prefilter, inverted grep enumerates candidate records first and applies
+line-level inversion after parsing:
 
 ```console
 $ agentgrep grep -v bliss
-usage: agentgrep grep [...]
-agentgrep grep: error: --invert-match for text output is not yet
-implemented (see https://github.com/tony/agentgrep/issues/8); use -c
 ```
 
-The flag is still honored under `-c` (returns `0` if any record
-matched, `1` if none), since it reduces to a "did anything match?"
-question that the engine's current output supports. Tracking issue:
-[tony/agentgrep#8](https://github.com/tony/agentgrep/issues/8).
+`-c` counts selected nonmatching lines. `-l` lists files with at least
+one selected nonmatching line. `-o -v` follows `rg` by printing the whole
+selected line, and `--vimgrep -v` prints `path:line:text` without a
+column because there is no positive submatch offset.
 
 (cli-grep-dedupe)=
 

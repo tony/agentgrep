@@ -1011,12 +1011,7 @@ def _build_grep_args(
 
     invert_match = t.cast("bool", namespace.invert_match)
     count_only = t.cast("bool", namespace.count)
-    if invert_match and not count_only:
-        with configured_color_environment(color_mode):
-            bundle.grep_parser.error(
-                "--invert-match for text output is not yet implemented "
-                "(see https://github.com/tony/agentgrep/issues/8); use -c",
-            )
+    only_matching = t.cast("bool", namespace.only_matching)
     if pattern_mode != "fixed":
         case_sensitive = case_mode == "respect" or (
             case_mode == "smart" and any(any(ch.isupper() for ch in p) for p in patterns_list)
@@ -1056,7 +1051,7 @@ def _build_grep_args(
         invert_match=invert_match,
         count_only=count_only,
         files_with_matches=t.cast("bool", namespace.files_with_matches),
-        only_matching=t.cast("bool", namespace.only_matching),
+        only_matching=only_matching,
         compiled=grep_compiled,
         raw_query=" ".join(patterns_list_raw),
         no_dedupe=t.cast("bool", namespace.no_dedupe),

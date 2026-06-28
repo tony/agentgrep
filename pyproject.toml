@@ -35,7 +35,7 @@ include = [
 dependencies = [
   "pydantic>=2.11.3",
   "textual>=3.2.0",
-  "fastmcp>=3.0.0",
+  "fastmcp>=3.0.0,<4",
   "rapidfuzz>=3.10.0",
 ]
 
@@ -44,6 +44,15 @@ dependencies = [
 # agentgrep runs without it; stdlib json stays the semantic source of truth
 # (see docs/dev/adr/0002).
 speedups = ["orjson>=3.10"]
+otel = [
+    "opentelemetry-api>=1.42.1",
+    "opentelemetry-exporter-otlp-proto-http>=1.42.1",
+    "opentelemetry-instrumentation-asyncio>=0.63b1",
+    "opentelemetry-instrumentation-sqlite3>=0.63b1",
+    "opentelemetry-sdk>=1.42.1",
+    "pyroscope-io>=1.0.12",
+    "pyroscope-otel>=1.0.1",
+]
 
 [project.urls]
 "Bug Tracker" = "https://github.com/tony/agentgrep/issues"
@@ -97,6 +106,13 @@ dev = [
   # to be project-importable.
   "click>=8.1",
   "typer>=0.12",
+  "pyroscope-io>=1.0.12",
+  "pyroscope-otel>=1.0.1",
+  "opentelemetry-api>=1.42.1",
+  "opentelemetry-sdk>=1.42.1",
+  "opentelemetry-exporter-otlp-proto-http>=1.42.1",
+  "opentelemetry-instrumentation-sqlite3>=0.63b1",
+  "opentelemetry-instrumentation-asyncio>=0.63b1",
 ]
 docs = [
   "gp-sphinx==0.0.1a31",
@@ -243,6 +259,9 @@ convention = "numpy"
 # (e.g. the mutually-exclusive-selector message in _select_targets) read
 # more naturally as one line than wrapped.
 "scripts/benchmark.py" = ["B008", "E501"]
+# Dashboard panels embed PromQL expressions as f-strings; E501 is suppressed
+# because the queries read more naturally as single lines than wrapped.
+"scripts/lgtm/generate_dashboards.py" = ["E501"]
 
 [tool.pytest.ini_options]
 addopts = [

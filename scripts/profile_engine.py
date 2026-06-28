@@ -11,11 +11,16 @@
 from __future__ import annotations
 
 import argparse
+import collections.abc as cabc
 import dataclasses
+import hashlib
 import io
 import json
+import logging
 import pathlib
+import sqlite3
 import sys
+import tempfile
 import typing as t
 
 import rich.console
@@ -27,6 +32,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 import agentgrep  # noqa: E402  (standalone script bootstraps src/ above)
+from agentgrep import _telemetry  # noqa: E402  (standalone script bootstraps src/ above)
 from agentgrep._engine.profiling import (  # noqa: E402  (standalone script bootstraps src/ above)
     FindProfileType,
     profile_find_query,
@@ -43,9 +49,12 @@ ProfileComponent = t.Literal[
 ]
 ComponentArgument = ProfileComponent | t.Literal["all", "search", "find"]
 OutputFormat = t.Literal["json", "ndjson", "rich"]
+FixtureKind = t.Literal["cursor-ide-state-vscdb"]
 SCHEMA_VERSION = 1
 PROFILE_RUN_ARTIFACT_KIND = "agentgrep.profile.run"
 PROFILE_BATCH_ARTIFACT_KIND = "agentgrep.profile.batch"
+CURSOR_IDE_FIXTURE_TEXT = "private-cursor-fixture-token agentgrep-cursor-fixture-token"
+logger = logging.getLogger("agentgrep.profile_engine")
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -69,6 +78,21 @@ class StrategyGroupSummary:
     source_kind: str
     strategy: str
     source_count: int
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class SourceSpanSummary:
+    """One source-level scan sample from profiler collection."""
+
+    component: str
+    agent: str
+    store: str
+    adapter_id: str
+    source_kind: str
+    strategy: str
+    duration_seconds: float
+    records_seen: int
+    matches_seen: int
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -217,6 +241,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=10,
         help="Number of slowest spans to show in rich output",
     )
+    parser.add_argument(
+        "--fixture",
+        choices=("cursor-ide-state-vscdb",),
+        default=None,
+        help="Run against a synthetic populated fixture instead of local user stores",
+    )
     return parser
 
 
@@ -332,12 +362,15 @@ def _run_spec(
     return payload
 
 
-def _run(args: argparse.Namespace) -> dict[str, object]:
-    """Run the selected profiler component and return a JSON-ready payload."""
-    home = pathlib.Path.home()
-    agents = t.cast("tuple[agentgrep.AgentName, ...]", args.agent)
-    limit = _resolve_result_limit(args)
-    specs = _resolve_component_specs(args)
+def _run_specs(
+    args: argparse.Namespace,
+    *,
+    home: pathlib.Path,
+    agents: tuple[agentgrep.AgentName, ...],
+    limit: int | None,
+    specs: tuple[ProfileRunSpec, ...],
+) -> dict[str, object]:
+    """Run resolved profiler specs against ``home``."""
     if bool(args.query_language) and any(spec.command == "find" for spec in specs):
         msg = "--query-language is unsupported for the find profiler (no compiled-query support)"
         raise ValueError(msg)
@@ -355,6 +388,56 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
         "limit": limit,
         "runs": runs,
     }
+
+
+def _write_cursor_ide_fixture(home: pathlib.Path) -> pathlib.Path:
+    """Write a synthetic Cursor IDE state database for benchmark coverage."""
+    path = home / ".cursor" / "state.vscdb"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(path)
+    try:
+        _ = connection.execute("CREATE TABLE ItemTable (key TEXT, value TEXT)")
+        payload = {"messages": [{"role": "user", "content": CURSOR_IDE_FIXTURE_TEXT}]}
+        _ = connection.execute(
+            "INSERT INTO ItemTable VALUES (?, ?)",
+            ("workbench.panel.chat.composerData", json.dumps(payload)),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    return path
+
+
+def _fixture_kind(args: argparse.Namespace) -> FixtureKind | None:
+    """Return the selected synthetic fixture kind."""
+    return t.cast("FixtureKind | None", args.fixture)
+
+
+def _annotate_fixture_payload(payload: dict[str, object], *, fixture_kind: FixtureKind) -> None:
+    """Attach safe fixture metadata to a profiler payload."""
+    payload["fixture_kind"] = fixture_kind
+    payload["fixture_source_count"] = 1
+    payload["fixture_record_count"] = 1
+
+
+def _run(args: argparse.Namespace) -> dict[str, object]:
+    """Run the selected profiler component and return a JSON-ready payload."""
+    agents = t.cast("tuple[agentgrep.AgentName, ...]", args.agent)
+    limit = _resolve_result_limit(args)
+    specs = _resolve_component_specs(args)
+    fixture_kind = _fixture_kind(args)
+    if fixture_kind is None:
+        return _run_specs(args, home=pathlib.Path.home(), agents=agents, limit=limit, specs=specs)
+
+    if fixture_kind == "cursor-ide-state-vscdb" and agents != ("cursor-ide",):
+        msg = "--fixture cursor-ide-state-vscdb requires --agent cursor-ide"
+        raise ValueError(msg)
+    with tempfile.TemporaryDirectory(prefix="agentgrep-profile-fixture-") as temp_dir:
+        home = pathlib.Path(temp_dir)
+        _ = _write_cursor_ide_fixture(home)
+        payload = _run_specs(args, home=home, agents=agents, limit=limit, specs=specs)
+    _annotate_fixture_payload(payload, fixture_kind=fixture_kind)
+    return payload
 
 
 def _profile_runs(payload: dict[str, object]) -> tuple[dict[str, object], ...]:
@@ -458,6 +541,37 @@ def _strategy_group_summaries(payload: dict[str, object]) -> tuple[StrategyGroup
             ),
         ),
     )
+
+
+def _source_span_summaries(payload: dict[str, object]) -> tuple[SourceSpanSummary, ...]:
+    """Return source-level scan samples from profiler collection."""
+    summaries: list[SourceSpanSummary] = []
+    for run in _profile_runs(payload):
+        component = run.get("profile_component")
+        component_text = component if isinstance(component, str) else "unknown"
+        for sample in _profile_samples(run):
+            if sample.get("name") != "search.collect.source":
+                continue
+            attributes = sample.get("attributes")
+            if not isinstance(attributes, dict):
+                continue
+            duration = sample.get("duration_seconds")
+            summaries.append(
+                SourceSpanSummary(
+                    component=component_text,
+                    agent=_attr_text(attributes, "agentgrep_agent"),
+                    store=_attr_text(attributes, "agentgrep_store"),
+                    adapter_id=_attr_text(attributes, "agentgrep_adapter_id"),
+                    source_kind=_attr_text(attributes, "agentgrep_source_kind"),
+                    strategy=_attr_text(attributes, "agentgrep_source_strategy"),
+                    duration_seconds=(
+                        float(duration) if isinstance(duration, int | float) else 0.0
+                    ),
+                    records_seen=_attr_int(attributes, "agentgrep_records_seen"),
+                    matches_seen=_attr_int(attributes, "agentgrep_matches_seen"),
+                ),
+            )
+    return tuple(summaries)
 
 
 def _fmt_duration(seconds: float) -> str:
@@ -585,25 +699,211 @@ def _render_payload(
     raise ValueError(msg)
 
 
+def _arg_count(argv: list[str] | None) -> int:
+    """Return argument count without recording raw argv."""
+    return len(sys.argv[1:] if argv is None else argv)
+
+
+def _set_run_span_attributes(payload: dict[str, object], *, output_format: str) -> None:
+    """Attach safe profile-run metadata to the active root span."""
+    runs = _profile_runs(payload)
+    _telemetry.set_span_attribute("agentgrep_output_format", output_format)
+    _telemetry.set_span_attribute("agentgrep_profile_component_count", len(runs))
+    for source_key, target_key in (
+        ("profile_component", "agentgrep_profile_component"),
+        ("profile_command", "agentgrep_command"),
+        ("agent_count", "agentgrep_agent_count"),
+        ("limit", "agentgrep_result_limit"),
+        ("fixture_kind", "agentgrep_fixture_kind"),
+        ("fixture_source_count", "agentgrep_fixture_source_count"),
+        ("fixture_record_count", "agentgrep_fixture_record_count"),
+    ):
+        value = payload.get(source_key)
+        if value is not None:
+            _telemetry.set_span_attribute(target_key, value)
+    if len(runs) == 1:
+        scope = runs[0].get("scope")
+        if scope is not None:
+            _telemetry.set_span_attribute("agentgrep_scope", scope)
+
+
+def _record_query_strategy_summary(
+    payload: dict[str, object],
+    *,
+    query_language: bool,
+    terms: cabc.Sequence[str],
+) -> None:
+    """Attach safe query-language scan-shape metadata to the active root span."""
+    if not query_language:
+        return
+    query_text = " ".join(terms)
+    query_hash = hashlib.sha256(query_text.encode("utf-8")).hexdigest()[:16]
+    strategy_groups = _strategy_group_summaries(payload)
+    source_spans = _source_span_summaries(payload)
+    root_full_scan_count = sum(
+        group.source_count for group in strategy_groups if group.strategy == "root_full_scan"
+    )
+    source_count = sum(group.source_count for group in strategy_groups)
+    dominant = max(strategy_groups, key=lambda group: group.source_count, default=None)
+    root_full_scan_spans = [
+        summary for summary in source_spans if summary.strategy == "root_full_scan"
+    ]
+    root_full_scan_records_seen = sum(summary.records_seen for summary in root_full_scan_spans)
+    root_full_scan_matches_seen = sum(summary.matches_seen for summary in root_full_scan_spans)
+    root_full_scan_duration_ms = round(
+        sum(summary.duration_seconds for summary in root_full_scan_spans) * 1000,
+        3,
+    )
+    attributes: dict[str, object] = {
+        "agentgrep_surface": "profile_engine",
+        "agentgrep_operation": "profile_engine.strategy_summary",
+        "agentgrep_query_language": True,
+        "agentgrep_query_text_len": len(query_text),
+        "agentgrep_query_hash": query_hash,
+        "agentgrep_strategy_group_count": len(strategy_groups),
+        "agentgrep_source_count": source_count,
+        "agentgrep_root_full_scan_source_count": root_full_scan_count,
+        "agentgrep_root_full_scan_source_ratio": (
+            root_full_scan_count / source_count if source_count else 0.0
+        ),
+        "agentgrep_root_full_scan_records_seen": root_full_scan_records_seen,
+        "agentgrep_root_full_scan_matches_seen": root_full_scan_matches_seen,
+        "agentgrep_root_full_scan_duration_ms": root_full_scan_duration_ms,
+    }
+    if dominant is not None:
+        attributes["agentgrep_dominant_agent"] = dominant.agent
+        attributes["agentgrep_dominant_store"] = dominant.store
+        attributes["agentgrep_dominant_adapter_id"] = dominant.adapter_id
+        attributes["agentgrep_dominant_source_kind"] = dominant.source_kind
+        attributes["agentgrep_dominant_source_strategy"] = dominant.strategy
+        attributes["agentgrep_dominant_source_count"] = dominant.source_count
+    for key, value in attributes.items():
+        _telemetry.set_span_attribute(key, value)
+    logger.info("profile engine strategy summarized", extra=attributes)
+
+
+def _system_exit_code(exc: SystemExit) -> int:
+    """Return a numeric ``SystemExit`` code."""
+    if isinstance(exc.code, int):
+        return exc.code
+    if exc.code is None:
+        return 0
+    return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the profiler command."""
     parser = _build_parser()
-    args = parser.parse_args(argv)
+    telemetry = _telemetry.setup(repo_root=REPO_ROOT, service_name="agentgrep-profile-engine")
     try:
-        payload = _run(args)
-    except ValueError as exc:
-        parser.error(str(exc))
-    try:
-        rendered = _render_payload(
-            payload,
-            output_format=t.cast("OutputFormat", args.output_format),
-            top_spans=t.cast("int", args.top_spans),
-        )
-    except ValueError as exc:
-        parser.error(str(exc))
-    sys.stdout.write(rendered)
-    sys.stdout.write("\n")
-    return 0
+        with _telemetry.span(
+            "agentgrep.profile_engine.run",
+            agentgrep_surface="profile_engine",
+            agentgrep_arg_count=_arg_count(argv),
+        ):
+            parse_exit: SystemExit | None = None
+            args: argparse.Namespace | None = None
+            with _telemetry.span(
+                "agentgrep.profile_engine.parse",
+                agentgrep_surface="profile_engine",
+            ):
+                try:
+                    args = parser.parse_args(argv)
+                except SystemExit as exc:
+                    parse_exit = exc
+                    _telemetry.set_span_attribute("agentgrep_outcome", "parse_error")
+                    _telemetry.set_span_attribute(
+                        "agentgrep_exit_code",
+                        _system_exit_code(exc),
+                    )
+            if parse_exit is not None:
+                exit_code = _system_exit_code(parse_exit)
+                outcome = "help" if exit_code == 0 else "parse_error"
+                _telemetry.set_span_attribute("agentgrep_outcome", outcome)
+                _telemetry.set_span_attribute("agentgrep_exit_code", exit_code)
+                logger.info(
+                    "profile engine completed",
+                    extra={
+                        "agentgrep_surface": "profile_engine",
+                        "agentgrep_operation": "profile_engine.run",
+                        "agentgrep_outcome": outcome,
+                        "agentgrep_exit_code": exit_code,
+                    },
+                )
+                if exit_code == 0:
+                    return 0
+                raise parse_exit
+            assert args is not None
+            logger.info(
+                "profile engine started",
+                extra={
+                    "agentgrep_surface": "profile_engine",
+                    "agentgrep_operation": "profile_engine.run",
+                },
+            )
+            try:
+                with _telemetry.span(
+                    "agentgrep.profile_engine.execute",
+                    agentgrep_surface="profile_engine",
+                ):
+                    payload = _run(args)
+            except ValueError as exc:
+                _telemetry.set_span_attribute("agentgrep_outcome", "parse_error")
+                logger.info(
+                    "profile engine failed",
+                    extra={
+                        "agentgrep_surface": "profile_engine",
+                        "agentgrep_operation": "profile_engine.run",
+                        "agentgrep_outcome": "parse_error",
+                    },
+                )
+                parser.error(str(exc))
+            _set_run_span_attributes(
+                payload,
+                output_format=t.cast("OutputFormat", args.output_format),
+            )
+            _record_query_strategy_summary(
+                payload,
+                query_language=bool(args.query_language),
+                terms=t.cast("list[str]", args.terms),
+            )
+            try:
+                with _telemetry.span(
+                    "agentgrep.profile_engine.render",
+                    agentgrep_surface="profile_engine",
+                ):
+                    rendered = _render_payload(
+                        payload,
+                        output_format=t.cast("OutputFormat", args.output_format),
+                        top_spans=t.cast("int", args.top_spans),
+                    )
+            except ValueError as exc:
+                _telemetry.set_span_attribute("agentgrep_outcome", "parse_error")
+                logger.info(
+                    "profile engine failed",
+                    extra={
+                        "agentgrep_surface": "profile_engine",
+                        "agentgrep_operation": "profile_engine.run",
+                        "agentgrep_outcome": "parse_error",
+                    },
+                )
+                parser.error(str(exc))
+            sys.stdout.write(rendered)
+            sys.stdout.write("\n")
+            _telemetry.set_span_attribute("agentgrep_outcome", "ok")
+            _telemetry.set_span_attribute("agentgrep_exit_code", 0)
+            logger.info(
+                "profile engine completed",
+                extra={
+                    "agentgrep_surface": "profile_engine",
+                    "agentgrep_operation": "profile_engine.run",
+                    "agentgrep_outcome": "ok",
+                    "agentgrep_exit_code": 0,
+                },
+            )
+            return 0
+    finally:
+        telemetry.shutdown()
 
 
 if __name__ == "__main__":

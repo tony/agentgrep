@@ -3345,6 +3345,95 @@ async def test_search_and_filter_inputs_carry_query_highlighter(
         assert isinstance(filter_input.highlighter, QueryHighlighter)
 
 
+class FocusedInputQuitCase(t.NamedTuple):
+    """One focused input case for empty ``q`` quit routing."""
+
+    test_id: str
+    input_attr: str
+    input_id: str
+
+
+FOCUSED_INPUT_QUIT_CASES: tuple[FocusedInputQuitCase, ...] = (
+    FocusedInputQuitCase(
+        test_id="search",
+        input_attr="_search_input",
+        input_id="search",
+    ),
+    FocusedInputQuitCase(
+        test_id="filter",
+        input_attr="_filter_input",
+        input_id="filter",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    FOCUSED_INPUT_QUIT_CASES,
+    ids=[case.test_id for case in FOCUSED_INPUT_QUIT_CASES],
+)
+async def test_empty_focused_input_q_requests_quit(
+    case: FocusedInputQuitCase,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``q`` quits from an empty focused search/filter input."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    requests: list[dict[str, str]] = []
+
+    def record_quit(**kwargs: str) -> None:
+        requests.append(kwargs)
+
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        focused_input = getattr(app, case.input_attr)
+        monkeypatch.setattr(app, "_quit_from_empty_input", record_quit)
+        focused_input.value = ""
+        focused_input.focus()
+        await pilot.pause()
+
+        await pilot.press("q")
+        await pilot.pause()
+
+        assert focused_input.value == ""
+
+    assert requests == [{"input_id": case.input_id, "key": "q"}]
+
+
+@pytest.mark.parametrize(
+    "case",
+    FOCUSED_INPUT_QUIT_CASES,
+    ids=[case.test_id for case in FOCUSED_INPUT_QUIT_CASES],
+)
+async def test_non_empty_focused_input_q_keeps_editing(
+    case: FocusedInputQuitCase,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``q`` remains a normal character while the focused input has text."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    requests: list[dict[str, str]] = []
+
+    def record_quit(**kwargs: str) -> None:
+        requests.append(kwargs)
+
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        focused_input = getattr(app, case.input_attr)
+        monkeypatch.setattr(app, "_quit_from_empty_input", record_quit)
+        focused_input.value = "abc"
+        focused_input.cursor_position = len(focused_input.value)
+        focused_input.focus()
+        await pilot.pause()
+
+        await pilot.press("q")
+        await pilot.pause()
+
+        assert focused_input.value == "abcq"
+
+    assert requests == []
+
+
 def test_scope_predicate_widening_does_not_persist(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -10170,7 +10259,9 @@ def test_resolve_env_root_warns_on_missing_path(
     relevant = [r for r in caplog.records if getattr(r, "agentgrep_env_var", None) == "CODEX_HOME"]
     assert relevant, "expected warning record with agentgrep_env_var"
     assert relevant[0].levelname == "WARNING"
-    assert getattr(relevant[0], "agentgrep_env_path", None) == str(bad_path)
+    assert not hasattr(relevant[0], "agentgrep_env_path")
+    assert getattr(relevant[0], "agentgrep_env_path_redacted", None) is True
+    assert getattr(relevant[0], "agentgrep_env_path_len", None) == len(str(bad_path))
     assert getattr(relevant[0], "agentgrep_env_path_status", None) == "not_found"
 
 
@@ -10198,7 +10289,9 @@ def test_resolve_env_root_warns_when_env_path_is_file(
     relevant = [r for r in caplog.records if getattr(r, "agentgrep_env_var", None) == "CODEX_HOME"]
     assert relevant, "expected warning record with agentgrep_env_var"
     assert getattr(relevant[0], "agentgrep_env_path_status", None) == "not_a_directory"
-    assert getattr(relevant[0], "agentgrep_env_path", None) == str(file_path)
+    assert not hasattr(relevant[0], "agentgrep_env_path")
+    assert getattr(relevant[0], "agentgrep_env_path_redacted", None) is True
+    assert getattr(relevant[0], "agentgrep_env_path_len", None) == len(str(file_path))
 
 
 def test_resolve_env_root_returns_default_when_env_unset(

@@ -114,6 +114,30 @@ ty:
 watch-ty:
     uv run ty check --watch
 
+# ---- OpenTelemetry / LGTM dev workflow ----
+
+# Start the local Grafana LGTM stack used by telemetry acceptance checks
+[group: 'otel']
+otel-up:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    scripts/lgtm/up.sh
+
+# Stop and remove the local Grafana LGTM stack
+[group: 'otel']
+otel-down:
+    docker rm -f agentgrep-lgtm
+
+# Run a local telemetry smoke workload against LGTM
+[group: 'otel']
+otel-smoke run_id='agentgrep-otel-smoke':
+    AGENTGREP_OTEL=live AGENTGREP_DEBUG_SESSION_ID={{ run_id }} OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 PYROSCOPE_SERVER_ADDRESS=http://localhost:4040 uv run python scripts/otel_smoke.py --run-id {{ run_id }}
+
+# Run live LGTM acceptance checks for traces, metrics, logs, and profiles
+[group: 'otel']
+otel-acceptance *args:
+    uv run python scripts/otel_acceptance.py --start-stack {{ args }}
+
 [private]
 _entr-warn:
     @echo "----------------------------------------------------------"

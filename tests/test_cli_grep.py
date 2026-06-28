@@ -457,9 +457,9 @@ def _fake_search_records(
     """Stub the search engine surface so dispatcher tests don't touch the FS.
 
     Patches both ``run_search_query`` (the eager list-return wrapper used
-    by --json / -c / -l / -L / --invert-match paths) and
-    ``iter_search_events`` (the streaming surface used by text and
-    NDJSON paths) so every dispatcher route is FS-isolated.
+    by --json / -c / -l / -L paths) and ``iter_search_events`` (the
+    streaming surface used by text and NDJSON paths) so every dispatcher
+    route is FS-isolated.
     """
 
     def _stub_list(
@@ -826,48 +826,182 @@ def test_grep_empty_pattern_exits_with_argparse_error(
     assert "Traceback" not in captured.err
 
 
-# ----- -v / --invert-match parse-time refusal -----------------------------
+# ----- -v / --invert-match -------------------------------------------------
 
 
-class InvertMatchRefusedCase(t.NamedTuple):
-    """Parametrized case for ``-v`` rejection outside ``-c``."""
+class InvertMatchAcceptedCase(t.NamedTuple):
+    """Parametrized case for advertised ``-v`` variants."""
 
     test_id: str
     argv: tuple[str, ...]
 
 
-INVERT_MATCH_REFUSED_CASES: tuple[InvertMatchRefusedCase, ...] = (
-    InvertMatchRefusedCase("invert-alone", ("grep", "-v", "bliss")),
-    InvertMatchRefusedCase("invert-with-line-number", ("grep", "-v", "-n", "bliss")),
-    InvertMatchRefusedCase("invert-with-json", ("grep", "-v", "--json", "bliss")),
-    InvertMatchRefusedCase("invert-with-vimgrep", ("grep", "-v", "--vimgrep", "bliss")),
+INVERT_MATCH_ACCEPTED_CASES: tuple[InvertMatchAcceptedCase, ...] = (
+    InvertMatchAcceptedCase(
+        test_id="invert-alone",
+        argv=("grep", "-v", "bliss"),
+    ),
+    InvertMatchAcceptedCase(
+        test_id="invert-line-number",
+        argv=("grep", "-v", "-n", "bliss"),
+    ),
+    InvertMatchAcceptedCase(
+        test_id="invert-json",
+        argv=("grep", "-v", "--json", "bliss"),
+    ),
+    InvertMatchAcceptedCase(
+        test_id="invert-ndjson",
+        argv=("grep", "-v", "--ndjson", "bliss"),
+    ),
+    InvertMatchAcceptedCase(
+        test_id="invert-vimgrep",
+        argv=("grep", "-v", "--vimgrep", "bliss"),
+    ),
+    InvertMatchAcceptedCase(
+        test_id="invert-count",
+        argv=("grep", "-v", "-c", "bliss"),
+    ),
+    InvertMatchAcceptedCase(
+        test_id="invert-files-with-matches",
+        argv=("grep", "-v", "-l", "bliss"),
+    ),
+    InvertMatchAcceptedCase(
+        test_id="invert-only-matching",
+        argv=("grep", "-v", "-o", "bliss"),
+    ),
+    InvertMatchAcceptedCase(
+        test_id="invert-fixed",
+        argv=("grep", "-v", "-F", "bliss", "needle"),
+    ),
 )
 
 
 @pytest.mark.parametrize(
     "case",
-    INVERT_MATCH_REFUSED_CASES,
-    ids=[c.test_id for c in INVERT_MATCH_REFUSED_CASES],
+    INVERT_MATCH_ACCEPTED_CASES,
+    ids=[c.test_id for c in INVERT_MATCH_ACCEPTED_CASES],
 )
-def test_grep_invert_match_outside_count_is_refused(
-    case: InvertMatchRefusedCase,
+def test_grep_invert_match_variants_parse(case: InvertMatchAcceptedCase) -> None:
+    """Advertised ``-v`` variants reach the dispatcher."""
+    parsed = agentgrep.parse_args(list(case.argv))
+    assert isinstance(parsed, agentgrep.GrepArgs)
+    assert parsed.invert_match is True
+
+
+def test_run_grep_command_invert_match_enumerates_nonmatching_records(
+    monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """``-v`` errors at parse time unless paired with ``-c``."""
-    with pytest.raises(SystemExit) as exc_info:
-        _ = agentgrep.parse_args(list(case.argv))
-    assert exc_info.value.code == 2
+    """``-v`` scans candidates without requiring positive engine matches."""
+    records = [
+        _make_count_record(text="alpha\nbeta", name="no-positive-match.jsonl"),
+        _make_count_record(text="needle\nsurvivor", name="mixed.jsonl"),
+        _make_count_record(text="needle", name="all-matching.jsonl"),
+    ]
+    seen_queries: list[agentgrep.SearchQuery] = []
+
+    def _stub_iter(
+        home: object,
+        query: agentgrep.SearchQuery,
+        *,
+        backends: object = None,
+        control: object = None,
+    ) -> t.Iterator[ag_events.SearchEvent]:
+        del home, backends, control
+        seen_queries.append(query)
+        for record in records:
+            yield ag_events.RecordEmitted(record=record)
+        yield ag_events.SearchFinished(match_count=len(records), elapsed_seconds=0.0)
+
+    monkeypatch.setattr(agentgrep, "iter_search_events", _stub_iter)
+    args = _make_grep_args(patterns=("needle",), invert_match=True, color_mode="never")
+
+    exit_code = agentgrep.run_grep_command(args)
     captured = capsys.readouterr()
-    assert "--invert-match for text output is not yet implemented" in captured.err
-    assert "issues/8" in captured.err
+    assert exit_code == 0
+    assert seen_queries[0].terms == ()
+    assert "alpha" in captured.out
+    assert "beta" in captured.out
+    assert "survivor" in captured.out
+    assert "needle" not in captured.out
+    assert "all-matching" not in captured.out
 
 
-def test_grep_invert_match_with_count_is_allowed() -> None:
-    """``-v -c`` still parses — that path honors inversion."""
-    args = agentgrep.parse_args(["grep", "-v", "-c", "bliss"])
-    assert args is not None
-    assert isinstance(args, agentgrep.GrepArgs)
-    assert args.invert_match is True
+def test_run_grep_command_invert_match_count_and_list(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``-v -c`` counts, and ``-v -l`` lists, selected nonmatching lines."""
+    records = [
+        _make_count_record(text="foo one\nbar two", name="mixed.jsonl"),
+        _make_count_record(text="foo one\nfoo two", name="all-matching.jsonl"),
+        _make_count_record(text="bar one\nbar two", name="none-matching.jsonl"),
+    ]
+    _fake_search_records(records, monkeypatch)
+    count_args = _make_grep_args(
+        patterns=("foo",),
+        invert_match=True,
+        count_only=True,
+        color_mode="never",
+    )
+
+    count_exit_code = agentgrep.run_grep_command(count_args)
+    captured = capsys.readouterr()
+    assert count_exit_code == 0
+    assert captured.out.splitlines() == [
+        "/tmp/mixed.jsonl:1",
+        "/tmp/all-matching.jsonl:0",
+        "/tmp/none-matching.jsonl:2",
+    ]
+
+    list_args = _make_grep_args(
+        patterns=("foo",),
+        invert_match=True,
+        files_with_matches=True,
+        color_mode="never",
+    )
+    list_exit_code = agentgrep.run_grep_command(list_args)
+    captured = capsys.readouterr()
+    assert list_exit_code == 0
+    assert captured.out.splitlines() == ["/tmp/mixed.jsonl", "/tmp/none-matching.jsonl"]
+
+
+def test_run_grep_command_invert_match_only_matching_prints_whole_lines(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``-o -v`` follows rg by emitting whole selected lines."""
+    _fake_search_records([_make_count_record(text="foo\nbar")], monkeypatch)
+    args = _make_grep_args(
+        patterns=("foo",),
+        invert_match=True,
+        only_matching=True,
+        color_mode="never",
+    )
+
+    exit_code = agentgrep.run_grep_command(args)
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert captured.out.splitlines() == ["bar"]
+
+
+def test_run_grep_command_invert_match_vimgrep_omits_column(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--vimgrep -v`` follows rg's ``path:line:text`` shape."""
+    _fake_search_records([_make_count_record(text="foo\nbar")], monkeypatch)
+    args = _make_grep_args(
+        patterns=("foo",),
+        invert_match=True,
+        vimgrep=True,
+        color_mode="never",
+    )
+
+    exit_code = agentgrep.run_grep_command(args)
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert captured.out.splitlines() == ["/tmp/fake.jsonl:2:bar"]
 
 
 def test_grep_files_without_match_flag_is_rejected(
