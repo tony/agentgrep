@@ -44,6 +44,32 @@ Open the explorer over prompts and conversations at once:
 $ agentgrep grep tmux --scope all --ui
 ```
 
+## Layouts and workflows
+
+The explorer is a thin shell over two pluggable axes — a **layout** (how records
+are arranged on screen) and a **workflow** (how the primary input queries them).
+Both are selectable at launch and switchable at runtime, so the same engine and
+the same records can drive very different surfaces.
+
+Two layouts ship:
+
+- **`hud`** (default) — the search bar, streaming results list, and detail pane.
+- **`greplog`** — an append-only `grep`-style log of matches as they stream in.
+
+Two workflows ship:
+
+- **`search`** (default) — the input runs a fresh engine search on each submit.
+- **`browse`** — the input filters the already-loaded records in-memory.
+
+Launch straight into a specific pair:
+
+```console
+$ agentgrep ui --layout greplog --workflow browse
+```
+
+Switch at runtime with `F2` (cycle the layout) and `F3` (cycle the workflow);
+the active `layout · workflow` pair shows in the title bar.
+
 ## Command
 
 ```{eval-rst}

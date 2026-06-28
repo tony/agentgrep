@@ -2,9 +2,10 @@
 
 ``ExplorerApp`` owns *only* App-lifecycle concerns: pi-lite theme registration,
 native ANSI-background mode, the non-blocking pump bind / heartbeat watchdog /
-audit hook (ADR 0011), and the choice of which
-:class:`~agentgrep.ui.layouts._base.LayoutScreen` to mount as the launch layout.
-All composition, bindings, and presentation belong to the layout, not here.
+audit hook (ADR 0011), and which :class:`~agentgrep.ui.layouts._base.LayoutScreen` and
+:class:`~agentgrep.ui.workflows.Workflow` to mount — plus the runtime switch
+between them (``f2`` cycles layouts, ``f3`` cycles workflows). All composition,
+bindings, and presentation belong to the layout, not here.
 
 Textual is imported at module scope, so this module is reached only lazily (via
 :func:`agentgrep.ui.app.build_streaming_ui_app`), keeping ``import agentgrep``
@@ -13,29 +14,43 @@ Textual-free (ADR 0010).
 
 from __future__ import annotations
 
+import collections.abc as cabc
 import typing as t
 
 from textual.app import App
+from textual.binding import Binding
 
-from agentgrep.ui import _runtime, theme as ui_theme
+from agentgrep.ui import _runtime, registry, theme as ui_theme
+from agentgrep.ui.layouts._base import LayoutScreen
 
 if t.TYPE_CHECKING:
     from textual.screen import Screen
 
     from agentgrep.ui._context import UiContext
+    from agentgrep.ui.workflows import Workflow
 
 __all__ = ["ExplorerApp"]
 
 
 class ExplorerApp(App[None]):
-    """Layout-agnostic shell: theme, pump lifecycle, and the launch layout."""
+    """Layout-agnostic shell: theme, pump lifecycle, and pluggable layout switching."""
 
     #: The pi-lite global stylesheet (semantic tokens + all-widget rules). The
     #: ``$ag-*`` tokens it references always resolve via
     #: :meth:`get_theme_variable_defaults`, regardless of the active theme.
     CSS_PATH: t.ClassVar[str] = "styles.tcss"
+    BINDINGS: t.ClassVar[list[t.Any]] = [
+        Binding("f2", "cycle_layout", "Layout", priority=True),
+        Binding("f3", "cycle_workflow", "Workflow", priority=True),
+    ]
 
-    def __init__(self, ctx: UiContext) -> None:
+    def __init__(
+        self,
+        ctx: UiContext,
+        *,
+        layout: str = registry.DEFAULT_LAYOUT,
+        workflow: str = registry.DEFAULT_WORKFLOW,
+    ) -> None:
         super().__init__()
         # Register and activate the pi-lite themes before the stylesheet loads
         # (CSS is parsed during startup) so the ``$ag-*`` tokens it references
@@ -48,6 +63,8 @@ class ExplorerApp(App[None]):
         # pi/claude-code instead of a painted color.
         self.ansi_color = True
         self._ctx = ctx
+        self._layout_name = layout
+        self._workflow_name = workflow
 
     def get_theme_variable_defaults(self) -> dict[str, str]:
         """Merge the ``$ag-*`` token defaults so the stylesheet always resolves.
@@ -63,15 +80,32 @@ class ExplorerApp(App[None]):
         return {**base, **ui_theme.ag_variable_defaults()}
 
     def get_default_screen(self) -> Screen:
-        """Mount the default layout (the HUD) as the launch screen.
+        """Mount the selected layout and workflow as the launch screen."""
+        return t.cast("Screen", self._build_layout(self._layout_name, self._workflow_name))
 
-        Imported lazily so the heavy layout module is only loaded when the app
-        is actually run.
+    def _build_layout(self, layout_name: str, workflow_name: str) -> LayoutScreen:
+        """Resolve names through the registry and construct the layout (lazy import)."""
+        layout = registry.layout_spec(layout_name) or registry.layout_spec(registry.DEFAULT_LAYOUT)
+        wf_spec = registry.workflow_spec(workflow_name) or registry.workflow_spec(
+            registry.DEFAULT_WORKFLOW,
+        )
+        assert layout is not None  # the defaults always resolve
+        assert wf_spec is not None
+        workflow = t.cast("Workflow", wf_spec.loader()())
+        return layout.loader()(self._ctx, workflow)
+
+    def _mode_factory(self, layout_name: str) -> cabc.Callable[[], Screen]:
+        """Return a zero-arg factory that builds ``layout_name`` with the active workflow.
+
+        ``App.MODES`` factories take no arguments, so this closure injects the
+        shared context and reads the *current* workflow name at build time, so a
+        layout switched into after an ``F3`` workflow swap carries the new one.
         """
-        from agentgrep.ui.layouts.hud import HudLayout
-        from agentgrep.ui.workflows import SearchWorkflow
 
-        return t.cast("Screen", HudLayout(self._ctx, SearchWorkflow()))
+        def factory() -> Screen:
+            return t.cast("Screen", self._build_layout(layout_name, self._workflow_name))
+
+        return factory
 
     def on_mount(self) -> None:
         """Bind the pump thread for the non-blocking guards (ADR 0011 NB-1/NB-8).
@@ -86,9 +120,38 @@ class ExplorerApp(App[None]):
             _runtime.start_pump_watchdog()
         if _runtime.audit_hook_enabled():
             _runtime.arm_pump_audit()
+        # Register every layout as a switchable mode (F2). The launch layout is
+        # already mounted via get_default_screen, so this only enables switching.
+        for name in registry.layout_names():
+            self.add_mode(name, self._mode_factory(name))
+        self._update_subtitle()
 
     def on_unmount(self) -> None:
         """Release the pump-thread binding and stop the watchdog on teardown."""
         _runtime.unbind_pump_thread()
         _runtime.stop_pump_watchdog()
         _runtime.disarm_pump_audit()
+
+    def action_cycle_layout(self) -> None:
+        """``F2``: switch to the next registered layout, keeping the workflow."""
+        names = registry.layout_names()
+        self._layout_name = names[(names.index(self._layout_name) + 1) % len(names)]
+        self.switch_mode(self._layout_name)
+        self._update_subtitle()
+
+    def action_cycle_workflow(self) -> None:
+        """``F3``: swap the active layout's workflow for the next registered one."""
+        screen = self.screen
+        if not isinstance(screen, LayoutScreen):
+            return
+        names = registry.workflow_names()
+        self._workflow_name = names[(names.index(self._workflow_name) + 1) % len(names)]
+        wf_spec = registry.workflow_spec(self._workflow_name)
+        if wf_spec is None:
+            return
+        screen.set_workflow(t.cast("Workflow", wf_spec.loader()()))
+        self._update_subtitle()
+
+    def _update_subtitle(self) -> None:
+        """Show the active ``layout · workflow`` in the app sub-title."""
+        self.sub_title = f"{self._layout_name} · {self._workflow_name}"
