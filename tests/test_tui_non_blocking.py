@@ -36,18 +36,20 @@ _APP_TREE = ast.parse(_APP_PATH.read_text(encoding="utf-8"))
 
 
 def _ui_source_trees() -> list[ast.AST]:
-    """Parse the HUD layout, the App shell, and every ``ui/widgets/*.py`` module.
+    """Parse every ``ui/layouts/*.py``, the App shell, and every ``ui/widgets/*.py``.
 
-    The HUD body lives in ``ui/layouts/hud.py``, the App-lifecycle shell in
-    ``ui/_shell.py``, the layout base in ``ui/layouts/_base.py``, and the leaf
-    widgets in ``ui/widgets/``; the no-blocking-calls guard scans the pump
-    methods (``watch_*`` / ``_on_key`` / ``on_mount`` / ``render``) of all of them.
+    Each pluggable layout (HUD, grep-log, …) carries its own streaming transport,
+    so the no-blocking-calls guard scans the pump methods (``watch_*`` /
+    ``_on_key`` / ``on_mount`` / ``render`` / ``@pump_only``) of all of them, plus
+    the App-lifecycle shell and the leaf widgets.
     """
     ui_dir = _APP_PATH.parent.parent
-    extra = [ui_dir / "_shell.py", _APP_PATH.parent / "_base.py"]
+    layout_paths = sorted((ui_dir / "layouts").glob("*.py"))
     widget_paths = sorted((ui_dir / "widgets").glob("*.py"))
+    extra = [ui_dir / "_shell.py"]
     return [
-        ast.parse(path.read_text(encoding="utf-8")) for path in (_APP_PATH, *extra, *widget_paths)
+        ast.parse(path.read_text(encoding="utf-8"))
+        for path in (*layout_paths, *extra, *widget_paths)
     ]
 
 
@@ -426,10 +428,11 @@ def test_json_parsing_confined_to_detail_body() -> None:
 
 
 def _run_worker_calls() -> list[ast.Call]:
-    """Return every ``*.run_worker(...)`` call in ``ui/layouts/hud.py``."""
+    """Return every ``*.run_worker(...)`` call across the layout modules."""
     return [
         node
-        for node in ast.walk(_APP_TREE)
+        for tree in _UI_TREES
+        for node in ast.walk(tree)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "run_worker"
