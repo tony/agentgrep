@@ -149,8 +149,21 @@ class ExplorerApp(App[None]):
         wf_spec = registry.workflow_spec(self._workflow_name)
         if wf_spec is None:
             return
-        screen.set_workflow(t.cast("Workflow", wf_spec.loader()()))
+        for layout in self._layout_screens():
+            layout.set_workflow(
+                t.cast("Workflow", wf_spec.loader()()),
+                attach=layout is screen,
+            )
         self._update_subtitle()
+
+    def _layout_screens(self) -> cabc.Iterator[LayoutScreen]:
+        """Yield each live layout screen once, including suspended mode stacks."""
+        seen: set[int] = set()
+        for stack in self._screen_stacks.values():
+            for screen in stack:
+                if isinstance(screen, LayoutScreen) and id(screen) not in seen:
+                    seen.add(id(screen))
+                    yield screen
 
     def _update_subtitle(self) -> None:
         """Show the active ``layout · workflow`` in the app sub-title."""

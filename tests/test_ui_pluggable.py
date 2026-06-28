@@ -167,6 +167,31 @@ async def test_f3_cycles_through_workflows(
         assert app.screen.workflow.name == "search"
 
 
+async def test_f3_updates_suspended_layout_workflow(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``F3`` updates already-created layouts before they are resumed."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("f2")
+        await pilot.pause()
+        greplog = app.screen
+        assert type(greplog).__name__ == "GrepLogLayout"
+        assert greplog.workflow.name == "search"
+        await pilot.press("f2")
+        await pilot.pause()
+        assert type(app.screen).__name__ == "HudLayout"
+        await pilot.press("f3")
+        await pilot.pause()
+        assert app.screen.workflow.name == "browse"
+        await pilot.press("f2")
+        await pilot.pause()
+        assert app.screen is greplog
+        assert app.screen.workflow.name == "browse"
+
+
 async def test_launch_into_greplog_layout(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
