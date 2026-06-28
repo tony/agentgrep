@@ -15,6 +15,7 @@ import pytest
 from agentgrep.progress import SearchControl
 from agentgrep.records import SearchQuery
 from agentgrep.ui._context import UiContext
+from agentgrep.ui.workflows.browse import BrowseWorkflow
 from agentgrep.ui.workflows.search import SearchWorkflow
 
 if t.TYPE_CHECKING:
@@ -140,3 +141,42 @@ def test_search_workflow_metadata() -> None:
     assert SearchWorkflow.name == "search"
     assert SearchWorkflow.summary
     assert SearchWorkflow().BINDINGS == ()
+
+
+class BrowseCase(t.NamedTuple):
+    """A BrowseWorkflow entry point and the host call it should produce."""
+
+    test_id: str
+    method: str  # "attach" or "query"
+    text: str
+    expected_kinds: tuple[str, ...]
+
+
+BROWSE_CASES = (
+    BrowseCase("attach-loads-the-set-once", "attach", "", ("run_search",)),
+    BrowseCase("query-filters-in-memory", "query", "foo", ("filter_loaded",)),
+)
+
+
+@pytest.mark.parametrize("case", BROWSE_CASES, ids=lambda c: c.test_id)
+def test_browse_workflow_routes_to_filter(case: BrowseCase) -> None:
+    """BrowseWorkflow loads once on attach and filters (never re-searches) on submit."""
+    host = _RecordingHost(_query("seed"))
+    workflow = BrowseWorkflow()
+    if case.method == "attach":
+        workflow.on_attach(host)
+    else:
+        workflow.on_query(host, case.text)
+    assert host.kinds() == case.expected_kinds
+
+
+def test_search_and_browse_diverge_on_submit() -> None:
+    """The axis proof: identical host + input, Search searches while Browse filters."""
+    search_host = _RecordingHost(_query())
+    browse_host = _RecordingHost(_query())
+    SearchWorkflow().on_query(search_host, "foo")
+    BrowseWorkflow().on_query(browse_host, "foo")
+    assert "run_search" in search_host.kinds()
+    assert "filter_loaded" not in search_host.kinds()
+    assert browse_host.kinds() == ("filter_loaded",)
+    assert "run_search" not in browse_host.kinds()
