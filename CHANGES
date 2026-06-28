@@ -42,6 +42,25 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### What's new
+
+#### Pluggable explorer layouts and workflows (#88)
+
+The interactive explorer (`agentgrep ui`) is now a thin shell over two
+independent axes you choose at launch and switch at runtime: a **layout**
+(how records are arranged on screen) and a **workflow** (what the primary
+input does). The familiar heads-up display is now the `hud` layout, joined
+by a new `greplog` that streams matches into an append-only, `grep`-style
+log; the live `search` workflow is joined by `browse`, where the input
+filters the already-loaded records in-memory instead of re-querying the
+engine.
+
+Launch straight into a pair with `agentgrep ui --layout greplog --workflow
+browse`, or cycle the layout with `F2` and the workflow with `F3` while the
+explorer is open — the active `layout · workflow` pair shows in the title
+bar. Every combination drives the same engine over the same records. See
+{ref}`tui` for details.
+
 ### Development
 
 #### Faster, parallel-capable test suite (#86)
