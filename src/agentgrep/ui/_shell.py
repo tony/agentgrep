@@ -156,7 +156,7 @@ class ExplorerApp(App[None]):
         self._update_subtitle()
 
     def action_cycle_workflow(self) -> None:
-        """``F3``: swap the active layout's workflow for the next registered one."""
+        """Cycle every live layout to the next registered workflow."""
         screen = self.screen
         if not isinstance(screen, LayoutScreen):
             return
