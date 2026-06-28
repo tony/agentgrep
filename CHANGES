@@ -36,11 +36,48 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a30 (Yet to be released)
+## agentgrep 0.1.0a31 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a30 (2026-06-27)
+
+agentgrep 0.1.0a30 stops the interactive explorer (`agentgrep ui`) from
+freezing on large stores: stepping find-in-detail matches and widening a
+results filter no longer block the keyboard for a noticeable beat. Under the
+hood it adds a layered defense — a static merge-time check plus a runtime
+watchdog — so "the UI froze" is caught going forward rather than
+rediscovered. See {ref}`adr-non-blocking-tui-invariants`.
+
+### Fixes
+
+#### Explorer no longer freezes on find or filter (#84)
+
+Stepping find-in-detail matches (`n` / `N`) and widening a results filter on
+a large result set could block the explorer's input for a noticeable pause.
+Find-in-detail now reuses a cached syntax-highlighted body instead of
+re-highlighting it on every keystroke, and a filter rebuild reuses
+already-rendered rows instead of rebuilding the whole list.
+
+### Development
+
+#### Layered non-blocking TUI defense (#84)
+
+The TUI's single-threaded message pump now has a two-gate guard against work
+that would freeze it: a static check that follows same-class helper calls and
+classifies the callables Textual invokes on the pump, plus an opt-in runtime
+audit hook and a log-only heartbeat watchdog that defaults on for an
+interactive terminal so a wedged pump is observable. The
+`textual-non-blocking-pump` skill and {ref}`adr-non-blocking-tui-invariants`
+record the audit procedure and why a lint alone cannot reach 100%.
+
+#### Development dependencies
+
+The gp-libs documentation toolchain moved to `0.0.18` (was `0.0.17`), with
+uv's `exclude-newer` cooldown whitelisting gp-libs so doc builds pick it up,
+and the dev tooling packages were refreshed.
 
 ## agentgrep 0.1.0a29 (2026-06-27)
 
