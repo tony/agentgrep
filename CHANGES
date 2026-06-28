@@ -36,11 +36,20 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a31 (Yet to be released)
+## agentgrep 0.1.0a32 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a31 (2026-06-28)
+
+agentgrep 0.1.0a31 turns the interactive explorer (`agentgrep ui`) into a
+thin shell over two independent axes you pick at launch and switch at
+runtime: a layout that arranges records on screen and a workflow that
+decides what the input does. The heads-up display becomes the `hud` layout
+alongside a new `greplog` stream, and the live `search` workflow gains an
+in-memory `browse` companion. See {ref}`tui`.
 
 ### What's new
 
