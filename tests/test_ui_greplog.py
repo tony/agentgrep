@@ -221,3 +221,27 @@ async def test_greplog_stale_filter_results_are_dropped(
         await pilot.pause()
         assert layout._records == expected_records
         assert len(layout.query_one("#greplog").lines) == expected_lines
+
+
+async def test_greplog_search_input_does_not_crash_on_keys(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Typing in the grep-log search box must not raise.
+
+    ``SearchInput`` routes the non-ctrl-c "disarm" and ctrl-c through
+    ``self.screen``; a layout reusing it (greplog) needs the LayoutScreen
+    defaults, else every keystroke would raise AttributeError.
+    """
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        layout = await _mount_greplog(app, pilot)
+        layout._search_input.focus()
+        await pilot.pause()
+        await pilot.press("a")  # a normal key -> screen._disarm_confirm_exit
+        await pilot.pause()
+        assert layout._search_input.value == "a"
+        await pilot.press("ctrl+c")  # with text -> screen._handle_input_ctrl_c clears it
+        await pilot.pause()
+        assert layout._search_input.value == ""

@@ -72,3 +72,19 @@ class LayoutScreen(_SCREEN_BASE):
         self._workflow = workflow
         if attach:
             self._workflow.on_attach(t.cast("t.Any", self))
+
+    # --- input control defaults (the shared SearchInput reaches these) --------
+    # SearchInput.on_key routes ctrl-c and the non-ctrl-c "disarm" through
+    # ``self.screen``, so every layout that hosts it needs these. The HUD
+    # overrides them with its staged confirm-exit gutter; other layouts get a
+    # sane default (clear the box, then quit on an empty box).
+    def _handle_input_ctrl_c(self, widget: object) -> None:
+        """Default ctrl-c inside an input: clear it, else quit on an empty box."""
+        target = t.cast("t.Any", widget)
+        if str(getattr(target, "value", "")):
+            target.value = ""
+            return
+        self.app.exit()
+
+    def _disarm_confirm_exit(self) -> None:
+        """No-op by default; the HUD overrides this to cancel its confirm gutter."""
