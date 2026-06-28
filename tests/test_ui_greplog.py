@@ -223,6 +223,52 @@ async def test_greplog_stale_filter_results_are_dropped(
         assert len(layout.query_one("#greplog").lines) == expected_lines
 
 
+class ActiveFilterBatchCase(t.NamedTuple):
+    """A streamed batch that arrives while a browse filter is active."""
+
+    test_id: str
+    filter_text: str
+    expected_lines: int
+    expected_records: int
+
+
+ACTIVE_FILTER_BATCH_CASES = (ActiveFilterBatchCase("later-batch-stays-filtered", "needle", 2, 4),)
+
+
+@pytest.mark.parametrize("case", ACTIVE_FILTER_BATCH_CASES, ids=lambda case: case.test_id)
+async def test_greplog_streaming_batches_respect_active_filter(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: ActiveFilterBatchCase,
+) -> None:
+    """Later streamed records stay under the active browse filter."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    first = [
+        _record(tmp_path, 0, "needle first"),
+        _record(tmp_path, 1, "plain first"),
+    ]
+    later = [
+        _record(tmp_path, 2, "plain later"),
+        _record(tmp_path, 3, "needle later"),
+    ]
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        layout = await _mount_greplog(app, pilot)
+        await layout._apply_event(
+            layout._generation,
+            StreamingRecordsBatch(records=tuple(first), total=len(first)),
+        )
+        layout.filter_loaded(case.filter_text)
+        await pilot.pause(0.2)
+        await layout._apply_event(
+            layout._generation,
+            StreamingRecordsBatch(records=tuple(later), total=len(first) + len(later)),
+        )
+        await pilot.pause(0.2)
+        assert len(layout._records) == case.expected_records
+        assert len(layout.query_one("#greplog").lines) == case.expected_lines
+
+
 async def test_greplog_search_input_does_not_crash_on_keys(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

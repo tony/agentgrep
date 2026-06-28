@@ -38,6 +38,7 @@ from agentgrep.ui.layouts._base import LayoutScreen
 from agentgrep.ui.widgets import SearchInput, SearchRequested
 
 if t.TYPE_CHECKING:
+    from agentgrep._engine.matching import CompiledRecordMatcher
     from agentgrep.ui.workflows import Workflow
 
 #: Bounded slice size for streaming log writes (NB-4), matching the HUD applier.
@@ -70,6 +71,7 @@ class GrepLogLayout(LayoutScreen):
         self._search_emit: cabc.Callable[[object], None] | None = None
         self._generation = 0
         self._filter_generation = 0
+        self._filter_matcher: CompiledRecordMatcher | None = None
         self._search_done = False
         self._log: t.Any = None
         self._status: t.Any = None
@@ -123,6 +125,7 @@ class GrepLogLayout(LayoutScreen):
         self.search_query = query
         self.control = SearchControl()
         self._records = []
+        self._filter_matcher = None
         self._filter_generation += 1
         self._search_done = False
         if self._log is not None:
@@ -144,7 +147,11 @@ class GrepLogLayout(LayoutScreen):
         The whole-buffer scan runs off the pump (NB-1) and the matching subset is
         re-written in bounded chunks (NB-4).
         """
-        matcher = self._build_matcher(text)
+        self._filter_matcher = self._build_matcher(text)
+        self._refresh_filter_log(self._filter_matcher)
+
+    def _refresh_filter_log(self, matcher: CompiledRecordMatcher | None) -> None:
+        """Schedule an off-pump repaint of the loaded log through ``matcher``."""
         records = tuple(self._records)
         self._filter_generation += 1
         generation = self._filter_generation
@@ -165,6 +172,7 @@ class GrepLogLayout(LayoutScreen):
     def reset_view(self) -> None:
         """Clear the log to the idle state without a search (host surface)."""
         self._records = []
+        self._filter_matcher = None
         self._filter_generation += 1
         self._search_done = True
         if self._log is not None:
@@ -209,6 +217,9 @@ class GrepLogLayout(LayoutScreen):
             return
         if isinstance(event, StreamingRecordsBatch):
             self._records.extend(event.records)
+            if self._filter_matcher is not None:
+                self._refresh_filter_log(self._filter_matcher)
+                return
             await _runtime.stream_apply(
                 event.records,
                 self._write_chunk,
@@ -255,7 +266,7 @@ class GrepLogLayout(LayoutScreen):
         self,
         generation: int,
         records: tuple[SearchRecord, ...],
-        matcher: t.Any,
+        matcher: CompiledRecordMatcher | None,
     ) -> None:
         """Filter the loaded buffer off the pump, then re-render the matches."""
         matching = records if matcher is None else tuple(r for r in records if matcher.matches(r))
@@ -275,7 +286,7 @@ class GrepLogLayout(LayoutScreen):
         self._log.clear()
         await _runtime.stream_apply(matching, self._write_chunk, chunk_size=_APPLY_CHUNK_SIZE)
 
-    def _build_matcher(self, text: str) -> t.Any:
+    def _build_matcher(self, text: str) -> CompiledRecordMatcher | None:
         """Compile a record matcher for ``text``, or ``None`` for an empty filter."""
         import dataclasses
 
