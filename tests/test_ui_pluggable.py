@@ -164,6 +164,32 @@ async def test_f2_resumes_launch_layout(
         assert app.screen is hud
 
 
+async def test_f2_ignores_active_history_modal(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``F2`` must not replace a modal screen stack."""
+    from agentgrep.ui._history import HistoryEntry
+    from agentgrep.ui.widgets.history import HistoryRecall
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        hud = app.screen
+        hud._history = [HistoryEntry(text="agent:codex refactor", ts=10)]
+        hud._search_input.focus()
+        await pilot.press("ctrl+r")
+        await pilot.pause()
+        assert isinstance(app.screen, HistoryRecall)
+        await pilot.press("f2")
+        await pilot.pause()
+        assert isinstance(app.screen, HistoryRecall)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.screen is hud
+        assert hud._search_input.value == "agent:codex refactor"
+
+
 async def test_launch_query_resumes_launch_layout(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

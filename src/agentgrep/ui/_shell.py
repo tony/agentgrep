@@ -144,6 +144,9 @@ class ExplorerApp(App[None]):
 
     def action_cycle_layout(self) -> None:
         """``F2``: switch to the next registered layout, keeping the workflow."""
+        screen = self.screen
+        if not isinstance(screen, LayoutScreen):
+            return
         names = registry.layout_names()
         self._layout_name = names[(names.index(self._layout_name) + 1) % len(names)]
         self.switch_mode(self._layout_name)
