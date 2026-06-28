@@ -69,6 +69,7 @@ class GrepLogLayout(LayoutScreen):
         self._records: list[SearchRecord] = []
         self._search_emit: cabc.Callable[[object], None] | None = None
         self._generation = 0
+        self._filter_generation = 0
         self._search_done = False
         self._log: t.Any = None
         self._status: t.Any = None
@@ -122,6 +123,7 @@ class GrepLogLayout(LayoutScreen):
         self.search_query = query
         self.control = SearchControl()
         self._records = []
+        self._filter_generation += 1
         self._search_done = False
         if self._log is not None:
             self._log.clear()
@@ -143,8 +145,17 @@ class GrepLogLayout(LayoutScreen):
         re-written in bounded chunks (NB-4).
         """
         matcher = self._build_matcher(text)
+        records = tuple(self._records)
+        self._filter_generation += 1
+        generation = self._filter_generation
         self.run_worker(
-            lambda captured=matcher: self._run_log_filter(captured),
+            lambda captured_generation=generation, captured_records=records, captured=matcher: (
+                self._run_log_filter(
+                    captured_generation,
+                    captured_records,
+                    captured,
+                )
+            ),
             name="filter",
             group="filter",
             thread=True,
@@ -154,6 +165,7 @@ class GrepLogLayout(LayoutScreen):
     def reset_view(self) -> None:
         """Clear the log to the idle state without a search (host surface)."""
         self._records = []
+        self._filter_generation += 1
         self._search_done = True
         if self._log is not None:
             self._log.clear()
@@ -239,17 +251,25 @@ class GrepLogLayout(LayoutScreen):
             self._log.write(_format_log_line(record))
 
     @_runtime.offload
-    def _run_log_filter(self, matcher: t.Any) -> None:
+    def _run_log_filter(
+        self,
+        generation: int,
+        records: tuple[SearchRecord, ...],
+        matcher: t.Any,
+    ) -> None:
         """Filter the loaded buffer off the pump, then re-render the matches."""
-        if matcher is None:
-            matching: tuple[SearchRecord, ...] = tuple(self._records)
-        else:
-            matching = tuple(r for r in self._records if matcher.matches(r))
-        self.app.call_from_thread(self._apply_log_filter, matching)
+        matching = records if matcher is None else tuple(r for r in records if matcher.matches(r))
+        self.app.call_from_thread(self._apply_log_filter, generation, matching)
 
     @_runtime.pump_only
-    async def _apply_log_filter(self, matching: cabc.Sequence[SearchRecord]) -> None:
+    async def _apply_log_filter(
+        self,
+        generation: int,
+        matching: cabc.Sequence[SearchRecord],
+    ) -> None:
         """Re-render the log from ``matching`` in bounded chunks (NB-4)."""
+        if generation != self._filter_generation:
+            return
         if self._log is None:
             return
         self._log.clear()

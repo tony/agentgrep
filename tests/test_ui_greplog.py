@@ -96,7 +96,7 @@ async def test_greplog_filter_renders_only_matches(
         await pilot.pause()
         assert len(layout.query_one("#greplog").lines) == 3
         matching = tuple(r for r in records if "needle" in r.text)
-        await layout._apply_log_filter(matching)
+        await layout._apply_log_filter(layout._filter_generation, matching)
         await pilot.pause()
         assert len(layout.query_one("#greplog").lines) == 2
 
@@ -161,3 +161,63 @@ async def test_greplog_reset_drops_stale_search_events(
         assert layout._records == []
         assert len(layout.query_one("#greplog").lines) == 0
         assert str(layout.query_one("#greplog-status").render()) == ""
+
+
+class StaleFilterCase(t.NamedTuple):
+    """A stale filter apply after another layout state change."""
+
+    test_id: str
+    invalidation: t.Literal["new-filter", "reset", "new-search"]
+
+
+STALE_FILTER_CASES = (
+    StaleFilterCase("newer-filter", "new-filter"),
+    StaleFilterCase("reset-view", "reset"),
+    StaleFilterCase("new-search", "new-search"),
+)
+
+
+@pytest.mark.parametrize("case", STALE_FILTER_CASES, ids=lambda case: case.test_id)
+async def test_greplog_stale_filter_results_are_dropped(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: StaleFilterCase,
+) -> None:
+    """Filter worker results from before a newer state must not repaint the log."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = [
+        _record(tmp_path, 0, "needle here"),
+        _record(tmp_path, 1, "haystack only"),
+        _record(tmp_path, 2, "needle again"),
+    ]
+
+    def no_worker(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        layout = await _mount_greplog(app, pilot)
+        monkeypatch.setattr(layout, "run_worker", no_worker)
+        await layout._apply_event(
+            layout._generation,
+            StreamingRecordsBatch(records=tuple(records), total=3),
+        )
+        await pilot.pause()
+        old_generation = layout._filter_generation
+        if case.invalidation == "new-filter":
+            layout.filter_loaded("newer")
+            expected_records = records
+            expected_lines = 3
+        elif case.invalidation == "reset":
+            layout.reset_view()
+            expected_records = []
+            expected_lines = 0
+        else:
+            layout.run_search(layout.search_query)
+            expected_records = []
+            expected_lines = 0
+
+        await layout._apply_log_filter(old_generation, tuple(records[:1]))
+        await pilot.pause()
+        assert layout._records == expected_records
+        assert len(layout.query_one("#greplog").lines) == expected_lines
