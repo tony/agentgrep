@@ -150,6 +150,9 @@ class ExplorerApp(App[None]):
         names = registry.layout_names()
         self._layout_name = names[(names.index(self._layout_name) + 1) % len(names)]
         self.switch_mode(self._layout_name)
+        screen = self.screen
+        if isinstance(screen, LayoutScreen):
+            screen.attach_pending_workflow()
         self._update_subtitle()
 
     def action_cycle_workflow(self) -> None:

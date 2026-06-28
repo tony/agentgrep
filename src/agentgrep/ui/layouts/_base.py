@@ -45,6 +45,7 @@ class LayoutScreen(_SCREEN_BASE):
         super().__init__()
         self._ctx = ctx
         self._workflow = workflow
+        self._workflow_attach_pending = False
 
     @property
     def context(self) -> UiContext:
@@ -64,14 +65,25 @@ class LayoutScreen(_SCREEN_BASE):
         may start a search and paint chrome) runs after the widgets exist.
         """
         self._workflow.on_attach(t.cast("t.Any", self))
+        self._workflow_attach_pending = False
 
     def set_workflow(self, workflow: Workflow, *, attach: bool = True) -> None:
         """Swap the active workflow, optionally re-seeding its initial dispatch."""
         if attach:
             t.cast("t.Any", self).request_cancel()
         self._workflow = workflow
+        self._workflow_attach_pending = not attach
         if attach:
             self._workflow.on_attach(t.cast("t.Any", self))
+            self._workflow_attach_pending = False
+
+    def attach_pending_workflow(self) -> None:
+        """Attach a suspended workflow swap when the layout is resumed."""
+        if not self._workflow_attach_pending:
+            return
+        self._workflow_attach_pending = False
+        t.cast("t.Any", self).request_cancel()
+        self._workflow.on_attach(t.cast("t.Any", self))
 
     # --- input control defaults (the shared SearchInput reaches these) --------
     # SearchInput.on_key routes ctrl-c and the non-ctrl-c "disarm" through

@@ -14,6 +14,8 @@ import typing as t
 import pytest
 
 import agentgrep
+from agentgrep.progress import SearchControl, StreamingRecordsBatch, StreamingSearchFinished
+from agentgrep.records import SearchQuery, SearchRecord
 from tests.test_agentgrep import _build_empty_ui_app
 
 
@@ -28,6 +30,37 @@ class _NoopInvoker:
         emit: cabc.Callable[[object], None],
     ) -> None:
         """Accept the search request without touching the engine."""
+
+
+class _StreamingInvoker:
+    """Search seam stub that emits one record per request."""
+
+    def __init__(self, tmp_path: pathlib.Path) -> None:
+        self._tmp_path = tmp_path
+        self.queries: list[SearchQuery] = []
+
+    def run(
+        self,
+        query: SearchQuery,
+        *,
+        control: SearchControl,
+        emit: cabc.Callable[[object], None],
+    ) -> None:
+        """Emit one streamed record for ``query`` unless already canceled."""
+        self.queries.append(query)
+        if control.answer_now_requested():
+            return
+        idx = len(self.queries)
+        record = SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="codex.sessions",
+            adapter_id="codex.sessions_jsonl.v1",
+            path=self._tmp_path / f"r{idx}.jsonl",
+            text=f"record {idx}",
+        )
+        emit(StreamingRecordsBatch(records=(record,), total=idx))
+        emit(StreamingSearchFinished(outcome="complete", total=idx, elapsed=0.01))
 
 
 class ResolveCase(t.NamedTuple):
@@ -86,6 +119,18 @@ CLI_CASES = (
     CliCase("defaults", ("ui",), "hud", "search"),
     CliCase("explicit", ("ui", "--layout", "greplog", "--workflow", "browse"), "greplog", "browse"),
 )
+
+
+class ResumedBrowseCase(t.NamedTuple):
+    """A suspended layout resumed after a workflow swap."""
+
+    test_id: str
+    query_terms: tuple[str, ...]
+    expected_searches: int
+    expected_records: int
+
+
+RESUMED_BROWSE_CASES = (ResumedBrowseCase("suspended-greplog-loads-on-resume", (), 2, 1),)
 
 
 @pytest.mark.parametrize("case", CLI_CASES, ids=lambda c: c.test_id)
@@ -272,6 +317,58 @@ async def test_f3_updates_suspended_layout_workflow(
         await pilot.pause()
         assert app.screen is greplog
         assert app.screen.workflow.name == "browse"
+
+
+@pytest.mark.parametrize("case", RESUMED_BROWSE_CASES, ids=lambda c: c.test_id)
+async def test_f3_browse_attaches_resumed_layout(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: ResumedBrowseCase,
+) -> None:
+    """A suspended layout loads browse records after it is resumed."""
+    from agentgrep.ui._context import UiContext
+    from agentgrep.ui._shell import ExplorerApp
+    from agentgrep.ui.layouts._base import LayoutScreen
+    from agentgrep.ui.layouts.greplog import GrepLogLayout
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    invoker = _StreamingInvoker(tmp_path)
+    query = SearchQuery(
+        terms=case.query_terms,
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+    app = ExplorerApp(
+        UiContext(
+            home=home,
+            invoker=invoker,
+            query=query,
+            control=SearchControl(),
+        ),
+    )
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("f2")
+        await pilot.pause()
+        greplog = t.cast(GrepLogLayout, app.screen)
+        assert type(greplog).__name__ == "GrepLogLayout"
+        await pilot.press("f2")
+        await pilot.pause()
+        await pilot.press("f3")
+        await pilot.pause(0.2)
+        assert t.cast(LayoutScreen, app.screen).workflow.name == "browse"
+        await pilot.press("f2")
+        await pilot.pause(0.2)
+        assert app.screen is greplog
+        assert t.cast(LayoutScreen, app.screen).workflow.name == "browse"
+        assert len(invoker.queries) == case.expected_searches
+        assert len(greplog._records) == case.expected_records
 
 
 async def test_launch_into_greplog_layout(
