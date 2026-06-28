@@ -295,6 +295,42 @@ metadata. Profile runs include phase spans such as `search.discover`,
 skipped, cancellation-requested, batch, queued-batch, queue-wait, and emitted
 counts when the frontier driver is selected, and runs with an active
 source-scan cache report `search.collect.source_scan_cache` lookup samples.
+
+Benchmark the cold path with the cache bypassed:
+
+```console
+$ env AGENTGREP_CACHE=off .venv/bin/agentgrep grep --no-progress --max-count 50 tmux
+```
+
+Benchmark the warm path against a bench-scoped cache that must serve
+the query (sync it once first):
+
+```console
+$ env AGENTGREP_DB=.tmp/bench-cache.sqlite .venv/bin/agentgrep db sync --no-progress
+```
+
+```console
+$ env AGENTGREP_DB=.tmp/bench-cache.sqlite AGENTGREP_CACHE=require .venv/bin/agentgrep grep --no-progress --max-count 50 tmux
+```
+
+The committed `*-cache-cold-*` and `*-cache-warm-*` benchmark entries
+wrap the same pattern; warm entries declare a `setup_command` that
+syncs the bench-scoped cache once before timing, and every measurement
+row records its `cache_mode`.
+
+DB-cache consultations report one `search.cache.decision` sample per query
+with the cache mode, whether the cache served the query, the served record
+count, and the fallback reason when it did not. `db.sql.statement` samples
+report one aggregate per executed SQL statement shape — name, execution
+count (the n+1 signal), rows, and summed duration — with placeholder-only
+statement text and no bound parameters.
+
+Capture SQLite query plans alongside the statement samples:
+
+```console
+$ env AGENTGREP_SQL_EXPLAIN=1 AGENTGREP_CACHE=require uv run python scripts/profile_engine.py grep-prompts tmux --agent all --max-count 50 --json
+```
+
 Those spans report agent, store,
 adapter, path kind, source kind, counts, and match decisions without including
 prompt text, raw argv, or local absolute paths.

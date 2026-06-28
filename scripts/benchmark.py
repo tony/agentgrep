@@ -29,6 +29,7 @@ import io
 import json
 import math
 import pathlib
+import re
 import shlex
 import shutil
 import signal
@@ -171,6 +172,9 @@ class BenchCommand(pydantic.BaseModel):
     ``{repo}`` placeholders. ``skip_if_missing``, if set, names a subcommand
     to probe via ``<venv>/bin/<binary> <skip_if_missing> --help`` before
     the bench runs; a non-zero exit marks the row ``command_missing``.
+    ``setup_command``, if set, is rendered with the same placeholders and
+    runs once before timing — warm-cache benches use it to sync the
+    bench-scoped cache.
     """
 
     model_config = pydantic.ConfigDict(extra="forbid")
@@ -179,6 +183,7 @@ class BenchCommand(pydantic.BaseModel):
     command: str
     default_query: str = ""
     skip_if_missing: str | None = None
+    setup_command: str = ""
 
 
 class Settings(pydantic.BaseModel):
@@ -219,6 +224,7 @@ class Measurement(pydantic.BaseModel):
     command_string: str
     samples: list[float] = pydantic.Field(default_factory=list)
     status: Status = "ok"
+    cache_mode: str | None = None
     error: str | None = None
     dry_run: bool = False
     profile_payload: ProfilePayload | None = None
@@ -393,6 +399,20 @@ def render_command(template: str, context: dict[str, str]) -> str:
     nonsensical command. Curly braces in literal queries should be doubled.
     """
     return template.format_map(context)
+
+
+def cache_mode_from_command(command_string: str) -> str | None:
+    """Extract the AGENTGREP_CACHE mode from an ``env``-prefixed command.
+
+    Examples
+    --------
+    >>> cache_mode_from_command("env AGENTGREP_CACHE=off bin/agentgrep grep x")
+    'off'
+    >>> cache_mode_from_command("bin/agentgrep grep x") is None
+    True
+    """
+    match = re.search(r"\bAGENTGREP_CACHE=(auto|require|off)\b", command_string)
+    return match.group(1) if match else None
 
 
 def sanitize_command_string(command_string: str, context: CommandContext) -> str:
@@ -1575,6 +1595,7 @@ def _run_one_commit(
                     command_string=sanitized_cmd_str,
                     samples=[],
                     status="ok",
+                    cache_mode=cache_mode_from_command(cmd_str),
                     dry_run=True,
                 ),
             )
@@ -1596,6 +1617,33 @@ def _run_one_commit(
             )
             continue
 
+        if bench.setup_command:
+            setup_cmd = render_command(bench.setup_command, context)
+            notify(f"[{commit.short_sha}] {name}: setup")
+            setup_result = subprocess.run(
+                shlex.split(setup_cmd),
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=config.settings.timeout_seconds,
+            )
+            if setup_result.returncode != 0:
+                error = (setup_result.stderr or setup_result.stdout or "").strip()
+                results.append(
+                    Measurement(
+                        sha=commit.sha,
+                        short_sha=commit.short_sha,
+                        subject=commit.subject,
+                        command_name=name,
+                        command_string=sanitized_cmd_str,
+                        samples=[],
+                        status="bench_fail",
+                        cache_mode=cache_mode_from_command(cmd_str),
+                        error=f"setup_command exited {setup_result.returncode}: {error[:300]}",
+                        dry_run=dry_run,
+                    ),
+                )
+                continue
         notify(f"[{commit.short_sha}] {name}")
         try:
             samples = time_command(
@@ -1636,6 +1684,7 @@ def _run_one_commit(
                 command_string=sanitized_cmd_str,
                 samples=samples,
                 status="ok",
+                cache_mode=cache_mode_from_command(cmd_str),
                 dry_run=dry_run,
                 profile_payload=profile_payload,
                 profile_capture_error=profile_capture_error,

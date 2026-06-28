@@ -618,6 +618,7 @@ def test_main_with_empty_argv_prints_root_help(
     assert "grep examples:" in captured
     assert "find examples:" in captured
     assert "ui examples:" in captured
+    assert "db examples:" in captured
 
 
 def test_main_with_unknown_positional_errors(
