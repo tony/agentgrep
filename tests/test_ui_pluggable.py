@@ -7,6 +7,7 @@ surface, the factory's validation, and the runtime ``f2`` / ``f3`` switching
 
 from __future__ import annotations
 
+import collections.abc as cabc
 import pathlib
 import typing as t
 
@@ -14,6 +15,19 @@ import pytest
 
 import agentgrep
 from tests.test_agentgrep import _build_empty_ui_app
+
+
+class _NoopInvoker:
+    """Search seam stub for startup tests that need non-empty query terms."""
+
+    def run(
+        self,
+        query: object,
+        *,
+        control: object,
+        emit: cabc.Callable[[object], None],
+    ) -> None:
+        """Accept the search request without touching the engine."""
 
 
 class ResolveCase(t.NamedTuple):
@@ -142,6 +156,48 @@ async def test_f2_resumes_launch_layout(
     async with app.run_test() as pilot:
         await pilot.pause()
         hud = app.screen
+        await pilot.press("f2")
+        await pilot.pause()
+        assert type(app.screen).__name__ == "GrepLogLayout"
+        await pilot.press("f2")
+        await pilot.pause()
+        assert app.screen is hud
+
+
+async def test_launch_query_resumes_launch_layout(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An initial query does not break the named launch layout stack."""
+    from agentgrep.ui._context import UiContext
+    from agentgrep.ui._shell import ExplorerApp
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    query = agentgrep.SearchQuery(
+        terms=("mobx",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+    app = ExplorerApp(
+        UiContext(
+            home=home,
+            invoker=_NoopInvoker(),
+            query=query,
+            control=agentgrep.SearchControl(),
+        ),
+    )
+    assert app._current_mode == app.DEFAULT_MODE
+    assert "hud" not in app._screen_stacks
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        hud = app.screen
+        assert type(hud).__name__ == "HudLayout"
         await pilot.press("f2")
         await pilot.pause()
         assert type(app.screen).__name__ == "GrepLogLayout"

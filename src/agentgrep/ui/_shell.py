@@ -67,8 +67,6 @@ class ExplorerApp(App[None]):
         self._workflow_name = workflow
         for name in registry.layout_names():
             self.add_mode(name, self._mode_factory(name))
-        self._screen_stacks.setdefault(layout, [])
-        self._current_mode = layout
 
     def get_theme_variable_defaults(self) -> dict[str, str]:
         """Merge the ``$ag-*`` token defaults so the stylesheet always resolves.
@@ -118,6 +116,7 @@ class ExplorerApp(App[None]):
         (default-on for an interactive TTY), and the opt-in audit hook live here;
         the layouts only carry ``@pump_only`` / ``@offload`` callables.
         """
+        self._adopt_launch_mode()
         _runtime.bind_pump_thread()
         if _runtime.watchdog_enabled():
             self.set_interval(_runtime.HEARTBEAT_INTERVAL, _runtime.record_heartbeat)
@@ -131,6 +130,17 @@ class ExplorerApp(App[None]):
         _runtime.unbind_pump_thread()
         _runtime.stop_pump_watchdog()
         _runtime.disarm_pump_audit()
+
+    def _adopt_launch_mode(self) -> None:
+        """Move Textual's startup stack into the selected layout mode."""
+        if self._current_mode != self.DEFAULT_MODE:
+            return
+        stack = self._screen_stacks.get(self.DEFAULT_MODE)
+        if not stack:
+            return
+        self._screen_stacks[self._layout_name] = stack
+        self._screen_stacks.pop(self.DEFAULT_MODE, None)
+        self._current_mode = self._layout_name
 
     def action_cycle_layout(self) -> None:
         """``F2``: switch to the next registered layout, keeping the workflow."""
