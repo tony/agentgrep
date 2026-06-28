@@ -87,6 +87,7 @@ def _make_record(
     timestamp: str | None = None,
     model: str | None = None,
     kind: t.Literal["prompt", "history"] = "prompt",
+    metadata: dict[str, t.Any] | None = None,
 ) -> agentgrep.SearchRecord:
     """Build a synthetic SearchRecord for compiler tests."""
     return agentgrep.SearchRecord(
@@ -102,7 +103,7 @@ def _make_record(
         model=model,
         session_id=None,
         conversation_id=None,
-        metadata={},
+        metadata={} if metadata is None else metadata,
     )
 
 
@@ -624,6 +625,30 @@ RECORD_PREDICATE_CASES: tuple[RecordPredicateCase, ...] = (
         query="mtime:* bliss",
         record_kwargs={"text": "bliss"},
         expected_matches=True,
+    ),
+    RecordPredicateCase(
+        test_id="human-true-keeps-untagged-typed-prompt",
+        query="human:true",
+        record_kwargs={"metadata": {}},
+        expected_matches=True,
+    ),
+    RecordPredicateCase(
+        test_id="human-true-drops-tool-output",
+        query="human:true",
+        record_kwargs={"metadata": {"human_typed": False}},
+        expected_matches=False,
+    ),
+    RecordPredicateCase(
+        test_id="human-false-keeps-tool-output",
+        query="human:false",
+        record_kwargs={"metadata": {"human_typed": False}},
+        expected_matches=True,
+    ),
+    RecordPredicateCase(
+        test_id="human-false-drops-typed-prompt",
+        query="human:false",
+        record_kwargs={"metadata": {}},
+        expected_matches=False,
     ),
 )
 

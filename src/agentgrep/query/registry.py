@@ -166,5 +166,11 @@ def default_registry() -> FieldRegistry:
         FieldSpec(name="model", kind="string", layer="record"),
         FieldSpec(name="role", kind="string", layer="record"),
         FieldSpec(name="text", kind="string", layer="record"),
+        FieldSpec(
+            name="human",
+            kind="enum",
+            layer="record",
+            enum_values=("true", "false"),
+        ),
     )
     return FieldRegistry(specs=specs)

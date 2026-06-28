@@ -409,6 +409,61 @@ async def test_mcp_search_rejects_invalid_query() -> None:
     assert "agent" in error_message
 
 
+async def test_mcp_search_tool_human_filter(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The MCP search ``human`` filter keeps user-typed prompts vs tool/agent output."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+
+    session_path = home / ".codex" / "sessions" / "2026" / "01" / "01" / "rollout.jsonl"
+    write_jsonl(
+        session_path,
+        [
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "type": "session_meta",
+                "payload": {"id": "session-h", "model_provider": "openai"},
+            },
+            {
+                "timestamp": "2026-01-01T00:00:01Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "deploy the widget service"}],
+                },
+            },
+            {
+                "timestamp": "2026-01-01T00:00:02Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call_output",
+                    "output": "widget service: installed 11 packages",
+                },
+            },
+        ],
+    )
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        kept = await client.call_tool(
+            "search",
+            {"terms": ["widget"], "agent": "codex", "scope": "all", "human": "true", "limit": 5},
+        )
+        dropped = await client.call_tool(
+            "search",
+            {"terms": ["widget"], "agent": "codex", "scope": "all", "human": "false", "limit": 5},
+        )
+
+    human_data = t.cast("SearchToolDataLike", kept.data)
+    tool_data = t.cast("SearchToolDataLike", dropped.data)
+    # human:true keeps the typed prompt; human:false excludes it.
+    assert any("deploy the widget service" in r.text for r in human_data.results)
+    assert all("deploy the widget service" not in r.text for r in tool_data.results)
+
+
 async def test_mcp_search_tool_sorts_records_across_sources(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

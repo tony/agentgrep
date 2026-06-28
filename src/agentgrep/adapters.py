@@ -287,6 +287,31 @@ def iter_source_records(
         return
 
 
+def codex_event_is_human_authored(payload: object) -> bool:
+    """Return whether a Codex ``response_item`` payload is a user-typed prompt.
+
+    Codex records tool invocations and their results as ``response_item``
+    payloads alongside chat messages. ``function_call`` / ``function_call_output``
+    (and ``reasoning``) are machine-authored; only a ``role=user`` message is
+    the user's ask.
+
+    Examples
+    --------
+    >>> codex_event_is_human_authored({"role": "user", "content": "hi"})
+    True
+    >>> codex_event_is_human_authored({"type": "function_call_output", "output": "..."})
+    False
+    >>> codex_event_is_human_authored({"type": "message", "role": "assistant"})
+    False
+    """
+    if not isinstance(payload, dict):
+        return True
+    mapping = t.cast("dict[str, object]", payload)
+    if mapping.get("type") in ("function_call", "function_call_output", "reasoning"):
+        return False
+    return mapping.get("role") == "user"
+
+
 def parse_codex_session_file(
     source: SourceHandle,
     *,
@@ -372,7 +397,9 @@ def parse_codex_session_file(
         )
         if candidate is None:
             continue
-        yield build_search_record(source, candidate)
+        yield build_search_record(
+            source, candidate, human_typed=codex_event_is_human_authored(payload)
+        )
 
 
 def parse_codex_legacy_session_file(
@@ -408,7 +435,9 @@ def parse_codex_legacy_session_file(
         )
         if candidate is None:
             continue
-        yield build_search_record(source, candidate)
+        yield build_search_record(
+            source, candidate, human_typed=codex_event_is_human_authored(item)
+        )
 
 
 def parse_codex_history_file(
@@ -491,6 +520,73 @@ def parse_codex_session_index_file(
         )
 
 
+def claude_event_is_human_authored(event: object) -> bool:
+    """Return whether a Claude Code JSONL event is a user-typed prompt.
+
+    Claude records tool results and subagent output as ``type=user`` with
+    a ``role=user`` message, so role alone cannot separate the user's asks
+    from tool noise. The raw event is structurally unambiguous, though:
+
+    - a human prompt's ``message.content`` is a plain string and the event
+      carries ``promptSource``/``entrypoint``;
+    - a tool result carries a top-level ``toolUseResult`` key and a
+      ``message.content`` list of ``tool_result`` blocks;
+    - ``isSidechain`` marks subagent transcripts, not the user's direct
+      conversation.
+
+    Examples
+    --------
+    >>> claude_event_is_human_authored({"type": "user", "message": {"content": "hi"}})
+    True
+    >>> claude_event_is_human_authored(
+    ...     {"type": "user", "toolUseResult": {}, "message": {"content": [{"type": "tool_result"}]}}
+    ... )
+    False
+    >>> claude_event_is_human_authored({"type": "assistant", "message": {"content": []}})
+    False
+    """
+    if not isinstance(event, dict):
+        return True
+    mapping = t.cast("dict[str, object]", event)
+    if mapping.get("isSidechain") is True or "toolUseResult" in mapping:
+        return False
+    event_type = mapping.get("type")
+    if event_type is not None and event_type != "user":
+        return False
+    message = mapping.get("message")
+    if isinstance(message, dict):
+        content = t.cast("dict[str, object]", message).get("content")
+    else:
+        content = mapping.get("content")
+    # The user's text comes either as a string or as text blocks; tool/agent
+    # noise is identified structurally (tool_result/tool_use blocks) or by a
+    # machine-authored content prefix (slash-command output, interrupt marker).
+    head = ""
+    if isinstance(content, list):
+        text_parts: list[str] = []
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            block_mapping = t.cast("dict[str, object]", block)
+            if block_mapping.get("type") in ("tool_result", "tool_use"):
+                return False
+            text_value = block_mapping.get("text")
+            if block_mapping.get("type") == "text" and isinstance(text_value, str):
+                text_parts.append(text_value)
+        head = "".join(text_parts).lstrip()[:48]
+    elif isinstance(content, str):
+        head = content.lstrip()[:48]
+    noise_prefixes = (
+        "<local-command-stdout>",
+        "<local-command-caveat>",
+        "[Request interrupted",
+    )
+    return not (
+        head.startswith(noise_prefixes)
+        or head.startswith("Caveat: The messages below were generated")
+    )
+
+
 def parse_claude_project_file(
     source: SourceHandle,
     *,
@@ -511,6 +607,7 @@ def parse_claude_project_file(
         else _iter_jsonl(source.path, reverse=reverse)
     )
     for event in events:
+        human_typed = claude_event_is_human_authored(event)
         for candidate in iter_message_candidates(
             event,
             fallback_conversation_id=conversation_id,
@@ -524,7 +621,7 @@ def parse_claude_project_file(
             if key in seen:
                 continue
             seen.add(key)
-            yield build_search_record(source, candidate)
+            yield build_search_record(source, candidate, human_typed=human_typed)
 
 
 def _json_string_list(value: object) -> list[str]:
@@ -1008,7 +1105,9 @@ def parse_cursor_cli_transcript(
             if key in seen:
                 continue
             seen.add(key)
-            yield build_search_record(source, candidate)
+            yield build_search_record(
+                source, candidate, human_typed=candidate_is_human_typed(candidate)
+            )
 
 
 def _gemini_thoughts_text(thoughts: object) -> str:
@@ -1127,7 +1226,9 @@ def parse_gemini_chat_file(
         candidate = _gemini_message_record_to_candidate(mapping, session_id)
         if candidate is None:
             continue
-        yield build_search_record(source, candidate)
+        yield build_search_record(
+            source, candidate, human_typed=candidate_is_human_typed(candidate)
+        )
 
 
 def parse_gemini_chat_legacy_file(
@@ -1157,7 +1258,9 @@ def parse_gemini_chat_legacy_file(
         candidate = _gemini_message_record_to_candidate(mapping, session_id)
         if candidate is None:
             continue
-        yield build_search_record(source, candidate)
+        yield build_search_record(
+            source, candidate, human_typed=candidate_is_human_typed(candidate)
+        )
 
 
 def parse_gemini_logs_file(
@@ -1285,6 +1388,8 @@ def parse_grok_chat_history(
             timestamp=as_optional_str(mapping.get("timestamp")),
             session_id=conversation_id,
             conversation_id=conversation_id,
+            # tool_use/tool_result (and assistant/system) are not user-typed.
+            metadata={} if record_type == "user" else {"human_typed": False},
         )
 
 
@@ -1436,7 +1541,9 @@ def parse_pi_session_file(
                 conversation_id,
             )
             if candidate is not None:
-                yield build_search_record(source, candidate)
+                yield build_search_record(
+                    source, candidate, human_typed=candidate_is_human_typed(candidate)
+                )
             continue
         text = _pi_entry_text(entry_type, mapping)
         if not text:
@@ -1988,6 +2095,13 @@ def parse_opencode_db(
             )
             session_id = as_optional_str(session_id_raw)
             directory = as_optional_str(directory_raw)
+            metadata: dict[str, object] = {}
+            if directory:
+                metadata["directory"] = directory
+            # ``kind == "history"`` means a non-user role (assistant/tool output),
+            # so tag it the same way build_search_record tags non-human turns.
+            if kind == "history":
+                metadata["human_typed"] = False
             yield SearchRecord(
                 kind=kind,
                 agent=source.agent,
@@ -2001,7 +2115,7 @@ def parse_opencode_db(
                 model=as_optional_str(message_data.get("modelID")),
                 session_id=session_id,
                 conversation_id=session_id,
-                metadata={"directory": directory} if directory else {},
+                metadata=metadata,
             )
     except sqlite3.DatabaseError:
         return
@@ -2285,7 +2399,9 @@ def parse_cursor_state_db(
                     if entry_key in seen:
                         continue
                     seen.add(entry_key)
-                    yield build_search_record(source, candidate)
+                    yield build_search_record(
+                        source, candidate, human_typed=candidate_is_human_typed(candidate)
+                    )
     except sqlite3.DatabaseError:
         return
     finally:
@@ -2517,8 +2633,29 @@ def flatten_summary_bullets(value: object) -> str | None:
     return None
 
 
-def build_search_record(source: SourceHandle, candidate: MessageCandidate) -> SearchRecord:
-    """Convert a parsed candidate into a normalized search record."""
+def candidate_is_human_typed(candidate: MessageCandidate) -> bool:
+    """Return whether a role-keyed candidate is a user-typed turn.
+
+    Adapters whose store separates turns by role (Gemini, Cursor, Pi, ...)
+    use this: a non-user role is assistant or tool output, not a typed prompt.
+    """
+    return (candidate.role or "").casefold() in USER_ROLES
+
+
+def build_search_record(
+    source: SourceHandle,
+    candidate: MessageCandidate,
+    *,
+    human_typed: bool = True,
+) -> SearchRecord:
+    """Convert a parsed candidate into a normalized search record.
+
+    ``human_typed`` distinguishes a turn the user actually typed from a
+    tool result or sidechain that an adapter records under a user role
+    (Claude Code stores ``tool_result`` blocks as ``role=user``). Only the
+    non-human case sets ``metadata["human_typed"]``, so the common record's
+    metadata stays empty and downstream consumers can opt in.
+    """
     role = candidate.role.casefold() if candidate.role is not None else None
     kind: t.Literal["prompt", "history"] = "prompt" if role in USER_ROLES else "history"
     return SearchRecord(
@@ -2534,6 +2671,7 @@ def build_search_record(source: SourceHandle, candidate: MessageCandidate) -> Se
         model=candidate.model,
         session_id=candidate.session_id,
         conversation_id=candidate.conversation_id,
+        metadata={} if human_typed else {"human_typed": False},
     )
 
 

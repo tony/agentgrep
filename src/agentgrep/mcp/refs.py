@@ -42,6 +42,7 @@ class _SearchCursorPayload(t.TypedDict):
     scope: SearchScopeName
     case_sensitive: bool
     limit: int
+    human: str | None
 
 
 class _FindCursorPayload(t.TypedDict):
@@ -73,6 +74,7 @@ class SearchCursor:
     scope: SearchScopeName
     case_sensitive: bool
     limit: int
+    human: str | None = None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -236,6 +238,7 @@ def make_search_cursor(
     scope: SearchScopeName,
     case_sensitive: bool,
     limit: int,
+    human: str | None = None,
 ) -> str:
     """Build an opaque cursor for the next search page."""
     return _encode_token(
@@ -251,6 +254,7 @@ def make_search_cursor(
                 scope=scope,
                 case_sensitive=case_sensitive,
                 limit=limit,
+                human=human,
             ),
         ),
     )
@@ -286,6 +290,8 @@ def parse_search_cursor(cursor: str) -> SearchCursor:
     if not isinstance(limit, int) or limit < 1:
         msg = "cursor limit must be positive"
         raise McpTokenError(msg)
+    human_raw = payload.get("human")
+    human = human_raw if human_raw in ("true", "false") else None
     return SearchCursor(
         offset=offset,
         terms=t.cast("list[str]", terms),
@@ -293,6 +299,7 @@ def parse_search_cursor(cursor: str) -> SearchCursor:
         scope=t.cast("SearchScopeName", scope),
         case_sensitive=case_sensitive,
         limit=limit,
+        human=t.cast("str | None", human),
     )
 
 

@@ -212,6 +212,7 @@ class SearchRequestModel(AgentGrepModel):
     case_sensitive: bool
     limit: int | None = None
     cursor: str | None = None
+    human: t.Literal["true", "false"] | None = None
 
 
 class SearchToolResponse(AgentGrepModel):
