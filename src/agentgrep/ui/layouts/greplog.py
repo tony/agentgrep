@@ -285,7 +285,7 @@ class GrepLogLayout(LayoutScreen):
         records: tuple[SearchRecord, ...],
         matcher: CompiledRecordMatcher | None,
     ) -> None:
-        """Filter the loaded buffer off the pump, then re-render the matches."""
+        """Filter a captured record snapshot, then re-render the matches."""
         matching = records if matcher is None else tuple(r for r in records if matcher.matches(r))
         self.app.call_from_thread(self._apply_log_filter, generation, matching)
 
