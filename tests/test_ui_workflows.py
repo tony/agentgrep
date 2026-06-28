@@ -15,6 +15,7 @@ import pytest
 from agentgrep.progress import SearchControl
 from agentgrep.records import SearchQuery
 from agentgrep.ui._context import UiContext
+from agentgrep.ui.layouts._base import LayoutScreen
 from agentgrep.ui.workflows.browse import BrowseWorkflow
 from agentgrep.ui.workflows.search import SearchWorkflow
 
@@ -86,6 +87,68 @@ class _RecordingHost:
 
     def kinds(self) -> tuple[str, ...]:
         return tuple(kind for kind, _ in self.calls)
+
+
+class _RecordingWorkflow:
+    """Records workflow attachment for ``LayoutScreen.set_workflow`` tests."""
+
+    name: t.ClassVar[str] = "recording"
+    summary: t.ClassVar[str] = "recording"
+    BINDINGS: t.ClassVar[cabc.Sequence[object]] = ()
+
+    def __init__(self, calls: list[str]) -> None:
+        self._calls = calls
+
+    def on_attach(self, host: t.Any) -> None:
+        """Record attach without touching the host."""
+        del host
+        self._calls.append("attach")
+
+    def on_query(self, host: t.Any, text: str) -> None:
+        """Unused protocol method."""
+        del host, text
+
+
+class _WorkflowSwapLayout(LayoutScreen):
+    """Minimal layout that records cancellation."""
+
+    def __init__(self, calls: list[str]) -> None:
+        ctx = UiContext(
+            home=pathlib.Path("/nonexistent"),
+            invoker=_NoopInvoker(),
+            query=_query("seed"),
+            control=SearchControl(),
+        )
+        super().__init__(ctx, _RecordingWorkflow(calls))
+        self._calls = calls
+
+    def request_cancel(self) -> None:
+        self._calls.append("cancel")
+
+
+class SetWorkflowCase(t.NamedTuple):
+    """A workflow swap mode and the side effects it should produce."""
+
+    test_id: str
+    attach: bool
+    expected_calls: tuple[str, ...]
+
+
+SET_WORKFLOW_CASES = (
+    SetWorkflowCase("attached-cancels-before-attach", True, ("cancel", "attach")),
+    SetWorkflowCase("suspended-assigns-only", False, ()),
+)
+
+
+@pytest.mark.parametrize("case", SET_WORKFLOW_CASES, ids=lambda c: c.test_id)
+def test_layout_set_workflow_cancel_order(case: SetWorkflowCase) -> None:
+    """Workflow replacement cancels active work before attached re-seeding."""
+    calls: list[str] = []
+    layout = _WorkflowSwapLayout(calls)
+    workflow = _RecordingWorkflow(calls)
+    layout.set_workflow(workflow, attach=case.attach)
+    assert tuple(calls) == case.expected_calls
+    assert layout.workflow is workflow
 
 
 class OnQueryCase(t.NamedTuple):

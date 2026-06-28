@@ -67,6 +67,8 @@ class LayoutScreen(_SCREEN_BASE):
 
     def set_workflow(self, workflow: Workflow, *, attach: bool = True) -> None:
         """Swap the active workflow, optionally re-seeding its initial dispatch."""
+        if attach:
+            t.cast("t.Any", self).request_cancel()
         self._workflow = workflow
         if attach:
             self._workflow.on_attach(t.cast("t.Any", self))
