@@ -92,6 +92,9 @@ class _DetailMatchStyles(t.NamedTuple):
     filter: str
 
 
+_DetailFindBaseKey = tuple[str, tuple[str, ...], bool, bool, tuple[str, ...]]
+
+
 #: Textual's ``App`` is the runtime base. It is kept opaque to the type checker
 #: exactly as it was inside the former ``build_streaming_ui_app`` closure (whose
 #: base came through a ``type[object]`` module Protocol, so the class body was
@@ -287,6 +290,11 @@ class ExplorerApp(_APP_BASE):
         # printed JSON for json bodies, the raw body otherwise. Find matches
         # and scroll work against this so offsets line up with what is shown.
         self._detail_find_source: str = ""
+        # Cached syntax+search+filter find body; the find-match overlay changes
+        # per keystroke but this base does not, so it is built once per
+        # highlight state and copied (invalidated in _present_detail).
+        self._detail_find_base: Text | None = None
+        self._detail_find_base_key: _DetailFindBaseKey | None = None
         # Per-record find memory, mirroring _detail_scroll_positions:
         # id(record) -> (query, match_index, input_cursor_pos). Bounded LRU.
         self._detail_find_state: collections.OrderedDict[
@@ -484,12 +492,16 @@ class ExplorerApp(_APP_BASE):
         # Rebuild Rich-baked rows/detail when the user switches palette
         # (e.g. dark <-> light via the command palette).
         self.theme_changed_signal.subscribe(self, self._on_theme_changed)
-        # Bind the pump thread for the non-blocking guards (NB-1/NB-2); when
-        # opted in via AGENTGREP_TUI_WATCHDOG, arm the heartbeat + watchdog.
+        # Bind the pump thread for the non-blocking guards (NB-1/NB-2). The
+        # heartbeat watchdog runs by default for an interactive terminal
+        # (log-only); the denylist-free audit hook is opt-in via
+        # AGENTGREP_TUI_WATCHDOG because it can abort a blocking syscall.
         _runtime.bind_pump_thread()
         if _runtime.watchdog_enabled():
             self.set_interval(_runtime.HEARTBEAT_INTERVAL, _runtime.record_heartbeat)
             _runtime.start_pump_watchdog()
+        if _runtime.audit_hook_enabled():
+            _runtime.arm_pump_audit()
         self._apply_responsive_layout()
         if self.query.terms:
             self._start_search_worker(self.query)
@@ -569,6 +581,7 @@ class ExplorerApp(_APP_BASE):
         """Release pump-thread binding and stop the watchdog on teardown."""
         _runtime.unbind_pump_thread()
         _runtime.stop_pump_watchdog()
+        _runtime.disarm_pump_audit()
 
     def _start_search_worker(self, query: SearchQuery) -> None:
         """Reset chrome and spawn a new search worker for ``query``.
@@ -623,7 +636,7 @@ class ExplorerApp(_APP_BASE):
         self._detail_opened = False
         self._pending_autohighlights = 0
         if self._results is not None:
-            self._results.set_records([])
+            self._results.clear()
         self._apply_responsive_layout()
         if self._detail is not None:
             self._detail.update("")
@@ -1679,6 +1692,8 @@ class ExplorerApp(_APP_BASE):
         # The displayed text find searches/scrolls against — formatted JSON
         # for json bodies, the raw body otherwise.
         self._detail_find_source = body_for_scroll
+        self._detail_find_base = None  # a fresh body invalidates the find base
+        self._detail_find_base_key = None
         self._detail.update(_RichGroup(t.cast("t.Any", header), t.cast("t.Any", body_renderable)))
         self._restore_detail_scroll(record)
         self._refresh_detail_statusline()
@@ -1956,23 +1971,44 @@ class ExplorerApp(_APP_BASE):
     def _present_detail_find(self) -> None:
         """Render the body with search/filter/find highlights overlaid.
 
-        For JSON the syntax-highlighted (pretty-printed) text is kept and the
-        search/filter/find spans are layered on top, so token colors survive
-        while find is active. Other formats render as plain highlighted text.
-        Built fresh each time (match offsets are against ``_detail_find_source``,
-        the displayed text) so the body cache stays clean.
+        The syntax+search+filter base is cached per render
+        (:meth:`_detail_find_base_for`); only the find-match spans are layered
+        here, on a copy, so stepping matches never re-tokenizes the body (NB-9).
         """
         if self._detail is None or self._current_detail_record is None:
             return
         source = self._detail_find_source or self._detail_body_text
+        text = self._detail_find_base_for(source).copy()
+        find_style = self._match_style("find")
+        current_style = self._match_style("find-current")
+        for index, (start, end) in enumerate(self._detail_find_matches):
+            style = current_style if index == self._detail_find_current else find_style
+            text.stylize(style, start, end)
+        self._detail.update(
+            _RichGroup(self._detail_header_text, t.cast("t.Any", text)),
+        )
+
+    def _detail_find_base_for(self, source: str) -> Text:
+        """Return the syntax+search+filter body for ``source`` and highlight state.
+
+        For JSON the body is syntax-highlighted via :class:`rich.syntax.Syntax`
+        so token colors survive find; other formats use ``highlight_matches``.
+        The find-match overlay changes per keystroke/step but this base does
+        not, so building it once and copying keeps the per-keystroke cost off a
+        full-body ``Syntax`` re-highlight. Invalidated in :meth:`_present_detail`.
+        """
+        key = (
+            source,
+            tuple(self.query.terms),
+            self.query.case_sensitive,
+            self.query.regex,
+            self._filter_terms,
+        )
+        cached = self._detail_find_base
+        if cached is not None and self._detail_find_base_key == key:
+            return cached
         if detect_content_format(source) == "json":
-            # Keep JSON token colors: highlight via Syntax, then layer spans.
-            text = _RichSyntax(
-                source,
-                "json",
-                theme="ansi_dark",
-                word_wrap=True,
-            ).highlight(source)
+            text = _RichSyntax(source, "json", theme="ansi_dark", word_wrap=True).highlight(source)
             text.no_wrap = False
             self._apply_search_highlight(text)
         else:
@@ -1984,14 +2020,9 @@ class ExplorerApp(_APP_BASE):
                 style=self._match_style("search"),
             )
         self._apply_filter_highlight(text)
-        find_style = self._match_style("find")
-        current_style = self._match_style("find-current")
-        for index, (start, end) in enumerate(self._detail_find_matches):
-            style = current_style if index == self._detail_find_current else find_style
-            text.stylize(style, start, end)
-        self._detail.update(
-            _RichGroup(self._detail_header_text, t.cast("t.Any", text)),
-        )
+        self._detail_find_base = text
+        self._detail_find_base_key = key
+        return text
 
     def _apply_search_highlight(self, text: t.Any) -> None:
         """Overlay the active search-query terms onto ``text`` (for the JSON path).

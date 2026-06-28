@@ -47,22 +47,105 @@ def _ui_source_trees() -> list[ast.AST]:
 _UI_TREES = _ui_source_trees()
 
 # A method Textual invokes on the pump thread: event/action/watch/compute
-# handlers, render/compose, the input key/value overrides — plus anything
-# explicitly tagged @pump_only.
+# handlers, render/compose, the input key/value overrides, @on-decorated
+# handlers (any name), the callables handed to a scheduler/cross-thread/signal
+# site (see _SCHEDULED_PUMP_NAMES), plus anything explicitly tagged @pump_only.
 _PUMP_PREFIXES = ("on_", "action_", "watch_", "compute_", "_watch_")
 _PUMP_EXACT = {"render", "compose", "_on_key"}
 
+# Calls that hand a callable to the pump thread; their target methods run there
+# even though their names match no prefix (NB-1/NB-8).
+_SCHEDULER_FUNCS = {
+    "set_timer",
+    "set_interval",
+    "call_later",
+    "call_next",
+    "call_after_refresh",
+    "call_from_thread",
+    "subscribe",
+}
+
 # Blocking calls forbidden in a pump-thread body (NB-1). JSON parsing is checked
-# separately (NB-9) because it has one sanctioned, bounded home.
-_FORBIDDEN_CALL_NAMES = {"open", "run_search_query"}
-_FORBIDDEN_ATTRS = {"read_text", "read_bytes"}
-_FORBIDDEN_DOTTED_ROOTS = {"subprocess", "sqlite3"}
-_FORBIDDEN_DOTTED = {"os.close", "os.open", "os.write", "time.sleep"}
+# separately (NB-9) because it has one sanctioned, bounded home. Generic attrs
+# (.get/.join/.wait/.acquire/.result/.read) are deliberately absent — carrying no
+# type, they would false-positive on dicts/strings/futures; the wall-clock
+# watchdog is the backstop for those (ADR 0011 coverage limits).
+_FORBIDDEN_CALL_NAMES = {"open", "input", "run_search_query"}
+_FORBIDDEN_ATTRS = {"read_text", "read_bytes", "iterdir", "rglob"}
+_FORBIDDEN_DOTTED_ROOTS = {
+    "subprocess",
+    "sqlite3",
+    "socket",
+    "urllib",
+    "requests",
+    "httpx",
+    "ftplib",
+}
+_FORBIDDEN_DOTTED = {
+    "os.close",
+    "os.open",
+    "os.write",
+    "os.read",
+    "os.walk",
+    "os.listdir",
+    "os.scandir",
+    "os.stat",
+    "time.sleep",
+    "json.load",
+    "json.dump",
+}
 
 #: The single method allowed to call ``json.loads`` / ``json.dumps`` (NB-9):
 #: the inline-bounded / worker detail-body builder. A new offender must be
 #: added here deliberately, with a bound, not silently.
 _JSON_EXEMPT = {"_build_detail_body"}
+
+
+def _import_map(tree: ast.AST) -> dict[str, str]:
+    """Map each imported name/alias to its canonical dotted target.
+
+    Resolves alias/from-import evasion: ``import subprocess as sp`` → sp:
+    subprocess; ``from time import sleep`` → sleep: time.sleep.
+    """
+    mapping: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                mapping[alias.asname or alias.name] = alias.name
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            for alias in node.names:
+                mapping[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+    return mapping
+
+
+def _scheduled_pump_names() -> frozenset[str]:
+    """Return method names handed to a scheduler/cross-thread/signal call site.
+
+    Textual runs these on the pump thread even though their names match no
+    prefix (e.g. ``set_timer(0.05, self._after_resize)``); the name classifier
+    cannot see them, so seed them from the call sites (NB-8).
+    """
+    names: set[str] = set()
+    for tree in _UI_TREES:
+        for call in ast.walk(tree):
+            if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Attribute):
+                continue
+            if call.func.attr not in _SCHEDULER_FUNCS:
+                continue
+            for arg in call.args:
+                # Seed only ``self.method`` targets: the data args passed
+                # alongside the callable are bare names, and a lambda/partial
+                # target has no name to seed (a known residual, ADR 0011).
+                if (
+                    isinstance(arg, ast.Attribute)
+                    and isinstance(arg.value, ast.Name)
+                    and arg.value.id == "self"
+                ):
+                    names.add(arg.attr)
+    return frozenset(names)
+
+
+_SCHEDULED_PUMP_NAMES = _scheduled_pump_names()
 
 
 class _Method(t.NamedTuple):
@@ -72,6 +155,7 @@ class _Method(t.NamedTuple):
     name: str
     node: ast.FunctionDef | ast.AsyncFunctionDef
     decorators: tuple[str, ...]
+    imports: tuple[tuple[str, str], ...]  # the module's import map, as sorted items
 
 
 def _decorator_name(node: ast.expr) -> str:
@@ -89,21 +173,22 @@ def _all_methods() -> list[_Method]:
     """Return every method defined on a class in the app or widget modules."""
     methods: list[_Method] = []
     for tree in _UI_TREES:
+        imports = tuple(sorted(_import_map(tree).items()))
         for cls in ast.walk(tree):
             if not isinstance(cls, ast.ClassDef):
                 continue
             for item in cls.body:
                 if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     decorators = tuple(_decorator_name(d) for d in item.decorator_list)
-                    methods.append(_Method(cls.name, item.name, item, decorators))
+                    methods.append(_Method(cls.name, item.name, item, decorators, imports))
     return methods
 
 
 def _is_pump_method(method: _Method) -> bool:
     """Classify whether Textual would invoke ``method`` on the pump thread."""
-    if "pump_only" in method.decorators:
+    if "pump_only" in method.decorators or "on" in method.decorators:
         return True
-    if method.name in _PUMP_EXACT:
+    if method.name in _PUMP_EXACT or method.name in _SCHEDULED_PUMP_NAMES:
         return True
     return method.name.startswith(_PUMP_PREFIXES)
 
@@ -118,22 +203,96 @@ def _dotted(node: ast.expr) -> str:
     return ""
 
 
-def _forbidden_calls(node: ast.AST) -> list[str]:
-    """Return the blocking-call names found anywhere under ``node`` (NB-1)."""
+def _forbidden_calls(node: ast.AST, imports: dict[str, str] | None = None) -> list[str]:
+    """Return the blocking-call names found anywhere under ``node`` (NB-1).
+
+    ``imports`` (a module's :func:`_import_map`) resolves alias / from-import
+    evasion to canonical dotted names before matching.
+    """
+    resolve = imports or {}
     found: list[str] = []
     for call in ast.walk(node):
         if not isinstance(call, ast.Call):
             continue
         func = call.func
-        if isinstance(func, ast.Name) and func.id in _FORBIDDEN_CALL_NAMES:
-            found.append(func.id)
+        if isinstance(func, ast.Name):
+            if func.id in _FORBIDDEN_CALL_NAMES:
+                found.append(func.id)
+                continue
+            canonical = resolve.get(func.id, func.id)
+            if (
+                canonical in _FORBIDDEN_DOTTED
+                or canonical.split(".", 1)[0] in _FORBIDDEN_DOTTED_ROOTS
+            ):
+                found.append(canonical)
         elif isinstance(func, ast.Attribute):
             if func.attr in _FORBIDDEN_ATTRS:
                 found.append(func.attr)
             dotted = _dotted(func)
-            root = dotted.split(".", 1)[0]
-            if root in _FORBIDDEN_DOTTED_ROOTS or dotted in _FORBIDDEN_DOTTED:
-                found.append(dotted)
+            if not dotted:
+                continue
+            root, _, rest = dotted.partition(".")
+            canonical_root = resolve.get(root, root)
+            canonical = canonical_root + ("." + rest if rest else "")
+            if (
+                canonical_root in _FORBIDDEN_DOTTED_ROOTS
+                or canonical in _FORBIDDEN_DOTTED
+                or dotted in _FORBIDDEN_DOTTED
+            ):
+                found.append(canonical)
+    return found
+
+
+def _self_call_targets(node: ast.AST) -> set[str]:
+    """Return method names invoked as ``self.<name>(...)`` under ``node``."""
+    targets: set[str] = set()
+    for call in ast.walk(node):
+        if (
+            isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Attribute)
+            and isinstance(call.func.value, ast.Name)
+            and call.func.value.id == "self"
+        ):
+            targets.add(call.func.attr)
+    return targets
+
+
+def _class_method_map() -> dict[str, dict[str, ast.FunctionDef | ast.AsyncFunctionDef]]:
+    """Map each class name to its ``{method name: node}`` for closure lookups."""
+    mapping: dict[str, dict[str, ast.FunctionDef | ast.AsyncFunctionDef]] = {}
+    for tree in _UI_TREES:
+        for cls in ast.walk(tree):
+            if not isinstance(cls, ast.ClassDef):
+                continue
+            methods = mapping.setdefault(cls.name, {})
+            for item in cls.body:
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    methods[item.name] = item
+    return mapping
+
+
+def _closure_forbidden_calls(
+    method: _Method,
+    class_methods: dict[str, ast.FunctionDef | ast.AsyncFunctionDef],
+    imports: dict[str, str],
+) -> list[str]:
+    """Forbidden calls reachable from ``method`` via same-class ``self.<helper>()``.
+
+    Closes the dominant gap: a blocking call extracted into a helper is invisible
+    to an intraprocedural scan. ``@offload`` worker bodies are *passed* to
+    ``run_worker`` rather than called as ``self.x()``, so the closure does not
+    follow into them (their I/O is correctly off the pump).
+    """
+    found: list[str] = []
+    visited: set[str] = {method.name}
+    stack: list[ast.AST] = [method.node]
+    while stack:
+        node = stack.pop()
+        found.extend(_forbidden_calls(node, imports))
+        for target in _self_call_targets(node):
+            if target not in visited and target in class_methods:
+                visited.add(target)
+                stack.append(class_methods[target])
     return found
 
 
@@ -157,13 +316,15 @@ def _json_calls(node: ast.AST) -> bool:
 
 
 def test_pump_methods_have_no_blocking_calls() -> None:
-    """No pump-thread method opens files, spawns processes, or sleeps (NB-1)."""
+    """No pump method — or a same-class helper it calls — opens/spawns/sleeps (NB-1)."""
+    class_methods = _class_method_map()
     offenders = {
         f"{m.cls}.{m.name}": calls
         for m in _all_methods()
-        if _is_pump_method(m) and (calls := _forbidden_calls(m.node))
+        if _is_pump_method(m)
+        and (calls := _closure_forbidden_calls(m, class_methods.get(m.cls, {}), dict(m.imports)))
     }
-    assert not offenders, f"blocking calls in pump methods (NB-1/NB-8): {offenders}"
+    assert not offenders, f"blocking calls reachable from pump methods (NB-1/NB-8): {offenders}"
 
 
 def test_forbidden_call_detector_flags_blocking_calls() -> None:
@@ -193,6 +354,57 @@ def test_forbidden_call_detector_flags_blocking_calls() -> None:
         "time.sleep",
     }
     assert _forbidden_calls(clean) == []
+
+
+def test_forbidden_call_detector_resolves_aliases_and_families() -> None:
+    """Import-aware: alias / from-import evasion and the NB-1 families are flagged."""
+    tree = ast.parse(
+        "import subprocess as sp\n"
+        "from time import sleep\n"
+        "from subprocess import run\n"
+        "def handler(self):\n"
+        "    sp.run(['rg'])\n"
+        "    sleep(1)\n"
+        "    run(['rg'])\n"
+        "    input()\n"
+        "    os.walk('/')\n"
+        "    self.path.iterdir()\n"
+        "    json.load(fh)\n"
+        "    socket.create_connection(addr)\n",
+    )
+    handler = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef))
+    found = set(_forbidden_calls(handler, _import_map(tree)))
+    assert {"subprocess.run", "time.sleep", "input", "os.walk", "iterdir", "json.load"} <= found
+    assert any(name.startswith("socket") for name in found)
+
+
+def test_classifier_sees_scheduled_callables_and_on_handlers() -> None:
+    """Scheduler / call_from_thread targets and @on handlers classify as pump."""
+    assert {"_after_resize", "_on_theme_changed"} <= _SCHEDULED_PUMP_NAMES  # real sites
+    # Data args passed alongside the callable must NOT be seeded (NB-8 false alarm).
+    assert not ({"record", "header", "body", "query_terms", "self"} & _SCHEDULED_PUMP_NAMES)
+    node = t.cast("ast.FunctionDef", ast.parse("def f(self): ...").body[0])
+    assert _is_pump_method(_Method("A", "_after_resize", node, (), ()))  # set_timer target
+    assert _is_pump_method(_Method("W", "_handle", node, ("on",), ()))  # @on handler
+    assert not _is_pump_method(_Method("W", "_helper", node, (), ()))  # plain helper
+
+
+def test_closure_follows_self_helpers() -> None:
+    """The NB-1 closure follows ``self.<helper>()`` into a same-class helper."""
+    tree = ast.parse(
+        "class W:\n"
+        "    def watch_x(self):\n"
+        "        self._do_io()\n"
+        "    def _do_io(self):\n"
+        "        open('x')\n",
+    )
+    cls = next(n for n in ast.walk(tree) if isinstance(n, ast.ClassDef))
+    methods = {
+        m.name: m for m in cls.body if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    watch = _Method("W", "watch_x", methods["watch_x"], (), ())
+    assert _forbidden_calls(watch.node) == []  # intraprocedural sees nothing
+    assert "open" in _closure_forbidden_calls(watch, methods, {})  # the closure does
 
 
 def test_json_parsing_confined_to_detail_body() -> None:
@@ -405,3 +617,108 @@ async def test_watchdog_not_started_without_env(
         await pilot.pause()
         names = {thread.name for thread in threading.enumerate()}
         assert "agentgrep-pump-watchdog" not in names
+
+
+# --- pump audit hook (denylist-free I/O-initiation guard) ------------------
+
+
+class _AuditCase(t.NamedTuple):
+    """One ``_pump_audit_hook`` scenario: inputs and the expected reaction."""
+
+    test_id: str
+    on_pump: bool
+    armed: bool
+    raising: bool
+    event: str
+    expect_raise: bool
+    expect_log: bool
+
+
+_AUDIT_CASES = (
+    _AuditCase("raises_on_blocking_event", True, True, True, "subprocess.Popen", True, True),
+    _AuditCase("ignores_non_blocking_event", True, True, True, "object.__getattr__", False, False),
+    _AuditCase("ignores_off_pump_thread", False, True, True, "subprocess.Popen", False, False),
+    _AuditCase("logs_without_raising", True, True, False, "sqlite3.connect", False, True),
+    _AuditCase("inert_when_disarmed", True, False, True, "subprocess.Popen", False, False),
+)
+
+
+@pytest.mark.parametrize("case", _AUDIT_CASES, ids=lambda c: c.test_id)
+def test_pump_audit_hook_behavior(
+    case: _AuditCase,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The hook flags a blocking-I/O initiation only when armed and on the pump.
+
+    A non-I/O event — and a pure CPU spin, which emits no audit event — never
+    trips it: the I/O-vs-CPU split of ADR 0011.
+    """
+    pump_id = threading.get_ident() if case.on_pump else -1
+    monkeypatch.setattr(_runtime, "_pump_thread_id", pump_id)
+    monkeypatch.setattr(_runtime, "_audit_armed", case.armed)
+    monkeypatch.setattr(_runtime, "_audit_raises", case.raising)
+    with caplog.at_level(logging.WARNING, logger="agentgrep.ui._runtime"):
+        if case.expect_raise:
+            with pytest.raises(_runtime.BlockingOnPumpError, match=case.event.split(".")[0]):
+                _runtime._pump_audit_hook(case.event, ())
+        else:
+            _runtime._pump_audit_hook(case.event, ())
+    logged = [r for r in caplog.records if hasattr(r, "agentgrep_pump_blocking_event")]
+    assert bool(logged) is case.expect_log
+    if case.expect_log:
+        assert t.cast("str", logged[0].agentgrep_pump_blocking_event) == case.event
+
+
+def test_arm_pump_audit_installs_and_disarms(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Arming installs and enables the hook; disarming makes it inert again."""
+    monkeypatch.setattr(_runtime, "_audit_armed", False)
+    monkeypatch.setattr(_runtime, "_audit_raises", False)
+    _runtime.arm_pump_audit(raising=True)
+    assert _runtime._audit_armed is True
+    assert _runtime._audit_raises is True
+    assert _runtime._audit_hook_installed is True
+    _runtime.disarm_pump_audit()
+    assert _runtime._audit_armed is False
+
+
+# --- watchdog / guards / audit enable-predicate truth-table ----------------
+
+
+class _PredicateCase(t.NamedTuple):
+    """Inputs and the expected, decoupled outputs of the three enable predicates."""
+
+    test_id: str
+    env: str | None
+    under_pytest: bool
+    isatty: bool
+    watchdog: bool
+    guards: bool
+    audit: bool
+
+
+_PREDICATE_CASES = (
+    # bare TTY: the watchdog runs but the (raising) asserts stay off — decoupled.
+    _PredicateCase("bare_tty", None, False, True, True, False, False),
+    _PredicateCase("bare_non_tty", None, False, False, False, False, False),
+    _PredicateCase("env_off_overrides_tty", "0", False, True, False, False, False),
+    _PredicateCase("env_on_arms_all", "1", False, False, True, True, True),
+    _PredicateCase("under_pytest_no_env", None, True, True, False, True, False),
+)
+
+
+@pytest.mark.parametrize("case", _PREDICATE_CASES, ids=lambda c: c.test_id)
+def test_runtime_enable_predicates(case: _PredicateCase, monkeypatch: pytest.MonkeyPatch) -> None:
+    """watchdog_enabled / guard-asserts / audit_hook_enabled decouple over env, pytest, TTY."""
+    if case.env is None:
+        monkeypatch.delenv("AGENTGREP_TUI_WATCHDOG", raising=False)
+    else:
+        monkeypatch.setenv("AGENTGREP_TUI_WATCHDOG", case.env)
+    if case.under_pytest:
+        monkeypatch.setenv("PYTEST_CURRENT_TEST", "tests/x.py::y (call)")
+    else:
+        monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.setattr(_runtime, "_stdout_isatty", lambda: case.isatty)
+    assert _runtime.watchdog_enabled() is case.watchdog
+    assert _runtime._compute_guards_enabled() is case.guards
+    assert _runtime.audit_hook_enabled() is case.audit

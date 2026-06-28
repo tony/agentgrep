@@ -4087,6 +4087,137 @@ async def test_detail_find_searches_navigates_and_counts(
         assert app._detail_find_current == 9
 
 
+async def test_detail_find_step_reuses_syntax_base(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stepping find matches must not re-tokenize the JSON body each press (NB-9).
+
+    ``_present_detail_find`` re-overlays only the find-match spans; the
+    syntax+search+filter base is identical across a find session, so a cached
+    base keeps the per-keystroke cost off a full-body ``Syntax`` re-highlight.
+    """
+    from agentgrep.ui import app_screen
+
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    body = json.dumps({"notes": [f"needle {i}" for i in range(12)]}, indent=2)
+    record = _ui_record(agentgrep, tmp_path / "j.jsonl", body, "json")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        syntax_calls = 0
+        real_syntax = app_screen._RichSyntax
+
+        def counting_syntax(*args: t.Any, **kwargs: t.Any) -> t.Any:  # forwarding spy
+            nonlocal syntax_calls
+            syntax_calls += 1
+            return real_syntax(*args, **kwargs)
+
+        monkeypatch.setattr(app_screen, "_RichSyntax", counting_syntax)
+        await _open_detail_with_find(app, record, pilot)
+        app._run_detail_find("needle", reset_cursor=True)
+        await pilot.pause()
+        assert app._detail_find_matches  # the JSON body really was matched
+        after_find = syntax_calls
+        assert after_find >= 1  # the JSON base was tokenized at least once
+        app._detail_find_step(1)
+        await pilot.pause()
+        assert syntax_calls == after_find  # the step reused the cached base
+
+
+class DetailFindFilterRefreshCase(t.NamedTuple):
+    """A same-record filter change while detail find stays open."""
+
+    test_id: str
+    initial_filter: str
+    updated_filter: str
+    find_query: str
+
+
+DETAIL_FIND_FILTER_REFRESH_CASES: tuple[DetailFindFilterRefreshCase, ...] = (
+    DetailFindFilterRefreshCase(
+        test_id="same-record-filter-change",
+        initial_filter="before",
+        updated_filter="after",
+        find_query="needle",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    DETAIL_FIND_FILTER_REFRESH_CASES,
+    ids=[case.test_id for case in DETAIL_FIND_FILTER_REFRESH_CASES],
+)
+async def test_detail_find_base_refreshes_filter_highlights_when_filter_changes(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: DetailFindFilterRefreshCase,
+) -> None:
+    """A same-record filter change refreshes the cached find-highlight base."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    body = f"{case.initial_filter} {case.find_query} {case.updated_filter}"
+    record = _ui_record(agentgrep, tmp_path / "filter.jsonl", body, "filter")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await _open_detail_with_find(app, record, pilot)
+        app._filter_terms = (case.initial_filter,)
+        app._detail_find_input.load_query(case.find_query)
+        app._run_detail_find(case.find_query, reset_cursor=True)
+        await pilot.pause()
+
+        app._filter_terms = (case.updated_filter,)
+        app._filter_input.value = case.updated_filter
+        payload = agentgrep.FilterCompletedPayload(
+            text=case.updated_filter,
+            matching=(record,),
+        )
+        app.on_filter_completed(_FakeFilterCompleted(payload=payload))
+        app._detail_find_step(1)
+        await pilot.pause()
+
+        detail_body = app._detail.content.renderables[1]
+        spans = [(span.start, span.end, str(span.style)) for span in detail_body.spans]
+        filter_bg = app.theme_variables["ag-match-filter-bg"]
+        initial_start = body.index(case.initial_filter)
+        updated_start = body.index(case.updated_filter)
+        assert not any(
+            start == initial_start
+            and end == initial_start + len(case.initial_filter)
+            and filter_bg in style
+            for start, end, style in spans
+        )
+        assert any(
+            start == updated_start
+            and end == updated_start + len(case.updated_filter)
+            and filter_bg in style
+            for start, end, style in spans
+        )
+
+
+async def test_new_search_clears_results_render_cache(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fresh search releases rendered rows so a reused record id can't go stale.
+
+    The row cache is keyed by ``id(record)`` (like cached_haystack); when a new
+    search empties ``all_records`` the rows must be released with them.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = [
+        _ui_record(agentgrep, tmp_path / f"r{i}.jsonl", f"row {i}", f"s{i}") for i in range(6)
+    ]
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app._results.set_records(records)  # renders rows -> cache populated
+        assert app._results._render_cache  # non-empty
+        app._reset_search_chrome()  # a fresh search releases the old records
+        assert app._results._render_cache == {}  # cache released with them
+
+
 async def test_detail_find_only_opens_with_a_record(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

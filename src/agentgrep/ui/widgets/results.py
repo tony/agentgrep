@@ -66,6 +66,10 @@ class SearchResultsList(OptionList, can_focus=True):
     ) -> None:
         super().__init__(id=id)
         self._records: list[SearchRecord] = []
+        # Rendered rows memoized by record id (rows bake theme hex but are stable
+        # within a palette): a filter rebuild reuses them instead of paying the
+        # dominant _render_record cost again. Cleared on clear() / rerender.
+        self._render_cache: dict[int, rich_text.Text] = {}
 
     def append_records(self, records: cabc.Sequence[SearchRecord]) -> None:
         """Append a batch of records — invoked via ``app.call_from_thread``.
@@ -156,13 +160,16 @@ class SearchResultsList(OptionList, can_focus=True):
         """Re-render the existing rows against the current theme tokens.
 
         The rows bake concrete hex into Rich renderables at build time, so
-        a palette switch needs a full rebuild from the cached records.
+        a palette switch needs a full rebuild — drop the row cache first so the
+        new palette is rendered.
         """
+        self._render_cache.clear()
         self._rebuild_options(self._records)
 
     def clear(self) -> None:
         """Empty the list."""
         self._records = []
+        self._render_cache.clear()
         self.clear_options()
 
     def _scroll_percent(self) -> int:
@@ -205,6 +212,16 @@ class SearchResultsList(OptionList, can_focus=True):
         self._post_scroll_changed(cursor=highlighted)
 
     def _render_record(self, record: SearchRecord) -> rich_text.Text:
+        """Return the rendered row for ``record``, memoized by id."""
+        cached = self._render_cache.get(id(record))
+        if cached is not None:
+            return cached
+        row = self._build_row(record)
+        self._render_cache[id(record)] = row
+        return row
+
+    def _build_row(self, record: SearchRecord) -> rich_text.Text:
+        """Build the colored row renderable for ``record`` (the uncached path)."""
         theme_vars = t.cast("t.Any", self.app).theme_variables
         agent_style = ui_theme.resolve(
             theme_vars,

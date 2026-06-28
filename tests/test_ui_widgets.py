@@ -328,6 +328,28 @@ async def test_results_streamed_row_is_pinned(
         assert results._render_record(_make_record()).plain == snapshot
 
 
+async def test_filter_rebuild_reuses_cached_row_renders(tmp_path: pathlib.Path) -> None:
+    """A full rebuild reuses cached row renders rather than re-rendering them.
+
+    ``_render_record`` dominates the filter re-apply cost, and the rows were
+    already rendered during streaming, so a rebuild must reuse them by record id
+    instead of rebuilding every ``Text`` (the filter-widen pump stall, #1).
+    """
+    from agentgrep.progress import SearchControl
+    from agentgrep.ui.app import build_streaming_ui_app
+
+    app = t.cast("t.Any", build_streaming_ui_app(tmp_path, _make_query(), control=SearchControl()))
+    async with app.run_test():
+        results = app.query_one(SearchResultsList)
+        records = [_make_record(f"row {i}") for i in range(8)]
+        results.set_records(records)  # initial render populates the row cache
+        before = [results.get_option_at_index(i).prompt for i in range(results.option_count)]
+        results._rebuild_options(records)  # a filter widen rebuilds the whole list
+        after = [results.get_option_at_index(i).prompt for i in range(results.option_count)]
+        assert results.option_count == len(records)
+        assert all(a is b for a, b in zip(before, after, strict=True))
+
+
 def test_detail_scroll_is_focusable_vertical_scroll() -> None:
     """DetailScroll is a focusable VerticalScroll exposing the vim scroll keys.
 
