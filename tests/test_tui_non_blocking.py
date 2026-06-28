@@ -133,14 +133,15 @@ def _scheduled_pump_names() -> frozenset[str]:
             if call.func.attr not in _SCHEDULER_FUNCS:
                 continue
             for arg in call.args:
+                # Seed only ``self.method`` targets: the data args passed
+                # alongside the callable are bare names, and a lambda/partial
+                # target has no name to seed (a known residual, ADR 0011).
                 if (
                     isinstance(arg, ast.Attribute)
                     and isinstance(arg.value, ast.Name)
                     and arg.value.id == "self"
                 ):
                     names.add(arg.attr)
-                elif isinstance(arg, ast.Name):
-                    names.add(arg.id)
     return frozenset(names)
 
 
@@ -380,6 +381,8 @@ def test_forbidden_call_detector_resolves_aliases_and_families() -> None:
 def test_classifier_sees_scheduled_callables_and_on_handlers() -> None:
     """Scheduler / call_from_thread targets and @on handlers classify as pump."""
     assert {"_after_resize", "_on_theme_changed"} <= _SCHEDULED_PUMP_NAMES  # real sites
+    # Data args passed alongside the callable must NOT be seeded (NB-8 false alarm).
+    assert not ({"record", "header", "body", "query_terms", "self"} & _SCHEDULED_PUMP_NAMES)
     node = t.cast("ast.FunctionDef", ast.parse("def f(self): ...").body[0])
     assert _is_pump_method(_Method("A", "_after_resize", node, (), ()))  # set_timer target
     assert _is_pump_method(_Method("W", "_handle", node, ("on",), ()))  # @on handler
