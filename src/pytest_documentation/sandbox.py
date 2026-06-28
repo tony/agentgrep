@@ -455,6 +455,11 @@ class TempHomeSandbox:
                 reason="interactive ui command accepted as bounded smoke policy",
                 execute=False,
             )
+        if _mentions_uv_mutation(words):
+            # Unhandled by the rewrites above (e.g. a compound command or a
+            # verb with no safe form); would write the shared read-only env.
+            reason = "project-mutating uv command"
+            raise blocked_command_error(reason)
         return SandboxCommandPlan(
             original_script=script,
             script=script,
@@ -563,6 +568,43 @@ def _split_script_words(script: str) -> list[str]:
         return shlex.split(script)
     except ValueError:
         return []
+
+
+_UV_MUTATION_SUBCOMMANDS: tuple[tuple[str, ...], ...] = (
+    ("uv", "add"),
+    ("uv", "remove"),
+    ("uv", "sync"),
+    ("uv", "lock"),
+    ("uv", "build"),
+    ("uv", "venv"),
+    ("uv", "pip", "install"),
+    ("uv", "pip", "uninstall"),
+    ("uv", "pip", "sync"),
+)
+
+
+def _mentions_uv_mutation(words: t.Sequence[str]) -> bool:
+    """Return whether tokens contain a uv command that writes the project env.
+
+    Leading safe forms (``uv sync`` / ``uv pip install`` rewritten to dry
+    runs) return earlier in planning, so a match here is an unhandled mutator
+    (e.g. inside a compound command) that is unsafe against a shared env.
+
+    Parameters
+    ----------
+    words : t.Sequence[str]
+        Shell tokens from :func:`_split_script_words`.
+
+    Returns
+    -------
+    bool
+        ``True`` if a project-mutating uv subcommand appears in ``words``.
+    """
+    for verb in _UV_MUTATION_SUBCOMMANDS:
+        span = len(verb)
+        if any(tuple(words[i : i + span]) == verb for i in range(len(words) - span + 1)):
+            return True
+    return False
 
 
 def _append_missing(words: t.Sequence[str], additions: t.Iterable[str]) -> list[str]:

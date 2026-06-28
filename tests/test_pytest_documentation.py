@@ -926,6 +926,57 @@ def test_sandbox_blocks_real_home_only_at_path_boundaries(
         sandbox._check_policy(script)
 
 
+class UvMutationCase(t.NamedTuple):
+    """One script for the project-mutating-uv policy in the docs sandbox."""
+
+    test_id: str
+    script: str
+    blocked: bool
+
+
+UV_MUTATION_CASES: tuple[UvMutationCase, ...] = (
+    UvMutationCase(test_id="compound-uv-sync", script="cd agentgrep && uv sync", blocked=True),
+    UvMutationCase(
+        test_id="compound-uv-pip-install", script="cd x && uv pip install p", blocked=True
+    ),
+    UvMutationCase(test_id="bare-uv-venv", script="uv venv .venv", blocked=True),
+    UvMutationCase(test_id="bare-uv-add", script="uv add agentgrep", blocked=True),
+    UvMutationCase(
+        test_id="bare-uv-pip-uninstall", script="uv pip uninstall agentgrep", blocked=True
+    ),
+    UvMutationCase(test_id="uv-run-allowed", script="uv run agentgrep find foo", blocked=False),
+    UvMutationCase(
+        test_id="leading-uv-sync-rewritten", script="uv sync --all-groups", blocked=False
+    ),
+    UvMutationCase(test_id="echo-mentions-uv-sync", script='echo "uv sync"', blocked=False),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    UV_MUTATION_CASES,
+    ids=[case.test_id for case in UV_MUTATION_CASES],
+)
+def test_sandbox_blocks_project_mutating_uv_commands(
+    tmp_path: pathlib.Path,
+    case: UvMutationCase,
+) -> None:
+    """Unhandled project-mutating uv commands are rejected before they execute.
+
+    Leading ``uv sync`` / ``uv pip install`` are rewritten to dry runs and
+    stay allowed; a compound or otherwise-unhandled mutator (which would write
+    the shared read-only environment) is blocked at the literal-exec fallback.
+    """
+    sandbox = TempHomeSandbox(project_root=tmp_path)
+    sandbox_root, _home, project, _shim = sandbox._ensure_world()
+
+    if case.blocked:
+        with pytest.raises(subprocess.SubprocessError, match="blocked command"):
+            sandbox._plan_script(case.script, sandbox_root=sandbox_root, project=project)
+    else:
+        sandbox._plan_script(case.script, sandbox_root=sandbox_root, project=project)
+
+
 def test_console_evaluator_classifies_data_dependent_empty_results(
     tmp_path: pathlib.Path,
 ) -> None:
