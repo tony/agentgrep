@@ -6,11 +6,30 @@ import pathlib
 import subprocess
 import sys
 
+import pytest
 
-def test_widgets_render_in_built_docs(tmp_path: pathlib.Path) -> None:
-    """The mcp-install and library-install widgets render with the right class hooks."""
+
+@pytest.fixture(scope="session")
+def built_docs(tmp_path_factory: pytest.TempPathFactory) -> pathlib.Path:
+    """Build the docs once (``dirhtml``) and share the output across widget tests.
+
+    The widget render, asset-copy, and backend-index smoke tests each only
+    *read* the built HTML, so a single deterministic build serves all of
+    them — far cheaper than rebuilding the full docs tree once per test.
+
+    Parameters
+    ----------
+    tmp_path_factory : pytest.TempPathFactory
+        Session-scoped temp-directory factory for the shared build output.
+
+    Returns
+    -------
+    pathlib.Path
+        The ``dirhtml`` output directory.
+    """
     repo = pathlib.Path(__file__).resolve().parents[1]
     docs = repo / "docs"
+    out = tmp_path_factory.mktemp("widget-docs")
     _ = subprocess.run(
         [
             sys.executable,
@@ -20,47 +39,33 @@ def test_widgets_render_in_built_docs(tmp_path: pathlib.Path) -> None:
             "dirhtml",
             "-q",
             str(docs),
-            str(tmp_path),
+            str(out),
         ],
         check=True,
         capture_output=True,
         text=True,
     )
+    return out
 
+
+def test_widgets_render_in_built_docs(built_docs: pathlib.Path) -> None:
+    """The mcp-install and library-install widgets render with the right class hooks."""
     # Pygments wraps whitespace in <span class="w"> ... </span>, so look for
     # token substrings that survive that wrapping rather than full phrases.
-    mcp_index = (tmp_path / "mcp" / "index.html").read_text(encoding="utf-8")
+    mcp_index = (built_docs / "mcp" / "index.html").read_text(encoding="utf-8")
     assert "ag-mcp-install" in mcp_index
     assert "claude" in mcp_index
     assert "agentgrep-mcp" in mcp_index
 
-    library_index = (tmp_path / "library" / "index.html").read_text(encoding="utf-8")
+    library_index = (built_docs / "library" / "index.html").read_text(encoding="utf-8")
     assert "ag-library-install" in library_index
     assert "SearchQuery" in library_index
 
 
-def test_widget_assets_copied(tmp_path: pathlib.Path) -> None:
+def test_widget_assets_copied(built_docs: pathlib.Path) -> None:
     """Widget CSS and JS land in ``_static/widgets/<name>/`` after a build."""
-    repo = pathlib.Path(__file__).resolve().parents[1]
-    docs = repo / "docs"
-    _ = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "sphinx",
-            "-b",
-            "dirhtml",
-            "-q",
-            str(docs),
-            str(tmp_path),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
     for widget in ("mcp-install", "library-install", "cli-install"):
-        widget_dir = tmp_path / "_static" / "widgets" / widget
+        widget_dir = built_docs / "_static" / "widgets" / widget
         assert (widget_dir / "widget.css").is_file()
         assert (widget_dir / "widget.js").is_file()
 
@@ -126,27 +131,9 @@ def test_cli_install_panel_matrix() -> None:
         assert "--pip-args" not in bodies["days"]
 
 
-def test_backend_index_renders_backend_shortcut_grid(tmp_path: pathlib.Path) -> None:
+def test_backend_index_renders_backend_shortcut_grid(built_docs: pathlib.Path) -> None:
     """The backend index links directly to each backend page near the top."""
-    repo = pathlib.Path(__file__).resolve().parents[1]
-    docs = repo / "docs"
-    _ = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "sphinx",
-            "-b",
-            "dirhtml",
-            "-q",
-            str(docs),
-            str(tmp_path),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-    backend_index = (tmp_path / "backends" / "index.html").read_text(encoding="utf-8")
+    backend_index = (built_docs / "backends" / "index.html").read_text(encoding="utf-8")
     assert "Backend pages" in backend_index
     assert backend_index.index("Backend pages") < backend_index.index("Coverage levels")
     for backend in (
