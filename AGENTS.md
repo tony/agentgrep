@@ -416,7 +416,7 @@ resize, and cancel at once. ADR 0011 (NB-1..NB-10) is the contract; the
   detail builds through an `@offload` worker. Never satisfy the guard by
   aliasing/`from`-import — move the call off the pump.
 - **The static guard cannot reach 100%.** "Blocks the pump" is a semantic
-  (Rice-undecidable) property; `tests/test_tui_non_blocking.py` now follows
+  (Rice-undecidable) property; `tests/test_tui_non_blocking.py` follows
   same-class helper calls, seeds `@on`/scheduler/`call_from_thread`/`subscribe`
   callees, and resolves import aliases — but it still cannot see cross-module or
   dynamic dispatch, a `lambda`/`partial` scheduler target, or CPU spin. Apply the
