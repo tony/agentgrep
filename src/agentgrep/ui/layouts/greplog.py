@@ -22,7 +22,6 @@ from collections import abc as cabc
 
 from textual.widgets import Footer, RichLog, Static
 
-from agentgrep._engine.orchestration import cached_haystack
 from agentgrep._text import format_compact_path
 from agentgrep.progress import (
     ProgressSnapshot,
@@ -258,7 +257,6 @@ class GrepLogLayout(LayoutScreen):
     def _write_chunk(self, chunk: cabc.Sequence[SearchRecord]) -> None:
         """Append one bounded slice of records to the log (pump-side)."""
         for record in chunk:
-            cached_haystack(record)
             self._log.write(_format_log_line(record))
 
     @_runtime.offload

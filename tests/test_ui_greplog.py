@@ -61,6 +61,27 @@ async def test_greplog_streams_records_into_the_log(
         assert len(layout.query_one("#greplog").lines) == 3
 
 
+async def test_greplog_write_chunk_does_not_warm_haystack_on_pump(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Writing log rows must not build full record haystacks."""
+    from agentgrep.ui.layouts import greplog as greplog_mod
+
+    def fail_cached_haystack(record: SearchRecord) -> t.NoReturn:
+        del record
+        raise AssertionError
+
+    monkeypatch.setattr(greplog_mod, "cached_haystack", fail_cached_haystack, raising=False)
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = _record(tmp_path, 0, "needle")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        layout = await _mount_greplog(app, pilot)
+        layout._write_chunk((record,))
+        assert len(layout.query_one("#greplog").lines) == 1
+
+
 async def test_greplog_finished_sets_status_line(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
