@@ -37,6 +37,16 @@ from agentgrep.ui.widgets.status import (
     SlowSourceDiagnosticsRow,
     SpinnerWidget,
 )
+from agentgrep.ui.widgets.transcript import ConversationLog
+from agentgrep.ui.widgets.turns import (
+    ChatTurnKind,
+    MessageTurn,
+    QueryTurn,
+    ResultTurn,
+    SystemTurn,
+    Turn,
+    TurnRenderer,
+)
 from agentgrep.ui.widgets.welcome import (
     DEPTH_OFFER_ACTION_META,
     WELCOME_QUERY_INDEX_META,
@@ -49,7 +59,9 @@ logging.getLogger(__name__).addHandler(logging.NullHandler())
 __all__ = [
     "DEPTH_OFFER_ACTION_META",
     "WELCOME_QUERY_INDEX_META",
+    "ChatTurnKind",
     "CompletionDropdown",
+    "ConversationLog",
     "DepthOffer",
     "DepthOfferSelected",
     "DetailFindInput",
@@ -62,9 +74,12 @@ __all__ = [
     "FilterInput",
     "FilterRequested",
     "HistoryRecall",
+    "MessageTurn",
     "MeterWidget",
     "PaneHeader",
+    "QueryTurn",
     "ResultHighlighted",
+    "ResultTurn",
     "ResultsHeader",
     "ResultsScrollChanged",
     "SearchInput",
@@ -73,6 +88,9 @@ __all__ = [
     "SearchingPanel",
     "SlowSourceDiagnosticsRow",
     "SpinnerWidget",
+    "SystemTurn",
+    "Turn",
+    "TurnRenderer",
     "WelcomeExamples",
     "WelcomeQuerySelected",
 ]
