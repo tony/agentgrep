@@ -385,6 +385,7 @@ def test_turn_renderer_dispatches_by_turn_type() -> None:
     query = renderer.render(QueryTurn(1, "rust error"))
     system = renderer.render(SystemTurn(1, "88 prompts", tone="muted"))
     assert isinstance(query, Text)
+    assert isinstance(system, Text)
     assert "you" in query.plain
     assert "rust error" in query.plain
     assert "88 prompts" in system.plain
@@ -392,24 +393,31 @@ def test_turn_renderer_dispatches_by_turn_type() -> None:
 
 def test_turn_renderer_result_is_bounded_to_first_line() -> None:
     """A result turn renders only the first body line + compact path (NB-1)."""
+    from rich.text import Text
+
     from agentgrep.ui.widgets import ResultTurn, TurnRenderer
 
     renderer = TurnRenderer(_TURN_THEME)
     record = _make_record("first line\nSECOND LINE must not render")
     rendered = renderer.render(ResultTurn(1, record))
+    assert isinstance(rendered, Text)
     assert "first line" in rendered.plain
     assert "SECOND LINE" not in rendered.plain
 
 
 def test_turn_renderer_query_depth_indents() -> None:
     """A deeper query turn is indented (the narrowing-depth cue)."""
+    from rich.text import Text
+
     from agentgrep.ui.widgets import QueryTurn, TurnRenderer
 
     renderer = TurnRenderer(_TURN_THEME)
-    shallow = renderer.render(QueryTurn(1, "anyhow", depth=0)).plain
-    deep = renderer.render(QueryTurn(1, "anyhow", depth=2)).plain
-    assert deep.startswith(" ")
-    assert len(deep) > len(shallow)
+    shallow = renderer.render(QueryTurn(1, "anyhow", depth=0))
+    deep = renderer.render(QueryTurn(1, "anyhow", depth=2))
+    assert isinstance(shallow, Text)
+    assert isinstance(deep, Text)
+    assert deep.plain.startswith(" ")
+    assert len(deep.plain) > len(shallow.plain)
 
 
 def test_message_turn_carries_value_object_and_kind_class() -> None:

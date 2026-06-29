@@ -85,6 +85,12 @@ class _RecordingHost:
     def request_cancel(self) -> None:
         self.calls.append(("request_cancel", None))
 
+    def set_input_text(self, text: str) -> None:
+        self.calls.append(("set_input_text", text))
+
+    def update_breadcrumb(self, frames: cabc.Sequence[str]) -> None:
+        self.calls.append(("update_breadcrumb", tuple(frames)))
+
     def kinds(self) -> tuple[str, ...]:
         return tuple(kind for kind, _ in self.calls)
 
@@ -107,6 +113,11 @@ class _RecordingWorkflow:
     def on_query(self, host: t.Any, text: str) -> None:
         """Unused protocol method."""
         del host, text
+
+    def on_action(self, host: t.Any, action_id: str) -> bool:
+        """Unused protocol method."""
+        del host, action_id
+        return False
 
 
 class _WorkflowSwapLayout(LayoutScreen):

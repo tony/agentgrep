@@ -83,7 +83,7 @@ async def test_chat_finished_posts_count_turn(
         await pilot.pause()
         system_turns = _turns(layout, SystemTurn)
         assert system_turns
-        assert "5" in system_turns[-1].turn.text
+        assert "5" in t.cast(SystemTurn, system_turns[-1].turn).text
 
 
 async def test_chat_run_search_posts_query_turn(
@@ -100,8 +100,9 @@ async def test_chat_run_search_posts_query_turn(
         await pilot.pause()
         query_turns = _turns(layout, QueryTurn)
         assert query_turns
-        assert query_turns[-1].turn.text == "rust error"
-        assert query_turns[-1].turn.depth == 0
+        query_turn = t.cast(QueryTurn, query_turns[-1].turn)
+        assert query_turn.text == "rust error"
+        assert query_turn.depth == 0
 
 
 async def test_chat_filter_appends_narrowed_block(
@@ -169,7 +170,8 @@ async def test_chat_result_cap_bounds_mounted_turns(
         layout._apply_finished("complete", len(records), 0.1, None)
         await pilot.pause()
         assert len(_turns(layout, ResultTurn)) == chat_mod._RESULT_TURN_CAP
-        assert "narrow to see all" in _turns(layout, SystemTurn)[-1].turn.text
+        last_system = t.cast(SystemTurn, _turns(layout, SystemTurn)[-1].turn)
+        assert "narrow to see all" in last_system.text
 
 
 async def test_chat_opens_detail_on_focused_result(

@@ -445,7 +445,7 @@ async def test_workflow_bindings_install_and_route(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test() as pilot:
         await pilot.pause()
-        screen = t.cast("t.Any", app.screen)
+        screen = app.screen
         workflow = _ActionWorkflow()
         screen.set_workflow(workflow, attach=True)
         await pilot.pause()
@@ -463,7 +463,7 @@ async def test_workflow_bindings_removed_on_swap(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test() as pilot:
         await pilot.pause()
-        screen = t.cast("t.Any", app.screen)
+        screen = app.screen
         screen.set_workflow(_ActionWorkflow(), attach=True)
         await pilot.pause()
         assert "ctrl+g" in screen._bindings.key_to_bindings
