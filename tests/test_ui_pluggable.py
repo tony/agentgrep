@@ -12,6 +12,7 @@ import pathlib
 import typing as t
 
 import pytest
+from textual.binding import Binding
 
 import agentgrep
 from agentgrep.progress import SearchControl, StreamingRecordsBatch, StreamingSearchFinished
@@ -75,8 +76,10 @@ class ResolveCase(t.NamedTuple):
 RESOLVE_CASES = (
     ResolveCase("layout-hud", "layout", "hud", "HudLayout"),
     ResolveCase("layout-greplog", "layout", "greplog", "GrepLogLayout"),
+    ResolveCase("layout-chat", "layout", "chat", "ChatLayout"),
     ResolveCase("workflow-search", "workflow", "search", "SearchWorkflow"),
     ResolveCase("workflow-browse", "workflow", "browse", "BrowseWorkflow"),
+    ResolveCase("workflow-deductive", "workflow", "deductive", "DeductiveWorkflow"),
 )
 
 
@@ -98,8 +101,8 @@ def test_registry_lists_names_and_rejects_unknown() -> None:
     """Names are listed in display order and unknown lookups return ``None``."""
     from agentgrep.ui import registry
 
-    assert registry.layout_names() == ("hud", "greplog")
-    assert registry.workflow_names() == ("search", "browse")
+    assert registry.layout_names() == ("hud", "greplog", "chat")
+    assert registry.workflow_names() == ("search", "browse", "deductive")
     assert registry.DEFAULT_LAYOUT == "hud"
     assert registry.DEFAULT_WORKFLOW == "search"
     assert registry.layout_spec("nope") is None
@@ -189,6 +192,9 @@ async def test_f2_cycles_through_layouts(
         assert type(app.screen).__name__ == "GrepLogLayout"
         await pilot.press("f2")
         await pilot.pause()
+        assert type(app.screen).__name__ == "ChatLayout"
+        await pilot.press("f2")
+        await pilot.pause()
         assert type(app.screen).__name__ == "HudLayout"
 
 
@@ -204,6 +210,9 @@ async def test_f2_resumes_launch_layout(
         await pilot.press("f2")
         await pilot.pause()
         assert type(app.screen).__name__ == "GrepLogLayout"
+        await pilot.press("f2")
+        await pilot.pause()
+        assert type(app.screen).__name__ == "ChatLayout"
         await pilot.press("f2")
         await pilot.pause()
         assert app.screen is hud
@@ -274,6 +283,9 @@ async def test_launch_query_resumes_launch_layout(
         assert type(app.screen).__name__ == "GrepLogLayout"
         await pilot.press("f2")
         await pilot.pause()
+        assert type(app.screen).__name__ == "ChatLayout"
+        await pilot.press("f2")
+        await pilot.pause()
         assert app.screen is hud
 
 
@@ -289,6 +301,9 @@ async def test_f3_cycles_through_workflows(
         await pilot.press("f3")
         await pilot.pause()
         assert app.screen.workflow.name == "browse"
+        await pilot.press("f3")
+        await pilot.pause()
+        assert app.screen.workflow.name == "deductive"
         await pilot.press("f3")
         await pilot.pause()
         assert app.screen.workflow.name == "search"
@@ -307,6 +322,9 @@ async def test_f3_updates_suspended_layout_workflow(
         greplog = app.screen
         assert type(greplog).__name__ == "GrepLogLayout"
         assert greplog.workflow.name == "search"
+        await pilot.press("f2")
+        await pilot.pause()
+        assert type(app.screen).__name__ == "ChatLayout"
         await pilot.press("f2")
         await pilot.pause()
         assert type(app.screen).__name__ == "HudLayout"
@@ -360,6 +378,8 @@ async def test_f3_browse_attaches_resumed_layout(
         assert type(greplog).__name__ == "GrepLogLayout"
         await pilot.press("f2")
         await pilot.pause()
+        await pilot.press("f2")
+        await pilot.pause()
         await pilot.press("f3")
         await pilot.pause(0.2)
         assert t.cast(LayoutScreen, app.screen).workflow.name == "browse"
@@ -369,6 +389,87 @@ async def test_f3_browse_attaches_resumed_layout(
         assert t.cast(LayoutScreen, app.screen).workflow.name == "browse"
         assert len(invoker.queries) == case.expected_searches
         assert len(greplog._records) == case.expected_records
+
+
+class _ActionWorkflow:
+    """A fake workflow with one priority binding routed through ``on_action``."""
+
+    name: t.ClassVar[str] = "actionwf"
+    summary: t.ClassVar[str] = "records routed actions"
+    BINDINGS: t.ClassVar[list[t.Any]] = [
+        Binding("ctrl+g", 'workflow("ping")', "Ping", priority=True),
+    ]
+
+    def __init__(self) -> None:
+        self.actions: list[str] = []
+
+    def on_attach(self, host: object) -> None:
+        del host
+
+    def on_query(self, host: object, text: str) -> None:
+        del host, text
+
+    def on_action(self, host: object, action_id: str) -> bool:
+        del host
+        self.actions.append(action_id)
+        return True
+
+
+class _PlainWorkflow:
+    """A fake workflow with no extra bindings (to prove removal on swap)."""
+
+    name: t.ClassVar[str] = "plainwf"
+    summary: t.ClassVar[str] = "no extra bindings"
+    BINDINGS: t.ClassVar[list[t.Any]] = []
+
+    def on_attach(self, host: object) -> None:
+        del host
+
+    def on_query(self, host: object, text: str) -> None:
+        del host, text
+
+    def on_action(self, host: object, action_id: str) -> bool:
+        del host, action_id
+        return False
+
+
+async def test_workflow_bindings_install_and_route(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A workflow's BINDINGS install on the screen and route to ``on_action``.
+
+    The dead-binding bug is invisible to the static guard, so this proves the
+    key reaches the workflow end-to-end through ``LayoutScreen.action_workflow``.
+    """
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        workflow = _ActionWorkflow()
+        screen.set_workflow(workflow, attach=True)
+        await pilot.pause()
+        assert "ctrl+g" in screen._bindings.key_to_bindings
+        await pilot.press("ctrl+g")
+        await pilot.pause()
+        assert workflow.actions == ["ping"]
+
+
+async def test_workflow_bindings_removed_on_swap(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Swapping to a workflow without the key drops the prior installed binding."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        screen.set_workflow(_ActionWorkflow(), attach=True)
+        await pilot.pause()
+        assert "ctrl+g" in screen._bindings.key_to_bindings
+        screen.set_workflow(_PlainWorkflow(), attach=True)
+        await pilot.pause()
+        assert "ctrl+g" not in screen._bindings.key_to_bindings
 
 
 async def test_launch_into_greplog_layout(

@@ -59,6 +59,18 @@ class WorkflowHost(t.Protocol):
         """Cooperatively signal the in-flight search to wrap up."""
         ...
 
+    def set_input_text(self, text: str) -> None:
+        """Set the primary input's value (e.g. re-seed after a refinement pop)."""
+        ...
+
+    def update_breadcrumb(self, frames: cabc.Sequence[str]) -> None:
+        """Repaint the active refinement path; an empty sequence clears it.
+
+        A layout without a breadcrumb (HUD, grep-log) may treat this as a no-op;
+        the chat layout renders ``all ▸ a ▸ b`` from ``frames``.
+        """
+        ...
+
 
 class Workflow(t.Protocol):
     """A pluggable interaction/query strategy over a layout's primary input.
@@ -81,4 +93,13 @@ class Workflow(t.Protocol):
 
     def on_query(self, host: WorkflowHost, text: str) -> None:
         """Handle the primary input being submitted with ``text``."""
+        ...
+
+    def on_action(self, host: WorkflowHost, action_id: str) -> bool:
+        """Handle a workflow-owned key action (e.g. ``widen`` / ``clear``).
+
+        Routed from the layout's ``action_workflow`` so a workflow's own
+        :attr:`BINDINGS` reach it without the strategy object importing Textual
+        or knowing about actions. Return ``True`` if the action was handled.
+        """
         ...

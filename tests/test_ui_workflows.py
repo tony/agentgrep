@@ -85,6 +85,12 @@ class _RecordingHost:
     def request_cancel(self) -> None:
         self.calls.append(("request_cancel", None))
 
+    def set_input_text(self, text: str) -> None:
+        self.calls.append(("set_input_text", text))
+
+    def update_breadcrumb(self, frames: cabc.Sequence[str]) -> None:
+        self.calls.append(("update_breadcrumb", tuple(frames)))
+
     def kinds(self) -> tuple[str, ...]:
         return tuple(kind for kind, _ in self.calls)
 
@@ -107,6 +113,11 @@ class _RecordingWorkflow:
     def on_query(self, host: t.Any, text: str) -> None:
         """Unused protocol method."""
         del host, text
+
+    def on_action(self, host: t.Any, action_id: str) -> bool:
+        """Unused protocol method."""
+        del host, action_id
+        return False
 
 
 class _WorkflowSwapLayout(LayoutScreen):
@@ -231,6 +242,28 @@ def test_browse_workflow_routes_to_filter(case: BrowseCase) -> None:
     else:
         workflow.on_query(host, case.text)
     assert host.kinds() == case.expected_kinds
+
+
+class OnActionNoopCase(t.NamedTuple):
+    """A built-in workflow that owns no key actions."""
+
+    test_id: str
+    factory: cabc.Callable[[], t.Any]
+
+
+ON_ACTION_NOOP_CASES = (
+    OnActionNoopCase("search-ignores-actions", SearchWorkflow),
+    OnActionNoopCase("browse-ignores-actions", BrowseWorkflow),
+)
+
+
+@pytest.mark.parametrize("case", ON_ACTION_NOOP_CASES, ids=lambda c: c.test_id)
+def test_builtin_workflow_on_action_is_noop(case: OnActionNoopCase) -> None:
+    """The default workflows handle no actions and touch the host for none."""
+    host = _RecordingHost(_query("seed"))
+    handled = case.factory().on_action(host, "widen")
+    assert handled is False
+    assert host.calls == []
 
 
 def test_search_and_browse_diverge_on_submit() -> None:

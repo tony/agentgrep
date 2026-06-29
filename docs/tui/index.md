@@ -51,20 +51,24 @@ are arranged on screen) and a **workflow** (how the primary input queries them).
 Both are selectable at launch and switchable at runtime, so the same engine and
 the same records can drive very different surfaces.
 
-Two layouts ship:
+Three layouts ship:
 
 - **`hud`** (default) — the search bar, streaming results list, and detail pane.
 - **`greplog`** — an append-only `grep`-style log of matches as they stream in.
+- **`chat`** — a conversation transcript: each query is a turn and the matches
+  stream in beneath it as result bubbles. See {ref}`adr-deductive-narrowing-and-conversation-layout`.
 
-Two workflows ship:
+Three workflows ship:
 
 - **`search`** (default) — the input runs a fresh engine search on each submit.
 - **`browse`** — the input filters the already-loaded records in-memory.
+- **`deductive`** — the first submit fixes a haystack and each later submit
+  narrows within it; `ctrl+up` widens back out and `ctrl+l` clears.
 
 Launch straight into a specific pair:
 
 ```console
-$ agentgrep ui --layout greplog --workflow browse
+$ agentgrep ui --layout chat --workflow deductive
 ```
 
 Switch at runtime with `F2` (cycle the layout) and `F3` (cycle the workflow);
