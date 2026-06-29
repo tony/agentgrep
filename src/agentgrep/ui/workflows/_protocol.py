@@ -82,3 +82,12 @@ class Workflow(t.Protocol):
     def on_query(self, host: WorkflowHost, text: str) -> None:
         """Handle the primary input being submitted with ``text``."""
         ...
+
+    def on_action(self, host: WorkflowHost, action_id: str) -> bool:
+        """Handle a workflow-owned key action (e.g. ``widen`` / ``clear``).
+
+        Routed from the layout's ``action_workflow`` so a workflow's own
+        :attr:`BINDINGS` reach it without the strategy object importing Textual
+        or knowing about actions. Return ``True`` if the action was handled.
+        """
+        ...
