@@ -846,6 +846,15 @@ class HudLayout(LayoutScreen):
         """Cooperatively signal the in-flight search to wrap up (host surface)."""
         self.control.request_answer_now()
 
+    def set_input_text(self, text: str) -> None:
+        """Set the search input's value — the deductive widen re-seed (host surface)."""
+        if self._search_input is not None:
+            t.cast("t.Any", self._search_input).value = text
+
+    def update_breadcrumb(self, frames: cabc.Sequence[str]) -> None:
+        """No-op: the HUD shows no refinement breadcrumb yet (host surface)."""
+        del frames
+
     def _dispatch_slash_command(self, command: commands.SlashCommand, args: str) -> None:
         """Run an already-resolved ``/command`` from the search box."""
         if self._enum_dropdown is not None:

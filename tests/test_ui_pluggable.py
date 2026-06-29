@@ -79,6 +79,7 @@ RESOLVE_CASES = (
     ResolveCase("layout-chat", "layout", "chat", "ChatLayout"),
     ResolveCase("workflow-search", "workflow", "search", "SearchWorkflow"),
     ResolveCase("workflow-browse", "workflow", "browse", "BrowseWorkflow"),
+    ResolveCase("workflow-deductive", "workflow", "deductive", "DeductiveWorkflow"),
 )
 
 
@@ -101,7 +102,7 @@ def test_registry_lists_names_and_rejects_unknown() -> None:
     from agentgrep.ui import registry
 
     assert registry.layout_names() == ("hud", "greplog", "chat")
-    assert registry.workflow_names() == ("search", "browse")
+    assert registry.workflow_names() == ("search", "browse", "deductive")
     assert registry.DEFAULT_LAYOUT == "hud"
     assert registry.DEFAULT_WORKFLOW == "search"
     assert registry.layout_spec("nope") is None
@@ -300,6 +301,9 @@ async def test_f3_cycles_through_workflows(
         await pilot.press("f3")
         await pilot.pause()
         assert app.screen.workflow.name == "browse"
+        await pilot.press("f3")
+        await pilot.pause()
+        assert app.screen.workflow.name == "deductive"
         await pilot.press("f3")
         await pilot.pause()
         assert app.screen.workflow.name == "search"
