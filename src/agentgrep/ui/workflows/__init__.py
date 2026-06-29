@@ -17,8 +17,15 @@ import logging
 
 from agentgrep.ui.workflows._protocol import Workflow, WorkflowHost
 from agentgrep.ui.workflows.browse import BrowseWorkflow
+from agentgrep.ui.workflows.deductive import DeductiveWorkflow
 from agentgrep.ui.workflows.search import SearchWorkflow
 
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
-__all__ = ["BrowseWorkflow", "SearchWorkflow", "Workflow", "WorkflowHost"]
+__all__ = [
+    "BrowseWorkflow",
+    "DeductiveWorkflow",
+    "SearchWorkflow",
+    "Workflow",
+    "WorkflowHost",
+]

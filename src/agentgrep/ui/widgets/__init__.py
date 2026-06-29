@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 
+from agentgrep.ui.widgets.breadcrumb import RefinementBreadcrumb
 from agentgrep.ui.widgets.detail import DetailScroll
 from agentgrep.ui.widgets.dropdown import CompletionDropdown
 from agentgrep.ui.widgets.history import HistoryRecall
@@ -68,6 +69,7 @@ __all__ = [
     "MeterWidget",
     "PaneHeader",
     "QueryTurn",
+    "RefinementBreadcrumb",
     "ResultHighlighted",
     "ResultTurn",
     "ResultsHeader",

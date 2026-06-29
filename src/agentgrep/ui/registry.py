@@ -89,6 +89,12 @@ def _load_browse() -> type[Workflow]:
     return BrowseWorkflow
 
 
+def _load_deductive() -> type[Workflow]:
+    from agentgrep.ui.workflows.deductive import DeductiveWorkflow
+
+    return DeductiveWorkflow
+
+
 #: The built-in layouts, in display order. The first is the default.
 LAYOUTS: tuple[LayoutSpec, ...] = (
     LayoutSpec(
@@ -105,6 +111,7 @@ LAYOUTS: tuple[LayoutSpec, ...] = (
 WORKFLOWS: tuple[WorkflowSpec, ...] = (
     WorkflowSpec("search", "Live incremental search over the engine", _load_search),
     WorkflowSpec("browse", "Browse a loaded set; the input filters in-memory", _load_browse),
+    WorkflowSpec("deductive", "Narrow a fixed haystack; widen pops back out", _load_deductive),
 )
 
 #: The fixed shipped pair and the defaults for omitted Python injection.
