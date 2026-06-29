@@ -18,7 +18,9 @@ from agentgrep.progress import SearchControl
 from agentgrep.records import SearchQuery
 from agentgrep.ui._context import UiContext
 from agentgrep.ui.workflows.deductive import DeductiveWorkflow
-from tests.test_agentgrep import _build_empty_ui_app
+from tests._agentgrep_tui_support import _build_empty_ui_app
+
+pytestmark = pytest.mark.tui
 
 
 def _query(*terms: str) -> SearchQuery:
@@ -56,6 +58,7 @@ class _DeductiveHost:
             invoker=_NoopInvoker(),
             query=query,
             control=SearchControl(),
+            base_scope=query.scope,
         )
         self.calls: list[tuple[str, object]] = []
 
@@ -211,6 +214,7 @@ def test_deductive_metadata() -> None:
     assert {"ctrl+up", "ctrl+l"} <= keys
 
 
+@pytest.mark.slow
 async def test_deductive_keys_route_on_chat_layout(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

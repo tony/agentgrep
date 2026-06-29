@@ -52,6 +52,7 @@ from agentgrep.ui.widgets.welcome import WELCOME_QUERY_INDEX_META, WelcomeExampl
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
 __all__ = [
+    "WELCOME_QUERY_INDEX_META",
     "ChatTurnKind",
     "CompletionDropdown",
     "ConversationLog",
@@ -83,7 +84,6 @@ __all__ = [
     "SystemTurn",
     "Turn",
     "TurnRenderer",
-    "WELCOME_QUERY_INDEX_META",
     "WelcomeExamples",
     "WelcomeQuerySelected",
 ]
