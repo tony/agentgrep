@@ -178,8 +178,11 @@ class TurnRenderer:
             self._theme_variables,
             ui_theme.KIND_TOKEN_BY_NAME.get(record.kind or ""),
         )
-        lines = (record.title or record.text or "").splitlines()
-        first = lines[0][:120] if lines else ""
+        # Bounded slice first (NB-1): never materialize a full multi-MB body into
+        # a line list on the pump — read at most a couple hundred chars, then the
+        # first line of that.
+        raw = record.title or record.text or ""
+        first = raw[:200].split("\n", 1)[0][:120]
         text = Text(no_wrap=True, overflow="ellipsis")
         text.append("  · ", style=self._muted or None)
         text.append(f"{(record.agent or '')[:8]:<8} ", style=agent_color or None)
