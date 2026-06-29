@@ -56,3 +56,8 @@ class SearchWorkflow:
         host.request_cancel()
         host.record_history(text)
         host.run_search(query)
+
+    def on_action(self, host: WorkflowHost, action_id: str) -> bool:
+        """Search owns no extra key actions."""
+        del host, action_id
+        return False
