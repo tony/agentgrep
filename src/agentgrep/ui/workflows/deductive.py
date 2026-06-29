@@ -104,10 +104,17 @@ class DeductiveWorkflow:
         """Compose the in-memory ``AND`` filter over refinements past the base.
 
         The base frame is the engine query (already applied by ``run_search``);
-        only the later refinements filter the loaded set. An empty result (widen
-        back to the base alone) clears the filter, showing the full haystack.
+        only the later refinements filter the loaded set. A single refinement is
+        passed through verbatim — wrapping a bare term in parens (``(python)``)
+        would make the query parser read it as a literal term that matches
+        nothing. Two or more are AND-grouped so each is a self-contained clause.
+        An empty result (widen back to the base alone) clears the filter,
+        showing the full haystack.
         """
-        return " AND ".join(f"({frame.text})" for frame in self._stack[1:])
+        refinements = self._stack[1:]
+        if len(refinements) == 1:
+            return refinements[0].text
+        return " AND ".join(f"({frame.text})" for frame in refinements)
 
     def _labels(self) -> tuple[str, ...]:
         """Return the breadcrumb labels for the current stack."""
