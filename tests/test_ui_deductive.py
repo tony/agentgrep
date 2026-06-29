@@ -14,8 +14,8 @@ import typing as t
 
 import pytest
 
-from agentgrep.progress import SearchControl
-from agentgrep.records import SearchQuery
+from agentgrep.progress import SearchControl, StreamingRecordsBatch, StreamingSearchFinished
+from agentgrep.records import SearchQuery, SearchRecord
 from agentgrep.ui._context import UiContext
 from agentgrep.ui.workflows.deductive import DeductiveWorkflow
 from tests._agentgrep_tui_support import _build_empty_ui_app
@@ -143,7 +143,9 @@ def test_deductive_later_submit_filters_in_memory() -> None:
         "filter_loaded",
         "update_breadcrumb",
     )
-    assert host.payloads("filter_loaded") == ["(anyhow)"]
+    # A single refinement is passed verbatim — NOT wrapped in parens, which the
+    # query parser would read as a literal term matching nothing.
+    assert host.payloads("filter_loaded") == ["anyhow"]
     assert host.payloads("update_breadcrumb")[-1] == ("rust", "anyhow")
     assert "run_search" not in host.kinds()
 
@@ -158,7 +160,7 @@ def test_deductive_widen_pops_and_reseeds() -> None:
     host.calls.clear()
     handled = workflow.on_action(host, "widen")
     assert handled is True
-    assert host.payloads("filter_loaded") == ["(anyhow)"]
+    assert host.payloads("filter_loaded") == ["anyhow"]
     assert host.payloads("set_input_text") == ["anyhow"]
     assert host.payloads("update_breadcrumb")[-1] == ("rust", "anyhow")
 
@@ -213,6 +215,103 @@ def test_deductive_metadata() -> None:
     keys = {t.cast("t.Any", b).key for b in DeductiveWorkflow.BINDINGS}
     assert {"ctrl+up", "ctrl+l"} <= keys
 
+
+def test_deductive_composed_filter_form() -> None:
+    """A single refinement filters verbatim; two or more AND-group with parens."""
+    host = _DeductiveHost(_query())
+    workflow = DeductiveWorkflow()
+    workflow.on_query(host, "rust")  # base haystack (run_search)
+    workflow.on_query(host, "anyhow")  # single refinement
+    assert host.payloads("filter_loaded")[-1] == "anyhow"
+    workflow.on_query(host, "error")  # second refinement
+    assert host.payloads("filter_loaded")[-1] == "(anyhow) AND (error)"
+
+
+class _MatchInvoker:
+    """A search seam that emits a fixed record set so narrowing can be exercised."""
+
+    def __init__(self, tmp_path: pathlib.Path) -> None:
+        self._tmp_path = tmp_path
+        self.runs = 0
+
+    def run(
+        self,
+        query: SearchQuery,
+        *,
+        control: SearchControl,
+        emit: cabc.Callable[[object], None],
+    ) -> None:
+        """Emit three records (two containing 'anyhow') then finish."""
+        del query
+        self.runs += 1
+        if control.answer_now_requested():
+            return
+        records = tuple(
+            SearchRecord(
+                kind="prompt",
+                agent="codex",
+                store="codex.sessions",
+                adapter_id="codex.sessions_jsonl.v1",
+                path=self._tmp_path / f"r{idx}.jsonl",
+                text=text,
+            )
+            for idx, text in enumerate(
+                ["rust anyhow here", "rust plain error", "rust anyhow again"],
+            )
+        )
+        emit(StreamingRecordsBatch(records=records, total=len(records)))
+        emit(StreamingSearchFinished(outcome="complete", total=len(records), elapsed=0.01))
+
+
+@pytest.mark.slow
+async def test_deductive_narrow_filters_to_matching_records(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end: a single-word narrow actually filters the haystack to matches.
+
+    The earlier fakes asserted the host-call *shape* (``filter_loaded`` got a
+    string) but never ran the matcher, so a paren-wrapped single term that
+    matched nothing slipped through. This runs the real engine seam + matcher.
+    """
+    from agentgrep.ui.layouts.chat import ChatLayout
+    from agentgrep.ui.widgets.turns import MessageTurn, ResultTurn
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    invoker = _MatchInvoker(tmp_path)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        query = _query()
+        ctx = UiContext(
+            home=tmp_path,
+            invoker=invoker,
+            query=query,
+            control=SearchControl(),
+            base_scope=query.scope,
+        )
+        layout = ChatLayout(ctx, DeductiveWorkflow())
+        await app.push_screen(layout)
+        await pilot.pause()
+
+        def result_turns() -> list[MessageTurn]:
+            return [
+                child
+                for child in layout.query_one("#transcript").children
+                if isinstance(child, MessageTurn) and isinstance(child.turn, ResultTurn)
+            ]
+
+        layout._search_input.value = "rust"  # first submit fixes the haystack
+        await pilot.press("enter")
+        await pilot.pause(0.3)
+        haystack = len(result_turns())
+        assert haystack == 3
+
+        layout._search_input.value = "anyhow"  # single-word narrow
+        await pilot.press("enter")
+        await pilot.pause(0.3)
+        narrowed = result_turns()[haystack:]
+        assert len(narrowed) == 2  # would be 0 with the (anyhow)-literal bug
+        assert all("anyhow" in t.cast(ResultTurn, turn.turn).record.text for turn in narrowed)
 
 @pytest.mark.slow
 async def test_deductive_keys_route_on_chat_layout(
