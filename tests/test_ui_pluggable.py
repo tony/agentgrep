@@ -12,6 +12,7 @@ import pathlib
 import typing as t
 
 import pytest
+from textual.binding import Binding
 
 import agentgrep
 from agentgrep.progress import SearchControl, StreamingRecordsBatch, StreamingSearchFinished
@@ -369,6 +370,87 @@ async def test_f3_browse_attaches_resumed_layout(
         assert t.cast(LayoutScreen, app.screen).workflow.name == "browse"
         assert len(invoker.queries) == case.expected_searches
         assert len(greplog._records) == case.expected_records
+
+
+class _ActionWorkflow:
+    """A fake workflow with one priority binding routed through ``on_action``."""
+
+    name: t.ClassVar[str] = "actionwf"
+    summary: t.ClassVar[str] = "records routed actions"
+    BINDINGS: t.ClassVar[list[t.Any]] = [
+        Binding("ctrl+g", 'workflow("ping")', "Ping", priority=True),
+    ]
+
+    def __init__(self) -> None:
+        self.actions: list[str] = []
+
+    def on_attach(self, host: object) -> None:
+        del host
+
+    def on_query(self, host: object, text: str) -> None:
+        del host, text
+
+    def on_action(self, host: object, action_id: str) -> bool:
+        del host
+        self.actions.append(action_id)
+        return True
+
+
+class _PlainWorkflow:
+    """A fake workflow with no extra bindings (to prove removal on swap)."""
+
+    name: t.ClassVar[str] = "plainwf"
+    summary: t.ClassVar[str] = "no extra bindings"
+    BINDINGS: t.ClassVar[list[t.Any]] = []
+
+    def on_attach(self, host: object) -> None:
+        del host
+
+    def on_query(self, host: object, text: str) -> None:
+        del host, text
+
+    def on_action(self, host: object, action_id: str) -> bool:
+        del host, action_id
+        return False
+
+
+async def test_workflow_bindings_install_and_route(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A workflow's BINDINGS install on the screen and route to ``on_action``.
+
+    The dead-binding bug is invisible to the static guard, so this proves the
+    key reaches the workflow end-to-end through ``LayoutScreen.action_workflow``.
+    """
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = t.cast("t.Any", app.screen)
+        workflow = _ActionWorkflow()
+        screen.set_workflow(workflow, attach=True)
+        await pilot.pause()
+        assert "ctrl+g" in screen._bindings.key_to_bindings
+        await pilot.press("ctrl+g")
+        await pilot.pause()
+        assert workflow.actions == ["ping"]
+
+
+async def test_workflow_bindings_removed_on_swap(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Swapping to a workflow without the key drops the prior installed binding."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = t.cast("t.Any", app.screen)
+        screen.set_workflow(_ActionWorkflow(), attach=True)
+        await pilot.pause()
+        assert "ctrl+g" in screen._bindings.key_to_bindings
+        screen.set_workflow(_PlainWorkflow(), attach=True)
+        await pilot.pause()
+        assert "ctrl+g" not in screen._bindings.key_to_bindings
 
 
 async def test_launch_into_greplog_layout(
