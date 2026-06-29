@@ -21,4 +21,5 @@ multiple adapters or public payloads.
 0011-non-blocking-tui-invariants
 0012-reusable-tui-widget-architecture
 0013-pluggable-tui-layouts-and-workflows
+0014-deductive-narrowing-and-conversation-layout
 ```
