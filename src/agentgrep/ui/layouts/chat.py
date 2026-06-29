@@ -49,6 +49,7 @@ from agentgrep.ui import _runtime, theme as ui_theme
 from agentgrep.ui._context import UiContext
 from agentgrep.ui.layouts._base import LayoutScreen
 from agentgrep.ui.widgets import ResultsHeader, SearchInput, SearchRequested
+from agentgrep.ui.widgets.breadcrumb import RefinementBreadcrumb
 from agentgrep.ui.widgets.transcript import ConversationLog
 from agentgrep.ui.widgets.turns import (
     MessageTurn,
@@ -80,6 +81,9 @@ class ChatLayout(LayoutScreen):
     DEFAULT_CSS = """
     ChatLayout { layout: vertical; }
     ChatLayout #transcript { height: 1fr; }
+    ChatLayout #breadcrumb {
+        height: auto; padding: 0 1; color: $text-muted; background: transparent;
+    }
     ChatLayout #chat-status { height: 1; padding: 0 1; color: $text-muted; }
     ChatLayout #prompt { dock: bottom; height: 3; }
     ChatLayout .turn { padding: 0 1; background: transparent; }
@@ -110,6 +114,7 @@ class ChatLayout(LayoutScreen):
         self._renderer: TurnRenderer | None = None
         self._log: ConversationLog | None = None
         self._status: ResultsHeader | None = None
+        self._breadcrumb: RefinementBreadcrumb | None = None
         self._search_input: SearchInput | None = None
 
     def compose(self) -> cabc.Iterator[t.Any]:
@@ -120,6 +125,7 @@ class ChatLayout(LayoutScreen):
             else " ".join(self.context.query.terms)
         )
         yield ConversationLog(id="transcript")
+        yield RefinementBreadcrumb(id="breadcrumb")
         yield ResultsHeader("chat", id="chat-status")
         yield SearchInput(
             value=initial,
@@ -133,6 +139,7 @@ class ChatLayout(LayoutScreen):
         """Cache widgets and build the renderer, then attach the workflow."""
         self._log = self.query_one("#transcript", ConversationLog)
         self._status = self.query_one("#chat-status", ResultsHeader)
+        self._breadcrumb = self.query_one("#breadcrumb", RefinementBreadcrumb)
         self._search_input = self.query_one("#prompt", SearchInput)
         self._search_input.cursor_blink = False
         self._renderer = TurnRenderer(self.app.theme_variables)
@@ -239,6 +246,16 @@ class ChatLayout(LayoutScreen):
     def request_cancel(self) -> None:
         """Cooperatively signal the in-flight search to wrap up (host surface)."""
         self.control.request_answer_now()
+
+    def set_input_text(self, text: str) -> None:
+        """Set the prompt's value — the deductive widen re-seed (host surface)."""
+        if self._search_input is not None:
+            self._search_input.value = text
+
+    def update_breadcrumb(self, frames: cabc.Sequence[str]) -> None:
+        """Repaint the refinement path above the prompt (host surface)."""
+        if self._breadcrumb is not None:
+            self._breadcrumb.set_frames(frames)
 
     # --- streaming transport (shared primitives, turn-specific present) --------
     def _make_gated_emit(self) -> cabc.Callable[[object], None]:

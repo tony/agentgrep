@@ -402,6 +402,15 @@ class _HudSearchBase(_HudDetailInteractionBase):
         """Cooperatively signal the in-flight search to wrap up (host surface)."""
         self.control.request_answer_now()
 
+    def set_input_text(self, text: str) -> None:
+        """Set the search input's value for a deductive widen re-seed."""
+        if self._search_input is not None:
+            t.cast("t.Any", self._search_input).value = text
+
+    def update_breadcrumb(self, frames: cabc.Sequence[str]) -> None:
+        """Ignore refinement breadcrumbs, which the HUD does not render."""
+        del frames
+
     def _record_history(self, text: str) -> None:
         """Append a submitted, non-empty query to the persisted history.
 
