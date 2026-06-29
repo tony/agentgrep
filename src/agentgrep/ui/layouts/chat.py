@@ -163,10 +163,24 @@ class ChatLayout(LayoutScreen):
             self.app.push_screen(
                 DetailScreen(
                     turn.record,
-                    self.search_query,
+                    self._detail_query(),
                     self.app.theme_variables,
                 ),
             )
+
+    def _detail_query(self) -> SearchQuery:
+        """Query whose terms highlight in the detail body: base + any refinement.
+
+        After an in-memory narrowing ``search_query`` is still the base haystack,
+        so fold the active filter matcher's terms in so the term the user actually
+        narrowed to is highlighted too.
+        """
+        if self._filter_matcher is None:
+            return self.search_query
+        return dataclasses.replace(
+            self.search_query,
+            terms=(*self.search_query.terms, *self._filter_matcher.query.terms),
+        )
 
     # --- WorkflowHost surface -------------------------------------------------
     def build_query(self, text: str) -> SearchQuery:
@@ -189,6 +203,8 @@ class ChatLayout(LayoutScreen):
         self._mounted_results = 0
         if self._log is not None:
             self._log.clear_turns()
+        if self._breadcrumb is not None:
+            self._breadcrumb.set_frames(())
         self._post_query_turn(self._take_turn_text(query), depth=0)
         if self._status is not None:
             self._status.begin()
@@ -208,8 +224,16 @@ class ChatLayout(LayoutScreen):
         mounted in bounded chunks (NB-4); the prior turns stay frozen above.
         """
         self._mounted_results = 0
-        self._post_query_turn(self._pending_turn_text or text, depth=1)
-        self._pending_turn_text = ""
+        # The literal text is the human query only on a submit (``_pending_turn_text``
+        # is set); a programmatic widen passes the composed filter syntax, so post
+        # a query turn only for a real submission — the breadcrumb carries the path.
+        if self._pending_turn_text:
+            self._post_query_turn(self._pending_turn_text, depth=1)
+            self._pending_turn_text = ""
+        # Supersede a still-streaming haystack search so its late batches are
+        # dropped (NB-10) instead of mounting unfiltered into the narrowed block;
+        # narrowing then runs over the records loaded so far.
+        self._search_emit = self._make_gated_emit()
         matcher = self._build_matcher(text)
         self._filter_matcher = matcher
         records = tuple(self._records)
@@ -235,6 +259,8 @@ class ChatLayout(LayoutScreen):
         self._mounted_results = 0
         if self._log is not None:
             self._log.clear_turns()
+        if self._breadcrumb is not None:
+            self._breadcrumb.set_frames(())
         if self._status is not None:
             self._status.go_idle()
         self._search_emit = self._make_gated_emit()
@@ -276,7 +302,10 @@ class ChatLayout(LayoutScreen):
         try:
             self.context.invoker.run(self.search_query, control=self.control, emit=emit)
         except BaseException as exc:
-            self.app.call_from_thread(self._apply_finished, "error", 0, 0.0, str(exc))
+            # Route the failure through the same gated emitter so a superseded
+            # worker's error is dropped on the pump (NB-10) instead of freezing
+            # the live search's status and posting a stale error turn.
+            emit(StreamingSearchFinished(outcome="error", total=0, elapsed=0.0, error=exc))
 
     @_runtime.pump_only
     async def _apply_event(self, generation: int, event: object) -> None:
@@ -497,7 +526,13 @@ class DetailScreen(ModalScreen[None]):
 
     @_runtime.pump_only
     def _present(self, header: RenderableType, body: RenderableType) -> None:
-        """Replace the header-only content with header + body (pump-side)."""
+        """Replace the header-only content with header + body (pump-side).
+
+        Thread workers cannot be interrupted, so a body build can land after the
+        modal was dismissed; bail when unmounted rather than raising ``NoMatches``.
+        """
+        if not self.is_mounted:
+            return
         body_widget = self.query_one("#detail-body", Static)
         body_widget.update(_RichGroup(header, body))
 
