@@ -31,11 +31,23 @@ from agentgrep.ui.widgets.status import (
     SearchingPanel,
     SpinnerWidget,
 )
+from agentgrep.ui.widgets.transcript import ConversationLog
+from agentgrep.ui.widgets.turns import (
+    ChatTurnKind,
+    MessageTurn,
+    QueryTurn,
+    ResultTurn,
+    SystemTurn,
+    Turn,
+    TurnRenderer,
+)
 
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
 __all__ = [
+    "ChatTurnKind",
     "CompletionDropdown",
+    "ConversationLog",
     "DetailFindInput",
     "DetailFindRequested",
     "DetailScroll",
@@ -44,8 +56,11 @@ __all__ = [
     "FilterInput",
     "FilterRequested",
     "HistoryRecall",
+    "MessageTurn",
     "MeterWidget",
     "PaneHeader",
+    "QueryTurn",
+    "ResultTurn",
     "ResultsHeader",
     "ResultsScrollChanged",
     "SearchInput",
@@ -53,4 +68,7 @@ __all__ = [
     "SearchResultsList",
     "SearchingPanel",
     "SpinnerWidget",
+    "SystemTurn",
+    "Turn",
+    "TurnRenderer",
 ]

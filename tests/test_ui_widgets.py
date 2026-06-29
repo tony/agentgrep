@@ -363,3 +363,60 @@ def test_detail_scroll_is_focusable_vertical_scroll() -> None:
     assert DetailScroll.can_focus is True
     binding_keys = {binding[0] for binding in DetailScroll.BINDINGS}
     assert {"j", "k", "h"} <= binding_keys
+
+
+_TURN_THEME = {
+    "accent": "#ffffff",
+    "ag-muted": "#909090",
+    "ag-dim": "#767676",
+    "error": "#cc0000",
+    "ag-agent-codex": "#00d7ff",
+    "ag-kind-prompt": "#b5bd68",
+}
+
+
+def test_turn_renderer_dispatches_by_turn_type() -> None:
+    """The renderer picks a distinct branch per turn type (singledispatch, NB-1)."""
+    from rich.text import Text
+
+    from agentgrep.ui.widgets import QueryTurn, SystemTurn, TurnRenderer
+
+    renderer = TurnRenderer(_TURN_THEME)
+    query = renderer.render(QueryTurn(1, "rust error"))
+    system = renderer.render(SystemTurn(1, "88 prompts", tone="muted"))
+    assert isinstance(query, Text)
+    assert "you" in query.plain
+    assert "rust error" in query.plain
+    assert "88 prompts" in system.plain
+
+
+def test_turn_renderer_result_is_bounded_to_first_line() -> None:
+    """A result turn renders only the first body line + compact path (NB-1)."""
+    from agentgrep.ui.widgets import ResultTurn, TurnRenderer
+
+    renderer = TurnRenderer(_TURN_THEME)
+    record = _make_record("first line\nSECOND LINE must not render")
+    rendered = renderer.render(ResultTurn(1, record))
+    assert "first line" in rendered.plain
+    assert "SECOND LINE" not in rendered.plain
+
+
+def test_turn_renderer_query_depth_indents() -> None:
+    """A deeper query turn is indented (the narrowing-depth cue)."""
+    from agentgrep.ui.widgets import QueryTurn, TurnRenderer
+
+    renderer = TurnRenderer(_TURN_THEME)
+    shallow = renderer.render(QueryTurn(1, "anyhow", depth=0)).plain
+    deep = renderer.render(QueryTurn(1, "anyhow", depth=2)).plain
+    assert deep.startswith(" ")
+    assert len(deep) > len(shallow)
+
+
+def test_message_turn_carries_value_object_and_kind_class() -> None:
+    """A MessageTurn keeps its Turn value object and tags a kind CSS class."""
+    from agentgrep.ui.widgets import MessageTurn, QueryTurn
+
+    turn = QueryTurn(1, "hi")
+    widget = MessageTurn(turn, "hi")
+    assert widget.turn is turn
+    assert "turn-query" in widget.classes

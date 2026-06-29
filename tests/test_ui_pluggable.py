@@ -76,6 +76,7 @@ class ResolveCase(t.NamedTuple):
 RESOLVE_CASES = (
     ResolveCase("layout-hud", "layout", "hud", "HudLayout"),
     ResolveCase("layout-greplog", "layout", "greplog", "GrepLogLayout"),
+    ResolveCase("layout-chat", "layout", "chat", "ChatLayout"),
     ResolveCase("workflow-search", "workflow", "search", "SearchWorkflow"),
     ResolveCase("workflow-browse", "workflow", "browse", "BrowseWorkflow"),
 )
@@ -99,7 +100,7 @@ def test_registry_lists_names_and_rejects_unknown() -> None:
     """Names are listed in display order and unknown lookups return ``None``."""
     from agentgrep.ui import registry
 
-    assert registry.layout_names() == ("hud", "greplog")
+    assert registry.layout_names() == ("hud", "greplog", "chat")
     assert registry.workflow_names() == ("search", "browse")
     assert registry.DEFAULT_LAYOUT == "hud"
     assert registry.DEFAULT_WORKFLOW == "search"
@@ -190,6 +191,9 @@ async def test_f2_cycles_through_layouts(
         assert type(app.screen).__name__ == "GrepLogLayout"
         await pilot.press("f2")
         await pilot.pause()
+        assert type(app.screen).__name__ == "ChatLayout"
+        await pilot.press("f2")
+        await pilot.pause()
         assert type(app.screen).__name__ == "HudLayout"
 
 
@@ -205,6 +209,9 @@ async def test_f2_resumes_launch_layout(
         await pilot.press("f2")
         await pilot.pause()
         assert type(app.screen).__name__ == "GrepLogLayout"
+        await pilot.press("f2")
+        await pilot.pause()
+        assert type(app.screen).__name__ == "ChatLayout"
         await pilot.press("f2")
         await pilot.pause()
         assert app.screen is hud
@@ -275,6 +282,9 @@ async def test_launch_query_resumes_launch_layout(
         assert type(app.screen).__name__ == "GrepLogLayout"
         await pilot.press("f2")
         await pilot.pause()
+        assert type(app.screen).__name__ == "ChatLayout"
+        await pilot.press("f2")
+        await pilot.pause()
         assert app.screen is hud
 
 
@@ -308,6 +318,9 @@ async def test_f3_updates_suspended_layout_workflow(
         greplog = app.screen
         assert type(greplog).__name__ == "GrepLogLayout"
         assert greplog.workflow.name == "search"
+        await pilot.press("f2")
+        await pilot.pause()
+        assert type(app.screen).__name__ == "ChatLayout"
         await pilot.press("f2")
         await pilot.pause()
         assert type(app.screen).__name__ == "HudLayout"
@@ -359,6 +372,8 @@ async def test_f3_browse_attaches_resumed_layout(
         await pilot.pause()
         greplog = t.cast(GrepLogLayout, app.screen)
         assert type(greplog).__name__ == "GrepLogLayout"
+        await pilot.press("f2")
+        await pilot.pause()
         await pilot.press("f2")
         await pilot.pause()
         await pilot.press("f3")

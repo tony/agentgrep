@@ -63,6 +63,12 @@ def _load_greplog() -> type[LayoutScreen]:
     return GrepLogLayout
 
 
+def _load_chat() -> type[LayoutScreen]:
+    from agentgrep.ui.layouts.chat import ChatLayout
+
+    return ChatLayout
+
+
 def _load_search() -> type[Workflow]:
     from agentgrep.ui.workflows.search import SearchWorkflow
 
@@ -79,6 +85,7 @@ def _load_browse() -> type[Workflow]:
 LAYOUTS: tuple[LayoutSpec, ...] = (
     LayoutSpec("hud", "Search box, streaming results list, and detail pane", _load_hud),
     LayoutSpec("greplog", "Append-only streaming grep log", _load_greplog),
+    LayoutSpec("chat", "Conversation transcript of streamed records", _load_chat),
 )
 
 #: The built-in workflows, in display order. The first is the default.
