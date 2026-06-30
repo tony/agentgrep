@@ -2,7 +2,7 @@ name: docs
 
 on:
   push:
-    branches: [master]
+    branches: [master, fix/mcp-search-tool-xref]
   pull_request:
 
 permissions:
@@ -75,27 +75,27 @@ jobs:
         run: just html
 
       - name: Configure AWS Credentials
-        if: env.BUILD_DOCS == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/master' && vars.AGENTGREP_DOCS_DEPLOY == 'true'
+        if: env.BUILD_DOCS == 'true' && github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/fix/mcp-search-tool-xref') && vars.AGENTGREP_DOCS_DEPLOY == 'true'
         uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AGENTGREP_DOCS_ROLE_ARN }}
           aws-region: us-east-1
 
       - name: Push documentation to S3
-        if: env.BUILD_DOCS == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/master' && vars.AGENTGREP_DOCS_DEPLOY == 'true'
+        if: env.BUILD_DOCS == 'true' && github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/fix/mcp-search-tool-xref') && vars.AGENTGREP_DOCS_DEPLOY == 'true'
         run: |
           aws s3 sync docs/_build/html "s3://${{ secrets.AGENTGREP_DOCS_BUCKET }}" \
             --delete --follow-symlinks
 
       - name: Invalidate CloudFront
-        if: env.BUILD_DOCS == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/master' && vars.AGENTGREP_DOCS_DEPLOY == 'true'
+        if: env.BUILD_DOCS == 'true' && github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/fix/mcp-search-tool-xref') && vars.AGENTGREP_DOCS_DEPLOY == 'true'
         run: |
           aws cloudfront create-invalidation \
             --distribution-id "${{ secrets.AGENTGREP_DOCS_DISTRIBUTION }}" \
-            --paths "/index.html" "/objects.inv" "/searchindex.js"
+            --paths "/*"
 
       - name: Purge cache on Cloudflare
-        if: env.BUILD_DOCS == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/master' && vars.AGENTGREP_DOCS_DEPLOY == 'true'
+        if: env.BUILD_DOCS == 'true' && github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/fix/mcp-search-tool-xref') && vars.AGENTGREP_DOCS_DEPLOY == 'true'
         uses: jakejarvis/cloudflare-purge-action@v0.3.0
         env:
           CLOUDFLARE_TOKEN: ${{ secrets.CLOUDFLARE_TOKEN }}
