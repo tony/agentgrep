@@ -10,7 +10,6 @@ sensitive `terms`, `pattern`, `sample_text`, and `cursor` fields.
 ## Prompt and Conversation Search
 
 ```{fastmcp-tool} search
-:no-index:
 ```
 
 **Use when** you need prompt records matching terms, query-language
