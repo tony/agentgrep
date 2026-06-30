@@ -138,6 +138,14 @@ sphinx-gp-theme = false
 sphinx-ux-autodoc-layout = false
 sphinx-ux-badges = false
 
+[tool.uv.sources]
+# TEMPORARY (preview only): build against gp-sphinx#60 — the canonical-first
+# tool-role cross-reference fix — before it ships in 0.0.1a32. Pairs with
+# dropping :no-index: from the search tool card so {tooliconl}`search` resolves
+# to the MCP tool instead of Sphinx's reserved "Search Page". Revert to the
+# version pin once sphinx-autodoc-fastmcp 0.0.1a32 is on PyPI.
+sphinx-autodoc-fastmcp = { git = "https://github.com/git-pull/gp-sphinx.git", branch = "fix/fastmcp-tool-ref-reserved-label-collision", subdirectory = "packages/sphinx-autodoc-fastmcp" }
+
 [tool.ty.environment]
 python-version = "3.14"
 

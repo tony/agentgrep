@@ -108,7 +108,7 @@ dev = [
     { name = "sphinx-autobuild" },
     { name = "sphinx-autodoc-api-style", specifier = "==0.0.1a31" },
     { name = "sphinx-autodoc-argparse", specifier = "==0.0.1a31" },
-    { name = "sphinx-autodoc-fastmcp", specifier = "==0.0.1a31" },
+    { name = "sphinx-autodoc-fastmcp", git = "https://github.com/git-pull/gp-sphinx.git?subdirectory=packages%2Fsphinx-autodoc-fastmcp&branch=fix%2Ffastmcp-tool-ref-reserved-label-collision" },
     { name = "syrupy", specifier = ">=5.1.0" },
     { name = "tomlkit", specifier = ">=0.13" },
     { name = "ty", specifier = ">=0.0.35" },
@@ -120,7 +120,7 @@ docs = [
     { name = "sphinx-autobuild" },
     { name = "sphinx-autodoc-api-style", specifier = "==0.0.1a31" },
     { name = "sphinx-autodoc-argparse", specifier = "==0.0.1a31" },
-    { name = "sphinx-autodoc-fastmcp", specifier = "==0.0.1a31" },
+    { name = "sphinx-autodoc-fastmcp", git = "https://github.com/git-pull/gp-sphinx.git?subdirectory=packages%2Fsphinx-autodoc-fastmcp&branch=fix%2Ffastmcp-tool-ref-reserved-label-collision" },
 ]
 
 [[package]]
@@ -1609,28 +1609,20 @@ wheels = [
 [[package]]
 name = "sphinx-autodoc-fastmcp"
 version = "0.0.1a31"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/git-pull/gp-sphinx.git?subdirectory=packages%2Fsphinx-autodoc-fastmcp&branch=fix%2Ffastmcp-tool-ref-reserved-label-collision#9c9fe50d5a1627e53fc04a7ff545a7c5b49d6c78" }
 dependencies = [
     { name = "sphinx" },
     { name = "sphinx-autodoc-typehints-gp" },
     { name = "sphinx-ux-autodoc-layout" },
     { name = "sphinx-ux-badges" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f7/c7/6bf1eae9bef8c1e329d15b29240b1c2fdefc82c59e7935bea5f873ac5ebe/sphinx_autodoc_fastmcp-0.0.1a31.tar.gz", hash = "sha256:a0c6cd7dc724ca519c84eafdb22608656997496ec40b5fd5f9dc6e47574c196c", size = 27544, upload-time = "2026-06-16T01:38:15.112Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/8b/21/12e67c80261e27739167167175acccc9bd465315dde3e19bae4cf56568c0/sphinx_autodoc_fastmcp-0.0.1a31-py3-none-any.whl", hash = "sha256:ee9d3c719eccfb4b8d8ec4054ab9c18e7bcc298d66c3e3a4d3af164628951dfd", size = 31460, upload-time = "2026-06-16T01:37:53.962Z" },
-]
 
 [[package]]
 name = "sphinx-autodoc-typehints-gp"
 version = "0.0.1a31"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/git-pull/gp-sphinx.git?subdirectory=packages%2Fsphinx-autodoc-typehints-gp&branch=fix%2Ffastmcp-tool-ref-reserved-label-collision#9c9fe50d5a1627e53fc04a7ff545a7c5b49d6c78" }
 dependencies = [
     { name = "sphinx" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/ac/6d/f509e55463159bfc4fff7196a7bac51116a0ecdc3b0e22f4102bab39be5c/sphinx_autodoc_typehints_gp-0.0.1a31.tar.gz", hash = "sha256:f269e2125c5de6bdeae159667bd8f92fadc81e1b2aa702ca8eb0cf55aee937f3", size = 36501, upload-time = "2026-06-16T01:38:18.006Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b0/07/eb1160f8c4e7adac433802f398cbe70c245c9d0ee5127209f880625bb2b9/sphinx_autodoc_typehints_gp-0.0.1a31-py3-none-any.whl", hash = "sha256:34140405eb5be548b034155f1424b8b9119be09470f102d7d4a1b7fc155cd16d", size = 38660, upload-time = "2026-06-16T01:37:58.325Z" },
 ]
 
 [[package]]
@@ -1745,25 +1737,17 @@ wheels = [
 [[package]]
 name = "sphinx-ux-autodoc-layout"
 version = "0.0.1a31"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/git-pull/gp-sphinx.git?subdirectory=packages%2Fsphinx-ux-autodoc-layout&branch=fix%2Ffastmcp-tool-ref-reserved-label-collision#9c9fe50d5a1627e53fc04a7ff545a7c5b49d6c78" }
 dependencies = [
     { name = "sphinx" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/38/17/fd806bccf73d5a4a1ab5504cdd9253b54a58ac393c7ecd4a9e5a8c239928/sphinx_ux_autodoc_layout-0.0.1a31.tar.gz", hash = "sha256:debebc1f632af4a7a7ca9a00285cc68419c08f73740f77241fc7beb2f39fa611", size = 30604, upload-time = "2026-06-16T01:38:23.168Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/da/d4/cc594472a755ced2702cf20d5e60db9c6714af6b362e3507445cd67a7763/sphinx_ux_autodoc_layout-0.0.1a31-py3-none-any.whl", hash = "sha256:06fbdaa8544118fac6a5c77e8fcf4309cae778fa1ace9b129e66d91731181fb7", size = 35000, upload-time = "2026-06-16T01:38:06.359Z" },
 ]
 
 [[package]]
 name = "sphinx-ux-badges"
 version = "0.0.1a31"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/git-pull/gp-sphinx.git?subdirectory=packages%2Fsphinx-ux-badges&branch=fix%2Ffastmcp-tool-ref-reserved-label-collision#9c9fe50d5a1627e53fc04a7ff545a7c5b49d6c78" }
 dependencies = [
     { name = "sphinx" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/ba/16/a861f04c971fc4668c84accc4a5ecd35e56c8bdd0e8ebd1baef28221caac/sphinx_ux_badges-0.0.1a31.tar.gz", hash = "sha256:274c9cfe5dc47ea8b98f32e5d04d92dac949bac7a87d2320b08231a68d83d2d5", size = 16723, upload-time = "2026-06-16T01:38:24.086Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/e2/e6/d5e95df77827691e1efd1411eea47c0ef75745040cb5247cbde47adb3440/sphinx_ux_badges-0.0.1a31-py3-none-any.whl", hash = "sha256:a757b65b3cef1d7ee0e2bf0f84ea1be32a8e063bd1620a4effc86478a594b2ee", size = 17487, upload-time = "2026-06-16T01:38:07.814Z" },
 ]
 
 [[package]]
