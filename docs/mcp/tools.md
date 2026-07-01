@@ -7,7 +7,6 @@ agentgrep's tools are read-only. They return structured Pydantic models and prot
 ## Prompt and Conversation Search
 
 ```{fastmcp-tool} search
-:no-index:
 ```
 
 **Use when** you need prompt records matching one or more terms. Pass
