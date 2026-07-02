@@ -55,6 +55,9 @@ conf = merge_sphinx_config(
             "<a href='https://github.com/tony/agentgrep/issues'>Feedback welcome</a>."
         ),
     },
+    # AGENTS.md is agent guidance, not a site page; keep Sphinx from
+    # treating it as an orphan document.
+    exclude_patterns=["_build", "AGENTS.md", "CLAUDE.md"],
 )
 
 conf["fastmcp_tool_modules"] = ["agentgrep_fastmcp"]
