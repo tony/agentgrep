@@ -43,9 +43,10 @@ There are no per-entry timestamps, so records share the file's mtime.
 ### cursor-cli.chats
 
 `~/.config/cursor/chats/<project_hash>/<session_uuid>/store.db` is a
-per-session SQLite database with a `meta` table (`agentId`,
-`latestRootBlobId`) and a `blobs` table of content-addressed protobuf
-messages forming a graph from the root blob. Cursor publishes no
+per-session SQLite database whose `meta` table holds a single row keyed
+`'0'` with hex-encoded JSON metadata (`agentId`, `latestRootBlobId`, …),
+alongside a `blobs` table of content-addressed protobuf messages forming
+a graph from the root blob. Cursor publishes no
 schema, so agentgrep walks the protobuf wire format generically and
 surfaces the readable UTF-8 runs it finds — a best-effort, date-versioned
 adapter. Because the extraction is noisier than and overlaps the JSONL

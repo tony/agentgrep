@@ -2200,7 +2200,8 @@ def parse_cursor_cli_chats_db(
     """Best-effort parse of a Cursor CLI ``chats/*/store.db`` blob store.
 
     The CLI persists each session as content-addressed protobuf blobs in
-    a ``blobs(id, data)`` table, rooted by ``meta``'s ``latestRootBlobId``.
+    a ``blobs(id, data)`` table; agentgrep reads every blob (the sibling
+    ``meta`` row's hex-encoded JSON metadata is not required).
     Cursor publishes no schema, so agentgrep walks the protobuf wire
     format generically (:func:`iter_protobuf_text_fields`) and surfaces
     the readable UTF-8 runs it finds. The adapter is versioned by

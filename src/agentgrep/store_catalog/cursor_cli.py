@@ -234,12 +234,13 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
         upstream_ref="agentgrep.parse_cursor_cli_chats_db / iter_protobuf_text_fields",
         schema_notes=(
             "Per-session SQLite with `meta(key, value)` and `blobs(id, data)` "
-            "tables. `meta` holds session metadata (`agentId`, "
-            "`latestRootBlobId`); `blobs` holds content-addressed protobuf "
-            "messages forming a Merkle graph from the root blob. Cursor "
-            "publishes no schema, so agentgrep walks the protobuf wire format "
-            "generically and surfaces readable UTF-8 runs — best-effort and "
-            "date-versioned, not an official format."
+            "tables. `meta` holds a single row keyed `'0'` whose value is "
+            "hex-encoded JSON nesting the session metadata (`agentId`, "
+            "`latestRootBlobId`, …); `blobs` holds content-addressed protobuf "
+            "messages (64-char sha256 ids) forming a Merkle graph from the root "
+            "blob. Cursor publishes no schema, so agentgrep walks the protobuf "
+            "wire format generically and surfaces readable UTF-8 runs — "
+            "best-effort and date-versioned, not an official format."
         ),
         distinguishes_from=("cursor-cli.transcripts",),
         coverage=StoreCoverage.INSPECTABLE,
