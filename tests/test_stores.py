@@ -921,6 +921,7 @@ PRIMARY_FIXTURES: tuple[tuple[str, str], ...] = (
     ("grok.subagents", "meta.json"),
     ("pi.sessions", "example.jsonl"),
     ("vscode.chat_sessions", "example.json"),
+    ("vscode.chat_sessions", "example.jsonl"),
 )
 
 

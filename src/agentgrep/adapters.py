@@ -2738,11 +2738,19 @@ def parse_vscode_chat_session(source: SourceHandle) -> cabc.Iterator[SearchRecor
     when present, an assistant record (the bare ``MarkdownString`` response parts
     with no ``kind``, joined). Tool-call names and the resolved workspace cwd are
     attached as metadata. Tolerates empty/draft turns and absent ``result``.
+
+    Current sessions are a ``.jsonl`` mutation log rebuilt by
+    :func:`_read_vscode_jsonl_session`; older ``.json`` sessions are one object.
     """
-    payload = read_json_file(source.path)
-    if not isinstance(payload, dict):
-        return
-    mapping = t.cast("dict[str, object]", payload)
+    if source.source_kind == "jsonl":
+        mapping = _read_vscode_jsonl_session(source.path)
+        if mapping is None:
+            return
+    else:
+        payload = read_json_file(source.path)
+        if not isinstance(payload, dict):
+            return
+        mapping = t.cast("dict[str, object]", payload)
     requests = mapping.get("requests")
     if not isinstance(requests, list):
         return
@@ -2801,6 +2809,68 @@ def parse_vscode_chat_session(source: SourceHandle) -> cabc.Iterator[SearchRecor
                 conversation_id=session_id,
                 metadata=metadata,
             )
+
+
+def _vscode_child(node: object, key: object) -> object:
+    """Return ``node[key]`` for a dict string key or list int index, else ``None``."""
+    if isinstance(node, dict) and isinstance(key, str):
+        return t.cast("dict[str, object]", node).get(key)
+    if isinstance(node, list) and isinstance(key, int) and 0 <= key < len(node):
+        return node[key]
+    return None
+
+
+def _read_vscode_jsonl_session(path: pathlib.Path) -> dict[str, object] | None:
+    """Reconstruct a Copilot Chat session from a ``chatSessions/<uuid>.jsonl`` log.
+
+    The newer serialization is a JSON-mutation log: the first ``kind: 0`` line
+    carries the full session snapshot under ``v``; ``kind: 1`` lines set a value
+    at key-path ``k``, and ``kind: 2`` lines insert the array ``v`` into the array
+    at ``k`` at index ``i`` (appended when ``i`` is out of range). Replaying the
+    log in file order rebuilds the ``requests`` list the single-object ``.json``
+    form stores directly, so one extraction handles both shapes.
+    """
+    session: dict[str, object] = {}
+    for record in iter_jsonl(path):
+        if not isinstance(record, dict):
+            continue
+        event = t.cast("dict[str, object]", record)
+        kind = event.get("kind")
+        value = event.get("v")
+        if kind == 0:
+            if isinstance(value, dict):
+                session = t.cast("dict[str, object]", value)
+            continue
+        keys = event.get("k")
+        if not (isinstance(keys, list) and keys):
+            continue
+        node: object = session
+        for key in keys[:-1]:
+            node = _vscode_child(node, key)
+            if node is None:
+                break
+        else:
+            last = keys[-1]
+            if kind == 1 and isinstance(node, dict) and isinstance(last, str):
+                t.cast("dict[str, object]", node)[last] = value
+            elif (
+                kind == 1
+                and isinstance(node, list)
+                and isinstance(last, int)
+                and 0 <= last < len(node)
+            ):
+                t.cast("list[object]", node)[last] = value
+            elif kind == 2 and isinstance(value, list):
+                target = _vscode_child(node, last)
+                if isinstance(target, list):
+                    index = event.get("i")
+                    at = (
+                        index
+                        if isinstance(index, int) and 0 <= index <= len(target)
+                        else len(target)
+                    )
+                    t.cast("list[object]", target)[at:at] = t.cast("list[object]", value)
+    return session or None
 
 
 def _vscode_response_text(response: object) -> str | None:

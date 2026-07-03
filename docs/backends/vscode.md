@@ -27,10 +27,14 @@ layout under their own `User/` directory.
 
 ### vscode.chat_sessions
 
-Each session is one JSON object. Per-workspace transcripts live under
-`workspaceStorage/<hash>/chatSessions/<uuid>.json`; sessions opened
+Per-workspace transcripts live under
+`workspaceStorage/<hash>/chatSessions/<uuid>.jsonl`; sessions opened
 without a folder live under `globalStorage/emptyWindowChatSessions/`.
-The turn list is `requests[]`:
+Current sessions are a JSONL mutation log — the first `kind:0` line holds
+the whole session snapshot under `v`, then `kind:1` lines set a value at a
+key-path and `kind:2` lines insert into an array, rebuilding the `requests[]`
+turn list that older single-object `.json` sessions store directly. agentgrep
+replays the log in file order, so the same fields drive both shapes:
 
 | Field | Record |
 |-------|--------|

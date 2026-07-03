@@ -9270,6 +9270,208 @@ def test_parse_vscode_chat_session_tolerates_empty_and_draft_turns(
     assert [(r.kind, r.text) for r in records] == [("prompt", "only a prompt")]
 
 
+class VscodeJsonlCase(t.NamedTuple):
+    """One VS Code ``.jsonl`` mutation-log session and its expected records."""
+
+    test_id: str
+    lines: tuple[str, ...]
+    expected: tuple[tuple[str, str, str], ...]
+
+
+VSCODE_JSONL_CASES: tuple[VscodeJsonlCase, ...] = (
+    VscodeJsonlCase(
+        test_id="snapshot-only-single-turn",
+        lines=(
+            json.dumps(
+                {
+                    "kind": 0,
+                    "v": {
+                        "sessionId": "s",
+                        "requests": [
+                            {
+                                "message": {"text": "hello"},
+                                "response": [{"value": "hi there"}],
+                                "timestamp": 1779999665000,
+                            },
+                        ],
+                    },
+                },
+            ),
+        ),
+        expected=(
+            ("prompt", "user", "hello"),
+            ("history", "assistant", "hi there"),
+        ),
+    ),
+    VscodeJsonlCase(
+        test_id="event-appends-second-turn",
+        lines=(
+            json.dumps(
+                {
+                    "kind": 0,
+                    "v": {
+                        "sessionId": "s",
+                        "requests": [
+                            {
+                                "message": {"text": "first"},
+                                "response": [{"value": "r1"}],
+                                "timestamp": 1,
+                            },
+                        ],
+                    },
+                },
+            ),
+            json.dumps(
+                {
+                    "kind": 2,
+                    "k": ["requests"],
+                    "i": 1,
+                    "v": [
+                        {
+                            "message": {"text": "second"},
+                            "response": [{"value": "r2"}],
+                            "timestamp": 2,
+                        },
+                    ],
+                },
+            ),
+        ),
+        expected=(
+            ("prompt", "user", "first"),
+            ("history", "assistant", "r1"),
+            ("prompt", "user", "second"),
+            ("history", "assistant", "r2"),
+        ),
+    ),
+    VscodeJsonlCase(
+        test_id="event-streams-response-parts",
+        lines=(
+            json.dumps(
+                {
+                    "kind": 0,
+                    "v": {
+                        "sessionId": "s",
+                        "requests": [
+                            {"message": {"text": "q"}, "response": [], "timestamp": 1},
+                        ],
+                    },
+                },
+            ),
+            json.dumps(
+                {"kind": 2, "k": ["requests", 0, "response"], "i": 0, "v": [{"value": "part1 "}]},
+            ),
+            json.dumps(
+                {"kind": 2, "k": ["requests", 0, "response"], "i": 1, "v": [{"value": "part2"}]},
+            ),
+        ),
+        expected=(
+            ("prompt", "user", "q"),
+            ("history", "assistant", "part1 part2"),
+        ),
+    ),
+    VscodeJsonlCase(
+        test_id="skips-non-object-lines",
+        lines=(
+            json.dumps([]),
+            json.dumps(
+                {
+                    "kind": 0,
+                    "v": {
+                        "sessionId": "s",
+                        "requests": [{"message": {"text": "ok"}, "timestamp": 1}],
+                    },
+                },
+            ),
+        ),
+        expected=(("prompt", "user", "ok"),),
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    VSCODE_JSONL_CASES,
+    ids=[c.test_id for c in VSCODE_JSONL_CASES],
+)
+def test_parse_vscode_chat_session_jsonl_event_log(
+    case: VscodeJsonlCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """The ``.jsonl`` mutation log rebuilds turns before the shared extraction runs."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    path = tmp_path / "session.jsonl"
+    _ = path.write_text("\n".join(case.lines) + "\n", encoding="utf-8")
+    source = agentgrep.SourceHandle(
+        agent="vscode",
+        store="vscode.chat_sessions",
+        adapter_id="vscode.chat_sessions_json.v1",
+        path=path,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=path.parent,
+        mtime_ns=0,
+    )
+
+    records = list(agentgrep.iter_source_records(source))
+
+    assert [(r.kind, r.role, r.text) for r in records] == list(case.expected)
+
+
+class VscodeDiscoveryCase(t.NamedTuple):
+    """A chat-session filename and the on-disk content to seed for discovery."""
+
+    test_id: str
+    filename: str
+    content: str
+
+
+VSCODE_DISCOVERY_CASES: tuple[VscodeDiscoveryCase, ...] = (
+    VscodeDiscoveryCase(
+        test_id="legacy-json-object",
+        filename="s.json",
+        content=json.dumps({"sessionId": "x", "requests": []}),
+    ),
+    VscodeDiscoveryCase(
+        test_id="current-jsonl-log",
+        filename="s.jsonl",
+        content=json.dumps({"kind": 0, "v": {"sessionId": "x", "requests": []}}),
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    VSCODE_DISCOVERY_CASES,
+    ids=[c.test_id for c in VSCODE_DISCOVERY_CASES],
+)
+def test_discover_vscode_finds_json_and_jsonl_sessions(
+    case: VscodeDiscoveryCase,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both the legacy ``.json`` and current ``.jsonl`` chat sessions are discovered."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    roaming = tmp_path / "Roaming"
+    monkeypatch.setenv("VSCODE_APPDATA", str(roaming))
+    session = (
+        roaming / "Code" / "User" / "workspaceStorage" / "hash1" / "chatSessions" / case.filename
+    )
+    session.parent.mkdir(parents=True)
+    _ = session.write_text(case.content, encoding="utf-8")
+
+    sources = agentgrep.discover_sources(
+        home,
+        ("vscode",),
+        agentgrep.BackendSelection(None, None, None),
+    )
+
+    assert session in {s.path for s in sources}
+
+
 def test_vscode_workspace_cwd_resolves_wsl_remote(tmp_path: pathlib.Path) -> None:
     """A sibling workspace.json maps a WSL remote folder URI to the Linux path."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
