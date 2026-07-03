@@ -12277,6 +12277,89 @@ def test_unix_to_isoformat_edge_cases(
         assert result.startswith(expected), f"{test_id}: {result!r}"
 
 
+class OpencodeModelCase(t.NamedTuple):
+    """An OpenCode message.data shape and the model id it should surface."""
+
+    test_id: str
+    message_data: dict[str, object]
+    expected_model: str | None
+
+
+OPENCODE_MODEL_CASES: tuple[OpencodeModelCase, ...] = (
+    OpencodeModelCase(
+        test_id="assistant-top-level-modelid",
+        message_data={
+            "role": "assistant",
+            "time": {"created": 1780000000000},
+            "modelID": "anthropic/opus",
+        },
+        expected_model="anthropic/opus",
+    ),
+    OpencodeModelCase(
+        test_id="user-nested-model-modelid",
+        message_data={
+            "role": "user",
+            "time": {"created": 1780000000000},
+            "model": {"providerID": "google", "modelID": "gemma-4"},
+        },
+        expected_model="gemma-4",
+    ),
+    OpencodeModelCase(
+        test_id="no-model-yields-none",
+        message_data={"role": "user", "time": {"created": 1780000000000}},
+        expected_model=None,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    OPENCODE_MODEL_CASES,
+    ids=[c.test_id for c in OPENCODE_MODEL_CASES],
+)
+def test_parse_opencode_db_message_model(
+    case: OpencodeModelCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """User-message model comes from nested data.model.modelID; assistant top-level."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    db_path = tmp_path / "opencode.db"
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute("CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT, directory TEXT)")
+        conn.execute("CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, data TEXT)")
+        conn.execute(
+            "CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, data TEXT)",
+        )
+        conn.execute("INSERT INTO session VALUES (?, ?, ?)", ("ses_1", "T", "/w"))
+        conn.execute(
+            "INSERT INTO message VALUES (?, ?, ?)",
+            ("msg_1", "ses_1", json.dumps(case.message_data)),
+        )
+        conn.execute(
+            "INSERT INTO part VALUES (?, ?, ?, ?)",
+            ("prt_1", "msg_1", "ses_1", json.dumps({"type": "text", "text": "hi"})),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    source = agentgrep.SourceHandle(
+        agent="opencode",
+        store="opencode.db",
+        adapter_id="opencode.db_sqlite.v1",
+        path=db_path,
+        path_kind="sqlite_db",
+        source_kind="sqlite",
+        search_root=None,
+        mtime_ns=1,
+    )
+
+    records = list(agentgrep.iter_source_records(source))
+
+    assert len(records) == 1
+    assert records[0].model == case.expected_model
+
+
 def test_parse_grok_subagents_emits_dispatch_prompt() -> None:
     """grok.subagents meta.json yields the delegated prompt as one record."""
     from tests.conftest import fixture_path

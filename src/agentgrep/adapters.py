@@ -1967,6 +1967,21 @@ def _opencode_part_text(part_type: str, part_data: dict[str, object]) -> str | N
     return None
 
 
+def _opencode_message_model(message_data: dict[str, object]) -> str | None:
+    """Return a message's model id.
+
+    Assistant messages carry a top-level ``modelID``; user messages nest the
+    selected model under ``model.modelID`` (``{providerID, modelID}``).
+    """
+    model = as_optional_str(message_data.get("modelID"))
+    if model:
+        return model
+    nested = message_data.get("model")
+    if isinstance(nested, dict):
+        return as_optional_str(t.cast("dict[str, object]", nested).get("modelID"))
+    return None
+
+
 def parse_opencode_db(
     source: SourceHandle,
 ) -> cabc.Iterator[SearchRecord]:
@@ -1975,8 +1990,10 @@ def parse_opencode_db(
     Joins ``part`` -> ``message`` -> ``session``: each text-bearing part
     becomes one record whose ``kind`` is derived from the joined message
     ``role`` (user -> prompt, else history), with the session title,
-    working directory, and the message model/timestamp attached. Degrades
-    gracefully when the expected tables or columns are absent.
+    working directory, and the message model/timestamp attached. The model
+    id is top-level ``modelID`` on assistant messages and nested under
+    ``model.modelID`` on user messages. Degrades gracefully when the expected
+    tables or columns are absent.
     """
     connection = open_readonly_sqlite(source.path)
     try:
@@ -2022,7 +2039,7 @@ def parse_opencode_db(
                 title=as_optional_str(title_raw),
                 role=role,
                 timestamp=_unix_millis_to_isoformat(created),
-                model=as_optional_str(message_data.get("modelID")),
+                model=_opencode_message_model(message_data),
                 session_id=session_id,
                 conversation_id=session_id,
                 metadata={"directory": directory} if directory else {},

@@ -39,7 +39,10 @@ reasoning parts require `--scope conversations` or `--scope all`.
 | `title` | TEXT | Session title |
 | `time_created` / `time_updated` | INTEGER | Unix milliseconds |
 
-`message` table — `id`, `session_id` (FK), and a `data` JSON column:
+`message` table — `id`, `session_id` (FK), and a `data` JSON column.
+Assistant messages carry a top-level `modelID`/`providerID`/`path.cwd`;
+user messages instead nest the selected model under `model.modelID`, so
+agentgrep reads `modelID` and falls back to `model.modelID`:
 
 ```json
 {"role": "assistant", "modelID": "...", "providerID": "...",
