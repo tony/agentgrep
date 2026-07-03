@@ -46,6 +46,9 @@ inspectable (opt-in) rather than searched by default.
 
 ## Path hashing
 
-Gemini hashes project roots with SHA-256 to derive directory names.
-agentgrep exposes {func}`~agentgrep.store_catalog.gemini_project_hash`
-to reproduce this derivation.
+Legacy `tmp/` project directories are named by the SHA-256 of the
+project root; current Gemini CLI also uses timestamp-style and plain
+project-basename directory names. Discovery does not depend on the
+scheme — agentgrep walks `tmp/` recursively — but agentgrep still
+exposes {func}`~agentgrep.store_catalog.gemini_project_hash` to
+reproduce the legacy hash directories.
