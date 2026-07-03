@@ -57,9 +57,12 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
         observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
-            "JSONL full session transcripts. `type` field discriminates "
-            "system/user/assistant/tool_use/tool_result. `content` is text "
-            "or content-blocks array. Includes tool calls and usage stats."
+            "JSONL full session transcripts. `type` discriminates "
+            "system/user/assistant/reasoning/tool_result/backend_tool_call. "
+            "Assistant tool calls live in a `tool_calls` array on the "
+            "assistant record; `backend_tool_call` records host-side calls. "
+            "`reasoning` stores its text under `encrypted_content` (encrypted, "
+            "not searchable). `content` is text or a content-blocks array."
         ),
         sample_record=(
             '{"type":"user","content":"<redacted>","timestamp":"2026-05-25T10:00:01.000000000Z"}'
@@ -93,7 +96,9 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         schema_notes=(
             "SQLite with FTS5. Table `session_docs`: session_id, cwd, "
             "updated_at (unix seconds), title (generated), content "
-            "(full-text index), content_hash. Schema version 3."
+            "(full-text index), content_hash, last_indexed_offset. A `meta` "
+            "table carries session_search_schema_version (3) and "
+            "last_bootstrap_at; `PRAGMA user_version` stays 0."
         ),
         search_by_default=True,
         search_notes=(
