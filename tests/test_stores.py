@@ -875,11 +875,23 @@ def test_cursor_cli_skills_discovery_scoped_to_skill_roots(
     assert (skill_md in skill_paths) is case.discovered
 
 
+@pytest.mark.parametrize(
+    ("test_id", "agent_dir_present"),
+    [("agent-dir-present", True), ("agent-dir-absent", False)],
+    ids=["agent-dir-present", "agent-dir-absent"],
+)
 def test_discover_pi_context_mode_db_is_reachable(
+    test_id: str,
+    agent_dir_present: bool,
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The pi context-mode SQLite store is discovered under include_non_default."""
+    """pi.context_mode_db is discovered even when the agent dir is absent.
+
+    The agent-dir-absent case guards the early-return: the context-mode root
+    lives at ``~/.pi/context-mode`` independent of ``~/.pi/agent``.
+    """
+    del test_id
     import sqlite3
 
     import agentgrep
@@ -888,7 +900,8 @@ def test_discover_pi_context_mode_db_is_reachable(
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
     monkeypatch.delenv("PI_CODING_AGENT_SESSION_DIR", raising=False)
-    (home / ".pi" / "agent").mkdir(parents=True)
+    if agent_dir_present:
+        (home / ".pi" / "agent").mkdir(parents=True)
     ctx_db = home / ".pi" / "context-mode" / "sessions" / "0123456789abcdef.db"
     ctx_db.parent.mkdir(parents=True)
     connection = sqlite3.connect(ctx_db)

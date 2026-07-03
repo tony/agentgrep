@@ -1189,12 +1189,13 @@ def discover_pi_sources(
         agent_dir / "sessions",
         label="PI_CODING_AGENT_SESSION_DIR",
     )
-    if not agent_dir.exists() and not session_dir.exists():
+    context_mode_dir = home / ".pi" / "context-mode"
+    if not agent_dir.exists() and not session_dir.exists() and not context_mode_dir.exists():
         return []
     roots: dict[str, DiscoveryRoot] = {
         "default": agent_dir,
         "pi_session": session_dir,
-        "pi_context_mode": home / ".pi" / "context-mode",
+        "pi_context_mode": context_mode_dir,
     }
     return discover_from_catalog(
         home,
