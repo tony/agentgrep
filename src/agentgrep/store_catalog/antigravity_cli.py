@@ -90,10 +90,12 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes=(
             "Readable JSONL transcript log under a brain conversation's "
-            "`.system_generated/logs/`. Each line is a step record "
-            "(`type`, `source`, `status`, `created_at`, `content`); string "
-            "`content` carries the user/assistant/tool turns. This is the "
-            "readable counterpart to the opaque protobuf "
+            "`.system_generated/logs/`. Each line is a step record with a "
+            "universal `step_index` plus `type`, `source`, `status`, "
+            "`created_at`; `content` (a string) carries user/assistant turns "
+            "but is absent on tool/thinking-only lines, where the payload is in "
+            "`tool_calls` or `thinking` instead (an occasional `error` key also "
+            "appears). This is the readable counterpart to the opaque protobuf "
             "`antigravity-cli.conversations` and reaches text the brain "
             "Markdown glob cannot. The truncated `transcript.jsonl` sibling is "
             "skipped in favour of `transcript_full.jsonl`."
