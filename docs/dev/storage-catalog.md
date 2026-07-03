@@ -410,8 +410,9 @@ credentials, never enumerated).
 
 ## Adding or updating a store
 
-1. Edit `src/agentgrep/store_catalog.py`. Stamp `observed_version`
-   and `observed_at` against the version you actually inspected.
+1. Edit the per-agent module under `src/agentgrep/store_catalog/`
+   (e.g. `vscode.py`). Stamp `observed_version` and `observed_at`
+   against the version you actually inspected.
 2. Add an `upstream_ref` (preferred) or a `sample_record` so future
    readers can verify the schema.
 3. If the new store overlaps a sibling, name it in
