@@ -904,6 +904,44 @@ def test_descriptor_round_trips_through_json() -> None:
     assert restored == sample
 
 
+class SettingsFileCase(t.NamedTuple):
+    """A config file a store's discovery must enumerate."""
+
+    test_id: str
+    store_id: str
+    filename: str
+
+
+SETTINGS_FILE_CASES: tuple[SettingsFileCase, ...] = (
+    SettingsFileCase(
+        test_id="claude-settings-remote",
+        store_id="claude.settings",
+        filename="remote-settings.json",
+    ),
+    SettingsFileCase(
+        test_id="claude-settings-local",
+        store_id="claude.settings",
+        filename="settings.local.json",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    SettingsFileCase._fields,
+    SETTINGS_FILE_CASES,
+    ids=[case.test_id for case in SETTINGS_FILE_CASES],
+)
+def test_settings_discovery_enumerates_file(
+    test_id: str,
+    store_id: str,
+    filename: str,
+) -> None:
+    """The named config file is among the store's discovery ``files``."""
+    del test_id
+    files = {name for spec in CATALOG.by_id(store_id).discovery for name in spec.files}
+    assert filename in files
+
+
 PRIMARY_FIXTURES: tuple[tuple[str, str], ...] = (
     ("claude.projects.session", "example.jsonl"),
     ("claude.projects.subagent", "example.jsonl"),

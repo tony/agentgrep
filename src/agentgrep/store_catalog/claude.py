@@ -470,6 +470,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
                 files=(
                     "settings.json",
                     "settings.local.json",
+                    "remote-settings.json",
                     "keybindings.json",
                     "policy-limits.json",
                     "mcp-needs-auth-cache.json",
