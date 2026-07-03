@@ -175,9 +175,11 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
         observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
-            "Per-session event stream with turn-level lifecycle events: "
-            "turn_started, loop_started, phase_changed, tool_started, "
-            "tool_finished. Schema version 1.0."
+            "Per-session event stream. `type` values include turn_started, "
+            "turn_ended, loop_started, first_token, phase_changed, "
+            "tool_started, tool_completed, permission_requested/resolved, and "
+            "an mcp_* lifecycle family (illustrative, not exhaustive). A "
+            'per-record `schema_version` ("1.0") rides on turn_started.'
         ),
     ),
     StoreDescriptor(
