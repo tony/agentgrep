@@ -39,10 +39,10 @@ are requested.
 `brain/<conversation_uuid>/.system_generated/logs/transcript_full.jsonl`
 is a readable JSONL log of the conversation. Each line is a step record
 with a universal `step_index` plus `type`, `source`, `status`,
-`created_at`. A string `content` holds user/assistant turns; some lines
-add readable payload in `thinking`/`tool_calls` (which may co-occur with
-`content`, not only replace it); and some lines (e.g.
-`CONVERSATION_HISTORY`) carry none of the three. This is the readable
+`created_at`. agentgrep surfaces the string `content` (user/assistant
+turns); lines without `content` — `thinking`/`tool_calls`-only lines
+(e.g. `PLANNER_RESPONSE`) and payload-less lines (e.g.
+`CONVERSATION_HISTORY`) — yield no record. This is the readable
 counterpart to
 the opaque protobuf `antigravity-cli.conversations` and reaches text the
 brain Markdown glob cannot. agentgrep discovers the untruncated
