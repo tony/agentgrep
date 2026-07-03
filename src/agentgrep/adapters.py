@@ -511,6 +511,9 @@ def parse_claude_project_file(
         else _iter_jsonl(source.path, reverse=reverse)
     )
     for event in events:
+        if isinstance(event, dict) and event.get("isCompactSummary") is True:
+            # `/compact` machine summaries are derived recaps, not user turns.
+            continue
         for candidate in iter_message_candidates(
             event,
             fallback_conversation_id=conversation_id,

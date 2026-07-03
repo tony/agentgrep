@@ -6695,6 +6695,70 @@ def test_plan_search_sources_prefilters_one_root_once(
     assert [source.path for source in planned] == [first]
 
 
+class ClaudeCompactCase(t.NamedTuple):
+    """One Claude project record and whether it should yield a search record."""
+
+    test_id: str
+    record: dict[str, object]
+    emits: bool
+
+
+CLAUDE_COMPACT_CASES: tuple[ClaudeCompactCase, ...] = (
+    ClaudeCompactCase(
+        test_id="normal-user-turn-emitted",
+        record={
+            "type": "user",
+            "uuid": "u1",
+            "sessionId": "s",
+            "timestamp": "2026-05-25T10:00:00Z",
+            "message": {"role": "user", "content": "a real user prompt"},
+        },
+        emits=True,
+    ),
+    ClaudeCompactCase(
+        test_id="compact-summary-skipped",
+        record={
+            "type": "user",
+            "isCompactSummary": True,
+            "uuid": "u2",
+            "sessionId": "s",
+            "timestamp": "2026-05-25T10:00:00Z",
+            "message": {"role": "user", "content": "a /compact machine recap"},
+        },
+        emits=False,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    CLAUDE_COMPACT_CASES,
+    ids=[c.test_id for c in CLAUDE_COMPACT_CASES],
+)
+def test_parse_claude_project_skips_compact_summaries(
+    case: ClaudeCompactCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """`isCompactSummary: true` records are dropped; normal user turns are kept."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    path = tmp_path / "session.jsonl"
+    _ = path.write_text(json.dumps(case.record) + "\n", encoding="utf-8")
+    source = agentgrep.SourceHandle(
+        agent="claude",
+        store="claude.projects",
+        adapter_id="claude.projects_jsonl.v1",
+        path=path,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=1,
+    )
+
+    records = list(agentgrep.iter_source_records(source))
+
+    assert bool(records) is case.emits
+
+
 def test_plan_search_sources_prunes_chat_sources_from_prompt_scope(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
