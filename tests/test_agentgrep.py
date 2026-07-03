@@ -1930,6 +1930,85 @@ def test_parse_pi_session_raw_prefilter_preserves_header(
     assert decoded_payloads == [header_line, match_line]
 
 
+class PiBashExecutionCase(t.NamedTuple):
+    """A pi ``bashExecution`` message and the searchable text it should yield."""
+
+    test_id: str
+    message: dict[str, object]
+    expected_text: str | None
+
+
+PI_BASH_EXECUTION_CASES: tuple[PiBashExecutionCase, ...] = (
+    PiBashExecutionCase(
+        test_id="command-and-output-joined",
+        message={
+            "role": "bashExecution",
+            "command": "ls -la",
+            "output": "total 0",
+            "excludeFromContext": False,
+        },
+        expected_text="ls -la\ntotal 0",
+    ),
+    PiBashExecutionCase(
+        test_id="command-only",
+        message={"role": "bashExecution", "command": "pwd", "output": ""},
+        expected_text="pwd",
+    ),
+    PiBashExecutionCase(
+        test_id="empty-yields-nothing",
+        message={"role": "bashExecution", "command": "", "output": ""},
+        expected_text=None,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    PI_BASH_EXECUTION_CASES,
+    ids=[c.test_id for c in PI_BASH_EXECUTION_CASES],
+)
+def test_parse_pi_session_extracts_bash_execution(
+    case: PiBashExecutionCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """`bashExecution` turns surface their joined command/output as history."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    path = tmp_path / "sess.jsonl"
+    header = json.dumps(
+        {
+            "type": "session",
+            "id": "pi-sess-1",
+            "timestamp": "2026-05-30T12:00:00.000Z",
+            "cwd": "/home/user/proj",
+            "version": 3,
+        },
+    )
+    entry = json.dumps(
+        {
+            "type": "message",
+            "id": "b1",
+            "parentId": None,
+            "timestamp": "2026-05-30T12:00:01.000Z",
+            "message": case.message,
+        },
+    )
+    _ = path.write_text("\n".join((header, entry)) + "\n", encoding="utf-8")
+    source = agentgrep.SourceHandle(
+        agent="pi",
+        store="pi.sessions",
+        adapter_id="pi.sessions_jsonl.v1",
+        path=path,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=1,
+    )
+
+    texts = [record.text for record in agentgrep.iter_source_records(source)]
+
+    assert texts == ([] if case.expected_text is None else [case.expected_text])
+
+
 def test_parse_codex_session_reverse_preserves_header(
     tmp_path: pathlib.Path,
 ) -> None:

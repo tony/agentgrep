@@ -1338,6 +1338,17 @@ def _unix_millis_to_isoformat(value: object) -> str | None:
         return None
 
 
+def _pi_bash_execution_text(message_map: dict[str, object]) -> str | None:
+    """Join a ``bashExecution`` turn's command and output into searchable text.
+
+    ``bashExecution`` messages have no ``content``; the shell command and its
+    captured output live in the ``command`` and ``output`` string fields.
+    """
+    command = as_optional_str(message_map.get("command"))
+    output = as_optional_str(message_map.get("output"))
+    return "\n".join(part for part in (command, output) if part) or None
+
+
 def _pi_message_candidate(
     entry: dict[str, object],
     entry_timestamp: str | None,
@@ -1350,6 +1361,8 @@ def _pi_message_candidate(
     ``content`` that is a string or content-blocks array). The
     entry-level ISO timestamp is preferred; the inner unix-milliseconds
     ``timestamp`` is the fallback for v1 entries that lack one.
+    ``bashExecution`` turns carry no ``content``; their command and output
+    are joined instead.
     """
     message = entry.get("message")
     if not isinstance(message, dict):
@@ -1357,6 +1370,8 @@ def _pi_message_candidate(
     message_map = t.cast("dict[str, object]", message)
     role = as_optional_str(message_map.get("role"))
     text = flatten_content_value(t.cast("JSONValue | None", message_map.get("content")))
+    if not text and role == "bashExecution":
+        text = _pi_bash_execution_text(message_map)
     if role is None or not text:
         return None
     timestamp = entry_timestamp or _unix_millis_to_isoformat(message_map.get("timestamp"))
