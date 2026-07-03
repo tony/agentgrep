@@ -35,10 +35,11 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
             "is reconstructed by joining part -> message -> session. Channel "
             "installs use `opencode-<channel>.db`; `OPENCODE_DB` overrides the "
             "path (also `:memory:`/absolute). The same file also carries the "
-            "unreleased v2 event-sourced tables `session_input`, "
-            "`session_message`, `event`/`event_sequence`, and `todo`; in stable "
-            "installs these are empty beta state, the canonical transcript "
-            "staying in `session`/`message`/`part`, so they are not searched. "
+            "v2 event-sourced tables `session_input`, `session_message`, "
+            "`event`/`event_sequence`, and `todo`; `event` is now populated on "
+            "stable installs and mirrors the `part` transcript text, so it is "
+            "left unsearched to avoid duplicate hits — the canonical transcript "
+            "stays in `session`/`message`/`part`. "
             "Secret-bearing `account`, `account_state`, `control_account`, and "
             "`credential` tables are present but never enumerated — the adapter "
             "reads only text-bearing `part` rows."
@@ -82,9 +83,10 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
         schema_notes=(
             "Pre-migration on-disk layout: one JSON file per session/message/"
             "part. A startup migration folds these into opencode.db; migrated "
-            "installs keep only an empty `storage/session_diff/` and a "
-            "`storage/migration` marker. Documentary — relevant only to older, "
-            "un-migrated installs."
+            "installs keep a `storage/session_diff/` of small per-session `[]` "
+            "marker files and a `storage/migration` marker, with no searchable "
+            "session/message/part JSON left. Documentary — relevant only to "
+            "older, un-migrated installs."
         ),
         distinguishes_from=("opencode.db",),
         search_by_default=False,

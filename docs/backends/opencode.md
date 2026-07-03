@@ -60,11 +60,12 @@ prompt, otherwise history). Tool, file, snapshot, patch, and step-marker
 parts are metadata and stay outside default search. Message timestamps
 are unix-milliseconds and are normalized to ISO-8601.
 
-The same `opencode.db` file also carries OpenCode's unreleased v2
-event-sourced tables — `session_input`, `session_message`,
-`event`/`event_sequence`, and `todo`. On stable installs these are empty
-beta state; the canonical transcript stays in `session`/`message`/`part`,
-so agentgrep does not search them. The secret-bearing `account`,
+The same `opencode.db` file also carries OpenCode's v2 event-sourced
+tables — `session_input`, `session_message`, `event`/`event_sequence`,
+and `todo`. The `event` table is now populated on stable installs and
+mirrors the `part` transcript text, so agentgrep leaves it unsearched to
+avoid duplicate hits; the canonical transcript stays in
+`session`/`message`/`part`. The secret-bearing `account`,
 `account_state`, `control_account`, and `credential` tables are present
 but never enumerated — the adapter reads only text-bearing `part` rows.
 
