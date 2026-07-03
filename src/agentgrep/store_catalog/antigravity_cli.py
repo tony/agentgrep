@@ -55,10 +55,11 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes=(
             "One SQLite database per conversation. Table `steps` contains "
-            "`idx`, `step_type`, `status`, `metadata`, `task_details`, "
-            "`step_payload` protobuf blobs, and `step_format`; companion "
-            "metadata tables hold protobuf blobs. No public schema is "
-            "available, so agentgrep extracts readable protobuf strings "
+            "`idx`, `step_type`, `status`, `has_subtrajectory`, `metadata`, "
+            "`error_details`, `permissions`, `task_details`, `render_info`, "
+            "`step_payload` (mostly protobuf blobs), and `step_format`; "
+            "companion metadata tables hold protobuf blobs. No public schema "
+            "is available, so agentgrep extracts readable protobuf strings "
             "best-effort."
         ),
         sample_record="steps(idx=1, step_payload=<protobuf>, step_format=1)",
