@@ -23,7 +23,7 @@ from agentgrep.store_catalog.windsurf import _WINDSURF_STORES
 from agentgrep.stores import StoreCatalog
 
 CATALOG = StoreCatalog(
-    catalog_version=32,
+    catalog_version=33,
     captured_at=_VSCODE_OBSERVED_AT,
     stores=(
         *_CLAUDE_STORES,
