@@ -50,7 +50,8 @@ wraps an LLM message; `role` is `user`, `assistant`, or `toolResult`,
 and `content` is a string or a content-blocks array. Assistant turns
 carry `model` and `provider` inline. A `bashExecution` role has no
 `content`; agentgrep joins its shell `command` and `output` as the
-searchable text.
+searchable text. Error/aborted assistant turns carry a diagnostic
+`errorMessage` string in place of `content`.
 
 ```json
 {"type": "message", "id": "...", "parentId": "...",

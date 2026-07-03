@@ -38,9 +38,11 @@ _PI_STORES: tuple[StoreDescriptor, ...] = (
             "(`role` user/assistant/toolResult, `content` string or "
             "content-blocks; assistant turns carry `model`/`provider`; a "
             "`bashExecution` role has no `content` and carries its shell "
-            "`command`/`output` instead); `compaction`/`branch_summary` carry "
-            "a `summary`; `session_info` carries a user-set `name`. No "
-            "separate prompt-history log or SQLite index exists."
+            "`command`/`output` instead; error/aborted assistant turns carry a "
+            "diagnostic `errorMessage` string in place of `content`); "
+            "`compaction`/`branch_summary` carry a `summary`; `session_info` "
+            "carries a user-set `name`. No separate prompt-history log or "
+            "SQLite index exists."
         ),
         sample_record=(
             '{"type":"message","id":"...","parentId":"...",'
