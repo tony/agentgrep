@@ -830,6 +830,51 @@ def test_actual_claude_discovery_splits_main_and_subagent_transcripts(
     assert stores_by_path[subagent] == "claude.projects_subagents"
 
 
+class CursorSkillsDiscoveryCase(t.NamedTuple):
+    """A ``SKILL.md`` location under ``~/.cursor`` and whether it is a real skill."""
+
+    test_id: str
+    relpath: str
+    discovered: bool
+
+
+CURSOR_SKILLS_DISCOVERY_CASES: tuple[CursorSkillsDiscoveryCase, ...] = (
+    CursorSkillsDiscoveryCase("skills-root", "skills/my-skill/SKILL.md", True),
+    CursorSkillsDiscoveryCase("skills-cursor-root", "skills-cursor/built-in/SKILL.md", True),
+    CursorSkillsDiscoveryCase("worktree-source-tree", "worktrees/proj/SKILL.md", False),
+    CursorSkillsDiscoveryCase("plugin-marketplace", "plugins/pkg/SKILL.md", False),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    CURSOR_SKILLS_DISCOVERY_CASES,
+    ids=[c.test_id for c in CURSOR_SKILLS_DISCOVERY_CASES],
+)
+def test_cursor_cli_skills_discovery_scoped_to_skill_roots(
+    case: CursorSkillsDiscoveryCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """cursor-cli.skills discovers SKILL.md only under skills/ and skills-cursor/."""
+    import agentgrep
+
+    base = tmp_path / "home"
+    skill_md = base / ".cursor" / case.relpath
+    skill_md.parent.mkdir(parents=True)
+    _ = skill_md.write_text("# skill\n", encoding="utf-8")
+
+    sources = agentgrep.discover_from_catalog(
+        tmp_path,
+        "cursor-cli",
+        base,
+        agentgrep.BackendSelection(None, None, None),
+        include_non_default=True,
+    )
+
+    skill_paths = {s.path for s in sources if s.store == "cursor-cli.skills"}
+    assert (skill_md in skill_paths) is case.discovered
+
+
 def test_actual_cursor_discovery_splits_main_and_subagent_transcripts(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
