@@ -20,7 +20,8 @@ JSONL with mixed record types. Line 1 is a `SessionMetadataRecord`
 (`sessionId`, `projectHash`, `startTime`, `lastUpdated`, `kind`).
 Subsequent lines are `MessageRecord` turns (`id`, `timestamp`,
 `type`, `content`) interleaved with `MetadataUpdateRecord` updates
-(`{$set: {...}}`).
+(`{$set: {...}}`). Some user records also carry `displayContent` (the
+UI-echo variant); `content` is the expanded form agentgrep searches.
 
 For `gemini`-typed records whose `content` is empty, the assistant's
 prose is drawn from `thoughts[*].subject`/`description` and the
