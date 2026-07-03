@@ -26,9 +26,10 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
         upstream_ref="cursor.com/docs/cli/overview",
         schema_notes=(
             "JSONL Anthropic-style: `role`, `message.content[]` with "
-            "`text`/`tool_use`/`tool_result`. No native timestamp — agentgrep "
-            "infers from the file's mtime. Tool outputs sometimes `[REDACTED]` "
-            "in older `cursor-agent` versions."
+            "`text`/`tool_use` blocks (tool outputs live in the separate "
+            "`cursor-cli.agent_tools` store, not inline). No native timestamp — "
+            "agentgrep infers from the file's mtime. Tool outputs sometimes "
+            "`[REDACTED]` in older `cursor-agent` versions."
         ),
         sample_record=(
             '{"role":"user","message":{"content":'

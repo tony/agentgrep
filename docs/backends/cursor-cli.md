@@ -17,9 +17,10 @@ data spans two home directories: the original `~/.cursor/` tree
 
 ### cursor-cli.transcripts
 
-Anthropic-style JSONL: `role`, `message.content[]` with
-`text`/`tool_use`/`tool_result` content blocks. No native per-turn
-timestamp — agentgrep infers from the file's mtime.
+Anthropic-style JSONL: `role`, `message.content[]` with `text`/`tool_use`
+content blocks (tool outputs live in the separate `cursor-cli.agent_tools`
+store, not inline). No native per-turn timestamp — agentgrep infers from
+the file's mtime.
 
 Sub-agent dispatches nest below a session's `subagents/` directory and
 share the same JSONL record shape. agentgrep reports them as the
