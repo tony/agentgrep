@@ -1256,8 +1256,9 @@ def parse_grok_chat_history(
 
     Lines carry a ``type`` field (system / user / assistant / reasoning /
     tool_result / backend_tool_call) and ``content`` (text or content-blocks
-    array). Records without ``content`` — every ``reasoning`` record and any
-    ``assistant`` record whose content is empty — are skipped.
+    array). Records without ``content`` — every ``reasoning`` and
+    ``backend_tool_call`` record, plus any ``assistant`` record whose content
+    is empty — are skipped.
     """
     conversation_id = source.path.parent.name
     events = (
