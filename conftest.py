@@ -87,7 +87,10 @@ _DOCS_SANDBOX = TempHomeSandbox(
 _DOCS_SUITE = DocumentationSuite(
     project_root=_REPO_ROOT,
     include_paths=("README.md", "docs", "fastmcp.json"),
-    exclude_parts=("_build",),
+    # AGENTS.md (and its CLAUDE.md symlink) is agent guidance, not a runnable
+    # doc page; keep the doc-suite from executing it, mirroring the Sphinx
+    # exclude_patterns in docs/conf.py.
+    exclude_parts=("_build", "AGENTS.md", "CLAUDE.md"),
 )
 _DOCS_SUITE.register_collector(MarkdownFenceCollector(languages={"console"}))
 _DOCS_SUITE.register_collector(MarkdownPythonPageCollector())
