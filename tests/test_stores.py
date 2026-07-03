@@ -875,6 +875,38 @@ def test_cursor_cli_skills_discovery_scoped_to_skill_roots(
     assert (skill_md in skill_paths) is case.discovered
 
 
+def test_discover_pi_context_mode_db_is_reachable(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The pi context-mode SQLite store is discovered under include_non_default."""
+    import sqlite3
+
+    import agentgrep
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+    monkeypatch.delenv("PI_CODING_AGENT_SESSION_DIR", raising=False)
+    (home / ".pi" / "agent").mkdir(parents=True)
+    ctx_db = home / ".pi" / "context-mode" / "sessions" / "0123456789abcdef.db"
+    ctx_db.parent.mkdir(parents=True)
+    connection = sqlite3.connect(ctx_db)
+    _ = connection.execute("CREATE TABLE session_events (id INTEGER, type TEXT, data TEXT)")
+    connection.commit()
+    connection.close()
+
+    sources = agentgrep.discover_sources(
+        home,
+        ("pi",),
+        agentgrep.BackendSelection(None, None, None),
+        include_non_default=True,
+    )
+
+    stores_by_path = {s.path: s.store for s in sources}
+    assert stores_by_path.get(ctx_db) == "pi.context_mode_db"
+
+
 def test_actual_cursor_discovery_splits_main_and_subagent_transcripts(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

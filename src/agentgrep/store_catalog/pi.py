@@ -79,17 +79,19 @@ _PI_STORES: tuple[StoreDescriptor, ...] = (
         store_id="pi.context_mode_db",
         role=StoreRole.APP_STATE,
         format=StoreFormat.SQLITE,
-        path_pattern="${HOME}/.pi/context-mode/sessions/<session_id>.db",
+        path_pattern="${HOME}/.pi/context-mode/sessions/<project_hash>.db",
         observed_version="pi v0.79.9 (observed 2026-06-21)",
         observed_at=_PI_OBSERVED_AT,
         schema_notes=(
-            "Per-session context-mode SQLite database, rooted at "
-            "`~/.pi/context-mode/sessions/<16-hex>.db` (outside the agent dir "
-            "and keyed by a 16-hex session id, unlike `pi.sessions`' "
-            "`--<cwd>--` grouping). The `session_events` table holds events "
+            "Per-project context-mode SQLite database, rooted at "
+            "`~/.pi/context-mode/sessions/<project_hash>.db` (outside the agent "
+            "dir; the stem is `sha256(project_dir)[:16]`, so it is a hashed "
+            "`cwd` grouping holding multiple sessions, each row carrying its "
+            "own `session_id`). The `session_events` table holds events "
             "(`type` = role/intent/decision/tool_call/file_read/"
-            "blocker_resolved) with a JSON `data` payload, emitted as "
-            "inspectable records."
+            "blocker_resolved/data) with a JSON `data` payload, emitted as "
+            "inspectable records; sibling `session_meta`/`session_resume`/"
+            "`tool_calls` tables exist but only `session_events` is parsed."
         ),
         coverage=StoreCoverage.INSPECTABLE,
         search_by_default=False,

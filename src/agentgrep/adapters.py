@@ -2655,11 +2655,12 @@ def parse_pi_context_mode_db(
 ) -> cabc.Iterator[SearchRecord]:
     """Parse a Pi context-mode session SQLite database.
 
-    The ``session_events`` table records per-session events (`type` =
-    role/intent/decision/tool_call/file_read/blocker_resolved) with a JSON
-    ``data`` payload. Each event's payload is emitted as one inspectable
-    record. Rooted under ``~/.pi/context-mode/sessions/`` and keyed by a
-    16-hex session id, distinct from ``pi.sessions``' cwd grouping.
+    The ``session_events`` table records events (`type` =
+    role/intent/decision/tool_call/file_read/blocker_resolved/data) with a
+    JSON ``data`` payload. Each event's payload is emitted as one inspectable
+    record. Rooted under ``~/.pi/context-mode/sessions/``; the file stem is
+    ``sha256(project_dir)[:16]`` — a hashed ``cwd`` grouping holding multiple
+    sessions, with each row carrying its own ``session_id``.
     """
     connection = open_readonly_sqlite(source.path)
     try:

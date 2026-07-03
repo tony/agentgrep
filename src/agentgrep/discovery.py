@@ -1194,6 +1194,7 @@ def discover_pi_sources(
     roots: dict[str, DiscoveryRoot] = {
         "default": agent_dir,
         "pi_session": session_dir,
+        "pi_context_mode": home / ".pi" / "context-mode",
     }
     return discover_from_catalog(
         home,
