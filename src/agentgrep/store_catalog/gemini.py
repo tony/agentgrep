@@ -36,9 +36,9 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
             "`type`, `content`, optional `toolCalls`/`thoughts`/`tokens`/`model`) "
             "interleaved with `MetadataUpdateRecord` updates (`{$set: ...}`). "
             "Upstream types also declare `RewindRecord` and `PartialMetadataRecord` "
-            "plus `type` values `info`/`error`/`warning` — these are valid in the "
-            "schema but do not appear in observed real-world session files; only "
-            "`user` and `gemini` `type` values were seen in v1 adapter sampling. "
+            "plus `type` values `info`/`error`/`warning`. The CLI does write "
+            "`info`/`error` system records, but agentgrep surfaces only the `user` "
+            "and `gemini` conversation turns and skips the system records. "
             "Adapter `store` field uses the underscore-flattened form "
             "``gemini.tmp_chats``."
         ),

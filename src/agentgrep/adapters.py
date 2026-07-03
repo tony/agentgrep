@@ -1066,14 +1066,18 @@ def _gemini_message_record_to_candidate(
 ) -> MessageCandidate | None:
     """Extract a ``MessageCandidate`` from one Gemini MessageRecord.
 
-    For user records the searchable text is the ``content`` field. For
-    gemini-typed records the model's prose often lives in ``thoughts[]``
-    (with ``content`` empty) and tool invocations live in ``toolCalls[]``;
-    both are concatenated into the candidate's text. Returns ``None`` only
-    when no field carries any text.
+    Only ``user`` and ``gemini`` conversation turns are surfaced; CLI
+    ``info``/``error``/``warning`` records are skipped. For user records the
+    searchable text is the ``content`` field. For gemini-typed records the
+    model's prose often lives in ``thoughts[]`` (with ``content`` empty) and
+    tool invocations live in ``toolCalls[]``; both are concatenated into the
+    candidate's text. Returns ``None`` when no field carries any text.
     """
     role = as_optional_str(mapping.get("type"))
     if not role:
+        return None
+    if role not in {"user", "gemini"}:
+        # info/error/warning are CLI system messages, not conversation turns.
         return None
     text_parts: list[str] = []
     content_text = flatten_content_value(

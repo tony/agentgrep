@@ -10813,6 +10813,69 @@ def test_search_gemini_chat_session_drops_textless_records(
     assert chat_records[0].role == "user"
 
 
+class GeminiRoleGateCase(t.NamedTuple):
+    """A Gemini record ``type`` and whether it should surface a search record."""
+
+    test_id: str
+    record_type: str
+    emitted: bool
+
+
+GEMINI_ROLE_GATE_CASES: tuple[GeminiRoleGateCase, ...] = (
+    GeminiRoleGateCase("user-emitted", "user", True),
+    GeminiRoleGateCase("gemini-emitted", "gemini", True),
+    GeminiRoleGateCase("info-dropped", "info", False),
+    GeminiRoleGateCase("error-dropped", "error", False),
+    GeminiRoleGateCase("warning-dropped", "warning", False),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    GEMINI_ROLE_GATE_CASES,
+    ids=[c.test_id for c in GEMINI_ROLE_GATE_CASES],
+)
+def test_parse_gemini_chat_gates_system_records(
+    case: GeminiRoleGateCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Only `user`/`gemini` turns surface; `info`/`error`/`warning` are skipped."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    path = tmp_path / "session-x.jsonl"
+    write_jsonl(
+        path,
+        [
+            {
+                "sessionId": "s",
+                "projectHash": "h",
+                "startTime": "2026-05-17T12:00:00Z",
+                "lastUpdated": "2026-05-17T12:00:00Z",
+                "kind": "main",
+            },
+            {
+                "id": "m1",
+                "timestamp": "2026-05-17T12:00:05Z",
+                "type": case.record_type,
+                "content": "searchable text",
+            },
+        ],
+    )
+    source = agentgrep.SourceHandle(
+        agent="gemini",
+        store="gemini.tmp_chats",
+        adapter_id="gemini.tmp_chats_jsonl.v1",
+        path=path,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=1,
+    )
+
+    records = list(agentgrep.iter_source_records(source))
+
+    assert bool(records) is case.emitted
+
+
 def test_search_gemini_chat_session_surfaces_thoughts_and_tool_calls(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
