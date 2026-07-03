@@ -72,7 +72,11 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
             "`isCompactSummary: true`. Keys: `type`, `uuid`, `parentUuid`, `timestamp`, "
             "`sessionId`, `cwd`, `gitBranch`, `version`, `message.role`, "
             "`message.content[]` (`text`/`thinking`/`tool_use`/`tool_result`), "
-            "`message.usage`."
+            "`message.usage`. Non-message record types also appear — "
+            "`queue-operation` (queued prompt text in `content`, no `role`), "
+            "`mode`, `permission-mode`, `ai-title`, `last-prompt`, `agent-name`, "
+            "`pr-link`, `attachment`, `file-history-snapshot`, `system` — only "
+            "role-bearing message records are indexed."
         ),
         sample_record='{"type":"user","uuid":"...","timestamp":"2026-05-17T...","message":{"role":"user","content":[{"type":"text","text":"<redacted>"}]}}',
         search_by_default=True,
