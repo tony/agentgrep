@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import datetime
+
 from agentgrep.store_catalog._common import _CLAUDE_OBSERVED_AT
 from agentgrep.stores import (
     DiscoverySpec,
@@ -1034,5 +1036,28 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
                 path_parts_excluded=(".git",),
             ),
         ),
+    ),
+    StoreDescriptor(
+        agent="claude",
+        store_id="claude.plugins_marketplaces",
+        role=StoreRole.INSTRUCTION,
+        format=StoreFormat.MARKDOWN_FRONTMATTER,
+        path_pattern=(
+            "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/plugins/marketplaces/"
+            "<repo>/<plugin>/{agents,commands,skills}/<name>.md"
+        ),
+        env_overrides=("CLAUDE_CONFIG_DIR",),
+        observed_version="claude-code v2.1.200",
+        observed_at=datetime.date(2026, 7, 3),
+        schema_notes=(
+            "Cloned plugin-marketplace repos under "
+            "`plugins/marketplaces/<repo>/` holding agent/command/skill "
+            "instruction Markdown, including plugins not installed; installed "
+            "plugins also resolve under `plugins/cache/` (inspected by "
+            "`claude.plugins_cache`)."
+        ),
+        distinguishes_from=("claude.plugins_cache",),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
     ),
 )
