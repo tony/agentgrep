@@ -34,9 +34,11 @@ Keys: `timestamp` (ISO-8601 nanosecond), `session_id` (UUIDv7),
 Full session transcripts. The `type` field discriminates record
 kinds: `system`, `user`, `assistant`, `reasoning`, `tool_result`,
 `backend_tool_call`. Assistant tool calls live in a `tool_calls` array
-on the assistant record; `reasoning` keeps its text under
-`encrypted_content` (encrypted, so not searchable). `content` is either
-a plain string or a content-blocks array.
+on the assistant record; `reasoning` records carry a readable `summary`
+array of `{type: summary_text, text}` blocks plus an opaque
+`encrypted_content` blob, but agentgrep does not surface them because the
+adapter reads only `content`, which reasoning records omit. `content` is
+either a plain string or a content-blocks array.
 
 ```json
 {"type": "user", "content": "explain the design",

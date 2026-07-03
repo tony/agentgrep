@@ -1247,9 +1247,10 @@ def parse_grok_chat_history(
 ) -> cabc.Iterator[SearchRecord]:
     """Parse a Grok CLI ``chat_history.jsonl`` session transcript.
 
-    Lines carry a ``type`` field (system / user / assistant / tool_use /
-    tool_result) and ``content`` (text or content-blocks array). All
-    record types are emitted to maximise searchable content.
+    Lines carry a ``type`` field (system / user / assistant / reasoning /
+    tool_result / backend_tool_call) and ``content`` (text or content-blocks
+    array). Records without ``content`` — every ``reasoning`` record and any
+    ``assistant`` record whose content is empty — are skipped.
     """
     conversation_id = source.path.parent.name
     events = (

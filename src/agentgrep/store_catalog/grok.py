@@ -61,8 +61,11 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
             "system/user/assistant/reasoning/tool_result/backend_tool_call. "
             "Assistant tool calls live in a `tool_calls` array on the "
             "assistant record; `backend_tool_call` records host-side calls. "
-            "`reasoning` stores its text under `encrypted_content` (encrypted, "
-            "not searchable). `content` is text or a content-blocks array."
+            "`reasoning` records carry a readable `summary` array of "
+            "`{type: summary_text, text}` blocks plus an opaque "
+            "`encrypted_content` blob; agentgrep does not surface them because "
+            "the adapter reads only `content`, which reasoning records omit. "
+            "`content` is text or a content-blocks array."
         ),
         sample_record=(
             '{"type":"user","content":"<redacted>","timestamp":"2026-05-25T10:00:01.000000000Z"}'
