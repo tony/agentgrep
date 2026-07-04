@@ -18,7 +18,7 @@ $ agentgrep suggestions list \
 Render one suggestion for review:
 
 ```console
-$ agentgrep suggestions render <suggestion-id>
+$ agentgrep suggestions render demo-id
 ```
 
 ## When changes take effect
