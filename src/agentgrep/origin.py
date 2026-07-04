@@ -50,6 +50,7 @@ _STRING_FIELD_KEYS: dict[str, tuple[str, ...]] = {
 }
 _FIELD_PREDICATE_RE = re.compile(r"(?<![A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*):")
 _BOOLEAN_KEYWORDS = frozenset({"AND", "OR", "NOT"})
+_QUERY_BARE_TERM_RE = re.compile(r"[\w\-./~*?@:+]+\Z", re.UNICODE)
 
 
 def query_quote(value: str) -> str:
@@ -102,7 +103,7 @@ def _wrapped_user_term_text(term: str) -> str:
         return query_quote(stripped)
     if _looks_like_query_syntax(stripped):
         return stripped
-    if ":" in stripped:
+    if ":" in stripped or not _QUERY_BARE_TERM_RE.fullmatch(stripped):
         return query_quote(stripped)
     return stripped
 

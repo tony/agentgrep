@@ -387,6 +387,30 @@ ORIGIN_LITERAL_TERM_CASES: tuple[OriginLiteralTermCase, ...] = (
         expected=True,
     ),
     OriginLiteralTermCase(
+        test_id="comma-literal",
+        term="foo,bar",
+        text="foo,bar appears literally",
+        expected=True,
+    ),
+    OriginLiteralTermCase(
+        test_id="equals-literal",
+        term="key=value",
+        text="key=value appears literally",
+        expected=True,
+    ),
+    OriginLiteralTermCase(
+        test_id="hash-literal",
+        term="foo#bar",
+        text="foo#bar appears literally",
+        expected=True,
+    ),
+    OriginLiteralTermCase(
+        test_id="emoji-literal",
+        term="\U0001f600",
+        text="emoji \U0001f600 appears literally",
+        expected=True,
+    ),
+    OriginLiteralTermCase(
         test_id="literal-miss",
         term="foo:bar",
         text="foo and bar are split",

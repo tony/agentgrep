@@ -203,6 +203,34 @@ MCP_ORIGIN_LITERAL_TERM_CASES: tuple[McpOriginLiteralTermCase, ...] = (
         nonmatching_text="foo and bar appear separately",
         expected_texts=["foo:bar appears literally"],
     ),
+    McpOriginLiteralTermCase(
+        test_id="comma-literal",
+        terms=["foo,bar"],
+        matching_text="foo,bar appears literally",
+        nonmatching_text="foo and bar appear separately",
+        expected_texts=["foo,bar appears literally"],
+    ),
+    McpOriginLiteralTermCase(
+        test_id="equals-literal",
+        terms=["key=value"],
+        matching_text="key=value appears literally",
+        nonmatching_text="key and value appear separately",
+        expected_texts=["key=value appears literally"],
+    ),
+    McpOriginLiteralTermCase(
+        test_id="hash-literal",
+        terms=["foo#bar"],
+        matching_text="foo#bar appears literally",
+        nonmatching_text="foo and bar appear separately",
+        expected_texts=["foo#bar appears literally"],
+    ),
+    McpOriginLiteralTermCase(
+        test_id="emoji-literal",
+        terms=["\U0001f600"],
+        matching_text="emoji \U0001f600 appears literally",
+        nonmatching_text="emoji appears textually",
+        expected_texts=["emoji \U0001f600 appears literally"],
+    ),
 )
 
 
