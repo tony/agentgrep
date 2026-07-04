@@ -1,6 +1,6 @@
 (adr-suggestion-skills-agent-instruction-changes)=
 
-# ADR 0007: Suggestion skills and agent instruction changes
+# ADR 0018: Suggestion skills and agent instruction changes
 
 ## Status
 

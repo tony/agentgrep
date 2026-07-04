@@ -1,6 +1,6 @@
 (adr-agentic-insights-engine)=
 
-# ADR 0006: Agentic insights engine
+# ADR 0017: Agentic insights engine
 
 ## Status
 
