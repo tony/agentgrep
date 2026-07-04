@@ -1,7 +1,8 @@
 """Read-only export of matched records and conversations to portable artifacts.
 
-This is the one frontend-neutral core the CLI ``export`` verb (and the deferred
-MCP tool / TUI action) drive, so the formats never drift. It owns conversation
+This is the one frontend-neutral core the CLI ``export`` verb and the
+``export_records`` MCP tool drive (the TUI action is deferred), so the formats
+never drift. It owns conversation
 assembly, an export-owned total order (``timestamp`` then content id) that makes
 reruns byte-identical and diffable, optional body redaction, and each tier's
 writer.
