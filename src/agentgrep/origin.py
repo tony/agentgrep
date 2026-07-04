@@ -48,7 +48,7 @@ _STRING_FIELD_KEYS: dict[str, tuple[str, ...]] = {
     "branch": ("branch", "gitBranch"),
     "cwd_hash": ("cwd_hash", "project_hash", "projectHash"),
 }
-_FIELD_PREDICATE_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_-]*:")
+_FIELD_PREDICATE_RE = re.compile(r"(?<![A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*):")
 _BOOLEAN_KEYWORDS = frozenset({"AND", "OR", "NOT"})
 
 
@@ -94,11 +94,11 @@ def origin_filtered_query_text(
 
 def _wrapped_user_term_text(term: str) -> str:
     stripped = term.strip()
-    if not stripped or not any(character.isspace() for character in stripped):
+    if not stripped or _looks_like_query_syntax(stripped):
         return stripped
-    if _looks_like_query_syntax(stripped):
-        return stripped
-    return query_quote(stripped)
+    if ":" in stripped or any(character.isspace() for character in stripped):
+        return query_quote(stripped)
+    return stripped
 
 
 def _looks_like_query_syntax(term: str) -> bool:
@@ -106,8 +106,18 @@ def _looks_like_query_syntax(term: str) -> bool:
         term[0] in {'"', "'"}
         or "(" in term
         or ")" in term
-        or _FIELD_PREDICATE_RE.search(term) is not None
+        or any(
+            match.group(1) in _query_field_names() for match in _FIELD_PREDICATE_RE.finditer(term)
+        )
         or bool(_BOOLEAN_KEYWORDS.intersection(term.split()))
+    )
+
+
+def _query_field_names() -> frozenset[str]:
+    from agentgrep.query import default_registry
+
+    return frozenset(
+        name for spec in default_registry().specs for name in (spec.name, *spec.aliases)
     )
 
 

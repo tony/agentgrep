@@ -85,6 +85,16 @@ class McpOriginPhraseCase(t.NamedTuple):
     expected_texts: list[str]
 
 
+class McpOriginLiteralTermCase(t.NamedTuple):
+    """Parametrized case for MCP origin filters with literal punctuation terms."""
+
+    test_id: str
+    terms: list[str]
+    matching_text: str
+    nonmatching_text: str
+    expected_texts: list[str]
+
+
 RESULT_SHAPE_CASES = [
     McpResultShapeCase(
         test_id="search",
@@ -145,6 +155,23 @@ MCP_ORIGIN_PHRASE_CASES: tuple[McpOriginPhraseCase, ...] = (
         test_id="single-phrase-term",
         terms=["exact phrase"],
         expected_texts=["exact phrase same"],
+    ),
+)
+
+MCP_ORIGIN_LITERAL_TERM_CASES: tuple[McpOriginLiteralTermCase, ...] = (
+    McpOriginLiteralTermCase(
+        test_id="https-url-literal",
+        terms=["https://example.com"],
+        matching_text="please inspect https://example.com",
+        nonmatching_text="please inspect https and example",
+        expected_texts=["please inspect https://example.com"],
+    ),
+    McpOriginLiteralTermCase(
+        test_id="unknown-field-looking-literal",
+        terms=["foo:bar"],
+        matching_text="foo:bar appears literally",
+        nonmatching_text="foo and bar appear separately",
+        expected_texts=["foo:bar appears literally"],
     ),
 )
 
@@ -745,6 +772,59 @@ async def test_mcp_search_origin_filters_preserve_phrase_terms(
         session_id="other-exact",
         timestamp="2026-06-01T00:00:00Z",
         text="exact phrase other",
+        cwd="/workspace/other",
+    )
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        result = await client.call_tool(
+            "search",
+            {
+                "terms": case.terms,
+                "agent": "codex",
+                "scope": "prompts",
+                "cwd": "/workspace/agentgrep",
+                "limit": 10,
+            },
+        )
+
+    data = tool_payload(result)
+    assert [row["text"] for row in data["results"]] == case.expected_texts
+
+
+@pytest.mark.parametrize(
+    "case",
+    MCP_ORIGIN_LITERAL_TERM_CASES,
+    ids=[case.test_id for case in MCP_ORIGIN_LITERAL_TERM_CASES],
+)
+async def test_mcp_search_origin_filters_preserve_literal_punctuation_terms(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: McpOriginLiteralTermCase,
+) -> None:
+    """Generated MCP origin predicates keep punctuation-heavy terms literal."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    sessions = home / ".codex" / "sessions" / "2026" / "01" / "01"
+    write_codex_prompt_session(
+        sessions / "same-match.jsonl",
+        session_id="same-match",
+        timestamp="2026-06-03T00:00:00Z",
+        text=case.matching_text,
+        cwd="/workspace/agentgrep",
+    )
+    write_codex_prompt_session(
+        sessions / "same-miss.jsonl",
+        session_id="same-miss",
+        timestamp="2026-06-02T00:00:00Z",
+        text=case.nonmatching_text,
+        cwd="/workspace/agentgrep",
+    )
+    write_codex_prompt_session(
+        sessions / "other-match.jsonl",
+        session_id="other-match",
+        timestamp="2026-06-01T00:00:00Z",
+        text=case.matching_text,
         cwd="/workspace/other",
     )
 

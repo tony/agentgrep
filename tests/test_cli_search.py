@@ -312,6 +312,50 @@ ORIGIN_PHRASE_FILTER_CASES: tuple[OriginPhraseFilterCase, ...] = (
 )
 
 
+class OriginLiteralTermCase(t.NamedTuple):
+    """Parametrized record case for literal terms under origin filters."""
+
+    test_id: str
+    term: str
+    text: str
+    expected: bool
+
+
+class OriginKnownPredicateCase(t.NamedTuple):
+    """Parametrized record case for known query predicates under origin filters."""
+
+    test_id: str
+    agent: agentgrep.AgentName
+    expected: bool
+
+
+ORIGIN_LITERAL_TERM_CASES: tuple[OriginLiteralTermCase, ...] = (
+    OriginLiteralTermCase(
+        test_id="https-url-literal",
+        term="https://example.com",
+        text="please inspect https://example.com",
+        expected=True,
+    ),
+    OriginLiteralTermCase(
+        test_id="unknown-field-looking-literal",
+        term="foo:bar",
+        text="foo:bar appears literally",
+        expected=True,
+    ),
+    OriginLiteralTermCase(
+        test_id="literal-miss",
+        term="foo:bar",
+        text="foo and bar are split",
+        expected=False,
+    ),
+)
+
+ORIGIN_KNOWN_PREDICATE_CASES: tuple[OriginKnownPredicateCase, ...] = (
+    OriginKnownPredicateCase(test_id="matching-agent", agent="codex", expected=True),
+    OriginKnownPredicateCase(test_id="other-agent", agent="claude", expected=False),
+)
+
+
 class OnlyHereRecordCase(t.NamedTuple):
     """Parametrized record case for cwd-only ``--only-here`` matching."""
 
@@ -474,6 +518,81 @@ def test_search_parse_only_here_detects_git_context(
         text="bliss command",
         origin=agentgrep.RecordOrigin(cwd=str(cwd)),
     )
+    query = agentgrep.SearchQuery(
+        terms=parsed.terms,
+        scope=parsed.scope,
+        any_term=False,
+        regex=False,
+        case_sensitive=parsed.case_sensitive,
+        agents=parsed.agents,
+        limit=parsed.limit,
+        compiled=parsed.compiled,
+    )
+    assert agentgrep.matches_record(record, query) is case.expected
+
+
+@pytest.mark.parametrize(
+    "case",
+    ORIGIN_LITERAL_TERM_CASES,
+    ids=[case.test_id for case in ORIGIN_LITERAL_TERM_CASES],
+)
+def test_search_origin_flags_preserve_literal_punctuation_terms(
+    case: OriginLiteralTermCase,
+) -> None:
+    """Generated origin predicates keep punctuation-heavy terms literal."""
+    parsed = agentgrep.parse_args(
+        ("search", "--cwd", "/workspace/agentgrep", case.term),
+    )
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text=case.text,
+        origin=agentgrep.RecordOrigin(cwd="/workspace/agentgrep"),
+    )
+
+    assert isinstance(parsed, agentgrep.SearchArgs)
+    assert parsed.compiled is not None
+    assert parsed.terms == (case.term,)
+    query = agentgrep.SearchQuery(
+        terms=parsed.terms,
+        scope=parsed.scope,
+        any_term=False,
+        regex=False,
+        case_sensitive=parsed.case_sensitive,
+        agents=parsed.agents,
+        limit=parsed.limit,
+        compiled=parsed.compiled,
+    )
+    assert agentgrep.matches_record(record, query) is case.expected
+
+
+@pytest.mark.parametrize(
+    "case",
+    ORIGIN_KNOWN_PREDICATE_CASES,
+    ids=[case.test_id for case in ORIGIN_KNOWN_PREDICATE_CASES],
+)
+def test_search_origin_flags_preserve_known_field_predicates(
+    case: OriginKnownPredicateCase,
+) -> None:
+    """Generated origin predicates keep known query-language fields active."""
+    parsed = agentgrep.parse_args(
+        ("search", "--cwd", "/workspace/agentgrep", "agent:codex"),
+    )
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent=case.agent,
+        store="history",
+        adapter_id="test.history.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text="field predicate",
+        origin=agentgrep.RecordOrigin(cwd="/workspace/agentgrep"),
+    )
+
+    assert isinstance(parsed, agentgrep.SearchArgs)
+    assert parsed.compiled is not None
     query = agentgrep.SearchQuery(
         terms=parsed.terms,
         scope=parsed.scope,
