@@ -118,6 +118,7 @@ def _normalize_args_conversation_limit(
         raise ValueError(msg)
     return value
 
+
 DbAction = t.Literal["sync", "status", "explain"]
 
 

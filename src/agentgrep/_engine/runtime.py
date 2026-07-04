@@ -7,11 +7,10 @@ import dataclasses
 import typing as t
 
 from agentgrep._engine.scanning import SourceScanCache
+from agentgrep.records import CacheMode
 
 if t.TYPE_CHECKING:
     from agentgrep.db import DbRuntime
-
-CacheMode = t.Literal["auto", "require", "off"]
 
 
 @dataclasses.dataclass(slots=True)
