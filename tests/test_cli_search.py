@@ -361,6 +361,18 @@ class OriginKnownPredicateCase(t.NamedTuple):
     expected: bool
 
 
+class OriginRelativePathFlagCase(t.NamedTuple):
+    """Parametrized case for relative origin path flags."""
+
+    test_id: str
+    flag: t.Literal["--cwd", "--repo"]
+    value: str
+    cwd_relative: pathlib.Path
+    expected_relative: pathlib.Path
+    record_relative: pathlib.Path
+    origin_field: t.Literal["cwd", "repo"]
+
+
 ORIGIN_LITERAL_TERM_CASES: tuple[OriginLiteralTermCase, ...] = (
     OriginLiteralTermCase(
         test_id="https-url-literal",
@@ -385,6 +397,27 @@ ORIGIN_LITERAL_TERM_CASES: tuple[OriginLiteralTermCase, ...] = (
 ORIGIN_KNOWN_PREDICATE_CASES: tuple[OriginKnownPredicateCase, ...] = (
     OriginKnownPredicateCase(test_id="matching-agent", agent="codex", expected=True),
     OriginKnownPredicateCase(test_id="other-agent", agent="claude", expected=False),
+)
+
+ORIGIN_RELATIVE_PATH_FLAG_CASES: tuple[OriginRelativePathFlagCase, ...] = (
+    OriginRelativePathFlagCase(
+        test_id="cwd-current-directory",
+        flag="--cwd",
+        value=".",
+        cwd_relative=pathlib.Path("repo"),
+        expected_relative=pathlib.Path("repo"),
+        record_relative=pathlib.Path("repo/src"),
+        origin_field="cwd",
+    ),
+    OriginRelativePathFlagCase(
+        test_id="repo-parent-directory",
+        flag="--repo",
+        value="..",
+        cwd_relative=pathlib.Path("parent/project"),
+        expected_relative=pathlib.Path("parent"),
+        record_relative=pathlib.Path("parent"),
+        origin_field="repo",
+    ),
 )
 
 
@@ -510,6 +543,56 @@ def test_search_origin_flags_preserve_phrase_term(
         compiled=parsed.compiled,
     )
     assert agentgrep.matches_record(record, query) is case.expected
+
+
+@pytest.mark.parametrize(
+    "case",
+    ORIGIN_RELATIVE_PATH_FLAG_CASES,
+    ids=[case.test_id for case in ORIGIN_RELATIVE_PATH_FLAG_CASES],
+)
+def test_search_origin_flags_resolve_relative_paths(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: OriginRelativePathFlagCase,
+) -> None:
+    """Explicit origin path flags are resolved against the invocation cwd."""
+    cwd = tmp_path / case.cwd_relative
+    cwd.mkdir(parents=True)
+    monkeypatch.chdir(cwd)
+    expected = tmp_path / case.expected_relative
+    record_path = tmp_path / case.record_relative
+    if case.origin_field == "cwd":
+        origin = agentgrep.RecordOrigin(cwd=str(record_path))
+    else:
+        origin = agentgrep.RecordOrigin(repo=str(record_path))
+
+    parsed = agentgrep.parse_args(("search", case.flag, case.value, "needle"))
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text="needle",
+        origin=origin,
+    )
+
+    assert isinstance(parsed, agentgrep.SearchArgs)
+    assert parsed.compiled is not None
+    assert parsed.raw_query.startswith(
+        f'{case.flag.removeprefix("--")}:"{expected}"',
+    )
+    query = agentgrep.SearchQuery(
+        terms=parsed.terms,
+        scope=parsed.scope,
+        any_term=False,
+        regex=False,
+        case_sensitive=parsed.case_sensitive,
+        agents=parsed.agents,
+        limit=parsed.limit,
+        compiled=parsed.compiled,
+    )
+    assert agentgrep.matches_record(record, query)
 
 
 @pytest.mark.parametrize(

@@ -704,7 +704,10 @@ def _normalize_origin_path_arg(value: str | None) -> str | None:
     """Normalize a path-valued CLI origin argument without touching the filesystem."""
     if value is None:
         return None
-    return str(pathlib.Path(value).expanduser())
+    path = pathlib.Path(value).expanduser()
+    if not path.is_absolute():
+        path = pathlib.Path.cwd() / path
+    return str(path.resolve(strict=False))
 
 
 def _grep_explicit_flags(namespace: argparse.Namespace) -> dict[str, str]:
