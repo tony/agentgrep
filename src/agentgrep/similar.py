@@ -1,7 +1,8 @@
 """Find records similar to a seed, across the scoped corpus.
 
-The one shared orchestrator behind the CLI ``similar`` verb (and the deferred
-TUI / MCP surfaces): narrow the corpus through the normal query path, then rank
+The one shared orchestrator behind the CLI ``similar`` verb and the
+``find_similar`` MCP tool (the TUI action is deferred): narrow the corpus
+through the normal query path, then rank
 it with the pure, stdlib scorer in :mod:`agentgrep.ranking`. Parity is by this
 one helper, not duplicated scoring logic.
 
