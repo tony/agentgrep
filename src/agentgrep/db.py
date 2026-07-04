@@ -548,7 +548,7 @@ class DbStore:
         """Run one write statement through the telemetry choke point."""
         start = time.perf_counter()
         cursor = self.connection.execute(sql, tuple(params))
-        rows = cursor.rowcount if cursor.rowcount > 0 else 0
+        rows = max(0, cursor.rowcount)
         _ = self._track(stmt_name, sql, time.perf_counter() - start, rows)
         return cursor
 

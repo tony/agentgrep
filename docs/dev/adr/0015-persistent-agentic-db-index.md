@@ -1,6 +1,6 @@
 (adr-persistent-agentic-db-index)=
 
-# ADR 0005: Persistent agentic DB index
+# ADR 0015: Persistent agentic DB index
 
 ## Status
 
