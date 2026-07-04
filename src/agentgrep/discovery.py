@@ -896,8 +896,8 @@ def discover_from_catalog(
         if coverage is not StoreCoverage.DEFAULT_SEARCH and not include_non_default:
             continue
         # Per-descriptor dedup: a row whose discovery tuple has more than one
-        # spec (e.g. Cursor IDE state.vscdb with both modern platform_paths
-        # and a legacy ~/.cursor glob) must not yield the same file twice
+        # spec (e.g. Cursor IDE state.vscdb with both the modern ide_global
+        # root and a legacy ~/.cursor glob) must not yield the same file twice
         # under different adapter ids on layouts where both specs match.
         seen_paths: set[pathlib.Path] = set()
         for spec in descriptor.discovery:

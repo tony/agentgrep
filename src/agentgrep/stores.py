@@ -127,9 +127,8 @@ class DiscoverySpec(pydantic.BaseModel):
       Cursor CLI transcripts must live under ``agent-transcripts`` but the
       primary transcript store excludes nested ``subagents`` files).
 
-    ``platform_paths`` lists absolute paths to check unconditionally — used
-    for stores whose canonical location depends on the operating system
-    (Cursor IDE's ``state.vscdb``).
+    ``platform_paths`` lists absolute paths to check unconditionally, for
+    stores whose canonical location depends on the operating system.
     """
 
     model_config = pydantic.ConfigDict(frozen=True)
@@ -153,7 +152,7 @@ class DiscoverySpec(pydantic.BaseModel):
     """Path segments appended to the agent's resolved base directory."""
 
     platform_paths: tuple[str, ...] = ()
-    """Absolute paths to check unconditionally, e.g. Cursor IDE state."""
+    """Absolute paths to check unconditionally."""
 
     root_key: str = "default"
     """Named discovery root to resolve this spec against."""
