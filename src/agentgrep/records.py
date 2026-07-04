@@ -39,6 +39,7 @@ __all__ = [
     "USER_ROLES",
     "AgentName",
     "BackendSelection",
+    "CacheMode",
     "ColorMode",
     "DiscoveryRoot",
     "DiscoveryStoreRoles",
@@ -96,6 +97,7 @@ DiscoveryVersionDetail = t.Literal["none", "catalog", "shape"]
 DiscoveryStoreRoles = frozenset[StoreRole] | None
 ColorMode = t.Literal["auto", "always", "never"]
 GrepStyle = t.Literal["default", "pretty"]
+CacheMode = t.Literal["auto", "require", "off"]
 type JSONScalar = str | int | float | bool | None
 type JSONValue = JSONScalar | list[JSONValue] | dict[str, JSONValue]
 type RawJsonlSkipLine = t.Callable[[str], bool]

@@ -299,18 +299,18 @@ source-scan cache report `search.collect.source_scan_cache` lookup samples.
 Benchmark the cold path with the cache bypassed:
 
 ```console
-$ env AGENTGREP_CACHE=off .venv/bin/agentgrep grep --no-progress --max-count 50 tmux
+$ env AGENTGREP_CACHE=off uv run agentgrep grep --no-progress --max-count 50 tmux
 ```
 
 Benchmark the warm path against a bench-scoped cache that must serve
 the query (sync it once first):
 
 ```console
-$ env AGENTGREP_DB=.tmp/bench-cache.sqlite .venv/bin/agentgrep db sync --no-progress
+$ env AGENTGREP_DB=.tmp/bench-cache.sqlite uv run agentgrep db sync --no-progress
 ```
 
 ```console
-$ env AGENTGREP_DB=.tmp/bench-cache.sqlite AGENTGREP_CACHE=require .venv/bin/agentgrep grep --no-progress --max-count 50 tmux
+$ env AGENTGREP_DB=.tmp/bench-cache.sqlite AGENTGREP_CACHE=require uv run agentgrep grep --no-progress --fixed-strings --max-count 50 tmux
 ```
 
 The committed `*-cache-cold-*` and `*-cache-warm-*` benchmark entries

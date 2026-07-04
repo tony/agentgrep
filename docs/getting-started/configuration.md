@@ -70,15 +70,18 @@ Fail loudly if the cache cannot serve a query:
 
 ```console
 $ AGENTGREP_CACHE=require uv run agentgrep grep "release"
+agentgrep: --cache require needs a synced DB
 ```
 
 Set `AGENTGREP_SQL_EXPLAIN` to capture the SQLite query plan for each
 statement shape in profiles and DEBUG logs. Statements are recorded
 with placeholders only — search terms and other bound parameters are
-never captured:
+never captured. Sync a cache first so a query plan exists to capture:
 
 ```console
-$ AGENTGREP_SQL_EXPLAIN=1 uv run agentgrep grep --cache require "release"
+$ export AGENTGREP_DB=.tmp/config-cache.sqlite \
+    && uv run agentgrep db sync --no-progress \
+    && AGENTGREP_SQL_EXPLAIN=1 uv run agentgrep grep --no-progress --fixed-strings --cache require "release"
 ```
 
 ## Output

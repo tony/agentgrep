@@ -123,6 +123,7 @@ conf["doctest_global_setup"] = "\n".join(
     (
         "import pathlib",
         "from agentgrep import format_timestamp_tig",
+        "from agentgrep.db import normalize_record_text, text_hash",
         "from agentgrep.store_catalog import gemini_project_hash",
     )
 )

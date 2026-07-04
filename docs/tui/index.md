@@ -84,6 +84,7 @@ downloads directory; in a browser session, it initiates a download.
     :func: build_docs_parser
     :prog: agentgrep
     :path: ui
+    :no-index:
     :nodescription:
 ```
 

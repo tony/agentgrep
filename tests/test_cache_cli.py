@@ -672,7 +672,7 @@ def test_grep_cache_require_unsupported_query_exits_without_traceback(
         no_dedupe=False,
         line_number=None,
         heading=None,
-        max_count=None,
+        limit=None,
         vimgrep=False,
         column=False,
         output_mode="text",

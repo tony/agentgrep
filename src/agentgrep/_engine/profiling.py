@@ -227,6 +227,7 @@ def profile_search_query(
     runtime: SearchRuntime | None = None,
 ) -> ProfiledSearchResult:
     """Run a search query and return engine-only phase timings."""
+    from agentgrep._engine.orchestration import _db_search_result
     from agentgrep._engine.planning import build_physical_search_plan
     from agentgrep._engine.source_filters import source_may_match_query
 
@@ -238,7 +239,7 @@ def profile_search_query(
         # engine phase so warm-cache profiles measure the cache path
         # and carry its search.cache.decision span instead of timing a
         # live scan mislabeled with the requested cache mode.
-        cache_handled, cache_records = agentgrep._db_search_result(query, runtime)
+        cache_handled, cache_records = _db_search_result(query, runtime)
         if cache_handled:
             return ProfiledSearchResult(
                 records=tuple(cache_records),

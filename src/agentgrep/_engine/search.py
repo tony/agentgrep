@@ -54,7 +54,10 @@ import threading
 import time
 import typing as t
 
-from agentgrep._engine.orchestration import discover_sources_for_search
+from agentgrep._engine.orchestration import (
+    _db_search_result,
+    discover_sources_for_search,
+)
 from agentgrep.progress import SearchControl
 from agentgrep.readers import select_backends
 from agentgrep.records import BackendSelection, SearchQuery
@@ -132,6 +135,21 @@ def iter_search_events(
     active_backends = select_backends() if backends is None else backends
     active_control = SearchControl() if control is None else control
     start_time = time.monotonic()
+
+    cache_handled, cache_records = _db_search_result(query, runtime)
+    if cache_handled:
+        yield _events.SearchStarted(source_count=0)
+        match_count = 0
+        for record in cache_records:
+            if active_control.answer_now_requested():
+                break
+            match_count += 1
+            yield _events.RecordEmitted(record=record)
+        yield _events.SearchFinished(
+            match_count=match_count,
+            elapsed_seconds=time.monotonic() - start_time,
+        )
+        return
 
     sources = discover_sources_for_search(
         home,

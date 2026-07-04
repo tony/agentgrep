@@ -16,8 +16,28 @@ import time
 import typing as t
 import unicodedata
 
-import agentgrep
+from agentgrep._engine.orchestration import (
+    build_record_match_surface,
+    matches_record,
+    record_dedupe_key,
+)
 from agentgrep._engine.scanning import _CACHE_EXEMPT_ADAPTERS
+from agentgrep.adapters import iter_source_records, store_role_for_record
+from agentgrep.progress import SearchControl
+from agentgrep.readers import (
+    SQLITE_MMAP_BYTES,
+    _record_engine_profile_sample,
+    open_readonly_sqlite,
+)
+from agentgrep.records import (
+    CONVERSATION_STORE_ROLES,
+    PROMPT_HISTORY_STORE_ROLES,
+    AgentName,
+    SearchQuery,
+    SearchRecord,
+    SearchScope,
+    SourceHandle,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +114,7 @@ class DbRecordRow:
     """One record row with its stable DB id."""
 
     record_id: str
-    record: agentgrep.SearchRecord
+    record: SearchRecord
 
 
 class DbQueryUnsupported(RuntimeError):
@@ -102,8 +122,8 @@ class DbQueryUnsupported(RuntimeError):
 
 
 type SourceRecordBatch = tuple[
-    agentgrep.SourceHandle,
-    cabc.Iterable[agentgrep.SearchRecord],
+    SourceHandle,
+    cabc.Iterable[SearchRecord],
 ]
 
 
@@ -118,7 +138,7 @@ class DbSyncProgress(t.Protocol):
         self,
         index: int,
         total: int,
-        source: agentgrep.SourceHandle,
+        source: SourceHandle,
         result: SyncResult,
     ) -> None:
         """Report that one source transaction is starting."""
@@ -128,7 +148,7 @@ class DbSyncProgress(t.Protocol):
         self,
         index: int,
         total: int,
-        source: agentgrep.SourceHandle,
+        source: SourceHandle,
         records_indexed: int,
         records_removed: int,
         result: SyncResult,
@@ -156,7 +176,7 @@ class NoopDbSyncProgress:
         self,
         index: int,
         total: int,
-        source: agentgrep.SourceHandle,
+        source: SourceHandle,
         result: SyncResult,
     ) -> None:
         """Ignore source start."""
@@ -166,7 +186,7 @@ class NoopDbSyncProgress:
         self,
         index: int,
         total: int,
-        source: agentgrep.SourceHandle,
+        source: SourceHandle,
         records_indexed: int,
         records_removed: int,
         result: SyncResult,
@@ -241,7 +261,7 @@ def text_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8", errors="surrogatepass")).hexdigest()
 
 
-def source_id_for(source: agentgrep.SourceHandle) -> str:
+def source_id_for(source: SourceHandle) -> str:
     """Return a stable source id derived from adapter identity and path."""
     identity = "\0".join(
         (
@@ -254,7 +274,7 @@ def source_id_for(source: agentgrep.SourceHandle) -> str:
     return text_hash(identity)
 
 
-def record_id_for(source_id: str, record: agentgrep.SearchRecord) -> str:
+def record_id_for(source_id: str, record: SearchRecord) -> str:
     """Return a stable record id derived from native identity and text."""
     return record_id_for_normalized(
         source_id,
@@ -265,7 +285,7 @@ def record_id_for(source_id: str, record: agentgrep.SearchRecord) -> str:
 
 def record_id_for_normalized(
     source_id: str,
-    record: agentgrep.SearchRecord,
+    record: SearchRecord,
     *,
     normalized_hash: str,
 ) -> str:
@@ -301,7 +321,7 @@ def _json_loads_mapping(value: str) -> dict[str, object]:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def _source_fingerprint(source: agentgrep.SourceHandle) -> str:
+def _source_fingerprint(source: SourceHandle) -> str:
     """Return a cheap source fingerprint for cache freshness checks.
 
     WAL-mode SQLite stores commit into a ``-wal`` sidecar while the main
@@ -354,15 +374,15 @@ def _fts_indexable(term: str) -> bool:
 
 
 def _record_in_cached_scope(
-    record: agentgrep.SearchRecord,
-    scope: agentgrep.SearchScope,
+    record: SearchRecord,
+    scope: SearchScope,
     prompt_history_agents: frozenset[str],
 ) -> bool:
     """Return whether a cached record belongs to the requested scope.
 
     Composes the live pipeline's two scope filters: the per-record
-    :func:`agentgrep.record_matches_scope` check and the planner's
-    :func:`agentgrep.source_matches_scope` store selection. The cached
+    :func:`record_matches_scope` check and the planner's
+    :func:`source_matches_scope` store selection. The cached
     table holds records from every synced store, so the planner's
     source-level decisions must be re-applied per record — most
     visibly for prompts scope, where an agent with a dedicated
@@ -370,9 +390,9 @@ def _record_in_cached_scope(
 
     Parameters
     ----------
-    record : agentgrep.SearchRecord
+    record : SearchRecord
         Cached record reconstructed from the records table.
-    scope : agentgrep.SearchScope
+    scope : SearchScope
         Requested search scope; ``"all"`` is handled by the caller.
     prompt_history_agents : frozenset[str]
         Agents holding a synced prompt-history-role source.
@@ -397,16 +417,16 @@ def _cached_scope_admits(
     store: str,
     adapter_id: str,
     agent: str,
-    scope: agentgrep.SearchScope,
+    scope: SearchScope,
     prompt_history_agents: frozenset[str],
 ) -> bool:
     """Scalar form of the cached scope filter for lean probe rows."""
-    role = agentgrep.store_role_for_record(store, adapter_id)
+    role = store_role_for_record(store, adapter_id)
     if scope == "conversations":
-        return role in agentgrep.CONVERSATION_STORE_ROLES
+        return role in CONVERSATION_STORE_ROLES
     if kind != "prompt":
         return False
-    if role in agentgrep.CONVERSATION_STORE_ROLES:
+    if role in CONVERSATION_STORE_ROLES:
         return agent not in prompt_history_agents
     return True
 
@@ -437,8 +457,9 @@ class DbStore:
         self.db_path = db_path
         self._sql_stats: dict[str, _SqlStatementStats] = {}
         if readonly:
-            self.connection = agentgrep.open_readonly_sqlite(self.db_path)
+            self.connection = open_readonly_sqlite(self.db_path)
             self.connection.row_factory = sqlite3.Row
+            _ = self.connection.execute(f"PRAGMA mmap_size={SQLITE_MMAP_BYTES}")
             return
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.connection = sqlite3.connect(str(self.db_path))
@@ -572,7 +593,7 @@ class DbStore:
         self._sql_stats = {}
         for stmt_name, stats in sorted(stats_by_name.items()):
             if stats.plan is not None:
-                agentgrep._record_engine_profile_sample(
+                _record_engine_profile_sample(
                     "db.sql.statement",
                     stats.seconds,
                     agentgrep_sql_statement=stmt_name,
@@ -581,7 +602,7 @@ class DbStore:
                     agentgrep_sql_plan=stats.plan,
                 )
                 continue
-            agentgrep._record_engine_profile_sample(
+            _record_engine_profile_sample(
                 "db.sql.statement",
                 stats.seconds,
                 agentgrep_sql_statement=stmt_name,
@@ -596,14 +617,14 @@ class DbStore:
         connection — existing caches keep their page size until the
         next rebuild. 8 KiB pages measurably shorten overflow chains
         for the ~3 KiB detail rows; the mmap budget rationale lives on
-        :data:`agentgrep.SQLITE_MMAP_BYTES`.
+        :data:`SQLITE_MMAP_BYTES`.
         """
         _ = self._execute("pragma.page_size", "PRAGMA page_size=8192")
         _ = self._execute("pragma.journal_mode", "PRAGMA journal_mode=WAL")
         _ = self._execute("pragma.foreign_keys", "PRAGMA foreign_keys=ON")
         _ = self._execute(
             "pragma.mmap_size",
-            f"PRAGMA mmap_size={agentgrep.SQLITE_MMAP_BYTES}",
+            f"PRAGMA mmap_size={SQLITE_MMAP_BYTES}",
         )
 
     def _stored_schema_version(self) -> int | None:
@@ -839,8 +860,8 @@ class DbStore:
 
     def replace_source_records(
         self,
-        source: agentgrep.SourceHandle,
-        records: cabc.Iterable[agentgrep.SearchRecord],
+        source: SourceHandle,
+        records: cabc.Iterable[SearchRecord],
     ) -> tuple[int, int]:
         """Replace every indexed record for ``source``.
 
@@ -896,7 +917,7 @@ class DbStore:
             )
         return indexed, removed
 
-    def source_is_current(self, source: agentgrep.SourceHandle) -> bool:
+    def source_is_current(self, source: SourceHandle) -> bool:
         """Return whether ``source`` has an up-to-date successful sync state.
 
         Adapters whose record text depends on files outside
@@ -930,7 +951,7 @@ class DbStore:
 
     def _upsert_source(
         self,
-        source: agentgrep.SourceHandle,
+        source: SourceHandle,
         *,
         source_id: str,
         fingerprint: str,
@@ -1024,7 +1045,7 @@ class DbStore:
     def _insert_record(
         self,
         source_id: str,
-        record: agentgrep.SearchRecord,
+        record: SearchRecord,
         *,
         record_id: str,
         now: str,
@@ -1032,7 +1053,7 @@ class DbStore:
         normalized_hash: str,
     ) -> str:
         """Insert one normalized record across the search/details/FTS surfaces."""
-        haystack = agentgrep.build_record_match_surface(record, "haystack").casefold()
+        haystack = build_record_match_surface(record, "haystack").casefold()
         cursor = self._execute(
             "records_search.insert",
             """
@@ -1092,8 +1113,8 @@ class DbStore:
         Returns the agents holding a prompt-history-role source and the
         conversation-role ``(store, adapter_id)`` pairs present in the
         ledger — both small, bounded sets. Mirrors
-        :func:`agentgrep.prompt_history_agents_for_sources` and the
-        planner's :func:`agentgrep.source_matches_scope` store
+        :func:`prompt_history_agents_for_sources` and the
+        planner's :func:`source_matches_scope` store
         selection so the gates can run inside SQL.
         """
         rows = self._query(
@@ -1105,21 +1126,21 @@ class DbStore:
         for row in rows:
             store = str(row["store"])
             adapter_id = str(row["adapter_id"])
-            role = agentgrep.store_role_for_record(store, adapter_id)
-            if role in agentgrep.PROMPT_HISTORY_STORE_ROLES:
+            role = store_role_for_record(store, adapter_id)
+            if role in PROMPT_HISTORY_STORE_ROLES:
                 prompt_history_agents.add(str(row["agent"]))
-            if role in agentgrep.CONVERSATION_STORE_ROLES:
+            if role in CONVERSATION_STORE_ROLES:
                 conversation_pairs.add((store, adapter_id))
         return frozenset(prompt_history_agents), frozenset(conversation_pairs)
 
-    def search_records(self, query: agentgrep.SearchQuery) -> list[agentgrep.SearchRecord]:
+    def search_records(self, query: SearchQuery) -> list[SearchRecord]:
         """Return SearchRecord objects matching ``query`` from SQLite/FTS."""
         try:
             return self._search_records(query)
         finally:
             self._flush_sql_samples()
 
-    def _search_records(self, query: agentgrep.SearchQuery) -> list[agentgrep.SearchRecord]:
+    def _search_records(self, query: SearchQuery) -> list[SearchRecord]:
         """Serve ``search_records`` ahead of the telemetry flush."""
         if query.regex or query.any_term or query.compiled is not None:
             msg = "query requires live scanner"
@@ -1206,12 +1227,12 @@ class DbStore:
 
     def _search_limited(
         self,
-        query: agentgrep.SearchQuery,
+        query: SearchQuery,
         stmt_name: str,
         from_where: str,
         base_params: tuple[object, ...],
         prompt_history_agents: frozenset[str],
-    ) -> list[agentgrep.SearchRecord]:
+    ) -> list[SearchRecord]:
         """Serve a limited search through the keyset probe.
 
         Probe pages arrive in the deterministic total order
@@ -1224,7 +1245,7 @@ class DbStore:
         """
         limit = query.limit
         assert limit is not None
-        results: list[agentgrep.SearchRecord] = []
+        results: list[SearchRecord] = []
         seen: set[tuple[str, str, str, str, str]] = set()
         window = self._initial_probe_window(limit)
         cursor: tuple[str, str, str, int] | None = None
@@ -1263,10 +1284,10 @@ class DbStore:
             by_rowid = self._hydrate([int(row["rowid"]) for row in admitted])
             for row in admitted:
                 record = by_rowid.get(int(row["rowid"]))
-                if record is None or not agentgrep.matches_record(record, query):
+                if record is None or not matches_record(record, query):
                     continue
                 if query.dedupe:
-                    key = agentgrep.record_dedupe_key(record)
+                    key = record_dedupe_key(record)
                     if key in seen:
                         continue
                     seen.add(key)
@@ -1277,7 +1298,7 @@ class DbStore:
             # fetched rows to oracle-surviving results explains page
             # continuations (e.g. text-surface queries rejecting
             # haystack-only hits) without per-record samples.
-            agentgrep._record_engine_profile_sample(
+            _record_engine_profile_sample(
                 "db.probe.page",
                 time.perf_counter() - page_started,
                 agentgrep_probe_page=page_index,
@@ -1305,12 +1326,12 @@ class DbStore:
 
     def _search_all(
         self,
-        query: agentgrep.SearchQuery,
+        query: SearchQuery,
         stmt_name: str,
         from_where: str,
         base_params: tuple[object, ...],
         prompt_history_agents: frozenset[str],
-    ) -> list[agentgrep.SearchRecord]:
+    ) -> list[SearchRecord]:
         """Serve an unlimited search: lean fetch, hydrate survivors, finish."""
         rows = self._query(
             stmt_name,
@@ -1343,22 +1364,22 @@ class DbStore:
         )
         by_rowid = self._hydrate([int(row["rowid"]) for row in admitted])
         seen: set[tuple[str, str, str, str, str]] = set()
-        results: list[agentgrep.SearchRecord] = []
+        results: list[SearchRecord] = []
         for row in admitted:
             record = by_rowid.get(int(row["rowid"]))
-            if record is None or not agentgrep.matches_record(record, query):
+            if record is None or not matches_record(record, query):
                 continue
             if query.dedupe:
-                key = agentgrep.record_dedupe_key(record)
+                key = record_dedupe_key(record)
                 if key in seen:
                     continue
                 seen.add(key)
             results.append(record)
         return results
 
-    def _hydrate(self, rowids: list[int]) -> dict[int, agentgrep.SearchRecord]:
+    def _hydrate(self, rowids: list[int]) -> dict[int, SearchRecord]:
         """Fetch full records for ``rowids``, keyed by rowid."""
-        out: dict[int, agentgrep.SearchRecord] = {}
+        out: dict[int, SearchRecord] = {}
         for start in range(0, len(rowids), 500):
             chunk = rowids[start : start + 500]
             id_list = ",".join(str(rowid) for rowid in chunk)
@@ -1401,11 +1422,11 @@ class DbStore:
             return None
         return DbRecordRow(record_id=record_id, record=self._row_to_record(rows[0]))
 
-    def _row_to_record(self, row: sqlite3.Row) -> agentgrep.SearchRecord:
+    def _row_to_record(self, row: sqlite3.Row) -> SearchRecord:
         """Convert one SQLite row into the public SearchRecord dataclass."""
-        return agentgrep.SearchRecord(
+        return SearchRecord(
             kind=t.cast("t.Literal['prompt', 'history']", str(row["kind"])),
-            agent=t.cast("agentgrep.AgentName", str(row["agent"])),
+            agent=t.cast("AgentName", str(row["agent"])),
             store=str(row["store"]),
             adapter_id=str(row["adapter_id"]),
             path=pathlib.Path(str(row["path"])),
@@ -1460,7 +1481,7 @@ class DbRuntime:
         self,
         batches: cabc.Iterable[SourceRecordBatch],
         *,
-        control: agentgrep.SearchControl | None = None,
+        control: SearchControl | None = None,
         progress: DbSyncProgress | None = None,
         force: bool = False,
         coverage: SyncCoverage | None = None,
@@ -1493,7 +1514,7 @@ class DbRuntime:
         self,
         batches: cabc.Iterable[SourceRecordBatch],
         *,
-        control: agentgrep.SearchControl | None = None,
+        control: SearchControl | None = None,
         progress: DbSyncProgress | None = None,
         force: bool = False,
         coverage: SyncCoverage | None = None,
@@ -1575,14 +1596,14 @@ class DbRuntime:
             self.store.merge_coverage(coverage)
         return result
 
-    def covers_query(self, query: agentgrep.SearchQuery) -> bool:
+    def covers_query(self, query: SearchQuery) -> bool:
         """Return whether coverage spans the query's agents and scope."""
         return self.store.covers(query.agents, query.scope)
 
     def _sync_one_source(
         self,
-        source: agentgrep.SourceHandle,
-        records: cabc.Iterable[agentgrep.SearchRecord],
+        source: SourceHandle,
+        records: cabc.Iterable[SearchRecord],
         *,
         result: SyncResult,
         force: bool,
@@ -1613,9 +1634,9 @@ class DbRuntime:
 
     def sync_sources(
         self,
-        sources: cabc.Iterable[agentgrep.SourceHandle],
+        sources: cabc.Iterable[SourceHandle],
         *,
-        control: agentgrep.SearchControl | None = None,
+        control: SearchControl | None = None,
         progress: DbSyncProgress | None = None,
         force: bool = False,
         coverage: SyncCoverage | None = None,
@@ -1623,7 +1644,7 @@ class DbRuntime:
     ) -> SyncResult:
         """Read records from existing adapters and sync them into the DB."""
         return self.sync_records(
-            ((source, agentgrep.iter_source_records(source)) for source in sources),
+            ((source, iter_source_records(source)) for source in sources),
             control=control,
             progress=progress,
             force=force,
@@ -1631,6 +1652,6 @@ class DbRuntime:
             prune_missing=prune_missing,
         )
 
-    def search_records(self, query: agentgrep.SearchQuery) -> list[agentgrep.SearchRecord]:
+    def search_records(self, query: SearchQuery) -> list[SearchRecord]:
         """Search the DB index."""
         return self.store.search_records(query)
