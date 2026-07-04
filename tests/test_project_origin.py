@@ -48,6 +48,14 @@ class OriginTrailingSlashCase(t.NamedTuple):
     expected: bool
 
 
+class OriginPathBoundaryCase(t.NamedTuple):
+    """Parametrized case for non-glob origin path predicates."""
+
+    test_id: str
+    record_cwd: str
+    expected: bool
+
+
 ORIGIN_TRAILING_SLASH_CASES: tuple[OriginTrailingSlashCase, ...] = (
     OriginTrailingSlashCase(
         test_id="cwd-display-path-matches-stored-path",
@@ -57,6 +65,24 @@ ORIGIN_TRAILING_SLASH_CASES: tuple[OriginTrailingSlashCase, ...] = (
     OriginTrailingSlashCase(
         test_id="negated-cwd-display-path-excludes-stored-path",
         query='tmux AND (NOT cwd:"~/work/notes/")',
+        expected=False,
+    ),
+)
+
+ORIGIN_PATH_BOUNDARY_CASES: tuple[OriginPathBoundaryCase, ...] = (
+    OriginPathBoundaryCase(
+        test_id="exact-path",
+        record_cwd="/tmp/repo",
+        expected=True,
+    ),
+    OriginPathBoundaryCase(
+        test_id="descendant-path",
+        record_cwd="/tmp/repo/src",
+        expected=True,
+    ),
+    OriginPathBoundaryCase(
+        test_id="sibling-prefix-path",
+        record_cwd="/tmp/repo2",
         expected=False,
     ),
 )
@@ -180,6 +206,31 @@ def test_origin_path_fields_match_display_trailing_slash(
     )
     compiled = compile_query(
         parse_query(case.query, default_registry()),
+        default_registry(),
+    )
+
+    assert compiled.record_predicate is not None
+    assert compiled.record_predicate(record) is case.expected
+
+
+@pytest.mark.parametrize(
+    "case",
+    ORIGIN_PATH_BOUNDARY_CASES,
+    ids=[case.test_id for case in ORIGIN_PATH_BOUNDARY_CASES],
+)
+def test_origin_path_fields_match_boundaries(case: OriginPathBoundaryCase) -> None:
+    """Non-glob cwd predicates match exact paths and descendants only."""
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text="needle prompt",
+        origin=agentgrep.RecordOrigin(cwd=case.record_cwd),
+    )
+    compiled = compile_query(
+        parse_query('cwd:"/tmp/repo" needle', default_registry()),
         default_registry(),
     )
 

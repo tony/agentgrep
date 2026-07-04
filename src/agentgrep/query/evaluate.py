@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import pathlib
 import typing as t
 
 from agentgrep._engine.orchestration import record_matches_scope
@@ -225,7 +226,8 @@ def _field_matches_record(
     if spec.name in {"cwd", "repo", "worktree"}:
         pattern = _path_pattern_for(node, path_patterns)
         return any(
-            _path_match(value, pattern) for value in record_origin_field_values(record, spec.name)
+            _origin_path_match(value, pattern)
+            for value in record_origin_field_values(record, spec.name)
         )
     if spec.name in {"branch", "project", "cwd_hash"}:
         return any(
@@ -239,6 +241,37 @@ def _field_matches_record(
             return _string_match(record.text, node.value)
         return _text_matches(record, node.value)
     return False
+
+
+def _origin_path_match(value: str, pattern: _CompiledPathPattern) -> bool:
+    """Match origin paths by boundary unless the query uses a glob."""
+    if pattern.is_glob:
+        return _path_match(value, pattern)
+    path = _origin_path_boundary_text(value)
+    return any(
+        _path_is_equal_or_descendant(path, _origin_path_boundary_text(variant))
+        for variant in pattern.variants
+    )
+
+
+def _origin_path_boundary_text(value: str) -> str:
+    if value == "~" or value.startswith("~/"):
+        value = str(pathlib.Path(value).expanduser())
+    normalized = value.replace("\\", "/")
+    stripped = normalized.rstrip("/")
+    if stripped:
+        return stripped
+    if normalized.startswith("/"):
+        return "/"
+    return normalized
+
+
+def _path_is_equal_or_descendant(path: str, target: str) -> bool:
+    if not path or not target:
+        return False
+    if target == "/":
+        return path.startswith("/")
+    return path == target or path.startswith(f"{target}/")
 
 
 def _field_matches_record_via_source(
