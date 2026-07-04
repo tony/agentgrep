@@ -181,7 +181,11 @@ because they have disjoint data homes and on-disk formats.
   SQLite. `cursor-ide.state_vscdb` covers the global database and
   `cursor-ide.workspace_state` covers the per-workspace
   `workspaceStorage/<hash>/state.vscdb`; both surface the
-  `aiService.prompts` history alongside composer/chat keys.
+  `aiService.prompts` history alongside composer/chat keys. On WSL,
+  discovery also probes the Windows-host mount under `/mnt/c/Users`
+  (overridable via `AGENTGREP_WSL_USERS_ROOT`) for a Windows-side Cursor
+  editing a WSL project, mirroring the VS Code backend; see
+  {ref}`adr-cross-host-discovery`.
 
 ### Codex
 
