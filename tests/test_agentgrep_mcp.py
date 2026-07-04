@@ -77,6 +77,14 @@ class AgentProductNameCase(t.NamedTuple):
     product_name: str
 
 
+class McpOriginPhraseCase(t.NamedTuple):
+    """Parametrized case for MCP origin filters with phrase terms."""
+
+    test_id: str
+    terms: list[str]
+    expected_texts: list[str]
+
+
 RESULT_SHAPE_CASES = [
     McpResultShapeCase(
         test_id="search",
@@ -130,6 +138,14 @@ AGENT_PRODUCT_NAMES: dict[agentgrep.AgentName, str] = {
 AGENT_PRODUCT_NAME_CASES: tuple[AgentProductNameCase, ...] = tuple(
     AgentProductNameCase(test_id=agent, agent=agent, product_name=product)
     for agent, product in sorted(AGENT_PRODUCT_NAMES.items())
+)
+
+MCP_ORIGIN_PHRASE_CASES: tuple[McpOriginPhraseCase, ...] = (
+    McpOriginPhraseCase(
+        test_id="single-phrase-term",
+        terms=["exact phrase"],
+        expected_texts=["exact phrase same"],
+    ),
 )
 
 
@@ -693,6 +709,59 @@ async def test_mcp_search_origin_filters_scope_boolean_query(
 
     data = tool_payload(result)
     assert [row["text"] for row in data["results"]] == ["foo same", "bar same"]
+
+
+@pytest.mark.parametrize(
+    "case",
+    MCP_ORIGIN_PHRASE_CASES,
+    ids=[case.test_id for case in MCP_ORIGIN_PHRASE_CASES],
+)
+async def test_mcp_search_origin_filters_preserve_phrase_terms(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: McpOriginPhraseCase,
+) -> None:
+    """Generated MCP origin predicates keep phrase terms intact."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    sessions = home / ".codex" / "sessions" / "2026" / "01" / "01"
+    write_codex_prompt_session(
+        sessions / "same-exact.jsonl",
+        session_id="same-exact",
+        timestamp="2026-06-03T00:00:00Z",
+        text="exact phrase same",
+        cwd="/workspace/agentgrep",
+    )
+    write_codex_prompt_session(
+        sessions / "same-separated.jsonl",
+        session_id="same-separated",
+        timestamp="2026-06-02T00:00:00Z",
+        text="exact words then phrase same",
+        cwd="/workspace/agentgrep",
+    )
+    write_codex_prompt_session(
+        sessions / "other-exact.jsonl",
+        session_id="other-exact",
+        timestamp="2026-06-01T00:00:00Z",
+        text="exact phrase other",
+        cwd="/workspace/other",
+    )
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        result = await client.call_tool(
+            "search",
+            {
+                "terms": case.terms,
+                "agent": "codex",
+                "scope": "prompts",
+                "cwd": "/workspace/agentgrep",
+                "limit": 10,
+            },
+        )
+
+    data = tool_payload(result)
+    assert [row["text"] for row in data["results"]] == case.expected_texts
 
 
 async def test_mcp_search_cursor_rejects_empty_terms(

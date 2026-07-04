@@ -8,6 +8,7 @@ or source prefilter behavior.
 from __future__ import annotations
 
 import pathlib
+import re
 import typing as t
 
 from agentgrep.records import RecordOrigin, SearchRecord
@@ -47,6 +48,8 @@ _STRING_FIELD_KEYS: dict[str, tuple[str, ...]] = {
     "branch": ("branch", "gitBranch"),
     "cwd_hash": ("cwd_hash", "project_hash", "projectHash"),
 }
+_FIELD_PREDICATE_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_-]*:")
+_BOOLEAN_KEYWORDS = frozenset({"AND", "OR", "NOT"})
 
 
 def query_quote(value: str) -> str:
@@ -83,10 +86,29 @@ def origin_filtered_query_text(
 ) -> str:
     """Return query text with generated origin filters grouped around user terms."""
     origin_text = " ".join(origin_terms).strip()
-    user_text = " ".join(user_terms).strip()
+    user_text = " ".join(_wrapped_user_term_text(term) for term in user_terms).strip()
     if origin_text and user_text:
         return f"{origin_text} AND ({user_text})"
     return origin_text or user_text
+
+
+def _wrapped_user_term_text(term: str) -> str:
+    stripped = term.strip()
+    if not stripped or not any(character.isspace() for character in stripped):
+        return stripped
+    if _looks_like_query_syntax(stripped):
+        return stripped
+    return query_quote(stripped)
+
+
+def _looks_like_query_syntax(term: str) -> bool:
+    return (
+        term[0] in {'"', "'"}
+        or "(" in term
+        or ")" in term
+        or _FIELD_PREDICATE_RE.search(term) is not None
+        or bool(_BOOLEAN_KEYWORDS.intersection(term.split()))
+    )
 
 
 def record_origin_field_values(record: SearchRecord, field: str) -> tuple[str, ...]:
