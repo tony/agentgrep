@@ -12,6 +12,7 @@ import agentgrep
 from agentgrep.identity import record_content_id
 from agentgrep.ranking import score_by_similarity
 from agentgrep.records import SearchRecord
+from agentgrep.similar import run_find_similar
 
 
 def _record(**overrides: object) -> SearchRecord:
@@ -189,3 +190,50 @@ def test_similar_exclude_exact_flag(
     assert agentgrep.main(["similar", *seed, "--exclude-exact"]) == 0
     excluded = json.loads(capsys.readouterr().out)["results"]
     assert all(r["text"] != "refactor the parser module" for r in excluded)
+
+
+class _CapCase(t.NamedTuple):
+    test_id: str
+    max_candidates: int | None
+    expected_count: int
+
+
+_CAP_CASES = [
+    _CapCase("uncapped-scans-all", None, 5),
+    _CapCase("capped-stops-early", 2, 2),
+]
+
+
+@pytest.mark.parametrize("case", _CAP_CASES, ids=[c.test_id for c in _CAP_CASES])
+def test_max_candidates_bounds_the_scanned_corpus(
+    case: _CapCase,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The cap bounds how many records are scanned (one record per source here)."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    base = tmp_path / ".codex" / "sessions" / "2026" / "01"
+    for index in range(5):
+        path = base / f"{index:02d}" / f"rollout-{index}.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "type": "response_item",
+                    "payload": {"role": "user", "content": f"prompt {index}"},
+                },
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    matches = run_find_similar(
+        tmp_path,
+        seed_text="prompt",
+        agents=t.cast("tuple[t.Any, ...]", ("codex",)),
+        scope="prompts",
+        top_k=20,
+        threshold=0.0,
+        max_candidates=case.max_candidates,
+    )
+    assert len(matches) == case.expected_count

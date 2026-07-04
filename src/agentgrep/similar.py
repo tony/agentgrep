@@ -20,6 +20,9 @@ if t.TYPE_CHECKING:
 
 __all__ = ["run_find_similar"]
 
+_MAX_CANDIDATES: int = 2000
+"""Per-call cap on records scanned, so a wide scope cannot hang."""
+
 
 def run_find_similar(
     home: pathlib.Path,
@@ -30,6 +33,7 @@ def run_find_similar(
     top_k: int = 20,
     threshold: float = 0.0,
     exclude_exact: bool = False,
+    max_candidates: int | None = _MAX_CANDIDATES,
 ) -> list[tuple[SearchRecord, float]]:
     """Return the records most similar to ``seed_text`` in the scoped corpus.
 
@@ -51,6 +55,9 @@ def run_find_similar(
         When true, drop neighbors whose text is identical to the seed. The
         default keeps verbatim matches from other stores (the
         "where else did I ask this?" answer).
+    max_candidates : int or None
+        Cap on records scanned (newest-first) so a wide scope cannot hang;
+        ``None`` scans the whole corpus.
 
     Returns
     -------
@@ -74,7 +81,7 @@ def run_find_similar(
         regex=False,
         case_sensitive=False,
         agents=agents,
-        limit=None,
+        limit=max_candidates,
     )
     records = run_search_query(
         home,
