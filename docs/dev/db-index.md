@@ -57,4 +57,4 @@ Use the CLI pages for the exact parser surface:
 - {ref}`cli-db-status`
 - {ref}`cli-db-explain`
 
-The architecture decision is {doc}`adr/0005-persistent-agentic-db-index`.
+The architecture decision is {doc}`adr/0015-persistent-agentic-db-index`.

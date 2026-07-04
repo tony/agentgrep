@@ -22,8 +22,8 @@ multiple adapters or public payloads.
 0012-reusable-tui-widget-architecture
 0013-pluggable-tui-layouts-and-workflows
 0014-result-order-limit-and-streaming-merge
+0015-persistent-agentic-db-index
+0016-cache-schema-versioning-and-rebuilds
 0020-progressive-deep-search
 0021-prompt-guided-conversation-routing
-0005-persistent-agentic-db-index
-0008-cache-schema-versioning-and-rebuilds
 ```
