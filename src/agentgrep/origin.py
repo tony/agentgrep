@@ -15,6 +15,7 @@ from agentgrep.records import RecordOrigin, SearchRecord
 __all__ = [
     "LEGACY_ORIGIN_METADATA_KEYS",
     "origin_filter_terms",
+    "origin_filtered_query_text",
     "query_quote",
     "record_matches_origin",
     "record_origin_field_values",
@@ -74,6 +75,18 @@ def origin_filter_terms(
         if value:
             terms.append(f"{field}:{query_quote(value)}")
     return tuple(terms)
+
+
+def origin_filtered_query_text(
+    origin_terms: t.Sequence[str],
+    user_terms: t.Sequence[str],
+) -> str:
+    """Return query text with generated origin filters grouped around user terms."""
+    origin_text = " ".join(origin_terms).strip()
+    user_text = " ".join(user_terms).strip()
+    if origin_text and user_text:
+        return f"{origin_text} AND ({user_text})"
+    return origin_text or user_text
 
 
 def record_origin_field_values(record: SearchRecord, field: str) -> tuple[str, ...]:

@@ -648,6 +648,53 @@ async def test_mcp_search_explicit_origin_filters_survive_cursor(
     assert second_data["page"]["next_cursor"] is None
 
 
+async def test_mcp_search_origin_filters_scope_boolean_query(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Generated MCP origin predicates apply to the whole boolean query."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    sessions = home / ".codex" / "sessions" / "2026" / "01" / "01"
+    write_codex_prompt_session(
+        sessions / "same-foo.jsonl",
+        session_id="same-foo",
+        timestamp="2026-06-03T00:00:00Z",
+        text="foo same",
+        cwd="/workspace/agentgrep",
+    )
+    write_codex_prompt_session(
+        sessions / "same-bar.jsonl",
+        session_id="same-bar",
+        timestamp="2026-06-02T00:00:00Z",
+        text="bar same",
+        cwd="/workspace/agentgrep/src",
+    )
+    write_codex_prompt_session(
+        sessions / "other-bar.jsonl",
+        session_id="other-bar",
+        timestamp="2026-06-01T00:00:00Z",
+        text="bar other",
+        cwd="/workspace/other",
+    )
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        result = await client.call_tool(
+            "search",
+            {
+                "terms": ["foo", "OR", "bar"],
+                "agent": "codex",
+                "scope": "prompts",
+                "cwd": "/workspace/agentgrep",
+                "limit": 10,
+            },
+        )
+
+    data = tool_payload(result)
+    assert [row["text"] for row in data["results"]] == ["foo same", "bar same"]
+
+
 async def test_mcp_search_cursor_rejects_empty_terms(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

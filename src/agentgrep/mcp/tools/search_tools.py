@@ -33,7 +33,7 @@ from agentgrep.mcp.models import (
     SearchToolResponse,
     SourceRecordModel,
 )
-from agentgrep.origin import origin_filter_terms
+from agentgrep.origin import origin_filter_terms, origin_filtered_query_text
 from agentgrep.query.help import query_language_summary
 
 if t.TYPE_CHECKING:
@@ -112,7 +112,7 @@ def _compile_request_query(
         repo=request.repo,
         branch=request.branch,
     )
-    joined = " ".join((*generated_terms, *request.terms)).strip()
+    joined = origin_filtered_query_text(generated_terms, request.terms)
     if not joined:
         return base_query
     result = build_query_from_input(joined, base_query, default_registry())

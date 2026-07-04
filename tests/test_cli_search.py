@@ -250,6 +250,74 @@ def test_search_parse_explicit_origin_filters_compile() -> None:
     assert agentgrep.matches_record(record, query)
 
 
+class OriginBooleanFilterCase(t.NamedTuple):
+    """Parametrized record case for generated origin filters and OR queries."""
+
+    test_id: str
+    text: str
+    cwd: str
+    expected: bool
+
+
+ORIGIN_BOOLEAN_FILTER_CASES: tuple[OriginBooleanFilterCase, ...] = (
+    OriginBooleanFilterCase(
+        test_id="inside-cwd-left-branch",
+        text="foo note",
+        cwd="/workspace/agentgrep",
+        expected=True,
+    ),
+    OriginBooleanFilterCase(
+        test_id="inside-cwd-right-branch",
+        text="bar note",
+        cwd="/workspace/agentgrep/src",
+        expected=True,
+    ),
+    OriginBooleanFilterCase(
+        test_id="outside-cwd-right-branch",
+        text="bar note",
+        cwd="/workspace/other",
+        expected=False,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    ORIGIN_BOOLEAN_FILTER_CASES,
+    ids=[case.test_id for case in ORIGIN_BOOLEAN_FILTER_CASES],
+)
+def test_search_origin_flags_scope_boolean_query(
+    case: OriginBooleanFilterCase,
+) -> None:
+    """Generated origin predicates apply to the whole boolean query."""
+    parsed = agentgrep.parse_args(
+        ("search", "--cwd", "/workspace/agentgrep", "foo", "OR", "bar"),
+    )
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text=case.text,
+        origin=agentgrep.RecordOrigin(cwd=case.cwd),
+    )
+
+    assert isinstance(parsed, agentgrep.SearchArgs)
+    assert parsed.compiled is not None
+    query = agentgrep.SearchQuery(
+        terms=parsed.terms,
+        scope=parsed.scope,
+        any_term=False,
+        regex=False,
+        case_sensitive=parsed.case_sensitive,
+        agents=parsed.agents,
+        limit=parsed.limit,
+        compiled=parsed.compiled,
+    )
+    assert agentgrep.matches_record(record, query) is case.expected
+
+
 def test_search_parse_only_here_detects_git_context(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

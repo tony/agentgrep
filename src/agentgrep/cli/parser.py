@@ -30,7 +30,7 @@ from agentgrep._text import (
     UI_DESCRIPTION,
 )
 from agentgrep.cli.help_theme import create_themed_formatter
-from agentgrep.origin import origin_filter_terms
+from agentgrep.origin import origin_filter_terms, origin_filtered_query_text
 from agentgrep.project_context import detect_project_context
 from agentgrep.records import (
     AGENT_CHOICES,
@@ -1193,7 +1193,11 @@ def _build_search_args(
             )
 
     origin_terms, origin_boost = _build_search_origin_terms(namespace)
-    query_terms = [*origin_terms, *terms_list]
+    query_terms = (
+        (origin_filtered_query_text(origin_terms, terms_list),)
+        if origin_terms
+        else tuple(terms_list)
+    )
     search_compiled, residual_terms, search_query_fields = _maybe_compile_query(
         query_terms,
         bundle=bundle,
