@@ -380,8 +380,14 @@ def test_run_search_query_respects_cache_mode(
     def iter_source_records(_source: agentgrep.SourceHandle) -> tuple[agentgrep.SearchRecord, ...]:
         return (_record(source, "live scanner ruff result"),)
 
-    monkeypatch.setattr(agentgrep, "discover_sources_for_search", discover_sources_for_search)
-    monkeypatch.setattr(agentgrep, "iter_source_records", iter_source_records)
+    monkeypatch.setattr(
+        "agentgrep._engine.orchestration.discover_sources_for_search",
+        discover_sources_for_search,
+    )
+    monkeypatch.setattr(
+        "agentgrep._engine.scanning.iter_source_records",
+        iter_source_records,
+    )
 
     records = agentgrep.run_search_query(tmp_path, _query("ruff"), runtime=runtime)
 

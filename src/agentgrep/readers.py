@@ -36,6 +36,7 @@ if t.TYPE_CHECKING:
     from agentgrep.records import JSONScalar, JSONValue, RawJsonlSkipLine, SummaryRow
 
 __all__ = [
+    "SQLITE_MMAP_BYTES",
     "as_optional_str",
     "decode_sqlite_value",
     "file_mtime_ns",
@@ -203,6 +204,10 @@ def iter_protobuf_text_fields(
             index += 8
         else:
             return
+
+
+SQLITE_MMAP_BYTES = 8 * 1024 * 1024 * 1024
+"""Memory-map budget applied to the DB index via ``PRAGMA mmap_size``."""
 
 
 def open_readonly_sqlite(path: pathlib.Path) -> sqlite3.Connection:

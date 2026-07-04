@@ -274,6 +274,7 @@ from agentgrep.readers import (
     _JSONL_YIELD_INTERVAL_SECONDS,
     _PI_SESSION_HEADER_MARKER,
     _SKIPPED_JSONL_LINE,
+    SQLITE_MMAP_BYTES,
     _combine_raw_skip_lines,
     _decode_jsonl_raw_line,
     _decode_protobuf_text,
@@ -508,6 +509,8 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
             return run_search_command(parsed)
         if isinstance(parsed, UIArgs):
             return run_ui_command(parsed)
+        if isinstance(parsed, DbArgs):
+            return run_db_command(parsed)
         assert isinstance(parsed, FindArgs)
         return run_find_command(parsed)
     except KeyboardInterrupt:
@@ -591,6 +594,7 @@ from agentgrep.cli.render import (  # noqa: E402  (re-exports must follow main d
     format_grep_record,
     print_find_results,
     print_grep_results,
+    run_db_command,
     run_find_command,
     run_grep_command,
     run_search_command,
