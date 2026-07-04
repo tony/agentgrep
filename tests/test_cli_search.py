@@ -432,6 +432,30 @@ ORIGIN_LITERAL_TERM_CASES: tuple[OriginLiteralTermCase, ...] = (
         expected=True,
     ),
     OriginLiteralTermCase(
+        test_id="negative-literal",
+        term="-foo",
+        text="-foo appears literally",
+        expected=True,
+    ),
+    OriginLiteralTermCase(
+        test_id="negative-literal-miss",
+        term="-foo",
+        text="foo appears without dash",
+        expected=False,
+    ),
+    OriginLiteralTermCase(
+        test_id="paren-literal",
+        term="foo(bar)",
+        text="foo(bar) appears literally",
+        expected=True,
+    ),
+    OriginLiteralTermCase(
+        test_id="paren-literal-miss",
+        term="foo(bar)",
+        text="foo and then bar appear separately",
+        expected=False,
+    ),
+    OriginLiteralTermCase(
         test_id="literal-miss",
         term="foo:bar",
         text="foo and bar are split",
@@ -738,7 +762,7 @@ def test_search_origin_flags_preserve_literal_punctuation_terms(
 ) -> None:
     """Generated origin predicates keep punctuation-heavy terms literal."""
     parsed = agentgrep.parse_args(
-        ("search", "--cwd", "/workspace/agentgrep", case.term),
+        ("search", "--cwd", "/workspace/agentgrep", "--", case.term),
     )
     record = agentgrep.SearchRecord(
         kind="prompt",

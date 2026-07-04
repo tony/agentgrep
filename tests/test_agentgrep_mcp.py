@@ -239,6 +239,20 @@ MCP_ORIGIN_LITERAL_TERM_CASES: tuple[McpOriginLiteralTermCase, ...] = (
         nonmatching_text="emoji appears textually",
         expected_texts=["emoji \U0001f600 appears literally"],
     ),
+    McpOriginLiteralTermCase(
+        test_id="negative-literal",
+        terms=["-foo"],
+        matching_text="-foo appears literally",
+        nonmatching_text="foo appears without dash",
+        expected_texts=["-foo appears literally"],
+    ),
+    McpOriginLiteralTermCase(
+        test_id="paren-literal",
+        terms=["foo(bar)"],
+        matching_text="foo(bar) appears literally",
+        nonmatching_text="foo and then bar appear separately",
+        expected_texts=["foo(bar) appears literally"],
+    ),
 )
 
 MCP_ORIGIN_CASE_SENSITIVE_CASES: tuple[McpOriginCaseSensitiveCase, ...] = (
