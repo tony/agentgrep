@@ -281,6 +281,31 @@ ORIGIN_BOOLEAN_FILTER_CASES: tuple[OriginBooleanFilterCase, ...] = (
 )
 
 
+class OnlyHereRecordCase(t.NamedTuple):
+    """Parametrized record case for cwd-only ``--only-here`` matching."""
+
+    test_id: str
+    relative_cwd: pathlib.Path | None
+    absolute_cwd: pathlib.Path | None
+    expected: bool
+
+
+ONLY_HERE_RECORD_CASES: tuple[OnlyHereRecordCase, ...] = (
+    OnlyHereRecordCase(
+        test_id="inside-project-cwd-only",
+        relative_cwd=pathlib.Path("src"),
+        absolute_cwd=None,
+        expected=True,
+    ),
+    OnlyHereRecordCase(
+        test_id="outside-project-cwd-only",
+        relative_cwd=None,
+        absolute_cwd=pathlib.Path("/workspace/other"),
+        expected=False,
+    ),
+)
+
+
 @pytest.mark.parametrize(
     "case",
     ORIGIN_BOOLEAN_FILTER_CASES,
@@ -318,9 +343,15 @@ def test_search_origin_flags_scope_boolean_query(
     assert agentgrep.matches_record(record, query) is case.expected
 
 
+@pytest.mark.parametrize(
+    "case",
+    ONLY_HERE_RECORD_CASES,
+    ids=[case.test_id for case in ONLY_HERE_RECORD_CASES],
+)
 def test_search_parse_only_here_detects_git_context(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
+    case: OnlyHereRecordCase,
 ) -> None:
     """--only-here turns the cwd's git context into a hard origin filter."""
     worktree = tmp_path / "repo"
@@ -337,6 +368,30 @@ def test_search_parse_only_here_detects_git_context(
     assert parsed.compiled is not None
     assert parsed.terms == ("bliss",)
     assert parsed.origin_boost is None
+    cwd = case.absolute_cwd
+    if cwd is None:
+        assert case.relative_cwd is not None
+        cwd = worktree / case.relative_cwd
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text="bliss command",
+        origin=agentgrep.RecordOrigin(cwd=str(cwd)),
+    )
+    query = agentgrep.SearchQuery(
+        terms=parsed.terms,
+        scope=parsed.scope,
+        any_term=False,
+        regex=False,
+        case_sensitive=parsed.case_sensitive,
+        agents=parsed.agents,
+        limit=parsed.limit,
+        compiled=parsed.compiled,
+    )
+    assert agentgrep.matches_record(record, query) is case.expected
 
 
 class RemovedSearchFlagCase(t.NamedTuple):
