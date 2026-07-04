@@ -171,3 +171,39 @@ def test_export_tolerates_lone_surrogate_body(
     assert exit_code == 0
     first = out.read_text(encoding="utf-8", errors="surrogatepass").splitlines()[0]
     assert json.loads(first)["text"] == "bad\ud800end"
+
+
+class _RenderExportCase(t.NamedTuple):
+    test_id: str
+    fmt: str
+
+
+_RENDER_EXPORT_CASES = [
+    _RenderExportCase("ndjson", "ndjson"),
+    _RenderExportCase("json", "json"),
+    _RenderExportCase("csv", "csv"),
+    _RenderExportCase("markdown", "markdown"),
+]
+
+
+@pytest.mark.parametrize(
+    "case",
+    _RENDER_EXPORT_CASES,
+    ids=[c.test_id for c in _RENDER_EXPORT_CASES],
+)
+def test_render_export_dispatches_to_each_writer(case: _RenderExportCase) -> None:
+    """render_export is a faithful pass-through to the per-format writer."""
+    records = [
+        _record(text="alpha", session_id="a", timestamp="2026-01-01T00:00:00Z"),
+        _record(text="beta", session_id="b", timestamp="2026-01-02T00:00:00Z"),
+    ]
+    got = export.render_export(records, t.cast("export.ExportFormat", case.fmt))
+    if case.fmt == "ndjson":
+        expected = "".join(f"{line}\n" for line in export.iter_ndjson_lines(records))
+    elif case.fmt == "json":
+        expected = export.render_json(records)
+    elif case.fmt == "csv":
+        expected = export.render_csv(records)
+    else:
+        expected = export.render_markdown(export.assemble_conversations(records))
+    assert got == expected

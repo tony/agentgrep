@@ -684,25 +684,9 @@ def run_export_command(args: ExportArgs) -> int:
         progress=noop_search_progress(),
         control=SearchControl(),
     )
-    if args.fmt == "ndjson":
-        rendered = "".join(
-            f"{line}\n"
-            for line in export.iter_ndjson_lines(records, redact=args.redact, limit=args.limit)
-        )
-    elif args.fmt == "json":
-        rendered = export.render_json(records, redact=args.redact, limit=args.limit) + "\n"
-    elif args.fmt == "csv":
-        rendered = export.render_csv(records, redact=args.redact, limit=args.limit)
-    else:
-        selected = (
-            records
-            if args.limit is None
-            else sorted(records, key=export.export_total_order_key)[: args.limit]
-        )
-        rendered = export.render_markdown(
-            export.assemble_conversations(selected),
-            redact=args.redact,
-        )
+    rendered = export.render_export(records, args.fmt, redact=args.redact, limit=args.limit)
+    if args.fmt == "json":
+        rendered += "\n"  # preserve the CLI file-convention trailing newline
     # Encode surrogate-tolerantly: store text imperfectly decoded upstream can
     # carry a lone surrogate, which a strict UTF-8 encode would abort on.
     data = rendered.encode("utf-8", "surrogatepass")

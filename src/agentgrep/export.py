@@ -44,6 +44,7 @@ __all__ = [
     "iter_ndjson_lines",
     "redact_record",
     "render_csv",
+    "render_export",
     "render_json",
     "render_markdown",
 ]
@@ -162,6 +163,25 @@ def assemble_conversations(records: Iterable[SearchRecord]) -> list[Conversation
 def _ordered(records: Iterable[SearchRecord], limit: int | None) -> list[SearchRecord]:
     ordered = sorted(records, key=export_total_order_key)
     return ordered if limit is None else ordered[:limit]
+
+
+def render_export(
+    records: Iterable[SearchRecord],
+    fmt: ExportFormat,
+    *,
+    redact: bool = False,
+    limit: int | None = None,
+) -> str:
+    """Render records to the requested format (canonical, no trailing newline)."""
+    if fmt == "ndjson":
+        lines = iter_ndjson_lines(records, redact=redact, limit=limit)
+        return "".join(f"{line}\n" for line in lines)
+    if fmt == "json":
+        return render_json(records, redact=redact, limit=limit)
+    if fmt == "csv":
+        return render_csv(records, redact=redact, limit=limit)
+    selected = records if limit is None else sorted(records, key=export_total_order_key)[:limit]
+    return render_markdown(assemble_conversations(selected), redact=redact)
 
 
 def iter_ndjson_lines(

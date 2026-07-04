@@ -56,27 +56,9 @@ def _render_export(request: ExportRequestModel) -> tuple[str, int]:
         control=SearchControl(),
     )
     count = len(records) if request.limit is None else min(len(records), request.limit)
-    if request.format == "ndjson":
-        rendered = "".join(
-            f"{line}\n"
-            for line in export.iter_ndjson_lines(
-                records, redact=request.redact, limit=request.limit
-            )
-        )
-    elif request.format == "json":
-        rendered = export.render_json(records, redact=request.redact, limit=request.limit)
-    elif request.format == "csv":
-        rendered = export.render_csv(records, redact=request.redact, limit=request.limit)
-    else:
-        selected = (
-            records
-            if request.limit is None
-            else sorted(records, key=export.export_total_order_key)[: request.limit]
-        )
-        rendered = export.render_markdown(
-            export.assemble_conversations(selected),
-            redact=request.redact,
-        )
+    rendered = export.render_export(
+        records, request.format, redact=request.redact, limit=request.limit
+    )
     return rendered, count
 
 
