@@ -61,6 +61,11 @@ _DOCS_SANDBOX = TempHomeSandbox(
     cwd=_REPO_ROOT,
     uv_cache_dir=_real_uv_cache_dir(),
     uv_project_environment=_SHARED_PROJECT_ENV,
+    # The VS Code / Cursor IDE WSL bridge probes the Windows users mount, which
+    # is independent of the sandbox's temp ``$HOME`` (ADR 0009). Point it at a
+    # nonexistent path so doc examples never read the developer's real host-side
+    # chat, mirroring the ``tests/conftest.py`` autouse fixture.
+    extra_env={"AGENTGREP_WSL_USERS_ROOT": str(_REPO_ROOT / "no-windows-mount")},
     seeds=(
         _sample_seed(
             _SAMPLES_ROOT / "docs" / "codex-history.jsonl",

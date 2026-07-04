@@ -7669,6 +7669,71 @@ def test_cursor_ide_workspace_state_extracts_aiservice_prompts(
     assert records[0].agent == "cursor-ide"
 
 
+def _write_cursor_state_db(path: pathlib.Path) -> None:
+    """Create a minimal valid Cursor IDE ``state.vscdb`` (empty ItemTable)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(path)
+    try:
+        _ = connection.execute("CREATE TABLE ItemTable (key TEXT, value TEXT)")
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def test_discover_cursor_ide_finds_native_global_state(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The global state.vscdb is discovered via the ide_global root on the native path."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    global_db = agentgrep._cursor_ide_workspace_root(home).parent / "globalStorage" / "state.vscdb"
+    _write_cursor_state_db(global_db)
+
+    sources = agentgrep.discover_sources(
+        home,
+        ("cursor-ide",),
+        agentgrep.BackendSelection(None, None, None),
+    )
+
+    global_sources = [
+        s for s in sources if s.store == "cursor-ide.state_vscdb" and s.path == global_db
+    ]
+    assert [s.adapter_id for s in global_sources] == ["cursor_ide.state_vscdb_modern.v1"]
+
+
+def test_discover_cursor_ide_wsl_bridge_probes_windows_mount(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On WSL, cursor-ide discovery reaches the Windows-host state.vscdb databases."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    # Force the WSL branch and point the users-mount root at a fake Windows tree.
+    monkeypatch.setattr(agentgrep.discovery, "_is_wsl", lambda: True)
+    users_root = tmp_path / "mnt-c-users"
+    monkeypatch.setenv("AGENTGREP_WSL_USERS_ROOT", str(users_root))
+    cursor_user = users_root / "winuser" / "AppData" / "Roaming" / "Cursor" / "User"
+    global_db = cursor_user / "globalStorage" / "state.vscdb"
+    workspace_db = cursor_user / "workspaceStorage" / "h" / "state.vscdb"
+    _write_cursor_state_db(global_db)
+    _write_cursor_state_db(workspace_db)
+
+    sources = agentgrep.discover_sources(
+        home,
+        ("cursor-ide",),
+        agentgrep.BackendSelection(None, None, None),
+    )
+
+    stores_by_path = {s.path: s.store for s in sources}
+    assert stores_by_path.get(global_db) == "cursor-ide.state_vscdb"
+    assert stores_by_path.get(workspace_db) == "cursor-ide.workspace_state"
+
+
 def test_find_discovers_sources_and_filters_pattern(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

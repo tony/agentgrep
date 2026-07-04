@@ -21,6 +21,7 @@ _CURSOR_IDE_STORES: tuple[StoreDescriptor, ...] = (
             "darwin": "${HOME}/Library/Application Support/Cursor/User/globalStorage/state.vscdb",
             "win32": "%APPDATA%/Cursor/User/globalStorage/state.vscdb",
         },
+        env_overrides=("AGENTGREP_WSL_USERS_ROOT",),
         observed_version="Cursor IDE (current observed paths)",
         observed_at=_CURSOR_IDE_OBSERVED_AT,
         upstream_ref=("agentgrep.parse_cursor_state_db / CURSOR_STATE_TOKENS"),
@@ -28,7 +29,8 @@ _CURSOR_IDE_STORES: tuple[StoreDescriptor, ...] = (
             "Cursor IDE chat storage; keys in `ItemTable`/`cursorDiskKV` containing "
             "`chat`/`composer`/`prompt`/`history` tokens hold conversation JSON. "
             "Cursor does not publish a formal schema — agentgrep's parser is the "
-            "reference implementation."
+            "reference implementation. On WSL the store is discovered under the "
+            "Windows-host mount too (see ADR 0009)."
         ),
         sample_record=(
             "ItemTable row: key='workbench.panel.aichat.view...prompts', "
@@ -46,11 +48,8 @@ _CURSOR_IDE_STORES: tuple[StoreDescriptor, ...] = (
                 adapter_id="cursor_ide.state_vscdb_modern.v1",
                 path_kind="sqlite_db",
                 source_kind="sqlite",
-                platform_paths=(
-                    "~/.config/Cursor/User/globalStorage/state.vscdb",
-                    "~/Library/Application Support/Cursor/User/globalStorage/state.vscdb",
-                    "~/AppData/Roaming/Cursor/User/globalStorage/state.vscdb",
-                ),
+                root_key="ide_global",
+                files=("state.vscdb",),
             ),
             DiscoverySpec(
                 store="cursor-ide.state_vscdb",
@@ -75,6 +74,7 @@ _CURSOR_IDE_STORES: tuple[StoreDescriptor, ...] = (
             ),
             "win32": "%APPDATA%/Cursor/User/workspaceStorage/<hash>/state.vscdb",
         },
+        env_overrides=("AGENTGREP_WSL_USERS_ROOT",),
         observed_version="Cursor IDE (current observed paths)",
         observed_at=_CURSOR_IDE_OBSERVED_AT,
         upstream_ref=("agentgrep.parse_cursor_state_db / CURSOR_STATE_TOKENS"),
