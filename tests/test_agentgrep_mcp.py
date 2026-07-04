@@ -93,6 +93,9 @@ RESULT_SHAPE_CASES = [
             "scope": "prompts",
             "case_sensitive": False,
             "limit": 1,
+            "cwd": None,
+            "repo": None,
+            "branch": None,
         },
     ),
     McpResultShapeCase(
@@ -183,14 +186,21 @@ def write_codex_prompt_session(
     session_id: str,
     timestamp: str,
     text: str,
+    cwd: str | None = None,
+    branch: str | None = None,
 ) -> None:
     """Write a minimal Codex session containing one user prompt."""
+    metadata: dict[str, object] = {"id": session_id, "model_provider": "openai"}
+    if cwd is not None:
+        metadata["cwd"] = cwd
+    if branch is not None:
+        metadata["git"] = {"branch": branch}
     write_jsonl(
         path,
         [
             {
                 "type": "session_meta",
-                "payload": {"id": session_id, "model_provider": "openai"},
+                "payload": metadata,
             },
             {
                 "timestamp": timestamp,
@@ -578,6 +588,64 @@ async def test_mcp_search_cursor_returns_next_page_without_duplicate(
     assert second_data["status"] == {"state": "complete", "reason": None}
     assert second_data["page"]["next_cursor"] is None
     assert second_data["request"]["terms"] == ["serenity"]
+
+
+async def test_mcp_search_explicit_origin_filters_survive_cursor(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit MCP origin filters narrow results and survive pagination."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    sessions = home / ".codex" / "sessions" / "2026" / "01" / "01"
+    write_codex_prompt_session(
+        sessions / "same-new.jsonl",
+        session_id="same-new",
+        timestamp="2026-06-02T00:00:00Z",
+        text="origin serenity new",
+        cwd="/workspace/agentgrep",
+        branch="project-context",
+    )
+    write_codex_prompt_session(
+        sessions / "same-old.jsonl",
+        session_id="same-old",
+        timestamp="2026-06-01T00:00:00Z",
+        text="origin serenity old",
+        cwd="/workspace/agentgrep",
+        branch="project-context",
+    )
+    write_codex_prompt_session(
+        sessions / "other.jsonl",
+        session_id="other",
+        timestamp="2026-06-03T00:00:00Z",
+        text="origin serenity other",
+        cwd="/workspace/other",
+        branch="main",
+    )
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        first = await client.call_tool(
+            "search",
+            {
+                "terms": ["origin", "serenity"],
+                "agent": "codex",
+                "scope": "prompts",
+                "cwd": "/workspace/agentgrep",
+                "branch": "project-context",
+                "limit": 1,
+            },
+        )
+        first_data = tool_payload(first)
+        cursor = first_data["page"]["next_cursor"]
+        second = await client.call_tool("search", {"cursor": cursor})
+
+    second_data = tool_payload(second)
+    assert [row["text"] for row in first_data["results"]] == ["origin serenity new"]
+    assert [row["text"] for row in second_data["results"]] == ["origin serenity old"]
+    assert second_data["request"]["cwd"] == "/workspace/agentgrep"
+    assert second_data["request"]["branch"] == "project-context"
+    assert second_data["page"]["next_cursor"] is None
 
 
 async def test_mcp_search_cursor_rejects_empty_terms(

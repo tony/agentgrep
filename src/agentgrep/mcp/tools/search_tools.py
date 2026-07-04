@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import collections.abc as cabc
 import datetime
 import pathlib
 import time
@@ -34,6 +33,7 @@ from agentgrep.mcp.models import (
     SearchToolResponse,
     SourceRecordModel,
 )
+from agentgrep.origin import origin_filter_terms
 from agentgrep.query.help import query_language_summary
 
 if t.TYPE_CHECKING:
@@ -65,8 +65,8 @@ def _page_diagnostics(next_cursor: str | None) -> list[DiagnosticModel]:
 def _request_from_cursor(request: SearchRequestModel) -> tuple[SearchRequestModel, int]:
     """Return the effective request and offset for a search page."""
     if request.cursor is None:
-        if not request.terms:
-            msg = "terms are required unless cursor is provided"
+        if not request.terms and not _request_has_origin_filter(request):
+            msg = "terms or an origin filter are required unless cursor is provided"
             raise ToolError(msg)
         return request, 0
     try:
@@ -81,14 +81,21 @@ def _request_from_cursor(request: SearchRequestModel) -> tuple[SearchRequestMode
             case_sensitive=cursor.case_sensitive,
             limit=cursor.limit,
             cursor=request.cursor,
+            cwd=cursor.cwd,
+            repo=cursor.repo,
+            branch=cursor.branch,
         ),
         cursor.offset,
     )
 
 
+def _request_has_origin_filter(request: SearchRequestModel) -> bool:
+    return bool(request.cwd or request.repo or request.branch)
+
+
 def _compile_request_query(
     base_query: SearchQuery,
-    terms: cabc.Sequence[str],
+    request: SearchRequestModel,
 ) -> SearchQuery:
     """Apply the query language to a search request's terms.
 
@@ -100,7 +107,12 @@ def _compile_request_query(
     """
     from agentgrep.query import build_query_from_input, default_registry
 
-    joined = " ".join(terms).strip()
+    generated_terms = origin_filter_terms(
+        cwd=request.cwd,
+        repo=request.repo,
+        branch=request.branch,
+    )
+    joined = " ".join((*generated_terms, *request.terms)).strip()
     if not joined:
         return base_query
     result = build_query_from_input(joined, base_query, default_registry())
@@ -131,7 +143,7 @@ async def _search_async(
             limit=query_limit,
         ),
     )
-    query = _compile_request_query(base_query, effective_request.terms)
+    query = _compile_request_query(base_query, effective_request)
     records: list[SearchRecordLike] = []
     source_count = 0
     searched = 0
@@ -168,6 +180,9 @@ async def _search_async(
                 scope=effective_request.scope,
                 case_sensitive=effective_request.case_sensitive,
                 limit=page_limit,
+                cwd=effective_request.cwd,
+                repo=effective_request.repo,
+                branch=effective_request.branch,
             )
             if has_more
             else None
@@ -264,6 +279,27 @@ def register(mcp: FastMCP, *, runtime: SearchRuntime | None = None) -> None:
                 description="Opaque page cursor returned by a previous search response.",
             ),
         ] = None,
+        cwd: t.Annotated[
+            str | None,
+            Field(
+                default=None,
+                description="Only return records whose recorded cwd matches this path.",
+            ),
+        ] = None,
+        repo: t.Annotated[
+            str | None,
+            Field(
+                default=None,
+                description="Only return records whose recorded repository root matches this path.",
+            ),
+        ] = None,
+        branch: t.Annotated[
+            str | None,
+            Field(
+                default=None,
+                description="Only return records whose recorded git branch matches this name.",
+            ),
+        ] = None,
     ) -> SearchToolResponse:
         request = SearchRequestModel(
             terms=terms or [],
@@ -272,6 +308,9 @@ def register(mcp: FastMCP, *, runtime: SearchRuntime | None = None) -> None:
             case_sensitive=case_sensitive,
             limit=limit,
             cursor=cursor,
+            cwd=cwd,
+            repo=repo,
+            branch=branch,
         )
         return await _search_async(request, runtime=runtime)
 
