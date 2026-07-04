@@ -42,6 +42,36 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### What's new
+
+#### Cross-host Cursor IDE discovery on WSL (#91)
+
+Under WSL the Cursor IDE UI runs on the Windows host and writes its chat
+under the Windows profile, where a home-rooted search never looked.
+agentgrep now detects WSL and bridges to that Windows-side store, so
+`search`, `grep`, and `find` reach Cursor IDE conversations authored from
+the Windows UI. The bridge is auto-detected and costs nothing on every
+other platform; point `AGENTGREP_WSL_USERS_ROOT` at a non-default mount to
+override it. See {ref}`backend-cursor-ide`.
+
+### Fixes
+
+Several backends were realigned to the formats today's CLIs actually write,
+so search reaches prompts and turns that earlier releases missed or buried:
+
+- **VS Code Copilot Chat**: recent chat sessions are discovered and
+  searchable — the client moved each session to an append-only event log
+  that the previous `.json`-only reader skipped entirely. See
+  {ref}`backend-vscode`. (#91)
+- **pi**: shell-command turns are now indexed, so `search` and `grep` reach
+  the commands and output pi ran on your behalf. (#91)
+- **Gemini**: results are limited to real conversation turns; system and
+  diagnostic records no longer surface as matches. (#91)
+- **Claude Code**: compacted-summary records are skipped, removing
+  duplicate-looking results that mirrored earlier turns. (#91)
+- **OpenCode**: user prompts now carry their model, so `model:` predicates
+  match them. (#91)
+
 ## agentgrep 0.1.0a31 (2026-06-28)
 
 agentgrep 0.1.0a31 turns the interactive explorer (`agentgrep ui`) into a
