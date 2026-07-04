@@ -1530,3 +1530,28 @@ async def test_mcp_export_records(
     first = json.loads(result.content.strip().splitlines()[0])
     assert first["text"] == "export this prompt"
     assert first["content_id"]
+
+
+class _TruncCase(t.NamedTuple):
+    test_id: str
+    rendered: str
+    cap: int
+    expected_content: str
+    expected_truncated: bool
+
+
+_TRUNC_CASES = [
+    _TruncCase("fits-under-cap", "a\nb\n", 10, "a\nb\n", False),
+    _TruncCase("cuts-at-newline", "line1\nline2\n", 8, "line1\n", True),
+    _TruncCase("no-newline-hard-cut", "oneverylongline", 4, "onev", True),
+]
+
+
+@pytest.mark.parametrize("case", _TRUNC_CASES, ids=[c.test_id for c in _TRUNC_CASES])
+def test_export_truncate_inline(case: _TruncCase) -> None:
+    """Oversize inline export content is cut at a line boundary when possible."""
+    from agentgrep.mcp.tools.export_tools import _truncate_inline
+
+    content, truncated = _truncate_inline(case.rendered, case.cap)
+    assert content == case.expected_content
+    assert truncated is case.expected_truncated

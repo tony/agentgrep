@@ -80,12 +80,23 @@ def _render_export(request: ExportRequestModel) -> tuple[str, int]:
     return rendered, count
 
 
+def _truncate_inline(rendered: str, cap: int) -> tuple[str, bool]:
+    """Cap inline content at a line boundary; return ``(content, truncated)``.
+
+    Cutting at the last newline within ``cap`` keeps every emitted ndjson/csv
+    line whole; a single line longer than ``cap`` still hard-cuts.
+    """
+    if len(rendered) <= cap:
+        return rendered, False
+    cut = rendered.rfind("\n", 0, cap)
+    return (rendered[: cut + 1] if cut >= 0 else rendered[:cap]), True
+
+
 def _export_sync(request: ExportRequestModel) -> ExportToolResponse:
     """Build the export response, truncating oversize content inline."""
     rendered, count = _render_export(request)
     byte_size = len(rendered.encode("utf-8", "surrogatepass"))
-    truncated = len(rendered) > _MAX_INLINE_CHARS
-    content = rendered[:_MAX_INLINE_CHARS] if truncated else rendered
+    content, truncated = _truncate_inline(rendered, _MAX_INLINE_CHARS)
     return ExportToolResponse(
         request=request,
         format=request.format,
