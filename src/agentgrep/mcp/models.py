@@ -249,6 +249,29 @@ class FindToolResponse(AgentGrepModel):
     results: list[FindRecordModel]
 
 
+class ExportRequestModel(AgentGrepModel):
+    """Validated export request payload."""
+
+    terms: list[str] = Field(default_factory=list)
+    agent: AgentSelector = "all"
+    scope: SearchScopeName = "prompts"
+    format: t.Literal["ndjson", "json", "markdown", "csv"] = "ndjson"
+    redact: bool = False
+    limit: int | None = None
+
+
+class ExportToolResponse(AgentGrepModel):
+    """Structured response for the MCP export_records tool."""
+
+    schema_version: str = agentgrep.SCHEMA_VERSION
+    request: ExportRequestModel
+    format: t.Literal["ndjson", "json", "markdown", "csv"]
+    record_count: int
+    byte_size: int
+    truncated: bool
+    content: str
+
+
 class BackendAvailabilityModel(AgentGrepModel):
     """Selected read-only subprocess backends."""
 

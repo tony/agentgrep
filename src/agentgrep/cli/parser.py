@@ -49,6 +49,7 @@ FindTypeFilter = t.Literal["prompts", "history", "sessions", "all"]
 
 __all__ = [
     "CaseMode",
+    "ExportArgs",
     "FindArgs",
     "FindPatternMode",
     "FindTypeFilter",
@@ -166,6 +167,22 @@ class SearchArgs:
 
 
 @dataclasses.dataclass(slots=True)
+class ExportArgs:
+    """Typed arguments for ``agentgrep export``."""
+
+    terms: tuple[str, ...]
+    agents: tuple[AgentName, ...]
+    scope: SearchScope
+    fmt: t.Literal["ndjson", "json", "markdown", "csv"]
+    redact: bool
+    limit: int | None
+    out: str | None
+    color_mode: ColorMode
+    compiled: CompiledQuery | None = None
+    raw_query: str = ""
+
+
+@dataclasses.dataclass(slots=True)
 class ParserBundle:
     """CLI parsers used for root and subcommand help."""
 
@@ -173,6 +190,7 @@ class ParserBundle:
     find_parser: argparse.ArgumentParser
     grep_parser: argparse.ArgumentParser
     search_parser: argparse.ArgumentParser
+    export_parser: argparse.ArgumentParser
 
 
 class _GrepLimitAction(argparse.Action):
@@ -605,11 +623,62 @@ def create_parser(
     )
     add_output_mode_options(search_parser, allow_ui=True)
 
+    export_parser = subparsers.add_parser(
+        "export",
+        help="Export matched records/conversations to portable files",
+        description=(
+            "Export matched prompts and conversations to portable artifacts: a "
+            "streaming NDJSON default, a single JSON envelope, a Markdown "
+            "transcript, or CSV. Output is deterministic (sorted by timestamp "
+            "then content id), so reruns are byte-identical and diffable."
+        ),
+        formatter_class=formatter_class,
+        color=color_mode != "never",
+    )
+    add_common_agent_options(export_parser)
+    _ = export_parser.add_argument(
+        "terms",
+        nargs="*",
+        metavar="TERM",
+        help="Terms selecting records to export (empty selects all; cap with --limit)",
+    )
+    _ = export_parser.add_argument(
+        "--scope",
+        choices=["prompts", "conversations", "all"],
+        dest="scope",
+        help="Export scope: prompts, conversations, or all (default: prompts)",
+    )
+    _ = export_parser.add_argument(
+        "--format",
+        dest="fmt",
+        choices=["ndjson", "json", "markdown", "csv"],
+        default="ndjson",
+        help="Export format (default: ndjson)",
+    )
+    _ = export_parser.add_argument(
+        "--redact",
+        action="store_true",
+        help="Replace prompt bodies with a stable hash, keeping ids and shape",
+    )
+    _ = export_parser.add_argument(
+        "--limit",
+        type=int,
+        metavar="N",
+        help="Limit the number of records exported",
+    )
+    _ = export_parser.add_argument(
+        "--out",
+        "-o",
+        metavar="FILE",
+        help="Write to FILE ('-' or omitted writes to stdout)",
+    )
+
     return ParserBundle(
         parser=parser,
         find_parser=find_parser,
         grep_parser=grep_parser,
         search_parser=search_parser,
+        export_parser=export_parser,
     )
 
 
@@ -868,7 +937,7 @@ def _check_for_mangled_field_predicate(
 
 def parse_args(
     argv: cabc.Sequence[str] | None = None,
-) -> FindArgs | UIArgs | GrepArgs | SearchArgs | None:
+) -> FindArgs | UIArgs | GrepArgs | SearchArgs | ExportArgs | None:
     """Parse CLI arguments into typed dataclasses."""
     color_mode = normalize_color_mode(argv)
     effective_argv = list(argv) if argv is not None else list(sys.argv[1:])
@@ -896,6 +965,20 @@ def parse_args(
 
     agents = parse_agents(t.cast("list[str]", namespace.agent))
     output_mode = parse_output_mode(namespace)
+
+    if command == "export":
+        export_terms = tuple(t.cast("list[str]", namespace.terms))
+        return ExportArgs(
+            terms=export_terms,
+            agents=agents,
+            scope=t.cast("SearchScope", namespace.scope or "prompts"),
+            fmt=t.cast("t.Literal['ndjson', 'json', 'markdown', 'csv']", namespace.fmt),
+            redact=t.cast("bool", namespace.redact),
+            limit=t.cast("int | None", namespace.limit),
+            out=t.cast("str | None", namespace.out),
+            color_mode=color_mode,
+            raw_query=" ".join(export_terms),
+        )
 
     if command == "grep":
         return _build_grep_args(

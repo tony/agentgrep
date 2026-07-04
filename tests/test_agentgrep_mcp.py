@@ -279,6 +279,7 @@ async def test_mcp_lists_tools_resources_prompts_and_templates() -> None:
         "inspect_result",
         "validate_query",
         "recent_sessions",
+        "export_records",
     }
     assert any(str(resource.uri) == "agentgrep://capabilities" for resource in resources)
     assert any(str(resource.uri) == "agentgrep://sources" for resource in resources)
@@ -1486,3 +1487,46 @@ async def test_mcp_capabilities_advertises_new_resources() -> None:
         "agentgrep://store-roles",
         "agentgrep://store-formats",
     } <= advertised
+
+
+async def test_mcp_export_records(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """export_records renders a deterministic ndjson artifact over a store."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    write_jsonl(
+        home / ".codex" / "sessions" / "2026" / "01" / "01" / "rollout.jsonl",
+        [
+            {"type": "session_meta", "payload": {"id": "s1", "model_provider": "openai"}},
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "export this prompt"}],
+                },
+            },
+        ],
+    )
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        result = t.cast(
+            "t.Any",
+            (
+                await client.call_tool(
+                    "export_records",
+                    {"terms": ["export"], "agent": "codex", "format": "ndjson"},
+                )
+            ).data,
+        )
+
+    assert result.format == "ndjson"
+    assert result.record_count == 1
+    assert result.truncated is False
+    first = json.loads(result.content.strip().splitlines()[0])
+    assert first["text"] == "export this prompt"
+    assert first["content_id"]

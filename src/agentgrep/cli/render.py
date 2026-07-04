@@ -18,7 +18,7 @@ from agentgrep import identity, run_ui
 from agentgrep._engine import iter_find_events, iter_search_events
 from agentgrep._engine.orchestration import run_search_query
 from agentgrep._text import AnsiColors, format_display_path
-from agentgrep.cli.parser import FindArgs, GrepArgs, SearchArgs, UIArgs
+from agentgrep.cli.parser import ExportArgs, FindArgs, GrepArgs, SearchArgs, UIArgs
 from agentgrep.cli.renderers import (
     GrepSummary,
     _compile_search_patterns,
@@ -69,6 +69,7 @@ __all__ = [
     "maybe_build_pydantic",
     "print_find_results",
     "print_grep_results",
+    "run_export_command",
     "run_find_command",
     "run_grep_command",
     "run_search_command",
@@ -655,3 +656,63 @@ def run_grep_command(args: GrepArgs) -> int:
         control=control,
     )
     return print_grep_results(records, args)
+
+
+def run_export_command(args: ExportArgs) -> int:
+    """Execute ``agentgrep export``.
+
+    Collects the selected records through the normal query path, then hands
+    them to the frontend-neutral writers in :mod:`agentgrep.export`. The export
+    module is imported function-locally so it stays off the eager
+    ``import agentgrep`` path.
+    """
+    from agentgrep import export
+
+    query = SearchQuery(
+        terms=args.terms,
+        scope=args.scope,
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=args.agents,
+        limit=None,
+        compiled=args.compiled,
+    )
+    records = run_search_query(
+        pathlib.Path.home(),
+        query,
+        progress=noop_search_progress(),
+        control=SearchControl(),
+    )
+    if args.fmt == "ndjson":
+        rendered = "".join(
+            f"{line}\n"
+            for line in export.iter_ndjson_lines(records, redact=args.redact, limit=args.limit)
+        )
+    elif args.fmt == "json":
+        rendered = export.render_json(records, redact=args.redact, limit=args.limit) + "\n"
+    elif args.fmt == "csv":
+        rendered = export.render_csv(records, redact=args.redact, limit=args.limit)
+    else:
+        selected = (
+            records
+            if args.limit is None
+            else sorted(records, key=export.export_total_order_key)[: args.limit]
+        )
+        rendered = export.render_markdown(
+            export.assemble_conversations(selected),
+            redact=args.redact,
+        )
+    # Encode surrogate-tolerantly: store text imperfectly decoded upstream can
+    # carry a lone surrogate, which a strict UTF-8 encode would abort on.
+    data = rendered.encode("utf-8", "surrogatepass")
+    if args.out and args.out != "-":
+        pathlib.Path(args.out).expanduser().write_bytes(data)
+    else:
+        buffer = getattr(sys.stdout, "buffer", None)
+        if buffer is not None:
+            buffer.write(data)
+            buffer.flush()
+        else:
+            sys.stdout.write(rendered)
+    return 0 if records else 1
