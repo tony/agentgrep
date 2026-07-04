@@ -325,6 +325,46 @@ def test_compile_query_source_predicate_prunes(
     assert compiled.source_predicate(source) is case.expected_passes
 
 
+class PathTrailingSlashCase(t.NamedTuple):
+    """Parametrized case for literal path predicates with trailing separators."""
+
+    test_id: str
+    source_path: str
+    expected_passes: bool
+
+
+PATH_TRAILING_SLASH_CASES: tuple[PathTrailingSlashCase, ...] = (
+    PathTrailingSlashCase(
+        test_id="child-path",
+        source_path="/tmp/repo/session.jsonl",
+        expected_passes=True,
+    ),
+    PathTrailingSlashCase(
+        test_id="sibling-prefix",
+        source_path="/tmp/repo2/session.jsonl",
+        expected_passes=False,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    PATH_TRAILING_SLASH_CASES,
+    ids=[case.test_id for case in PATH_TRAILING_SLASH_CASES],
+)
+def test_path_query_trailing_separator_preserves_source_boundary(
+    case: PathTrailingSlashCase,
+) -> None:
+    """A trailing slash in a literal path predicate keeps sibling paths out."""
+    compiled = compile_query(
+        parse_query('path:"/tmp/repo/"', default_registry()),
+        default_registry(),
+    )
+
+    assert compiled.source_predicate is not None
+    assert compiled.source_predicate(_make_source(path=case.source_path)) is case.expected_passes
+
+
 def test_path_query_expands_current_user_home_for_source_predicate(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: pathlib.Path,
