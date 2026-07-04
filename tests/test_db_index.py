@@ -659,6 +659,197 @@ def test_similarity_analysis_reports_artifact_write_progress(
     assert write_details[-1] == "1/1 clusters, 6/6 edges"
 
 
+def _sync_prompts(
+    tmp_path: pathlib.Path,
+    texts: tuple[str, ...],
+) -> DbRuntime:
+    """Sync one synthetic prompt per text into a fresh DB runtime."""
+    source_path = tmp_path / "source.jsonl"
+    source_path.write_text("{}", encoding="utf-8")
+    source = _source(source_path)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    _ = runtime.sync_records(
+        (
+            (
+                source,
+                tuple(
+                    _record(source, text, session_id=f"session-{index}")
+                    for index, text in enumerate(texts)
+                ),
+            ),
+        ),
+    )
+    return runtime
+
+
+def _near_duplicate_edges(runtime: DbRuntime) -> list[tuple[frozenset[str], float]]:
+    """Return near-duplicate edges as ``({left_text, right_text}, confidence)``."""
+    rows = runtime.store.connection.execute(
+        """
+        SELECT dl.text AS left_text, dr.text AS right_text, v.confidence AS confidence
+        FROM variant_edges v
+        JOIN records_search rl ON rl.record_id = v.left_record_id
+        JOIN record_details dl ON dl.rowid = rl.rowid
+        JOIN records_search rr ON rr.record_id = v.right_record_id
+        JOIN record_details dr ON dr.rowid = rr.rowid
+        WHERE v.variant_type = 'near_duplicate'
+        """,
+    ).fetchall()
+    return [
+        (frozenset({str(row["left_text"]), str(row["right_text"])}), float(row["confidence"]))
+        for row in rows
+    ]
+
+
+def _near_duplicate_cluster_member_texts(runtime: DbRuntime) -> list[frozenset[str]]:
+    """Return the record texts grouped in each near-duplicate cluster."""
+    rows = runtime.store.connection.execute(
+        """
+        SELECT c.cluster_id AS cluster_id, d.text AS text
+        FROM clusters c
+        JOIN cluster_members m ON m.cluster_id = c.cluster_id
+        JOIN records_search r ON r.record_id = m.record_id
+        JOIN record_details d ON d.rowid = r.rowid
+        WHERE c.kind = 'near_duplicate_prompt'
+        ORDER BY c.cluster_id, d.text
+        """,
+    ).fetchall()
+    by_cluster: dict[str, set[str]] = {}
+    for row in rows:
+        by_cluster.setdefault(str(row["cluster_id"]), set()).add(str(row["text"]))
+    return [frozenset(texts) for texts in by_cluster.values()]
+
+
+def test_insight_engine_links_near_duplicate_prompts(tmp_path: pathlib.Path) -> None:
+    """Slightly different prompts become one near-duplicate edge and cluster."""
+    left = "run ruff check across the repo"
+    right = "run ruff check across the whole repo"
+    runtime = _sync_prompts(tmp_path, (left, right))
+
+    result = InsightEngine(runtime.store).run_similarity()
+    edges = _near_duplicate_edges(runtime)
+    clusters = _near_duplicate_cluster_member_texts(runtime)
+
+    assert result.variant_edges == 1
+    assert result.clusters == 1
+    assert len(edges) == 1
+    pair, confidence = edges[0]
+    assert pair == frozenset({left, right})
+    # Confidence is the exact token-set Jaccard: 6 shared / 7 union tokens.
+    assert confidence == pytest.approx(6 / 7)
+    assert clusters == [frozenset({left, right})]
+
+
+def test_insight_engine_keeps_exact_and_near_duplicates_separate(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Exact duplicates stay exact-only and are not re-reported as near."""
+    exact = "run ruff check across the repo"
+    variant = "run ruff check across the whole repo"
+    runtime = _sync_prompts(tmp_path, (exact, exact, variant))
+
+    result = InsightEngine(runtime.store).run_similarity()
+    exact_edges = runtime.store.connection.execute(
+        "SELECT confidence FROM variant_edges WHERE variant_type = 'exact_duplicate'",
+    ).fetchall()
+    near_edges = _near_duplicate_edges(runtime)
+
+    assert len(exact_edges) == 1
+    assert float(exact_edges[0]["confidence"]) == pytest.approx(1.0)
+    # The two identical prompts collapse to one representative, so their
+    # pair is never emitted as a near-duplicate edge.
+    assert frozenset({exact}) not in {pair for pair, _confidence in near_edges}
+    # The representative still links to the distinct near-duplicate variant.
+    assert near_edges == [(frozenset({exact, variant}), pytest.approx(6 / 7))]
+    assert result.variant_edges == 2
+
+
+def test_insight_engine_ignores_unrelated_prompts_for_near_duplicates(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Prompts below the Jaccard threshold produce no near-duplicate edge."""
+    runtime = _sync_prompts(
+        tmp_path,
+        (
+            "run ruff check across the repo",
+            "deploy the kubernetes cluster to staging tonight",
+        ),
+    )
+
+    result = InsightEngine(runtime.store).run_similarity()
+
+    assert result.variant_edges == 0
+    assert result.clusters == 0
+    assert _near_duplicate_edges(runtime) == []
+
+
+def test_insight_engine_clusters_transitive_near_duplicates(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A~B and B~C above threshold land in one cluster via union-find."""
+    a = "run ruff check across the repo before every commit"
+    b = "run ruff check across the repo"
+    c = "run ruff check across the repo inside docker containers"
+    runtime = _sync_prompts(tmp_path, (a, b, c))
+
+    result = InsightEngine(runtime.store).run_similarity()
+    edges = _near_duplicate_edges(runtime)
+    clusters = _near_duplicate_cluster_member_texts(runtime)
+
+    assert result.clusters == 1
+    assert clusters == [frozenset({a, b, c})]
+    # A~C (Jaccard 0.5) is below threshold, so only the two chain edges exist.
+    assert {pair for pair, _confidence in edges} == {
+        frozenset({a, b}),
+        frozenset({b, c}),
+    }
+    assert frozenset({a, c}) not in {pair for pair, _confidence in edges}
+    cluster_confidence = runtime.store.connection.execute(
+        "SELECT confidence FROM clusters WHERE kind = 'near_duplicate_prompt'",
+    ).fetchone()
+    # Cluster confidence is the weakest-link (minimum) pairwise Jaccard.
+    assert float(cluster_confidence["confidence"]) == pytest.approx(6 / 9)
+
+
+def test_near_duplicate_similarity_run_is_deterministic(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Re-running similarity yields identical near-duplicate ids and counts."""
+    runtime = _sync_prompts(
+        tmp_path,
+        (
+            "run ruff check across the repo before every commit",
+            "run ruff check across the repo",
+            "run ruff check across the repo inside docker containers",
+        ),
+    )
+
+    def snapshot() -> tuple[frozenset[str], frozenset[str]]:
+        edge_ids = frozenset(
+            str(row["edge_id"])
+            for row in runtime.store.connection.execute(
+                "SELECT edge_id FROM variant_edges WHERE variant_type = 'near_duplicate'",
+            )
+        )
+        cluster_ids = frozenset(
+            str(row["cluster_id"])
+            for row in runtime.store.connection.execute(
+                "SELECT cluster_id FROM clusters WHERE kind = 'near_duplicate_prompt'",
+            )
+        )
+        return edge_ids, cluster_ids
+
+    first_result = InsightEngine(runtime.store).run_similarity()
+    first_snapshot = snapshot()
+    second_result = InsightEngine(runtime.store).run_similarity()
+    second_snapshot = snapshot()
+
+    assert first_snapshot == second_snapshot
+    assert first_result.run_id == second_result.run_id
+    assert first_result.variant_edges == second_result.variant_edges == 2
+    assert first_result.clusters == second_result.clusters == 1
+
+
 def test_suggestion_engine_renders_review_only_instruction_suggestion(
     tmp_path: pathlib.Path,
 ) -> None:
