@@ -249,6 +249,44 @@ class FindToolResponse(AgentGrepModel):
     results: list[FindRecordModel]
 
 
+class BookmarkModel(AgentGrepModel):
+    """A record pinned in agentgrep's bookmark store."""
+
+    id: str
+    content_id: str
+    agent: str
+    store: str
+    kind: str
+    title: str | None = None
+    timestamp: str | None = None
+    snippet: str = ""
+    note: str = ""
+    tags: list[str] = Field(default_factory=list)
+
+
+class BookmarkListResponse(AgentGrepModel):
+    """Structured response for the MCP bookmark_list tool."""
+
+    schema_version: str = agentgrep.SCHEMA_VERSION
+    count: int
+    bookmarks: list[BookmarkModel]
+
+
+class BookmarkShowRequest(AgentGrepModel):
+    """Validated bookmark_show request payload."""
+
+    id_prefix: str = Field(min_length=1)
+
+
+class BookmarkShowResponse(AgentGrepModel):
+    """Structured response for the MCP bookmark_show tool."""
+
+    schema_version: str = agentgrep.SCHEMA_VERSION
+    bookmark: BookmarkModel | None = None
+    resolved: SearchRecordModel | None = None
+    error_message: str | None = None
+
+
 class BackendAvailabilityModel(AgentGrepModel):
     """Selected read-only subprocess backends."""
 

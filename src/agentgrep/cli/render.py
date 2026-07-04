@@ -18,7 +18,7 @@ from agentgrep import identity, run_ui
 from agentgrep._engine import iter_find_events, iter_search_events
 from agentgrep._engine.orchestration import run_search_query
 from agentgrep._text import AnsiColors, format_display_path
-from agentgrep.cli.parser import FindArgs, GrepArgs, SearchArgs, UIArgs
+from agentgrep.cli.parser import BookmarkArgs, FindArgs, GrepArgs, SearchArgs, UIArgs
 from agentgrep.cli.renderers import (
     GrepSummary,
     _compile_search_patterns,
@@ -53,6 +53,9 @@ from agentgrep.progress import (
 )
 from agentgrep.records import AGENT_CHOICES, FindRecord, SearchQuery, SearchRecord
 
+if t.TYPE_CHECKING:
+    from agentgrep.bookmarks import BookmarkEntry
+
 __all__ = [
     "GrepSummary",
     "build_envelope",
@@ -69,6 +72,7 @@ __all__ = [
     "maybe_build_pydantic",
     "print_find_results",
     "print_grep_results",
+    "run_bookmark_command",
     "run_find_command",
     "run_grep_command",
     "run_search_command",
@@ -655,3 +659,175 @@ def run_grep_command(args: GrepArgs) -> int:
         control=control,
     )
     return print_grep_results(records, args)
+
+
+def run_bookmark_command(args: BookmarkArgs) -> int:
+    """Dispatch the ``bookmark`` subcommand (add / list / show / rm)."""
+    from agentgrep import bookmarks
+
+    if bookmarks.bookmarks_disabled():
+        print("bookmarks are disabled (AGENTGREP_NO_BOOKMARKS)", file=sys.stderr)
+        return 1
+    home = pathlib.Path.home()
+    path = bookmarks.bookmarks_path(home)
+    if args.action == "add":
+        return _bookmark_add(args, path)
+    if args.action == "list":
+        return _bookmark_list(args, path)
+    if args.action == "show":
+        return _bookmark_show(args, home, path)
+    return _bookmark_rm(args, path)
+
+
+def _bookmark_snippet(text: object) -> str:
+    """Return a compact one-line snippet for a record body."""
+    if not isinstance(text, str) or not text.strip():
+        return ""
+    return text.strip().splitlines()[0][:120]
+
+
+def _bookmark_row(entry: BookmarkEntry) -> dict[str, object]:
+    """Serialize a bookmark for JSON/NDJSON output."""
+    return {
+        "id": entry.short,
+        "content_id": entry.id,
+        "agent": entry.agent,
+        "store": entry.store,
+        "adapter_id": entry.adapter_id,
+        "path": entry.path,
+        "kind": entry.kind,
+        "title": entry.title,
+        "timestamp": entry.timestamp,
+        "snippet": entry.snippet,
+        "note": entry.note,
+        "tags": list(entry.tags),
+    }
+
+
+def _bookmark_add(args: BookmarkArgs, path: pathlib.Path) -> int:
+    from agentgrep import bookmarks
+
+    try:
+        obj = json.loads(sys.stdin.read())
+    except ValueError:
+        print("bookmark add: expected one JSON record on stdin", file=sys.stderr)
+        return 2
+    if not isinstance(obj, dict):
+        print("bookmark add: expected a JSON object", file=sys.stderr)
+        return 2
+    content_id = obj.get("content_id")
+    adapter_id = obj.get("adapter_id")
+    if not (
+        isinstance(content_id, str) and content_id and isinstance(adapter_id, str) and adapter_id
+    ):
+        print(
+            "bookmark add: record needs content_id and adapter_id "
+            "(pipe a line from `agentgrep search --ndjson`)",
+            file=sys.stderr,
+        )
+        return 2
+    title = obj.get("title")
+    timestamp = obj.get("timestamp")
+    session = obj.get("session_id") or obj.get("conversation_id")
+    entry = bookmarks.BookmarkEntry(
+        id=content_id,
+        agent=str(obj.get("agent") or ""),
+        store=str(obj.get("store") or ""),
+        adapter_id=adapter_id,
+        path=str(obj.get("path") or ""),
+        title=title if isinstance(title, str) else None,
+        timestamp=timestamp if isinstance(timestamp, str) else None,
+        session=session if isinstance(session, str) else None,
+        snippet=_bookmark_snippet(obj.get("text")),
+        note=args.note,
+    )
+    added = bookmarks.add_bookmark(path, entry)
+    if args.output_mode in ("json", "ndjson"):
+        print(json.dumps({**_bookmark_row(entry), "added": added}, ensure_ascii=False))
+        return 0
+    colors = AnsiColors.for_stream(args.color_mode, sys.stdout)
+    verb = "bookmarked" if added else "already bookmarked"
+    print(f"{verb} {colors.heading(entry.short)}")
+    return 0
+
+
+def _bookmark_list(args: BookmarkArgs, path: pathlib.Path) -> int:
+    from agentgrep import bookmarks
+
+    entries = bookmarks.load_bookmarks(path, limit=args.limit)
+    if args.output_mode in ("json", "ndjson"):
+        rows = [_bookmark_row(entry) for entry in entries]
+        if args.output_mode == "ndjson":
+            for row in rows:
+                print(json.dumps(row, ensure_ascii=False))
+        else:
+            envelope = build_envelope("bookmark", {"action": "list"}, rows)
+            print(json.dumps(envelope, ensure_ascii=False, indent=2))
+        return 0
+    colors = AnsiColors.for_stream(args.color_mode, sys.stdout)
+    if not entries:
+        print(colors.dim("no bookmarks"))
+        return 0
+    for entry in entries:
+        label = entry.title or entry.snippet or "(no title)"
+        print(f"{colors.heading(entry.short)}  {colors.dim(entry.agent)}  {label}")
+    return 0
+
+
+def _bookmark_show(args: BookmarkArgs, home: pathlib.Path, path: pathlib.Path) -> int:
+    from agentgrep import bookmarks, resolve
+
+    if not args.target:
+        print("bookmark show: an id prefix is required", file=sys.stderr)
+        return 2
+    match = bookmarks.find_by_prefix(bookmarks.load_bookmarks(path), args.target)
+    if match.entry is None:
+        if match.ambiguous:
+            shorts = ", ".join(entry.short for entry in match.ambiguous)
+            print(
+                f"bookmark show: ambiguous id '{args.target}' (matches {shorts})", file=sys.stderr
+            )
+        else:
+            print(f"bookmark show: no bookmark matching '{args.target}'", file=sys.stderr)
+        return 1
+    entry = match.entry
+    live = resolve.resolve_bookmarked_record(
+        home,
+        agent=entry.agent,
+        adapter_id=entry.adapter_id,
+        path=entry.path,
+        content_id=entry.id,
+    )
+    if args.output_mode in ("json", "ndjson"):
+        payload = _bookmark_row(entry)
+        payload["resolved"] = serialize_search_record(live) if live is not None else None
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+    colors = AnsiColors.for_stream(args.color_mode, sys.stdout)
+    print(f"{colors.heading(entry.short)}  {colors.dim(entry.agent + ' · ' + entry.kind)}")
+    print(entry.title or entry.snippet or entry.agent)
+    if entry.note:
+        print(colors.dim(f"  note: {entry.note}"))
+    if live is not None:
+        print()
+        print(live.text)
+    else:
+        print(colors.dim("  (record not found in the live store; showing saved snippet)"))
+        if entry.snippet:
+            print(entry.snippet)
+    return 0
+
+
+def _bookmark_rm(args: BookmarkArgs, path: pathlib.Path) -> int:
+    from agentgrep import bookmarks
+
+    if not args.target:
+        print("bookmark rm: an id prefix is required", file=sys.stderr)
+        return 2
+    removed = bookmarks.remove_bookmark(path, args.target)
+    if removed is None:
+        print(f"bookmark rm: no unique bookmark matching '{args.target}'", file=sys.stderr)
+        return 1
+    colors = AnsiColors.for_stream(args.color_mode, sys.stdout)
+    print(f"removed {colors.heading(removed.short)}")
+    return 0

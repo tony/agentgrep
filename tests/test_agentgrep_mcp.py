@@ -279,6 +279,8 @@ async def test_mcp_lists_tools_resources_prompts_and_templates() -> None:
         "inspect_result",
         "validate_query",
         "recent_sessions",
+        "bookmark_list",
+        "bookmark_show",
     }
     assert any(str(resource.uri) == "agentgrep://capabilities" for resource in resources)
     assert any(str(resource.uri) == "agentgrep://sources" for resource in resources)
@@ -1486,3 +1488,61 @@ async def test_mcp_capabilities_advertises_new_resources() -> None:
         "agentgrep://store-roles",
         "agentgrep://store-formats",
     } <= advertised
+
+
+async def test_mcp_bookmark_list_and_show(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """bookmark_list returns the pinned set; bookmark_show re-resolves the record."""
+    from agentgrep import bookmarks
+
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_DATA_HOME", str(home / "data"))
+    write_jsonl(
+        home / ".codex" / "sessions" / "2026" / "01" / "01" / "rollout.jsonl",
+        [
+            {"type": "session_meta", "payload": {"id": "s1", "model_provider": "openai"}},
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "bookmark this prompt"}],
+                },
+            },
+        ],
+    )
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        found = t.cast(
+            "t.Any",
+            (await client.call_tool("search", {"terms": ["bookmark"], "agent": "codex"})).data,
+        )
+    record = found.results[0]
+    entry = bookmarks.BookmarkEntry(
+        id=record.content_id,
+        agent=record.agent,
+        store=record.store,
+        adapter_id=record.adapter_id,
+        path=record.path,
+        title="pinned",
+        snippet=record.text,
+    )
+    bookmarks.add_bookmark(bookmarks.bookmarks_path(home), entry, now=1.0)
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        listed = t.cast("t.Any", (await client.call_tool("bookmark_list", {})).data)
+        shown = t.cast(
+            "t.Any",
+            (await client.call_tool("bookmark_show", {"id_prefix": entry.short[:6]})).data,
+        )
+
+    assert listed.count == 1
+    assert listed.bookmarks[0].content_id == entry.id
+    assert shown.bookmark.title == "pinned"
+    assert shown.resolved is not None
+    assert shown.resolved.text == "bookmark this prompt"

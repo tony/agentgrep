@@ -48,6 +48,7 @@ FindPatternMode = t.Literal["regex", "glob", "fixed", "exact"]
 FindTypeFilter = t.Literal["prompts", "history", "sessions", "all"]
 
 __all__ = [
+    "BookmarkArgs",
     "CaseMode",
     "FindArgs",
     "FindPatternMode",
@@ -166,6 +167,18 @@ class SearchArgs:
 
 
 @dataclasses.dataclass(slots=True)
+class BookmarkArgs:
+    """Typed arguments for ``agentgrep bookmark``."""
+
+    action: t.Literal["add", "list", "show", "rm"]
+    target: str | None
+    note: str
+    output_mode: OutputMode
+    color_mode: ColorMode
+    limit: int | None
+
+
+@dataclasses.dataclass(slots=True)
 class ParserBundle:
     """CLI parsers used for root and subcommand help."""
 
@@ -173,6 +186,7 @@ class ParserBundle:
     find_parser: argparse.ArgumentParser
     grep_parser: argparse.ArgumentParser
     search_parser: argparse.ArgumentParser
+    bookmark_parser: argparse.ArgumentParser
 
 
 class _GrepLimitAction(argparse.Action):
@@ -605,11 +619,47 @@ def create_parser(
     )
     add_output_mode_options(search_parser, allow_ui=True)
 
+    bookmark_parser = subparsers.add_parser(
+        "bookmark",
+        help="Pin and recall records by their content id",
+        description=(
+            "Pin matched records by their stable content id and recall them "
+            "later. 'bookmark add' reads one JSON record on stdin (pipe a line "
+            "from 'search --ndjson'); 'show' / 'rm' take an id prefix."
+        ),
+        formatter_class=formatter_class,
+        color=color_mode != "never",
+    )
+    _ = bookmark_parser.add_argument(
+        "action",
+        choices=["add", "list", "show", "rm"],
+        help="add (reads a JSON record on stdin), list, show <id>, or rm <id>",
+    )
+    _ = bookmark_parser.add_argument(
+        "target",
+        nargs="?",
+        metavar="ID",
+        help="Bookmark id prefix (for show / rm)",
+    )
+    _ = bookmark_parser.add_argument(
+        "--note",
+        default="",
+        help="Note to attach when adding",
+    )
+    _ = bookmark_parser.add_argument(
+        "--limit",
+        type=int,
+        metavar="N",
+        help="Limit the number of rows (list)",
+    )
+    add_output_mode_options(bookmark_parser, allow_ui=False)
+
     return ParserBundle(
         parser=parser,
         find_parser=find_parser,
         grep_parser=grep_parser,
         search_parser=search_parser,
+        bookmark_parser=bookmark_parser,
     )
 
 
@@ -868,7 +918,7 @@ def _check_for_mangled_field_predicate(
 
 def parse_args(
     argv: cabc.Sequence[str] | None = None,
-) -> FindArgs | UIArgs | GrepArgs | SearchArgs | None:
+) -> FindArgs | UIArgs | GrepArgs | SearchArgs | BookmarkArgs | None:
     """Parse CLI arguments into typed dataclasses."""
     color_mode = normalize_color_mode(argv)
     effective_argv = list(argv) if argv is not None else list(sys.argv[1:])
@@ -892,6 +942,16 @@ def parse_args(
             color_mode=color_mode,
             layout=t.cast("str", namespace.layout),
             workflow=t.cast("str", namespace.workflow),
+        )
+
+    if command == "bookmark":
+        return BookmarkArgs(
+            action=t.cast('t.Literal["add", "list", "show", "rm"]', namespace.action),
+            target=t.cast("str | None", namespace.target),
+            note=t.cast("str", namespace.note),
+            output_mode=parse_output_mode(namespace),
+            color_mode=color_mode,
+            limit=t.cast("int | None", namespace.limit),
         )
 
     agents = parse_agents(t.cast("list[str]", namespace.agent))
