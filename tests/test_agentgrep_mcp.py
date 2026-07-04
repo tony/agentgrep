@@ -1546,3 +1546,82 @@ async def test_mcp_bookmark_list_and_show(
     assert shown.bookmark.title == "pinned"
     assert shown.resolved is not None
     assert shown.resolved.text == "bookmark this prompt"
+
+
+class _BookmarkDisabledCase(t.NamedTuple):
+    test_id: str
+    disabled: bool
+    expected_count: int
+    expect_resolved: bool
+
+
+_BOOKMARK_DISABLED_CASES = [
+    _BookmarkDisabledCase("enabled-lists-and-resolves", False, 1, True),
+    _BookmarkDisabledCase("disabled-suppresses-reads", True, 0, False),
+]
+
+
+@pytest.mark.parametrize(
+    "case",
+    _BOOKMARK_DISABLED_CASES,
+    ids=[c.test_id for c in _BOOKMARK_DISABLED_CASES],
+)
+async def test_mcp_bookmark_tools_honor_disabled(
+    case: _BookmarkDisabledCase,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AGENTGREP_NO_BOOKMARKS suppresses the read tools, mirroring the CLI gate."""
+    from agentgrep import bookmarks
+
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_DATA_HOME", str(home / "data"))
+    monkeypatch.delenv("AGENTGREP_NO_BOOKMARKS", raising=False)
+    write_jsonl(
+        home / ".codex" / "sessions" / "2026" / "01" / "01" / "rollout.jsonl",
+        [
+            {"type": "session_meta", "payload": {"id": "s1", "model_provider": "openai"}},
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "bookmark this prompt"}],
+                },
+            },
+        ],
+    )
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        found = t.cast(
+            "t.Any",
+            (await client.call_tool("search", {"terms": ["bookmark"], "agent": "codex"})).data,
+        )
+    record = found.results[0]
+    entry = bookmarks.BookmarkEntry(
+        id=record.content_id,
+        agent=record.agent,
+        store=record.store,
+        adapter_id=record.adapter_id,
+        path=record.path,
+        title="pinned",
+        snippet=record.text,
+    )
+    bookmarks.add_bookmark(bookmarks.bookmarks_path(home), entry, now=1.0)
+    if case.disabled:
+        monkeypatch.setenv("AGENTGREP_NO_BOOKMARKS", "1")
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        listed = t.cast("t.Any", (await client.call_tool("bookmark_list", {})).data)
+        shown = t.cast(
+            "t.Any",
+            (await client.call_tool("bookmark_show", {"id_prefix": entry.short[:6]})).data,
+        )
+
+    assert listed.count == case.expected_count
+    assert (shown.resolved is not None) is case.expect_resolved
+    if case.disabled:
+        assert shown.error_message == "bookmarks are disabled"

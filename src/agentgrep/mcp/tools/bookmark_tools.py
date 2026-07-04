@@ -48,6 +48,8 @@ def _bookmark_list_sync(limit: int | None) -> BookmarkListResponse:
     """Load the bookmark set newest-first (blocking)."""
     from agentgrep import bookmarks
 
+    if bookmarks.bookmarks_disabled():
+        return BookmarkListResponse(count=0, bookmarks=[])
     entries = bookmarks.load_bookmarks(
         bookmarks.bookmarks_path(pathlib.Path.home()),
         limit=limit,
@@ -61,6 +63,8 @@ def _bookmark_show_sync(request: BookmarkShowRequest) -> BookmarkShowResponse:
     """Resolve a bookmark by id prefix and re-read its live record (blocking)."""
     from agentgrep import bookmarks, resolve
 
+    if bookmarks.bookmarks_disabled():
+        return BookmarkShowResponse(error_message="bookmarks are disabled")
     home = pathlib.Path.home()
     match = bookmarks.find_by_prefix(
         bookmarks.load_bookmarks(bookmarks.bookmarks_path(home)),
