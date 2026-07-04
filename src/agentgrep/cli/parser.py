@@ -824,6 +824,7 @@ def _maybe_compile_query(
     subparser: argparse.ArgumentParser,
     explicit_flags: dict[str, str] | None = None,
     find_mode: bool = False,
+    case_sensitive: bool = False,
 ) -> tuple[CompiledQuery | None, tuple[str, ...], set[str]]:
     """Detect Lucene-style query syntax in positionals and compile if present.
 
@@ -881,7 +882,7 @@ def _maybe_compile_query(
                         f"{field_name}: field predicate; pick one syntax",
                     )
     try:
-        compiled = compile_query(ast, registry)
+        compiled = compile_query(ast, registry, case_sensitive=case_sensitive)
     except QueryCompileError as exc:
         with configured_color_environment(color_mode):
             subparser.error(f"invalid query: {exc}")
@@ -1213,6 +1214,7 @@ def _build_search_args(
         color_mode=color_mode,
         subparser=bundle.search_parser,
         explicit_flags=_search_explicit_flags(namespace),
+        case_sensitive=t.cast("bool", namespace.case_sensitive),
     )
     final_terms: tuple[str, ...] = residual_terms
     case_sensitive = t.cast("bool", namespace.case_sensitive)

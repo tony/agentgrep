@@ -113,6 +113,8 @@ def _evaluate_record(
     record: SearchRecord,
     registry: FieldRegistry,
     path_patterns: dict[str, _CompiledPathPattern],
+    *,
+    case_sensitive: bool = False,
 ) -> bool:
     """Evaluate ``node`` exactly against ``record``.
 
@@ -122,14 +124,20 @@ def _evaluate_record(
     itself.
     """
     if isinstance(node, TermNode):
-        return _text_matches(record, node.value)
+        return _text_matches(record, node.value, case_sensitive=case_sensitive)
     if isinstance(node, FieldExistsNode):
         return _field_exists_on_record(node.field, record)
     if isinstance(node, FieldEqNode):
         spec = registry.get(node.field)
         if spec is None:
             return False
-        return _field_matches_record(node, record, spec, path_patterns)
+        return _field_matches_record(
+            node,
+            record,
+            spec,
+            path_patterns,
+            case_sensitive=case_sensitive,
+        )
     if isinstance(node, FieldCmpNode):
         spec = registry.get(node.field)
         if spec is None:
@@ -141,11 +149,35 @@ def _evaluate_record(
             return False
         return _field_range_matches_record(node, record, spec)
     if isinstance(node, NotNode):
-        return not _evaluate_record(node.child, record, registry, path_patterns)
+        return not _evaluate_record(
+            node.child,
+            record,
+            registry,
+            path_patterns,
+            case_sensitive=case_sensitive,
+        )
     if isinstance(node, AndNode):
-        return all(_evaluate_record(c, record, registry, path_patterns) for c in node.children)
+        return all(
+            _evaluate_record(
+                c,
+                record,
+                registry,
+                path_patterns,
+                case_sensitive=case_sensitive,
+            )
+            for c in node.children
+        )
     if isinstance(node, OrNode):
-        return any(_evaluate_record(c, record, registry, path_patterns) for c in node.children)
+        return any(
+            _evaluate_record(
+                c,
+                record,
+                registry,
+                path_patterns,
+                case_sensitive=case_sensitive,
+            )
+            for c in node.children
+        )
     return False
 
 
@@ -204,6 +236,8 @@ def _field_matches_record(
     record: SearchRecord,
     spec: FieldSpec,
     path_patterns: dict[str, _CompiledPathPattern],
+    *,
+    case_sensitive: bool = False,
 ) -> bool:
     """Decide whether ``record`` matches a record-layer FieldEqNode."""
     if spec.layer == "source":
@@ -238,8 +272,12 @@ def _field_matches_record(
         # A wildcard text value matches the record text only (anchored
         # glob); a plain value keeps the multi-surface substring match.
         if _is_wildcard(node.value):
-            return _string_match(record.text, node.value)
-        return _text_matches(record, node.value)
+            return _string_match(
+                record.text,
+                node.value,
+                case_sensitive=case_sensitive,
+            )
+        return _text_matches(record, node.value, case_sensitive=case_sensitive)
     return False
 
 

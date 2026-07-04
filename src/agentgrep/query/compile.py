@@ -67,7 +67,12 @@ class CompiledQuery:
     is_pure_text: bool
 
 
-def compile_query(ast: QueryNode, registry: FieldRegistry) -> CompiledQuery:
+def compile_query(
+    ast: QueryNode,
+    registry: FieldRegistry,
+    *,
+    case_sensitive: bool = False,
+) -> CompiledQuery:
     """Compile an AST into a :class:`CompiledQuery`.
 
     Pure-text queries short-circuit to the fast path; everything
@@ -101,7 +106,13 @@ def compile_query(ast: QueryNode, registry: FieldRegistry) -> CompiledQuery:
         return _evaluate_source(ast, source, registry, path_patterns) != "F"
 
     def record_predicate(record: SearchRecord) -> bool:
-        return _evaluate_record(ast, record, registry, path_patterns)
+        return _evaluate_record(
+            ast,
+            record,
+            registry,
+            path_patterns,
+            case_sensitive=case_sensitive,
+        )
 
     return CompiledQuery(
         source_predicate=source_predicate,
@@ -271,7 +282,7 @@ def build_query_from_input(
     except QueryParseError as exc:
         return QueryBuildResult(query=None, error=str(exc))
     try:
-        compiled = compile_query(ast, registry)
+        compiled = compile_query(ast, registry, case_sensitive=base_query.case_sensitive)
     except QueryCompileError as exc:
         return QueryBuildResult(query=None, error=str(exc))
     # A pure-text result (phrase, or parenthesized AND of terms) needs no

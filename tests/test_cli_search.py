@@ -291,6 +291,14 @@ class OriginPhraseFilterCase(t.NamedTuple):
     expected: bool
 
 
+class OriginCaseSensitiveFilterCase(t.NamedTuple):
+    """Parametrized record case for case-sensitive generated origin filters."""
+
+    test_id: str
+    text: str
+    expected: bool
+
+
 ORIGIN_PHRASE_FILTER_CASES: tuple[OriginPhraseFilterCase, ...] = (
     OriginPhraseFilterCase(
         test_id="inside-cwd-exact-phrase",
@@ -339,6 +347,19 @@ ORIGIN_PHRASE_FILTER_CASES: tuple[OriginPhraseFilterCase, ...] = (
         term="rock (roll)",
         text="rock roll",
         cwd="/workspace/agentgrep",
+        expected=False,
+    ),
+)
+
+ORIGIN_CASE_SENSITIVE_FILTER_CASES: tuple[OriginCaseSensitiveFilterCase, ...] = (
+    OriginCaseSensitiveFilterCase(
+        test_id="exact-case",
+        text="Needle appears here",
+        expected=True,
+    ),
+    OriginCaseSensitiveFilterCase(
+        test_id="lowercase-miss",
+        text="needle appears here",
         expected=False,
     ),
 )
@@ -556,6 +577,43 @@ def test_search_origin_flags_preserve_phrase_term(
     assert isinstance(parsed, agentgrep.SearchArgs)
     assert parsed.compiled is not None
     assert parsed.terms == (case.term,)
+    query = agentgrep.SearchQuery(
+        terms=parsed.terms,
+        scope=parsed.scope,
+        any_term=False,
+        regex=False,
+        case_sensitive=parsed.case_sensitive,
+        agents=parsed.agents,
+        limit=parsed.limit,
+        compiled=parsed.compiled,
+    )
+    assert agentgrep.matches_record(record, query) is case.expected
+
+
+@pytest.mark.parametrize(
+    "case",
+    ORIGIN_CASE_SENSITIVE_FILTER_CASES,
+    ids=[case.test_id for case in ORIGIN_CASE_SENSITIVE_FILTER_CASES],
+)
+def test_search_origin_flags_preserve_case_sensitive_terms(
+    case: OriginCaseSensitiveFilterCase,
+) -> None:
+    """Generated origin predicates preserve the search case mode."""
+    parsed = agentgrep.parse_args(
+        ("search", "--case-sensitive", "--cwd", "/workspace/agentgrep", "Needle"),
+    )
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text=case.text,
+        origin=agentgrep.RecordOrigin(cwd="/workspace/agentgrep"),
+    )
+
+    assert isinstance(parsed, agentgrep.SearchArgs)
+    assert parsed.compiled is not None
     query = agentgrep.SearchQuery(
         terms=parsed.terms,
         scope=parsed.scope,

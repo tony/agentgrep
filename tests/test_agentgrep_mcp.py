@@ -98,6 +98,14 @@ class McpOriginLiteralTermCase(t.NamedTuple):
     expected_texts: list[str]
 
 
+class McpOriginCaseSensitiveCase(t.NamedTuple):
+    """Parametrized case for MCP origin filters with case-sensitive terms."""
+
+    test_id: str
+    text: str
+    expected_texts: list[str]
+
+
 RESULT_SHAPE_CASES = [
     McpResultShapeCase(
         test_id="search",
@@ -230,6 +238,19 @@ MCP_ORIGIN_LITERAL_TERM_CASES: tuple[McpOriginLiteralTermCase, ...] = (
         matching_text="emoji \U0001f600 appears literally",
         nonmatching_text="emoji appears textually",
         expected_texts=["emoji \U0001f600 appears literally"],
+    ),
+)
+
+MCP_ORIGIN_CASE_SENSITIVE_CASES: tuple[McpOriginCaseSensitiveCase, ...] = (
+    McpOriginCaseSensitiveCase(
+        test_id="exact-case",
+        text="Needle appears here",
+        expected_texts=["Needle appears here"],
+    ),
+    McpOriginCaseSensitiveCase(
+        test_id="lowercase-miss",
+        text="needle appears here",
+        expected_texts=[],
     ),
 )
 
@@ -894,6 +915,46 @@ async def test_mcp_search_origin_filters_preserve_literal_punctuation_terms(
                 "agent": "codex",
                 "scope": "prompts",
                 "cwd": "/workspace/agentgrep",
+                "limit": 10,
+            },
+        )
+
+    data = tool_payload(result)
+    assert [row["text"] for row in data["results"]] == case.expected_texts
+
+
+@pytest.mark.parametrize(
+    "case",
+    MCP_ORIGIN_CASE_SENSITIVE_CASES,
+    ids=[case.test_id for case in MCP_ORIGIN_CASE_SENSITIVE_CASES],
+)
+async def test_mcp_search_origin_filters_preserve_case_sensitive_terms(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: McpOriginCaseSensitiveCase,
+) -> None:
+    """Generated MCP origin predicates preserve the request case mode."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    sessions = home / ".codex" / "sessions" / "2026" / "01" / "01"
+    write_codex_prompt_session(
+        sessions / "same-case.jsonl",
+        session_id="same-case",
+        timestamp="2026-06-03T00:00:00Z",
+        text=case.text,
+        cwd="/workspace/agentgrep",
+    )
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        result = await client.call_tool(
+            "search",
+            {
+                "terms": ["Needle"],
+                "agent": "codex",
+                "scope": "prompts",
+                "cwd": "/workspace/agentgrep",
+                "case_sensitive": True,
                 "limit": 10,
             },
         )
