@@ -82,6 +82,9 @@ class McpOriginPhraseCase(t.NamedTuple):
 
     test_id: str
     terms: list[str]
+    matching_text: str
+    nonmatching_text: str
+    outside_text: str
     expected_texts: list[str]
 
 
@@ -154,7 +157,34 @@ MCP_ORIGIN_PHRASE_CASES: tuple[McpOriginPhraseCase, ...] = (
     McpOriginPhraseCase(
         test_id="single-phrase-term",
         terms=["exact phrase"],
+        matching_text="exact phrase same",
+        nonmatching_text="exact words then phrase same",
+        outside_text="exact phrase other",
         expected_texts=["exact phrase same"],
+    ),
+    McpOriginPhraseCase(
+        test_id="boolean-word-phrase",
+        terms=["rock OR roll"],
+        matching_text="rock OR roll same",
+        nonmatching_text="rock same",
+        outside_text="rock OR roll other",
+        expected_texts=["rock OR roll same"],
+    ),
+    McpOriginPhraseCase(
+        test_id="not-word-phrase",
+        terms=["rock NOT roll"],
+        matching_text="rock NOT roll same",
+        nonmatching_text="rock same",
+        outside_text="rock NOT roll other",
+        expected_texts=["rock NOT roll same"],
+    ),
+    McpOriginPhraseCase(
+        test_id="paren-phrase",
+        terms=["rock (roll)"],
+        matching_text="rock (roll) same",
+        nonmatching_text="rock roll same",
+        outside_text="rock (roll) other",
+        expected_texts=["rock (roll) same"],
     ),
 )
 
@@ -757,21 +787,21 @@ async def test_mcp_search_origin_filters_preserve_phrase_terms(
         sessions / "same-exact.jsonl",
         session_id="same-exact",
         timestamp="2026-06-03T00:00:00Z",
-        text="exact phrase same",
+        text=case.matching_text,
         cwd="/workspace/agentgrep",
     )
     write_codex_prompt_session(
         sessions / "same-separated.jsonl",
         session_id="same-separated",
         timestamp="2026-06-02T00:00:00Z",
-        text="exact words then phrase same",
+        text=case.nonmatching_text,
         cwd="/workspace/agentgrep",
     )
     write_codex_prompt_session(
         sessions / "other-exact.jsonl",
         session_id="other-exact",
         timestamp="2026-06-01T00:00:00Z",
-        text="exact phrase other",
+        text=case.outside_text,
         cwd="/workspace/other",
     )
 

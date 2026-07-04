@@ -94,9 +94,15 @@ def origin_filtered_query_text(
 
 def _wrapped_user_term_text(term: str) -> str:
     stripped = term.strip()
-    if not stripped or _looks_like_query_syntax(stripped):
+    if not stripped:
         return stripped
-    if ":" in stripped or any(character.isspace() for character in stripped):
+    if any(character.isspace() for character in stripped):
+        if stripped[0] in {'"', "'"}:
+            return stripped
+        return query_quote(stripped)
+    if _looks_like_query_syntax(stripped):
+        return stripped
+    if ":" in stripped:
         return query_quote(stripped)
     return stripped
 

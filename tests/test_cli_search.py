@@ -285,6 +285,7 @@ class OriginPhraseFilterCase(t.NamedTuple):
     """Parametrized record case for generated origin filters and phrase terms."""
 
     test_id: str
+    term: str
     text: str
     cwd: str
     expected: bool
@@ -293,20 +294,51 @@ class OriginPhraseFilterCase(t.NamedTuple):
 ORIGIN_PHRASE_FILTER_CASES: tuple[OriginPhraseFilterCase, ...] = (
     OriginPhraseFilterCase(
         test_id="inside-cwd-exact-phrase",
+        term="exact phrase",
         text="exact phrase",
         cwd="/workspace/agentgrep",
         expected=True,
     ),
     OriginPhraseFilterCase(
         test_id="inside-cwd-separated-words",
+        term="exact phrase",
         text="exact words then phrase",
         cwd="/workspace/agentgrep",
         expected=False,
     ),
     OriginPhraseFilterCase(
         test_id="outside-cwd-exact-phrase",
+        term="exact phrase",
         text="exact phrase",
         cwd="/workspace/other",
+        expected=False,
+    ),
+    OriginPhraseFilterCase(
+        test_id="boolean-word-phrase-hit",
+        term="rock OR roll",
+        text="rock OR roll",
+        cwd="/workspace/agentgrep",
+        expected=True,
+    ),
+    OriginPhraseFilterCase(
+        test_id="boolean-word-phrase-miss",
+        term="rock OR roll",
+        text="rock only",
+        cwd="/workspace/agentgrep",
+        expected=False,
+    ),
+    OriginPhraseFilterCase(
+        test_id="not-word-phrase-hit",
+        term="rock NOT roll",
+        text="rock NOT roll",
+        cwd="/workspace/agentgrep",
+        expected=True,
+    ),
+    OriginPhraseFilterCase(
+        test_id="paren-phrase-miss",
+        term="rock (roll)",
+        text="rock roll",
+        cwd="/workspace/agentgrep",
         expected=False,
     ),
 )
@@ -452,7 +484,7 @@ def test_search_origin_flags_preserve_phrase_term(
 ) -> None:
     """Generated origin predicates keep shell-quoted phrase terms intact."""
     parsed = agentgrep.parse_args(
-        ("search", "--cwd", "/workspace/agentgrep", "exact phrase"),
+        ("search", "--cwd", "/workspace/agentgrep", case.term),
     )
     record = agentgrep.SearchRecord(
         kind="prompt",
@@ -466,7 +498,7 @@ def test_search_origin_flags_preserve_phrase_term(
 
     assert isinstance(parsed, agentgrep.SearchArgs)
     assert parsed.compiled is not None
-    assert parsed.terms == ("exact phrase",)
+    assert parsed.terms == (case.term,)
     query = agentgrep.SearchQuery(
         terms=parsed.terms,
         scope=parsed.scope,
