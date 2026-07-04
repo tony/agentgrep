@@ -321,6 +321,15 @@ class OnlyHereRecordCase(t.NamedTuple):
     expected: bool
 
 
+class OnlyHereLinkedWorktreeCase(t.NamedTuple):
+    """Parametrized record case for linked-worktree ``--only-here`` matching."""
+
+    test_id: str
+    cwd_owner: t.Literal["worktree", "repo"]
+    relative_cwd: pathlib.Path
+    expected: bool
+
+
 ONLY_HERE_RECORD_CASES: tuple[OnlyHereRecordCase, ...] = (
     OnlyHereRecordCase(
         test_id="inside-project-cwd-only",
@@ -332,6 +341,21 @@ ONLY_HERE_RECORD_CASES: tuple[OnlyHereRecordCase, ...] = (
         test_id="outside-project-cwd-only",
         relative_cwd=None,
         absolute_cwd=pathlib.Path("/workspace/other"),
+        expected=False,
+    ),
+)
+
+ONLY_HERE_LINKED_WORKTREE_CASES: tuple[OnlyHereLinkedWorktreeCase, ...] = (
+    OnlyHereLinkedWorktreeCase(
+        test_id="current-worktree-cwd",
+        cwd_owner="worktree",
+        relative_cwd=pathlib.Path("docs"),
+        expected=True,
+    ),
+    OnlyHereLinkedWorktreeCase(
+        test_id="common-repo-cwd",
+        cwd_owner="repo",
+        relative_cwd=pathlib.Path("docs"),
         expected=False,
     ),
 )
@@ -449,6 +473,57 @@ def test_search_parse_only_here_detects_git_context(
         path=pathlib.Path("/tmp/session.jsonl"),
         text="bliss command",
         origin=agentgrep.RecordOrigin(cwd=str(cwd)),
+    )
+    query = agentgrep.SearchQuery(
+        terms=parsed.terms,
+        scope=parsed.scope,
+        any_term=False,
+        regex=False,
+        case_sensitive=parsed.case_sensitive,
+        agents=parsed.agents,
+        limit=parsed.limit,
+        compiled=parsed.compiled,
+    )
+    assert agentgrep.matches_record(record, query) is case.expected
+
+
+@pytest.mark.parametrize(
+    "case",
+    ONLY_HERE_LINKED_WORKTREE_CASES,
+    ids=[case.test_id for case in ONLY_HERE_LINKED_WORKTREE_CASES],
+)
+def test_search_parse_only_here_prefers_linked_worktree(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: OnlyHereLinkedWorktreeCase,
+) -> None:
+    """--only-here filters against the current linked worktree."""
+    repo = tmp_path / "repo"
+    common_git = repo / ".git"
+    linked = tmp_path / "linked"
+    git_dir = common_git / "worktrees" / "linked"
+    git_dir.mkdir(parents=True)
+    linked.mkdir()
+    _ = (linked / ".git").write_text(f"gitdir: {git_dir}\n", encoding="utf-8")
+    _ = (git_dir / "HEAD").write_text("ref: refs/heads/project-context\n", encoding="utf-8")
+    _ = (git_dir / "commondir").write_text("../..\n", encoding="utf-8")
+    child = linked / "src"
+    child.mkdir()
+    monkeypatch.chdir(child)
+
+    parsed = agentgrep.parse_args(("search", "--only-here", "bliss"))
+
+    assert isinstance(parsed, agentgrep.SearchArgs)
+    assert parsed.compiled is not None
+    cwd_root = linked if case.cwd_owner == "worktree" else repo
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text="bliss command",
+        origin=agentgrep.RecordOrigin(cwd=str(cwd_root / case.relative_cwd)),
     )
     query = agentgrep.SearchQuery(
         terms=parsed.terms,

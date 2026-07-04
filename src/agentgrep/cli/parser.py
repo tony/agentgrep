@@ -689,7 +689,7 @@ def _build_search_origin_terms(
         if t.cast("bool", namespace.here):
             origin_boost = _search_here_origin_boost(context)
         if t.cast("bool", namespace.only_here):
-            cwd = cwd or str(context.repo or context.worktree or context.cwd)
+            cwd = cwd or str(context.worktree or context.repo or context.cwd)
     return origin_filter_terms(cwd=cwd, repo=repo, branch=branch), origin_boost
 
 
