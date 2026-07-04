@@ -141,6 +141,16 @@ class DbSimilarityRow:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class DbFeatureRow:
+    """One record's persisted MinHash sketch plus its text for near-dup analysis."""
+
+    record_id: str
+    normalized_hash: str
+    minhash_signature: tuple[str, ...]
+    text: str
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class _FeatureInput:
     """Minimal pickleable input for deterministic feature building."""
 
@@ -1684,6 +1694,34 @@ class DbStore:
             for row in rows
         )
 
+    def iter_feature_rows(self) -> tuple[DbFeatureRow, ...]:
+        """Return records with persisted MinHash sketches and their text.
+
+        Only records that already have a ``record_features`` row are
+        returned; after :meth:`refresh_missing_features` that is every
+        indexed record. The MinHash signature is parsed from its stored
+        JSON list of hex strings so callers can bucket records into LSH
+        bands without recomputing sketches.
+        """
+        rows = self.connection.execute(
+            """
+            SELECT r.record_id, f.normalized_hash, f.minhash_json, d.text
+            FROM records_search r
+            JOIN record_features f ON f.record_id = r.record_id
+            JOIN record_details d ON d.rowid = r.rowid
+            ORDER BY r.rowid
+            """,
+        ).fetchall()
+        return tuple(
+            DbFeatureRow(
+                record_id=str(row["record_id"]),
+                normalized_hash=str(row["normalized_hash"]),
+                minhash_signature=_parse_minhash_signature(str(row["minhash_json"])),
+                text=str(row["text"]),
+            )
+            for row in rows
+        )
+
     def get_record_row(self, record_id: str) -> DbRecordRow | None:
         """Return one indexed record row by id."""
         rows = self._query(
@@ -2001,6 +2039,27 @@ def _minhash_signature_from_tokens(tokens: cabc.Iterable[str], *, size: int = 16
         )
         signature.append(minimum)
     return signature
+
+
+def _parse_minhash_signature(minhash_json: str) -> tuple[str, ...]:
+    """Return the MinHash signature stored as a JSON list of hex strings.
+
+    Examples
+    --------
+    >>> _parse_minhash_signature('["ab","cd"]')
+    ('ab', 'cd')
+    >>> _parse_minhash_signature('[]')
+    ()
+    >>> _parse_minhash_signature('not json')
+    ()
+    """
+    try:
+        parsed = json.loads(minhash_json)
+    except json.JSONDecodeError:
+        return ()
+    if not isinstance(parsed, list):
+        return ()
+    return tuple(str(item) for item in parsed)
 
 
 def _quality_flags_for_text(text: str, *, timestamp: str | None) -> dict[str, object]:

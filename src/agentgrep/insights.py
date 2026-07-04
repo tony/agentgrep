@@ -10,6 +10,7 @@ import pathlib
 import typing as t
 
 from agentgrep.db import (
+    DbFeatureRow,
     DbStore,
     normalize_record_text,
     text_hash,
@@ -20,6 +21,9 @@ if t.TYPE_CHECKING:
     from agentgrep.progress import SearchControl
 
 _INSIGHT_PROGRESS_INTERVAL = 1024
+
+#: Minimum exact token-set Jaccard for a verified near-duplicate pair.
+NEAR_DUP_THRESHOLD = 0.6
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -105,6 +109,139 @@ def _format_similarity_write_progress(
     return f"{clusters_done:,}/{clusters_total:,} clusters, {edges_done:,}/{edges_total:,} edges"
 
 
+class _UnionFind:
+    """Minimal dict-based union-find with path compression and union by rank."""
+
+    def __init__(self) -> None:
+        self._parent: dict[str, str] = {}
+        self._rank: dict[str, int] = {}
+
+    def add(self, item: str) -> None:
+        """Register ``item`` as its own singleton set if unseen."""
+        if item not in self._parent:
+            self._parent[item] = item
+            self._rank[item] = 0
+
+    def find(self, item: str) -> str:
+        """Return the representative root for ``item`` with path compression."""
+        root = item
+        while self._parent[root] != root:
+            root = self._parent[root]
+        while self._parent[item] != root:
+            self._parent[item], item = root, self._parent[item]
+        return root
+
+    def union(self, left: str, right: str) -> None:
+        """Merge the sets containing ``left`` and ``right``."""
+        left_root = self.find(left)
+        right_root = self.find(right)
+        if left_root == right_root:
+            return
+        if self._rank[left_root] < self._rank[right_root]:
+            left_root, right_root = right_root, left_root
+        self._parent[right_root] = left_root
+        if self._rank[left_root] == self._rank[right_root]:
+            self._rank[left_root] += 1
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _NearCluster:
+    """One near-duplicate cluster with its deterministic id and confidence."""
+
+    cluster_id: str
+    members: tuple[str, ...]
+    member_scores: dict[str, float]
+    confidence: float
+
+
+def _near_duplicate_pairs(
+    feature_rows: tuple[DbFeatureRow, ...],
+) -> list[tuple[str, str, float]]:
+    """Return sorted near-duplicate pairs above :data:`NEAR_DUP_THRESHOLD`.
+
+    Records are first collapsed to one representative per normalized
+    hash (the lexicographically smallest record id) so exact duplicates
+    are never re-reported as near-duplicates. Representatives are then
+    bucketed into MinHash LSH bands — one band per signature position —
+    and any two records sharing a bucket become a candidate pair. Each
+    unique candidate pair is verified with an exact token-set Jaccard;
+    pairs with an empty token set on either side are skipped.
+    """
+    representatives: dict[str, DbFeatureRow] = {}
+    for row in feature_rows:
+        existing = representatives.get(row.normalized_hash)
+        if existing is None or row.record_id < existing.record_id:
+            representatives[row.normalized_hash] = row
+    tokens_by_id = {row.record_id: token_set(row.text) for row in representatives.values()}
+    buckets: dict[tuple[int, str], list[str]] = collections.defaultdict(list)
+    for row in representatives.values():
+        for band_index, band_hash in enumerate(row.minhash_signature):
+            buckets[(band_index, band_hash)].append(row.record_id)
+    candidate_pairs: set[tuple[str, str]] = set()
+    for bucket in buckets.values():
+        if len(bucket) < 2:
+            continue
+        for left, right in itertools.combinations(sorted(set(bucket)), 2):
+            candidate_pairs.add((left, right))
+    near_pairs: list[tuple[str, str, float]] = []
+    for left, right in sorted(candidate_pairs):
+        left_tokens = tokens_by_id[left]
+        right_tokens = tokens_by_id[right]
+        if not left_tokens or not right_tokens:
+            continue
+        score = _jaccard(left_tokens, right_tokens)
+        if score >= NEAR_DUP_THRESHOLD:
+            near_pairs.append((left, right, score))
+    return near_pairs
+
+
+def _cluster_near_pairs(
+    near_pairs: list[tuple[str, str, float]],
+) -> list[_NearCluster]:
+    """Group verified near-duplicate pairs into clusters via union-find.
+
+    Cluster confidence is the minimum pairwise Jaccard among the
+    cluster's near-duplicate edges (the weakest link that still cleared
+    the threshold). Members and clusters are ordered by record id so the
+    resulting cluster ids are reproducible across runs.
+    """
+    if not near_pairs:
+        return []
+    union_find = _UnionFind()
+    for left, right, _score in near_pairs:
+        union_find.add(left)
+        union_find.add(right)
+        union_find.union(left, right)
+    nodes = sorted({node for left, right, _score in near_pairs for node in (left, right)})
+    members_by_root: dict[str, list[str]] = collections.defaultdict(list)
+    for node in nodes:
+        members_by_root[union_find.find(node)].append(node)
+    min_score_by_root: dict[str, float] = {}
+    member_scores_by_root: dict[str, dict[str, float]] = collections.defaultdict(dict)
+    for left, right, score in near_pairs:
+        root = union_find.find(left)
+        current = min_score_by_root.get(root)
+        if current is None or score < current:
+            min_score_by_root[root] = score
+        scores = member_scores_by_root[root]
+        scores[left] = max(scores.get(left, 0.0), score)
+        scores[right] = max(scores.get(right, 0.0), score)
+    clusters: list[_NearCluster] = []
+    for root, members in members_by_root.items():
+        ordered = tuple(members)
+        cluster_id = text_hash("near_cluster\0" + "\0".join(ordered))[:32]
+        clusters.append(
+            _NearCluster(
+                cluster_id=cluster_id,
+                members=ordered,
+                member_scores=member_scores_by_root[root],
+                confidence=min_score_by_root[root],
+            ),
+        )
+    clusters.sort(key=lambda cluster: cluster.members[0])
+    return clusters
+
+
 class InsightEngine:
     """Generate deterministic clusters, variants, and omission findings."""
 
@@ -143,20 +280,29 @@ class InsightEngine:
         groups: dict[str, list[str]] = collections.defaultdict(list)
         for row in rows:
             groups[row.normalized_hash].append(row.record_id)
-        candidate_groups = sum(1 for record_ids in groups.values() if len(record_ids) >= 2)
-        total_variant_edges = sum(
+        exact_candidate_groups = sum(1 for record_ids in groups.values() if len(record_ids) >= 2)
+        exact_variant_edges = sum(
             len(record_ids) * (len(record_ids) - 1) // 2
             for record_ids in groups.values()
             if len(record_ids) >= 2
         )
         if progress is not None:
             progress.set_activity(
+                "grouping duplicate prompts",
+                detail="bucketing minhash sketches for near-duplicates",
+            )
+        near_pairs = _near_duplicate_pairs(self.store.iter_feature_rows())
+        near_clusters = _cluster_near_pairs(near_pairs)
+        clusters_total = exact_candidate_groups + len(near_clusters)
+        edges_total = exact_variant_edges + len(near_pairs)
+        if progress is not None:
+            progress.set_activity(
                 "writing similarity artifacts",
                 detail=_format_similarity_write_progress(
                     clusters_done=0,
-                    clusters_total=candidate_groups,
+                    clusters_total=clusters_total,
                     edges_done=0,
-                    edges_total=total_variant_edges,
+                    edges_total=edges_total,
                 ),
             )
         edge_count = 0
@@ -216,25 +362,95 @@ class InsightEngine:
                     edge_count += 1
                     if progress is not None and _should_report_insight_progress(
                         edge_count,
-                        total_variant_edges,
+                        edges_total,
                     ):
                         progress.set_activity(
                             "writing similarity artifacts",
                             detail=_format_similarity_write_progress(
                                 clusters_done=cluster_count,
-                                clusters_total=candidate_groups,
+                                clusters_total=clusters_total,
                                 edges_done=edge_count,
-                                edges_total=total_variant_edges,
+                                edges_total=edges_total,
                             ),
                         )
+            for near_cluster in near_clusters:
+                cluster_count += 1
+                self.store.connection.execute(
+                    """
+                    INSERT OR REPLACE INTO clusters(
+                        cluster_id, run_id, kind, label, centroid_record_id,
+                        confidence, evidence_json
+                    )
+                    VALUES(?, ?, 'near_duplicate_prompt', ?, ?, ?, ?)
+                    """,
+                    (
+                        near_cluster.cluster_id,
+                        run_id,
+                        "near-duplicate prompt family",
+                        near_cluster.members[0],
+                        near_cluster.confidence,
+                        json.dumps(
+                            {"signal": "minhash_lsh+jaccard", "threshold": NEAR_DUP_THRESHOLD},
+                            sort_keys=True,
+                        ),
+                    ),
+                )
+                for member in near_cluster.members:
+                    self.store.connection.execute(
+                        """
+                        INSERT OR REPLACE INTO cluster_members(
+                            cluster_id, record_id, score, signals_json
+                        )
+                        VALUES(?, ?, ?, '{"signal":"minhash_lsh"}')
+                        """,
+                        (
+                            near_cluster.cluster_id,
+                            member,
+                            near_cluster.member_scores[member],
+                        ),
+                    )
+            for left, right, jaccard in near_pairs:
+                edge_id = _edge_id(left, right, "near_duplicate")
+                self.store.connection.execute(
+                    """
+                    INSERT OR REPLACE INTO variant_edges(
+                        edge_id, run_id, left_record_id, right_record_id,
+                        variant_type, confidence, signals_json, explanation
+                    )
+                    VALUES(?, ?, ?, ?, 'near_duplicate', ?, ?, ?)
+                    """,
+                    (
+                        edge_id,
+                        run_id,
+                        left,
+                        right,
+                        jaccard,
+                        json.dumps({"signal": "minhash_lsh", "jaccard": jaccard}, sort_keys=True),
+                        "normalized prompt token sets overlap heavily",
+                    ),
+                )
+                edge_count += 1
+                if progress is not None and _should_report_insight_progress(
+                    edge_count,
+                    edges_total,
+                ):
+                    progress.set_activity(
+                        "writing similarity artifacts",
+                        detail=_format_similarity_write_progress(
+                            clusters_done=cluster_count,
+                            clusters_total=clusters_total,
+                            edges_done=edge_count,
+                            edges_total=edges_total,
+                        ),
+                    )
         if progress is not None:
             progress.set_activity(
                 "writing similarity artifacts",
                 detail=_format_similarity_write_progress(
                     clusters_done=cluster_count,
-                    clusters_total=candidate_groups,
+                    clusters_total=clusters_total,
                     edges_done=edge_count,
-                    edges_total=total_variant_edges,
+                    edges_total=edges_total,
                 ),
             )
         return InsightRunResult(
