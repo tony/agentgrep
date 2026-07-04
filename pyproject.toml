@@ -59,10 +59,10 @@ pytest-documentation = "pytest_documentation.plugin"
 [dependency-groups]
 dev = [
   # Docs
-  "gp-sphinx==0.0.1a31",
-  "sphinx-autodoc-api-style==0.0.1a31",
-  "sphinx-autodoc-argparse==0.0.1a31",
-  "sphinx-autodoc-fastmcp==0.0.1a31",
+  "gp-sphinx==0.0.1a32",
+  "sphinx-autodoc-api-style==0.0.1a32",
+  "sphinx-autodoc-argparse==0.0.1a32",
+  "sphinx-autodoc-fastmcp==0.0.1a32",
   "sphinx-autobuild",
   # Testing
   "pytest",
@@ -99,10 +99,10 @@ dev = [
   "typer>=0.12",
 ]
 docs = [
-  "gp-sphinx==0.0.1a31",
-  "sphinx-autodoc-api-style==0.0.1a31",
-  "sphinx-autodoc-argparse==0.0.1a31",
-  "sphinx-autodoc-fastmcp==0.0.1a31",
+  "gp-sphinx==0.0.1a32",
+  "sphinx-autodoc-api-style==0.0.1a32",
+  "sphinx-autodoc-argparse==0.0.1a32",
+  "sphinx-autodoc-fastmcp==0.0.1a32",
   "sphinx-autobuild",
   # docs/_ext/lexers.py registers agentgrep.query.pygments_lexer, which imports
   # pygments directly (also transitive via Sphinx).
