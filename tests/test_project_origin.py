@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import pathlib
 import sqlite3
+import typing as t
 
 import pytest
 
@@ -37,6 +38,28 @@ def _source(
         search_root=None,
         mtime_ns=1,
     )
+
+
+class OriginTrailingSlashCase(t.NamedTuple):
+    """Parametrized case for display-style origin path predicates."""
+
+    test_id: str
+    query: str
+    expected: bool
+
+
+ORIGIN_TRAILING_SLASH_CASES: tuple[OriginTrailingSlashCase, ...] = (
+    OriginTrailingSlashCase(
+        test_id="cwd-display-path-matches-stored-path",
+        query='cwd:"~/work/notes/" tmux',
+        expected=True,
+    ),
+    OriginTrailingSlashCase(
+        test_id="negated-cwd-display-path-excludes-stored-path",
+        query='tmux AND (NOT cwd:"~/work/notes/")',
+        expected=False,
+    ),
+)
 
 
 def test_search_record_origin_serialization_scrubs_path_like_values(
@@ -131,6 +154,37 @@ def test_origin_query_fields_filter_records_and_expand_home(
             ),
         ),
     )
+
+
+@pytest.mark.parametrize(
+    "case",
+    ORIGIN_TRAILING_SLASH_CASES,
+    ids=[case.test_id for case in ORIGIN_TRAILING_SLASH_CASES],
+)
+def test_origin_path_fields_match_display_trailing_slash(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: OriginTrailingSlashCase,
+) -> None:
+    """Display-style cwd predicates match stored origin paths without a slash."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="claude",
+        store="claude.history",
+        adapter_id="claude.history_jsonl.v1",
+        path=home / ".claude" / "history.jsonl",
+        text="tmux plugin notes",
+        origin=agentgrep.RecordOrigin(cwd=str(home / "work" / "notes")),
+    )
+    compiled = compile_query(
+        parse_query(case.query, default_registry()),
+        default_registry(),
+    )
+
+    assert compiled.record_predicate is not None
+    assert compiled.record_predicate(record) is case.expected
 
 
 def test_origin_fields_fall_back_to_legacy_metadata() -> None:

@@ -52,10 +52,18 @@ def _compile_path_pattern(raw: str) -> _CompiledPathPattern:
     variants = [raw]
     variants.extend(_expand_current_user_home_patterns(raw))
     unique_variants = _dedupe_preserving_order(variants)
+    is_glob = any(ch in variant for variant in unique_variants for ch in "*?[")
+    if not is_glob:
+        unique_variants = _dedupe_preserving_order(
+            (
+                *unique_variants,
+                *(_strip_trailing_path_separators(value) for value in unique_variants),
+            ),
+        )
     return _CompiledPathPattern(
         raw=raw,
         variants=unique_variants,
-        is_glob=any(ch in variant for variant in unique_variants for ch in "*?["),
+        is_glob=is_glob,
     )
 
 
@@ -95,6 +103,24 @@ def _dedupe_preserving_order(values: t.Iterable[str]) -> tuple[str, ...]:
         seen.add(value)
         unique.append(value)
     return tuple(unique)
+
+
+def _strip_trailing_path_separators(value: str) -> str:
+    """Return ``value`` without trailing path separators, except root paths."""
+    stripped = value.rstrip("/\\")
+    if not stripped or _is_windows_drive_root(value, stripped):
+        return value
+    return stripped
+
+
+def _is_windows_drive_root(value: str, stripped: str) -> bool:
+    r"""Return whether stripping would turn ``C:/`` or ``C:\`` into ``C:``."""
+    return (
+        len(stripped) == 2
+        and stripped[1] == ":"
+        and len(value) > 2
+        and all(character in "/\\" for character in value[2:])
+    )
 
 
 def _path_pattern_for(
