@@ -704,6 +704,50 @@ def test_mcp_search_ref_fingerprint_distinguishes_kind_and_role(
     assert refs.make_search_ref(prompt_like) != refs.make_search_ref(history_like)
 
 
+def test_mcp_search_record_model_carries_content_id_and_survives_surrogate(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The MCP model exposes id/content_id and tolerates lone-surrogate text.
+
+    A strict UTF-8 encode of the surrogate would abort the whole ``search``
+    response serialization; the unified locator id makes it hash instead.
+    """
+    from agentgrep.mcp.models import SearchRecordModel
+
+    path = tmp_path / "session.jsonl"
+    path.touch()
+    surrogate = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=path,
+        text="broken\ud800tail",
+        role="user",
+        session_id="s-1",
+    )
+    model = SearchRecordModel.from_record(t.cast("McpSearchRecordLike", surrogate))
+    assert model.id
+    assert model.content_id
+    assert model.ref.startswith("agref1:")
+
+    # same content via a different adapter shares the content id but keeps a
+    # distinct physical ref.
+    twin = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.history_jsonl.v1",
+        path=path,
+        text="broken\ud800tail",
+        role="user",
+        session_id="s-1",
+    )
+    twin_model = SearchRecordModel.from_record(t.cast("McpSearchRecordLike", twin))
+    assert twin_model.content_id == model.content_id
+    assert twin_model.ref != model.ref
+
+
 async def test_mcp_list_sources_exposes_searchability_metadata(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -220,6 +220,8 @@ class SearchRecordPayload(t.TypedDict):
     """JSON payload for search records."""
 
     schema_version: str
+    id: str
+    content_id: str
     kind: t.Literal["prompt", "history"]
     agent: AgentName
     store: str

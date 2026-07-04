@@ -7927,6 +7927,14 @@ def test_json_output_falls_back_without_pydantic(monkeypatch: pytest.MonkeyPatch
     assert envelope["schema_version"] == "agentgrep.v1"
     results = t.cast("list[dict[str, object]]", envelope["results"])
     assert results[0]["text"] == "serenity and bliss"
+    # the pydantic-free fallback carries the same content id the pydantic path
+    # would, proving the serializer/TypedDict/model triangle stays in parity.
+    from agentgrep import identity as identity_mod
+
+    content_id = t.cast("str", results[0]["content_id"])
+    assert content_id == identity_mod.record_content_id(record)
+    assert results[0]["id"] == identity_mod.short_id(content_id)
+    assert len(t.cast("str", results[0]["id"])) == 12
 
 
 def test_json_output_default_does_not_emit_progress(tmp_path: pathlib.Path) -> None:

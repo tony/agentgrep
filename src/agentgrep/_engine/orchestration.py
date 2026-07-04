@@ -18,6 +18,7 @@ import typing as t
 
 from agentgrep.adapters import store_role_for_record
 from agentgrep.discovery import discover_sources
+from agentgrep.identity import content_key
 from agentgrep.progress import SearchControl, SearchProgress, noop_search_progress
 from agentgrep.readers import (
     _record_engine_profile_sample,
@@ -768,12 +769,11 @@ def search_record_sort_key(record: SearchRecord) -> tuple[str, str, str]:
 
 
 def record_dedupe_key(record: SearchRecord) -> tuple[str, str, str, str, str]:
-    """Return the per-session dedupe key for a search record."""
-    session_identity = record.session_id or record.conversation_id or str(record.path)
-    return (
-        record.kind,
-        record.agent,
-        record.store,
-        session_identity,
-        record.text,
-    )
+    """Return the per-session dedupe key for a search record.
+
+    Delegates to :func:`agentgrep.identity.content_key` so the engine
+    dedupe rule and the surfaced content id share one recipe and cannot
+    drift. The id-less-store fallback routes the path through
+    ``format_display_path``, so the key never embeds an absolute home path.
+    """
+    return content_key(record)

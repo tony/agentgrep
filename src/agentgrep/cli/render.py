@@ -14,7 +14,7 @@ import pathlib
 import sys
 import typing as t
 
-from agentgrep import run_ui
+from agentgrep import identity, run_ui
 from agentgrep._engine import iter_find_events, iter_search_events
 from agentgrep._engine.orchestration import run_search_query
 from agentgrep._text import AnsiColors, format_display_path
@@ -377,7 +377,12 @@ def _print_search_text(
                 lines.append(highlighted)
                 if remaining > 0:
                     lines.append(colors.dim(f"  ... {remaining} more lines"))
-            provenance_parts: list[str] = [record.agent, record.kind]
+            content_id = identity.record_content_id(record)
+            provenance_parts: list[str] = [
+                identity.short_id(content_id),
+                record.agent,
+                record.kind,
+            ]
             if record.timestamp:
                 provenance_parts.append(format_relative_time(record.timestamp))
             provenance_parts.append(

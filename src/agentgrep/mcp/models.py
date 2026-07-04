@@ -28,6 +28,8 @@ class SearchRecordModel(AgentGrepModel):
 
     schema_version: str = agentgrep.SCHEMA_VERSION
     ref: str
+    id: str
+    content_id: str
     kind: t.Literal["prompt", "history"]
     agent: t.Literal[
         "codex",

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import typing as t
 
-from agentgrep import maybe_use_pydantic
+from agentgrep import identity, maybe_use_pydantic
 from agentgrep._text import format_display_path
 from agentgrep.records import (
     SCHEMA_VERSION,
@@ -48,8 +48,11 @@ def maybe_build_pydantic() -> tuple[
 
 def serialize_search_record(record: SearchRecord) -> SearchRecordPayload:
     """Serialize a search record to a JSON-compatible mapping."""
+    content_id = identity.record_content_id(record)
     return {
         "schema_version": SCHEMA_VERSION,
+        "id": identity.short_id(content_id),
+        "content_id": content_id,
         "kind": record.kind,
         "agent": record.agent,
         "store": record.store,

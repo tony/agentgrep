@@ -9,6 +9,7 @@ import json
 import pathlib
 import typing as t
 
+from agentgrep.identity import record_locator_id
 from agentgrep.mcp._library import (
     AgentSelector,
     FindRecordLike,
@@ -16,6 +17,9 @@ from agentgrep.mcp._library import (
     SearchScopeName,
     agentgrep,
 )
+
+if t.TYPE_CHECKING:
+    from agentgrep.records import SearchRecord
 
 _REF_PREFIX = "agref1:"
 _CURSOR_PREFIX = "agcur1:"
@@ -136,22 +140,16 @@ def _record_fingerprint(payload: dict[str, object]) -> str:
 
 
 def search_record_fingerprint(record: SearchRecordLike) -> str:
-    """Return a stable privacy-preserving fingerprint for a search record."""
-    return _record_fingerprint(
-        {
-            "kind": "search",
-            "record_kind": record.kind,
-            "role": record.role,
-            "agent": record.agent,
-            "store": record.store,
-            "adapter_id": record.adapter_id,
-            "path": agentgrep.format_display_path(record.path),
-            "timestamp": record.timestamp,
-            "session_id": record.session_id,
-            "conversation_id": record.conversation_id,
-            "text_sha256": hashlib.sha256(record.text.encode("utf-8")).hexdigest(),
-        },
-    )
+    """Return a stable privacy-preserving fingerprint for a search record.
+
+    Delegates to :func:`agentgrep.identity.record_locator_id`, the canonical
+    physical-locator recipe. Its field set is byte-identical to the historical
+    fingerprint, so issued ``agref1:`` refs and the ``inspect_result`` equality
+    contract stay unchanged; the delegation adds the surrogate-tolerant text
+    codec so a lone surrogate in imperfectly decoded store text no longer
+    raises.
+    """
+    return record_locator_id(t.cast("SearchRecord", record))
 
 
 def find_record_fingerprint(record: FindRecordLike) -> str:
