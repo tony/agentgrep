@@ -388,8 +388,8 @@ class SearchRecord:
     model: str | None = None
     session_id: str | None = None
     conversation_id: str | None = None
-    origin: RecordOrigin | None = None
     metadata: dict[str, object] = dataclasses.field(default_factory=dict)
+    origin: RecordOrigin | None = None
 
 
 @dataclasses.dataclass(slots=True)
