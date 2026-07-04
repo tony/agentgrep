@@ -31,7 +31,7 @@ from agentgrep._text import (
 )
 from agentgrep.cli.help_theme import create_themed_formatter
 from agentgrep.origin import origin_filter_terms, origin_filtered_query_text
-from agentgrep.project_context import detect_project_context
+from agentgrep.project_context import ProjectContext, detect_project_context
 from agentgrep.records import (
     AGENT_CHOICES,
     AgentName,
@@ -687,10 +687,17 @@ def _build_search_origin_terms(
     if t.cast("bool", namespace.here) or t.cast("bool", namespace.only_here):
         context = detect_project_context()
         if t.cast("bool", namespace.here):
-            origin_boost = context.origin
+            origin_boost = _search_here_origin_boost(context)
         if t.cast("bool", namespace.only_here):
             cwd = cwd or str(context.repo or context.worktree or context.cwd)
     return origin_filter_terms(cwd=cwd, repo=repo, branch=branch), origin_boost
+
+
+def _search_here_origin_boost(context: ProjectContext) -> RecordOrigin:
+    project_root = context.worktree or context.repo
+    if project_root is not None:
+        return RecordOrigin(repo=str(project_root))
+    return RecordOrigin(cwd=str(context.cwd))
 
 
 def _normalize_origin_path_arg(value: str | None) -> str | None:

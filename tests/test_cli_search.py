@@ -463,6 +463,53 @@ def test_search_parse_only_here_detects_git_context(
     assert agentgrep.matches_record(record, query) is case.expected
 
 
+def test_search_parse_here_boosts_branchless_project_records(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--here ranks same-project records without requiring branch metadata."""
+    worktree = tmp_path / "repo"
+    git_dir = worktree / ".git"
+    git_dir.mkdir(parents=True)
+    _ = (git_dir / "HEAD").write_text("ref: refs/heads/project-context\n", encoding="utf-8")
+    child = worktree / "src"
+    child.mkdir()
+    monkeypatch.chdir(child)
+
+    parsed = agentgrep.parse_args(("search", "--here", "streaming", "parser"))
+
+    assert isinstance(parsed, agentgrep.SearchArgs)
+    assert parsed.origin_boost == agentgrep.RecordOrigin(repo=str(worktree))
+    records = [
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="codex.sessions",
+            adapter_id="codex.sessions_jsonl.v1",
+            path=pathlib.Path("/tmp/other.jsonl"),
+            text="streaming parser notes",
+            origin=agentgrep.RecordOrigin(cwd="/elsewhere"),
+        ),
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="codex.sessions",
+            adapter_id="codex.sessions_jsonl.v1",
+            path=pathlib.Path("/tmp/here.jsonl"),
+            text="streaming parser notes",
+            origin=agentgrep.RecordOrigin(cwd=str(worktree / "docs")),
+        ),
+    ]
+
+    ranked = agentgrep.rank_search_records(
+        records,
+        "streaming parser",
+        origin_boost=parsed.origin_boost,
+    )
+
+    assert ranked[0][0].origin == agentgrep.RecordOrigin(cwd=str(worktree / "docs"))
+
+
 class RemovedSearchFlagCase(t.NamedTuple):
     """Parametrized case for search flags removed pending bounded-memory support."""
 
