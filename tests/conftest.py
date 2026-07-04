@@ -19,13 +19,13 @@ def _isolate_vscode_wsl_bridge(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Keep the VS Code WSL cross-host probe off the developer's real ``/mnt/c``.
+    """Keep the WSL cross-host probes off the developer's real ``/mnt/c``.
 
-    ``agentgrep.discover_vscode_sources`` auto-probes the Windows-host VS Code
-    data under ``/mnt/c/Users`` when it detects WSL. That path is independent of
-    ``$HOME``, so on a WSL dev box it would leak real Copilot Chat history into
-    hermetic ``find --agent all`` tests. Point the users-mount root at a
-    nonexistent path by default; tests that exercise the bridge override
+    ``discover_vscode_sources`` and ``discover_cursor_ide_sources`` auto-probe
+    the Windows-host data under ``/mnt/c/Users`` when they detect WSL. That path
+    is independent of ``$HOME``, so on a WSL dev box it would leak real chat
+    history into hermetic ``find --agent all`` tests. Point the users-mount root
+    at a nonexistent path by default; tests that exercise a bridge override
     ``AGENTGREP_WSL_USERS_ROOT`` explicitly.
     """
     monkeypatch.setenv("AGENTGREP_WSL_USERS_ROOT", str(tmp_path / "no-windows-mount"))
