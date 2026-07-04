@@ -345,7 +345,12 @@ def run_search_command(args: SearchArgs) -> int:
     else:
         from agentgrep.ranking import rank_search_records
 
-        scored = rank_search_records(records, query_text, threshold=args.threshold)
+        scored = rank_search_records(
+            records,
+            query_text,
+            threshold=args.threshold,
+            origin_boost=args.origin_boost,
+        )
     if args.limit is not None:
         scored = scored[: args.limit]
     from agentgrep.ranking import group_by_session
@@ -403,7 +408,12 @@ def _run_search_eager(args: SearchArgs, query: SearchQuery) -> int:
     else:
         from agentgrep.ranking import rank_search_records
 
-        scored = rank_search_records(records, query_text, threshold=args.threshold)
+        scored = rank_search_records(
+            records,
+            query_text,
+            threshold=args.threshold,
+            origin_boost=args.origin_boost,
+        )
     if args.limit is not None:
         scored = scored[: args.limit]
     from agentgrep.ranking import group_by_session

@@ -209,6 +209,68 @@ def test_search_parse_agent_filter() -> None:
     assert parsed.agents == ("codex",)
 
 
+def test_search_parse_explicit_origin_filters_compile() -> None:
+    """--cwd/--branch compile into the same record predicate as field syntax."""
+    parsed = agentgrep.parse_args(
+        (
+            "search",
+            "--cwd",
+            "/workspace/agentgrep",
+            "--branch",
+            "project-context",
+            "bliss",
+        ),
+    )
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text="bliss command",
+        origin=agentgrep.RecordOrigin(
+            cwd="/workspace/agentgrep/src",
+            branch="project-context",
+        ),
+    )
+
+    assert isinstance(parsed, agentgrep.SearchArgs)
+    assert parsed.compiled is not None
+    assert parsed.terms == ("bliss",)
+    query = agentgrep.SearchQuery(
+        terms=parsed.terms,
+        scope=parsed.scope,
+        any_term=False,
+        regex=False,
+        case_sensitive=parsed.case_sensitive,
+        agents=parsed.agents,
+        limit=parsed.limit,
+        compiled=parsed.compiled,
+    )
+    assert agentgrep.matches_record(record, query)
+
+
+def test_search_parse_only_here_detects_git_context(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--only-here turns the cwd's git context into a hard origin filter."""
+    worktree = tmp_path / "repo"
+    git_dir = worktree / ".git"
+    git_dir.mkdir(parents=True)
+    _ = (git_dir / "HEAD").write_text("ref: refs/heads/project-context\n", encoding="utf-8")
+    child = worktree / "src"
+    child.mkdir()
+    monkeypatch.chdir(child)
+
+    parsed = agentgrep.parse_args(("search", "--only-here", "bliss"))
+
+    assert isinstance(parsed, agentgrep.SearchArgs)
+    assert parsed.compiled is not None
+    assert parsed.terms == ("bliss",)
+    assert parsed.origin_boost is None
+
+
 class RemovedSearchFlagCase(t.NamedTuple):
     """Parametrized case for search flags removed pending bounded-memory support."""
 
@@ -300,6 +362,7 @@ def _make_search_args(**overrides: t.Any) -> agentgrep.SearchArgs:
         "no_rank": False,
         "compiled": None,
         "raw_query": "",
+        "origin_boost": None,
     }
     base.update(overrides)
     return agentgrep.SearchArgs(**base)
@@ -336,6 +399,46 @@ def _canned_records() -> list[agentgrep.SearchRecord]:
             session_id="sess-1",
         ),
     ]
+
+
+def test_search_here_boost_reorders_ranked_results(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--here-style origin boost affects ranked search without filtering globally."""
+    records = [
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="test",
+            adapter_id="test.v1",
+            path=pathlib.Path("/tmp/other.jsonl"),
+            text="streaming parser notes",
+            origin=agentgrep.RecordOrigin(cwd="/elsewhere"),
+        ),
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="test",
+            adapter_id="test.v1",
+            path=pathlib.Path("/tmp/here.jsonl"),
+            text="streaming parser notes",
+            origin=agentgrep.RecordOrigin(cwd="/workspace/agentgrep/src"),
+        ),
+    ]
+    monkeypatch.setattr(_r_render, "run_search_query", lambda *_args, **_kwargs: records)
+    args = _make_search_args(
+        terms=("streaming", "parser"),
+        output_mode="json",
+        no_group=True,
+        origin_boost=agentgrep.RecordOrigin(repo="/workspace/agentgrep"),
+    )
+
+    code = run_search_command(args)
+
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["results"][0]["origin"]["cwd"] == "/workspace/agentgrep/src/"
 
 
 def test_search_command_no_terms_raises() -> None:

@@ -17,6 +17,7 @@ import collections.abc as cabc
 import contextlib
 import dataclasses
 import os
+import pathlib
 import re
 import sys
 import typing as t
@@ -29,6 +30,8 @@ from agentgrep._text import (
     UI_DESCRIPTION,
 )
 from agentgrep.cli.help_theme import create_themed_formatter
+from agentgrep.origin import origin_filter_terms
+from agentgrep.project_context import detect_project_context
 from agentgrep.records import (
     AGENT_CHOICES,
     AgentName,
@@ -36,6 +39,7 @@ from agentgrep.records import (
     GrepStyle,
     OutputMode,
     ProgressMode,
+    RecordOrigin,
     SearchScope,
 )
 
@@ -163,6 +167,7 @@ class SearchArgs:
     no_rank: bool = False
     compiled: CompiledQuery | None = None
     raw_query: str = ""
+    origin_boost: RecordOrigin | None = None
 
 
 @dataclasses.dataclass(slots=True)
@@ -568,6 +573,32 @@ def create_parser(
         help="Force case-sensitive matching",
     )
     _ = search_parser.add_argument(
+        "--cwd",
+        metavar="PATH",
+        help="Only return records whose recorded cwd matches PATH",
+    )
+    _ = search_parser.add_argument(
+        "--repo",
+        metavar="PATH",
+        help="Only return records whose recorded repository root matches PATH",
+    )
+    _ = search_parser.add_argument(
+        "--branch",
+        metavar="NAME",
+        help="Only return records whose recorded git branch matches NAME",
+    )
+    here_group = search_parser.add_mutually_exclusive_group()
+    _ = here_group.add_argument(
+        "--here",
+        action="store_true",
+        help="Boost records from the current project without filtering",
+    )
+    _ = here_group.add_argument(
+        "--only-here",
+        action="store_true",
+        help="Only return records from the current project",
+    )
+    _ = search_parser.add_argument(
         "--limit",
         type=int,
         metavar="N",
@@ -635,6 +666,41 @@ def _search_explicit_flags(namespace: argparse.Namespace) -> dict[str, str]:
     return flags
 
 
+def _search_has_origin_filter(namespace: argparse.Namespace) -> bool:
+    """Return whether ``search`` has a flag that can run without text terms."""
+    return bool(
+        t.cast("str | None", namespace.cwd)
+        or t.cast("str | None", namespace.repo)
+        or t.cast("str | None", namespace.branch)
+        or t.cast("bool", namespace.only_here),
+    )
+
+
+def _build_search_origin_terms(
+    namespace: argparse.Namespace,
+) -> tuple[tuple[str, ...], RecordOrigin | None]:
+    """Build generated query predicates and optional same-project boost."""
+    cwd = _normalize_origin_path_arg(t.cast("str | None", namespace.cwd))
+    repo = _normalize_origin_path_arg(t.cast("str | None", namespace.repo))
+    branch = t.cast("str | None", namespace.branch)
+    origin_boost: RecordOrigin | None = None
+    if t.cast("bool", namespace.here) or t.cast("bool", namespace.only_here):
+        context = detect_project_context()
+        if t.cast("bool", namespace.here):
+            origin_boost = context.origin
+        if t.cast("bool", namespace.only_here):
+            repo = str(context.repo or context.worktree or context.cwd)
+            branch = branch or context.branch
+    return origin_filter_terms(cwd=cwd, repo=repo, branch=branch), origin_boost
+
+
+def _normalize_origin_path_arg(value: str | None) -> str | None:
+    """Normalize a path-valued CLI origin argument without touching the filesystem."""
+    if value is None:
+        return None
+    return str(pathlib.Path(value).expanduser())
+
+
 def _grep_explicit_flags(namespace: argparse.Namespace) -> dict[str, str]:
     """Map query-field name → CLI flag name for `grep` flag/field collisions."""
     flags: dict[str, str] = {}
@@ -691,6 +757,12 @@ _QUERY_FIELD_NAMES: frozenset[str] = frozenset(
         "date",
         "model",
         "role",
+        "cwd",
+        "repo",
+        "worktree",
+        "branch",
+        "project",
+        "cwd_hash",
         "text",
     },
 )
@@ -911,7 +983,11 @@ def parse_args(
         # record; show the subcommand help+examples instead, the way
         # bare `agentgrep` shows root help. `--ui` keeps launching the
         # explorer with an empty seed query.
-        if not t.cast("list[str]", namespace.terms) and not t.cast("bool", namespace.ui):
+        if (
+            not t.cast("list[str]", namespace.terms)
+            and not t.cast("bool", namespace.ui)
+            and not _search_has_origin_filter(namespace)
+        ):
             with configured_color_environment(color_mode):
                 bundle.search_parser.print_help()
             return None
@@ -1116,8 +1192,10 @@ def _build_search_args(
                 "--threshold has no effect with --no-rank (ranking is disabled)",
             )
 
+    origin_terms, origin_boost = _build_search_origin_terms(namespace)
+    query_terms = [*origin_terms, *terms_list]
     search_compiled, residual_terms, search_query_fields = _maybe_compile_query(
-        terms_list,
+        query_terms,
         bundle=bundle,
         color_mode=color_mode,
         subparser=bundle.search_parser,
@@ -1142,7 +1220,8 @@ def _build_search_args(
         no_group=t.cast("bool", namespace.no_group),
         no_rank=t.cast("bool", namespace.no_rank),
         compiled=search_compiled,
-        raw_query=" ".join(terms_list),
+        raw_query=" ".join(query_terms),
+        origin_boost=origin_boost,
     )
 
 
