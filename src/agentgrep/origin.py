@@ -41,7 +41,7 @@ LEGACY_ORIGIN_METADATA_KEYS: frozenset[str] = frozenset(
 
 _PATH_FIELD_KEYS: dict[str, tuple[str, ...]] = {
     "cwd": ("cwd", "project", "workspace", "directory"),
-    "repo": ("repo", "repository"),
+    "repo": ("repo", "repository", "worktree", "cwd", "workspace", "directory"),
     "worktree": ("worktree", "workspace", "directory"),
 }
 _STRING_FIELD_KEYS: dict[str, tuple[str, ...]] = {
@@ -137,6 +137,8 @@ def record_origin_field_values(record: SearchRecord, field: str) -> tuple[str, .
             value = t.cast("str | None", getattr(origin, field))
             if value:
                 values.append(value)
+            if field == "repo":
+                values.extend(value for value in (origin.worktree, origin.cwd) if value)
         values.extend(_metadata_strings(record, _PATH_FIELD_KEYS[field]))
         return _dedupe(values)
     if field in _STRING_FIELD_KEYS:

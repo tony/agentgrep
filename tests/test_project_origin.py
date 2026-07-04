@@ -56,6 +56,14 @@ class OriginPathBoundaryCase(t.NamedTuple):
     expected: bool
 
 
+class RepoOriginFallbackCase(t.NamedTuple):
+    """Parametrized case for repo predicates against partial origin metadata."""
+
+    test_id: str
+    origin: agentgrep.RecordOrigin
+    expected: bool
+
+
 class OriginRemoteSerializationCase(t.NamedTuple):
     """Parametrized case for serialized origin remotes."""
 
@@ -91,6 +99,29 @@ ORIGIN_PATH_BOUNDARY_CASES: tuple[OriginPathBoundaryCase, ...] = (
     OriginPathBoundaryCase(
         test_id="sibling-prefix-path",
         record_cwd="/tmp/repo2",
+        expected=False,
+    ),
+)
+
+REPO_ORIGIN_FALLBACK_CASES: tuple[RepoOriginFallbackCase, ...] = (
+    RepoOriginFallbackCase(
+        test_id="explicit-repo",
+        origin=agentgrep.RecordOrigin(repo="/workspace/agentgrep"),
+        expected=True,
+    ),
+    RepoOriginFallbackCase(
+        test_id="cwd-descendant",
+        origin=agentgrep.RecordOrigin(cwd="/workspace/agentgrep/src"),
+        expected=True,
+    ),
+    RepoOriginFallbackCase(
+        test_id="worktree-descendant",
+        origin=agentgrep.RecordOrigin(worktree="/workspace/agentgrep/docs"),
+        expected=True,
+    ),
+    RepoOriginFallbackCase(
+        test_id="cwd-sibling-prefix",
+        origin=agentgrep.RecordOrigin(cwd="/workspace/agentgrep2/src"),
         expected=False,
     ),
 )
@@ -297,6 +328,33 @@ def test_origin_path_fields_match_boundaries(case: OriginPathBoundaryCase) -> No
     )
     compiled = compile_query(
         parse_query('cwd:"/tmp/repo" needle', default_registry()),
+        default_registry(),
+    )
+
+    assert compiled.record_predicate is not None
+    assert compiled.record_predicate(record) is case.expected
+
+
+@pytest.mark.parametrize(
+    "case",
+    REPO_ORIGIN_FALLBACK_CASES,
+    ids=[case.test_id for case in REPO_ORIGIN_FALLBACK_CASES],
+)
+def test_repo_origin_field_matches_partial_origin_metadata(
+    case: RepoOriginFallbackCase,
+) -> None:
+    """Repo predicates match cwd/worktree-only origins by path boundary."""
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text="needle prompt",
+        origin=case.origin,
+    )
+    compiled = compile_query(
+        parse_query('repo:"/workspace/agentgrep" needle', default_registry()),
         default_registry(),
     )
 
