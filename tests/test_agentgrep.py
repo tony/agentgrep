@@ -6550,6 +6550,56 @@ async def test_show_detail_keeps_text_highlighting_for_plain_body(
         assert any("bold" in style and search_hex in style for style in styled)
 
 
+async def test_show_detail_includes_record_origin_without_io(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The TUI detail header surfaces origin fields already on the record."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    rich_text_module = importlib.import_module("rich.text")
+    home = tmp_path / "home"
+    home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(agentgrep, "run_search_query", lambda *args, **kwargs: [])
+    query = agentgrep.SearchQuery(
+        terms=("origin",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+    control = agentgrep.SearchControl()
+    app = agentgrep.build_streaming_ui_app(home, query, control=control)
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=home / ".codex" / "sessions" / "rollout.jsonl",
+        text="plain origin detail",
+        origin=agentgrep.RecordOrigin(
+            cwd=str(home / "work" / "agentgrep"),
+            branch="project-context",
+        ),
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.screen.show_detail(record)
+        await pilot.pause()
+        rendered = app.screen._detail.content
+        header = next(
+            item
+            for item in rendered.renderables
+            if isinstance(item, rich_text_module.Text) and "Agent:" in item.plain
+        )
+
+    assert "Cwd: ~/work/agentgrep/" in header.plain
+    assert "Branch: project-context" in header.plain
+
+
 def test_pydantic_payloads_reject_wrong_types(tmp_path: pathlib.Path) -> None:
     """Payload models validate field types at construction time."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
