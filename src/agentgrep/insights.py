@@ -9,13 +9,15 @@ import json
 import pathlib
 import typing as t
 
-import agentgrep
 from agentgrep.db import (
     DbStore,
     normalize_record_text,
     text_hash,
     token_set,
 )
+
+if t.TYPE_CHECKING:
+    from agentgrep.progress import SearchControl
 
 _INSIGHT_PROGRESS_INTERVAL = 1024
 
@@ -112,7 +114,7 @@ class InsightEngine:
     def run_similarity(
         self,
         *,
-        control: agentgrep.SearchControl | None = None,
+        control: SearchControl | None = None,
         progress: InsightAnalyzeProgress | None = None,
     ) -> InsightRunResult:
         """Detect exact and near-duplicate prompt variants."""
@@ -248,7 +250,7 @@ class InsightEngine:
         *,
         target_path: pathlib.Path,
         target_text: str,
-        control: agentgrep.SearchControl | None = None,
+        control: SearchControl | None = None,
         progress: InsightAnalyzeProgress | None = None,
     ) -> InsightRunResult:
         """Detect indexed instructions absent from a target file."""

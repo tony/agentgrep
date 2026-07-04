@@ -32,7 +32,16 @@ from agentgrep._text import (
     _visible_width,
     format_display_path,
 )
-from agentgrep.cli.parser import DbArgs, FindArgs, GrepArgs, SearchArgs, UIArgs
+from agentgrep.cli.parser import (
+    DbArgs,
+    FindArgs,
+    GrepArgs,
+    InsightsArgs,
+    InsightsKind,
+    SearchArgs,
+    SuggestionsArgs,
+    UIArgs,
+)
 from agentgrep.cli.renderers import (
     GrepSummary,
     _compile_search_patterns,
@@ -89,7 +98,9 @@ __all__ = [
     "run_db_command",
     "run_find_command",
     "run_grep_command",
+    "run_insights_command",
     "run_search_command",
+    "run_suggestions_command",
     "run_ui_command",
     "serialize_find_record",
     "serialize_grep_record",
@@ -761,6 +772,35 @@ def _format_structured_text(payload: object, *, colors: AnsiColors) -> str:
         return _format_db_explain_text(payload, colors=colors)
     if _has_attributes(payload, ("db_path", "schema_version", "sources", "records")):
         return _format_db_status_text(payload, colors=colors)
+    if _is_suggestions_list_payload(payload):
+        return _format_suggestions_page_text(
+            t.cast("cabc.Mapping[str, object]", payload),
+            colors=colors,
+        )
+    if _is_insights_list_payload(payload):
+        return _format_insights_list_text(
+            t.cast("cabc.Mapping[str, object]", payload),
+            colors=colors,
+        )
+    if _is_insights_explain_payload(payload):
+        return _format_insights_explain_text(
+            t.cast("cabc.Mapping[str, object]", payload),
+            colors=colors,
+        )
+    if _is_suggestion_collection(payload):
+        return _format_suggestions_list_text(
+            t.cast("cabc.Sequence[object]", payload),
+            colors=colors,
+        )
+    if _is_suggestion(payload):
+        return _format_suggestion_text(payload, colors=colors)
+    if _is_insight_result_collection(payload):
+        return _format_insights_analyze_text(
+            t.cast("cabc.Sequence[object]", payload),
+            colors=colors,
+        )
+    if _is_insight_result(payload):
+        return _format_insights_analyze_text((payload,), colors=colors)
     return _format_generic_structured_text(payload, colors=colors)
 
 
@@ -769,12 +809,75 @@ def _has_attributes(payload: object, names: cabc.Sequence[str]) -> bool:
     return all(hasattr(payload, name) for name in names)
 
 
+def _is_suggestion(payload: object) -> bool:
+    """Return whether ``payload`` looks like a suggestion artifact."""
+    return _has_attributes(payload, ("suggestion_id", "target_path", "title", "confidence"))
+
+
+def _is_suggestion_collection(payload: object) -> bool:
+    """Return whether ``payload`` is a sequence of suggestion artifacts."""
+    return (
+        isinstance(payload, cabc.Sequence)
+        and not isinstance(payload, (str, bytes, bytearray))
+        and all(_is_suggestion(item) for item in payload)
+    )
+
+
+def _is_insight_result(payload: object) -> bool:
+    """Return whether ``payload`` looks like one insight analyze result."""
+    return _has_attributes(payload, ("run_id", "kind")) and (
+        hasattr(payload, "variant_edges") or hasattr(payload, "omission_findings")
+    )
+
+
+def _is_insight_result_collection(payload: object) -> bool:
+    """Return whether ``payload`` is a sequence of insight analyze results."""
+    return (
+        isinstance(payload, cabc.Sequence)
+        and not isinstance(payload, (str, bytes, bytearray))
+        and all(_is_insight_result(item) for item in payload)
+    )
+
+
+def _is_suggestions_list_payload(payload: object) -> bool:
+    """Return whether ``payload`` is the bounded suggestions list shape."""
+    if not isinstance(payload, cabc.Mapping):
+        return False
+    mapping = t.cast("cabc.Mapping[str, object]", payload)
+    return isinstance(mapping.get("suggestions"), cabc.Mapping)
+
+
+def _is_insights_list_payload(payload: object) -> bool:
+    """Return whether ``payload`` is the persisted-insights list shape."""
+    if not isinstance(payload, cabc.Mapping):
+        return False
+    mapping = t.cast("cabc.Mapping[str, object]", payload)
+    return any(
+        isinstance(mapping.get(key), cabc.Mapping) for key in ("variant_edges", "omission_findings")
+    )
+
+
+def _is_insights_explain_payload(payload: object) -> bool:
+    """Return whether ``payload`` is the persisted-insights counter shape."""
+    if not isinstance(payload, cabc.Mapping):
+        return False
+    mapping = t.cast("cabc.Mapping[str, object]", payload)
+    keys = set(mapping)
+    return keys <= {"variant_edges", "omission_findings"} and bool(keys)
+
+
 def _format_db_status_text(payload: object, *, colors: AnsiColors) -> str:
     """Return human-readable DB status text."""
     db_path = _attribute_or_mapping_value(payload, "db_path", "")
     schema_version = _attribute_or_mapping_value(payload, "schema_version", "")
     sources = _as_int_value(_attribute_or_mapping_value(payload, "sources", 0))
     records = _as_int_value(_attribute_or_mapping_value(payload, "records", 0))
+    features = _as_int_value(_attribute_or_mapping_value(payload, "features", 0))
+    variant_edges = _as_int_value(_attribute_or_mapping_value(payload, "variant_edges", 0))
+    omission_findings = _as_int_value(
+        _attribute_or_mapping_value(payload, "omission_findings", 0),
+    )
+    suggestions = _as_int_value(_attribute_or_mapping_value(payload, "suggestions", 0))
     lines = [
         colors.heading("DB status"),
         f"{colors.muted('Path')} | {colors.path(str(db_path))}",
@@ -783,6 +886,14 @@ def _format_db_status_text(payload: object, *, colors: AnsiColors) -> str:
             (
                 colors.warning(format_db_source_count(sources)),
                 colors.warning(_format_count(records, "record")),
+                colors.warning(_format_count(features, "feature")),
+            ),
+        ),
+        " | ".join(
+            (
+                colors.warning(format_insights_variant_count(variant_edges)),
+                colors.warning(format_insights_omission_count(omission_findings)),
+                colors.warning(_format_count(suggestions, "suggestion")),
             ),
         ),
     ]
@@ -863,12 +974,18 @@ def _format_db_sync_result_text(payload: object, *, colors: AnsiColors) -> str:
             ),
         ),
     ]
+    optional = []
     skipped = _as_int_value(_attribute_or_mapping_value(payload, "sources_skipped", 0))
+    deferred = _as_int_value(_attribute_or_mapping_value(payload, "features_deferred", 0))
     if skipped:
-        lines.append(colors.warning(format_db_skipped_count(skipped)))
+        optional.append(colors.warning(format_db_skipped_count(skipped)))
     pruned = _as_int_value(_attribute_or_mapping_value(payload, "sources_pruned", 0))
     if pruned:
-        lines.append(colors.warning(format_db_pruned_count(pruned)))
+        optional.append(colors.warning(format_db_pruned_count(pruned)))
+    if deferred:
+        optional.append(colors.warning(format_db_deferred_count(deferred)))
+    if optional:
+        lines.append(" | ".join(optional))
     return "\n".join(lines)
 
 
@@ -919,6 +1036,52 @@ def _format_count(count: int, singular: str, plural: str | None = None) -> str:
     """Return a human-readable count with pluralization."""
     label = singular if count == 1 else (plural or f"{singular}s")
     return f"{count} {label}"
+
+
+def _as_int(payload: cabc.Mapping[str, object], key: str) -> int:
+    """Return one mapping value as an integer count."""
+    return _as_int_value(payload.get(key, 0))
+
+
+def _format_confidence(value: object) -> str:
+    """Return a compact confidence value.
+
+    Examples
+    --------
+    >>> _format_confidence(0.825)
+    '0.82'
+    >>> _format_confidence("1")
+    '1.00'
+    >>> _format_confidence("high")
+    'high'
+    """
+    if isinstance(value, str | int | float):
+        try:
+            return f"{float(value):.2f}"
+        except ValueError:
+            return str(value)
+    return str(value)
+
+
+def _short_identifier(value: str, *, width: int = 16) -> str:
+    """Return a compact identifier for terminal summaries.
+
+    Examples
+    --------
+    >>> _short_identifier("edge-1")
+    'edge-1'
+    >>> _short_identifier("0123456789abcdef0123", width=8)
+    '01234567...'
+    """
+    return value if len(value) <= width else f"{value[:width]}..."
+
+
+def _short_text(value: str, width: int) -> str:
+    """Return text shortened to ``width`` display characters."""
+    compact = " ".join(value.split())
+    if len(compact) <= width:
+        return compact
+    return f"{compact[: max(0, width - 3)]}..."
 
 
 def _format_scalar(value: object) -> str:
@@ -1520,6 +1683,20 @@ def format_db_pruned_count(count: int) -> str:
     return f"{count} {suffix}"
 
 
+def format_db_deferred_count(count: int) -> str:
+    """Return a human-readable deferred-feature count.
+
+    Examples
+    --------
+    >>> format_db_deferred_count(1)
+    '1 feature deferred'
+    >>> format_db_deferred_count(5)
+    '5 features deferred'
+    """
+    suffix = "feature deferred" if count == 1 else "features deferred"
+    return f"{count} {suffix}"
+
+
 def _format_optional_db_sync_counts(result: SyncResult, *, colors: SearchColors) -> str:
     """Return optional DB sync counters prefixed for inline summaries."""
     parts: list[str] = []
@@ -1646,6 +1823,10 @@ def _run_db_status_command(args: DbArgs) -> int:
                 schema_version=SCHEMA_VERSION,
                 sources=0,
                 records=0,
+                features=0,
+                variant_edges=0,
+                omission_findings=0,
+                suggestions=0,
             )
         _print_json_or_text(payload, output_mode=args.output_mode, color_mode=args.color_mode)
         return 0
@@ -1728,6 +1909,7 @@ def _run_db_command_with_runtime(args: DbArgs, runtime: DbRuntime) -> int:
             sources,
             control=control,
             progress=progress,
+            features_mode=args.features_mode,
             force=args.force,
             coverage=coverage,
             prune_missing=prune_missing,
@@ -1742,4 +1924,1133 @@ def _run_db_command_with_runtime(args: DbArgs, runtime: DbRuntime) -> int:
         if progress is not None:
             progress.close()
     _print_json_or_text(result, output_mode=args.output_mode, color_mode=args.color_mode)
+    return 0
+
+
+def _format_insights_explain_text(
+    payload: cabc.Mapping[str, object],
+    *,
+    colors: AnsiColors,
+) -> str:
+    """Return human-readable persisted insight counters."""
+    return "\n".join(
+        (
+            colors.heading("Insights"),
+            " | ".join(
+                (
+                    colors.warning(
+                        format_insights_variant_count(_as_int(payload, "variant_edges")),
+                    ),
+                    colors.warning(
+                        format_insights_omission_count(_as_int(payload, "omission_findings")),
+                    ),
+                ),
+            ),
+        ),
+    )
+
+
+def _format_suggestions_page_text(
+    payload: cabc.Mapping[str, object],
+    *,
+    colors: AnsiColors,
+) -> str:
+    """Return human-readable bounded suggestion list text."""
+    lines = [colors.heading("Suggestions")]
+    limit = _as_int(payload, "limit")
+    lines.append(colors.muted(f"limit {limit}"))
+    family = payload.get("suggestions")
+    if isinstance(family, cabc.Mapping):
+        lines.extend(
+            _format_insight_family_lines(
+                "Suggestions",
+                "suggestion",
+                t.cast("cabc.Mapping[str, object]", family),
+                colors=colors,
+                item_formatter=_format_suggestion_summary_line_for_family,
+            ),
+        )
+    return "\n".join(lines)
+
+
+def _format_suggestion_summary_line_for_family(
+    item: object,
+    colors: AnsiColors,
+) -> str:
+    """Adapt the suggestion row formatter to the family-lines signature."""
+    return _format_suggestion_summary_line(item, colors=colors)
+
+
+def _format_insights_list_text(
+    payload: cabc.Mapping[str, object],
+    *,
+    colors: AnsiColors,
+) -> str:
+    """Return human-readable persisted insight list text."""
+    lines = [colors.heading("Insights")]
+    if "limit" in payload:
+        lines.append(f"{colors.muted('Page')} | limit {colors.warning(str(payload['limit']))}")
+    variant_edges = payload.get("variant_edges")
+    if isinstance(variant_edges, cabc.Mapping):
+        lines.extend(
+            _format_insight_family_lines(
+                "Variant edges",
+                "variant edge",
+                t.cast("cabc.Mapping[str, object]", variant_edges),
+                colors=colors,
+                item_formatter=_format_variant_edge_line,
+            ),
+        )
+    omission_findings = payload.get("omission_findings")
+    if isinstance(omission_findings, cabc.Mapping):
+        lines.extend(
+            _format_insight_family_lines(
+                "Omission findings",
+                "omission finding",
+                t.cast("cabc.Mapping[str, object]", omission_findings),
+                colors=colors,
+                item_formatter=_format_omission_finding_line,
+            ),
+        )
+    return "\n".join(lines)
+
+
+def _format_insight_family_lines(
+    heading: str,
+    item_name: str,
+    payload: cabc.Mapping[str, object],
+    *,
+    colors: AnsiColors,
+    item_formatter: cabc.Callable[[object, AnsiColors], str],
+) -> list[str]:
+    """Return lines for one insights list family."""
+    total = _as_int(payload, "total")
+    returned = _as_int(payload, "returned")
+    truncated = bool(payload.get("truncated", False))
+    suffix = item_name if total == 1 else f"{item_name}s"
+    state = colors.warning("truncated") if truncated else colors.success("complete")
+    lines = [
+        (f"{colors.heading(heading)} | {colors.warning(f'{returned}/{total} {suffix}')} | {state}"),
+    ]
+    items = payload.get("items", ())
+    if not isinstance(items, cabc.Sequence) or isinstance(items, (str, bytes, bytearray)):
+        return lines
+    rows = t.cast("cabc.Sequence[object]", items)
+    shown = 0
+    for item in rows[:_HUMAN_SAMPLE_LIMIT]:
+        lines.append(f"  {item_formatter(item, colors)}")
+        shown += 1
+    remaining = len(rows) - shown
+    if remaining > 0:
+        lines.append(colors.dim(f"  ... {remaining} more returned; use --json for full rows"))
+    return lines
+
+
+def _format_variant_edge_line(item: object, colors: AnsiColors) -> str:
+    """Return one human-readable variant edge row."""
+    edge_id = _attribute_or_mapping_value(item, "edge_id", "")
+    variant_type = _attribute_or_mapping_value(item, "variant_type", "")
+    confidence = _attribute_or_mapping_value(item, "confidence", 0.0)
+    explanation = _attribute_or_mapping_value(item, "explanation", "")
+    return " | ".join(
+        (
+            colors.accent(_short_identifier(str(edge_id))),
+            colors.warning(str(variant_type)),
+            colors.muted(f"confidence {_format_confidence(confidence)}"),
+            _short_text(str(explanation), 88),
+        ),
+    )
+
+
+def _format_omission_finding_line(item: object, colors: AnsiColors) -> str:
+    """Return one human-readable omission finding row."""
+    finding_id = _attribute_or_mapping_value(item, "finding_id", "")
+    target_path = _attribute_or_mapping_value(item, "target_path", "")
+    confidence = _attribute_or_mapping_value(item, "confidence", 0.0)
+    rationale = _attribute_or_mapping_value(item, "rationale", "")
+    return " | ".join(
+        (
+            colors.accent(_short_identifier(str(finding_id))),
+            colors.path(str(target_path)),
+            colors.muted(f"confidence {_format_confidence(confidence)}"),
+            _short_text(str(rationale), 88),
+        ),
+    )
+
+
+def _format_insights_analyze_text(
+    results: cabc.Sequence[object],
+    *,
+    colors: AnsiColors,
+) -> str:
+    """Return human-readable insights analyze result text."""
+    aggregate = _empty_insights_analyze_progress_result()
+    for result in results:
+        aggregate = _add_insight_result(aggregate, result)
+    lines = [
+        colors.heading("Insights analyze"),
+        " | ".join(
+            (
+                colors.warning(format_insights_run_count(aggregate.runs_analyzed)),
+                colors.warning(format_insights_feature_count(aggregate.features_refreshed)),
+                colors.warning(format_insights_cluster_count(aggregate.clusters)),
+                colors.warning(format_insights_variant_count(aggregate.variant_edges)),
+                colors.warning(format_insights_omission_count(aggregate.omission_findings)),
+            ),
+        ),
+    ]
+    for result in results[:_HUMAN_SAMPLE_LIMIT]:
+        kind = _attribute_or_mapping_value(result, "kind", "insight")
+        run_id = _attribute_or_mapping_value(result, "run_id", "")
+        lines.append(f"  {colors.accent(str(kind))} | {colors.muted(str(run_id))}")
+    remaining = len(results) - _HUMAN_SAMPLE_LIMIT
+    if remaining > 0:
+        lines.append(colors.dim(f"  ... {remaining} more runs"))
+    return "\n".join(lines)
+
+
+def _format_suggestions_list_text(
+    suggestions: cabc.Sequence[object],
+    *,
+    colors: AnsiColors,
+) -> str:
+    """Return human-readable suggestion list text."""
+    count = len(suggestions)
+    lines = [
+        colors.heading("Suggestions"),
+        colors.warning(_format_count(count, "suggestion")),
+    ]
+    lines.extend(
+        f"  {_format_suggestion_summary_line(suggestion, colors=colors)}"
+        for suggestion in suggestions[:_HUMAN_SAMPLE_LIMIT]
+    )
+    remaining = count - _HUMAN_SAMPLE_LIMIT
+    if remaining > 0:
+        lines.append(colors.dim(f"  ... {remaining} more suggestions; use --json for full rows"))
+    return "\n".join(lines)
+
+
+def _format_suggestion_text(payload: object, *, colors: AnsiColors) -> str:
+    """Return human-readable suggestion detail text."""
+    rationale = _attribute_or_mapping_value(payload, "rationale", "")
+    reload_note = _attribute_or_mapping_value(payload, "reload_note", "")
+    body = _attribute_or_mapping_value(payload, "body", "")
+    return "\n".join(
+        (
+            colors.heading("Suggestion"),
+            _format_suggestion_summary_line(payload, colors=colors),
+            f"{colors.muted('Rationale')} | {rationale}",
+            f"{colors.muted('Reload')} | {reload_note}",
+            "",
+            str(body),
+        ),
+    )
+
+
+def _format_suggestion_summary_line(
+    suggestion: object,
+    *,
+    colors: AnsiColors,
+) -> str:
+    """Return one human-readable suggestion row."""
+    suggestion_id = str(_attribute_or_mapping_value(suggestion, "suggestion_id", ""))
+    target_path = str(_attribute_or_mapping_value(suggestion, "target_path", ""))
+    surface_kind = str(_attribute_or_mapping_value(suggestion, "surface_kind", ""))
+    status = str(_attribute_or_mapping_value(suggestion, "status", ""))
+    confidence = _attribute_or_mapping_value(suggestion, "confidence", 0.0)
+    title = str(_attribute_or_mapping_value(suggestion, "title", ""))
+    return " | ".join(
+        (
+            colors.accent(_short_identifier(suggestion_id)),
+            colors.path(target_path),
+            colors.muted(surface_kind),
+            colors.success(status),
+            colors.warning(_format_confidence(confidence)),
+            title,
+        ),
+    )
+
+
+@dataclasses.dataclass(frozen=True)
+class InsightsAnalyzeProgressResult:
+    """Aggregate counters for one insights analyze command."""
+
+    runs_analyzed: int
+    features_refreshed: int
+    clusters: int
+    variant_edges: int
+    omission_findings: int
+
+
+@dataclasses.dataclass(frozen=True)
+class InsightsAnalyzeProgressSnapshot:
+    """Immutable view of insights analyze progress state for one render pass."""
+
+    phase: str
+    current: int | None
+    total: int | None
+    detail: str | None
+    activity: str | None
+    activity_detail: str | None
+    result: InsightsAnalyzeProgressResult
+    elapsed: float
+
+
+class ConsoleInsightsAnalyzeProgress:
+    """Human progress reporter for insights analyze operations."""
+
+    _SPINNER_FRAMES: t.ClassVar[str] = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+    def __init__(
+        self,
+        *,
+        enabled: bool,
+        stream: t.TextIO | None = None,
+        tty: bool | None = None,
+        color_mode: ColorMode = "auto",
+        refresh_interval: float = 0.1,
+        heartbeat_interval: float = 10.0,
+        answer_now_hint: bool = False,
+    ) -> None:
+        self._enabled = enabled
+        self._stream = stream if stream is not None else sys.stderr
+        self._tty = (
+            tty if tty is not None else bool(getattr(self._stream, "isatty", lambda: False)())
+        )
+        self._colors = AnsiColors.for_stream(color_mode, self._stream)
+        self._refresh_interval = refresh_interval
+        self._heartbeat_interval = heartbeat_interval
+        self._answer_now_hint = answer_now_hint
+        self._lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._started_at: float | None = None
+        self._last_heartbeat_at: float | None = None
+        self._last_line_len = 0
+        self._phase = "analyzing"
+        self._detail: str | None = None
+        self._activity: str | None = None
+        self._activity_detail: str | None = None
+        self._current: int | None = None
+        self._total: int | None = None
+        self._result = InsightsAnalyzeProgressResult(
+            runs_analyzed=0,
+            features_refreshed=0,
+            clusters=0,
+            variant_edges=0,
+            omission_findings=0,
+        )
+        self._finished = False
+        self._last_tty_lines = 0
+
+    def start(self, total_steps: int) -> None:
+        """Begin insight analysis progress."""
+        if not self._enabled:
+            return
+        started_now = self._ensure_started(
+            "analyzing",
+            current=0,
+            total=total_steps,
+            detail=f"{total_steps} steps",
+        )
+        if started_now:
+            if self._tty:
+                self._ensure_tty_thread()
+            else:
+                self._emit_line(self._start_line())
+
+    def step_started(
+        self,
+        index: int,
+        total: int,
+        step: str,
+        result: InsightsAnalyzeProgressResult,
+    ) -> None:
+        """Report that one insight analysis step is starting."""
+        if not self._enabled:
+            return
+        self._update_result(result)
+        self.set_status(
+            "analyzing",
+            current=index,
+            total=total,
+            detail=step,
+        )
+        self.set_activity("preparing insight step", detail=step)
+
+    def step_finished(
+        self,
+        index: int,
+        total: int,
+        step: str,
+        result: InsightsAnalyzeProgressResult,
+    ) -> None:
+        """Report that one insight analysis step has finished."""
+        if not self._enabled:
+            return
+        self._update_result(result)
+        self.set_status(
+            "analyzing",
+            current=index,
+            total=total,
+            detail=f"{step} complete",
+        )
+        self.set_activity("completed insight step", detail=step)
+
+    def set_status(
+        self,
+        phase: str,
+        *,
+        current: int | None = None,
+        total: int | None = None,
+        detail: str | None = None,
+    ) -> None:
+        """Update the current progress status."""
+        if not self._enabled:
+            return
+        with self._lock:
+            self._phase = phase
+            self._current = current
+            self._total = total
+            self._detail = detail
+        self._emit_heartbeat_if_due()
+
+    def set_activity(self, activity: str, *, detail: str | None = None) -> None:
+        """Update the current backend activity."""
+        if not self._enabled:
+            return
+        with self._lock:
+            self._activity = activity
+            self._activity_detail = detail
+        self._emit_heartbeat_if_due()
+
+    def finish(self, result: InsightsAnalyzeProgressResult) -> None:
+        """Finish progress reporting after a complete analysis."""
+        if not self._enabled:
+            return
+        self._update_result(result)
+        with self._lock:
+            self._phase = "complete"
+            self._finished = True
+        if self._tty:
+            self._stop_tty_thread()
+            self._clear_tty_line()
+            return
+        self._emit_line(self._finish_line(result))
+
+    def exiting_early(self, result: InsightsAnalyzeProgressResult) -> None:
+        """Finish progress reporting after cooperative early exit."""
+        if not self._enabled:
+            return
+        self._update_result(result)
+        with self._lock:
+            self._phase = "exiting early"
+            self._finished = True
+        line = self._exiting_early_line(result)
+        if self._tty:
+            self._stop_tty_thread()
+            self._write_tty_line(line)
+            return
+        self._emit_line(line)
+
+    def interrupt(self) -> None:
+        """Stop progress rendering while preserving the current status."""
+        if not self._enabled:
+            return
+        if self._tty:
+            self._stop_tty_thread()
+            self._write_tty_summary_line()
+            return
+        self._emit_line(self._summary())
+
+    def close(self) -> None:
+        """Stop any active progress renderer."""
+        if not self._enabled:
+            return
+        if self._tty:
+            self._stop_tty_thread()
+            if not self._finished:
+                self._clear_tty_line()
+
+    def _ensure_started(
+        self,
+        phase: str,
+        *,
+        current: int | None = None,
+        total: int | None = None,
+        detail: str | None = None,
+    ) -> bool:
+        now = time.monotonic()
+        with self._lock:
+            already_started = self._started_at is not None
+            if not already_started:
+                self._started_at = now
+                self._last_heartbeat_at = now
+                self._finished = False
+            self._phase = phase
+            self._current = current
+            self._total = total
+            self._detail = detail
+        if not already_started and self._tty:
+            self._ensure_tty_thread()
+        return not already_started
+
+    def _update_result(self, result: InsightsAnalyzeProgressResult) -> None:
+        with self._lock:
+            self._result = result
+
+    def _ensure_tty_thread(self) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._stop_event.clear()
+        self._thread = threading.Thread(
+            target=self._tty_loop,
+            daemon=True,
+            name="agentgrep-insights-analyze-progress",
+        )
+        self._thread.start()
+
+    def _stop_tty_thread(self) -> None:
+        self._stop_event.set()
+        thread = self._thread
+        self._thread = None
+        if thread is not None:
+            thread.join(timeout=1.0)
+
+    def _tty_loop(self) -> None:
+        frames = itertools.cycle(self._SPINNER_FRAMES)
+        while not self._stop_event.is_set():
+            self._render_tty(next(frames))
+            self._stop_event.wait(self._refresh_interval)
+
+    def _render_tty(self, frame: str) -> None:
+        frame_text = self._colors.info(frame)
+        terminal_width = self._terminal_width()
+        summary_lines = list(self._summary_lines(max_width=terminal_width))
+        if summary_lines:
+            first_width = max(1, terminal_width - _visible_width(frame_text) - 1)
+            summary_lines[0] = _hard_truncate_ansi(summary_lines[0], first_width)
+            summary_lines[0] = f"{frame_text} {summary_lines[0]}"
+        else:
+            summary_lines = [frame_text]
+        with self._lock:
+            try:
+                self._clear_tty_block_locked()
+                self._stream.write("\n".join(summary_lines))
+                self._stream.flush()
+                self._last_line_len = len(summary_lines[-1])
+                self._last_tty_lines = len(summary_lines)
+            except OSError, ValueError:
+                pass
+
+    def _clear_tty_line(self) -> None:
+        with self._lock:
+            self._clear_tty_block_locked()
+            self._last_line_len = 0
+            self._last_tty_lines = 0
+
+    def _clear_tty_block_locked(self) -> None:
+        if self._last_tty_lines <= 0:
+            return
+        if self._last_tty_lines > 1:
+            self._stream.write(f"\033[{self._last_tty_lines - 1}A")
+        self._stream.write("\r")
+        for index in range(self._last_tty_lines):
+            self._stream.write("\033[2K")
+            if index < self._last_tty_lines - 1:
+                self._stream.write("\033[1B")
+        if self._last_tty_lines > 1:
+            self._stream.write(f"\033[{self._last_tty_lines - 1}A")
+        self._stream.write("\r")
+
+    def _write_tty_summary_line(self) -> None:
+        lines = self._summary_lines(max_width=self._terminal_width())
+        self._write_tty_lines(lines)
+
+    def _write_tty_line(self, line: str) -> None:
+        self._write_tty_lines((line,))
+
+    def _write_tty_lines(self, lines: tuple[str, ...]) -> None:
+        with self._lock:
+            try:
+                self._clear_tty_block_locked()
+                self._stream.write("\n".join(lines) + "\n")
+                self._stream.flush()
+            except OSError, ValueError:
+                pass
+            self._last_line_len = 0
+            self._last_tty_lines = 0
+
+    def _emit_heartbeat_if_due(self) -> None:
+        if not self._enabled or self._tty:
+            return
+        with self._lock:
+            last = self._last_heartbeat_at
+        if last is None:
+            return
+        now = time.monotonic()
+        if now - last < self._heartbeat_interval:
+            return
+        elapsed = self._elapsed_seconds()
+        self._emit_line(self._heartbeat_line(elapsed))
+        with self._lock:
+            self._last_heartbeat_at = now
+
+    def _emit_line(self, line: str) -> None:
+        try:
+            self._stream.write(line + "\n")
+            self._stream.flush()
+        except OSError, ValueError:
+            pass
+
+    def _summary(self, *, max_width: int | None = None) -> str:
+        return " / ".join(self._summary_lines(max_width=max_width))
+
+    def _summary_lines(self, *, max_width: int | None = None) -> tuple[str, ...]:
+        return format_insights_analyze_progress_lines(
+            self._snapshot(),
+            colors=self._colors,
+            answer_now_hint=self._answer_now_hint,
+            max_width=max_width,
+        )
+
+    def _terminal_width(self) -> int:
+        try:
+            columns = os.get_terminal_size(self._stream.fileno()).columns
+        except AttributeError, OSError, TypeError, ValueError:
+            columns = 0
+        if columns >= 20:
+            return columns
+        return max(20, shutil.get_terminal_size(fallback=(80, 24)).columns)
+
+    def _snapshot(self) -> InsightsAnalyzeProgressSnapshot:
+        elapsed = self._elapsed_seconds()
+        with self._lock:
+            return InsightsAnalyzeProgressSnapshot(
+                phase=self._phase,
+                current=self._current,
+                total=self._total,
+                detail=self._detail,
+                activity=self._activity,
+                activity_detail=self._activity_detail,
+                result=self._result,
+                elapsed=elapsed,
+            )
+
+    def _start_line(self) -> str:
+        return f"{self._colors.heading('Insights analyze')} {self._colors.muted('starting')}"
+
+    def _heartbeat_line(self, elapsed: float) -> str:
+        prefix = f"{self._colors.muted('...')} {self._colors.heading('still analyzing')}"
+        elapsed_text = self._colors.muted(f"{elapsed:.0f}s elapsed")
+        return f"{prefix}: {self._summary()} ({elapsed_text})"
+
+    def _finish_line(self, result: InsightsAnalyzeProgressResult) -> str:
+        return (
+            f"{self._colors.success('Analyze complete:')} "
+            f"{self._colors.warning(format_insights_run_count(result.runs_analyzed))}, "
+            f"{self._colors.warning(format_insights_feature_count(result.features_refreshed))}, "
+            f"{self._colors.warning(format_insights_cluster_count(result.clusters))}, "
+            f"{self._colors.warning(format_insights_variant_count(result.variant_edges))}, "
+            f"{self._colors.warning(format_insights_omission_count(result.omission_findings))} "
+            f"({self._colors.muted(f'{self._elapsed_seconds():.1f}s elapsed')})"
+        )
+
+    def _exiting_early_line(self, result: InsightsAnalyzeProgressResult) -> str:
+        parts = [
+            f"{self._colors.success('Exiting early:')} "
+            f"{self._colors.warning(format_insights_run_count(result.runs_analyzed))}, "
+            f"{self._colors.warning(format_insights_feature_count(result.features_refreshed))}, "
+            f"{self._colors.warning(format_insights_variant_count(result.variant_edges))}",
+        ]
+        if self._answer_now_hint:
+            parts.append(self._colors.white("[Press enter, exit early]"))
+        return " | ".join(parts)
+
+    def _elapsed_seconds(self) -> float:
+        with self._lock:
+            started = self._started_at
+        if started is None:
+            return 0.0
+        return time.monotonic() - started
+
+
+def format_insights_run_count(count: int) -> str:
+    """Return a human-readable insight-run count."""
+    suffix = "run analyzed" if count == 1 else "runs analyzed"
+    return f"{count} {suffix}"
+
+
+def format_insights_feature_count(count: int) -> str:
+    """Return a human-readable refreshed-feature count."""
+    suffix = "feature refreshed" if count == 1 else "features refreshed"
+    return f"{count} {suffix}"
+
+
+def format_insights_cluster_count(count: int) -> str:
+    """Return a human-readable cluster count."""
+    suffix = "cluster" if count == 1 else "clusters"
+    return f"{count} {suffix}"
+
+
+def format_insights_variant_count(count: int) -> str:
+    """Return a human-readable variant-edge count."""
+    suffix = "variant edge" if count == 1 else "variant edges"
+    return f"{count} {suffix}"
+
+
+def format_insights_omission_count(count: int) -> str:
+    """Return a human-readable omission-finding count."""
+    suffix = "omission finding" if count == 1 else "omission findings"
+    return f"{count} {suffix}"
+
+
+def format_insights_analyze_progress_line(
+    snapshot: InsightsAnalyzeProgressSnapshot,
+    *,
+    colors: SearchColors,
+    answer_now_hint: bool = False,
+    max_width: int | None = None,
+) -> str:
+    """Format the single-line insights analyze progress summary."""
+    return " / ".join(
+        format_insights_analyze_progress_lines(
+            snapshot,
+            colors=colors,
+            answer_now_hint=answer_now_hint,
+            max_width=max_width,
+        ),
+    )
+
+
+def format_insights_analyze_progress_lines(
+    snapshot: InsightsAnalyzeProgressSnapshot,
+    *,
+    colors: SearchColors,
+    answer_now_hint: bool = False,
+    max_width: int | None = None,
+) -> tuple[str, ...]:
+    """Format multi-line insights analyze progress."""
+    lines = _format_insights_analyze_progress_lines(
+        snapshot,
+        colors=colors,
+        answer_now_hint=answer_now_hint,
+        include_detail=True,
+    )
+    if max_width is None:
+        return lines
+    return tuple(_hard_truncate_ansi(line, max_width) for line in lines)
+
+
+def _format_insights_analyze_progress_lines(
+    snapshot: InsightsAnalyzeProgressSnapshot,
+    *,
+    colors: SearchColors,
+    answer_now_hint: bool,
+    include_detail: bool,
+) -> tuple[str, ...]:
+    """Build one insights analyze progress-line variant."""
+    label_part = colors.heading("Insights analyze")
+    detail_part = colors.muted(snapshot.detail) if include_detail and snapshot.detail else None
+    if snapshot.current is not None and snapshot.total is not None:
+        count = colors.warning(f"{snapshot.current}/{snapshot.total}")
+        status_part = f"{colors.heading(snapshot.phase)} {count} {colors.muted('steps')}"
+    elif include_detail and snapshot.detail:
+        status_part = f"{colors.heading(snapshot.phase)} {colors.muted(snapshot.detail)}"
+        detail_part = None
+    else:
+        status_part = colors.heading(snapshot.phase)
+    result = snapshot.result
+    status_parts = [
+        label_part,
+        status_part,
+    ]
+    if detail_part:
+        status_parts.append(detail_part)
+    status_parts.append(colors.muted(f"{snapshot.elapsed:.1f}s"))
+    if answer_now_hint:
+        status_parts.append(colors.white("[Press enter, exit early]"))
+    lines = [" | ".join(status_parts)]
+    if snapshot.activity is not None:
+        activity_parts = [
+            colors.heading("Doing"),
+            colors.warning(snapshot.activity),
+        ]
+        if include_detail and snapshot.activity_detail:
+            activity_parts.append(colors.muted(snapshot.activity_detail))
+        lines.append(" | ".join(activity_parts))
+    if _has_insights_analyze_progress_result(result):
+        lines.append(
+            " | ".join(
+                (
+                    colors.heading("Results"),
+                    colors.warning(format_insights_run_count(result.runs_analyzed)),
+                    colors.warning(format_insights_feature_count(result.features_refreshed)),
+                    colors.warning(format_insights_cluster_count(result.clusters)),
+                    colors.warning(format_insights_variant_count(result.variant_edges)),
+                    colors.warning(format_insights_omission_count(result.omission_findings)),
+                ),
+            ),
+        )
+    return tuple(lines)
+
+
+def _has_insights_analyze_progress_result(result: InsightsAnalyzeProgressResult) -> bool:
+    """Return whether aggregate insight counters carry completed work."""
+    return (
+        result.runs_analyzed > 0
+        or result.features_refreshed > 0
+        or result.clusters > 0
+        or result.variant_edges > 0
+        or result.omission_findings > 0
+    )
+
+
+def _empty_insights_analyze_progress_result() -> InsightsAnalyzeProgressResult:
+    """Return zeroed aggregate counters for insights analyze progress."""
+    return InsightsAnalyzeProgressResult(
+        runs_analyzed=0,
+        features_refreshed=0,
+        clusters=0,
+        variant_edges=0,
+        omission_findings=0,
+    )
+
+
+def _insight_counter(result: object, name: str) -> int:
+    """Read an integer counter from dataclass or mapping insight results."""
+    value: object
+    if dataclasses.is_dataclass(result) and not isinstance(result, type):
+        value = getattr(result, name, 0)
+    elif isinstance(result, cabc.Mapping):
+        mapping = t.cast("cabc.Mapping[str, object]", result)
+        value = mapping.get(name, 0)
+    else:
+        return 0
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return 0
+    return 0
+
+
+def _add_insight_result(
+    aggregate: InsightsAnalyzeProgressResult,
+    result: object,
+) -> InsightsAnalyzeProgressResult:
+    """Add one insight result into aggregate analyze counters."""
+    return InsightsAnalyzeProgressResult(
+        runs_analyzed=aggregate.runs_analyzed + 1,
+        features_refreshed=aggregate.features_refreshed
+        + _insight_counter(result, "features_refreshed"),
+        clusters=aggregate.clusters + _insight_counter(result, "clusters"),
+        variant_edges=aggregate.variant_edges + _insight_counter(result, "variant_edges"),
+        omission_findings=aggregate.omission_findings
+        + _insight_counter(result, "omission_findings"),
+    )
+
+
+def _insights_analyze_payload(results: list[object]) -> object:
+    """Return the public analyze payload for one or multiple insight results."""
+    return results[0] if len(results) == 1 else results
+
+
+def _insights_list_payload(
+    engine: object,
+    *,
+    kind: InsightsKind,
+    limit: int,
+) -> dict[str, object]:
+    """Return a bounded persisted-insights listing payload."""
+    payload: dict[str, object] = {"limit": limit}
+    typed = t.cast("t.Any", engine)
+    if kind in {"similarity", "all"}:
+        total = int(typed.count_variant_edges())
+        items = typed.list_variant_edges(limit=limit)
+        payload["variant_edges"] = {
+            "total": total,
+            "returned": len(items),
+            "truncated": total > len(items),
+            "items": items,
+        }
+    if kind in {"omissions", "all"}:
+        total = int(typed.count_omission_findings())
+        items = typed.list_omission_findings(limit=limit)
+        payload["omission_findings"] = {
+            "total": total,
+            "returned": len(items),
+            "truncated": total > len(items),
+            "items": items,
+        }
+    return payload
+
+
+def _empty_insights_list_payload(*, kind: InsightsKind, limit: int) -> dict[str, object]:
+    """Return the zero-rows listing payload for a missing cache."""
+    payload: dict[str, object] = {"limit": limit}
+    empty: dict[str, object] = {
+        "total": 0,
+        "returned": 0,
+        "truncated": False,
+        "items": [],
+    }
+    if kind in {"similarity", "all"}:
+        payload["variant_edges"] = dict(empty)
+    if kind in {"omissions", "all"}:
+        payload["omission_findings"] = dict(empty)
+    return payload
+
+
+def _insights_explain_payload(engine: object) -> dict[str, int]:
+    """Return cheap persisted-insight counters."""
+    typed = t.cast("t.Any", engine)
+    return {
+        "variant_edges": int(typed.count_variant_edges()),
+        "omission_findings": int(typed.count_omission_findings()),
+    }
+
+
+def _run_readonly_db_action(
+    db_path: str | None,
+    action: cabc.Callable[[DbRuntime], int],
+    *,
+    on_missing: cabc.Callable[[], int],
+) -> int:
+    """Run a read action against a read-only DB open, without cache writes.
+
+    Mirrors the db status path: a missing cache reports an empty payload
+    without creating the file, and a foreign file fails cleanly.
+    """
+    import sqlite3
+
+    from agentgrep.db import DbRuntime, default_db_path
+
+    path = default_db_path() if db_path is None else pathlib.Path(db_path).expanduser()
+    if not path.exists():
+        return on_missing()
+    try:
+        with DbRuntime.open_readonly(path) as runtime:
+            return action(runtime)
+    except sqlite3.DatabaseError:
+        print(f"agentgrep: not an agentgrep database: {path}", file=sys.stderr)
+        return 1
+
+
+def run_insights_command(args: InsightsArgs) -> int:
+    """Execute ``agentgrep insights`` subcommands."""
+    if args.action in {"list", "explain"}:
+
+        def list_action(runtime: DbRuntime) -> int:
+            return _run_insights_command_with_runtime(args, runtime)
+
+        def empty_listing() -> int:
+            payload: object
+            if args.action == "explain":
+                payload = {"variant_edges": 0, "omission_findings": 0}
+            else:
+                payload = _empty_insights_list_payload(kind=args.kind, limit=args.limit)
+            _print_json_or_text(
+                payload,
+                output_mode=args.output_mode,
+                color_mode=args.color_mode,
+            )
+            return 0
+
+        return _run_readonly_db_action(args.db_path, list_action, on_missing=empty_listing)
+    runtime = _open_db_runtime(args.db_path)
+    try:
+        return _run_insights_command_with_runtime(args, runtime)
+    finally:
+        runtime.close()
+
+
+def _run_insights_command_with_runtime(args: InsightsArgs, runtime: DbRuntime) -> int:
+    """Execute one insights action against an already-open runtime."""
+    from agentgrep.insights import InsightEngine
+
+    engine = InsightEngine(runtime.store)
+    if args.action == "analyze":
+        control = SearchControl()
+        human_output = args.output_mode == "text"
+        progress_enabled = args.progress_mode == "always" or (
+            args.progress_mode == "auto" and human_output
+        )
+        answer_now_enabled = (
+            progress_enabled
+            and human_output
+            and bool(getattr(sys.stdin, "isatty", lambda: False)())
+            and bool(getattr(sys.stderr, "isatty", lambda: False)())
+        )
+        progress = (
+            ConsoleInsightsAnalyzeProgress(
+                enabled=True,
+                color_mode=args.color_mode,
+                answer_now_hint=answer_now_enabled,
+            )
+            if progress_enabled
+            else None
+        )
+        listener = AnswerNowInputListener(control) if answer_now_enabled else None
+        results: list[object] = []
+        aggregate = _empty_insights_analyze_progress_result()
+        jobs: list[tuple[str, cabc.Callable[[], object]]] = []
+        if args.kind in {"similarity", "all"}:
+            jobs.append(
+                (
+                    "similarity",
+                    lambda: engine.run_similarity(control=control, progress=progress),
+                ),
+            )
+        if args.kind in {"omissions", "all"} and args.target is not None:
+            target_path = pathlib.Path(args.target)
+            target_text = target_path.read_text(encoding="utf-8")
+            jobs.append(
+                (
+                    "omissions",
+                    lambda: engine.run_omissions(
+                        target_path=target_path,
+                        target_text=target_text,
+                        control=control,
+                        progress=progress,
+                    ),
+                ),
+            )
+        if listener is not None:
+            listener.start()
+        if progress is not None:
+            progress.start(len(jobs))
+        exited_early = False
+        try:
+            for index, (label, job) in enumerate(jobs, start=1):
+                if control.answer_now_requested():
+                    exited_early = True
+                    if progress is not None:
+                        progress.exiting_early(aggregate)
+                    break
+                if progress is not None:
+                    progress.step_started(index, len(jobs), label, aggregate)
+                result = job()
+                results.append(result)
+                aggregate = _add_insight_result(aggregate, result)
+                if progress is not None:
+                    progress.step_finished(index, len(jobs), label, aggregate)
+                if control.answer_now_requested():
+                    exited_early = True
+                    if progress is not None:
+                        progress.exiting_early(aggregate)
+                    break
+            if not exited_early and progress is not None:
+                progress.finish(aggregate)
+        except KeyboardInterrupt:
+            if progress is not None:
+                progress.interrupt()
+            raise
+        finally:
+            if listener is not None:
+                listener.stop()
+            if progress is not None:
+                progress.close()
+        _print_json_or_text(
+            _insights_analyze_payload(results),
+            output_mode=args.output_mode,
+            color_mode=args.color_mode,
+        )
+        return 0
+    if args.action == "explain":
+        _print_json_or_text(
+            _insights_explain_payload(engine),
+            output_mode=args.output_mode,
+            color_mode=args.color_mode,
+        )
+        return 0
+    _print_json_or_text(
+        _insights_list_payload(engine, kind=args.kind, limit=args.limit),
+        output_mode=args.output_mode,
+        color_mode=args.color_mode,
+    )
+    return 0
+
+
+def run_suggestions_command(args: SuggestionsArgs) -> int:
+    """Execute ``agentgrep suggestions`` subcommands."""
+    writes = args.action == "list" and args.target is not None
+    if not writes:
+
+        def read_action(runtime: DbRuntime) -> int:
+            return _run_suggestions_command_with_runtime(args, runtime)
+
+        def empty_result() -> int:
+            if args.action == "list":
+                _print_json_or_text(
+                    {
+                        "limit": args.limit,
+                        "suggestions": {
+                            "total": 0,
+                            "returned": 0,
+                            "truncated": False,
+                            "items": [],
+                        },
+                    },
+                    output_mode=args.output_mode,
+                    color_mode=args.color_mode,
+                )
+                return 0
+            return 1
+
+        return _run_readonly_db_action(args.db_path, read_action, on_missing=empty_result)
+    runtime = _open_db_runtime(args.db_path)
+    try:
+        return _run_suggestions_command_with_runtime(args, runtime)
+    finally:
+        runtime.close()
+
+
+def _run_suggestions_command_with_runtime(args: SuggestionsArgs, runtime: DbRuntime) -> int:
+    """Execute one suggestions action against an already-open runtime."""
+    from agentgrep.suggestions import SuggestionEngine
+
+    engine = SuggestionEngine(runtime.store)
+    if args.action == "list":
+        if args.target is not None:
+            _ = engine.create_from_omissions(target_path=pathlib.Path(args.target))
+        total = engine.count_suggestions()
+        items = engine.list_suggestions(limit=args.limit)
+        _print_json_or_text(
+            {
+                "limit": args.limit,
+                "suggestions": {
+                    "total": total,
+                    "returned": len(items),
+                    "truncated": total > len(items),
+                    "items": items,
+                },
+            },
+            output_mode=args.output_mode,
+            color_mode=args.color_mode,
+        )
+        return 0
+    if args.suggestion_id is None:
+        msg = "suggestion id is required"
+        raise SystemExit(msg)
+    if args.action == "render" and args.output_mode != "json":
+        rendered = engine.render_suggestion(args.suggestion_id)
+        if rendered is None:
+            return 1
+        print(rendered)
+        return 0
+    suggestion = engine.get_suggestion(args.suggestion_id)
+    if suggestion is None:
+        return 1
+    _print_json_or_text(
+        suggestion,
+        output_mode=args.output_mode,
+        color_mode=args.color_mode,
+    )
     return 0

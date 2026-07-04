@@ -58,6 +58,18 @@ Open the interactive Textual explorer command surface.
 Sync and inspect the persistent DB index.
 :::
 
+:::{grid-item-card} agentgrep insights
+:link: insights/index
+:link-type: doc
+Run and inspect deterministic similarity and omission analysis.
+:::
+
+:::{grid-item-card} agentgrep suggestions
+:link: suggestions/index
+:link-type: doc
+List, inspect, and render review-only instruction suggestions.
+:::
+
 :::{grid-item-card} API Reference
 :link: reference
 :link-type: doc
@@ -168,5 +180,7 @@ search
 find
 ui
 db/index
+insights/index
+suggestions/index
 reference
 ```
