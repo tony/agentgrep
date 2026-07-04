@@ -36,11 +36,22 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a32 (Yet to be released)
+## agentgrep 0.1.0a33 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a32 (2026-07-04)
+
+agentgrep 0.1.0a32 realigns every agent backend to the formats today's
+CLIs actually write and brings Cursor IDE chat within reach on WSL. VS
+Code Copilot Chat search is restored — the client's move to a per-session
+event log had left recent sessions invisible — and Claude Code, pi,
+Gemini, and OpenCode results are sharpened to the prompts and turns you
+actually typed and received. Under WSL, Cursor IDE conversations written
+by the Windows-host UI are now discovered across the `/mnt/c` bridge. See
+{ref}`backend-cursor-ide`.
 
 ### What's new
 
