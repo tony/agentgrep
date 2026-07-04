@@ -510,6 +510,8 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
             return run_search_command(parsed)
         if isinstance(parsed, UIArgs):
             return run_ui_command(parsed)
+        if isinstance(parsed, SimilarArgs):
+            return run_similar_command(parsed)
         return run_find_command(parsed)
     except KeyboardInterrupt:
         _write_interrupt_notice()
@@ -571,6 +573,7 @@ from agentgrep.cli.parser import (  # noqa: E402  (re-exports must follow main d
     ParserBundle,
     PatternMode,
     SearchArgs,
+    SimilarArgs,
     UIArgs,
     add_common_agent_options,
     add_output_mode_options,
@@ -593,6 +596,7 @@ from agentgrep.cli.render import (  # noqa: E402  (re-exports must follow main d
     run_find_command,
     run_grep_command,
     run_search_command,
+    run_similar_command,
     run_ui_command,
     serialize_find_record,
     serialize_grep_record,
@@ -690,6 +694,7 @@ __all__ = (
     "SearchRequestedPayload",
     "SearchRuntime",
     "SearchScope",
+    "SimilarArgs",
     "SourceHandle",
     "SourceHandlePayload",
     "SourceKind",
@@ -870,6 +875,7 @@ __all__ = (
     "run_readonly_command",
     "run_search_command",
     "run_search_query",
+    "run_similar_command",
     "run_ui",
     "run_ui_command",
     "search_record_sort_key",

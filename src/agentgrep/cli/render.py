@@ -18,7 +18,7 @@ from agentgrep import identity, run_ui
 from agentgrep._engine import iter_find_events, iter_search_events
 from agentgrep._engine.orchestration import run_search_query
 from agentgrep._text import AnsiColors, format_display_path
-from agentgrep.cli.parser import FindArgs, GrepArgs, SearchArgs, UIArgs
+from agentgrep.cli.parser import FindArgs, GrepArgs, SearchArgs, SimilarArgs, UIArgs
 from agentgrep.cli.renderers import (
     GrepSummary,
     _compile_search_patterns,
@@ -72,6 +72,7 @@ __all__ = [
     "run_find_command",
     "run_grep_command",
     "run_search_command",
+    "run_similar_command",
     "run_ui_command",
     "serialize_find_record",
     "serialize_grep_record",
@@ -655,3 +656,50 @@ def run_grep_command(args: GrepArgs) -> int:
         control=control,
     )
     return print_grep_results(records, args)
+
+
+def run_similar_command(args: SimilarArgs) -> int:
+    """Execute ``agentgrep similar``.
+
+    Collects the scope-narrowed corpus and ranks it against the seed text with
+    the shared :func:`agentgrep.similar.run_find_similar` helper, then renders
+    neighbors best-first with the score inline.
+    """
+    from agentgrep.similar import run_find_similar
+
+    matches = run_find_similar(
+        pathlib.Path.home(),
+        seed_text=args.seed_text,
+        agents=args.agents,
+        scope=args.scope,
+        top_k=args.top_k,
+        threshold=args.threshold,
+        exclude_exact=args.exclude_exact,
+    )
+    if args.output_mode in ("json", "ndjson"):
+        serialize_search, _, serialize_envelope = maybe_build_pydantic()
+        rows: list[dict[str, object]] = []
+        for record, score in matches:
+            row = dict(serialize_search(record))
+            row["score"] = score
+            rows.append(row)
+        if args.output_mode == "ndjson":
+            for row in rows:
+                print(json.dumps(row, ensure_ascii=False))
+        else:
+            envelope = serialize_envelope(
+                "similar",
+                {"top_k": args.top_k, "threshold": args.threshold},
+                rows,
+            )
+            print(json.dumps(envelope, ensure_ascii=False, indent=2))
+        return 0 if matches else 1
+    colors = AnsiColors.for_stream(args.color_mode, sys.stdout)
+    if not matches:
+        print(colors.dim("no similar records"))
+        return 1
+    for record, score in matches:
+        short = identity.short_id(identity.record_content_id(record))
+        snippet = record.text.strip().splitlines()[0][:100] if record.text.strip() else ""
+        print(f"{score:.2f}  {colors.heading(short)}  {colors.dim(record.agent)}  {snippet}")
+    return 0

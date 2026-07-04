@@ -77,6 +77,7 @@ def build_capabilities() -> CapabilitiesModel:
         tools=[
             "search",
             "recent_sessions",
+            "find_similar",
             "find",
             "list_sources",
             "filter_sources",

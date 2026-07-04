@@ -56,6 +56,7 @@ __all__ = [
     "ParserBundle",
     "PatternMode",
     "SearchArgs",
+    "SimilarArgs",
     "UIArgs",
     "add_common_agent_options",
     "add_output_mode_options",
@@ -166,6 +167,20 @@ class SearchArgs:
 
 
 @dataclasses.dataclass(slots=True)
+class SimilarArgs:
+    """Typed arguments for ``agentgrep similar``."""
+
+    seed_text: str
+    agents: tuple[AgentName, ...]
+    scope: SearchScope
+    top_k: int
+    threshold: float
+    exclude_exact: bool
+    output_mode: OutputMode
+    color_mode: ColorMode
+
+
+@dataclasses.dataclass(slots=True)
 class ParserBundle:
     """CLI parsers used for root and subcommand help."""
 
@@ -173,6 +188,7 @@ class ParserBundle:
     find_parser: argparse.ArgumentParser
     grep_parser: argparse.ArgumentParser
     search_parser: argparse.ArgumentParser
+    similar_parser: argparse.ArgumentParser
 
 
 class _GrepLimitAction(argparse.Action):
@@ -605,11 +621,60 @@ def create_parser(
     )
     add_output_mode_options(search_parser, allow_ui=True)
 
+    similar_parser = subparsers.add_parser(
+        "similar",
+        help="Find records similar to a seed text",
+        description=(
+            "Find the records most similar to a seed text across every backend, "
+            "ranked by a zero-dependency difflib similarity score. Seeding by a "
+            "record id is a planned addition."
+        ),
+        formatter_class=formatter_class,
+        color=color_mode != "never",
+    )
+    add_common_agent_options(similar_parser)
+    _ = similar_parser.add_argument(
+        "--similar-text",
+        dest="similar_text",
+        metavar="TEXT",
+        help="Seed text to find neighbors of (required)",
+    )
+    _ = similar_parser.add_argument(
+        "--scope",
+        choices=["prompts", "conversations", "all"],
+        dest="scope",
+        help="Search scope: prompts, conversations, or all (default: prompts)",
+    )
+    _ = similar_parser.add_argument(
+        "--top-k",
+        type=int,
+        default=20,
+        dest="top_k",
+        metavar="N",
+        help="Maximum neighbors to return (default: 20)",
+    )
+    _ = similar_parser.add_argument(
+        "--min-score",
+        type=float,
+        default=0.0,
+        dest="threshold",
+        metavar="S",
+        help="Minimum similarity 0..1 (default: 0.0)",
+    )
+    _ = similar_parser.add_argument(
+        "--exclude-exact",
+        action="store_true",
+        dest="exclude_exact",
+        help="Drop neighbors whose text is identical to the seed",
+    )
+    add_output_mode_options(similar_parser, allow_ui=False)
+
     return ParserBundle(
         parser=parser,
         find_parser=find_parser,
         grep_parser=grep_parser,
         search_parser=search_parser,
+        similar_parser=similar_parser,
     )
 
 
@@ -868,7 +933,7 @@ def _check_for_mangled_field_predicate(
 
 def parse_args(
     argv: cabc.Sequence[str] | None = None,
-) -> FindArgs | UIArgs | GrepArgs | SearchArgs | None:
+) -> FindArgs | UIArgs | GrepArgs | SearchArgs | SimilarArgs | None:
     """Parse CLI arguments into typed dataclasses."""
     color_mode = normalize_color_mode(argv)
     effective_argv = list(argv) if argv is not None else list(sys.argv[1:])
@@ -896,6 +961,22 @@ def parse_args(
 
     agents = parse_agents(t.cast("list[str]", namespace.agent))
     output_mode = parse_output_mode(namespace)
+
+    if command == "similar":
+        similar_text = t.cast("str | None", namespace.similar_text)
+        if not similar_text:
+            with configured_color_environment(color_mode):
+                bundle.similar_parser.error("--similar-text is required")
+        return SimilarArgs(
+            seed_text=t.cast("str", similar_text),
+            agents=agents,
+            scope=t.cast("SearchScope", namespace.scope or "prompts"),
+            top_k=t.cast("int", namespace.top_k),
+            threshold=t.cast("float", namespace.threshold),
+            exclude_exact=t.cast("bool", namespace.exclude_exact),
+            output_mode=output_mode,
+            color_mode=color_mode,
+        )
 
     if command == "grep":
         return _build_grep_args(

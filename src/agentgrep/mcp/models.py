@@ -249,6 +249,32 @@ class FindToolResponse(AgentGrepModel):
     results: list[FindRecordModel]
 
 
+class SimilarRequestModel(AgentGrepModel):
+    """Validated find-similar request payload."""
+
+    text: str
+    agent: AgentSelector
+    scope: SearchScopeName
+    top_k: int = 20
+    threshold: float = 0.0
+    exclude_exact: bool = False
+
+
+class SimilarMatchModel(AgentGrepModel):
+    """One scored neighbor: the record and its 0..1 similarity."""
+
+    score: float
+    record: SearchRecordModel
+
+
+class SimilarToolResponse(AgentGrepModel):
+    """Structured response for the MCP find_similar tool."""
+
+    schema_version: str = agentgrep.SCHEMA_VERSION
+    request: SimilarRequestModel
+    results: list[SimilarMatchModel]
+
+
 class BackendAvailabilityModel(AgentGrepModel):
     """Selected read-only subprocess backends."""
 

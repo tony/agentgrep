@@ -60,6 +60,19 @@ class FindToolDataLike(t.Protocol):
     results: list[FindRecordLike]
 
 
+class SimilarMatchLike(t.Protocol):
+    """Structural type for one find_similar neighbor."""
+
+    score: float
+    record: SearchRecordLike
+
+
+class SimilarToolDataLike(t.Protocol):
+    """Structural type for find_similar tool responses."""
+
+    results: list[SimilarMatchLike]
+
+
 class McpResultShapeCase(t.NamedTuple):
     """Parametrized case for common search/find result payload fields."""
 
@@ -269,6 +282,7 @@ async def test_mcp_lists_tools_resources_prompts_and_templates() -> None:
 
     assert {tool.name for tool in tools} == {
         "search",
+        "find_similar",
         "find",
         "list_sources",
         "filter_sources",
@@ -335,6 +349,48 @@ async def test_mcp_search_tool_returns_full_prompt(
     assert data.results[0].kind == "prompt"
     assert data.results[0].agent == "codex"
     assert data.results[0].text == "serenity and bliss live here"
+
+
+async def test_mcp_find_similar_ranks_records(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The find_similar tool ranks the corpus against a seed, score inline."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    session_path = home / ".codex" / "sessions" / "2026" / "01" / "01" / "rollout.jsonl"
+    write_jsonl(
+        session_path,
+        [
+            {"type": "session_meta", "payload": {"id": "s1", "model_provider": "openai"}},
+            *(
+                {
+                    "timestamp": f"2026-01-01T00:00:0{index}Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": text}],
+                    },
+                }
+                for index, text in enumerate(
+                    ("refactor the parser module", "what is the capital of france"),
+                )
+            ),
+        ],
+    )
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        result = await client.call_tool(
+            "find_similar",
+            {"text": "refactor the parser module", "agent": "codex", "top_k": 5},
+        )
+
+    data = t.cast("SimilarToolDataLike", result.data)
+    assert data.results[0].record.text == "refactor the parser module"
+    assert data.results[0].score == 1.0
+    assert data.results[0].score >= data.results[-1].score
 
 
 def _codex_user_session(session_id: str, text: str) -> list[dict[str, object]]:

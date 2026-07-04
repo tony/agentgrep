@@ -17,9 +17,11 @@ def register_tools(mcp: FastMCP, *, runtime: SearchRuntime | None = None) -> Non
         diagnostic_tools,
         discovery_tools,
         search_tools,
+        similar_tools,
     )
 
     search_tools.register(mcp, runtime=runtime)
+    similar_tools.register(mcp)
     discovery_tools.register(mcp)
     catalog_tools.register(mcp)
     diagnostic_tools.register(mcp)

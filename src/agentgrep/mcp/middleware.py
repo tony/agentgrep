@@ -17,7 +17,7 @@ import typing as t
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 
 _SENSITIVE_ARG_NAMES: frozenset[str] = frozenset(
-    {"terms", "pattern", "sample_text", "cursor"},
+    {"terms", "pattern", "sample_text", "text", "cursor"},
 )
 """Tool argument names whose values get redacted before logging.
 
