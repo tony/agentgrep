@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import datetime
+
 from agentgrep.store_catalog._common import _GROK_OBSERVED_AT
 from agentgrep.stores import (
     DiscoverySpec,
@@ -57,9 +59,15 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
         observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
-            "JSONL full session transcripts. `type` field discriminates "
-            "system/user/assistant/tool_use/tool_result. `content` is text "
-            "or content-blocks array. Includes tool calls and usage stats."
+            "JSONL full session transcripts. `type` discriminates "
+            "system/user/assistant/reasoning/tool_result/backend_tool_call. "
+            "Assistant tool calls live in a `tool_calls` array on the "
+            "assistant record; `backend_tool_call` records host-side calls. "
+            "`reasoning` records carry a readable `summary` array of "
+            "`{type: summary_text, text}` blocks plus an opaque "
+            "`encrypted_content` blob; agentgrep does not surface them because "
+            "the adapter reads only `content`, which reasoning records omit. "
+            "`content` is text or a content-blocks array."
         ),
         sample_record=(
             '{"type":"user","content":"<redacted>","timestamp":"2026-05-25T10:00:01.000000000Z"}'
@@ -93,7 +101,9 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         schema_notes=(
             "SQLite with FTS5. Table `session_docs`: session_id, cwd, "
             "updated_at (unix seconds), title (generated), content "
-            "(full-text index), content_hash. Schema version 3."
+            "(full-text index), content_hash, last_indexed_offset. A `meta` "
+            "table carries session_search_schema_version (3) and "
+            "last_bootstrap_at; `PRAGMA user_version` stays 0."
         ),
         search_by_default=True,
         search_notes=(
@@ -167,9 +177,11 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
         observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
-            "Per-session event stream with turn-level lifecycle events: "
-            "turn_started, loop_started, phase_changed, tool_started, "
-            "tool_finished. Schema version 1.0."
+            "Per-session event stream. `type` values include turn_started, "
+            "turn_ended, loop_started, first_token, phase_changed, "
+            "tool_started, tool_completed, permission_requested/resolved, and "
+            "an mcp_* lifecycle family (illustrative, not exhaustive). A "
+            'per-record `schema_version` ("1.0") rides on turn_started.'
         ),
     ),
     StoreDescriptor(
@@ -380,6 +392,23 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
             "project). Tool output, not chat, and high-volume; documented for "
             "inventory and deliberately not searched."
         ),
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="grok",
+        store_id="grok.skills",
+        role=StoreRole.INSTRUCTION,
+        format=StoreFormat.MARKDOWN_FRONTMATTER,
+        path_pattern="${GROK_HOME or ${HOME}/.grok}/skills/<name>/SKILL.md",
+        env_overrides=("GROK_HOME",),
+        observed_version="grok-cli v0.2.82 (observed 2026-07-03)",
+        observed_at=datetime.date(2026, 7, 3),
+        schema_notes=(
+            "`skills/<name>/SKILL.md` skill-instruction files (currently the "
+            "bundled set mirrored under `bundled/skills/`; users can author "
+            "their own). Parity with claude.skills and cursor-cli.skills."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
     ),
 )

@@ -80,8 +80,9 @@ so a WSL-remote chat reports `/home/you/work/proj` rather than a storage hash.
 ## Scope
 
 This ADR governs cross-host store discovery and remote-workspace path mapping.
-It applies to the VS Code backend today and to any future backend whose UI and
-project live on different filesystems. It does not change the execution engine
+It applies to the VS Code and Cursor IDE backends today (both VS Code-style,
+persisting WSL-remote chat client-side on the Windows host) and to any future
+backend whose UI and project live on different filesystems. It does not change the execution engine
 (ADR 0004), introduce native code (ADR 0003), or alter the catalogue schema —
 the catalogue stays declarative; only the discovery function computes roots.
 
@@ -89,9 +90,10 @@ the catalogue stays declarative; only the discovery function computes roots.
 
 - Cross-host discovery activates only on detected WSL and only for existing
   directories; other platforms incur no extra filesystem probes.
-- The cross-host root is overridable (`AGENTGREP_WSL_USERS_ROOT`) and a single
-  install is pinnable (`VSCODE_APPDATA`); both are declared in the affected
-  catalogue rows' `env_overrides`.
+- The cross-host root is overridable via `AGENTGREP_WSL_USERS_ROOT`, declared
+  in every bridged catalogue row's `env_overrides`. VS Code additionally pins a
+  single install with `VSCODE_APPDATA` (it has four editions); Cursor IDE has
+  one edition, so it declares no such pin.
 - Remote-URI mapping handles `file://` and `vscode-remote://…` and returns
   `None` for non-path URIs (for example `untitled:`), never raising.
 - Because the cross-host root escapes `$HOME`, the test harness neutralizes it

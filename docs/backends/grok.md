@@ -32,8 +32,13 @@ Keys: `timestamp` (ISO-8601 nanosecond), `session_id` (UUIDv7),
 ### grok.sessions
 
 Full session transcripts. The `type` field discriminates record
-kinds: `system`, `user`, `assistant`, `tool_use`, `tool_result`.
-`content` is either a plain string or a content-blocks array.
+kinds: `system`, `user`, `assistant`, `reasoning`, `tool_result`,
+`backend_tool_call`. Assistant tool calls live in a `tool_calls` array
+on the assistant record; `reasoning` records carry a readable `summary`
+array of `{type: summary_text, text}` blocks plus an opaque
+`encrypted_content` blob, but agentgrep does not surface them because the
+adapter reads only `content`, which reasoning records omit. `content` is
+either a plain string or a content-blocks array.
 
 ```json
 {"type": "user", "content": "explain the design",
@@ -69,9 +74,11 @@ SQLite with FTS5. Table `session_docs`:
 | `title` | TEXT | Generated session title |
 | `content` | TEXT | Full-text indexed body |
 | `content_hash` | TEXT | Content digest |
+| `last_indexed_offset` | INTEGER | Incremental-index cursor |
 
-agentgrep converts `updated_at` to ISO-8601 for timestamp
-consistency with other adapters.
+A sibling `meta` table holds `session_search_schema_version` (3) and
+`last_bootstrap_at`; `PRAGMA user_version` stays 0. agentgrep converts
+`updated_at` to ISO-8601 for timestamp consistency with other adapters.
 
 ### grok.plans
 

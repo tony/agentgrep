@@ -1930,6 +1930,85 @@ def test_parse_pi_session_raw_prefilter_preserves_header(
     assert decoded_payloads == [header_line, match_line]
 
 
+class PiBashExecutionCase(t.NamedTuple):
+    """A pi ``bashExecution`` message and the searchable text it should yield."""
+
+    test_id: str
+    message: dict[str, object]
+    expected_text: str | None
+
+
+PI_BASH_EXECUTION_CASES: tuple[PiBashExecutionCase, ...] = (
+    PiBashExecutionCase(
+        test_id="command-and-output-joined",
+        message={
+            "role": "bashExecution",
+            "command": "ls -la",
+            "output": "total 0",
+            "excludeFromContext": False,
+        },
+        expected_text="ls -la\ntotal 0",
+    ),
+    PiBashExecutionCase(
+        test_id="command-only",
+        message={"role": "bashExecution", "command": "pwd", "output": ""},
+        expected_text="pwd",
+    ),
+    PiBashExecutionCase(
+        test_id="empty-yields-nothing",
+        message={"role": "bashExecution", "command": "", "output": ""},
+        expected_text=None,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    PI_BASH_EXECUTION_CASES,
+    ids=[c.test_id for c in PI_BASH_EXECUTION_CASES],
+)
+def test_parse_pi_session_extracts_bash_execution(
+    case: PiBashExecutionCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """`bashExecution` turns surface their joined command/output as history."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    path = tmp_path / "sess.jsonl"
+    header = json.dumps(
+        {
+            "type": "session",
+            "id": "pi-sess-1",
+            "timestamp": "2026-05-30T12:00:00.000Z",
+            "cwd": "/home/user/proj",
+            "version": 3,
+        },
+    )
+    entry = json.dumps(
+        {
+            "type": "message",
+            "id": "b1",
+            "parentId": None,
+            "timestamp": "2026-05-30T12:00:01.000Z",
+            "message": case.message,
+        },
+    )
+    _ = path.write_text("\n".join((header, entry)) + "\n", encoding="utf-8")
+    source = agentgrep.SourceHandle(
+        agent="pi",
+        store="pi.sessions",
+        adapter_id="pi.sessions_jsonl.v1",
+        path=path,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=1,
+    )
+
+    texts = [record.text for record in agentgrep.iter_source_records(source)]
+
+    assert texts == ([] if case.expected_text is None else [case.expected_text])
+
+
 def test_parse_codex_session_reverse_preserves_header(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -6695,6 +6774,70 @@ def test_plan_search_sources_prefilters_one_root_once(
     assert [source.path for source in planned] == [first]
 
 
+class ClaudeCompactCase(t.NamedTuple):
+    """One Claude project record and whether it should yield a search record."""
+
+    test_id: str
+    record: dict[str, object]
+    emits: bool
+
+
+CLAUDE_COMPACT_CASES: tuple[ClaudeCompactCase, ...] = (
+    ClaudeCompactCase(
+        test_id="normal-user-turn-emitted",
+        record={
+            "type": "user",
+            "uuid": "u1",
+            "sessionId": "s",
+            "timestamp": "2026-05-25T10:00:00Z",
+            "message": {"role": "user", "content": "a real user prompt"},
+        },
+        emits=True,
+    ),
+    ClaudeCompactCase(
+        test_id="compact-summary-skipped",
+        record={
+            "type": "user",
+            "isCompactSummary": True,
+            "uuid": "u2",
+            "sessionId": "s",
+            "timestamp": "2026-05-25T10:00:00Z",
+            "message": {"role": "user", "content": "a /compact machine recap"},
+        },
+        emits=False,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    CLAUDE_COMPACT_CASES,
+    ids=[c.test_id for c in CLAUDE_COMPACT_CASES],
+)
+def test_parse_claude_project_skips_compact_summaries(
+    case: ClaudeCompactCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """`isCompactSummary: true` records are dropped; normal user turns are kept."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    path = tmp_path / "session.jsonl"
+    _ = path.write_text(json.dumps(case.record) + "\n", encoding="utf-8")
+    source = agentgrep.SourceHandle(
+        agent="claude",
+        store="claude.projects",
+        adapter_id="claude.projects_jsonl.v1",
+        path=path,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=1,
+    )
+
+    records = list(agentgrep.iter_source_records(source))
+
+    assert bool(records) is case.emits
+
+
 def test_plan_search_sources_prunes_chat_sources_from_prompt_scope(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -7524,6 +7667,71 @@ def test_cursor_ide_workspace_state_extracts_aiservice_prompts(
     assert [r.text for r in records] == ["serenity workspace prompt"]
     assert records[0].role == "user"
     assert records[0].agent == "cursor-ide"
+
+
+def _write_cursor_state_db(path: pathlib.Path) -> None:
+    """Create a minimal valid Cursor IDE ``state.vscdb`` (empty ItemTable)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(path)
+    try:
+        _ = connection.execute("CREATE TABLE ItemTable (key TEXT, value TEXT)")
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def test_discover_cursor_ide_finds_native_global_state(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The global state.vscdb is discovered via the ide_global root on the native path."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    global_db = agentgrep._cursor_ide_workspace_root(home).parent / "globalStorage" / "state.vscdb"
+    _write_cursor_state_db(global_db)
+
+    sources = agentgrep.discover_sources(
+        home,
+        ("cursor-ide",),
+        agentgrep.BackendSelection(None, None, None),
+    )
+
+    global_sources = [
+        s for s in sources if s.store == "cursor-ide.state_vscdb" and s.path == global_db
+    ]
+    assert [s.adapter_id for s in global_sources] == ["cursor_ide.state_vscdb_modern.v1"]
+
+
+def test_discover_cursor_ide_wsl_bridge_probes_windows_mount(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On WSL, cursor-ide discovery reaches the Windows-host state.vscdb databases."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    # Force the WSL branch and point the users-mount root at a fake Windows tree.
+    monkeypatch.setattr(agentgrep.discovery, "_is_wsl", lambda: True)
+    users_root = tmp_path / "mnt-c-users"
+    monkeypatch.setenv("AGENTGREP_WSL_USERS_ROOT", str(users_root))
+    cursor_user = users_root / "winuser" / "AppData" / "Roaming" / "Cursor" / "User"
+    global_db = cursor_user / "globalStorage" / "state.vscdb"
+    workspace_db = cursor_user / "workspaceStorage" / "h" / "state.vscdb"
+    _write_cursor_state_db(global_db)
+    _write_cursor_state_db(workspace_db)
+
+    sources = agentgrep.discover_sources(
+        home,
+        ("cursor-ide",),
+        agentgrep.BackendSelection(None, None, None),
+    )
+
+    stores_by_path = {s.path: s.store for s in sources}
+    assert stores_by_path.get(global_db) == "cursor-ide.state_vscdb"
+    assert stores_by_path.get(workspace_db) == "cursor-ide.workspace_state"
 
 
 def test_find_discovers_sources_and_filters_pattern(
@@ -9270,6 +9478,283 @@ def test_parse_vscode_chat_session_tolerates_empty_and_draft_turns(
     assert [(r.kind, r.text) for r in records] == [("prompt", "only a prompt")]
 
 
+class VscodeJsonlCase(t.NamedTuple):
+    """One VS Code ``.jsonl`` mutation-log session and its expected records."""
+
+    test_id: str
+    lines: tuple[str, ...]
+    expected: tuple[tuple[str, str, str], ...]
+
+
+VSCODE_JSONL_CASES: tuple[VscodeJsonlCase, ...] = (
+    VscodeJsonlCase(
+        test_id="snapshot-only-single-turn",
+        lines=(
+            json.dumps(
+                {
+                    "kind": 0,
+                    "v": {
+                        "sessionId": "s",
+                        "requests": [
+                            {
+                                "message": {"text": "hello"},
+                                "response": [{"value": "hi there"}],
+                                "timestamp": 1779999665000,
+                            },
+                        ],
+                    },
+                },
+            ),
+        ),
+        expected=(
+            ("prompt", "user", "hello"),
+            ("history", "assistant", "hi there"),
+        ),
+    ),
+    VscodeJsonlCase(
+        test_id="event-appends-second-turn",
+        lines=(
+            json.dumps(
+                {
+                    "kind": 0,
+                    "v": {
+                        "sessionId": "s",
+                        "requests": [
+                            {
+                                "message": {"text": "first"},
+                                "response": [{"value": "r1"}],
+                                "timestamp": 1,
+                            },
+                        ],
+                    },
+                },
+            ),
+            json.dumps(
+                {
+                    "kind": 2,
+                    "k": ["requests"],
+                    "i": 1,
+                    "v": [
+                        {
+                            "message": {"text": "second"},
+                            "response": [{"value": "r2"}],
+                            "timestamp": 2,
+                        },
+                    ],
+                },
+            ),
+        ),
+        expected=(
+            ("prompt", "user", "first"),
+            ("history", "assistant", "r1"),
+            ("prompt", "user", "second"),
+            ("history", "assistant", "r2"),
+        ),
+    ),
+    VscodeJsonlCase(
+        test_id="event-streams-response-parts",
+        lines=(
+            json.dumps(
+                {
+                    "kind": 0,
+                    "v": {
+                        "sessionId": "s",
+                        "requests": [
+                            {"message": {"text": "q"}, "response": [], "timestamp": 1},
+                        ],
+                    },
+                },
+            ),
+            json.dumps(
+                {"kind": 2, "k": ["requests", 0, "response"], "i": 0, "v": [{"value": "part1 "}]},
+            ),
+            json.dumps(
+                {"kind": 2, "k": ["requests", 0, "response"], "i": 1, "v": [{"value": "part2"}]},
+            ),
+        ),
+        expected=(
+            ("prompt", "user", "q"),
+            ("history", "assistant", "part1 part2"),
+        ),
+    ),
+    VscodeJsonlCase(
+        test_id="skips-non-object-lines",
+        lines=(
+            json.dumps([]),
+            json.dumps(
+                {
+                    "kind": 0,
+                    "v": {
+                        "sessionId": "s",
+                        "requests": [{"message": {"text": "ok"}, "timestamp": 1}],
+                    },
+                },
+            ),
+        ),
+        expected=(("prompt", "user", "ok"),),
+    ),
+    VscodeJsonlCase(
+        test_id="truncate-replaces-response-tail",
+        lines=(
+            json.dumps(
+                {
+                    "kind": 0,
+                    "v": {
+                        "sessionId": "s",
+                        "requests": [
+                            {
+                                "message": {"text": "q"},
+                                "response": [{"value": "kept "}, {"value": "REPLACED"}],
+                                "timestamp": 1,
+                            },
+                        ],
+                    },
+                },
+            ),
+            json.dumps(
+                {"kind": 2, "k": ["requests", 0, "response"], "i": 1, "v": [{"value": "new"}]},
+            ),
+        ),
+        expected=(
+            ("prompt", "user", "q"),
+            ("history", "assistant", "kept new"),
+        ),
+    ),
+    VscodeJsonlCase(
+        test_id="no-v-truncates-response",
+        lines=(
+            json.dumps(
+                {
+                    "kind": 0,
+                    "v": {
+                        "sessionId": "s",
+                        "requests": [
+                            {
+                                "message": {"text": "q"},
+                                "response": [{"value": "keep"}, {"value": "drop"}],
+                                "timestamp": 1,
+                            },
+                        ],
+                    },
+                },
+            ),
+            json.dumps({"kind": 2, "k": ["requests", 0, "response"], "i": 1}),
+        ),
+        expected=(
+            ("prompt", "user", "q"),
+            ("history", "assistant", "keep"),
+        ),
+    ),
+    VscodeJsonlCase(
+        test_id="requests-replace-drops-stale-turn",
+        lines=(
+            json.dumps(
+                {
+                    "kind": 0,
+                    "v": {
+                        "sessionId": "s",
+                        "requests": [{"message": {"text": "stale prompt"}, "timestamp": 1}],
+                    },
+                },
+            ),
+            json.dumps(
+                {
+                    "kind": 2,
+                    "k": ["requests"],
+                    "i": 0,
+                    "v": [{"message": {"text": "current prompt"}, "timestamp": 2}],
+                },
+            ),
+        ),
+        expected=(("prompt", "user", "current prompt"),),
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    VSCODE_JSONL_CASES,
+    ids=[c.test_id for c in VSCODE_JSONL_CASES],
+)
+def test_parse_vscode_chat_session_jsonl_event_log(
+    case: VscodeJsonlCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """The ``.jsonl`` mutation log rebuilds turns before the shared extraction runs."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    path = tmp_path / "session.jsonl"
+    _ = path.write_text("\n".join(case.lines) + "\n", encoding="utf-8")
+    source = agentgrep.SourceHandle(
+        agent="vscode",
+        store="vscode.chat_sessions",
+        adapter_id="vscode.chat_sessions_json.v1",
+        path=path,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=path.parent,
+        mtime_ns=0,
+    )
+
+    records = list(agentgrep.iter_source_records(source))
+
+    assert [(r.kind, r.role, r.text) for r in records] == list(case.expected)
+
+
+class VscodeDiscoveryCase(t.NamedTuple):
+    """A chat-session filename and the on-disk content to seed for discovery."""
+
+    test_id: str
+    filename: str
+    content: str
+
+
+VSCODE_DISCOVERY_CASES: tuple[VscodeDiscoveryCase, ...] = (
+    VscodeDiscoveryCase(
+        test_id="legacy-json-object",
+        filename="s.json",
+        content=json.dumps({"sessionId": "x", "requests": []}),
+    ),
+    VscodeDiscoveryCase(
+        test_id="current-jsonl-log",
+        filename="s.jsonl",
+        content=json.dumps({"kind": 0, "v": {"sessionId": "x", "requests": []}}),
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    VSCODE_DISCOVERY_CASES,
+    ids=[c.test_id for c in VSCODE_DISCOVERY_CASES],
+)
+def test_discover_vscode_finds_json_and_jsonl_sessions(
+    case: VscodeDiscoveryCase,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both the legacy ``.json`` and current ``.jsonl`` chat sessions are discovered."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    roaming = tmp_path / "Roaming"
+    monkeypatch.setenv("VSCODE_APPDATA", str(roaming))
+    session = (
+        roaming / "Code" / "User" / "workspaceStorage" / "hash1" / "chatSessions" / case.filename
+    )
+    session.parent.mkdir(parents=True)
+    _ = session.write_text(case.content, encoding="utf-8")
+
+    sources = agentgrep.discover_sources(
+        home,
+        ("vscode",),
+        agentgrep.BackendSelection(None, None, None),
+    )
+
+    assert session in {s.path for s in sources}
+
+
 def test_vscode_workspace_cwd_resolves_wsl_remote(tmp_path: pathlib.Path) -> None:
     """A sibling workspace.json maps a WSL remote folder URI to the Linux path."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
@@ -10466,6 +10951,69 @@ def test_search_gemini_chat_session_drops_textless_records(
     chat_records = [r for r in records if r.store == "gemini.tmp_chats"]
     assert len(chat_records) == 1
     assert chat_records[0].role == "user"
+
+
+class GeminiRoleGateCase(t.NamedTuple):
+    """A Gemini record ``type`` and whether it should surface a search record."""
+
+    test_id: str
+    record_type: str
+    emitted: bool
+
+
+GEMINI_ROLE_GATE_CASES: tuple[GeminiRoleGateCase, ...] = (
+    GeminiRoleGateCase("user-emitted", "user", True),
+    GeminiRoleGateCase("gemini-emitted", "gemini", True),
+    GeminiRoleGateCase("info-dropped", "info", False),
+    GeminiRoleGateCase("error-dropped", "error", False),
+    GeminiRoleGateCase("warning-dropped", "warning", False),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    GEMINI_ROLE_GATE_CASES,
+    ids=[c.test_id for c in GEMINI_ROLE_GATE_CASES],
+)
+def test_parse_gemini_chat_gates_system_records(
+    case: GeminiRoleGateCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Only `user`/`gemini` turns surface; `info`/`error`/`warning` are skipped."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    path = tmp_path / "session-x.jsonl"
+    write_jsonl(
+        path,
+        [
+            {
+                "sessionId": "s",
+                "projectHash": "h",
+                "startTime": "2026-05-17T12:00:00Z",
+                "lastUpdated": "2026-05-17T12:00:00Z",
+                "kind": "main",
+            },
+            {
+                "id": "m1",
+                "timestamp": "2026-05-17T12:00:05Z",
+                "type": case.record_type,
+                "content": "searchable text",
+            },
+        ],
+    )
+    source = agentgrep.SourceHandle(
+        agent="gemini",
+        store="gemini.tmp_chats",
+        adapter_id="gemini.tmp_chats_jsonl.v1",
+        path=path,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=1,
+    )
+
+    records = list(agentgrep.iter_source_records(source))
+
+    assert bool(records) is case.emitted
 
 
 def test_search_gemini_chat_session_surfaces_thoughts_and_tool_calls(
@@ -11867,6 +12415,89 @@ def test_unix_to_isoformat_edge_cases(
     else:
         assert result is not None, f"{test_id}: expected timestamp, got None"
         assert result.startswith(expected), f"{test_id}: {result!r}"
+
+
+class OpencodeModelCase(t.NamedTuple):
+    """An OpenCode message.data shape and the model id it should surface."""
+
+    test_id: str
+    message_data: dict[str, object]
+    expected_model: str | None
+
+
+OPENCODE_MODEL_CASES: tuple[OpencodeModelCase, ...] = (
+    OpencodeModelCase(
+        test_id="assistant-top-level-modelid",
+        message_data={
+            "role": "assistant",
+            "time": {"created": 1780000000000},
+            "modelID": "anthropic/opus",
+        },
+        expected_model="anthropic/opus",
+    ),
+    OpencodeModelCase(
+        test_id="user-nested-model-modelid",
+        message_data={
+            "role": "user",
+            "time": {"created": 1780000000000},
+            "model": {"providerID": "google", "modelID": "gemma-4"},
+        },
+        expected_model="gemma-4",
+    ),
+    OpencodeModelCase(
+        test_id="no-model-yields-none",
+        message_data={"role": "user", "time": {"created": 1780000000000}},
+        expected_model=None,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    OPENCODE_MODEL_CASES,
+    ids=[c.test_id for c in OPENCODE_MODEL_CASES],
+)
+def test_parse_opencode_db_message_model(
+    case: OpencodeModelCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """User-message model comes from nested data.model.modelID; assistant top-level."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    db_path = tmp_path / "opencode.db"
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute("CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT, directory TEXT)")
+        conn.execute("CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, data TEXT)")
+        conn.execute(
+            "CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, data TEXT)",
+        )
+        conn.execute("INSERT INTO session VALUES (?, ?, ?)", ("ses_1", "T", "/w"))
+        conn.execute(
+            "INSERT INTO message VALUES (?, ?, ?)",
+            ("msg_1", "ses_1", json.dumps(case.message_data)),
+        )
+        conn.execute(
+            "INSERT INTO part VALUES (?, ?, ?, ?)",
+            ("prt_1", "msg_1", "ses_1", json.dumps({"type": "text", "text": "hi"})),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    source = agentgrep.SourceHandle(
+        agent="opencode",
+        store="opencode.db",
+        adapter_id="opencode.db_sqlite.v1",
+        path=db_path,
+        path_kind="sqlite_db",
+        source_kind="sqlite",
+        search_root=None,
+        mtime_ns=1,
+    )
+
+    records = list(agentgrep.iter_source_records(source))
+
+    assert len(records) == 1
+    assert records[0].model == case.expected_model
 
 
 def test_parse_grok_subagents_emits_dispatch_prompt() -> None:

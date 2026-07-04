@@ -908,7 +908,12 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         env_overrides=("CODEX_HOME",),
         observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
         observed_at=_CODEX_OBSERVED_AT,
-        schema_notes="Runtime cache, temporary files, and SQLite sidecar directories.",
+        schema_notes=(
+            "Runtime cache and temporary files. The `sqlite/` subdir is a "
+            "nested/alternate SQLite home (a candidate `CODEX_SQLITE_HOME` / "
+            "config `sqlite_home` target) holding full same-schema DB copies, "
+            "not `-wal`/`-shm` sidecars — those belong to codex.sqlite_sidecars."
+        ),
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
     ),

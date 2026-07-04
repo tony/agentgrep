@@ -20,7 +20,8 @@ JSONL with mixed record types. Line 1 is a `SessionMetadataRecord`
 (`sessionId`, `projectHash`, `startTime`, `lastUpdated`, `kind`).
 Subsequent lines are `MessageRecord` turns (`id`, `timestamp`,
 `type`, `content`) interleaved with `MetadataUpdateRecord` updates
-(`{$set: {...}}`).
+(`{$set: {...}}`). Some user records also carry `displayContent` (the
+UI-echo variant); `content` is the expanded form agentgrep searches.
 
 For `gemini`-typed records whose `content` is empty, the assistant's
 prose is drawn from `thoughts[*].subject`/`description` and the
@@ -46,6 +47,9 @@ inspectable (opt-in) rather than searched by default.
 
 ## Path hashing
 
-Gemini hashes project roots with SHA-256 to derive directory names.
-agentgrep exposes {func}`~agentgrep.store_catalog.gemini_project_hash`
-to reproduce this derivation.
+Legacy `tmp/` project directories are named by the SHA-256 of the
+project root; current Gemini CLI also uses timestamp-style and plain
+project-basename directory names. Discovery does not depend on the
+scheme — agentgrep walks `tmp/` recursively — but agentgrep still
+exposes {func}`~agentgrep.store_catalog.gemini_project_hash` to
+reproduce the legacy hash directories.

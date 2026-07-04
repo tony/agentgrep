@@ -830,6 +830,96 @@ def test_actual_claude_discovery_splits_main_and_subagent_transcripts(
     assert stores_by_path[subagent] == "claude.projects_subagents"
 
 
+class CursorSkillsDiscoveryCase(t.NamedTuple):
+    """A ``SKILL.md`` location under ``~/.cursor`` and whether it is a real skill."""
+
+    test_id: str
+    relpath: str
+    discovered: bool
+
+
+CURSOR_SKILLS_DISCOVERY_CASES: tuple[CursorSkillsDiscoveryCase, ...] = (
+    CursorSkillsDiscoveryCase("skills-root", "skills/my-skill/SKILL.md", True),
+    CursorSkillsDiscoveryCase("skills-cursor-root", "skills-cursor/built-in/SKILL.md", True),
+    CursorSkillsDiscoveryCase("worktree-source-tree", "worktrees/proj/SKILL.md", False),
+    CursorSkillsDiscoveryCase("plugin-marketplace", "plugins/pkg/SKILL.md", False),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    CURSOR_SKILLS_DISCOVERY_CASES,
+    ids=[c.test_id for c in CURSOR_SKILLS_DISCOVERY_CASES],
+)
+def test_cursor_cli_skills_discovery_scoped_to_skill_roots(
+    case: CursorSkillsDiscoveryCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """cursor-cli.skills discovers SKILL.md only under skills/ and skills-cursor/."""
+    import agentgrep
+
+    base = tmp_path / "home"
+    skill_md = base / ".cursor" / case.relpath
+    skill_md.parent.mkdir(parents=True)
+    _ = skill_md.write_text("# skill\n", encoding="utf-8")
+
+    sources = agentgrep.discover_from_catalog(
+        tmp_path,
+        "cursor-cli",
+        base,
+        agentgrep.BackendSelection(None, None, None),
+        include_non_default=True,
+    )
+
+    skill_paths = {s.path for s in sources if s.store == "cursor-cli.skills"}
+    assert (skill_md in skill_paths) is case.discovered
+
+
+@pytest.mark.parametrize(
+    ("test_id", "agent_dir_present"),
+    [("agent-dir-present", True), ("agent-dir-absent", False)],
+    ids=["agent-dir-present", "agent-dir-absent"],
+)
+def test_discover_pi_context_mode_db_is_reachable(
+    test_id: str,
+    agent_dir_present: bool,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """pi.context_mode_db is discovered even when the agent dir is absent.
+
+    The agent-dir-absent case guards the early-return: the context-mode root
+    lives at ``~/.pi/context-mode`` independent of ``~/.pi/agent``.
+    """
+    del test_id
+    import sqlite3
+
+    import agentgrep
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+    monkeypatch.delenv("PI_CODING_AGENT_SESSION_DIR", raising=False)
+    if agent_dir_present:
+        (home / ".pi" / "agent").mkdir(parents=True)
+    ctx_db = home / ".pi" / "context-mode" / "sessions" / "0123456789abcdef.db"
+    ctx_db.parent.mkdir(parents=True)
+    connection = sqlite3.connect(ctx_db)
+    _ = connection.execute("CREATE TABLE session_events (id INTEGER, type TEXT, data TEXT)")
+    connection.commit()
+    connection.close()
+
+    sources = agentgrep.discover_sources(
+        home,
+        ("pi",),
+        agentgrep.BackendSelection(None, None, None),
+        include_non_default=True,
+    )
+
+    stores_by_path = {s.path: s.store for s in sources}
+    assert stores_by_path.get(ctx_db) == "pi.context_mode_db"
+
+
 def test_actual_cursor_discovery_splits_main_and_subagent_transcripts(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -904,6 +994,44 @@ def test_descriptor_round_trips_through_json() -> None:
     assert restored == sample
 
 
+class SettingsFileCase(t.NamedTuple):
+    """A config file a store's discovery must enumerate."""
+
+    test_id: str
+    store_id: str
+    filename: str
+
+
+SETTINGS_FILE_CASES: tuple[SettingsFileCase, ...] = (
+    SettingsFileCase(
+        test_id="claude-settings-remote",
+        store_id="claude.settings",
+        filename="remote-settings.json",
+    ),
+    SettingsFileCase(
+        test_id="claude-settings-local",
+        store_id="claude.settings",
+        filename="settings.local.json",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    SettingsFileCase._fields,
+    SETTINGS_FILE_CASES,
+    ids=[case.test_id for case in SETTINGS_FILE_CASES],
+)
+def test_settings_discovery_enumerates_file(
+    test_id: str,
+    store_id: str,
+    filename: str,
+) -> None:
+    """The named config file is among the store's discovery ``files``."""
+    del test_id
+    files = {name for spec in CATALOG.by_id(store_id).discovery for name in spec.files}
+    assert filename in files
+
+
 PRIMARY_FIXTURES: tuple[tuple[str, str], ...] = (
     ("claude.projects.session", "example.jsonl"),
     ("claude.projects.subagent", "example.jsonl"),
@@ -921,6 +1049,7 @@ PRIMARY_FIXTURES: tuple[tuple[str, str], ...] = (
     ("grok.subagents", "meta.json"),
     ("pi.sessions", "example.jsonl"),
     ("vscode.chat_sessions", "example.json"),
+    ("vscode.chat_sessions", "example.jsonl"),
 )
 
 

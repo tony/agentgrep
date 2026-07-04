@@ -55,10 +55,11 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes=(
             "One SQLite database per conversation. Table `steps` contains "
-            "`idx`, `step_type`, `status`, `metadata`, `task_details`, "
-            "`step_payload` protobuf blobs, and `step_format`; companion "
-            "metadata tables hold protobuf blobs. No public schema is "
-            "available, so agentgrep extracts readable protobuf strings "
+            "`idx`, `step_type`, `status`, `has_subtrajectory`, `metadata`, "
+            "`error_details`, `permissions`, `task_details`, `render_info`, "
+            "`step_payload` (mostly protobuf blobs), and `step_format`; "
+            "companion metadata tables hold protobuf blobs. No public schema "
+            "is available, so agentgrep extracts readable protobuf strings "
             "best-effort."
         ),
         sample_record="steps(idx=1, step_payload=<protobuf>, step_format=1)",
@@ -90,9 +91,13 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes=(
             "Readable JSONL transcript log under a brain conversation's "
-            "`.system_generated/logs/`. Each line is a step record "
-            "(`type`, `source`, `status`, `created_at`, `content`); string "
-            "`content` carries the user/assistant/tool turns. This is the "
+            "`.system_generated/logs/`. Each line is a step record with a "
+            "universal `step_index` plus `type`, `source`, `status`, "
+            "`created_at`. agentgrep surfaces the string `content` "
+            "(user/assistant turns); lines without `content` — "
+            "`thinking`/`tool_calls`-only lines (e.g. `PLANNER_RESPONSE`) and "
+            "payload-less lines (e.g. `CONVERSATION_HISTORY`) — yield no "
+            "record. This is the "
             "readable counterpart to the opaque protobuf "
             "`antigravity-cli.conversations` and reaches text the brain "
             "Markdown glob cannot. The truncated `transcript.jsonl` sibling is "

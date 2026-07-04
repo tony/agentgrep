@@ -26,9 +26,10 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
         upstream_ref="cursor.com/docs/cli/overview",
         schema_notes=(
             "JSONL Anthropic-style: `role`, `message.content[]` with "
-            "`text`/`tool_use`/`tool_result`. No native timestamp — agentgrep "
-            "infers from the file's mtime. Tool outputs sometimes `[REDACTED]` "
-            "in older `cursor-agent` versions."
+            "`text`/`tool_use` blocks (tool outputs live in the separate "
+            "`cursor-cli.agent_tools` store, not inline). No native timestamp — "
+            "agentgrep infers from the file's mtime. Tool outputs sometimes "
+            "`[REDACTED]` in older `cursor-agent` versions."
         ),
         sample_record=(
             '{"role":"user","message":{"content":'
@@ -234,12 +235,13 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
         upstream_ref="agentgrep.parse_cursor_cli_chats_db / iter_protobuf_text_fields",
         schema_notes=(
             "Per-session SQLite with `meta(key, value)` and `blobs(id, data)` "
-            "tables. `meta` holds session metadata (`agentId`, "
-            "`latestRootBlobId`); `blobs` holds content-addressed protobuf "
-            "messages forming a Merkle graph from the root blob. Cursor "
-            "publishes no schema, so agentgrep walks the protobuf wire format "
-            "generically and surfaces readable UTF-8 runs — best-effort and "
-            "date-versioned, not an official format."
+            "tables. `meta` holds a single row keyed `'0'` whose value is "
+            "hex-encoded JSON nesting the session metadata (`agentId`, "
+            "`latestRootBlobId`, …); `blobs` holds content-addressed protobuf "
+            "messages (64-char sha256 ids) forming a Merkle graph from the root "
+            "blob. Cursor publishes no schema, so agentgrep walks the protobuf "
+            "wire format generically and surfaces readable UTF-8 runs — "
+            "best-effort and date-versioned, not an official format."
         ),
         distinguishes_from=("cursor-cli.transcripts",),
         coverage=StoreCoverage.INSPECTABLE,
@@ -284,8 +286,16 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
                 adapter_id="cursor_cli.skills_text.v1",
                 path_kind="store_file",
                 source_kind="text",
-                home_subpath=(".cursor",),
-                glob="SKILL.md",
+                home_subpath=(".cursor", "skills"),
+                glob="*/SKILL.md",
+            ),
+            DiscoverySpec(
+                store="cursor-cli.skills",
+                adapter_id="cursor_cli.skills_text.v1",
+                path_kind="store_file",
+                source_kind="text",
+                home_subpath=(".cursor", "skills-cursor"),
+                glob="*/SKILL.md",
             ),
         ),
     ),

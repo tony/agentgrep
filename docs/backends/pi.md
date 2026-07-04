@@ -48,7 +48,10 @@ Every later line is a `SessionEntry` sharing `id` / `parentId` /
 `timestamp` (an append-only tree, not a flat list). A `message` entry
 wraps an LLM message; `role` is `user`, `assistant`, or `toolResult`,
 and `content` is a string or a content-blocks array. Assistant turns
-carry `model` and `provider` inline.
+carry `model` and `provider` inline. A `bashExecution` role has no
+`content`; agentgrep joins its shell `command` and `output` as the
+searchable text. Error/aborted assistant turns carry a diagnostic
+`errorMessage` string in place of `content`.
 
 ```json
 {"type": "message", "id": "...", "parentId": "...",
@@ -68,12 +71,14 @@ only as a fallback.
 
 ### pi.context_mode_db
 
-`~/.pi/context-mode/sessions/<16-hex>.db` is a per-session SQLite
-database rooted outside the agent dir and keyed by a 16-hex session id
-(unlike `pi.sessions`' `--<cwd>--` grouping). Its `session_events`
-table holds events (`type` = role/intent/decision/tool_call/
-file_read/blocker_resolved) with a JSON `data` payload, emitted as
-inspectable records.
+`~/.pi/context-mode/sessions/<project_hash>.db` is a per-project SQLite
+database rooted outside the agent dir; the stem is
+`sha256(project_dir)[:16]`, so it is a hashed `cwd` grouping holding
+multiple sessions (each row carries its own `session_id`). Its
+`session_events` table holds events (`type` = role/intent/decision/
+tool_call/file_read/blocker_resolved/data) with a JSON `data` payload,
+emitted as inspectable records; sibling `session_meta`/`session_resume`/
+`tool_calls` tables exist but only `session_events` is parsed.
 
 ## Documentary stores
 

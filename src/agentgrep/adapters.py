@@ -511,6 +511,9 @@ def parse_claude_project_file(
         else _iter_jsonl(source.path, reverse=reverse)
     )
     for event in events:
+        if isinstance(event, dict) and event.get("isCompactSummary") is True:
+            # `/compact` machine summaries are derived recaps, not user turns.
+            continue
         for candidate in iter_message_candidates(
             event,
             fallback_conversation_id=conversation_id,
@@ -1063,14 +1066,18 @@ def _gemini_message_record_to_candidate(
 ) -> MessageCandidate | None:
     """Extract a ``MessageCandidate`` from one Gemini MessageRecord.
 
-    For user records the searchable text is the ``content`` field. For
-    gemini-typed records the model's prose often lives in ``thoughts[]``
-    (with ``content`` empty) and tool invocations live in ``toolCalls[]``;
-    both are concatenated into the candidate's text. Returns ``None`` only
-    when no field carries any text.
+    Only ``user`` and ``gemini`` conversation turns are surfaced; CLI
+    ``info``/``error``/``warning`` records are skipped. For user records the
+    searchable text is the ``content`` field. For gemini-typed records the
+    model's prose often lives in ``thoughts[]`` (with ``content`` empty) and
+    tool invocations live in ``toolCalls[]``; both are concatenated into the
+    candidate's text. Returns ``None`` when no field carries any text.
     """
     role = as_optional_str(mapping.get("type"))
     if not role:
+        return None
+    if role not in {"user", "gemini"}:
+        # info/error/warning are CLI system messages, not conversation turns.
         return None
     text_parts: list[str] = []
     content_text = flatten_content_value(
@@ -1247,9 +1254,11 @@ def parse_grok_chat_history(
 ) -> cabc.Iterator[SearchRecord]:
     """Parse a Grok CLI ``chat_history.jsonl`` session transcript.
 
-    Lines carry a ``type`` field (system / user / assistant / tool_use /
-    tool_result) and ``content`` (text or content-blocks array). All
-    record types are emitted to maximise searchable content.
+    Lines carry a ``type`` field (system / user / assistant / reasoning /
+    tool_result / backend_tool_call) and ``content`` (text or content-blocks
+    array). Records without ``content`` — every ``reasoning`` and
+    ``backend_tool_call`` record, plus any ``assistant`` record whose content
+    is empty — are skipped.
     """
     conversation_id = source.path.parent.name
     events = (
@@ -1334,6 +1343,17 @@ def _unix_millis_to_isoformat(value: object) -> str | None:
         return None
 
 
+def _pi_bash_execution_text(message_map: dict[str, object]) -> str | None:
+    """Join a ``bashExecution`` turn's command and output into searchable text.
+
+    ``bashExecution`` messages have no ``content``; the shell command and its
+    captured output live in the ``command`` and ``output`` string fields.
+    """
+    command = as_optional_str(message_map.get("command"))
+    output = as_optional_str(message_map.get("output"))
+    return "\n".join(part for part in (command, output) if part) or None
+
+
 def _pi_message_candidate(
     entry: dict[str, object],
     entry_timestamp: str | None,
@@ -1346,6 +1366,8 @@ def _pi_message_candidate(
     ``content`` that is a string or content-blocks array). The
     entry-level ISO timestamp is preferred; the inner unix-milliseconds
     ``timestamp`` is the fallback for v1 entries that lack one.
+    ``bashExecution`` turns carry no ``content``; their command and output
+    are joined instead.
     """
     message = entry.get("message")
     if not isinstance(message, dict):
@@ -1353,6 +1375,8 @@ def _pi_message_candidate(
     message_map = t.cast("dict[str, object]", message)
     role = as_optional_str(message_map.get("role"))
     text = flatten_content_value(t.cast("JSONValue | None", message_map.get("content")))
+    if not text and role == "bashExecution":
+        text = _pi_bash_execution_text(message_map)
     if role is None or not text:
         return None
     timestamp = entry_timestamp or _unix_millis_to_isoformat(message_map.get("timestamp"))
@@ -1943,6 +1967,21 @@ def _opencode_part_text(part_type: str, part_data: dict[str, object]) -> str | N
     return None
 
 
+def _opencode_message_model(message_data: dict[str, object]) -> str | None:
+    """Return a message's model id.
+
+    Assistant messages carry a top-level ``modelID``; user messages nest the
+    selected model under ``model.modelID`` (``{providerID, modelID}``).
+    """
+    model = as_optional_str(message_data.get("modelID"))
+    if model:
+        return model
+    nested = message_data.get("model")
+    if isinstance(nested, dict):
+        return as_optional_str(t.cast("dict[str, object]", nested).get("modelID"))
+    return None
+
+
 def parse_opencode_db(
     source: SourceHandle,
 ) -> cabc.Iterator[SearchRecord]:
@@ -1951,8 +1990,10 @@ def parse_opencode_db(
     Joins ``part`` -> ``message`` -> ``session``: each text-bearing part
     becomes one record whose ``kind`` is derived from the joined message
     ``role`` (user -> prompt, else history), with the session title,
-    working directory, and the message model/timestamp attached. Degrades
-    gracefully when the expected tables or columns are absent.
+    working directory, and the message model/timestamp attached. The model
+    id is top-level ``modelID`` on assistant messages and nested under
+    ``model.modelID`` on user messages. Degrades gracefully when the expected
+    tables or columns are absent.
     """
     connection = open_readonly_sqlite(source.path)
     try:
@@ -1998,7 +2039,7 @@ def parse_opencode_db(
                 title=as_optional_str(title_raw),
                 role=role,
                 timestamp=_unix_millis_to_isoformat(created),
-                model=as_optional_str(message_data.get("modelID")),
+                model=_opencode_message_model(message_data),
                 session_id=session_id,
                 conversation_id=session_id,
                 metadata={"directory": directory} if directory else {},
@@ -2200,7 +2241,8 @@ def parse_cursor_cli_chats_db(
     """Best-effort parse of a Cursor CLI ``chats/*/store.db`` blob store.
 
     The CLI persists each session as content-addressed protobuf blobs in
-    a ``blobs(id, data)`` table, rooted by ``meta``'s ``latestRootBlobId``.
+    a ``blobs(id, data)`` table; agentgrep reads every blob (the sibling
+    ``meta`` row's hex-encoded JSON metadata is not required).
     Cursor publishes no schema, so agentgrep walks the protobuf wire
     format generically (:func:`iter_protobuf_text_fields`) and surfaces
     the readable UTF-8 runs it finds. The adapter is versioned by
@@ -2653,11 +2695,12 @@ def parse_pi_context_mode_db(
 ) -> cabc.Iterator[SearchRecord]:
     """Parse a Pi context-mode session SQLite database.
 
-    The ``session_events`` table records per-session events (`type` =
-    role/intent/decision/tool_call/file_read/blocker_resolved) with a JSON
-    ``data`` payload. Each event's payload is emitted as one inspectable
-    record. Rooted under ``~/.pi/context-mode/sessions/`` and keyed by a
-    16-hex session id, distinct from ``pi.sessions``' cwd grouping.
+    The ``session_events`` table records events (`type` =
+    role/intent/decision/tool_call/file_read/blocker_resolved/data) with a
+    JSON ``data`` payload. Each event's payload is emitted as one inspectable
+    record. Rooted under ``~/.pi/context-mode/sessions/``; the file stem is
+    ``sha256(project_dir)[:16]`` — a hashed ``cwd`` grouping holding multiple
+    sessions, with each row carrying its own ``session_id``.
     """
     connection = open_readonly_sqlite(source.path)
     try:
@@ -2738,11 +2781,19 @@ def parse_vscode_chat_session(source: SourceHandle) -> cabc.Iterator[SearchRecor
     when present, an assistant record (the bare ``MarkdownString`` response parts
     with no ``kind``, joined). Tool-call names and the resolved workspace cwd are
     attached as metadata. Tolerates empty/draft turns and absent ``result``.
+
+    Current sessions are a ``.jsonl`` mutation log rebuilt by
+    :func:`_read_vscode_jsonl_session`; older ``.json`` sessions are one object.
     """
-    payload = read_json_file(source.path)
-    if not isinstance(payload, dict):
-        return
-    mapping = t.cast("dict[str, object]", payload)
+    if source.source_kind == "jsonl":
+        mapping = _read_vscode_jsonl_session(source.path)
+        if mapping is None:
+            return
+    else:
+        payload = read_json_file(source.path)
+        if not isinstance(payload, dict):
+            return
+        mapping = t.cast("dict[str, object]", payload)
     requests = mapping.get("requests")
     if not isinstance(requests, list):
         return
@@ -2801,6 +2852,73 @@ def parse_vscode_chat_session(source: SourceHandle) -> cabc.Iterator[SearchRecor
                 conversation_id=session_id,
                 metadata=metadata,
             )
+
+
+def _vscode_child(node: object, key: object) -> object:
+    """Return ``node[key]`` for a dict string key or list int index, else ``None``."""
+    if isinstance(node, dict) and isinstance(key, str):
+        return t.cast("dict[str, object]", node).get(key)
+    if isinstance(node, list) and isinstance(key, int) and 0 <= key < len(node):
+        return node[key]
+    return None
+
+
+def _read_vscode_jsonl_session(path: pathlib.Path) -> dict[str, object] | None:
+    """Reconstruct a Copilot Chat session from a ``chatSessions/<uuid>.jsonl`` log.
+
+    The newer serialization is a JSON-mutation log: the first ``kind: 0`` line
+    carries the full session snapshot under ``v``; ``kind: 1`` lines set a value
+    at key-path ``k``, and ``kind: 2`` lines replace the array at ``k`` from
+    index ``i`` onward with ``v`` (truncate to ``i``, then append ``v``; a
+    missing ``i`` appends, a missing ``v`` truncates). Replaying the log in file
+    order rebuilds the ``requests`` list the single-object ``.json`` form stores
+    directly, so one extraction handles both shapes.
+    """
+    session: dict[str, object] = {}
+    for record in iter_jsonl(path):
+        if not isinstance(record, dict):
+            continue
+        event = t.cast("dict[str, object]", record)
+        kind = event.get("kind")
+        value = event.get("v")
+        if kind == 0:
+            if isinstance(value, dict):
+                session = t.cast("dict[str, object]", value)
+            continue
+        keys = event.get("k")
+        if not (isinstance(keys, list) and keys):
+            continue
+        node: object = session
+        for key in keys[:-1]:
+            node = _vscode_child(node, key)
+            if node is None:
+                break
+        else:
+            last = keys[-1]
+            if kind == 1 and isinstance(node, dict) and isinstance(last, str):
+                t.cast("dict[str, object]", node)[last] = value
+            elif (
+                kind == 1
+                and isinstance(node, list)
+                and isinstance(last, int)
+                and 0 <= last < len(node)
+            ):
+                t.cast("list[object]", node)[last] = value
+            elif kind == 2:
+                target = _vscode_child(node, last)
+                if isinstance(target, list):
+                    index = event.get("i")
+                    tail = value if isinstance(value, list) else []
+                    # kind:2 replaces the array from index `i` onward with `v`
+                    # (truncate to `i`, then append `v`); a missing `i` appends
+                    # and a missing `v` truncates.
+                    cut = (
+                        index
+                        if isinstance(index, int) and 0 <= index <= len(target)
+                        else len(target)
+                    )
+                    t.cast("list[object]", target)[cut:] = t.cast("list[object]", tail)
+    return session or None
 
 
 def _vscode_response_text(response: object) -> str | None:

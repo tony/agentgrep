@@ -34,3 +34,14 @@ shape; the `aiService.prompts` key holds that workspace's typed prompt
 history. agentgrep enumerates them through the platform
 `workspaceStorage` directory and parses them with the same adapter as
 the global store.
+
+## Cross-host discovery on WSL
+
+Cursor is a VS Code fork, so when its UI runs on a Windows host and edits
+a project inside WSL, the IDE chat is written client-side on Windows under
+`/mnt/c/Users/<user>/AppData/Roaming/Cursor/User`, not inside the distro.
+On WSL, agentgrep detects this and also probes the Windows users mount so
+both the global and per-workspace `state.vscdb` databases are searchable
+from Linux. `AGENTGREP_WSL_USERS_ROOT` overrides the mount root (default
+`/mnt/c/Users`) for non-default drive letters. See
+{doc}`../dev/adr/0009-cross-host-discovery` for the design.

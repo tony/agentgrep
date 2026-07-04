@@ -17,9 +17,10 @@ data spans two home directories: the original `~/.cursor/` tree
 
 ### cursor-cli.transcripts
 
-Anthropic-style JSONL: `role`, `message.content[]` with
-`text`/`tool_use`/`tool_result` content blocks. No native per-turn
-timestamp — agentgrep infers from the file's mtime.
+Anthropic-style JSONL: `role`, `message.content[]` with `text`/`tool_use`
+content blocks (tool outputs live in the separate `cursor-cli.agent_tools`
+store, not inline). No native per-turn timestamp — agentgrep infers from
+the file's mtime.
 
 Sub-agent dispatches nest below a session's `subagents/` directory and
 share the same JSONL record shape. agentgrep reports them as the
@@ -43,9 +44,10 @@ There are no per-entry timestamps, so records share the file's mtime.
 ### cursor-cli.chats
 
 `~/.config/cursor/chats/<project_hash>/<session_uuid>/store.db` is a
-per-session SQLite database with a `meta` table (`agentId`,
-`latestRootBlobId`) and a `blobs` table of content-addressed protobuf
-messages forming a graph from the root blob. Cursor publishes no
+per-session SQLite database whose `meta` table holds a single row keyed
+`'0'` with hex-encoded JSON metadata (`agentId`, `latestRootBlobId`, …),
+alongside a `blobs` table of content-addressed protobuf messages forming
+a graph from the root blob. Cursor publishes no
 schema, so agentgrep walks the protobuf wire format generically and
 surfaces the readable UTF-8 runs it finds — a best-effort, date-versioned
 adapter. Because the extraction is noisier than and overlaps the JSONL

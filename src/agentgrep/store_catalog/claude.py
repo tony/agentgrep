@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import datetime
+
 from agentgrep.store_catalog._common import _CLAUDE_OBSERVED_AT
 from agentgrep.stores import (
     DiscoverySpec,
@@ -72,7 +74,11 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
             "`isCompactSummary: true`. Keys: `type`, `uuid`, `parentUuid`, `timestamp`, "
             "`sessionId`, `cwd`, `gitBranch`, `version`, `message.role`, "
             "`message.content[]` (`text`/`thinking`/`tool_use`/`tool_result`), "
-            "`message.usage`."
+            "`message.usage`. Non-message record types also appear — "
+            "`queue-operation` (queued prompt text in `content`, no `role`), "
+            "`mode`, `permission-mode`, `ai-title`, `last-prompt`, `agent-name`, "
+            "`pr-link`, `attachment`, `file-history-snapshot`, `system` — only "
+            "role-bearing message records are indexed."
         ),
         sample_record='{"type":"user","uuid":"...","timestamp":"2026-05-17T...","message":{"role":"user","content":[{"type":"text","text":"<redacted>"}]}}',
         search_by_default=True,
@@ -470,6 +476,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
                 files=(
                     "settings.json",
                     "settings.local.json",
+                    "remote-settings.json",
                     "keybindings.json",
                     "policy-limits.json",
                     "mcp-needs-auth-cache.json",
@@ -1029,5 +1036,28 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
                 path_parts_excluded=(".git",),
             ),
         ),
+    ),
+    StoreDescriptor(
+        agent="claude",
+        store_id="claude.plugins_marketplaces",
+        role=StoreRole.INSTRUCTION,
+        format=StoreFormat.MARKDOWN_FRONTMATTER,
+        path_pattern=(
+            "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/plugins/marketplaces/"
+            "<repo>/<plugin>/{agents,commands,skills}/<name>.md"
+        ),
+        env_overrides=("CLAUDE_CONFIG_DIR",),
+        observed_version="claude-code v2.1.200",
+        observed_at=datetime.date(2026, 7, 3),
+        schema_notes=(
+            "Cloned plugin-marketplace repos under "
+            "`plugins/marketplaces/<repo>/` holding agent/command/skill "
+            "instruction Markdown, including plugins not installed; installed "
+            "plugins also resolve under `plugins/cache/` (inspected by "
+            "`claude.plugins_cache`)."
+        ),
+        distinguishes_from=("claude.plugins_cache",),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
     ),
 )

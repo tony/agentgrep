@@ -28,17 +28,20 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
             "SQLite store (Drizzle). Tables `session` (id, project_id, "
             "`directory` = working dir, title, version, time_created/updated, "
             "model, cost, tokens_*), `message` (id, session_id FK, `data` JSON "
-            "with role user/assistant, modelID/providerID, time, path.cwd), and "
+            "with `role`/`time`; assistant messages carry top-level "
+            "`modelID`/`providerID`/`path.cwd`, while user messages nest the "
+            "selected model under `model.modelID`), and "
             "`part` (id, message_id FK, session_id, `data` JSON with type + "
             "payload). Searchable text lives in `part.data`: type `text`/"
             "`reasoning` -> `text`, `subtask` -> `prompt`. A conversation turn "
             "is reconstructed by joining part -> message -> session. Channel "
             "installs use `opencode-<channel>.db`; `OPENCODE_DB` overrides the "
             "path (also `:memory:`/absolute). The same file also carries the "
-            "unreleased v2 event-sourced tables `session_input`, "
-            "`session_message`, `event`/`event_sequence`, and `todo`; in stable "
-            "installs these are empty beta state, the canonical transcript "
-            "staying in `session`/`message`/`part`, so they are not searched. "
+            "v2 event-sourced tables `session_input`, `session_message`, "
+            "`event`/`event_sequence`, and `todo`; `event` is now populated on "
+            "stable installs and mirrors the `part` transcript text, so it is "
+            "left unsearched to avoid duplicate hits — the canonical transcript "
+            "stays in `session`/`message`/`part`. "
             "Secret-bearing `account`, `account_state`, `control_account`, and "
             "`credential` tables are present but never enumerated — the adapter "
             "reads only text-bearing `part` rows."
@@ -82,9 +85,10 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
         schema_notes=(
             "Pre-migration on-disk layout: one JSON file per session/message/"
             "part. A startup migration folds these into opencode.db; migrated "
-            "installs keep only an empty `storage/session_diff/` and a "
-            "`storage/migration` marker. Documentary — relevant only to older, "
-            "un-migrated installs."
+            "installs keep a `storage/session_diff/` of small per-session `[]` "
+            "marker files and a `storage/migration` marker, with no searchable "
+            "session/message/part JSON left. Documentary — relevant only to "
+            "older, un-migrated installs."
         ),
         distinguishes_from=("opencode.db",),
         search_by_default=False,
@@ -94,7 +98,7 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
         store_id="opencode.config",
         role=StoreRole.APP_STATE,
         format=StoreFormat.JSON_OBJECT,
-        path_pattern="${XDG_CONFIG_HOME or ${HOME}/.config}/opencode/opencode.json",
+        path_pattern="${XDG_CONFIG_HOME or ${HOME}/.config}/opencode/opencode.{json,jsonc}",
         env_overrides=("XDG_CONFIG_HOME", "OPENCODE_CONFIG_DIR"),
         observed_version="opencode v1.17.9 (observed 2026-06-21)",
         observed_at=_OPENCODE_OBSERVED_AT,

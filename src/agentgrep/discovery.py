@@ -896,8 +896,8 @@ def discover_from_catalog(
         if coverage is not StoreCoverage.DEFAULT_SEARCH and not include_non_default:
             continue
         # Per-descriptor dedup: a row whose discovery tuple has more than one
-        # spec (e.g. Cursor IDE state.vscdb with both modern platform_paths
-        # and a legacy ~/.cursor glob) must not yield the same file twice
+        # spec (e.g. Cursor IDE state.vscdb with both the modern ide_global
+        # root and a legacy ~/.cursor glob) must not yield the same file twice
         # under different adapter ids on layouts where both specs match.
         seen_paths: set[pathlib.Path] = set()
         for spec in descriptor.discovery:
@@ -1020,13 +1020,39 @@ def discover_cursor_cli_sources(
     )
 
 
+def _cursor_ide_native_user_dir(home: pathlib.Path) -> pathlib.Path:
+    """Resolve the native Cursor IDE ``User/`` directory for this platform."""
+    if sys.platform == "darwin":
+        return home / "Library" / "Application Support" / "Cursor" / "User"
+    if sys.platform == "win32":
+        return home / "AppData" / "Roaming" / "Cursor" / "User"
+    return home / ".config" / "Cursor" / "User"
+
+
 def _cursor_ide_workspace_root(home: pathlib.Path) -> pathlib.Path:
     """Resolve the Cursor IDE ``workspaceStorage`` directory for this platform."""
-    if sys.platform == "darwin":
-        return home / "Library" / "Application Support" / "Cursor" / "User" / "workspaceStorage"
-    if sys.platform == "win32":
-        return home / "AppData" / "Roaming" / "Cursor" / "User" / "workspaceStorage"
-    return home / ".config" / "Cursor" / "User" / "workspaceStorage"
+    return _cursor_ide_native_user_dir(home) / "workspaceStorage"
+
+
+def _cursor_ide_user_dirs(home: pathlib.Path) -> tuple[pathlib.Path, ...]:
+    """Return existing Cursor IDE ``User/`` directories, including the WSL host mount.
+
+    Mirrors :func:`_vscode_user_dirs`: the native per-platform ``User/`` dir plus,
+    on WSL, the Windows-host ``User/`` dirs under the users mount. Cursor is a
+    VS Code fork, so a WSL-remote project persists its chat client-side on the
+    Windows host (reachable from the distro via ``/mnt/c``).
+    ``AGENTGREP_WSL_USERS_ROOT`` overrides the mount root (default
+    ``/mnt/c/Users``). See :ref:`adr-cross-host-discovery`.
+    """
+    bases: list[pathlib.Path] = [_cursor_ide_native_user_dir(home)]
+    if _is_wsl():
+        windows_users = pathlib.Path(os.environ.get("AGENTGREP_WSL_USERS_ROOT") or "/mnt/c/Users")
+        if windows_users.is_dir():
+            bases.extend(
+                user_dir / "AppData" / "Roaming" / "Cursor" / "User"
+                for user_dir in sorted(windows_users.glob("*"))
+            )
+    return tuple(path for path in dict.fromkeys(bases) if path.is_dir())
 
 
 def discover_cursor_ide_sources(
@@ -1039,16 +1065,19 @@ def discover_cursor_ide_sources(
 ) -> list[SourceHandle]:
     """Discover Cursor IDE (desktop app) sources.
 
-    Covers the VS Code-style ``state.vscdb`` databases: the
-    platform-specific ``globalStorage`` location, the legacy
-    ``~/.cursor/state.vscdb`` glob, and the per-workspace
-    ``workspaceStorage/<hash>/state.vscdb`` databases resolved through the
-    ``ide_workspace`` root. Driven entirely by the ``cursor-ide.*``
-    catalogue rows.
+    Covers the VS Code-style ``state.vscdb`` databases: the global
+    ``globalStorage`` location, the legacy ``~/.cursor/state.vscdb`` glob, and
+    the per-workspace ``workspaceStorage/<hash>/state.vscdb`` databases. The
+    ``ide_global`` and ``ide_workspace`` roots span every existing native and
+    (on WSL) Windows-host ``User/`` dir, so a WSL-remote project's IDE chat —
+    written client-side on Windows — is reachable. Driven entirely by the
+    ``cursor-ide.*`` catalogue rows.
     """
+    user_dirs = _cursor_ide_user_dirs(home)
     roots: dict[str, DiscoveryRoot] = {
         "default": home,
-        "ide_workspace": _cursor_ide_workspace_root(home),
+        "ide_global": tuple(d / "globalStorage" for d in user_dirs),
+        "ide_workspace": tuple(d / "workspaceStorage" for d in user_dirs),
     }
     return discover_from_catalog(
         home,
@@ -1189,11 +1218,13 @@ def discover_pi_sources(
         agent_dir / "sessions",
         label="PI_CODING_AGENT_SESSION_DIR",
     )
-    if not agent_dir.exists() and not session_dir.exists():
+    context_mode_dir = home / ".pi" / "context-mode"
+    if not agent_dir.exists() and not session_dir.exists() and not context_mode_dir.exists():
         return []
     roots: dict[str, DiscoveryRoot] = {
         "default": agent_dir,
         "pi_session": session_dir,
+        "pi_context_mode": context_mode_dir,
     }
     return discover_from_catalog(
         home,

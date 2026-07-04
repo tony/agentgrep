@@ -181,7 +181,11 @@ because they have disjoint data homes and on-disk formats.
   SQLite. `cursor-ide.state_vscdb` covers the global database and
   `cursor-ide.workspace_state` covers the per-workspace
   `workspaceStorage/<hash>/state.vscdb`; both surface the
-  `aiService.prompts` history alongside composer/chat keys.
+  `aiService.prompts` history alongside composer/chat keys. On WSL,
+  discovery also probes the Windows-host mount under `/mnt/c/Users`
+  (overridable via `AGENTGREP_WSL_USERS_ROOT`) for a Windows-side Cursor
+  editing a WSL project, mirroring the VS Code backend; see
+  {ref}`adr-cross-host-discovery`.
 
 ### Codex
 
@@ -410,8 +414,9 @@ credentials, never enumerated).
 
 ## Adding or updating a store
 
-1. Edit `src/agentgrep/store_catalog.py`. Stamp `observed_version`
-   and `observed_at` against the version you actually inspected.
+1. Edit the per-agent module under `src/agentgrep/store_catalog/`
+   (e.g. `vscode.py`). Stamp `observed_version` and `observed_at`
+   against the version you actually inspected.
 2. Add an `upstream_ref` (preferred) or a `sample_record` so future
    readers can verify the schema.
 3. If the new store overlaps a sibling, name it in
