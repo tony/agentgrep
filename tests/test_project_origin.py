@@ -56,6 +56,14 @@ class OriginPathBoundaryCase(t.NamedTuple):
     expected: bool
 
 
+class OriginRemoteSerializationCase(t.NamedTuple):
+    """Parametrized case for serialized origin remotes."""
+
+    test_id: str
+    remote: str
+    expected_remote: str | None
+
+
 ORIGIN_TRAILING_SLASH_CASES: tuple[OriginTrailingSlashCase, ...] = (
     OriginTrailingSlashCase(
         test_id="cwd-display-path-matches-stored-path",
@@ -84,6 +92,34 @@ ORIGIN_PATH_BOUNDARY_CASES: tuple[OriginPathBoundaryCase, ...] = (
         test_id="sibling-prefix-path",
         record_cwd="/tmp/repo2",
         expected=False,
+    ),
+)
+
+ORIGIN_REMOTE_SERIALIZATION_CASES: tuple[OriginRemoteSerializationCase, ...] = (
+    OriginRemoteSerializationCase(
+        test_id="public-https",
+        remote="https://github.com/tony/agentgrep",
+        expected_remote="https://github.com/tony/agentgrep",
+    ),
+    OriginRemoteSerializationCase(
+        test_id="credential-https",
+        remote="https://secret-token@github.com/tony/agentgrep.git?x=1#frag",
+        expected_remote="https://github.com/tony/agentgrep.git",
+    ),
+    OriginRemoteSerializationCase(
+        test_id="scp-ssh",
+        remote="git@github.com:tony/agentgrep.git",
+        expected_remote="ssh://github.com/tony/agentgrep.git",
+    ),
+    OriginRemoteSerializationCase(
+        test_id="local-path",
+        remote="/home/private/repo",
+        expected_remote=None,
+    ),
+    OriginRemoteSerializationCase(
+        test_id="file-url",
+        remote="file:///home/private/repo",
+        expected_remote=None,
     ),
 )
 
@@ -124,6 +160,36 @@ def test_search_record_origin_serialization_scrubs_path_like_values(
     }
     assert payload["metadata"]["project"] == "~/work/agentgrep/"
     assert str(home) not in json.dumps(payload)
+
+
+@pytest.mark.parametrize(
+    "case",
+    ORIGIN_REMOTE_SERIALIZATION_CASES,
+    ids=[case.test_id for case in ORIGIN_REMOTE_SERIALIZATION_CASES],
+)
+def test_record_origin_remote_serialization_is_safe(
+    case: OriginRemoteSerializationCase,
+) -> None:
+    """Serialized origin remotes do not leak credentials or local paths."""
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text="origin privacy",
+        origin=agentgrep.RecordOrigin(remote=case.remote),
+    )
+
+    payload = agentgrep.serialize_search_record(record)
+    origin = payload["origin"]
+
+    if case.expected_remote is None:
+        assert origin is None or "remote" not in origin
+    else:
+        assert origin is not None
+        assert origin["remote"] == case.expected_remote
+        assert "secret-token" not in json.dumps(origin)
 
 
 def test_origin_query_fields_filter_records_and_expand_home(

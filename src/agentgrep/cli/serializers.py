@@ -9,7 +9,9 @@ is unavailable, behind ``maybe_build_pydantic``.
 from __future__ import annotations
 
 import pathlib
+import re
 import typing as t
+import urllib.parse
 
 from agentgrep import maybe_use_pydantic
 from agentgrep._text import format_display_path
@@ -85,10 +87,12 @@ def serialize_record_origin(origin: RecordOrigin | None) -> RecordOriginPayload 
     if origin.branch:
         payload["branch"] = origin.branch
     if origin.remote:
-        payload["remote"] = origin.remote
+        remote = _safe_remote_text(origin.remote)
+        if remote:
+            payload["remote"] = remote
     if origin.cwd_hash:
         payload["cwd_hash"] = origin.cwd_hash
-    return payload
+    return payload or None
 
 
 def serialize_record_metadata(metadata: dict[str, object]) -> dict[str, object]:
@@ -114,6 +118,39 @@ def _is_path_like(value: str) -> bool:
         or value.startswith("./")
         or value.startswith("../")
     )
+
+
+_SCP_REMOTE_RE = re.compile(r"^[^@/\s:]+@(?P<host>[^:/\s]+):(?P<path>\S+)$")
+_SAFE_REMOTE_SCHEMES = frozenset({"git", "http", "https", "ssh"})
+
+
+def _safe_remote_text(value: str) -> str | None:
+    remote = value.strip()
+    if not remote:
+        return None
+    scp_match = _SCP_REMOTE_RE.match(remote)
+    if scp_match is not None:
+        return f"ssh://{scp_match.group('host')}/{scp_match.group('path').lstrip('/')}"
+    parsed = urllib.parse.urlsplit(remote)
+    if parsed.scheme not in _SAFE_REMOTE_SCHEMES or not parsed.netloc:
+        return None
+    hostname = parsed.hostname
+    if hostname is None:
+        return None
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+    netloc = _remote_netloc(hostname, port)
+    return urllib.parse.urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
+
+
+def _remote_netloc(hostname: str, port: int | None) -> str:
+    if ":" in hostname and not hostname.startswith("["):
+        hostname = f"[{hostname}]"
+    if port is not None:
+        return f"{hostname}:{port}"
+    return hostname
 
 
 def serialize_find_record(record: FindRecord) -> FindRecordPayload:
