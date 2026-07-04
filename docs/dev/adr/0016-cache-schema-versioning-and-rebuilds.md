@@ -1,6 +1,6 @@
 (adr-cache-schema-versioning-rebuilds)=
 
-# ADR 0008: Cache schema versioning and rebuilds
+# ADR 0016: Cache schema versioning and rebuilds
 
 ## Status
 
