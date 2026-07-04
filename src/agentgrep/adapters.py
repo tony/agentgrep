@@ -2868,10 +2868,11 @@ def _read_vscode_jsonl_session(path: pathlib.Path) -> dict[str, object] | None:
 
     The newer serialization is a JSON-mutation log: the first ``kind: 0`` line
     carries the full session snapshot under ``v``; ``kind: 1`` lines set a value
-    at key-path ``k``, and ``kind: 2`` lines insert the array ``v`` into the array
-    at ``k`` at index ``i`` (appended when ``i`` is out of range). Replaying the
-    log in file order rebuilds the ``requests`` list the single-object ``.json``
-    form stores directly, so one extraction handles both shapes.
+    at key-path ``k``, and ``kind: 2`` lines replace the array at ``k`` from
+    index ``i`` onward with ``v`` (truncate to ``i``, then append ``v``; a
+    missing ``i`` appends, a missing ``v`` truncates). Replaying the log in file
+    order rebuilds the ``requests`` list the single-object ``.json`` form stores
+    directly, so one extraction handles both shapes.
     """
     session: dict[str, object] = {}
     for record in iter_jsonl(path):
@@ -2903,16 +2904,20 @@ def _read_vscode_jsonl_session(path: pathlib.Path) -> dict[str, object] | None:
                 and 0 <= last < len(node)
             ):
                 t.cast("list[object]", node)[last] = value
-            elif kind == 2 and isinstance(value, list):
+            elif kind == 2:
                 target = _vscode_child(node, last)
                 if isinstance(target, list):
                     index = event.get("i")
-                    at = (
+                    tail = value if isinstance(value, list) else []
+                    # kind:2 replaces the array from index `i` onward with `v`
+                    # (truncate to `i`, then append `v`); a missing `i` appends
+                    # and a missing `v` truncates.
+                    cut = (
                         index
                         if isinstance(index, int) and 0 <= index <= len(target)
                         else len(target)
                     )
-                    t.cast("list[object]", target)[at:at] = t.cast("list[object]", value)
+                    t.cast("list[object]", target)[cut:] = t.cast("list[object]", tail)
     return session or None
 
 

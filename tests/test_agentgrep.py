@@ -9593,6 +9593,81 @@ VSCODE_JSONL_CASES: tuple[VscodeJsonlCase, ...] = (
         ),
         expected=(("prompt", "user", "ok"),),
     ),
+    VscodeJsonlCase(
+        test_id="truncate-replaces-response-tail",
+        lines=(
+            json.dumps(
+                {
+                    "kind": 0,
+                    "v": {
+                        "sessionId": "s",
+                        "requests": [
+                            {
+                                "message": {"text": "q"},
+                                "response": [{"value": "kept "}, {"value": "REPLACED"}],
+                                "timestamp": 1,
+                            },
+                        ],
+                    },
+                },
+            ),
+            json.dumps(
+                {"kind": 2, "k": ["requests", 0, "response"], "i": 1, "v": [{"value": "new"}]},
+            ),
+        ),
+        expected=(
+            ("prompt", "user", "q"),
+            ("history", "assistant", "kept new"),
+        ),
+    ),
+    VscodeJsonlCase(
+        test_id="no-v-truncates-response",
+        lines=(
+            json.dumps(
+                {
+                    "kind": 0,
+                    "v": {
+                        "sessionId": "s",
+                        "requests": [
+                            {
+                                "message": {"text": "q"},
+                                "response": [{"value": "keep"}, {"value": "drop"}],
+                                "timestamp": 1,
+                            },
+                        ],
+                    },
+                },
+            ),
+            json.dumps({"kind": 2, "k": ["requests", 0, "response"], "i": 1}),
+        ),
+        expected=(
+            ("prompt", "user", "q"),
+            ("history", "assistant", "keep"),
+        ),
+    ),
+    VscodeJsonlCase(
+        test_id="requests-replace-drops-stale-turn",
+        lines=(
+            json.dumps(
+                {
+                    "kind": 0,
+                    "v": {
+                        "sessionId": "s",
+                        "requests": [{"message": {"text": "stale prompt"}, "timestamp": 1}],
+                    },
+                },
+            ),
+            json.dumps(
+                {
+                    "kind": 2,
+                    "k": ["requests"],
+                    "i": 0,
+                    "v": [{"message": {"text": "current prompt"}, "timestamp": 2}],
+                },
+            ),
+        ),
+        expected=(("prompt", "user", "current prompt"),),
+    ),
 )
 
 

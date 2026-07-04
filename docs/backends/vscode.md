@@ -32,7 +32,8 @@ Per-workspace transcripts live under
 without a folder live under `globalStorage/emptyWindowChatSessions/`.
 Current sessions are a JSONL mutation log — the first `kind:0` line holds
 the whole session snapshot under `v`, then `kind:1` lines set a value at a
-key-path and `kind:2` lines insert into an array, rebuilding the `requests[]`
+key-path and `kind:2` lines replace an array from index `i` with `v`
+(truncate, then append), rebuilding the `requests[]`
 turn list that older single-object `.json` sessions store directly. agentgrep
 replays the log in file order, so the same fields drive both shapes:
 
