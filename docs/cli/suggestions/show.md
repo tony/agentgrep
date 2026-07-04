@@ -10,13 +10,13 @@ review data, especially with `--json`.
 Show one suggestion:
 
 ```console
-$ agentgrep suggestions show <suggestion-id>
+$ agentgrep suggestions show demo-id
 ```
 
 Emit one suggestion as JSON:
 
 ```console
-$ agentgrep suggestions show <suggestion-id> --json
+$ agentgrep suggestions show demo-id --json
 ```
 
 ## Command

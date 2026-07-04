@@ -11,7 +11,7 @@ reload an agent session.
 Render one suggestion:
 
 ```console
-$ agentgrep suggestions render <suggestion-id>
+$ agentgrep suggestions render demo-id
 ```
 
 Read from a non-default agentgrep database:
@@ -19,7 +19,7 @@ Read from a non-default agentgrep database:
 ```console
 $ agentgrep suggestions render \
     --db .tmp/agentgrep.sqlite \
-    <suggestion-id>
+    demo-id
 ```
 
 ## Command
