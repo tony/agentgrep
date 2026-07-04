@@ -94,7 +94,8 @@ def compile_query(ast: QueryNode, registry: FieldRegistry) -> CompiledQuery:
 
     _validate_ast(ast, registry)
     text_terms = tuple(_collect_text_terms(ast))
-    path_patterns = _compile_path_patterns(ast)
+    path_fields = frozenset(spec.name for spec in registry.specs if spec.kind == "path")
+    path_patterns = _compile_path_patterns(ast, path_fields=path_fields)
 
     def source_predicate(source: SourceHandle) -> bool:
         return _evaluate_source(ast, source, registry, path_patterns) != "F"

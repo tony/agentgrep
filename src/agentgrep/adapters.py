@@ -56,6 +56,7 @@ from agentgrep.records import (
     JSONValue,
     MessageCandidate,
     RawJsonlSkipLine,
+    RecordOrigin,
     SearchRecord,
     SourceHandle,
 )
@@ -287,6 +288,62 @@ def iter_source_records(
         return
 
 
+def _record_origin(
+    *,
+    cwd: str | None = None,
+    repo: str | None = None,
+    worktree: str | None = None,
+    branch: str | None = None,
+    remote: str | None = None,
+    cwd_hash: str | None = None,
+    fallback: RecordOrigin | None = None,
+) -> RecordOrigin | None:
+    """Build a non-empty origin, inheriting omitted values from ``fallback``."""
+    origin = RecordOrigin(
+        cwd=cwd or (fallback.cwd if fallback is not None else None),
+        repo=repo or (fallback.repo if fallback is not None else None),
+        worktree=worktree or (fallback.worktree if fallback is not None else None),
+        branch=branch or (fallback.branch if fallback is not None else None),
+        remote=remote or (fallback.remote if fallback is not None else None),
+        cwd_hash=cwd_hash or (fallback.cwd_hash if fallback is not None else None),
+    )
+    return None if origin.is_empty() else origin
+
+
+def _origin_from_mapping(
+    mapping: dict[str, object],
+    *,
+    fallback: RecordOrigin | None = None,
+) -> RecordOrigin | None:
+    """Extract common cwd/branch/project-hash fields from a JSON mapping."""
+    git = mapping.get("git")
+    git_mapping = t.cast("dict[str, object]", git) if isinstance(git, dict) else {}
+    return _record_origin(
+        cwd=as_optional_str(mapping.get("cwd"))
+        or as_optional_str(mapping.get("workspace"))
+        or as_optional_str(mapping.get("directory")),
+        repo=as_optional_str(mapping.get("repo")) or as_optional_str(mapping.get("repository")),
+        worktree=as_optional_str(mapping.get("worktree")),
+        branch=(
+            as_optional_str(mapping.get("gitBranch"))
+            or as_optional_str(mapping.get("branch"))
+            or as_optional_str(git_mapping.get("branch"))
+        ),
+        remote=(
+            as_optional_str(mapping.get("remote"))
+            or as_optional_str(git_mapping.get("repository_url"))
+            or as_optional_str(git_mapping.get("repositoryUrl"))
+            or as_optional_str(git_mapping.get("remote"))
+        ),
+        cwd_hash=(
+            as_optional_str(mapping.get("cwd_hash"))
+            or as_optional_str(mapping.get("project_hash"))
+            or as_optional_str(mapping.get("projectHash"))
+        ),
+        fallback=fallback,
+    )
+
+
 def parse_codex_session_file(
     source: SourceHandle,
     *,
@@ -296,6 +353,7 @@ def parse_codex_session_file(
     """Parse Codex session JSONL files."""
     session_id = source.path.stem
     session_model: str | None = None
+    session_origin: RecordOrigin | None = None
     if reverse:
         # Reverse iteration reads the leading session_meta header last,
         # so seed its state up front to keep emitted records canonical.
@@ -308,6 +366,7 @@ def parse_codex_session_file(
         ):
             payload = t.cast("dict[str, object]", header_payload)
             session_id = as_optional_str(payload.get("id")) or session_id
+            session_origin = _origin_from_mapping(payload, fallback=session_origin)
             session_model = (
                 as_optional_str(payload.get("model"))
                 or as_optional_str(payload.get("model_name"))
@@ -353,11 +412,13 @@ def parse_codex_session_file(
         event_type = str(event.get("type", ""))
         payload = event.get("payload")
         if event_type == "session_meta" and isinstance(payload, dict):
-            session_id = as_optional_str(payload.get("id")) or session_id
+            payload_map = t.cast("dict[str, object]", payload)
+            session_id = as_optional_str(payload_map.get("id")) or session_id
+            session_origin = _origin_from_mapping(payload_map, fallback=session_origin)
             session_model = (
-                as_optional_str(payload.get("model"))
-                or as_optional_str(payload.get("model_name"))
-                or as_optional_str(payload.get("model_provider"))
+                as_optional_str(payload_map.get("model"))
+                or as_optional_str(payload_map.get("model_name"))
+                or as_optional_str(payload_map.get("model_provider"))
                 or session_model
             )
             continue
@@ -369,6 +430,7 @@ def parse_codex_session_file(
             model=session_model,
             session_id=session_id,
             conversation_id=session_id,
+            origin=session_origin,
         )
         if candidate is None:
             continue
@@ -863,6 +925,7 @@ def parse_claude_history_file(
         if not display:
             continue
         session_id = as_optional_str(mapping.get("sessionId"))
+        project = as_optional_str(mapping.get("project"))
         yield SearchRecord(
             kind="prompt",
             agent=source.agent,
@@ -879,7 +942,8 @@ def parse_claude_history_file(
             timestamp=_unix_millis_to_isoformat(mapping.get("timestamp")),
             session_id=session_id,
             conversation_id=session_id,
-            metadata={"project": as_optional_str(mapping.get("project")) or ""},
+            origin=_record_origin(cwd=project),
+            metadata={"project": project or ""},
         )
 
 
@@ -908,6 +972,7 @@ def parse_antigravity_cli_history_file(
         if not display:
             continue
         session_id = as_optional_str(mapping.get("conversationId"))
+        workspace = as_optional_str(mapping.get("workspace"))
         yield SearchRecord(
             kind="prompt",
             agent=source.agent,
@@ -920,8 +985,9 @@ def parse_antigravity_cli_history_file(
             timestamp=_unix_millis_to_isoformat(mapping.get("timestamp")),
             session_id=session_id,
             conversation_id=session_id,
+            origin=_record_origin(cwd=workspace),
             metadata={
-                "workspace": as_optional_str(mapping.get("workspace")) or "",
+                "workspace": workspace or "",
                 "type": as_optional_str(mapping.get("type")) or "",
             },
         )
@@ -1063,6 +1129,7 @@ def _gemini_tool_calls_text(tool_calls: object) -> str:
 def _gemini_message_record_to_candidate(
     mapping: dict[str, object],
     session_id: str | None,
+    origin: RecordOrigin | None = None,
 ) -> MessageCandidate | None:
     """Extract a ``MessageCandidate`` from one Gemini MessageRecord.
 
@@ -1101,6 +1168,7 @@ def _gemini_message_record_to_candidate(
         model=as_optional_str(mapping.get("model")),
         session_id=session_id or as_optional_str(mapping.get("sessionId")),
         conversation_id=session_id,
+        origin=_origin_from_mapping(mapping, fallback=origin),
     )
 
 
@@ -1118,6 +1186,7 @@ def parse_gemini_chat_file(
     fields directly rather than going through ``iter_message_candidates``.
     """
     session_id: str | None = None
+    session_origin: RecordOrigin | None = _record_origin(cwd_hash=source.path.parent.parent.name)
     for event in iter_jsonl(source.path):
         if not isinstance(event, dict):
             continue
@@ -1130,8 +1199,9 @@ def parse_gemini_chat_file(
             # so this stays correct even if a future schema adds a
             # ``type`` field to the metadata record.
             session_id = as_optional_str(mapping.get("sessionId"))
+            session_origin = _origin_from_mapping(mapping, fallback=session_origin)
             continue
-        candidate = _gemini_message_record_to_candidate(mapping, session_id)
+        candidate = _gemini_message_record_to_candidate(mapping, session_id, session_origin)
         if candidate is None:
             continue
         yield build_search_record(source, candidate)
@@ -1154,6 +1224,7 @@ def parse_gemini_chat_legacy_file(
         return
     container = t.cast("dict[str, object]", payload)
     session_id = as_optional_str(container.get("sessionId"))
+    session_origin = _origin_from_mapping(container)
     messages = container.get("messages")
     if not isinstance(messages, list):
         return
@@ -1161,7 +1232,7 @@ def parse_gemini_chat_legacy_file(
         if not isinstance(entry, dict):
             continue
         mapping = t.cast("dict[str, object]", entry)
-        candidate = _gemini_message_record_to_candidate(mapping, session_id)
+        candidate = _gemini_message_record_to_candidate(mapping, session_id, session_origin)
         if candidate is None:
             continue
         yield build_search_record(source, candidate)
@@ -1176,6 +1247,7 @@ def parse_gemini_logs_file(
     user prompts, the same role ``codex.history`` plays for Codex.
     """
     payload = read_json_file(source.path)
+    origin = _record_origin(cwd_hash=source.path.parent.name)
     entries = payload if isinstance(payload, list) else []
     for entry in entries:
         if not isinstance(entry, dict):
@@ -1197,6 +1269,7 @@ def parse_gemini_logs_file(
             timestamp=as_optional_str(mapping.get("timestamp")),
             session_id=session_id,
             conversation_id=session_id,
+            origin=_origin_from_mapping(mapping, fallback=origin),
         )
 
 
@@ -1359,6 +1432,7 @@ def _pi_message_candidate(
     entry_timestamp: str | None,
     session_id: str | None,
     conversation_id: str | None,
+    origin: RecordOrigin | None = None,
 ) -> MessageCandidate | None:
     """Build a candidate from a pi ``message`` session entry.
 
@@ -1387,6 +1461,7 @@ def _pi_message_candidate(
         model=as_optional_str(message_map.get("model")),
         session_id=session_id,
         conversation_id=conversation_id,
+        origin=origin,
     )
 
 
@@ -1421,6 +1496,7 @@ def parse_pi_session_file(
     """
     session_id: str | None = source.path.stem
     conversation_id: str | None = None
+    session_origin: RecordOrigin | None = None
     if reverse:
         # Reverse iteration reads the leading session header last, so
         # seed its state up front to keep emitted records canonical.
@@ -1428,6 +1504,7 @@ def parse_pi_session_file(
         if header is not None and as_optional_str(header.get("type")) == "session":
             session_id = as_optional_str(header.get("id")) or session_id
             conversation_id = as_optional_str(header.get("cwd"))
+            session_origin = _record_origin(cwd=conversation_id)
     # The session header feeds session_id/cwd into later records, so the
     # text prefilter must never drop it.
     events = (
@@ -1450,6 +1527,7 @@ def parse_pi_session_file(
         if entry_type == "session":
             session_id = as_optional_str(mapping.get("id")) or session_id
             conversation_id = as_optional_str(mapping.get("cwd"))
+            session_origin = _record_origin(cwd=conversation_id, fallback=session_origin)
             continue
         entry_timestamp = as_optional_str(mapping.get("timestamp"))
         if entry_type == "message":
@@ -1458,6 +1536,7 @@ def parse_pi_session_file(
                 entry_timestamp,
                 session_id,
                 conversation_id,
+                session_origin,
             )
             if candidate is not None:
                 yield build_search_record(source, candidate)
@@ -1476,6 +1555,7 @@ def parse_pi_session_file(
             timestamp=entry_timestamp,
             session_id=session_id,
             conversation_id=conversation_id,
+            origin=session_origin,
         )
 
 
@@ -1912,10 +1992,10 @@ def parse_grok_session_search_db(
     connection = open_readonly_sqlite(source.path)
     try:
         cursor = connection.execute(
-            "SELECT session_id, title, content, updated_at FROM session_docs",
+            "SELECT session_id, cwd, title, content, updated_at FROM session_docs",
         )
         for row in cursor:
-            session_id_raw, title_raw, content_raw, updated_at_raw = row
+            session_id_raw, cwd_raw, title_raw, content_raw, updated_at_raw = row
             text = content_raw if isinstance(content_raw, str) and content_raw.strip() else None
             if not text:
                 continue
@@ -1932,6 +2012,7 @@ def parse_grok_session_search_db(
                 timestamp=_unix_to_isoformat(updated_at_raw),
                 session_id=session_id,
                 conversation_id=session_id,
+                origin=_record_origin(cwd=as_optional_str(cwd_raw)),
             )
     except sqlite3.DatabaseError:
         return
@@ -2042,6 +2123,7 @@ def parse_opencode_db(
                 model=_opencode_message_model(message_data),
                 session_id=session_id,
                 conversation_id=session_id,
+                origin=_record_origin(cwd=directory),
                 metadata={"directory": directory} if directory else {},
             )
     except sqlite3.DatabaseError:
@@ -2296,6 +2378,7 @@ def parse_cursor_state_db(
     try:
         tables = sqlite_table_names(connection)
         candidate_tables = [name for name in ("ItemTable", "cursorDiskKV") if name in tables]
+        source_origin = _cursor_workspace_hash_origin(source)
         seen: set[tuple[str | None, str, str | None, str | None]] = set()
         for table in candidate_tables:
             for key, raw_value in iter_key_value_rows(
@@ -2314,8 +2397,13 @@ def parse_cursor_state_db(
                         parsed,
                         fallback_title=key,
                         fallback_conversation_id=key,
+                        fallback_origin=source_origin,
                     ),
-                    iter_cursor_prompt_candidates(parsed, fallback_conversation_id=key),
+                    iter_cursor_prompt_candidates(
+                        parsed,
+                        fallback_conversation_id=key,
+                        fallback_origin=source_origin,
+                    ),
                 )
                 for candidate in candidates:
                     entry_key = (
@@ -2334,6 +2422,16 @@ def parse_cursor_state_db(
         connection.close()
 
 
+def _cursor_workspace_hash_origin(source: SourceHandle) -> RecordOrigin | None:
+    """Return a hash-only origin for per-workspace Cursor state stores."""
+    parent_name = source.path.parent.name
+    if parent_name in {"globalStorage", "User"}:
+        return None
+    if source.path.name != "state.vscdb":
+        return None
+    return _record_origin(cwd_hash=parent_name)
+
+
 def candidate_from_mapping(
     mapping: dict[str, object],
     *,
@@ -2341,6 +2439,7 @@ def candidate_from_mapping(
     model: str | None,
     session_id: str | None,
     conversation_id: str | None,
+    origin: RecordOrigin | None = None,
 ) -> MessageCandidate | None:
     """Extract one message candidate from a known message-like mapping."""
     role = extract_role(mapping)
@@ -2357,6 +2456,7 @@ def candidate_from_mapping(
         model=model or extract_model(mapping),
         session_id=session_id or extract_session_id(mapping),
         conversation_id=conversation_id or extract_conversation_id(mapping),
+        origin=_origin_from_mapping(mapping, fallback=origin),
     )
 
 
@@ -2365,6 +2465,7 @@ def iter_message_candidates(
     *,
     fallback_title: str | None = None,
     fallback_conversation_id: str | None = None,
+    fallback_origin: RecordOrigin | None = None,
 ) -> cabc.Iterator[MessageCandidate]:
     """Recursively walk a JSON value and yield message candidates.
 
@@ -2374,6 +2475,7 @@ def iter_message_candidates(
     """
     if isinstance(value, dict):
         mapping = t.cast("dict[str, object]", value)
+        origin = _origin_from_mapping(mapping, fallback=fallback_origin)
         role = extract_role(mapping)
         # Text extraction drives the recursive content flatten; it is only
         # used when a role is present, so skip it for the many role-less nodes.
@@ -2387,12 +2489,14 @@ def iter_message_candidates(
                 model=extract_model(mapping),
                 session_id=extract_session_id(mapping),
                 conversation_id=extract_conversation_id(mapping) or fallback_conversation_id,
+                origin=origin,
             )
         for nested in mapping.values():
             yield from iter_message_candidates(
                 nested,
                 fallback_title=fallback_title,
                 fallback_conversation_id=fallback_conversation_id,
+                fallback_origin=origin,
             )
     elif isinstance(value, list):
         for item in value:
@@ -2400,6 +2504,7 @@ def iter_message_candidates(
                 item,
                 fallback_title=fallback_title,
                 fallback_conversation_id=fallback_conversation_id,
+                fallback_origin=fallback_origin,
             )
 
 
@@ -2407,6 +2512,7 @@ def iter_cursor_prompt_candidates(
     value: JSONValue | None,
     *,
     fallback_conversation_id: str | None = None,
+    fallback_origin: RecordOrigin | None = None,
 ) -> cabc.Iterator[MessageCandidate]:
     """Yield user-prompt candidates from Cursor ``aiService.prompts`` data.
 
@@ -2441,6 +2547,7 @@ def iter_cursor_prompt_candidates(
             model=None,
             session_id=None,
             conversation_id=fallback_conversation_id,
+            origin=fallback_origin,
         )
 
 
@@ -2576,6 +2683,7 @@ def build_search_record(source: SourceHandle, candidate: MessageCandidate) -> Se
         model=candidate.model,
         session_id=candidate.session_id,
         conversation_id=candidate.conversation_id,
+        origin=candidate.origin,
     )
 
 
@@ -2703,6 +2811,7 @@ def parse_pi_context_mode_db(
     sessions, with each row carrying its own ``session_id``.
     """
     connection = open_readonly_sqlite(source.path)
+    origin = _record_origin(cwd_hash=source.path.stem)
     try:
         if "session_events" not in sqlite_table_names(connection):
             return
@@ -2727,6 +2836,7 @@ def parse_pi_context_mode_db(
                 timestamp=as_optional_str(created_raw),
                 session_id=session_id,
                 conversation_id=session_id,
+                origin=origin,
             )
     except sqlite3.DatabaseError:
         return
@@ -2800,6 +2910,7 @@ def parse_vscode_chat_session(source: SourceHandle) -> cabc.Iterator[SearchRecor
     session_id = as_optional_str(mapping.get("sessionId"))
     base_metadata: dict[str, object] = {}
     cwd = _vscode_workspace_cwd(source.path)
+    origin = _record_origin(cwd=cwd)
     if cwd:
         base_metadata["cwd"] = cwd
     title: str | None = None
@@ -2829,6 +2940,7 @@ def parse_vscode_chat_session(source: SourceHandle) -> cabc.Iterator[SearchRecor
                 timestamp=timestamp,
                 session_id=session_id,
                 conversation_id=session_id,
+                origin=origin,
                 metadata=dict(base_metadata),
             )
         reply = _vscode_response_text(request.get("response"))
@@ -2850,6 +2962,7 @@ def parse_vscode_chat_session(source: SourceHandle) -> cabc.Iterator[SearchRecor
                 model=as_optional_str(request.get("modelId")),
                 session_id=session_id,
                 conversation_id=session_id,
+                origin=origin,
                 metadata=metadata,
             )
 

@@ -8,16 +8,20 @@ is unavailable, behind ``maybe_build_pydantic``.
 
 from __future__ import annotations
 
+import pathlib
 import typing as t
 
 from agentgrep import maybe_use_pydantic
 from agentgrep._text import format_display_path
+from agentgrep.origin import LEGACY_ORIGIN_METADATA_KEYS
 from agentgrep.records import (
     SCHEMA_VERSION,
     EnvelopeFactory,
     EnvelopePayload,
     FindRecord,
     FindRecordPayload,
+    RecordOrigin,
+    RecordOriginPayload,
     SearchRecord,
     SearchRecordPayload,
     SourceHandle,
@@ -62,8 +66,54 @@ def serialize_search_record(record: SearchRecord) -> SearchRecordPayload:
         "model": record.model,
         "session_id": record.session_id,
         "conversation_id": record.conversation_id,
-        "metadata": record.metadata,
+        "origin": serialize_record_origin(record.origin),
+        "metadata": serialize_record_metadata(record.metadata),
     }
+
+
+def serialize_record_origin(origin: RecordOrigin | None) -> RecordOriginPayload | None:
+    """Serialize project-origin metadata with display-safe paths."""
+    if origin is None or origin.is_empty():
+        return None
+    payload: RecordOriginPayload = {}
+    if origin.cwd:
+        payload["cwd"] = _display_path_text(origin.cwd)
+    if origin.repo:
+        payload["repo"] = _display_path_text(origin.repo)
+    if origin.worktree:
+        payload["worktree"] = _display_path_text(origin.worktree)
+    if origin.branch:
+        payload["branch"] = origin.branch
+    if origin.remote:
+        payload["remote"] = origin.remote
+    if origin.cwd_hash:
+        payload["cwd_hash"] = origin.cwd_hash
+    return payload
+
+
+def serialize_record_metadata(metadata: dict[str, object]) -> dict[str, object]:
+    """Return metadata with legacy path-like origin values redacted for display."""
+    payload: dict[str, object] = {}
+    for key, value in metadata.items():
+        if key in LEGACY_ORIGIN_METADATA_KEYS and isinstance(value, str) and _is_path_like(value):
+            payload[key] = _display_path_text(value)
+        else:
+            payload[key] = value
+    return payload
+
+
+def _display_path_text(value: str) -> str:
+    return format_display_path(pathlib.Path(value), directory=True)
+
+
+def _is_path_like(value: str) -> bool:
+    return (
+        value == "~"
+        or value.startswith("~/")
+        or value.startswith("/")
+        or value.startswith("./")
+        or value.startswith("../")
+    )
 
 
 def serialize_find_record(record: FindRecord) -> FindRecordPayload:

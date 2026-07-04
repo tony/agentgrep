@@ -28,16 +28,21 @@ class _CompiledPathPattern:
     is_glob: bool
 
 
-def _compile_path_patterns(node: QueryNode) -> dict[str, _CompiledPathPattern]:
+def _compile_path_patterns(
+    node: QueryNode,
+    *,
+    path_fields: frozenset[str] | None = None,
+) -> dict[str, _CompiledPathPattern]:
     """Return pre-expanded path patterns keyed by their raw query value."""
-    if isinstance(node, FieldEqNode) and node.field == "path":
+    fields = frozenset({"path"}) if path_fields is None else path_fields
+    if isinstance(node, FieldEqNode) and node.field in fields:
         return {node.value: _compile_path_pattern(node.value)}
     if isinstance(node, NotNode):
-        return _compile_path_patterns(node.child)
+        return _compile_path_patterns(node.child, path_fields=fields)
     if isinstance(node, AndNode | OrNode):
         patterns: dict[str, _CompiledPathPattern] = {}
         for child in node.children:
-            patterns.update(_compile_path_patterns(child))
+            patterns.update(_compile_path_patterns(child, path_fields=fields))
         return patterns
     return {}
 

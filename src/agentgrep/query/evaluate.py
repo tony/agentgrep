@@ -6,6 +6,7 @@ import datetime as dt
 import typing as t
 
 from agentgrep._engine.orchestration import record_matches_scope
+from agentgrep.origin import record_origin_field_values
 from agentgrep.query.ast import (
     AndNode,
     FieldCmpNode,
@@ -157,6 +158,8 @@ def _field_exists_on_record(field: str, record: SearchRecord) -> bool:
     carries no ``mtime_ns``). Nullable record fields count as absent when
     ``None`` or empty.
     """
+    if field in {"cwd", "repo", "worktree", "branch", "project", "cwd_hash"}:
+        return bool(record_origin_field_values(record, field))
     if field in {"agent", "store", "adapter_id", "mtime", "scope"}:
         return True
     if field == "path":
@@ -219,6 +222,16 @@ def _field_matches_record(
         return record.model is not None and _string_match(record.model, node.value)
     if spec.name == "role":
         return record.role is not None and _string_match(record.role, node.value)
+    if spec.name in {"cwd", "repo", "worktree"}:
+        pattern = _path_pattern_for(node, path_patterns)
+        return any(
+            _path_match(value, pattern) for value in record_origin_field_values(record, spec.name)
+        )
+    if spec.name in {"branch", "project", "cwd_hash"}:
+        return any(
+            _string_match(value, node.value)
+            for value in record_origin_field_values(record, spec.name)
+        )
     if spec.name == "text":
         # A wildcard text value matches the record text only (anchored
         # glob); a plain value keeps the multi-surface substring match.

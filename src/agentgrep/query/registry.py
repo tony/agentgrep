@@ -112,6 +112,12 @@ def default_registry() -> FieldRegistry:
     ``timestamp`` date   record  Record timestamp; comparison + range
     ``model``     string record  Substring against ``record.model``
     ``role``      string record  Substring against ``record.role``
+    ``cwd``       path   record  Project working directory
+    ``repo``      path   record  Project repository root
+    ``worktree``  path   record  Git worktree root
+    ``branch``    string record  Git branch name
+    ``project``   string record  Project/workspace basename
+    ``cwd_hash``  string record  Opaque project hash when cwd is unavailable
     ``text``      string record  Implicit field for bare positional terms
     ============= ====== ======= ===========================================
     """
@@ -165,6 +171,12 @@ def default_registry() -> FieldRegistry:
         ),
         FieldSpec(name="model", kind="string", layer="record"),
         FieldSpec(name="role", kind="string", layer="record"),
+        FieldSpec(name="cwd", kind="path", layer="record"),
+        FieldSpec(name="repo", kind="path", layer="record"),
+        FieldSpec(name="worktree", kind="path", layer="record"),
+        FieldSpec(name="branch", kind="string", layer="record"),
+        FieldSpec(name="project", kind="string", layer="record"),
+        FieldSpec(name="cwd_hash", kind="string", layer="record"),
         FieldSpec(name="text", kind="string", layer="record"),
     )
     return FieldRegistry(specs=specs)

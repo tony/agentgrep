@@ -17,8 +17,10 @@ from __future__ import annotations
 import collections
 import typing as t
 
+from agentgrep.origin import record_matches_origin
+
 if t.TYPE_CHECKING:
-    from agentgrep.records import SearchRecord
+    from agentgrep.records import RecordOrigin, SearchRecord
 
 __all__ = [
     "collapse_near_duplicates",
@@ -32,6 +34,7 @@ def rank_search_records(
     query_text: str,
     *,
     threshold: int = 0,
+    origin_boost: RecordOrigin | None = None,
 ) -> list[tuple[SearchRecord, float]]:
     """Score records by relevance and sort best-first.
 
@@ -43,6 +46,9 @@ def rank_search_records(
         The space-joined search terms for WRatio scoring.
     threshold : int
         Minimum fuzzy score (0-100). Records below are dropped.
+    origin_boost : RecordOrigin | None
+        Optional same-project context. Matching records receive a small
+        additive boost after thresholding.
 
     Returns
     -------
@@ -51,11 +57,14 @@ def rank_search_records(
     """
     import rapidfuzz.fuzz
 
-    scored: list[tuple[SearchRecord, float]] = [
-        (r, float(rapidfuzz.fuzz.WRatio(query_text, r.text))) for r in records
-    ]
-    if threshold > 0:
-        scored = [(r, s) for r, s in scored if s >= threshold]
+    scored: list[tuple[SearchRecord, float]] = []
+    for record in records:
+        score = float(rapidfuzz.fuzz.WRatio(query_text, record.text))
+        if threshold > 0 and score < threshold:
+            continue
+        if origin_boost is not None and record_matches_origin(record, origin_boost):
+            score += 10.0
+        scored.append((record, score))
     scored.sort(key=lambda pair: pair[1], reverse=True)
     return scored
 

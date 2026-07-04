@@ -1,0 +1,205 @@
+"""Helpers for project-origin metadata.
+
+Project origin is optional record metadata. It is deliberately kept out of the
+plain text haystack so origin filters do not change ordinary search relevance
+or source prefilter behavior.
+"""
+
+from __future__ import annotations
+
+import pathlib
+import typing as t
+
+from agentgrep.records import RecordOrigin, SearchRecord
+
+__all__ = [
+    "LEGACY_ORIGIN_METADATA_KEYS",
+    "origin_filter_terms",
+    "query_quote",
+    "record_matches_origin",
+    "record_origin_field_values",
+]
+
+LEGACY_ORIGIN_METADATA_KEYS: frozenset[str] = frozenset(
+    {
+        "branch",
+        "cwd",
+        "cwd_hash",
+        "directory",
+        "gitBranch",
+        "project",
+        "project_hash",
+        "projectHash",
+        "repo",
+        "repository",
+        "workspace",
+        "worktree",
+    },
+)
+
+_PATH_FIELD_KEYS: dict[str, tuple[str, ...]] = {
+    "cwd": ("cwd", "project", "workspace", "directory"),
+    "repo": ("repo", "repository"),
+    "worktree": ("worktree", "workspace", "directory"),
+}
+_STRING_FIELD_KEYS: dict[str, tuple[str, ...]] = {
+    "branch": ("branch", "gitBranch"),
+    "cwd_hash": ("cwd_hash", "project_hash", "projectHash"),
+}
+
+
+def query_quote(value: str) -> str:
+    """Quote a query value for use in a generated field predicate."""
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def origin_filter_terms(
+    *,
+    cwd: str | None = None,
+    repo: str | None = None,
+    worktree: str | None = None,
+    branch: str | None = None,
+    cwd_hash: str | None = None,
+) -> tuple[str, ...]:
+    """Return query-language field predicates for explicit origin filters."""
+    terms: list[str] = []
+    for field, value in (
+        ("cwd", cwd),
+        ("repo", repo),
+        ("worktree", worktree),
+        ("branch", branch),
+        ("cwd_hash", cwd_hash),
+    ):
+        if value:
+            terms.append(f"{field}:{query_quote(value)}")
+    return tuple(terms)
+
+
+def record_origin_field_values(record: SearchRecord, field: str) -> tuple[str, ...]:
+    """Return every known value for an origin query field on ``record``."""
+    origin = record.origin
+    if field in _PATH_FIELD_KEYS:
+        values: list[str] = []
+        if origin is not None:
+            value = t.cast("str | None", getattr(origin, field))
+            if value:
+                values.append(value)
+        values.extend(_metadata_strings(record, _PATH_FIELD_KEYS[field]))
+        return _dedupe(values)
+    if field in _STRING_FIELD_KEYS:
+        values = []
+        if origin is not None:
+            value = t.cast("str | None", getattr(origin, field))
+            if value:
+                values.append(value)
+        values.extend(_metadata_strings(record, _STRING_FIELD_KEYS[field]))
+        return _dedupe(values)
+    if field == "project":
+        return _project_values(record)
+    return ()
+
+
+def record_matches_origin(record: SearchRecord, origin: RecordOrigin | None) -> bool:
+    """Return whether ``record`` belongs to the supplied origin context.
+
+    Ranking uses this for opt-in same-project boosts. Path comparisons accept
+    descendants, so a target repo of ``/repo`` matches a record cwd of
+    ``/repo/src``.
+    """
+    if origin is None or origin.is_empty():
+        return False
+    checks: list[bool] = []
+    if origin.branch:
+        checks.append(origin.branch in record_origin_field_values(record, "branch"))
+    if origin.cwd:
+        checks.append(_any_path_related(record_origin_field_values(record, "cwd"), origin.cwd))
+    if origin.repo:
+        checks.append(
+            _any_path_related(
+                (
+                    *record_origin_field_values(record, "repo"),
+                    *record_origin_field_values(record, "worktree"),
+                    *record_origin_field_values(record, "cwd"),
+                ),
+                origin.repo,
+            ),
+        )
+    if origin.worktree:
+        checks.append(
+            _any_path_related(
+                (
+                    *record_origin_field_values(record, "worktree"),
+                    *record_origin_field_values(record, "cwd"),
+                ),
+                origin.worktree,
+            ),
+        )
+    if origin.cwd_hash:
+        checks.append(origin.cwd_hash in record_origin_field_values(record, "cwd_hash"))
+    return bool(checks) and all(checks)
+
+
+def _metadata_strings(record: SearchRecord, keys: tuple[str, ...]) -> list[str]:
+    values: list[str] = []
+    for key in keys:
+        value = record.metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            values.append(value.strip())
+    return values
+
+
+def _project_values(record: SearchRecord) -> tuple[str, ...]:
+    values: list[str] = []
+    if record.origin is not None:
+        for value in (record.origin.repo, record.origin.worktree, record.origin.cwd):
+            _append_project_value(values, value)
+    for key in ("project", "workspace", "directory", "cwd", "repo", "worktree"):
+        value = record.metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            _append_project_value(values, value.strip())
+    return _dedupe(values)
+
+
+def _append_project_value(values: list[str], value: str | None) -> None:
+    if not value:
+        return
+    values.append(value)
+    normalized = value.rstrip("/\\")
+    if not normalized:
+        return
+    if "/" in normalized or "\\" in normalized:
+        name = pathlib.PurePosixPath(normalized.replace("\\", "/")).name
+        if name:
+            values.append(name)
+
+
+def _any_path_related(values: t.Iterable[str], target: str) -> bool:
+    target_norm = _normalize_path_text(target)
+    if not target_norm:
+        return False
+    return any(_paths_related(_normalize_path_text(value), target_norm) for value in values)
+
+
+def _paths_related(value: str, target: str) -> bool:
+    if not value:
+        return False
+    return value == target or value.startswith(f"{target}/") or target.startswith(f"{value}/")
+
+
+def _normalize_path_text(value: str) -> str:
+    expanded = value
+    if value == "~" or value.startswith("~/"):
+        expanded = str(pathlib.Path(value).expanduser())
+    return expanded.rstrip("/\\")
+
+
+def _dedupe(values: t.Iterable[str]) -> tuple[str, ...]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return tuple(result)

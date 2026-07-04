@@ -56,6 +56,8 @@ __all__ = [
     "OutputMode",
     "ProgressMode",
     "RawJsonlSkipLine",
+    "RecordOrigin",
+    "RecordOriginPayload",
     "SearchMatchSurface",
     "SearchQuery",
     "SearchRecord",
@@ -232,7 +234,19 @@ class SearchRecordPayload(t.TypedDict):
     model: str | None
     session_id: str | None
     conversation_id: str | None
+    origin: RecordOriginPayload | None
     metadata: dict[str, object]
+
+
+class RecordOriginPayload(t.TypedDict, total=False):
+    """JSON payload for project-origin metadata."""
+
+    cwd: str
+    repo: str
+    worktree: str
+    branch: str
+    remote: str
+    cwd_hash: str
 
 
 class FindRecordPayload(t.TypedDict):
@@ -374,6 +388,7 @@ class SearchRecord:
     model: str | None = None
     session_id: str | None = None
     conversation_id: str | None = None
+    origin: RecordOrigin | None = None
     metadata: dict[str, object] = dataclasses.field(default_factory=dict)
 
 
@@ -401,6 +416,32 @@ class MessageCandidate:
     model: str | None = None
     session_id: str | None = None
     conversation_id: str | None = None
+    origin: RecordOrigin | None = None
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class RecordOrigin:
+    """Project/workspace origin attached to a normalized record."""
+
+    cwd: str | None = None
+    repo: str | None = None
+    worktree: str | None = None
+    branch: str | None = None
+    remote: str | None = None
+    cwd_hash: str | None = None
+
+    def is_empty(self) -> bool:
+        """Return whether this origin carries no useful project signal."""
+        return not any(
+            (
+                self.cwd,
+                self.repo,
+                self.worktree,
+                self.branch,
+                self.remote,
+                self.cwd_hash,
+            ),
+        )
 
 
 # --- Store-role classification constants -----------------------------------
