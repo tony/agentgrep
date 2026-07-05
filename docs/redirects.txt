@@ -14,3 +14,4 @@ reference/api/index library/reference
 reference/api/agentgrep library/reference
 reference/api/mcp mcp/reference
 reference/api/ui tui/reference
+cli/ui tui/index
