@@ -543,13 +543,7 @@ async def test_mcp_search_honors_query_language_in_single_tokens(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Whitespace-containing terms without origin params stay query language.
-
-    Regression guard: routing every request through the origin
-    query-text wrapper force-quoted ``agent:codex alpha`` and
-    ``zzznope OR alpha`` into literal phrases, silently returning zero
-    results for the tool description's advertised syntax.
-    """
+    """Whitespace-containing terms without origin params stay query language."""
     agentgrep_mcp = load_agentgrep_mcp_module()
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
