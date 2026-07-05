@@ -1317,3 +1317,42 @@ def test_search_limit_caps_results(
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
     assert len(payload["results"]) == 1
+
+
+class HereConflictCase(t.NamedTuple):
+    """Parametrized case for --here combinations that would drop the boost."""
+
+    test_id: str
+    argv: tuple[str, ...]
+    expected_message_fragment: str
+
+
+HERE_CONFLICT_CASES: tuple[HereConflictCase, ...] = (
+    HereConflictCase(
+        test_id="here-with-no-rank",
+        argv=("search", "--here", "--no-rank", "bliss"),
+        expected_message_fragment="--here has no effect with --no-rank",
+    ),
+    HereConflictCase(
+        test_id="here-with-ui",
+        argv=("search", "--here", "--ui", "bliss"),
+        expected_message_fragment="--here has no effect with --ui",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    HERE_CONFLICT_CASES,
+    ids=[case.test_id for case in HERE_CONFLICT_CASES],
+)
+def test_here_conflicts_error_at_parse_time(
+    case: HereConflictCase,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--here errors in modes where the same-project boost cannot apply."""
+    with pytest.raises(SystemExit) as exc_info:
+        _ = agentgrep.parse_args(list(case.argv))
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert case.expected_message_fragment in captured.err

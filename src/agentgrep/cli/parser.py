@@ -1207,6 +1207,18 @@ def _build_search_args(
             bundle.search_parser.error(
                 "--threshold has no effect with --no-rank (ranking is disabled)",
             )
+    # The --here boost only exists inside ranked CLI output; reject the
+    # modes that would silently drop it.
+    if t.cast("bool", namespace.here) and no_rank:
+        with configured_color_environment(color_mode):
+            bundle.search_parser.error(
+                "--here has no effect with --no-rank (ranking is disabled)",
+            )
+    if t.cast("bool", namespace.here) and output_mode == "ui":
+        with configured_color_environment(color_mode):
+            bundle.search_parser.error(
+                "--here has no effect with --ui (use --only-here to filter)",
+            )
 
     origin_nodes, origin_boost = _build_search_origin_nodes(namespace)
     search_compiled, residual_terms, search_query_fields = _maybe_compile_query(
