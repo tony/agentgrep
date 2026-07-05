@@ -81,11 +81,11 @@ MCP. Two flags govern machine-readable output:
   incrementally.
 
 Both flags work on `search`, `grep`, and `find`. See
-[](#cli-find-json-output) for the record shapes.
+{ref}`cli-find-json-output` for the record shapes.
 
 Agents that already speak MCP should prefer
-[`agentgrep-mcp`](../mcp/index.md) — same discovery and parsing
-surface, but exposed as MCP tools with typed schemas.
+{ref}`MCP <mcp>` — same discovery and parsing surface, but exposed as
+MCP tools with typed schemas.
 
 ## Examples
 

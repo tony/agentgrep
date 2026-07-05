@@ -12,10 +12,10 @@ collector. Three frontends, one engine.
 
 A short scan completes before the user notices. A long one — broad
 patterns, deep history, slow stores — can take seconds. The legacy
-list-return path (`agentgrep.run_search_query`) buffers every match
-until the scan finishes, then returns the list. That hides the
-engine's progress from the consumer and forces a "wait, then dump"
-UX in the CLI.
+list-return path ({func}`~agentgrep.run_search_query`) buffers every
+match until the scan finishes, then returns the list. That hides the
+engine's progress from the consumer and forces a "wait, then dump" UX
+in the CLI.
 
 The event stream solves both:
 
@@ -72,13 +72,13 @@ keeps the test surface small.
 
 ### Pydantic events
 
-Events are frozen `pydantic.BaseModel` subclasses tagged with a
+Events are frozen {class}`pydantic.BaseModel` subclasses tagged with a
 `Literal["..."]` discriminator field. The union types
 {data}`~agentgrep.events.SearchEvent` and
 {data}`~agentgrep.events.FindEvent` carry
-`pydantic.Field(discriminator="type")` so runtime validation routes
-each payload to the correct variant and `isinstance` narrowing
-works in consumer loops.
+{func}`pydantic.Field` ``(discriminator="type")`` so runtime
+validation routes each payload to the correct variant and `isinstance`
+narrowing works in consumer loops.
 
 Events embed agentgrep's existing
 {class}`~agentgrep.SearchRecord` / {class}`~agentgrep.FindRecord`
@@ -88,14 +88,15 @@ layer consumers (a future HTTP SSE endpoint, for example) should
 serialise records through
 {class}`~agentgrep.mcp.models.SearchRecordModel` /
 {class}`~agentgrep.mcp.models.FindRecordModel` at the boundary so
-the dataclass-typed field doesn't block `model_dump_json()`.
+the dataclass-typed field doesn't block
+{meth}`pydantic.BaseModel.model_dump_json`.
 
 ## Search events
 
 The {data}`~agentgrep.events.SearchEvent` union has five members.
 Their guaranteed sequence:
 
-```
+```text
 SearchStarted → (SourceStarted → RecordEmitted* → SourceFinished)* → SearchFinished
 ```
 
@@ -124,7 +125,7 @@ The {data}`~agentgrep.events.FindEvent` union has three members.
 Find has no per-source scan loop — each discovered source produces
 exactly one record — so the sequence simplifies:
 
-```
+```text
 FindStarted → FindRecordEmitted* → FindFinished
 ```
 
@@ -192,8 +193,8 @@ event rather than draining first.
 ### Cancel mid-scan
 
 Pass a {class}`~agentgrep.SearchControl` and flip its
-`request_answer_now()` flag to break out at the next per-record
-boundary:
+{meth}`~agentgrep.SearchControl.request_answer_now` flag to break out
+at the next per-record boundary:
 
 ```python
 control = agentgrep.SearchControl()
@@ -209,14 +210,14 @@ The generator still emits `SearchFinished` so cleanup runs.
 This page documents Slice 1 — the sync iterator surface used by the
 CLI's live streaming. Two follow-up slices are planned:
 
-- **Slice 2**: an `aiter_search_events` async wrapper that bridges
-  the sync producer via a bounded `asyncio.Queue` and a thread-
-  backed producer task. Cancellation propagates through
+- **Slice 2**: an {func}`~agentgrep.aiter_search_events` async wrapper
+  that bridges the sync producer via a bounded {class}`asyncio.Queue`
+  and a thread-backed producer task. Cancellation propagates through
   `CancelledError`. The TUI moves to the async surface; the CLI
   keeps using the sync iterator.
-- **Slice 3**: source-level parallelism via `asyncio.TaskGroup`
-  over `asyncio.to_thread(parse_source, src)`. Each source's events
-  merge into a single output stream via the queue. Cancellation
+- **Slice 3**: source-level parallelism via {class}`asyncio.TaskGroup`
+  over {func}`asyncio.to_thread` ``(parse_source, src)``. Each source's
+  events merge into a single output stream via the queue. Cancellation
   propagates through task cancel.
 
 Both slices preserve the public event surface — consumers written

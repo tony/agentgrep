@@ -2,7 +2,7 @@
 
 # API Reference
 
-The `agentgrep.ui` subpackage holds the streaming Textual explorer.
+The {mod}`agentgrep.ui` subpackage holds the streaming Textual explorer.
 Textual is imported lazily inside
 {func}`~agentgrep.ui.app.build_streaming_ui_app` via
 `importlib.import_module`, so bare `import agentgrep` does not pull
@@ -11,9 +11,18 @@ the moment the factory is called.
 
 The subpackage's `__init__` re-exports {func}`~agentgrep.ui.app.run_ui`
 and {func}`~agentgrep.ui.app.build_streaming_ui_app` at the
-`agentgrep.ui` namespace for convenience, and the top-level
+{mod}`agentgrep.ui` namespace for convenience, and the top-level
 `agentgrep` package provides matching lazy wrappers so callers can
-use `agentgrep.run_ui()` without reaching into `agentgrep.ui.app`.
+use {func}`agentgrep.run_ui` without reaching into
+{mod}`agentgrep.ui.app`.
+
+```{eval-rst}
+.. automodule:: agentgrep.ui
+   :no-members:
+
+.. automodule:: agentgrep.ui.app
+   :no-members:
+```
 
 ## Argument type
 

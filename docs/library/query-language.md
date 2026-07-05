@@ -22,22 +22,22 @@ the parser.
 
 ## Grammar
 
-```
-query        := disjunction
-disjunction  := conjunction ("OR" conjunction)*
-conjunction  := negation ("AND"? negation)*
-negation     := ("NOT" | "-" | "+")? primary
-primary      := group | field-expr | phrase | term
-group        := "(" disjunction ")"
-field-expr   := IDENT ":" field-value
-field-value  := comparison | range | exists | exact-value
-comparison   := (">" | "<" | ">=" | "<=") TERM
-range        := "[" TERM "TO" TERM "]"        ; inclusive
-              | "{" TERM "TO" TERM "}"        ; exclusive
-exists       := "*"                           ; field present + non-empty
-exact-value  := TERM                          ; may carry * / ? wildcards
-phrase       := '"' TEXT '"'                  ; exact adjacent words
-term         := TERM
+```ebnf
+query = disjunction ;
+disjunction = conjunction, { "OR", conjunction } ;
+conjunction = negation, { [ "AND" ], negation } ;
+negation = [ "NOT" | "-" | "+" ], primary ;
+primary = group | field expr | phrase | term ;
+group = "(", disjunction, ")" ;
+field expr = IDENT, ":", field value ;
+field value = comparison | range | exists | exact value ;
+comparison = ( ">" | "<" | ">=" | "<=" ), TERM ;
+range = "[", TERM, "TO", TERM, "]" (* inclusive *)
+      | "{", TERM, "TO", TERM, "}" (* exclusive *) ;
+exists = "*" (* field present and non-empty *) ;
+exact value = TERM (* may carry "*" or "?" wildcards *) ;
+phrase = '"', TEXT, '"' (* exact adjacent words *) ;
+term = TERM ;
 ```
 
 A full query exercising most of the grammar:
@@ -90,10 +90,11 @@ the registered fields, so a mistyped predicate (`agnet:codex`) is
 caught immediately rather than silently matching nothing.
 
 Every queryable field, alias, and operator is also reflected
-programmatically by `agentgrep.query.help` (`query_language_fields`,
-`query_language_operators`), which backs the MCP tool descriptions and
-the {resource}`agentgrep_query_language` resource — the same vocabulary,
-never out of sync.
+programmatically by {mod}`agentgrep.query.help`
+({func}`~agentgrep.query.help.query_language_fields`,
+{func}`~agentgrep.query.help.query_language_operators`), which backs
+the MCP tool descriptions and the {resource}`agentgrep_query_language`
+resource — the same vocabulary, never out of sync.
 
 ## Phrases
 
