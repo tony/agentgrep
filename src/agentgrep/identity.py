@@ -344,7 +344,10 @@ def resolve_short_prefix(prefix: str, candidates: Iterable[str]) -> ShortIdResol
     'none'
     """
     needle = prefix.lower()
-    matches = tuple(sorted(candidate for candidate in candidates if candidate.startswith(needle)))
+    # Dedupe first: record_content_id is designed to collapse across adapter/path
+    # within a store, so the same full id routinely appears more than once. Two
+    # copies of one id are still one match, not an ambiguous pair.
+    matches = tuple(sorted({candidate for candidate in candidates if candidate.startswith(needle)}))
     if not matches:
         return ShortIdResolution("none", None, (), None)
     if len(matches) == 1:

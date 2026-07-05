@@ -152,6 +152,7 @@ _PREFIX_CASES = [
     _PrefixCase("ambiguous", "ab", ["abcd", "abce", "zz"], "ambiguous", None),
     _PrefixCase("none", "q", ["abcd", "wxyz"], "none", None),
     _PrefixCase("case_insensitive", "AB", ["abcd", "wxyz"], "unique", "abcd"),
+    _PrefixCase("duplicate_ids_collapse", "abcd", ["abcd", "abcd"], "unique", "abcd"),
 ]
 
 
@@ -164,6 +165,10 @@ def test_resolve_short_prefix(case: _PrefixCase) -> None:
     if case.status == "ambiguous":
         assert result.min_length is not None
         assert result.min_length >= len(case.prefix)
+    elif case.status == "unique":
+        # A unique match widens to the query length, never past it (duplicate
+        # full ids must collapse rather than inflate the distinguishing length).
+        assert result.min_length == len(case.prefix)
 
 
 def test_locator_id_is_byte_compatible_with_legacy_fingerprint() -> None:
