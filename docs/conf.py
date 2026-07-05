@@ -38,10 +38,12 @@ conf = merge_sphinx_config(
         "sphinx_autodoc_api_style",
         "sphinx_autodoc_argparse",
         "sphinx_autodoc_fastmcp",
+        "sphinx_gp_mermaid",
         "docs._ext.storages",
         "docs._ext.widgets",
         "docs._ext.lexers",
     ],
+    myst_fence_as_directive=["mermaid"],
     intersphinx_mapping={
         "python": ("https://docs.python.org/3/", None),
         "pydantic": ("https://docs.pydantic.dev/latest/", None),
@@ -57,7 +59,13 @@ conf = merge_sphinx_config(
     },
     # AGENTS.md is agent guidance, not a site page; keep Sphinx from
     # treating it as an orphan document.
-    exclude_patterns=["_build", "AGENTS.md", "CLAUDE.md"],
+    exclude_patterns=[
+        "_build",
+        "node_modules",
+        "_mermaid_cache",
+        "AGENTS.md",
+        "CLAUDE.md",
+    ],
 )
 
 conf["fastmcp_tool_modules"] = ["agentgrep_fastmcp"]

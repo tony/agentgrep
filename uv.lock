@@ -7,6 +7,7 @@ exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for 
 exclude-newer-span = "P3D"
 
 [options.exclude-newer-package]
+sphinx-gp-mermaid = false
 gp-sphinx = false
 sphinx-autodoc-sphinx = false
 sphinx-autodoc-api-style = false
@@ -69,6 +70,7 @@ dev = [
     { name = "sphinx-autodoc-api-style" },
     { name = "sphinx-autodoc-argparse" },
     { name = "sphinx-autodoc-fastmcp" },
+    { name = "sphinx-gp-mermaid" },
     { name = "syrupy" },
     { name = "tomlkit" },
     { name = "ty" },
@@ -81,6 +83,7 @@ docs = [
     { name = "sphinx-autodoc-api-style" },
     { name = "sphinx-autodoc-argparse" },
     { name = "sphinx-autodoc-fastmcp" },
+    { name = "sphinx-gp-mermaid" },
 ]
 
 [package.metadata]
@@ -109,6 +112,7 @@ dev = [
     { name = "sphinx-autodoc-api-style", specifier = "==0.0.1a32" },
     { name = "sphinx-autodoc-argparse", specifier = "==0.0.1a32" },
     { name = "sphinx-autodoc-fastmcp", specifier = "==0.0.1a32" },
+    { name = "sphinx-gp-mermaid", specifier = "==0.0.1a32" },
     { name = "syrupy", specifier = ">=5.1.0" },
     { name = "tomlkit", specifier = ">=0.13" },
     { name = "ty", specifier = ">=0.0.35" },
@@ -121,6 +125,7 @@ docs = [
     { name = "sphinx-autodoc-api-style", specifier = "==0.0.1a32" },
     { name = "sphinx-autodoc-argparse", specifier = "==0.0.1a32" },
     { name = "sphinx-autodoc-fastmcp", specifier = "==0.0.1a32" },
+    { name = "sphinx-gp-mermaid", specifier = "==0.0.1a32" },
 ]
 
 [[package]]
@@ -1691,6 +1696,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/76/91/c12bb22eff9c838ef51e4ad2f2f8e8c2286957bd804a55cd823a89b77f1e/sphinx_gp_llms-0.0.1a32.tar.gz", hash = "sha256:b043a9b81b6c2a273820092afe02a4d9c0c63021b5054bf5dab42aa7d8730d9f", size = 9910, upload-time = "2026-07-04T11:54:34.665Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/45/f0/1191ce0af7c39192db0ab0c02b6b57e98e91344a2e813adc56a73ba512f8/sphinx_gp_llms-0.0.1a32-py3-none-any.whl", hash = "sha256:4ee8bc2824b88f4182d8857010446d0102697a1eba29946057ba3c0c21cf0c8f", size = 12636, upload-time = "2026-07-04T11:54:16.667Z" },
+]
+
+[[package]]
+name = "sphinx-gp-mermaid"
+version = "0.0.1a32"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "sphinx" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c0/e8/3397aecb017a8beab4f13122ed6e961cc0b96eb3a0b5bb9535f7a533b741/sphinx_gp_mermaid-0.0.1a32.tar.gz", hash = "sha256:01e035add8e998daf25a433146ef57854a955c0b39219f4a71b1ac9cc9d1c84e", size = 70478, upload-time = "2026-07-04T11:54:35.57Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6a/46/9ecc34f7e39c235653907e3dd5a26ba72926e6e2caaad7decd7f4f7f314c/sphinx_gp_mermaid-0.0.1a32-py3-none-any.whl", hash = "sha256:6ffefab4bac2b77dc726aff6c5f7ec53a4fba58152c0cd2fa6505a80b0846d07", size = 11895, upload-time = "2026-07-04T11:54:17.755Z" },
 ]
 
 [[package]]

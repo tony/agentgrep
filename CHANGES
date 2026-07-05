@@ -42,6 +42,22 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### Documentation
+
+#### Diagrammed event-stream architecture (#95)
+
+The library docs now render Mermaid diagrams for the event-stream engine
+instead of relying on dense ASCII and one-line ordering notation. The
+architecture chart shows how one typed event stream feeds CLI, TUI, and MCP
+consumers, while the search and find sequence charts show the started,
+record, and finished envelopes that scripts can rely on.
+
+The docs build now carries a local Mermaid toolchain, so the diagrams render
+as themed SVGs during the Sphinx build and keep captions and fallback text in
+the generated site. The same pass tightens API cross-references and highlights
+the query grammar as EBNF, making the reference pages easier to scan without
+changing runtime behavior.
+
 ## agentgrep 0.1.0a32 (2026-07-04)
 
 agentgrep 0.1.0a32 realigns every agent backend to the formats today's

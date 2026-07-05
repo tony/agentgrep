@@ -84,6 +84,16 @@ every surface (CLI, TUI, MCP).
 .. autofunction:: agentgrep.iter_find_events
 ```
 
+## Query language helpers
+
+```{eval-rst}
+.. automodule:: agentgrep.query.help
+   :no-members:
+
+.. autofunction:: agentgrep.query.help.query_language_fields
+.. autofunction:: agentgrep.query.help.query_language_operators
+```
+
 ## Discovery and search
 
 ```{eval-rst}

@@ -70,6 +70,8 @@ instance/
 
 # Sphinx documentation
 docs/_build/
+docs/_mermaid_cache/
+docs/node_modules/
 
 # PyBuilder
 .pybuilder/

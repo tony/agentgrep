@@ -1,0 +1,8 @@
+{
+  "name": "agentgrep-docs",
+  "private": true,
+  "description": "Build-time tooling for the agentgrep docs.",
+  "devDependencies": {
+    "@mermaid-js/mermaid-cli": "11.15.0"
+  }
+}

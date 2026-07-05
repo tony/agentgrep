@@ -12,10 +12,10 @@ collector. Three frontends, one engine.
 
 A short scan completes before the user notices. A long one — broad
 patterns, deep history, slow stores — can take seconds. The legacy
-list-return path (`agentgrep.run_search_query`) buffers every match
-until the scan finishes, then returns the list. That hides the
-engine's progress from the consumer and forces a "wait, then dump"
-UX in the CLI.
+list-return path ({func}`~agentgrep.run_search_query`) buffers every
+match until the scan finishes, then returns the list. That hides the
+engine's progress from the consumer and forces a "wait, then dump" UX
+in the CLI.
 
 The event stream solves both:
 
@@ -33,35 +33,38 @@ The event stream solves both:
 
 ## Architecture
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│                   PRODUCER  (agentgrep._engine)                │
-│                                                                │
-│   def iter_search_events(home, query, *, control=None)         │
-│       -> Iterator[SearchEvent]:                                │
-│                                                                │
-│     yield SearchStarted(source_count=...)                      │
-│     for source in discovered:                                  │
-│         yield SourceStarted(adapter_id, index, total)          │
-│         for record in iter_source_records(source):             │
-│             if matches(record, query) and unique:              │
-│                 yield RecordEmitted(record=record)             │
-│         yield SourceFinished(adapter_id, records_seen, ...)    │
-│     yield SearchFinished(match_count, elapsed_seconds)         │
-└──────────────────────────┬─────────────────────────────────────┘
-                           │
-       ┌───────────────────┼───────────────────┐
-       ▼                   ▼                   ▼
-┌──────────────┐  ┌──────────────────┐  ┌──────────────────┐
-│  CLI (sync)  │  │  TUI (Textual)   │  │   MCP (sync)     │
-│              │  │                  │  │                  │
-│ for ev in    │  │ @work(thread=    │  │ list(records     │
-│   stream:    │  │  True) consumes  │  │   for ev in      │
-│   if Record  │  │  via to_thread   │  │   stream if      │
-│      print() │  │                  │  │   isinstance     │
-│      flush() │  │                  │  │   RecordEmitted) │
-└──────────────┘  └──────────────────┘  └──────────────────┘
-```
+::::{mermaid}
+:caption: One typed event stream feeds every frontend.
+
+flowchart TD
+    engine["agentgrep._engine"]:::cmd
+    iterator["iter_search_events"]:::cmd
+    events["SearchEvent / FindEvent"]:::cmd
+
+    started["Started envelope"]
+    source["Source progress"]
+    record["Record emitted"]
+    finished["Finished envelope"]
+
+    cli["CLI live output"]
+    tui["Textual worker"]
+    mcp["MCP collector"]
+
+    engine --> iterator
+    iterator --> events
+    events --> started
+    events --> source
+    events --> record
+    events --> finished
+    record --> cli
+    record --> tui
+    record --> mcp
+    source --> cli
+    source --> tui
+    finished --> cli
+    finished --> tui
+    finished --> mcp
+::::
 
 ### Sync producer
 
@@ -72,13 +75,13 @@ keeps the test surface small.
 
 ### Pydantic events
 
-Events are frozen `pydantic.BaseModel` subclasses tagged with a
+Events are frozen {class}`pydantic.BaseModel` subclasses tagged with a
 `Literal["..."]` discriminator field. The union types
 {data}`~agentgrep.events.SearchEvent` and
 {data}`~agentgrep.events.FindEvent` carry
-`pydantic.Field(discriminator="type")` so runtime validation routes
-each payload to the correct variant and `isinstance` narrowing
-works in consumer loops.
+{func}`pydantic.Field` ``(discriminator="type")`` so runtime
+validation routes each payload to the correct variant and `isinstance`
+narrowing works in consumer loops.
 
 Events embed agentgrep's existing
 {class}`~agentgrep.SearchRecord` / {class}`~agentgrep.FindRecord`
@@ -88,16 +91,32 @@ layer consumers (a future HTTP SSE endpoint, for example) should
 serialise records through
 {class}`~agentgrep.mcp.models.SearchRecordModel` /
 {class}`~agentgrep.mcp.models.FindRecordModel` at the boundary so
-the dataclass-typed field doesn't block `model_dump_json()`.
+the dataclass-typed field doesn't block
+{meth}`pydantic.BaseModel.model_dump_json`.
 
 ## Search events
 
 The {data}`~agentgrep.events.SearchEvent` union has five members.
 Their guaranteed sequence:
 
-```
-SearchStarted → (SourceStarted → RecordEmitted* → SourceFinished)* → SearchFinished
-```
+::::{mermaid}
+:caption: Search events always open and close an envelope around each source.
+
+flowchart TD
+    search_started["SearchStarted"]:::cmd
+    source_started["SourceStarted"]:::cmd
+    record_emitted["RecordEmitted"]:::cmd
+    source_finished["SourceFinished"]:::cmd
+    search_finished["SearchFinished"]:::cmd
+
+    search_started --> source_started
+    source_started -->|match| record_emitted
+    source_started -->|zero matches| source_finished
+    record_emitted -->|next match| record_emitted
+    record_emitted --> source_finished
+    source_finished -->|next source| source_started
+    source_finished --> search_finished
+::::
 
 - {class}`~agentgrep.events.SearchStarted` — exactly once at the
   head. Carries `source_count` (the number of candidate sources
@@ -124,9 +143,19 @@ The {data}`~agentgrep.events.FindEvent` union has three members.
 Find has no per-source scan loop — each discovered source produces
 exactly one record — so the sequence simplifies:
 
-```
-FindStarted → FindRecordEmitted* → FindFinished
-```
+::::{mermaid}
+:caption: Find emits one record per discovered source, then finishes.
+
+flowchart TD
+    find_started["FindStarted"]:::cmd
+    find_record["FindRecordEmitted"]:::cmd
+    find_finished["FindFinished"]:::cmd
+
+    find_started -->|record| find_record
+    find_started -->|no records| find_finished
+    find_record -->|next record| find_record
+    find_record --> find_finished
+::::
 
 - {class}`~agentgrep.events.FindStarted`
 - {class}`~agentgrep.events.FindRecordEmitted`
@@ -192,8 +221,8 @@ event rather than draining first.
 ### Cancel mid-scan
 
 Pass a {class}`~agentgrep.SearchControl` and flip its
-`request_answer_now()` flag to break out at the next per-record
-boundary:
+{meth}`~agentgrep.SearchControl.request_answer_now` flag to break out
+at the next per-record boundary:
 
 ```python
 control = agentgrep.SearchControl()
@@ -209,14 +238,14 @@ The generator still emits `SearchFinished` so cleanup runs.
 This page documents Slice 1 — the sync iterator surface used by the
 CLI's live streaming. Two follow-up slices are planned:
 
-- **Slice 2**: an `aiter_search_events` async wrapper that bridges
-  the sync producer via a bounded `asyncio.Queue` and a thread-
-  backed producer task. Cancellation propagates through
+- **Slice 2**: an {func}`~agentgrep.aiter_search_events` async wrapper
+  that bridges the sync producer via a bounded {class}`asyncio.Queue`
+  and a thread-backed producer task. Cancellation propagates through
   `CancelledError`. The TUI moves to the async surface; the CLI
   keeps using the sync iterator.
-- **Slice 3**: source-level parallelism via `asyncio.TaskGroup`
-  over `asyncio.to_thread(parse_source, src)`. Each source's events
-  merge into a single output stream via the queue. Cancellation
+- **Slice 3**: source-level parallelism via {class}`asyncio.TaskGroup`
+  over {func}`asyncio.to_thread` ``(parse_source, src)``. Each source's
+  events merge into a single output stream via the queue. Cancellation
   propagates through task cancel.
 
 Both slices preserve the public event surface — consumers written
