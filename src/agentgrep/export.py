@@ -180,8 +180,14 @@ def render_export(
         return render_json(records, redact=redact, limit=limit)
     if fmt == "csv":
         return render_csv(records, redact=redact, limit=limit)
-    selected = records if limit is None else sorted(records, key=export_total_order_key)[:limit]
-    return render_markdown(assemble_conversations(selected), redact=redact)
+    # Group first, then cap whole conversations. Applying ``limit`` to the flat
+    # record list truncates a conversation mid-turn and hashes a partial member
+    # set, breaking the completeness guarantee export's content_hash makes.
+    conversations = assemble_conversations(records)
+    return render_markdown(
+        conversations if limit is None else conversations[:limit],
+        redact=redact,
+    )
 
 
 def iter_ndjson_lines(

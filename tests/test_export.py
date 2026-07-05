@@ -226,3 +226,17 @@ def test_export_limit_rejects_non_positive_value(capsys: pytest.CaptureFixture[s
         _ = agentgrep.parse_args(["export", "--limit", "0"])
     assert exc_info.value.code == 2
     assert "--limit must be greater than 0" in capsys.readouterr().err
+
+
+def test_markdown_limit_caps_whole_conversations() -> None:
+    """Markdown ``--limit`` bounds whole conversations, never truncating one mid-turn."""
+    records = [
+        _record(text="c1-t1", session_id="c1", timestamp="2026-01-01T00:00:00Z"),
+        _record(text="c1-t2", session_id="c1", role="assistant", timestamp="2026-01-01T00:01:00Z"),
+        _record(text="c2-t1", session_id="c2", timestamp="2026-01-02T00:00:00Z"),
+        _record(text="c2-t2", session_id="c2", role="assistant", timestamp="2026-01-02T00:01:00Z"),
+    ]
+    out = export.render_export(records, "markdown", limit=1)
+    assert "c1-t1" in out
+    assert "c1-t2" in out
+    assert "c2-t1" not in out
