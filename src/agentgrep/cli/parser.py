@@ -967,6 +967,10 @@ def parse_args(
     output_mode = parse_output_mode(namespace)
 
     if command == "export":
+        limit = t.cast("int | None", namespace.limit)
+        if limit is not None and limit < 1:
+            with configured_color_environment(color_mode):
+                bundle.export_parser.error("--limit must be greater than 0")
         export_terms = tuple(t.cast("list[str]", namespace.terms))
         export_compiled, export_residual, _export_fields = _maybe_compile_query(
             list(export_terms),
@@ -980,7 +984,7 @@ def parse_args(
             scope=t.cast("SearchScope", namespace.scope or "prompts"),
             fmt=t.cast("t.Literal['ndjson', 'json', 'markdown', 'csv']", namespace.fmt),
             redact=t.cast("bool", namespace.redact),
-            limit=t.cast("int | None", namespace.limit),
+            limit=limit,
             out=t.cast("str | None", namespace.out),
             color_mode=color_mode,
             compiled=export_compiled,

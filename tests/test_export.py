@@ -218,3 +218,11 @@ def test_export_compiles_field_predicates() -> None:
     assert args.compiled is not None
     assert args.terms == ()
     assert args.raw_query == "role:user"
+
+
+def test_export_limit_rejects_non_positive_value(capsys: pytest.CaptureFixture[str]) -> None:
+    """``export --limit`` requires a positive record cap, like every sibling verb."""
+    with pytest.raises(SystemExit) as exc_info:
+        _ = agentgrep.parse_args(["export", "--limit", "0"])
+    assert exc_info.value.code == 2
+    assert "--limit must be greater than 0" in capsys.readouterr().err
