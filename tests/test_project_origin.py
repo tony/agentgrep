@@ -10,7 +10,11 @@ import typing as t
 import pytest
 
 import agentgrep
-from agentgrep.origin import record_matches_origin
+from agentgrep.origin import (
+    normalize_origin_path_text,
+    origin_filter_nodes,
+    record_matches_origin,
+)
 from agentgrep.query import compile_query, default_registry, parse_query
 
 
@@ -843,3 +847,28 @@ def test_origin_boost_shares_filter_path_normalization(
     )
 
     assert record_matches_origin(record, case.boost) is case.expected
+
+
+class BlankOriginFilterCase(t.NamedTuple):
+    """Parametrized case for blank origin filter values."""
+
+    test_id: str
+    value: str
+
+
+BLANK_ORIGIN_FILTER_CASES: tuple[BlankOriginFilterCase, ...] = (
+    BlankOriginFilterCase(test_id="empty", value=""),
+    BlankOriginFilterCase(test_id="spaces", value="   "),
+    BlankOriginFilterCase(test_id="tab", value="\t"),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    BLANK_ORIGIN_FILTER_CASES,
+    ids=[case.test_id for case in BLANK_ORIGIN_FILTER_CASES],
+)
+def test_blank_origin_filter_values_are_absent(case: BlankOriginFilterCase) -> None:
+    """A blank filter value is treated as absent, not as the process cwd."""
+    assert normalize_origin_path_text(case.value) is None
+    assert origin_filter_nodes(branch=case.value) == ()

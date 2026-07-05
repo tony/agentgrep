@@ -69,7 +69,8 @@ def normalize_origin_path_text(value: str | None) -> str | None:
     ``cwd="."`` resolve the same way before matching against the
     absolute paths records carry.
     """
-    if value is None:
+    if value is None or not value.strip():
+        # A blank value must not resolve to the invoking process's cwd.
         return None
     path = pathlib.Path(value).expanduser()
     if not path.is_absolute():
@@ -103,7 +104,7 @@ def origin_filter_nodes(
             ("branch", branch),
             ("cwd_hash", cwd_hash),
         )
-        if value
+        if value and value.strip()
     )
 
 

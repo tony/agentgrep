@@ -858,6 +858,40 @@ async def test_mcp_search_normalizes_origin_path_filters(
     assert [row["text"] for row in tilde_data["results"]] == ["origin serenity"]
 
 
+async def test_mcp_search_ignores_blank_origin_filters(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Blank cwd/repo/branch values never filter against the server's cwd."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    sessions = home / ".codex" / "sessions" / "2026" / "01" / "01"
+    write_codex_prompt_session(
+        sessions / "blank.jsonl",
+        session_id="blank",
+        timestamp="2026-06-02T00:00:00Z",
+        text="origin serenity",
+        cwd="/workspace/elsewhere",
+    )
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        blank = await client.call_tool(
+            "search",
+            {
+                "terms": ["serenity"],
+                "agent": "codex",
+                "scope": "prompts",
+                "cwd": "",
+                "repo": " ",
+                "branch": "",
+            },
+        )
+
+    blank_data = tool_payload(blank)
+    assert [row["text"] for row in blank_data["results"]] == ["origin serenity"]
+
+
 async def test_mcp_search_origin_filters_scope_boolean_query(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

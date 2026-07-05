@@ -91,7 +91,11 @@ def _request_from_cursor(request: SearchRequestModel) -> tuple[SearchRequestMode
 
 
 def _request_has_origin_filter(request: SearchRequestModel) -> bool:
-    return bool(request.cwd or request.repo or request.branch)
+    return bool(
+        (request.cwd or "").strip()
+        or (request.repo or "").strip()
+        or (request.branch or "").strip(),
+    )
 
 
 def _compile_request_query(

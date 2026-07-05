@@ -668,9 +668,9 @@ def _search_explicit_flags(namespace: argparse.Namespace) -> dict[str, str]:
 def _search_has_origin_filter(namespace: argparse.Namespace) -> bool:
     """Return whether ``search`` has a flag that can run without text terms."""
     return bool(
-        t.cast("str | None", namespace.cwd)
-        or t.cast("str | None", namespace.repo)
-        or t.cast("str | None", namespace.branch)
+        t.cast("str", namespace.cwd or "").strip()
+        or t.cast("str", namespace.repo or "").strip()
+        or t.cast("str", namespace.branch or "").strip()
         or t.cast("bool", namespace.only_here),
     )
 
