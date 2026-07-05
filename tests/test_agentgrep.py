@@ -1430,6 +1430,58 @@ def test_iter_message_candidates_skips_text_extraction_without_role(
     assert len(calls) == 1  # the single role-bearing node
 
 
+class MessageCandidateOriginCase(t.NamedTuple):
+    """One ``iter_message_candidates`` walk and its expected origin cwd."""
+
+    test_id: str
+    value: object
+    expected_cwd: str | None
+
+
+_MESSAGE_CANDIDATE_ORIGIN_CASES = (
+    MessageCandidateOriginCase(
+        test_id="uuid_workspace_not_a_path",
+        value={"workspace": "a1b2-uuid", "messages": [{"role": "user", "text": "hi"}]},
+        expected_cwd=None,
+    ),
+    MessageCandidateOriginCase(
+        test_id="bare_token_directory_not_a_path",
+        value={"directory": "sidebar", "messages": [{"role": "user", "text": "hi"}]},
+        expected_cwd=None,
+    ),
+    MessageCandidateOriginCase(
+        test_id="path_workspace_extracted",
+        value={"workspace": "/work/proj", "messages": [{"role": "user", "text": "hi"}]},
+        expected_cwd="/work/proj",
+    ),
+    MessageCandidateOriginCase(
+        test_id="home_prefixed_cwd_extracted",
+        value={"cwd": "~/work/proj", "messages": [{"role": "user", "text": "hi"}]},
+        expected_cwd="~/work/proj",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    _MESSAGE_CANDIDATE_ORIGIN_CASES,
+    ids=lambda case: case.test_id,
+)
+def test_iter_message_candidates_requires_path_like_origin_values(
+    case: MessageCandidateOriginCase,
+) -> None:
+    """Bare tokens under path-named keys never become origin paths."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    candidates = list(agentgrep.iter_message_candidates(case.value))
+    assert len(candidates) == 1
+    origin = candidates[0].origin
+    if case.expected_cwd is None:
+        assert origin is None
+    else:
+        assert origin is not None
+        assert origin.cwd == case.expected_cwd
+
+
 class CodexNoiseLineCase(t.NamedTuple):
     """One Codex JSONL line and whether it is a function-call-output record."""
 

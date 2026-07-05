@@ -310,6 +310,21 @@ def _record_origin(
     return None if origin.is_empty() else origin
 
 
+def _path_like_str(value: object) -> str | None:
+    """Accept a mapping value as an origin path only when it looks like one.
+
+    Store blobs reuse key names like ``workspace`` or ``branch`` for
+    non-filesystem values (workspace UUIDs, UI state); a bare token
+    without a separator or home prefix must not become an origin path.
+    """
+    text = as_optional_str(value)
+    if text is None:
+        return None
+    if "/" in text or "\\" in text or text == "~":
+        return text
+    return None
+
+
 def _origin_from_mapping(
     mapping: dict[str, object],
     *,
@@ -319,11 +334,11 @@ def _origin_from_mapping(
     git = mapping.get("git")
     git_mapping = t.cast("dict[str, object]", git) if isinstance(git, dict) else {}
     return _record_origin(
-        cwd=as_optional_str(mapping.get("cwd"))
-        or as_optional_str(mapping.get("workspace"))
-        or as_optional_str(mapping.get("directory")),
-        repo=as_optional_str(mapping.get("repo")) or as_optional_str(mapping.get("repository")),
-        worktree=as_optional_str(mapping.get("worktree")),
+        cwd=_path_like_str(mapping.get("cwd"))
+        or _path_like_str(mapping.get("workspace"))
+        or _path_like_str(mapping.get("directory")),
+        repo=_path_like_str(mapping.get("repo")) or _path_like_str(mapping.get("repository")),
+        worktree=_path_like_str(mapping.get("worktree")),
         branch=(
             as_optional_str(mapping.get("gitBranch"))
             or as_optional_str(mapping.get("branch"))
