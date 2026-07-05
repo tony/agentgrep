@@ -184,3 +184,37 @@ def test_bookmark_resolves_live_record_after_store_rewrite(
     # Rewrite in place, advancing only the mtime; the id (and resolution) hold.
     os.utime(session, (10_000_000_000, 10_000_000_000))
     assert _resolved_text(record["id"][:6]) == "resolve me"
+
+
+def test_bookmark_session_survives_read_paths(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A session-tagged bookmark surfaces its session on the CLI and MCP read paths.
+
+    ``bookmark add`` parses ``session_id``/``conversation_id`` into the stored
+    entry, so the value must be observable again through ``bookmark list`` and
+    the MCP bookmark model rather than being write-only.
+    """
+    from agentgrep.mcp.tools.bookmark_tools import _to_model
+
+    _clean_bookmark_env(monkeypatch, tmp_path)
+    record = {
+        "content_id": "de" * 32,
+        "adapter_id": "codex.sessions_jsonl.v1",
+        "agent": "codex",
+        "path": "~/.codex/x.jsonl",
+        "text": "refactor the parser",
+        "session_id": "sess-42",
+    }
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(record)))
+    assert agentgrep.main(["bookmark", "add"]) == 0
+    _ = capsys.readouterr()
+
+    assert agentgrep.main(["bookmark", "list", "--json"]) == 0
+    row = json.loads(capsys.readouterr().out)["results"][0]
+    assert row["session"] == "sess-42"
+
+    entry = bookmarks.load_bookmarks(bookmarks.bookmarks_path(tmp_path))[0]
+    assert _to_model(entry).session == "sess-42"

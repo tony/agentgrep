@@ -698,6 +698,7 @@ def _bookmark_row(entry: BookmarkEntry) -> dict[str, object]:
         "kind": entry.kind,
         "title": entry.title,
         "timestamp": entry.timestamp,
+        "session": entry.session,
         "snippet": entry.snippet,
         "note": entry.note,
         "tags": list(entry.tags),

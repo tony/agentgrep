@@ -259,6 +259,7 @@ class BookmarkModel(AgentGrepModel):
     kind: str
     title: str | None = None
     timestamp: str | None = None
+    session: str | None = None
     snippet: str = ""
     note: str = ""
     tags: list[str] = Field(default_factory=list)

@@ -38,6 +38,7 @@ def _to_model(entry: BookmarkEntry) -> BookmarkModel:
         kind=entry.kind,
         title=entry.title,
         timestamp=entry.timestamp,
+        session=entry.session,
         snippet=entry.snippet,
         note=entry.note,
         tags=list(entry.tags),
