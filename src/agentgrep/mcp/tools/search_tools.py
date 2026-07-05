@@ -34,7 +34,7 @@ from agentgrep.mcp.models import (
     SearchToolResponse,
     SourceRecordModel,
 )
-from agentgrep.origin import origin_filter_nodes
+from agentgrep.origin import normalize_origin_path_text, origin_filter_nodes
 from agentgrep.query.help import query_language_summary
 
 if t.TYPE_CHECKING:
@@ -117,8 +117,8 @@ def _compile_request_query(
     )
 
     origin_nodes = origin_filter_nodes(
-        cwd=request.cwd,
-        repo=request.repo,
+        cwd=normalize_origin_path_text(request.cwd),
+        repo=normalize_origin_path_text(request.repo),
         branch=request.branch,
     )
     terms = tuple(term for term in request.terms if term.strip())

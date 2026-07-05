@@ -17,7 +17,6 @@ import collections.abc as cabc
 import contextlib
 import dataclasses
 import os
-import pathlib
 import re
 import sys
 import typing as t
@@ -30,7 +29,7 @@ from agentgrep._text import (
     UI_DESCRIPTION,
 )
 from agentgrep.cli.help_theme import create_themed_formatter
-from agentgrep.origin import origin_filter_nodes
+from agentgrep.origin import normalize_origin_path_text, origin_filter_nodes
 from agentgrep.project_context import ProjectContext, detect_project_context
 from agentgrep.records import (
     AGENT_CHOICES,
@@ -680,8 +679,8 @@ def _build_search_origin_nodes(
     namespace: argparse.Namespace,
 ) -> tuple[tuple[FieldEqNode, ...], RecordOrigin | None]:
     """Build generated query predicates and optional same-project boost."""
-    cwd = _normalize_origin_path_arg(t.cast("str | None", namespace.cwd))
-    repo = _normalize_origin_path_arg(t.cast("str | None", namespace.repo))
+    cwd = normalize_origin_path_text(t.cast("str | None", namespace.cwd))
+    repo = normalize_origin_path_text(t.cast("str | None", namespace.repo))
     branch = t.cast("str | None", namespace.branch)
     origin_boost: RecordOrigin | None = None
     if t.cast("bool", namespace.here) or t.cast("bool", namespace.only_here):
@@ -698,16 +697,6 @@ def _search_here_origin_boost(context: ProjectContext) -> RecordOrigin:
     if project_root is not None:
         return RecordOrigin(repo=str(project_root))
     return RecordOrigin(cwd=str(context.cwd))
-
-
-def _normalize_origin_path_arg(value: str | None) -> str | None:
-    """Normalize a path-valued CLI origin argument without touching the filesystem."""
-    if value is None:
-        return None
-    path = pathlib.Path(value).expanduser()
-    if not path.is_absolute():
-        path = pathlib.Path.cwd() / path
-    return str(path.resolve(strict=False))
 
 
 def _query_value_display(value: str) -> str:

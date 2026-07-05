@@ -19,6 +19,7 @@ __all__ = [
     "LEGACY_ORIGIN_METADATA_KEYS",
     "_origin_path_boundary_text",
     "_path_is_equal_or_descendant",
+    "normalize_origin_path_text",
     "origin_filter_nodes",
     "record_matches_origin",
     "record_origin_field_values",
@@ -50,6 +51,21 @@ _STRING_FIELD_KEYS: dict[str, tuple[str, ...]] = {
     "branch": ("branch", "gitBranch"),
     "cwd_hash": ("cwd_hash", "project_hash", "projectHash"),
 }
+
+
+def normalize_origin_path_text(value: str | None) -> str | None:
+    """Expand and absolutize a user-supplied origin path filter value.
+
+    CLI and MCP frontends share this so ``--cwd .`` and an MCP
+    ``cwd="."`` resolve the same way before matching against the
+    absolute paths records carry.
+    """
+    if value is None:
+        return None
+    path = pathlib.Path(value).expanduser()
+    if not path.is_absolute():
+        path = pathlib.Path.cwd() / path
+    return str(path.resolve(strict=False))
 
 
 def origin_filter_nodes(

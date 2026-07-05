@@ -823,6 +823,47 @@ async def test_mcp_search_explicit_origin_filters_survive_cursor(
     assert second_data["page"]["next_cursor"] is None
 
 
+async def test_mcp_search_normalizes_origin_path_filters(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Relative and ~-prefixed MCP cwd filters resolve like the CLI flags."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    workspace = home / "work" / "agentgrep"
+    workspace.mkdir(parents=True)
+    sessions = home / ".codex" / "sessions" / "2026" / "01" / "01"
+    write_codex_prompt_session(
+        sessions / "same.jsonl",
+        session_id="same",
+        timestamp="2026-06-02T00:00:00Z",
+        text="origin serenity",
+        cwd=str(workspace.resolve()),
+    )
+    monkeypatch.chdir(workspace)
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        relative = await client.call_tool(
+            "search",
+            {"terms": ["serenity"], "agent": "codex", "scope": "prompts", "cwd": "."},
+        )
+        tilde = await client.call_tool(
+            "search",
+            {
+                "terms": ["serenity"],
+                "agent": "codex",
+                "scope": "prompts",
+                "cwd": "~/work/agentgrep",
+            },
+        )
+
+    relative_data = tool_payload(relative)
+    tilde_data = tool_payload(tilde)
+    assert [row["text"] for row in relative_data["results"]] == ["origin serenity"]
+    assert [row["text"] for row in tilde_data["results"]] == ["origin serenity"]
+
+
 async def test_mcp_search_origin_filters_scope_boolean_query(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
