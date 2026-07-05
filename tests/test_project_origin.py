@@ -997,3 +997,22 @@ def test_history_parsers_gate_non_path_origin_values(
         assert origin is None
     else:
         assert origin == agentgrep.RecordOrigin(cwd=case.expected_cwd)
+
+
+def test_metadata_and_origin_agree_on_path_likeness() -> None:
+    """One shared predicate decides path rewriting for origin and metadata."""
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text="origin display parity",
+        origin=agentgrep.RecordOrigin(cwd="work/proj"),
+        metadata={"directory": "work/proj"},
+    )
+
+    payload = agentgrep.serialize_search_record(record)
+
+    assert payload["origin"] is not None
+    assert payload["origin"]["cwd"] == payload["metadata"]["directory"]

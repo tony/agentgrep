@@ -23,6 +23,7 @@ import tomllib
 import typing as t
 import urllib.parse
 
+from agentgrep.origin import is_path_like_text
 from agentgrep.readers import (
     _CODEX_RAW_SKIP_MIN_BYTES,
     _CODEX_SESSION_META_MARKER,
@@ -318,11 +319,9 @@ def _path_like_str(value: object) -> str | None:
     without a separator or home prefix must not become an origin path.
     """
     text = as_optional_str(value)
-    if text is None:
+    if text is None or not is_path_like_text(text):
         return None
-    if "/" in text or "\\" in text or text == "~":
-        return text
-    return None
+    return text
 
 
 def _origin_from_mapping(

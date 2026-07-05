@@ -23,6 +23,7 @@ __all__ = [
     "ORIGIN_STRING_QUERY_FIELDS",
     "_origin_path_boundary_text",
     "_path_is_equal_or_descendant",
+    "is_path_like_text",
     "normalize_origin_path_text",
     "origin_filter_nodes",
     "record_matches_origin",
@@ -61,6 +62,21 @@ _STRING_FIELD_KEYS: dict[str, tuple[str, ...]] = {
 ORIGIN_PATH_QUERY_FIELDS: frozenset[str] = frozenset(_PATH_FIELD_KEYS)
 ORIGIN_STRING_QUERY_FIELDS: frozenset[str] = frozenset(_STRING_FIELD_KEYS) | {"project"}
 ORIGIN_QUERY_FIELDS: frozenset[str] = ORIGIN_PATH_QUERY_FIELDS | ORIGIN_STRING_QUERY_FIELDS
+
+
+def is_path_like_text(text: str) -> bool:
+    """Return whether a store value looks like a filesystem path.
+
+    Shared by ingest gating (adapters) and display rewriting
+    (serializers) so origin fields and legacy metadata agree on what
+    counts as a path.
+
+    >>> is_path_like_text("/work/proj"), is_path_like_text("~")
+    (True, True)
+    >>> is_path_like_text("a1b2-uuid")
+    False
+    """
+    return "/" in text or "\\" in text or text == "~"
 
 
 def normalize_origin_path_text(value: str | None) -> str | None:

@@ -15,7 +15,7 @@ import urllib.parse
 
 from agentgrep import maybe_use_pydantic
 from agentgrep._text import format_display_path
-from agentgrep.origin import LEGACY_ORIGIN_METADATA_KEYS
+from agentgrep.origin import LEGACY_ORIGIN_METADATA_KEYS, is_path_like_text
 from agentgrep.records import (
     SCHEMA_VERSION,
     EnvelopeFactory,
@@ -105,7 +105,12 @@ def serialize_record_metadata(metadata: dict[str, object]) -> dict[str, object]:
     """
     payload: dict[str, object] = {}
     for key, value in metadata.items():
-        if key in LEGACY_ORIGIN_METADATA_KEYS and isinstance(value, str) and _is_path_like(value):
+        is_legacy_path = (
+            key in LEGACY_ORIGIN_METADATA_KEYS
+            and isinstance(value, str)
+            and is_path_like_text(value)
+        )
+        if is_legacy_path:
             payload[key] = _display_path_text(value)
         else:
             payload[key] = value
@@ -114,16 +119,6 @@ def serialize_record_metadata(metadata: dict[str, object]) -> dict[str, object]:
 
 def _display_path_text(value: str) -> str:
     return format_display_path(pathlib.Path(value), directory=True)
-
-
-def _is_path_like(value: str) -> bool:
-    return (
-        value == "~"
-        or value.startswith("~/")
-        or value.startswith("/")
-        or value.startswith("./")
-        or value.startswith("../")
-    )
 
 
 # @ is excluded from host and path so credential-shaped remotes fall
