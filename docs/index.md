@@ -95,13 +95,13 @@ Per-agent store layouts, record schemas, and support matrix.
 
 Find prompt records by literal term or regular expression, with explicit opt-in for conversations.
 
-Use {tool}`search` from MCP clients.
+<a class="reference internal" href="mcp/tools/#fastmcp-tool-search"><code>search</code></a>
 
 ### Discovery
 
 List the stores, session files, and SQLite databases that agentgrep can read.
 
-Use {tool}`find` from MCP clients.
+<a class="reference internal" href="mcp/tools/#fastmcp-tool-find"><code>find</code></a>
 
 ### MCP guidance
 
