@@ -30,7 +30,7 @@ from agentgrep._text import (
     UI_DESCRIPTION,
 )
 from agentgrep.cli.help_theme import create_themed_formatter
-from agentgrep.origin import origin_filter_terms, origin_filtered_query_text
+from agentgrep.origin import origin_filter_nodes
 from agentgrep.project_context import ProjectContext, detect_project_context
 from agentgrep.records import (
     AGENT_CHOICES,
@@ -44,7 +44,7 @@ from agentgrep.records import (
 )
 
 if t.TYPE_CHECKING:
-    from agentgrep.query import CompiledQuery
+    from agentgrep.query import CompiledQuery, FieldEqNode
 
 CaseMode = t.Literal["smart", "ignore", "respect"]
 PatternMode = t.Literal["regex", "fixed", "word"]
@@ -676,9 +676,9 @@ def _search_has_origin_filter(namespace: argparse.Namespace) -> bool:
     )
 
 
-def _build_search_origin_terms(
+def _build_search_origin_nodes(
     namespace: argparse.Namespace,
-) -> tuple[tuple[str, ...], RecordOrigin | None]:
+) -> tuple[tuple[FieldEqNode, ...], RecordOrigin | None]:
     """Build generated query predicates and optional same-project boost."""
     cwd = _normalize_origin_path_arg(t.cast("str | None", namespace.cwd))
     repo = _normalize_origin_path_arg(t.cast("str | None", namespace.repo))
@@ -690,7 +690,7 @@ def _build_search_origin_terms(
             origin_boost = _search_here_origin_boost(context)
         if t.cast("bool", namespace.only_here):
             cwd = cwd or str(context.worktree or context.repo or context.cwd)
-    return origin_filter_terms(cwd=cwd, repo=repo, branch=branch), origin_boost
+    return origin_filter_nodes(cwd=cwd, repo=repo, branch=branch), origin_boost
 
 
 def _search_here_origin_boost(context: ProjectContext) -> RecordOrigin:
@@ -708,6 +708,12 @@ def _normalize_origin_path_arg(value: str | None) -> str | None:
     if not path.is_absolute():
         path = pathlib.Path.cwd() / path
     return str(path.resolve(strict=False))
+
+
+def _query_value_display(value: str) -> str:
+    """Quote a generated predicate value for the UI search-box seed."""
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
 
 
 def _grep_explicit_flags(namespace: argparse.Namespace) -> dict[str, str]:
@@ -825,6 +831,7 @@ def _maybe_compile_query(
     explicit_flags: dict[str, str] | None = None,
     find_mode: bool = False,
     case_sensitive: bool = False,
+    extra_nodes: tuple[FieldEqNode, ...] = (),
 ) -> tuple[CompiledQuery | None, tuple[str, ...], set[str]]:
     """Detect Lucene-style query syntax in positionals and compile if present.
 
@@ -844,30 +851,34 @@ def _maybe_compile_query(
     (record-level field predicates, boolean text composition), since
     ``find`` only honors the source predicate and a flat path pattern.
 
+    ``extra_nodes`` carries synthetic predicates (generated origin
+    filters) that are ANDed with the user terms at the AST level, so
+    the terms keep their bare-path semantics. Field collision checks
+    and ``fields`` cover only the user's own query.
+
     Parse / compile errors route through ``subparser.error()`` so the
     user sees an argparse-shaped message instead of a Python
     traceback.
     """
-    if not _query_syntax_present(positionals):
+    if not _query_syntax_present(positionals) and not extra_nodes:
         return None, tuple(positionals), set()
     from agentgrep.query import (
         QueryCompileError,
         QueryParseError,
         compile_query,
+        compose_query_ast,
         default_registry,
         fields_in_ast,
         find_unsupported_reason,
-        parse_query,
     )
 
-    query_text = " ".join(positionals)
     registry = default_registry()
     try:
-        ast = parse_query(query_text, registry)
+        ast, user_ast = compose_query_ast(positionals, extra_nodes, registry)
     except QueryParseError as exc:
         with configured_color_environment(color_mode):
             subparser.error(f"invalid query: {exc}")
-    used_fields = fields_in_ast(ast)
+    used_fields = fields_in_ast(user_ast) if user_ast is not None else set()
     if find_mode:
         reason = find_unsupported_reason(ast, registry)
         if reason is not None:
@@ -1202,22 +1213,24 @@ def _build_search_args(
                 "--threshold has no effect with --no-rank (ranking is disabled)",
             )
 
-    origin_terms, origin_boost = _build_search_origin_terms(namespace)
-    query_terms = (
-        (origin_filtered_query_text(origin_terms, terms_list),)
-        if origin_terms
-        else tuple(terms_list)
-    )
+    origin_nodes, origin_boost = _build_search_origin_nodes(namespace)
     search_compiled, residual_terms, search_query_fields = _maybe_compile_query(
-        query_terms,
+        terms_list,
         bundle=bundle,
         color_mode=color_mode,
         subparser=bundle.search_parser,
         explicit_flags=_search_explicit_flags(namespace),
         case_sensitive=t.cast("bool", namespace.case_sensitive),
+        extra_nodes=origin_nodes,
     )
     final_terms: tuple[str, ...] = residual_terms
     case_sensitive = t.cast("bool", namespace.case_sensitive)
+    raw_query = " ".join(
+        (
+            *(f"{node.field}:{_query_value_display(node.value)}" for node in origin_nodes),
+            *terms_list,
+        ),
+    )
 
     return SearchArgs(
         terms=final_terms,
@@ -1235,7 +1248,7 @@ def _build_search_args(
         no_group=t.cast("bool", namespace.no_group),
         no_rank=t.cast("bool", namespace.no_rank),
         compiled=search_compiled,
-        raw_query=" ".join(query_terms),
+        raw_query=raw_query,
         origin_boost=origin_boost,
     )
 

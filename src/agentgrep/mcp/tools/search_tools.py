@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import datetime
 import pathlib
 import time
@@ -33,7 +34,7 @@ from agentgrep.mcp.models import (
     SearchToolResponse,
     SourceRecordModel,
 )
-from agentgrep.origin import origin_filter_terms, origin_filtered_query_text
+from agentgrep.origin import origin_filter_nodes
 from agentgrep.query.help import query_language_summary
 
 if t.TYPE_CHECKING:
@@ -97,29 +98,51 @@ def _compile_request_query(
     base_query: SearchQuery,
     request: SearchRequestModel,
 ) -> SearchQuery:
-    """Apply the query language to a search request's terms.
+    """Apply the query language and origin filters to a search request.
 
-    Joins the request terms and routes them through
-    :func:`agentgrep.query.build_query_from_input` so MCP clients get the
-    same field predicates, booleans, phrases, and wildcards as the CLI.
-    Bare terms stay literal substrings; a malformed query raises a
-    :class:`ToolError` with the parse/compile message.
+    User terms compile exactly as the CLI's bare path compiles them —
+    field predicates, booleans, phrases, and wildcards all apply, and
+    plain terms stay literal substrings. Origin filters are ANDed in as
+    synthetic AST nodes via :func:`agentgrep.query.compose_query_ast`.
+    A malformed query raises a :class:`ToolError` with the parse/compile
+    message.
     """
-    from agentgrep.query import build_query_from_input, default_registry
+    from agentgrep.query import (
+        QueryCompileError,
+        QueryParseError,
+        compile_query,
+        compose_query_ast,
+        default_registry,
+        fields_in_ast,
+    )
 
-    generated_terms = origin_filter_terms(
+    origin_nodes = origin_filter_nodes(
         cwd=request.cwd,
         repo=request.repo,
         branch=request.branch,
     )
-    joined = origin_filtered_query_text(generated_terms, request.terms)
-    if not joined:
+    terms = tuple(term for term in request.terms if term.strip())
+    if not origin_nodes and not terms:
         return base_query
-    result = build_query_from_input(joined, base_query, default_registry())
-    if result.query is None:
-        message = f"invalid query: {result.error}"
-        raise ToolError(message)
-    return result.query
+    registry = default_registry()
+    try:
+        ast, user_ast = compose_query_ast(terms, origin_nodes, registry)
+        compiled = compile_query(ast, registry, case_sensitive=base_query.case_sensitive)
+    except (QueryParseError, QueryCompileError) as exc:
+        message = f"invalid query: {exc}"
+        raise ToolError(message) from exc
+    scope = base_query.scope
+    if user_ast is not None and "scope" in fields_in_ast(user_ast):
+        # Mirrors build_query_from_input: a scope: predicate filters
+        # records, so discovery must open both prompt and conversation
+        # stores for it to act on.
+        scope = "all"
+    return dataclasses.replace(
+        base_query,
+        terms=compiled.text_terms,
+        compiled=None if compiled.is_pure_text else compiled,
+        scope=scope,
+    )
 
 
 async def _search_async(

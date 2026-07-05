@@ -322,32 +322,60 @@ ORIGIN_PHRASE_FILTER_CASES: tuple[OriginPhraseFilterCase, ...] = (
         expected=False,
     ),
     OriginPhraseFilterCase(
-        test_id="boolean-word-phrase-hit",
-        term="rock OR roll",
-        text="rock OR roll",
-        cwd="/workspace/agentgrep",
-        expected=True,
-    ),
-    OriginPhraseFilterCase(
-        test_id="boolean-word-phrase-miss",
-        term="rock OR roll",
-        text="rock only",
-        cwd="/workspace/agentgrep",
-        expected=False,
-    ),
-    OriginPhraseFilterCase(
-        test_id="not-word-phrase-hit",
-        term="rock NOT roll",
-        text="rock NOT roll",
-        cwd="/workspace/agentgrep",
-        expected=True,
-    ),
-    OriginPhraseFilterCase(
         test_id="paren-phrase-miss",
         term="rock (roll)",
         text="rock roll",
         cwd="/workspace/agentgrep",
         expected=False,
+    ),
+)
+
+
+class OriginBooleanTokenCase(t.NamedTuple):
+    """Parametrized case for single-token boolean terms under origin filters."""
+
+    test_id: str
+    term: str
+    text: str
+    cwd: str
+    expected: bool
+
+
+ORIGIN_BOOLEAN_TOKEN_CASES: tuple[OriginBooleanTokenCase, ...] = (
+    OriginBooleanTokenCase(
+        test_id="or-token-matches-either-branch",
+        term="rock OR roll",
+        text="rock only",
+        cwd="/workspace/agentgrep",
+        expected=True,
+    ),
+    OriginBooleanTokenCase(
+        test_id="or-token-still-scoped-to-cwd",
+        term="rock OR roll",
+        text="rock only",
+        cwd="/workspace/other",
+        expected=False,
+    ),
+    OriginBooleanTokenCase(
+        test_id="or-token-neither-branch",
+        term="rock OR roll",
+        text="jazz",
+        cwd="/workspace/agentgrep",
+        expected=False,
+    ),
+    OriginBooleanTokenCase(
+        test_id="not-token-excludes-match",
+        term="rock NOT roll",
+        text="rock and roll",
+        cwd="/workspace/agentgrep",
+        expected=False,
+    ),
+    OriginBooleanTokenCase(
+        test_id="not-token-keeps-plain-match",
+        term="rock NOT roll",
+        text="rock solo",
+        cwd="/workspace/agentgrep",
+        expected=True,
     ),
 )
 
@@ -601,6 +629,44 @@ def test_search_origin_flags_preserve_phrase_term(
     assert isinstance(parsed, agentgrep.SearchArgs)
     assert parsed.compiled is not None
     assert parsed.terms == (case.term,)
+    query = agentgrep.SearchQuery(
+        terms=parsed.terms,
+        scope=parsed.scope,
+        any_term=False,
+        regex=False,
+        case_sensitive=parsed.case_sensitive,
+        agents=parsed.agents,
+        limit=parsed.limit,
+        compiled=parsed.compiled,
+    )
+    assert agentgrep.matches_record(record, query) is case.expected
+
+
+@pytest.mark.parametrize(
+    "case",
+    ORIGIN_BOOLEAN_TOKEN_CASES,
+    ids=[case.test_id for case in ORIGIN_BOOLEAN_TOKEN_CASES],
+)
+def test_search_origin_flags_keep_boolean_token_semantics(
+    case: OriginBooleanTokenCase,
+) -> None:
+    """A single boolean-carrying token parses the same with or without --cwd."""
+    parsed = agentgrep.parse_args(
+        ("search", "--cwd", "/workspace/agentgrep", case.term),
+    )
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text=case.text,
+        origin=agentgrep.RecordOrigin(cwd=case.cwd),
+    )
+
+    assert isinstance(parsed, agentgrep.SearchArgs)
+    assert parsed.compiled is not None
+    assert parsed.terms == ("rock", "roll")
     query = agentgrep.SearchQuery(
         terms=parsed.terms,
         scope=parsed.scope,

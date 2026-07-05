@@ -27,6 +27,7 @@ through, the record filter will decide". See the design doc at
 
 from __future__ import annotations
 
+import collections.abc as cabc
 import dataclasses
 import re
 import typing as t
@@ -305,6 +306,53 @@ def build_query_from_input(
         ),
         error=None,
     )
+
+
+def compose_query_ast(
+    terms: cabc.Sequence[str],
+    nodes: cabc.Sequence[QueryNode],
+    registry: FieldRegistry,
+) -> tuple[QueryNode, QueryNode | None]:
+    """AND synthetic ``nodes`` with user terms compiled as the bare path would.
+
+    Frontends inject generated predicates (origin filters) through this
+    helper so user terms keep their no-filter semantics: terms carrying
+    query syntax parse exactly as the bare path parses them, and plain
+    terms become literal :class:`~agentgrep.query.ast.TermNode` children —
+    a single token with spaces stays one substring term instead of being
+    re-parsed as two.
+
+    Parameters
+    ----------
+    terms : Sequence[str]
+        User search terms, one argv/request element each.
+    nodes : Sequence[QueryNode]
+        Synthetic predicate nodes to AND with the user terms.
+    registry : FieldRegistry
+        Registry used for syntax detection and parsing.
+
+    Returns
+    -------
+    tuple[QueryNode, QueryNode | None]
+        The composed root, plus the parsed user AST when the terms
+        carried query syntax (``None`` when every term stayed literal).
+
+    Raises
+    ------
+    QueryParseError
+        When the user terms carry syntax that fails to parse.
+    """
+    cleaned = tuple(term for term in terms if term.strip())
+    children: list[QueryNode] = list(nodes)
+    user_ast: QueryNode | None = None
+    if any(_has_query_syntax(term.strip(), registry) for term in cleaned):
+        user_ast = parse_query(" ".join(cleaned), registry)
+        children.append(user_ast)
+    else:
+        children.extend(TermNode(value=term) for term in cleaned)
+    if len(children) == 1:
+        return children[0], user_ast
+    return AndNode(children=tuple(children)), user_ast
 
 
 _BOOLEAN_KEYWORDS: frozenset[str] = frozenset({"AND", "OR", "NOT"})

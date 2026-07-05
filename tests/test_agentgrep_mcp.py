@@ -171,20 +171,22 @@ MCP_ORIGIN_PHRASE_CASES: tuple[McpOriginPhraseCase, ...] = (
         expected_texts=["exact phrase same"],
     ),
     McpOriginPhraseCase(
-        test_id="boolean-word-phrase",
+        # A single boolean-carrying token parses as query language, the
+        # same as it does without origin filters.
+        test_id="boolean-word-token",
         terms=["rock OR roll"],
         matching_text="rock OR roll same",
         nonmatching_text="rock same",
         outside_text="rock OR roll other",
-        expected_texts=["rock OR roll same"],
+        expected_texts=["rock OR roll same", "rock same"],
     ),
     McpOriginPhraseCase(
-        test_id="not-word-phrase",
+        test_id="not-word-token",
         terms=["rock NOT roll"],
         matching_text="rock NOT roll same",
         nonmatching_text="rock same",
         outside_text="rock NOT roll other",
-        expected_texts=["rock NOT roll same"],
+        expected_texts=["rock same"],
     ),
     McpOriginPhraseCase(
         test_id="paren-phrase",
@@ -535,6 +537,43 @@ async def test_mcp_search_honors_query_language(
     assert len(union_data.results) == 1
     assert union_data.results[0].text == "alpha content here"
     assert len(wrong_agent_data.results) == 0
+
+
+async def test_mcp_search_honors_query_language_in_single_tokens(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Whitespace-containing terms without origin params stay query language.
+
+    Regression guard: routing every request through the origin
+    query-text wrapper force-quoted ``agent:codex alpha`` and
+    ``zzznope OR alpha`` into literal phrases, silently returning zero
+    results for the tool description's advertised syntax.
+    """
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    write_jsonl(
+        home / ".codex" / "sessions" / "2026" / "01" / "01" / "rollout.jsonl",
+        _codex_user_session("session-1", "alpha content here"),
+    )
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        union = await client.call_tool(
+            "search",
+            {"terms": ["zzznope OR alpha"], "scope": "prompts", "limit": 5},
+        )
+        predicate = await client.call_tool(
+            "search",
+            {"terms": ["agent:codex alpha"], "scope": "prompts", "limit": 5},
+        )
+
+    union_data = t.cast("SearchToolDataLike", union.data)
+    predicate_data = t.cast("SearchToolDataLike", predicate.data)
+    assert len(union_data.results) == 1
+    assert union_data.results[0].text == "alpha content here"
+    assert len(predicate_data.results) == 1
+    assert predicate_data.results[0].text == "alpha content here"
 
 
 async def test_mcp_search_rejects_invalid_query() -> None:

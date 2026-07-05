@@ -8,18 +8,18 @@ or source prefilter behavior.
 from __future__ import annotations
 
 import pathlib
-import re
 import typing as t
 
 from agentgrep.records import RecordOrigin, SearchRecord
+
+if t.TYPE_CHECKING:
+    from agentgrep.query.ast import FieldEqNode
 
 __all__ = [
     "LEGACY_ORIGIN_METADATA_KEYS",
     "_origin_path_boundary_text",
     "_path_is_equal_or_descendant",
-    "origin_filter_terms",
-    "origin_filtered_query_text",
-    "query_quote",
+    "origin_filter_nodes",
     "record_matches_origin",
     "record_origin_field_values",
 ]
@@ -50,78 +50,35 @@ _STRING_FIELD_KEYS: dict[str, tuple[str, ...]] = {
     "branch": ("branch", "gitBranch"),
     "cwd_hash": ("cwd_hash", "project_hash", "projectHash"),
 }
-_FIELD_PREDICATE_RE = re.compile(r"(?<![A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*):")
-_BOOLEAN_KEYWORDS = frozenset({"AND", "OR", "NOT"})
 
 
-def query_quote(value: str) -> str:
-    """Quote a query value for use in a generated field predicate."""
-    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{escaped}"'
-
-
-def origin_filter_terms(
+def origin_filter_nodes(
     *,
     cwd: str | None = None,
     repo: str | None = None,
     worktree: str | None = None,
     branch: str | None = None,
     cwd_hash: str | None = None,
-) -> tuple[str, ...]:
-    """Return query-language field predicates for explicit origin filters."""
-    terms: list[str] = []
-    for field, value in (
-        ("cwd", cwd),
-        ("repo", repo),
-        ("worktree", worktree),
-        ("branch", branch),
-        ("cwd_hash", cwd_hash),
-    ):
-        if value:
-            terms.append(f"{field}:{query_quote(value)}")
-    return tuple(terms)
+) -> tuple[FieldEqNode, ...]:
+    """Return synthetic field predicates for explicit origin filters.
 
+    Values land verbatim in AST nodes for
+    :func:`agentgrep.query.compose_query_ast`, so no query-text quoting
+    or escaping is involved.
+    """
+    # Deferred: keeps pydantic-backed AST models off the CLI cold-start path.
+    from agentgrep.query.ast import FieldEqNode
 
-def origin_filtered_query_text(
-    origin_terms: t.Sequence[str],
-    user_terms: t.Sequence[str],
-) -> str:
-    """Return query text with generated origin filters grouped around user terms."""
-    origin_text = " ".join(origin_terms).strip()
-    user_text = " ".join(_wrapped_user_term_text(term) for term in user_terms).strip()
-    if origin_text and user_text:
-        return f"{origin_text} AND ({user_text})"
-    return origin_text or user_text
-
-
-def _wrapped_user_term_text(term: str) -> str:
-    stripped = term.strip()
-    if not stripped:
-        return stripped
-    if stripped[0] in {'"', "'"}:
-        return stripped
-    if any(character.isspace() for character in stripped):
-        return query_quote(stripped)
-    if _looks_like_query_syntax(stripped):
-        return stripped
-    return query_quote(stripped)
-
-
-def _looks_like_query_syntax(term: str) -> bool:
-    return (
-        term in {"(", ")"}
-        or term in _BOOLEAN_KEYWORDS
-        or any(
-            match.group(1) in _query_field_names() for match in _FIELD_PREDICATE_RE.finditer(term)
+    return tuple(
+        FieldEqNode(field=field, value=value)
+        for field, value in (
+            ("cwd", cwd),
+            ("repo", repo),
+            ("worktree", worktree),
+            ("branch", branch),
+            ("cwd_hash", cwd_hash),
         )
-    )
-
-
-def _query_field_names() -> frozenset[str]:
-    from agentgrep.query import default_registry
-
-    return frozenset(
-        name for spec in default_registry().specs for name in (spec.name, *spec.aliases)
+        if value
     )
 
 
