@@ -338,19 +338,8 @@ def run_search_command(args: SearchArgs) -> int:
     finally:
         if listener is not None:
             listener.stop()
-    query_text = " ".join(args.terms)
     answered_early = control.answer_now_requested()
-    if args.no_rank or answered_early or not query_text:
-        scored: list[tuple[SearchRecord, float]] = [(r, 0.0) for r in records]
-    else:
-        from agentgrep.ranking import rank_search_records
-
-        scored = rank_search_records(
-            records,
-            query_text,
-            threshold=args.threshold,
-            origin_boost=args.origin_boost,
-        )
+    scored = _score_search_records(records, args, answered_early=answered_early)
     if args.limit is not None:
         scored = scored[: args.limit]
     from agentgrep.ranking import group_by_session
@@ -393,6 +382,27 @@ def _print_search_text(
             print()
 
 
+def _score_search_records(
+    records: list[SearchRecord],
+    args: SearchArgs,
+    *,
+    answered_early: bool = False,
+) -> list[tuple[SearchRecord, float]]:
+    """Rank search records when text relevance or origin boost can affect order."""
+    query_text = " ".join(args.terms)
+    if args.no_rank or answered_early or (not query_text and args.origin_boost is None):
+        return [(r, 0.0) for r in records]
+
+    from agentgrep.ranking import rank_search_records
+
+    return rank_search_records(
+        records,
+        query_text,
+        threshold=args.threshold if query_text else 0,
+        origin_boost=args.origin_boost,
+    )
+
+
 def _run_search_eager(args: SearchArgs, query: SearchQuery) -> int:
     """Eager search for JSON/NDJSON output with ranking but no pairwise dedup."""
     control = SearchControl()
@@ -402,18 +412,7 @@ def _run_search_eager(args: SearchArgs, query: SearchQuery) -> int:
         progress=noop_search_progress(),
         control=control,
     )
-    query_text = " ".join(args.terms)
-    if args.no_rank or not query_text:
-        scored: list[tuple[SearchRecord, float]] = [(r, 0.0) for r in records]
-    else:
-        from agentgrep.ranking import rank_search_records
-
-        scored = rank_search_records(
-            records,
-            query_text,
-            threshold=args.threshold,
-            origin_boost=args.origin_boost,
-        )
+    scored = _score_search_records(records, args)
     if args.limit is not None:
         scored = scored[: args.limit]
     from agentgrep.ranking import group_by_session

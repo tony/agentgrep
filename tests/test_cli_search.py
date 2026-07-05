@@ -1198,6 +1198,19 @@ def _canned_records() -> list[agentgrep.SearchRecord]:
     ]
 
 
+class FieldOnlyHereBoostCase(t.NamedTuple):
+    """Parametrized case for field-only search output modes."""
+
+    test_id: str
+    output_mode: t.Literal["json", "text"]
+
+
+FIELD_ONLY_HERE_BOOST_CASES: tuple[FieldOnlyHereBoostCase, ...] = (
+    FieldOnlyHereBoostCase(test_id="json-output", output_mode="json"),
+    FieldOnlyHereBoostCase(test_id="text-output", output_mode="text"),
+)
+
+
 def test_search_here_boost_reorders_ranked_results(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -1236,6 +1249,59 @@ def test_search_here_boost_reorders_ranked_results(
     assert code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["results"][0]["origin"]["cwd"] == "/workspace/agentgrep/src/"
+
+
+@pytest.mark.parametrize(
+    "case",
+    FIELD_ONLY_HERE_BOOST_CASES,
+    ids=[case.test_id for case in FIELD_ONLY_HERE_BOOST_CASES],
+)
+def test_search_here_boost_reorders_field_only_results(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    case: FieldOnlyHereBoostCase,
+) -> None:
+    """--here-style origin boost affects field-only compiled searches."""
+    parsed = agentgrep.parse_args(("search", "agent:codex"))
+    assert isinstance(parsed, agentgrep.SearchArgs)
+    records = [
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="test",
+            adapter_id="test.v1",
+            path=pathlib.Path("/tmp/other.jsonl"),
+            text="field only notes",
+            origin=agentgrep.RecordOrigin(cwd="/elsewhere"),
+        ),
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="test",
+            adapter_id="test.v1",
+            path=pathlib.Path("/tmp/here.jsonl"),
+            text="field only notes",
+            origin=agentgrep.RecordOrigin(cwd="/workspace/agentgrep/src"),
+        ),
+    ]
+    monkeypatch.setattr(_r_render, "run_search_query", lambda *_args, **_kwargs: records)
+    args = _make_search_args(
+        terms=parsed.terms,
+        output_mode=case.output_mode,
+        no_group=True,
+        compiled=parsed.compiled,
+        origin_boost=agentgrep.RecordOrigin(repo="/workspace/agentgrep"),
+    )
+
+    code = run_search_command(args)
+
+    assert code == 0
+    captured = capsys.readouterr()
+    if case.output_mode == "json":
+        payload = json.loads(captured.out)
+        assert payload["results"][0]["origin"]["cwd"] == "/workspace/agentgrep/src/"
+    else:
+        assert captured.out.index("/tmp/here.jsonl") < captured.out.index("/tmp/other.jsonl")
 
 
 def test_search_command_no_terms_raises() -> None:
