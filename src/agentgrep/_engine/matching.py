@@ -6,6 +6,7 @@ import dataclasses
 import re
 
 from agentgrep._engine.orchestration import build_record_match_surface, record_matches_scope
+from agentgrep.origin import record_matches_origin
 from agentgrep.records import SearchMatchSurface, SearchQuery, SearchRecord
 
 
@@ -27,8 +28,14 @@ class CompiledRecordMatcher:
             # The record predicate evaluates text terms itself with the
             # query's AND/OR/NOT structure; pre-gating on the flat term
             # list would wrongly require every OR branch at once.
-            return compiled.record_predicate(record)
-        return self._matches_query_terms(record)
+            return compiled.record_predicate(record) and self._matches_origin_filter(record)
+        return self._matches_query_terms(record) and self._matches_origin_filter(record)
+
+    def _matches_origin_filter(self, record: SearchRecord) -> bool:
+        """Return whether ``record`` satisfies an explicit origin filter."""
+        if self.query.origin_filter is None:
+            return True
+        return record_matches_origin(record, self.query.origin_filter)
 
     def _matches_query_terms(self, record: SearchRecord) -> bool:
         """Return whether unfielded query terms match ``record``."""

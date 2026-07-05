@@ -34,8 +34,9 @@ from agentgrep.mcp.models import (
     SearchToolResponse,
     SourceRecordModel,
 )
-from agentgrep.origin import normalize_origin_path_text, origin_filter_nodes
+from agentgrep.origin import normalize_origin_path_text
 from agentgrep.query.help import query_language_summary
+from agentgrep.records import RecordOrigin
 
 if t.TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -120,20 +121,24 @@ def _compile_request_query(
         scope_widened_for_ast,
     )
 
-    origin_nodes = origin_filter_nodes(
+    origin_filter = RecordOrigin(
         cwd=normalize_origin_path_text(request.cwd),
         repo=normalize_origin_path_text(request.repo),
-        branch=request.branch,
+        branch=request.branch if request.branch and request.branch.strip() else None,
     )
+    if origin_filter.is_empty():
+        origin_filter = None
     # Whitespace-split each element: MCP terms have always been words
     # (the pre-origin path joined and re-split them), unlike CLI argv
     # elements, which stay whole to match the bare fast path.
     terms = tuple(word for term in request.terms for word in term.split())
-    if not origin_nodes and not terms:
-        return base_query
+    if not terms:
+        if origin_filter is None:
+            return base_query
+        return dataclasses.replace(base_query, terms=(), origin_filter=origin_filter)
     registry = default_registry()
     try:
-        ast, user_ast = compose_query_ast(terms, origin_nodes, registry)
+        ast, user_ast = compose_query_ast(terms, (), registry)
         compiled = compile_query(ast, registry, case_sensitive=base_query.case_sensitive)
     except (QueryParseError, QueryCompileError) as exc:
         message = f"invalid query: {exc}"
@@ -144,6 +149,7 @@ def _compile_request_query(
         terms=compiled.text_terms,
         compiled=None if compiled.is_pure_text else compiled,
         scope=scope,
+        origin_filter=origin_filter,
     )
 
 

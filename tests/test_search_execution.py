@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import collections.abc as cabc
+import dataclasses
 import json
 import os
 import pathlib
@@ -899,6 +900,80 @@ def test_scan_source_task_uses_runtime_source_scan_cache(
         stats = case.runtime.source_scan_cache.stats()
         assert stats.hits == case.expected_hits
         assert stats.misses == case.expected_misses
+
+
+def test_source_scan_cache_separates_origin_filters(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cached records remain scoped to the origin filter that produced them."""
+    query = _query(limit=2)
+    source = _source(tmp_path / "session.jsonl")
+    source.path.write_text("first\n", encoding="utf-8")
+    task = _plan(query, source, strategy="jsonl_bounded_reverse_scan").tasks[0]
+    batch_reads = 0
+
+    def iter_batches(
+        _query: agentgrep.SearchQuery,
+        task: SourceTask,
+        *,
+        index: int,
+        total: int,
+        control: agentgrep.SearchControl,
+        progress: agentgrep.SearchProgress | None = None,
+        batch_size: int = 32,
+    ) -> cabc.Iterator[SourceScanBatch]:
+        nonlocal batch_reads
+        _ = progress, batch_size
+        assert not control.answer_now_requested()
+        batch_reads += 1
+        yield SourceScanBatch(
+            index=index,
+            total=total,
+            source=task.source,
+            task=task,
+            records=(_record(task.source, "newest bliss", "2026-01-02T00:00:00Z"),),
+            records_seen=1,
+            matches_seen=1,
+            duration_seconds=0.0,
+            is_final=True,
+        )
+
+    monkeypatch.setattr(scanning, "iter_source_task_batches", iter_batches)
+    runtime = agentgrep.SearchRuntime.with_source_scan_cache()
+    first_query = dataclasses.replace(
+        query,
+        origin_filter=agentgrep.RecordOrigin(cwd="/workspace/one"),
+    )
+    second_query = dataclasses.replace(
+        query,
+        origin_filter=agentgrep.RecordOrigin(cwd="/workspace/two"),
+    )
+
+    first = scanning.scan_source_task(
+        first_query,
+        task,
+        index=1,
+        total=2,
+        control=agentgrep.SearchControl(),
+        runtime=runtime,
+    )
+    second = scanning.scan_source_task(
+        second_query,
+        task,
+        index=2,
+        total=2,
+        control=agentgrep.SearchControl(),
+        runtime=runtime,
+    )
+
+    assert first.cache_hit is False
+    assert second.cache_hit is False
+    assert batch_reads == 2
+    assert runtime.source_scan_cache is not None
+    stats = runtime.source_scan_cache.stats()
+    assert stats.hits == 0
+    assert stats.misses == 2
 
 
 def test_scan_source_task_exempts_cross_file_adapters(

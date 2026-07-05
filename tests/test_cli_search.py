@@ -211,7 +211,7 @@ def test_search_parse_agent_filter() -> None:
 
 
 def test_search_parse_explicit_origin_filters_compile() -> None:
-    """--cwd/--branch compile into the same record predicate as field syntax."""
+    """--cwd/--branch keep plain terms on the fast path and filter origin."""
     parsed = agentgrep.parse_args(
         (
             "search",
@@ -236,8 +236,12 @@ def test_search_parse_explicit_origin_filters_compile() -> None:
     )
 
     assert isinstance(parsed, agentgrep.SearchArgs)
-    assert parsed.compiled is not None
+    assert parsed.compiled is None
     assert parsed.terms == ("bliss",)
+    assert parsed.origin_filter == agentgrep.RecordOrigin(
+        cwd="/workspace/agentgrep",
+        branch="project-context",
+    )
     query = agentgrep.SearchQuery(
         terms=parsed.terms,
         scope=parsed.scope,
@@ -247,8 +251,24 @@ def test_search_parse_explicit_origin_filters_compile() -> None:
         agents=parsed.agents,
         limit=parsed.limit,
         compiled=parsed.compiled,
+        origin_filter=parsed.origin_filter,
     )
     assert agentgrep.matches_record(record, query)
+    assert not agentgrep.matches_record(
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="codex.sessions",
+            adapter_id="codex.sessions_jsonl.v1",
+            path=pathlib.Path("/tmp/session.jsonl"),
+            text="bliss command",
+            origin=agentgrep.RecordOrigin(
+                cwd="/workspace/other",
+                branch="project-context",
+            ),
+        ),
+        query,
+    )
 
 
 class OriginBooleanFilterCase(t.NamedTuple):
@@ -622,6 +642,7 @@ def test_search_origin_flags_scope_boolean_query(
         agents=parsed.agents,
         limit=parsed.limit,
         compiled=parsed.compiled,
+        origin_filter=parsed.origin_filter,
     )
     assert agentgrep.matches_record(record, query) is case.expected
 
@@ -649,7 +670,7 @@ def test_search_origin_flags_preserve_phrase_term(
     )
 
     assert isinstance(parsed, agentgrep.SearchArgs)
-    assert parsed.compiled is not None
+    assert parsed.compiled is None
     assert parsed.terms == (case.term,)
     query = agentgrep.SearchQuery(
         terms=parsed.terms,
@@ -660,6 +681,7 @@ def test_search_origin_flags_preserve_phrase_term(
         agents=parsed.agents,
         limit=parsed.limit,
         compiled=parsed.compiled,
+        origin_filter=parsed.origin_filter,
     )
     assert agentgrep.matches_record(record, query) is case.expected
 
@@ -698,6 +720,7 @@ def test_search_origin_flags_keep_boolean_token_semantics(
         agents=parsed.agents,
         limit=parsed.limit,
         compiled=parsed.compiled,
+        origin_filter=parsed.origin_filter,
     )
     assert agentgrep.matches_record(record, query) is case.expected
 
@@ -725,7 +748,7 @@ def test_search_origin_flags_preserve_case_sensitive_terms(
     )
 
     assert isinstance(parsed, agentgrep.SearchArgs)
-    assert parsed.compiled is not None
+    assert parsed.compiled is None
     query = agentgrep.SearchQuery(
         terms=parsed.terms,
         scope=parsed.scope,
@@ -735,6 +758,7 @@ def test_search_origin_flags_preserve_case_sensitive_terms(
         agents=parsed.agents,
         limit=parsed.limit,
         compiled=parsed.compiled,
+        origin_filter=parsed.origin_filter,
     )
     assert agentgrep.matches_record(record, query) is case.expected
 
@@ -772,7 +796,7 @@ def test_search_origin_flags_resolve_relative_paths(
     )
 
     assert isinstance(parsed, agentgrep.SearchArgs)
-    assert parsed.compiled is not None
+    assert parsed.compiled is None
     assert parsed.raw_query.startswith(
         f'{case.flag.removeprefix("--")}:"{expected}"',
     )
@@ -785,6 +809,7 @@ def test_search_origin_flags_resolve_relative_paths(
         agents=parsed.agents,
         limit=parsed.limit,
         compiled=parsed.compiled,
+        origin_filter=parsed.origin_filter,
     )
     assert agentgrep.matches_record(record, query)
 
@@ -811,7 +836,7 @@ def test_search_parse_only_here_detects_git_context(
     parsed = agentgrep.parse_args(("search", "--only-here", "bliss"))
 
     assert isinstance(parsed, agentgrep.SearchArgs)
-    assert parsed.compiled is not None
+    assert parsed.compiled is None
     assert parsed.terms == ("bliss",)
     assert parsed.origin_boost is None
     cwd = case.absolute_cwd
@@ -836,6 +861,7 @@ def test_search_parse_only_here_detects_git_context(
         agents=parsed.agents,
         limit=parsed.limit,
         compiled=parsed.compiled,
+        origin_filter=parsed.origin_filter,
     )
     assert agentgrep.matches_record(record, query) is case.expected
 
@@ -863,7 +889,7 @@ def test_search_origin_flags_preserve_literal_punctuation_terms(
     )
 
     assert isinstance(parsed, agentgrep.SearchArgs)
-    assert parsed.compiled is not None
+    assert parsed.compiled is None
     assert parsed.terms == (case.term,)
     query = agentgrep.SearchQuery(
         terms=parsed.terms,
@@ -874,6 +900,7 @@ def test_search_origin_flags_preserve_literal_punctuation_terms(
         agents=parsed.agents,
         limit=parsed.limit,
         compiled=parsed.compiled,
+        origin_filter=parsed.origin_filter,
     )
     assert agentgrep.matches_record(record, query) is case.expected
 
@@ -911,6 +938,7 @@ def test_search_origin_flags_preserve_known_field_predicates(
         agents=parsed.agents,
         limit=parsed.limit,
         compiled=parsed.compiled,
+        origin_filter=parsed.origin_filter,
     )
     assert agentgrep.matches_record(record, query) is case.expected
 
@@ -942,7 +970,7 @@ def test_search_parse_only_here_prefers_linked_worktree(
     parsed = agentgrep.parse_args(("search", "--only-here", "bliss"))
 
     assert isinstance(parsed, agentgrep.SearchArgs)
-    assert parsed.compiled is not None
+    assert parsed.compiled is None
     cwd_root = linked if case.cwd_owner == "worktree" else repo
     record = agentgrep.SearchRecord(
         kind="prompt",
@@ -962,6 +990,7 @@ def test_search_parse_only_here_prefers_linked_worktree(
         agents=parsed.agents,
         limit=parsed.limit,
         compiled=parsed.compiled,
+        origin_filter=parsed.origin_filter,
     )
     assert agentgrep.matches_record(record, query) is case.expected
 
@@ -1004,7 +1033,7 @@ def test_search_here_preserves_logical_symlink_cwd(
         origin=agentgrep.RecordOrigin(cwd=str(logical_child)),
     )
     if case.mode == "filter":
-        assert parsed.compiled is not None
+        assert parsed.compiled is None
         query = agentgrep.SearchQuery(
             terms=parsed.terms,
             scope=parsed.scope,
@@ -1014,6 +1043,7 @@ def test_search_here_preserves_logical_symlink_cwd(
             agents=parsed.agents,
             limit=parsed.limit,
             compiled=parsed.compiled,
+            origin_filter=parsed.origin_filter,
         )
         assert agentgrep.matches_record(record, query)
     else:
@@ -1132,6 +1162,7 @@ def test_search_scope_field_conversation_record_reaches_compiled_predicate() -> 
         agents=parsed.agents,
         limit=parsed.limit,
         compiled=parsed.compiled,
+        origin_filter=parsed.origin_filter,
     )
 
     assert query.scope == "all"
@@ -1160,6 +1191,7 @@ def _make_search_args(**overrides: t.Any) -> agentgrep.SearchArgs:
         "compiled": None,
         "raw_query": "",
         "origin_boost": None,
+        "origin_filter": None,
     }
     base.update(overrides)
     return agentgrep.SearchArgs(**base)
@@ -1290,6 +1322,7 @@ def test_search_here_boost_reorders_field_only_results(
         output_mode=case.output_mode,
         no_group=True,
         compiled=parsed.compiled,
+        origin_filter=parsed.origin_filter,
         origin_boost=agentgrep.RecordOrigin(repo="/workspace/agentgrep"),
     )
 

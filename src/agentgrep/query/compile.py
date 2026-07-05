@@ -411,6 +411,7 @@ def _rebuild(
         dedupe=base.dedupe,
         compiled=compiled,
         match_surface=base.match_surface,
+        origin_filter=base.origin_filter,
     )
 
 

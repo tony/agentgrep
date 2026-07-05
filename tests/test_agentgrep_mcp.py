@@ -819,6 +819,69 @@ async def test_mcp_search_explicit_origin_filters_survive_cursor(
     assert second_data["page"]["next_cursor"] is None
 
 
+def test_mcp_explicit_origin_filters_keep_plain_terms_fast_path() -> None:
+    """Explicit MCP origin filters keep plain terms out of compiled predicates."""
+    from agentgrep.mcp import SearchRequestModel
+    from agentgrep.mcp.tools.search_tools import _compile_request_query
+
+    base_query = agentgrep.SearchQuery(
+        terms=("origin", "serenity"),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=10,
+    )
+    request = SearchRequestModel(
+        terms=["origin", "serenity"],
+        agent="codex",
+        scope="prompts",
+        case_sensitive=False,
+        cwd="/workspace/agentgrep",
+        branch="project-context",
+    )
+
+    query = _compile_request_query(base_query, request)
+
+    assert query.compiled is None
+    assert query.terms == ("origin", "serenity")
+    assert query.origin_filter == agentgrep.RecordOrigin(
+        cwd="/workspace/agentgrep",
+        branch="project-context",
+    )
+    assert agentgrep.matches_record(
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="codex.sessions",
+            adapter_id="codex.sessions_jsonl.v1",
+            path=pathlib.Path("/tmp/session.jsonl"),
+            text="origin serenity",
+            origin=agentgrep.RecordOrigin(
+                cwd="/workspace/agentgrep/src",
+                branch="project-context",
+            ),
+        ),
+        query,
+    )
+    assert not agentgrep.matches_record(
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="codex.sessions",
+            adapter_id="codex.sessions_jsonl.v1",
+            path=pathlib.Path("/tmp/session.jsonl"),
+            text="origin serenity",
+            origin=agentgrep.RecordOrigin(
+                cwd="/workspace/other",
+                branch="project-context",
+            ),
+        ),
+        query,
+    )
+
+
 async def test_mcp_search_normalizes_origin_path_filters(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

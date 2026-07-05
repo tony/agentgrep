@@ -324,6 +324,8 @@ class SearchQuery:
     ``match_surface`` lets line-oriented callers such as ``grep``
     require a match in record text while fuzzy search and filtering
     can keep using the metadata-rich haystack.
+    ``origin_filter`` carries explicit CLI/MCP project filters outside
+    the compiled query so plain text searches keep the legacy fast path.
     """
 
     terms: tuple[str, ...]
@@ -336,6 +338,7 @@ class SearchQuery:
     dedupe: bool = True
     compiled: CompiledQuery | None = None
     match_surface: SearchMatchSurface = "haystack"
+    origin_filter: RecordOrigin | None = None
 
 
 @dataclasses.dataclass(slots=True)

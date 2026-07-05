@@ -282,7 +282,12 @@ def run_search_command(args: SearchArgs) -> int:
     and renders with snippet-first pretty output.  Returns ``0`` when
     at least one result survives, ``1`` otherwise.
     """
-    if not args.terms and args.compiled is None and args.output_mode != "ui":
+    if (
+        not args.terms
+        and args.compiled is None
+        and args.origin_filter is None
+        and args.output_mode != "ui"
+    ):
         msg = "search requires at least one term unless --ui is used"
         raise SystemExit(msg)
     query = SearchQuery(
@@ -294,6 +299,7 @@ def run_search_command(args: SearchArgs) -> int:
         agents=args.agents,
         limit=args.limit,
         compiled=args.compiled,
+        origin_filter=args.origin_filter,
     )
     if args.output_mode == "ui":
         run_ui(

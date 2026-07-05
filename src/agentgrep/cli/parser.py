@@ -167,6 +167,7 @@ class SearchArgs:
     compiled: CompiledQuery | None = None
     raw_query: str = ""
     origin_boost: RecordOrigin | None = None
+    origin_filter: RecordOrigin | None = None
 
 
 @dataclasses.dataclass(slots=True)
@@ -683,11 +684,12 @@ def _search_has_origin_filter(namespace: argparse.Namespace) -> bool:
 
 def _build_search_origin_nodes(
     namespace: argparse.Namespace,
-) -> tuple[tuple[FieldEqNode, ...], RecordOrigin | None]:
-    """Build generated query predicates and optional same-project boost."""
+) -> tuple[tuple[FieldEqNode, ...], RecordOrigin | None, RecordOrigin | None]:
+    """Build display predicates, same-project boost, and hard origin filter."""
     cwd = normalize_origin_path_text(t.cast("str | None", namespace.cwd))
     repo = normalize_origin_path_text(t.cast("str | None", namespace.repo))
-    branch = t.cast("str | None", namespace.branch)
+    raw_branch = t.cast("str | None", namespace.branch)
+    branch = raw_branch if raw_branch and raw_branch.strip() else None
     origin_boost: RecordOrigin | None = None
     if t.cast("bool", namespace.here) or t.cast("bool", namespace.only_here):
         context = detect_project_context()
@@ -695,7 +697,10 @@ def _build_search_origin_nodes(
             origin_boost = _search_here_origin_boost(context)
         if t.cast("bool", namespace.only_here):
             cwd = cwd or str(context.worktree or context.repo or context.cwd)
-    return origin_filter_nodes(cwd=cwd, repo=repo, branch=branch), origin_boost
+    origin_filter = RecordOrigin(cwd=cwd, repo=repo, branch=branch)
+    if origin_filter.is_empty():
+        origin_filter = None
+    return origin_filter_nodes(cwd=cwd, repo=repo, branch=branch), origin_boost, origin_filter
 
 
 def _search_here_origin_boost(context: ProjectContext) -> RecordOrigin:
@@ -1227,7 +1232,7 @@ def _build_search_args(
                 "--here has no effect with --ui (use --only-here to filter)",
             )
 
-    origin_nodes, origin_boost = _build_search_origin_nodes(namespace)
+    origin_nodes, origin_boost, origin_filter = _build_search_origin_nodes(namespace)
     search_compiled, residual_terms, search_query_fields = _maybe_compile_query(
         terms_list,
         bundle=bundle,
@@ -1235,7 +1240,6 @@ def _build_search_args(
         subparser=bundle.search_parser,
         explicit_flags=_search_explicit_flags(namespace),
         case_sensitive=t.cast("bool", namespace.case_sensitive),
-        extra_nodes=origin_nodes,
     )
     final_terms: tuple[str, ...] = residual_terms
     case_sensitive = t.cast("bool", namespace.case_sensitive)
@@ -1264,6 +1268,7 @@ def _build_search_args(
         compiled=search_compiled,
         raw_query=raw_query,
         origin_boost=origin_boost,
+        origin_filter=origin_filter,
     )
 
 
