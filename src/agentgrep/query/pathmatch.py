@@ -6,8 +6,8 @@ import dataclasses
 import fnmatch
 import os
 import pathlib
-import typing as t
 
+from agentgrep.origin import _dedupe as _dedupe_preserving_order
 from agentgrep.query.ast import (
     AndNode,
     FieldCmpNode,
@@ -84,18 +84,6 @@ def _path_separators() -> tuple[str, ...]:
     if os.altsep is not None:
         separators.append(os.altsep)
     return _dedupe_preserving_order(separators)
-
-
-def _dedupe_preserving_order(values: t.Iterable[str]) -> tuple[str, ...]:
-    """Return unique values while preserving first-seen order."""
-    seen: set[str] = set()
-    unique: list[str] = []
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        unique.append(value)
-    return tuple(unique)
 
 
 def _path_pattern_for(

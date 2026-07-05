@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import datetime as dt
-import pathlib
 import typing as t
 
 from agentgrep._engine.orchestration import record_matches_scope
-from agentgrep.origin import record_origin_field_values
+from agentgrep.origin import (
+    _origin_path_boundary_text,
+    _path_is_equal_or_descendant,
+    record_origin_field_values,
+)
 from agentgrep.query.ast import (
     AndNode,
     FieldCmpNode,
@@ -290,26 +293,6 @@ def _origin_path_match(value: str, pattern: _CompiledPathPattern) -> bool:
         _path_is_equal_or_descendant(path, _origin_path_boundary_text(variant))
         for variant in pattern.variants
     )
-
-
-def _origin_path_boundary_text(value: str) -> str:
-    if value == "~" or value.startswith("~/"):
-        value = str(pathlib.Path(value).expanduser())
-    normalized = value.replace("\\", "/")
-    stripped = normalized.rstrip("/")
-    if stripped:
-        return stripped
-    if normalized.startswith("/"):
-        return "/"
-    return normalized
-
-
-def _path_is_equal_or_descendant(path: str, target: str) -> bool:
-    if not path or not target:
-        return False
-    if target == "/":
-        return path.startswith("/")
-    return path == target or path.startswith(f"{target}/")
 
 
 def _field_matches_record_via_source(

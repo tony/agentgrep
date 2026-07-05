@@ -684,3 +684,56 @@ def test_origin_boost_requires_equal_or_descendant_paths(
     boost = agentgrep.RecordOrigin(repo="/home/user/work/proj")
 
     assert record_matches_origin(record, boost) is case.expected
+
+
+class OriginBoostNormalizationCase(t.NamedTuple):
+    """Parametrized case for boost path normalization parity with filters."""
+
+    test_id: str
+    record_cwd: str
+    boost: agentgrep.RecordOrigin
+    expected: bool
+
+
+ORIGIN_BOOST_NORMALIZATION_CASES: tuple[OriginBoostNormalizationCase, ...] = (
+    OriginBoostNormalizationCase(
+        test_id="backslash-descendant",
+        record_cwd="C:\\repo\\src",
+        boost=agentgrep.RecordOrigin(repo="C:\\repo"),
+        expected=True,
+    ),
+    OriginBoostNormalizationCase(
+        test_id="root-target-matches-absolute",
+        record_cwd="/etc",
+        boost=agentgrep.RecordOrigin(cwd="/"),
+        expected=True,
+    ),
+    OriginBoostNormalizationCase(
+        test_id="trailing-slash-target",
+        record_cwd="/home/user/work/proj/src",
+        boost=agentgrep.RecordOrigin(repo="/home/user/work/proj/"),
+        expected=True,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    ORIGIN_BOOST_NORMALIZATION_CASES,
+    ids=[case.test_id for case in ORIGIN_BOOST_NORMALIZATION_CASES],
+)
+def test_origin_boost_shares_filter_path_normalization(
+    case: OriginBoostNormalizationCase,
+) -> None:
+    """The boost applies the same boundary normalization as origin filters."""
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text="streaming parser notes",
+        origin=agentgrep.RecordOrigin(cwd=case.record_cwd),
+    )
+
+    assert record_matches_origin(record, case.boost) is case.expected

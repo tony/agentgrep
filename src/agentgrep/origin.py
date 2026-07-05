@@ -15,6 +15,8 @@ from agentgrep.records import RecordOrigin, SearchRecord
 
 __all__ = [
     "LEGACY_ORIGIN_METADATA_KEYS",
+    "_origin_path_boundary_text",
+    "_path_is_equal_or_descendant",
     "origin_filter_terms",
     "origin_filtered_query_text",
     "query_quote",
@@ -224,23 +226,34 @@ def _append_project_value(values: list[str], value: str | None) -> None:
 
 
 def _any_path_related(values: t.Iterable[str], target: str) -> bool:
-    target_norm = _normalize_path_text(target)
+    target_norm = _origin_path_boundary_text(target)
     if not target_norm:
         return False
-    return any(_paths_related(_normalize_path_text(value), target_norm) for value in values)
+    return any(
+        _path_is_equal_or_descendant(_origin_path_boundary_text(value), target_norm)
+        for value in values
+    )
 
 
-def _paths_related(value: str, target: str) -> bool:
-    if not value:
-        return False
-    return value == target or value.startswith(f"{target}/")
-
-
-def _normalize_path_text(value: str) -> str:
-    expanded = value
+def _origin_path_boundary_text(value: str) -> str:
+    """Normalize a path for boundary comparison (shared by filter and boost)."""
     if value == "~" or value.startswith("~/"):
-        expanded = str(pathlib.Path(value).expanduser())
-    return expanded.rstrip("/\\")
+        value = str(pathlib.Path(value).expanduser())
+    normalized = value.replace("\\", "/")
+    stripped = normalized.rstrip("/")
+    if stripped:
+        return stripped
+    if normalized.startswith("/"):
+        return "/"
+    return normalized
+
+
+def _path_is_equal_or_descendant(path: str, target: str) -> bool:
+    if not path or not target:
+        return False
+    if target == "/":
+        return path.startswith("/")
+    return path == target or path.startswith(f"{target}/")
 
 
 def _dedupe(values: t.Iterable[str]) -> tuple[str, ...]:
