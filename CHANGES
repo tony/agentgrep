@@ -42,6 +42,21 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### What's new
+
+#### Project context follows search results (#93)
+
+agentgrep now carries project and workspace context with search records when
+the underlying agent store exposes it. CLI, TUI, JSON, NDJSON, and MCP results
+can show where a prompt came from — such as its working directory, repository,
+worktree, branch, or workspace hash — so same-looking sessions from different
+projects are easier to tell apart without opening the raw history files.
+
+The same context powers project-aware search controls. `--only-here`, `--here`,
+`cwd:`, `repo:`, `branch:`, and MCP origin filters can narrow or boost records
+from the current project while keeping symlinked checkouts, branch names, and
+remote URLs in their proper lanes.
+
 ### Documentation
 
 #### Diagrammed event-stream architecture (#95)
