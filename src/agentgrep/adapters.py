@@ -368,6 +368,27 @@ def _origin_from_mapping(
     )
 
 
+# Every key _origin_from_mapping reads; lets hot walks skip extraction
+# for the many nodes that carry none of them.
+_ORIGIN_MAPPING_KEYS: frozenset[str] = frozenset(
+    {
+        "git",
+        "cwd",
+        "workspace",
+        "directory",
+        "repo",
+        "repository",
+        "worktree",
+        "gitBranch",
+        "branch",
+        "remote",
+        "cwd_hash",
+        "project_hash",
+        "projectHash",
+    },
+)
+
+
 def parse_codex_session_file(
     source: SourceHandle,
     *,
@@ -2506,7 +2527,13 @@ def iter_message_candidates(
     """
     if isinstance(value, dict):
         mapping = t.cast("dict[str, object]", value)
-        origin = _origin_from_mapping(mapping, fallback=fallback_origin)
+        # Origin extraction is ~14 lookups plus an allocation; skip it
+        # for the many structural nodes without any origin key.
+        origin = (
+            _origin_from_mapping(mapping, fallback=fallback_origin)
+            if mapping.keys() & _ORIGIN_MAPPING_KEYS
+            else fallback_origin
+        )
         role = extract_role(mapping)
         # Text extraction drives the recursive content flatten; it is only
         # used when a role is present, so skip it for the many role-less nodes.

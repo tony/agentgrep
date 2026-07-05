@@ -7,6 +7,7 @@ import argparse
 import asyncio
 import contextlib
 import importlib
+import inspect
 import io
 import itertools
 import json
@@ -1540,6 +1541,15 @@ def test_iter_message_candidates_gates_bare_branch_keys(
     else:
         assert origin is not None
         assert origin.branch == case.expected_branch
+
+
+def test_origin_mapping_keys_cover_extractor() -> None:
+    """The walk-guard key set lists every key _origin_from_mapping reads."""
+    adapters = importlib.import_module("agentgrep.adapters")
+    source = inspect.getsource(adapters._origin_from_mapping)
+    read_keys = set(re.findall(r'(?<!git_)mapping\.get\("([^"]+)"\)', source))
+    assert read_keys
+    assert read_keys <= adapters._ORIGIN_MAPPING_KEYS
 
 
 class CodexNoiseLineCase(t.NamedTuple):
