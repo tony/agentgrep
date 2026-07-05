@@ -33,35 +33,38 @@ The event stream solves both:
 
 ## Architecture
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│                   PRODUCER  (agentgrep._engine)                │
-│                                                                │
-│   def iter_search_events(home, query, *, control=None)         │
-│       -> Iterator[SearchEvent]:                                │
-│                                                                │
-│     yield SearchStarted(source_count=...)                      │
-│     for source in discovered:                                  │
-│         yield SourceStarted(adapter_id, index, total)          │
-│         for record in iter_source_records(source):             │
-│             if matches(record, query) and unique:              │
-│                 yield RecordEmitted(record=record)             │
-│         yield SourceFinished(adapter_id, records_seen, ...)    │
-│     yield SearchFinished(match_count, elapsed_seconds)         │
-└──────────────────────────┬─────────────────────────────────────┘
-                           │
-       ┌───────────────────┼───────────────────┐
-       ▼                   ▼                   ▼
-┌──────────────┐  ┌──────────────────┐  ┌──────────────────┐
-│  CLI (sync)  │  │  TUI (Textual)   │  │   MCP (sync)     │
-│              │  │                  │  │                  │
-│ for ev in    │  │ @work(thread=    │  │ list(records     │
-│   stream:    │  │  True) consumes  │  │   for ev in      │
-│   if Record  │  │  via to_thread   │  │   stream if      │
-│      print() │  │                  │  │   isinstance     │
-│      flush() │  │                  │  │   RecordEmitted) │
-└──────────────┘  └──────────────────┘  └──────────────────┘
-```
+::::{mermaid}
+:caption: One typed event stream feeds every frontend.
+
+flowchart TD
+    engine["agentgrep._engine"]:::cmd
+    iterator["iter_search_events"]:::cmd
+    events["SearchEvent / FindEvent"]:::cmd
+
+    started["Started envelope"]
+    source["Source progress"]
+    record["Record emitted"]
+    finished["Finished envelope"]
+
+    cli["CLI live output"]
+    tui["Textual worker"]
+    mcp["MCP collector"]
+
+    engine --> iterator
+    iterator --> events
+    events --> started
+    events --> source
+    events --> record
+    events --> finished
+    record --> cli
+    record --> tui
+    record --> mcp
+    source --> cli
+    source --> tui
+    finished --> cli
+    finished --> tui
+    finished --> mcp
+::::
 
 ### Sync producer
 
