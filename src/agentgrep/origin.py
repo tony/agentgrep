@@ -7,6 +7,8 @@ or source prefilter behavior.
 
 from __future__ import annotations
 
+import dataclasses
+import fnmatch
 import os
 import pathlib
 import typing as t
@@ -62,6 +64,127 @@ _STRING_FIELD_KEYS: dict[str, tuple[str, ...]] = {
 ORIGIN_PATH_QUERY_FIELDS: frozenset[str] = frozenset(_PATH_FIELD_KEYS)
 ORIGIN_STRING_QUERY_FIELDS: frozenset[str] = frozenset(_STRING_FIELD_KEYS) | {"project"}
 ORIGIN_QUERY_FIELDS: frozenset[str] = ORIGIN_PATH_QUERY_FIELDS | ORIGIN_STRING_QUERY_FIELDS
+
+_OriginMatchKind = t.Literal["path", "string"]
+
+_CONTEXT_FIELD_VALUES: dict[str, tuple[str, ...]] = {
+    "branch": ("branch",),
+    "cwd": ("cwd",),
+    "repo": ("repo", "worktree", "cwd"),
+    "worktree": ("worktree", "cwd"),
+    "cwd_hash": ("cwd_hash",),
+}
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class OriginPredicate:
+    """One compiled origin predicate against a record's origin fields."""
+
+    fields: tuple[str, ...]
+    value: str
+    kind: _OriginMatchKind
+    variants: tuple[str, ...]
+    is_glob: bool
+
+    @classmethod
+    def from_field_value(
+        cls,
+        field: str,
+        value: str,
+        *,
+        fields: tuple[str, ...] | None = None,
+        variants: t.Iterable[str] | None = None,
+        is_glob: bool | None = None,
+    ) -> OriginPredicate | None:
+        """Compile one origin field/value predicate."""
+        if field in ORIGIN_PATH_QUERY_FIELDS:
+            compiled_variants = tuple(variants) if variants is not None else (value,)
+            return cls(
+                fields=(field,) if fields is None else fields,
+                value=value,
+                kind="path",
+                variants=compiled_variants,
+                is_glob=_origin_path_is_glob(compiled_variants) if is_glob is None else is_glob,
+            )
+        if field in ORIGIN_STRING_QUERY_FIELDS:
+            return cls(
+                fields=(field,) if fields is None else fields,
+                value=value,
+                kind="string",
+                variants=(value,),
+                is_glob=_origin_string_is_glob(value) if is_glob is None else is_glob,
+            )
+        return None
+
+    def matches(self, record: SearchRecord) -> bool:
+        """Return whether ``record`` satisfies this origin predicate."""
+        values = _dedupe(
+            value for field in self.fields for value in record_origin_field_values(record, field)
+        )
+        if self.kind == "path":
+            return any(self._path_matches(value) for value in values)
+        return any(
+            _origin_string_equal(value, self.value, is_glob=self.is_glob) for value in values
+        )
+
+    def _path_matches(self, value: str) -> bool:
+        if self.is_glob:
+            return any(fnmatch.fnmatchcase(value, variant) for variant in self.variants)
+        path = _origin_path_boundary_text(value)
+        return any(
+            _path_is_equal_or_descendant(path, _origin_path_boundary_text(variant))
+            for variant in self.variants
+        )
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class OriginMatcher:
+    """Compiled matcher for origin fields and origin-context boosts."""
+
+    predicates: tuple[OriginPredicate, ...]
+
+    @classmethod
+    def from_field_value(
+        cls,
+        field: str,
+        value: str,
+        *,
+        variants: t.Iterable[str] | None = None,
+        is_glob: bool | None = None,
+    ) -> OriginMatcher:
+        """Compile one origin query field/value predicate."""
+        predicate = OriginPredicate.from_field_value(
+            field,
+            value,
+            variants=variants,
+            is_glob=is_glob,
+        )
+        return cls(()) if predicate is None else cls((predicate,))
+
+    @classmethod
+    def from_origin(cls, origin: RecordOrigin | None) -> OriginMatcher:
+        """Compile a :class:`RecordOrigin` into same-context predicates."""
+        if origin is None or origin.is_empty():
+            return cls(())
+        predicates: list[OriginPredicate] = []
+        for field in ("branch", "cwd", "repo", "worktree", "cwd_hash"):
+            value = t.cast("str | None", getattr(origin, field))
+            if not value:
+                continue
+            predicate = OriginPredicate.from_field_value(
+                field,
+                value,
+                fields=_CONTEXT_FIELD_VALUES[field],
+            )
+            if predicate is not None:
+                predicates.append(predicate)
+        return cls(tuple(predicates))
+
+    def matches(self, record: SearchRecord) -> bool:
+        """Return whether ``record`` satisfies every compiled predicate."""
+        return bool(self.predicates) and all(
+            predicate.matches(record) for predicate in self.predicates
+        )
 
 
 def is_path_like_text(text: str) -> bool:
@@ -177,47 +300,7 @@ def record_matches_origin(record: SearchRecord, origin: RecordOrigin | None) -> 
     descendants, so a target repo of ``/repo`` matches a record cwd of
     ``/repo/src``.
     """
-    if origin is None or origin.is_empty():
-        return False
-    checks: list[bool] = []
-    if origin.branch:
-        checks.append(
-            _any_string_equal(record_origin_field_values(record, "branch"), origin.branch),
-        )
-    if origin.cwd:
-        checks.append(_any_path_related(record_origin_field_values(record, "cwd"), origin.cwd))
-    if origin.repo:
-        checks.append(
-            _any_path_related(
-                (
-                    *record_origin_field_values(record, "repo"),
-                    *record_origin_field_values(record, "worktree"),
-                    *record_origin_field_values(record, "cwd"),
-                ),
-                origin.repo,
-            ),
-        )
-    if origin.worktree:
-        checks.append(
-            _any_path_related(
-                (
-                    *record_origin_field_values(record, "worktree"),
-                    *record_origin_field_values(record, "cwd"),
-                ),
-                origin.worktree,
-            ),
-        )
-    if origin.cwd_hash:
-        checks.append(
-            _any_string_equal(record_origin_field_values(record, "cwd_hash"), origin.cwd_hash),
-        )
-    return bool(checks) and all(checks)
-
-
-def _any_string_equal(values: t.Iterable[str], target: str) -> bool:
-    """Casefolded whole-value match, mirroring the branch:/cwd_hash: filters."""
-    target_cmp = target.casefold()
-    return any(value.casefold() == target_cmp for value in values)
+    return OriginMatcher.from_origin(origin).matches(record)
 
 
 def _metadata_strings(record: SearchRecord, keys: tuple[str, ...]) -> list[str]:
@@ -254,14 +337,20 @@ def _append_project_value(values: list[str], value: str | None) -> None:
             values.append(name)
 
 
-def _any_path_related(values: t.Iterable[str], target: str) -> bool:
-    target_norm = _origin_path_boundary_text(target)
-    if not target_norm:
-        return False
-    return any(
-        _path_is_equal_or_descendant(_origin_path_boundary_text(value), target_norm)
-        for value in values
-    )
+def _origin_string_is_glob(value: str) -> bool:
+    return "*" in value or "?" in value
+
+
+def _origin_path_is_glob(values: t.Iterable[str]) -> bool:
+    return any(ch in value for value in values for ch in "*?[")
+
+
+def _origin_string_equal(value: str, target: str, *, is_glob: bool) -> bool:
+    value_cmp = value.casefold()
+    target_cmp = target.casefold()
+    if is_glob:
+        return fnmatch.fnmatchcase(value_cmp, target_cmp)
+    return value_cmp == target_cmp
 
 
 def _origin_path_boundary_text(value: str) -> str:

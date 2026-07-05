@@ -17,7 +17,7 @@ from __future__ import annotations
 import collections
 import typing as t
 
-from agentgrep.origin import record_matches_origin
+from agentgrep.origin import OriginMatcher
 
 if t.TYPE_CHECKING:
     from agentgrep.records import RecordOrigin, SearchRecord
@@ -58,11 +58,12 @@ def rank_search_records(
     import rapidfuzz.fuzz
 
     scored: list[tuple[SearchRecord, float]] = []
+    origin_matcher = OriginMatcher.from_origin(origin_boost)
     for record in records:
         score = float(rapidfuzz.fuzz.WRatio(query_text, record.text))
         if threshold > 0 and score < threshold:
             continue
-        if origin_boost is not None and record_matches_origin(record, origin_boost):
+        if origin_matcher.matches(record):
             score += 10.0
         scored.append((record, score))
     scored.sort(key=lambda pair: pair[1], reverse=True)

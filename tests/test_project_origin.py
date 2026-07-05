@@ -11,6 +11,7 @@ import pytest
 
 import agentgrep
 from agentgrep.origin import (
+    OriginMatcher,
     normalize_origin_path_text,
     origin_filter_nodes,
     record_matches_origin,
@@ -466,6 +467,137 @@ ORIGIN_IDENTIFIER_EQUALITY_CASES: tuple[OriginIdentifierEqualityCase, ...] = (
         expected=False,
     ),
 )
+
+
+class OriginMatcherFieldCase(t.NamedTuple):
+    """Parametrized case for compiled origin field predicates."""
+
+    test_id: str
+    field: str
+    value: str
+    origin: agentgrep.RecordOrigin
+    expected: bool
+
+
+ORIGIN_MATCHER_FIELD_CASES: tuple[OriginMatcherFieldCase, ...] = (
+    OriginMatcherFieldCase(
+        test_id="branch-whole-value",
+        field="branch",
+        value="MAIN",
+        origin=agentgrep.RecordOrigin(branch="main"),
+        expected=True,
+    ),
+    OriginMatcherFieldCase(
+        test_id="branch-substring-miss",
+        field="branch",
+        value="main",
+        origin=agentgrep.RecordOrigin(branch="maintenance"),
+        expected=False,
+    ),
+    OriginMatcherFieldCase(
+        test_id="branch-wildcard",
+        field="branch",
+        value="release/*",
+        origin=agentgrep.RecordOrigin(branch="release/2026"),
+        expected=True,
+    ),
+    OriginMatcherFieldCase(
+        test_id="project-basename",
+        field="project",
+        value="agentgrep",
+        origin=agentgrep.RecordOrigin(repo="/work/agentgrep"),
+        expected=True,
+    ),
+    OriginMatcherFieldCase(
+        test_id="cwd-descendant-path",
+        field="cwd",
+        value="/work/agentgrep",
+        origin=agentgrep.RecordOrigin(cwd="/work/agentgrep/src"),
+        expected=True,
+    ),
+    OriginMatcherFieldCase(
+        test_id="cwd-sibling-prefix-miss",
+        field="cwd",
+        value="/work/agentgrep",
+        origin=agentgrep.RecordOrigin(cwd="/work/agentgrep2/src"),
+        expected=False,
+    ),
+)
+
+
+class OriginMatcherContextCase(t.NamedTuple):
+    """Parametrized case for compiled origin context predicates."""
+
+    test_id: str
+    boost: agentgrep.RecordOrigin
+    origin: agentgrep.RecordOrigin
+    expected: bool
+
+
+ORIGIN_MATCHER_CONTEXT_CASES: tuple[OriginMatcherContextCase, ...] = (
+    OriginMatcherContextCase(
+        test_id="repo-matches-record-cwd-descendant",
+        boost=agentgrep.RecordOrigin(repo="/work/agentgrep"),
+        origin=agentgrep.RecordOrigin(cwd="/work/agentgrep/src"),
+        expected=True,
+    ),
+    OriginMatcherContextCase(
+        test_id="worktree-matches-record-cwd-descendant",
+        boost=agentgrep.RecordOrigin(worktree="/work/agentgrep"),
+        origin=agentgrep.RecordOrigin(cwd="/work/agentgrep/src"),
+        expected=True,
+    ),
+    OriginMatcherContextCase(
+        test_id="combined-branch-mismatch",
+        boost=agentgrep.RecordOrigin(repo="/work/agentgrep", branch="main"),
+        origin=agentgrep.RecordOrigin(cwd="/work/agentgrep/src", branch="feature"),
+        expected=False,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    ORIGIN_MATCHER_FIELD_CASES,
+    ids=[case.test_id for case in ORIGIN_MATCHER_FIELD_CASES],
+)
+def test_origin_matcher_matches_field_predicates(case: OriginMatcherFieldCase) -> None:
+    """Compiled origin field predicates preserve existing query semantics."""
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text="needle prompt",
+        origin=case.origin,
+    )
+
+    matcher = OriginMatcher.from_field_value(case.field, case.value)
+
+    assert matcher.matches(record) is case.expected
+
+
+@pytest.mark.parametrize(
+    "case",
+    ORIGIN_MATCHER_CONTEXT_CASES,
+    ids=[case.test_id for case in ORIGIN_MATCHER_CONTEXT_CASES],
+)
+def test_origin_matcher_matches_origin_context(case: OriginMatcherContextCase) -> None:
+    """Compiled origin context predicates preserve same-project boost semantics."""
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text="needle prompt",
+        origin=case.origin,
+    )
+
+    matcher = OriginMatcher.from_origin(case.boost)
+
+    assert matcher.matches(record) is case.expected
 
 
 @pytest.mark.parametrize(

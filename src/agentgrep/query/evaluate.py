@@ -9,9 +9,7 @@ from agentgrep._engine.orchestration import record_matches_scope
 from agentgrep.origin import (
     ORIGIN_PATH_QUERY_FIELDS,
     ORIGIN_QUERY_FIELDS,
-    ORIGIN_STRING_QUERY_FIELDS,
-    _origin_path_boundary_text,
-    _path_is_equal_or_descendant,
+    OriginMatcher,
     record_origin_field_values,
 )
 from agentgrep.query.ast import (
@@ -43,7 +41,6 @@ from agentgrep.query.pathmatch import (
 from agentgrep.query.registry import FieldRegistry, FieldSpec
 from agentgrep.query.textmatch import (
     _is_wildcard,
-    _string_equals,
     _string_match,
     _text_matches,
 )
@@ -125,6 +122,7 @@ def _evaluate_record(
     record: SearchRecord,
     registry: FieldRegistry,
     path_patterns: dict[_PathPatternKey, _CompiledPathPattern],
+    origin_matchers: dict[tuple[str, str], OriginMatcher] | None = None,
     *,
     case_sensitive: bool = False,
 ) -> bool:
@@ -148,6 +146,7 @@ def _evaluate_record(
             record,
             spec,
             path_patterns,
+            origin_matchers,
             case_sensitive=case_sensitive,
         )
     if isinstance(node, FieldCmpNode):
@@ -166,6 +165,7 @@ def _evaluate_record(
             record,
             registry,
             path_patterns,
+            origin_matchers,
             case_sensitive=case_sensitive,
         )
     if isinstance(node, AndNode):
@@ -175,6 +175,7 @@ def _evaluate_record(
                 record,
                 registry,
                 path_patterns,
+                origin_matchers,
                 case_sensitive=case_sensitive,
             )
             for c in node.children
@@ -186,6 +187,7 @@ def _evaluate_record(
                 record,
                 registry,
                 path_patterns,
+                origin_matchers,
                 case_sensitive=case_sensitive,
             )
             for c in node.children
@@ -248,6 +250,7 @@ def _field_matches_record(
     record: SearchRecord,
     spec: FieldSpec,
     path_patterns: dict[_PathPatternKey, _CompiledPathPattern],
+    origin_matchers: dict[tuple[str, str], OriginMatcher] | None = None,
     *,
     case_sensitive: bool = False,
 ) -> bool:
@@ -269,17 +272,9 @@ def _field_matches_record(
         return record.model is not None and _string_match(record.model, node.value)
     if spec.name == "role":
         return record.role is not None and _string_match(record.role, node.value)
-    if spec.name in ORIGIN_PATH_QUERY_FIELDS:
-        pattern = _path_pattern_for(node, path_patterns)
-        return any(
-            _origin_path_match(value, pattern)
-            for value in record_origin_field_values(record, spec.name)
-        )
-    if spec.name in ORIGIN_STRING_QUERY_FIELDS:
-        return any(
-            _string_equals(value, node.value)
-            for value in record_origin_field_values(record, spec.name)
-        )
+    if spec.name in ORIGIN_QUERY_FIELDS:
+        matcher = _origin_matcher_for_node(node, spec, path_patterns, origin_matchers)
+        return matcher.matches(record)
     if spec.name == "text":
         # A wildcard text value matches the record text only (anchored
         # glob); a plain value keeps the multi-surface substring match.
@@ -293,15 +288,25 @@ def _field_matches_record(
     return False
 
 
-def _origin_path_match(value: str, pattern: _CompiledPathPattern) -> bool:
-    """Match origin paths by boundary unless the query uses a glob."""
-    if pattern.is_glob:
-        return _path_match(value, pattern)
-    path = _origin_path_boundary_text(value)
-    return any(
-        _path_is_equal_or_descendant(path, _origin_path_boundary_text(variant))
-        for variant in pattern.variants
-    )
+def _origin_matcher_for_node(
+    node: FieldEqNode,
+    spec: FieldSpec,
+    path_patterns: dict[_PathPatternKey, _CompiledPathPattern],
+    origin_matchers: dict[tuple[str, str], OriginMatcher] | None,
+) -> OriginMatcher:
+    """Return the precompiled matcher for an origin field predicate."""
+    matcher = origin_matchers.get((node.field, node.value)) if origin_matchers is not None else None
+    if matcher is not None:
+        return matcher
+    if spec.name in ORIGIN_PATH_QUERY_FIELDS:
+        pattern = _path_pattern_for(node, path_patterns)
+        return OriginMatcher.from_field_value(
+            spec.name,
+            node.value,
+            variants=pattern.variants,
+            is_glob=pattern.is_glob,
+        )
+    return OriginMatcher.from_field_value(spec.name, node.value)
 
 
 def _field_matches_record_via_source(

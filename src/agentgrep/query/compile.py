@@ -32,6 +32,11 @@ import dataclasses
 import re
 import typing as t
 
+from agentgrep.origin import (
+    ORIGIN_PATH_QUERY_FIELDS,
+    ORIGIN_QUERY_FIELDS,
+    OriginMatcher,
+)
 from agentgrep.query.ast import (
     AndNode,
     FieldCmpNode,
@@ -47,7 +52,7 @@ from agentgrep.query.dates import DateParseError, parse_date_literal
 from agentgrep.query.errors import QueryCompileError
 from agentgrep.query.evaluate import _evaluate_record, _evaluate_source
 from agentgrep.query.parser import QueryParseError, parse_query
-from agentgrep.query.pathmatch import _compile_path_patterns
+from agentgrep.query.pathmatch import _compile_path_patterns, _CompiledPathPattern
 from agentgrep.query.registry import FieldRegistry
 from agentgrep.records import SearchQuery, SearchRecord, SearchScope, SourceHandle
 
@@ -102,6 +107,7 @@ def compile_query(
     text_terms = tuple(_collect_text_terms(ast))
     path_fields = frozenset(spec.name for spec in registry.specs if spec.kind == "path")
     path_patterns = _compile_path_patterns(ast, path_fields=path_fields)
+    origin_matchers = _compile_origin_matchers(ast, registry, path_patterns)
 
     def source_predicate(source: SourceHandle) -> bool:
         return _evaluate_source(ast, source, registry, path_patterns) != "F"
@@ -112,6 +118,7 @@ def compile_query(
             record,
             registry,
             path_patterns,
+            origin_matchers,
             case_sensitive=case_sensitive,
         )
 
@@ -121,6 +128,37 @@ def compile_query(
         text_terms=text_terms,
         is_pure_text=False,
     )
+
+
+def _compile_origin_matchers(
+    node: QueryNode,
+    registry: FieldRegistry,
+    path_patterns: dict[tuple[str, str], _CompiledPathPattern],
+) -> dict[tuple[str, str], OriginMatcher]:
+    """Return origin matchers keyed by the parsed field/value pair."""
+    if isinstance(node, FieldEqNode):
+        spec = registry.get(node.field)
+        if spec is None or spec.name not in ORIGIN_QUERY_FIELDS:
+            return {}
+        pattern = path_patterns.get((node.field, node.value))
+        if spec.name in ORIGIN_PATH_QUERY_FIELDS and pattern is not None:
+            matcher = OriginMatcher.from_field_value(
+                spec.name,
+                node.value,
+                variants=pattern.variants,
+                is_glob=pattern.is_glob,
+            )
+        else:
+            matcher = OriginMatcher.from_field_value(spec.name, node.value)
+        return {(node.field, node.value): matcher}
+    if isinstance(node, NotNode):
+        return _compile_origin_matchers(node.child, registry, path_patterns)
+    if isinstance(node, AndNode | OrNode):
+        matchers: dict[tuple[str, str], OriginMatcher] = {}
+        for child in node.children:
+            matchers.update(_compile_origin_matchers(child, registry, path_patterns))
+        return matchers
+    return {}
 
 
 def _validate_ast(node: QueryNode, registry: FieldRegistry) -> None:
