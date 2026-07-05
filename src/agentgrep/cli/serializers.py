@@ -96,7 +96,13 @@ def serialize_record_origin(origin: RecordOrigin | None) -> RecordOriginPayload 
 
 
 def serialize_record_metadata(metadata: dict[str, object]) -> dict[str, object]:
-    """Return metadata with legacy path-like origin values redacted for display."""
+    """Return metadata with legacy path-like origin values redacted for display.
+
+    Deliberate privacy rewrite: the payload must never carry absolute
+    home paths, so these values differ from the raw store strings
+    (home collapses to ``~``, directories gain a trailing slash) —
+    consumers must not compare them to local absolute paths.
+    """
     payload: dict[str, object] = {}
     for key, value in metadata.items():
         if key in LEGACY_ORIGIN_METADATA_KEYS and isinstance(value, str) and _is_path_like(value):
