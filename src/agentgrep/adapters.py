@@ -1991,9 +1991,16 @@ def parse_grok_session_search_db(
     """
     connection = open_readonly_sqlite(source.path)
     try:
-        cursor = connection.execute(
-            "SELECT session_id, cwd, title, content, updated_at FROM session_docs",
-        )
+        try:
+            cursor = connection.execute(
+                "SELECT session_id, cwd, title, content, updated_at FROM session_docs",
+            )
+        except sqlite3.OperationalError:
+            # Databases written before Grok recorded cwd lack the column;
+            # keep their records searchable, just without origin metadata.
+            cursor = connection.execute(
+                "SELECT session_id, NULL, title, content, updated_at FROM session_docs",
+            )
         for row in cursor:
             session_id_raw, cwd_raw, title_raw, content_raw, updated_at_raw = row
             text = content_raw if isinstance(content_raw, str) and content_raw.strip() else None

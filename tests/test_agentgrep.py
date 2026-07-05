@@ -11456,6 +11456,61 @@ def test_search_grok_session_search_db(
     assert db_records[0].timestamp.startswith("2026-")
 
 
+def test_search_grok_session_search_db_without_cwd_column(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Grok databases predating the cwd column still yield records."""
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("GROK_HOME", raising=False)
+    db_path = home / ".grok" / "sessions" / "session_search.sqlite"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "CREATE TABLE session_docs ("
+        "  session_id TEXT PRIMARY KEY,"
+        "  updated_at INTEGER NOT NULL,"
+        "  title TEXT NOT NULL,"
+        "  content TEXT NOT NULL,"
+        "  content_hash TEXT NOT NULL"
+        ")",
+    )
+    conn.execute(
+        "INSERT INTO session_docs VALUES (?, ?, ?, ?, ?)",
+        (
+            "019729a0-0000-7000-8000-000000000042",
+            1779750000,
+            "Refactor auth middleware",
+            "The auth middleware was refactored to use JWT tokens.",
+            "abc123",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    query = t.cast("t.Any", agentgrep).SearchQuery(
+        terms=("middleware",),
+        scope="all",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("grok",),
+        limit=None,
+    )
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("grok",), backends)
+    records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
+
+    db_records = [r for r in records if r.store == "grok.session_search"]
+    assert db_records, "expected at least one session_search record"
+    assert db_records[0].title == "Refactor auth middleware"
+    assert db_records[0].session_id == "019729a0-0000-7000-8000-000000000042"
+    assert db_records[0].origin is None
+
+
 def _pi_session_header(
     *, cwd: str = "/home/user/project", version: int | None = 3
 ) -> dict[str, object]:
