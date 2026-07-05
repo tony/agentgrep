@@ -10,6 +10,7 @@ import typing as t
 import pytest
 
 import agentgrep
+from agentgrep.origin import record_matches_origin
 from agentgrep.query import compile_query, default_registry, parse_query
 
 
@@ -628,3 +629,58 @@ def test_ranking_can_boost_same_origin_records() -> None:
     )
 
     assert ranked[0][0].origin and ranked[0][0].origin.cwd == "/workspace/agentgrep/src"
+
+
+class OriginBoostDirectionCase(t.NamedTuple):
+    """Parametrized case for same-project boost path direction."""
+
+    test_id: str
+    record_cwd: str
+    expected: bool
+
+
+ORIGIN_BOOST_DIRECTION_CASES: tuple[OriginBoostDirectionCase, ...] = (
+    OriginBoostDirectionCase(
+        test_id="equal-path",
+        record_cwd="/home/user/work/proj",
+        expected=True,
+    ),
+    OriginBoostDirectionCase(
+        test_id="descendant-path",
+        record_cwd="/home/user/work/proj/src",
+        expected=True,
+    ),
+    OriginBoostDirectionCase(
+        test_id="ancestor-path",
+        record_cwd="/home/user",
+        expected=False,
+    ),
+    OriginBoostDirectionCase(
+        test_id="sibling-prefix-path",
+        record_cwd="/home/user/work/proj2",
+        expected=False,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    ORIGIN_BOOST_DIRECTION_CASES,
+    ids=[case.test_id for case in ORIGIN_BOOST_DIRECTION_CASES],
+)
+def test_origin_boost_requires_equal_or_descendant_paths(
+    case: OriginBoostDirectionCase,
+) -> None:
+    """The --here boost only accepts records at or under the target project."""
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text="streaming parser notes",
+        origin=agentgrep.RecordOrigin(cwd=case.record_cwd),
+    )
+    boost = agentgrep.RecordOrigin(repo="/home/user/work/proj")
+
+    assert record_matches_origin(record, boost) is case.expected

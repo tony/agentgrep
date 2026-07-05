@@ -233,7 +233,7 @@ def _any_path_related(values: t.Iterable[str], target: str) -> bool:
 def _paths_related(value: str, target: str) -> bool:
     if not value:
         return False
-    return value == target or value.startswith(f"{target}/") or target.startswith(f"{value}/")
+    return value == target or value.startswith(f"{target}/")
 
 
 def _normalize_path_text(value: str) -> str:
