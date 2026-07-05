@@ -126,7 +126,9 @@ def _is_path_like(value: str) -> bool:
     )
 
 
-_SCP_REMOTE_RE = re.compile(r"^[^@/\s:]+@(?P<host>[^:/\s]+):(?P<path>\S+)$")
+# @ is excluded from host and path so credential-shaped remotes fall
+# through to the URL parse and are omitted instead of emitted.
+_SCP_REMOTE_RE = re.compile(r"^[^@/\s:]+@(?P<host>[^:/\s@]+):(?P<path>[^@\s]+)$")
 _SAFE_REMOTE_SCHEMES = frozenset({"git", "http", "https", "ssh"})
 
 

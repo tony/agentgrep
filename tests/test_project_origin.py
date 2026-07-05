@@ -148,6 +148,16 @@ ORIGIN_REMOTE_SERIALIZATION_CASES: tuple[OriginRemoteSerializationCase, ...] = (
         expected_remote="ssh://github.com/tony/agentgrep.git",
     ),
     OriginRemoteSerializationCase(
+        test_id="scp-embedded-credential",
+        remote="git@user:token@github.com:tony/agentgrep.git",
+        expected_remote=None,
+    ),
+    OriginRemoteSerializationCase(
+        test_id="scp-credential-shaped-host",
+        remote="user@pass@host:path",
+        expected_remote=None,
+    ),
+    OriginRemoteSerializationCase(
         test_id="local-path",
         remote="/home/private/repo",
         expected_remote=None,
