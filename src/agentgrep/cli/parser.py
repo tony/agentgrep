@@ -968,8 +968,14 @@ def parse_args(
 
     if command == "export":
         export_terms = tuple(t.cast("list[str]", namespace.terms))
+        export_compiled, export_residual, _export_fields = _maybe_compile_query(
+            list(export_terms),
+            bundle=bundle,
+            color_mode=color_mode,
+            subparser=bundle.export_parser,
+        )
         return ExportArgs(
-            terms=export_terms,
+            terms=export_residual,
             agents=agents,
             scope=t.cast("SearchScope", namespace.scope or "prompts"),
             fmt=t.cast("t.Literal['ndjson', 'json', 'markdown', 'csv']", namespace.fmt),
@@ -977,6 +983,7 @@ def parse_args(
             limit=t.cast("int | None", namespace.limit),
             out=t.cast("str | None", namespace.out),
             color_mode=color_mode,
+            compiled=export_compiled,
             raw_query=" ".join(export_terms),
         )
 

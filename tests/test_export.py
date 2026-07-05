@@ -207,3 +207,14 @@ def test_render_export_dispatches_to_each_writer(case: _RenderExportCase) -> Non
     else:
         expected = export.render_markdown(export.assemble_conversations(records))
     assert got == expected
+
+
+def test_export_compiles_field_predicates() -> None:
+    """Field predicates typed as export terms compile instead of staying literal."""
+    from agentgrep.cli.parser import ExportArgs
+
+    args = agentgrep.parse_args(["export", "role:user"])
+    assert isinstance(args, ExportArgs)
+    assert args.compiled is not None
+    assert args.terms == ()
+    assert args.raw_query == "role:user"
