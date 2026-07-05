@@ -58,6 +58,18 @@ the generated site. The same pass tightens API cross-references and highlights
 the query grammar as EBNF, making the reference pages easier to scan without
 changing runtime behavior.
 
+#### Event-stream diagrams split for narrow screens (#96)
+
+The event-stream architecture chart is now two top-to-bottom diagrams — one
+for the producer side, one for consumers — each with alt text, a stable link
+target, and a responsive policy, so they stay legible at phone width.
+
+#### Inline commands and paths are highlighted (#96)
+
+Inline mentions of `agentgrep` commands and file paths now carry syntax
+highlighting via the shared `sphinx-gp-highlighting` package, and the
+accelerator module layout renders as a highlighted directory tree.
+
 ## agentgrep 0.1.0a32 (2026-07-04)
 
 agentgrep 0.1.0a32 realigns every agent backend to the formats today's
