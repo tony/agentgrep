@@ -311,6 +311,13 @@ def _record_origin(
     return None if origin.is_empty() else origin
 
 
+_SCP_REMOTE_RE = re.compile(r"^[^@/\s:]+@[^:/\s]+:.+")
+
+
+def _remote_like_str(text: str) -> bool:
+    return "://" in text or _SCP_REMOTE_RE.match(text) is not None
+
+
 def _path_like_str(value: object) -> str | None:
     """Accept a mapping value as an origin path only when it looks like one.
 
@@ -319,7 +326,7 @@ def _path_like_str(value: object) -> str | None:
     without a separator or home prefix must not become an origin path.
     """
     text = as_optional_str(value)
-    if text is None or not is_path_like_text(text):
+    if text is None or not is_path_like_text(text) or _remote_like_str(text):
         return None
     return text
 

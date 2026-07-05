@@ -82,6 +82,14 @@ class OriginRemoteSerializationCase(t.NamedTuple):
     expected_remote: str | None
 
 
+class OriginRepoPathGateCase(t.NamedTuple):
+    """Parametrized case for repo-like mapping values."""
+
+    test_id: str
+    value: str
+    expected_repo: str | None
+
+
 ORIGIN_TRAILING_SLASH_CASES: tuple[OriginTrailingSlashCase, ...] = (
     OriginTrailingSlashCase(
         test_id="cwd-display-path-matches-stored-path",
@@ -174,6 +182,29 @@ ORIGIN_REMOTE_SERIALIZATION_CASES: tuple[OriginRemoteSerializationCase, ...] = (
     ),
 )
 
+ORIGIN_REPO_PATH_GATE_CASES: tuple[OriginRepoPathGateCase, ...] = (
+    OriginRepoPathGateCase(
+        test_id="absolute-path",
+        value="/workspace/agentgrep",
+        expected_repo="/workspace/agentgrep",
+    ),
+    OriginRepoPathGateCase(
+        test_id="relative-path",
+        value="work/agentgrep",
+        expected_repo="work/agentgrep",
+    ),
+    OriginRepoPathGateCase(
+        test_id="https-remote",
+        value="https://token@github.com/org/repo.git",
+        expected_repo=None,
+    ),
+    OriginRepoPathGateCase(
+        test_id="scp-remote",
+        value="git@github.com:org/repo.git",
+        expected_repo=None,
+    ),
+)
+
 
 def test_search_record_origin_serialization_scrubs_path_like_values(
     tmp_path: pathlib.Path,
@@ -241,6 +272,29 @@ def test_record_origin_remote_serialization_is_safe(
         assert origin is not None
         assert origin["remote"] == case.expected_remote
         assert "secret-token" not in json.dumps(origin)
+
+
+@pytest.mark.parametrize(
+    "case",
+    ORIGIN_REPO_PATH_GATE_CASES,
+    ids=[case.test_id for case in ORIGIN_REPO_PATH_GATE_CASES],
+)
+def test_message_origin_repo_values_reject_remotes(
+    case: OriginRepoPathGateCase,
+) -> None:
+    """Generic origin extraction treats repo as a path, not a remote URL."""
+    candidates = list(
+        agentgrep.iter_message_candidates(
+            {"role": "user", "content": "repo origin", "repo": case.value},
+        ),
+    )
+
+    assert len(candidates) == 1
+    origin = candidates[0].origin
+    if case.expected_repo is None:
+        assert origin is None or origin.repo is None
+    else:
+        assert origin == agentgrep.RecordOrigin(repo=case.expected_repo)
 
 
 def test_origin_query_fields_filter_records_and_expand_home(
