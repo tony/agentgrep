@@ -102,6 +102,10 @@ def score_by_similarity(
     list of (SearchRecord, float)
         ``(record, score)`` pairs, best-first, capped at ``top_k``.
     """
+    if top_k <= 0:
+        # A non-positive cap keeps nothing; return early so the size-k heap
+        # guard below never indexes an empty best_scores.
+        return []
     import difflib
     import heapq
 

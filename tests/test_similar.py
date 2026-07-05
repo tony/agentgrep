@@ -237,3 +237,28 @@ def test_max_candidates_bounds_the_scanned_corpus(
         max_candidates=case.max_candidates,
     )
     assert len(matches) == case.expected_count
+
+
+class _TopKGuardCase(t.NamedTuple):
+    test_id: str
+    top_k: int
+
+
+_TOP_K_GUARD_CASES = [
+    _TopKGuardCase("zero", 0),
+    _TopKGuardCase("negative", -1),
+]
+
+
+@pytest.mark.parametrize("case", _TOP_K_GUARD_CASES, ids=[c.test_id for c in _TOP_K_GUARD_CASES])
+def test_score_by_similarity_non_positive_top_k_returns_empty(case: _TopKGuardCase) -> None:
+    """A non-positive ``top_k`` yields no matches instead of indexing an empty heap."""
+    assert score_by_similarity("seed", [_record(text="seed")], top_k=case.top_k) == []
+
+
+def test_similar_top_k_rejects_non_positive_value(capsys: pytest.CaptureFixture[str]) -> None:
+    """``similar --top-k`` requires a positive neighbor cap (the CLI-side guard)."""
+    with pytest.raises(SystemExit) as exc_info:
+        _ = agentgrep.parse_args(["similar", "--similar-text", "x", "--top-k", "0"])
+    assert exc_info.value.code == 2
+    assert "--top-k must be greater than 0" in capsys.readouterr().err

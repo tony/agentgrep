@@ -967,11 +967,15 @@ def parse_args(
         if not similar_text:
             with configured_color_environment(color_mode):
                 bundle.similar_parser.error("--similar-text is required")
+        top_k = t.cast("int", namespace.top_k)
+        if top_k < 1:
+            with configured_color_environment(color_mode):
+                bundle.similar_parser.error("--top-k must be greater than 0")
         return SimilarArgs(
             seed_text=t.cast("str", similar_text),
             agents=agents,
             scope=t.cast("SearchScope", namespace.scope or "prompts"),
-            top_k=t.cast("int", namespace.top_k),
+            top_k=top_k,
             threshold=t.cast("float", namespace.threshold),
             exclude_exact=t.cast("bool", namespace.exclude_exact),
             output_mode=output_mode,
