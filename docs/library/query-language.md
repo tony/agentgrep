@@ -2,8 +2,8 @@
 
 # Query language
 
-{argparse:subcommand}`agentgrep search`, {argparse:subcommand}`agentgrep grep`,
-and {argparse:subcommand}`agentgrep find` accept a Lucene-style query language
+{argparse:program}`agentgrep search`, {argparse:program}`agentgrep grep`,
+and {argparse:program}`agentgrep find` accept a Lucene-style query language
 for inline field predicates, boolean composition, and date ranges. The same
 syntax works across all three subcommands; each interprets the predicates
 against its natural record shape.
@@ -61,7 +61,7 @@ layers:
 
 ### Source-level fields
 
-These can be decided from a `SourceHandle` alone, so source-level
+These can be decided from a {class}`~agentgrep.SourceHandle` alone, so source-level
 predicates prune sources before any file is opened.
 
 | Field | Kind | Notes |

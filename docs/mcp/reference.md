@@ -7,50 +7,69 @@ FastMCP server factory, payload models, and MCP helpers.
 ## Payload models
 
 ```{eval-rst}
+.. autoclass:: agentgrep.mcp.AgentGrepModel
+
 .. autoclass:: agentgrep.mcp.SearchRecordModel
-   :members:
 
 .. autoclass:: agentgrep.mcp.FindRecordModel
-   :members:
 
 .. autoclass:: agentgrep.mcp.SourceRecordModel
-   :members:
+
+.. autoclass:: agentgrep.mcp.SourceVersionDetectionModel
 
 .. autoclass:: agentgrep.mcp.SearchRequestModel
-   :members:
 
 .. autoclass:: agentgrep.mcp.SearchToolResponse
-   :members:
 
 .. autoclass:: agentgrep.mcp.FindRequestModel
-   :members:
 
 .. autoclass:: agentgrep.mcp.FindToolResponse
-   :members:
 
 .. autoclass:: agentgrep.mcp.ResultStatsModel
-   :members:
 
 .. autoclass:: agentgrep.mcp.PageInfoModel
-   :members:
 
 .. autoclass:: agentgrep.mcp.RunStatusModel
-   :members:
 
 .. autoclass:: agentgrep.mcp.DiagnosticModel
-   :members:
 
 .. autoclass:: agentgrep.mcp.InspectResultRequest
-   :members:
 
 .. autoclass:: agentgrep.mcp.InspectResultResponse
-   :members:
+
+.. autoclass:: agentgrep.mcp.StoreDescriptorModel
+
+.. autoclass:: agentgrep.mcp.ListStoresRequest
+
+.. autoclass:: agentgrep.mcp.ListStoresResponse
+
+.. autoclass:: agentgrep.mcp.GetStoreDescriptorRequest
+
+.. autoclass:: agentgrep.mcp.ListSourcesRequest
+
+.. autoclass:: agentgrep.mcp.ListSourcesResponse
+
+.. autoclass:: agentgrep.mcp.FilterSourcesRequest
+
+.. autoclass:: agentgrep.mcp.DiscoverySummaryRequest
+
+.. autoclass:: agentgrep.mcp.DiscoverySummaryResponse
+
+.. autoclass:: agentgrep.mcp.ValidateQueryRequest
+
+.. autoclass:: agentgrep.mcp.ValidateQueryResponse
+
+.. autoclass:: agentgrep.mcp.RecentSessionsRequest
+
+.. autoclass:: agentgrep.mcp.RecentSessionsResponse
+
+.. autoclass:: agentgrep.mcp.InspectSampleRequest
+
+.. autoclass:: agentgrep.mcp.InspectSampleResponse
 
 .. autoclass:: agentgrep.mcp.BackendAvailabilityModel
-   :members:
 
 .. autoclass:: agentgrep.mcp.CapabilitiesModel
-   :members:
 ```
 
 ## Server helpers

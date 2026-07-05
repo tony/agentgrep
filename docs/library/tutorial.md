@@ -2,6 +2,11 @@
 
 # Tutorial
 
+This tutorial starts with the default prompt-search path and then opens the
+smaller doors: ranked results, full conversation records, multi-term matching,
+and structured output. You can stop after the first section if all you need is
+"what did I ask my agents about this?"
+
 ## Search prompts
 
 Search user prompts across all supported stores:

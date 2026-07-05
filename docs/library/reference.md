@@ -54,6 +54,36 @@ every surface (CLI, TUI, MCP).
    :members:
 ```
 
+## Event streams
+
+```{eval-rst}
+.. autoclass:: agentgrep.events.SearchStarted
+
+.. autoclass:: agentgrep.events.SourceStarted
+
+.. autoclass:: agentgrep.events.RecordEmitted
+
+.. autoclass:: agentgrep.events.SourceFinished
+
+.. autoclass:: agentgrep.events.SearchFinished
+
+.. autodata:: agentgrep.events.SearchEvent
+   :no-value:
+
+.. autoclass:: agentgrep.events.FindStarted
+
+.. autoclass:: agentgrep.events.FindRecordEmitted
+
+.. autoclass:: agentgrep.events.FindFinished
+
+.. autodata:: agentgrep.events.FindEvent
+   :no-value:
+
+.. autofunction:: agentgrep.iter_search_events
+.. autofunction:: agentgrep.aiter_search_events
+.. autofunction:: agentgrep.iter_find_events
+```
+
 ## Discovery and search
 
 ```{eval-rst}
@@ -63,4 +93,35 @@ every surface (CLI, TUI, MCP).
 .. autofunction:: agentgrep.search_sources
 .. autofunction:: agentgrep.run_find_query
 .. autofunction:: agentgrep.find_sources
+```
+
+## Store catalog
+
+```{eval-rst}
+.. autodata:: agentgrep.stores.AgentName
+   :no-value:
+
+.. autodata:: agentgrep.stores.PathKind
+   :no-value:
+
+.. autodata:: agentgrep.stores.SourceKind
+   :no-value:
+
+.. autoclass:: agentgrep.stores.StoreFormat
+
+.. autoclass:: agentgrep.stores.StoreRole
+
+.. autoclass:: agentgrep.stores.StoreCoverage
+
+.. autoclass:: agentgrep.stores.VersionDetectionStrategy
+
+.. autoclass:: agentgrep.stores.VersionDetectionConfidence
+
+.. autoclass:: agentgrep.stores.DiscoverySpec
+
+.. autoclass:: agentgrep.stores.StoreDescriptor
+
+.. autoclass:: agentgrep.stores.StoreCatalog
+
+.. autofunction:: agentgrep.store_catalog.gemini_project_hash
 ```

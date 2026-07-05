@@ -2,6 +2,11 @@
 
 # Claude Code
 
+Claude Code stores a small global prompt history and per-project transcript
+logs. agentgrep searches the prompt and transcript surfaces by default, while
+memory, todo, settings, shell snapshots, and plugin/skill files stay
+inventory-only unless a caller explicitly asks to inspect non-default stores.
+
 Base path: `~/.claude` (env override: `CLAUDE_CONFIG_DIR`).
 
 `observed_version`: `claude-code v2.1.185` (observed 2026-06-21).
@@ -40,16 +45,16 @@ whose concrete shape cannot be sampled safely.
 
 ## Record schemas
 
-### claude.history
+### Global prompt history
 
-Global JSONL prompt-history audit log at
+{storage:storeref}`claude.history` is the global JSONL prompt-history audit log at
 `${CLAUDE_CONFIG_DIR or ~/.claude}/history.jsonl`. Each line carries
-`display`, `pastedContents`, `timestamp` as Unix milliseconds,
-`project`, and `sessionId`. `display` is the user-facing prompt text;
-when it contains `[Pasted text #N]` placeholders, agentgrep expands
-inline text from `pastedContents` or the external
-`paste-cache/<contentHash>.txt` file when present. Missing or non-text
-paste entries keep their original placeholder text.
+`display`, `pastedContents`, `timestamp` as Unix milliseconds, `project`, and
+`sessionId`. `display` is the user-facing prompt text; when it contains
+`[Pasted text #N]` placeholders, agentgrep expands inline text from
+`pastedContents` or the external `paste-cache/<contentHash>.txt` file when
+present. Missing or non-text paste entries keep their original placeholder
+text.
 
 ```json
 {"display": "Review [Pasted text #1]",
@@ -59,11 +64,11 @@ paste entries keep their original placeholder text.
  "sessionId": "..."}
 ```
 
-### claude.projects.session
+### Project transcripts
 
-JSONL with stream fragments grouped by `uuid`. Keys: `type`, `uuid`,
-`parentUuid`, `timestamp`, `sessionId`, `cwd`, `gitBranch`,
-`version`, `message.role`, `message.content[]`
+{storage:storeref}`claude.projects.session` is JSONL with stream fragments grouped by
+`uuid`. Keys: `type`, `uuid`, `parentUuid`, `timestamp`, `sessionId`, `cwd`,
+`gitBranch`, `version`, `message.role`, `message.content[]`
 (`text`/`thinking`/`tool_use`/`tool_result`), `message.usage`.
 
 ```json
@@ -72,25 +77,24 @@ JSONL with stream fragments grouped by `uuid`. Keys: `type`, `uuid`,
 ```
 
 Sub-agent dispatches nest under `<session_uuid>/subagents/` and use
-the same record parser. agentgrep reports them as the distinct runtime
-store `claude.projects_subagents` so main session files and nested
-sub-agent files do not collapse into one source.
+the same record parser. agentgrep reports them as the distinct runtime store
+`claude.projects_subagents` so main session files and nested sub-agent files do
+not collapse into one source.
 
-### claude.store_db
+### Store database
 
-Claude Code also keeps `__store.db` under the config root. Observed
-tables include `base_messages`, `user_messages`,
-`assistant_messages`, and `conversation_summaries`. The message tables
-can duplicate JSONL transcript content, so agentgrep catalogs and
-discovers the DB for explicit inventory but does not search it by
-default.
+{storage:storeref}`claude.store_db` is Claude Code's `__store.db` under the config
+root. Observed tables include `base_messages`, `user_messages`,
+`assistant_messages`, and `conversation_summaries`. The message tables can
+duplicate JSONL transcript content, so agentgrep catalogs and discovers the DB
+for explicit inventory but does not search it by default.
 
-### claude.projects.session_memory
+### Session memory
 
-Session memory summaries live under
-`projects/<encoded_project>/<session_uuid>/session-memory/summary.md`.
-They can contain prompt context and summaries, but they are derived
-state rather than the primary transcript.
+{storage:storeref}`claude.projects.session_memory` summaries live under
+`projects/<encoded_project>/<session_uuid>/session-memory/summary.md`. They
+can contain prompt context and summaries, but they are derived state rather
+than the primary transcript.
 
 ### Tasks, Plans, And Configuration
 

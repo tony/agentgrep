@@ -2,6 +2,11 @@
 
 # VS Code (GitHub Copilot Chat)
 
+VS Code's built-in GitHub Copilot Chat persists readable transcript snapshots
+and mutations under the workbench user-data directory. agentgrep treats those
+files as a JSON-transcript backend, with prompt records in the default scope
+and full conversation records behind the conversation scope.
+
 Base path: `~/.config/Code/User` on Linux
 (`~/Library/Application Support/Code/User` on macOS,
 `%APPDATA%/Code/User` on Windows). Env overrides: `VSCODE_APPDATA`,
@@ -10,13 +15,10 @@ Base path: `~/.config/Code/User` on Linux
 `observed_version`: `VS Code GitHub Copilot Chat (chatSessions v3)`
 (observed 2026-06-21).
 
-VS Code's built-in GitHub Copilot Chat persists conversations client-side
-as readable JSON under the workbench `User/` directory — one transcript
-per session. This makes VS Code a JSON-transcript backend, and unlike
-Windsurf's encrypted conversation blobs, the transcripts are plain text
-agentgrep can read directly. Editions are covered side by side: stable
-`Code`, `Code - Insiders`, `VSCodium`, and `Code - OSS` all share the same
-layout under their own `User/` directory.
+Unlike Windsurf's encrypted conversation blobs, the transcripts are plain text
+agentgrep can read directly. Editions are covered side by side: stable `Code`,
+`Code - Insiders`, `VSCodium`, and `Code - OSS` all share the same layout under
+their own `User/` directory.
 
 ## Stores
 
@@ -25,17 +27,17 @@ layout under their own `User/` directory.
 
 ## Record schema
 
-### vscode.chat_sessions
+### Chat sessions
 
-Per-workspace transcripts live under
-`workspaceStorage/<hash>/chatSessions/<uuid>.jsonl`; sessions opened
-without a folder live under `globalStorage/emptyWindowChatSessions/`.
-Current sessions are a JSONL mutation log — the first `kind:0` line holds
-the whole session snapshot under `v`, then `kind:1` lines set a value at a
-key-path and `kind:2` lines replace an array from index `i` with `v`
-(truncate, then append), rebuilding the `requests[]`
-turn list that older single-object `.json` sessions store directly. agentgrep
-replays the log in file order, so the same fields drive both shapes:
+{storage:storeref}`vscode.chat_sessions` covers per-workspace transcripts under
+`workspaceStorage/<hash>/chatSessions/<uuid>.jsonl`; sessions opened without a
+folder live under `globalStorage/emptyWindowChatSessions/`. Current sessions
+are a JSONL mutation log — the first `kind:0` line holds the whole session
+snapshot under `v`, then `kind:1` lines set a value at a key-path and `kind:2`
+lines replace an array from index `i` with `v` (truncate, then append),
+rebuilding the `requests[]` turn list that older single-object `.json` sessions
+store directly. agentgrep replays the log in file order, so the same fields
+drive both shapes:
 
 | Field | Record |
 |-------|--------|
@@ -54,13 +56,13 @@ does not publish a formal schema, so agentgrep's parser is the reference
 implementation; a forward-compatible `markdownContent` response kind and a
 per-turn `modelId` are read when a newer file carries them.
 
-### vscode.inline_history
+### Inline-edit history
 
-The workbench `globalStorage/state.vscdb` SQLite database has an
-`inline-chat-history` key in its `ItemTable` holding a JSON array of the
-user's Ctrl+I inline-edit prompts. agentgrep reads that key alone
-(token-filtered in SQL), so the `secret://…` auth keys in the same
-database are never enumerated.
+{storage:storeref}`vscode.inline_history` lives in the workbench
+`globalStorage/state.vscdb` SQLite database. Its `ItemTable` has an
+`inline-chat-history` key holding a JSON array of the user's Ctrl+I inline-edit
+prompts. agentgrep reads that key alone (token-filtered in SQL), so the
+`secret://…` auth keys in the same database are never enumerated.
 
 ## Resolving the project directory
 

@@ -2,7 +2,15 @@
 
 # How to
 
+These recipes cover the library-adjacent tasks people usually reach for after
+their first search: discover stores, bound output, stop an interactive scan
+early, and hand the same surface to an MCP client. Start with the first command
+that matches your question; the examples stay small on purpose.
+
 ## Find stores before searching
+
+Use discovery when you want to know which agent history files agentgrep can
+read before you search them.
 
 ```console
 $ uv run agentgrep find
@@ -15,6 +23,9 @@ $ uv run agentgrep find sessions --agent codex
 ```
 
 ## Cap result count
+
+Use a limit when you are checking whether a term exists and do not need every
+matching record.
 
 ```console
 $ uv run agentgrep grep "migration" --limit 5

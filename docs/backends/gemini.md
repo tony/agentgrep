@@ -2,6 +2,11 @@
 
 # Gemini CLI
 
+Gemini CLI keeps temporary chat transcripts and older JSON archives under its
+CLI home. agentgrep treats the active JSONL chat files as the main searchable
+surface and keeps legacy/archive variants explicit so readers can tell which
+shape a result came from.
+
 Base path: `~/.gemini` (env override: `GEMINI_CLI_HOME`).
 
 `observed_version`: `gemini-cli v0.47.0` stable (observed 2026-06-21);
@@ -14,35 +19,36 @@ types pinned at HEAD `927170fc`.
 
 ## Record schemas
 
-### gemini.tmp.chats
+### Active chat JSONL
 
-JSONL with mixed record types. Line 1 is a `SessionMetadataRecord`
-(`sessionId`, `projectHash`, `startTime`, `lastUpdated`, `kind`).
-Subsequent lines are `MessageRecord` turns (`id`, `timestamp`,
-`type`, `content`) interleaved with `MetadataUpdateRecord` updates
-(`{$set: {...}}`). Some user records also carry `displayContent` (the
-UI-echo variant); `content` is the expanded form agentgrep searches.
+{storage:storeref}`gemini.tmp.chats` is JSONL with mixed record types. Line 1 is a
+`SessionMetadataRecord` (`sessionId`, `projectHash`, `startTime`,
+`lastUpdated`, `kind`). Subsequent lines are `MessageRecord` turns (`id`,
+`timestamp`, `type`, `content`) interleaved with `MetadataUpdateRecord` updates
+(`{$set: {...}}`). Some user records also carry `displayContent` (the UI-echo
+variant); `content` is the expanded form agentgrep searches.
 
 For `gemini`-typed records whose `content` is empty, the assistant's
 prose is drawn from `thoughts[*].subject`/`description` and the
 tool-call context from `toolCalls[*].name`/`description`.
 
-### gemini.tmp.chats\_legacy
+### Legacy chat JSON
 
-Pre-Feb 2026 single-file `.json` format. JSON object with session
-metadata at the top level and the full conversation under a
-`messages` array.
+{storage:storeref}`gemini.tmp.chats_legacy` is the pre-Feb 2026 single-file `.json`
+format. It is a JSON object with session metadata at the top level and the full
+conversation under a `messages` array.
 
-### gemini.tmp.logs
+### Prompt logs
 
-Flat JSON array of `LogEntry { sessionId, messageId, timestamp,
-type, message }` — user-prompt audit log.
+{storage:storeref}`gemini.tmp.logs` is a flat JSON array of
+`LogEntry { sessionId, messageId, timestamp, type, message }` — a user-prompt
+audit log.
 
-### gemini.memory
+### Memory file
 
-`~/.gemini/GEMINI.md` — the global user-authored context/memory file
-injected into Gemini CLI sessions, the analogue of Claude's
-`CLAUDE.md`. Standing instructions rather than chat, so it is
+{storage:storeref}`gemini.memory` is `~/.gemini/GEMINI.md` — the global user-authored
+context/memory file injected into Gemini CLI sessions, the analogue of
+Claude's `CLAUDE.md`. Standing instructions rather than chat, so it is
 inspectable (opt-in) rather than searched by default.
 
 ## Path hashing

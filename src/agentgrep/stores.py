@@ -234,7 +234,7 @@ class StoreDescriptor(pydantic.BaseModel):
     """
 
     distinguishes_from: tuple[str, ...] = ()
-    """Sibling ``store_id``s this store overlaps with; explains how they differ."""
+    """Sibling ``store_id`` values this store overlaps with; explains how they differ."""
 
     search_by_default: bool | None = None
     """Whether agentgrep should search this store by default.

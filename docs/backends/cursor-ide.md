@@ -14,11 +14,11 @@ under the platform user-data directory.
 
 ## Record schemas
 
-### cursor-ide.state_vscdb
+### Global state database
 
-Platform-specific SQLite (`state.vscdb`). Keys in
-`ItemTable`/`cursorDiskKV` containing `chat`/`composer`/`prompt`/
-`history` tokens hold conversation JSON.
+{storage:storeref}`cursor-ide.state_vscdb` is the platform-specific global SQLite
+database (`state.vscdb`). Keys in `ItemTable`/`cursorDiskKV` containing
+`chat`/`composer`/`prompt`/`history` tokens hold conversation JSON.
 
 | Platform | Path |
 |----------|------|
@@ -26,14 +26,14 @@ Platform-specific SQLite (`state.vscdb`). Keys in
 | macOS | `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` |
 | Windows | `%APPDATA%/Cursor/User/globalStorage/state.vscdb` |
 
-### cursor-ide.workspace_state
+### Workspace state databases
 
-The IDE also writes one `state.vscdb` per opened project under
-`workspaceStorage/<hash>/`. These share the global store's `ItemTable`
-shape; the `aiService.prompts` key holds that workspace's typed prompt
-history. agentgrep enumerates them through the platform
-`workspaceStorage` directory and parses them with the same adapter as
-the global store.
+{storage:storeref}`cursor-ide.workspace_state` covers one `state.vscdb` per opened
+project under `workspaceStorage/<hash>/`. These share the global store's
+`ItemTable` shape; the `aiService.prompts` key holds that workspace's typed
+prompt history. agentgrep enumerates them through the platform
+`workspaceStorage` directory and parses them with the same adapter as the
+global store.
 
 ## Cross-host discovery on WSL
 
