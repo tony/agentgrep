@@ -63,6 +63,7 @@ dev = [
   "sphinx-autodoc-api-style==0.0.1a32",
   "sphinx-autodoc-argparse==0.0.1a32",
   "sphinx-autodoc-fastmcp==0.0.1a32",
+  "sphinx-gp-mermaid==0.0.1a32",
   "sphinx-autobuild",
   # Testing
   "pytest",
@@ -103,6 +104,7 @@ docs = [
   "sphinx-autodoc-api-style==0.0.1a32",
   "sphinx-autodoc-argparse==0.0.1a32",
   "sphinx-autodoc-fastmcp==0.0.1a32",
+  "sphinx-gp-mermaid==0.0.1a32",
   "sphinx-autobuild",
   # docs/_ext/lexers.py registers agentgrep.query.pygments_lexer, which imports
   # pygments directly (also transitive via Sphinx).
@@ -131,6 +133,7 @@ sphinx-autodoc-pytest-fixtures = false
 sphinx-autodoc-sphinx = false
 sphinx-autodoc-typehints-gp = false
 sphinx-fonts = false
+sphinx-gp-mermaid = false
 sphinx-gp-opengraph = false
 sphinx-gp-llms = false
 sphinx-gp-sitemap = false
