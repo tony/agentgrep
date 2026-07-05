@@ -36,7 +36,15 @@ def _compile_path_patterns(
     """Return pre-expanded path patterns keyed by their raw query value."""
     fields = frozenset({"path"}) if path_fields is None else path_fields
     if isinstance(node, FieldEqNode) and node.field in fields:
-        return {node.value: _compile_path_pattern(node.value)}
+        # Origin paths (cwd/repo/worktree) also match their resolved
+        # form so a symlinked filter finds physically recorded paths;
+        # `path:` keeps pure substring semantics.
+        return {
+            node.value: _compile_path_pattern(
+                node.value,
+                add_resolved=node.field != "path",
+            ),
+        }
     if isinstance(node, NotNode):
         return _compile_path_patterns(node.child, path_fields=fields)
     if isinstance(node, AndNode | OrNode):
@@ -47,12 +55,18 @@ def _compile_path_patterns(
     return {}
 
 
-def _compile_path_pattern(raw: str) -> _CompiledPathPattern:
+def _compile_path_pattern(raw: str, *, add_resolved: bool = False) -> _CompiledPathPattern:
     """Compile one ``path:`` value into raw and home-expanded variants."""
     variants = [raw]
     variants.extend(_expand_current_user_home_patterns(raw))
+    is_glob = any(ch in variant for variant in variants for ch in "*?[")
+    if add_resolved and not is_glob:
+        variants.extend(
+            str(pathlib.Path(variant).resolve(strict=False))
+            for variant in tuple(variants)
+            if pathlib.Path(variant).is_absolute()
+        )
     unique_variants = _dedupe_preserving_order(variants)
-    is_glob = any(ch in variant for variant in unique_variants for ch in "*?[")
     return _CompiledPathPattern(
         raw=raw,
         variants=unique_variants,

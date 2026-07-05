@@ -7,6 +7,7 @@ or source prefilter behavior.
 
 from __future__ import annotations
 
+import os
 import pathlib
 import typing as t
 
@@ -67,7 +68,9 @@ def normalize_origin_path_text(value: str | None) -> str | None:
 
     CLI and MCP frontends share this so ``--cwd .`` and an MCP
     ``cwd="."`` resolve the same way before matching against the
-    absolute paths records carry.
+    absolute paths records carry. The value keeps the user's logical
+    (unresolved) form; symlink resolution happens as an extra pattern
+    variant at compile time so records stored in either form match.
     """
     if value is None or not value.strip():
         # A blank value must not resolve to the invoking process's cwd.
@@ -75,7 +78,7 @@ def normalize_origin_path_text(value: str | None) -> str | None:
     path = pathlib.Path(value).expanduser()
     if not path.is_absolute():
         path = pathlib.Path.cwd() / path
-    return str(path.resolve(strict=False))
+    return os.path.normpath(str(path))
 
 
 def origin_filter_nodes(

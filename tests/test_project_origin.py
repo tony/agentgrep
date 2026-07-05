@@ -15,7 +15,12 @@ from agentgrep.origin import (
     origin_filter_nodes,
     record_matches_origin,
 )
-from agentgrep.query import compile_query, default_registry, parse_query
+from agentgrep.query import (
+    compile_query,
+    compose_query_ast,
+    default_registry,
+    parse_query,
+)
 
 
 def _write_jsonl(path: pathlib.Path, rows: list[object]) -> None:
@@ -882,3 +887,52 @@ def test_blank_origin_filter_values_are_absent(case: BlankOriginFilterCase) -> N
     """A blank filter value is treated as absent, not as the process cwd."""
     assert normalize_origin_path_text(case.value) is None
     assert origin_filter_nodes(branch=case.value) == ()
+
+
+class SymlinkOriginFilterCase(t.NamedTuple):
+    """Parametrized case for symlinked cwd filters vs recorded path forms."""
+
+    test_id: str
+    record_form: t.Literal["logical", "physical"]
+
+
+SYMLINK_ORIGIN_FILTER_CASES: tuple[SymlinkOriginFilterCase, ...] = (
+    SymlinkOriginFilterCase(test_id="logically-recorded-cwd", record_form="logical"),
+    SymlinkOriginFilterCase(test_id="physically-recorded-cwd", record_form="physical"),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    SYMLINK_ORIGIN_FILTER_CASES,
+    ids=[case.test_id for case in SYMLINK_ORIGIN_FILTER_CASES],
+)
+def test_cwd_filter_matches_across_symlinks(
+    tmp_path: pathlib.Path,
+    case: SymlinkOriginFilterCase,
+) -> None:
+    """A symlinked filter path matches logical and physical recorded cwds."""
+    real = tmp_path / "real" / "proj"
+    real.mkdir(parents=True)
+    link = tmp_path / "link"
+    link.symlink_to(tmp_path / "real", target_is_directory=True)
+    logical = link / "proj"
+    record_cwd = str(logical) if case.record_form == "logical" else str(real)
+
+    filter_value = normalize_origin_path_text(str(logical))
+    assert filter_value is not None
+    registry = default_registry()
+    ast, _user_ast = compose_query_ast((), origin_filter_nodes(cwd=filter_value), registry)
+    compiled = compile_query(ast, registry)
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text="symlinked project notes",
+        origin=agentgrep.RecordOrigin(cwd=record_cwd),
+    )
+
+    assert compiled.record_predicate is not None
+    assert compiled.record_predicate(record)
