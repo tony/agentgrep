@@ -1352,6 +1352,21 @@ FLAG_FIELD_COLLISION_CASES: tuple[FlagFieldCollisionCase, ...] = (
         argv=("search", "--scope", "prompts", "scope:conversations", "bliss"),
         expected_message_fragment="cannot combine --scope flag with scope: field",
     ),
+    FlagFieldCollisionCase(
+        test_id="search-cwd-flag-and-field",
+        argv=("search", "--cwd", "/workspace/a", "cwd:/workspace/b", "bliss"),
+        expected_message_fragment="cannot combine --cwd flag with cwd: field",
+    ),
+    FlagFieldCollisionCase(
+        test_id="search-repo-flag-and-field",
+        argv=("search", "--repo", "/workspace/a", "repo:/workspace/b", "bliss"),
+        expected_message_fragment="cannot combine --repo flag with repo: field",
+    ),
+    FlagFieldCollisionCase(
+        test_id="search-branch-flag-and-field",
+        argv=("search", "--branch", "main", "branch:feature", "bliss"),
+        expected_message_fragment="cannot combine --branch flag with branch: field",
+    ),
 )
 
 

@@ -662,6 +662,12 @@ def _search_explicit_flags(namespace: argparse.Namespace) -> dict[str, str]:
         flags["agent"] = "--agent"
     if t.cast("str | None", namespace.scope) is not None:
         flags["scope"] = "--scope"
+    if t.cast("str", namespace.cwd or "").strip():
+        flags["cwd"] = "--cwd"
+    if t.cast("str", namespace.repo or "").strip():
+        flags["repo"] = "--repo"
+    if t.cast("str", namespace.branch or "").strip():
+        flags["branch"] = "--branch"
     return flags
 
 
