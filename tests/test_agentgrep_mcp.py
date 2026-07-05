@@ -1544,6 +1544,10 @@ _TRUNC_CASES = [
     _TruncCase("fits-under-cap", "a\nb\n", 10, "a\nb\n", False),
     _TruncCase("cuts-at-newline", "line1\nline2\n", 8, "line1\n", True),
     _TruncCase("no-newline-hard-cut", "oneverylongline", 4, "onev", True),
+    # The cap is bytes: 4 codepoints (12 bytes) exceed a 10-byte cap even though
+    # they fit well under it as characters; the hard-cut lands on a char boundary.
+    _TruncCase("multibyte-bytes-exceed-cap", "中中中中", 10, "中中中", True),
+    _TruncCase("multibyte-cuts-at-newline", "中\n中\n中\n", 6, "中\n", True),
 ]
 
 
@@ -1555,3 +1559,4 @@ def test_export_truncate_inline(case: _TruncCase) -> None:
     content, truncated = _truncate_inline(case.rendered, case.cap)
     assert content == case.expected_content
     assert truncated is case.expected_truncated
+    assert len(content.encode("utf-8", "surrogatepass")) <= case.cap

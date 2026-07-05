@@ -29,8 +29,13 @@ if t.TYPE_CHECKING:
 
     from agentgrep.records import AgentName
 
-_MAX_INLINE_CHARS = 200_000
-"""Inline export cap, well under the MCP 512KB response ceiling."""
+_MAX_INLINE_BYTES = 200_000
+"""Inline export cap in UTF-8 bytes, well under the MCP 512KB response ceiling.
+
+The response middleware measures the serialized payload in bytes, so the cap
+must be a byte budget: non-ASCII content well under this many codepoints can
+still overflow the ceiling.
+"""
 
 
 def _render_export(request: ExportRequestModel) -> tuple[str, int]:
@@ -63,22 +68,31 @@ def _render_export(request: ExportRequestModel) -> tuple[str, int]:
 
 
 def _truncate_inline(rendered: str, cap: int) -> tuple[str, bool]:
-    """Cap inline content at a line boundary; return ``(content, truncated)``.
+    """Cap inline content to ``cap`` UTF-8 bytes at a line boundary.
 
-    Cutting at the last newline within ``cap`` keeps every emitted ndjson/csv
-    line whole; a single line longer than ``cap`` still hard-cuts.
+    Returns ``(content, truncated)``. The cap is bytes, not codepoints, because
+    the response middleware measures bytes: non-ASCII content that fits well
+    under ``cap`` characters can still overflow. Cutting at the last newline
+    within ``cap`` bytes keeps every emitted ndjson/csv line whole; a single
+    line longer than ``cap`` hard-cuts on a UTF-8 character boundary.
     """
-    if len(rendered) <= cap:
+    encoded = rendered.encode("utf-8", "surrogatepass")
+    if len(encoded) <= cap:
         return rendered, False
-    cut = rendered.rfind("\n", 0, cap)
-    return (rendered[: cut + 1] if cut >= 0 else rendered[:cap]), True
+    cut = encoded.rfind(b"\n", 0, cap)
+    if cut >= 0:
+        return encoded[: cut + 1].decode("utf-8", "surrogatepass"), True
+    end = cap
+    while end > 0 and encoded[end] & 0xC0 == 0x80:
+        end -= 1
+    return encoded[:end].decode("utf-8", "surrogatepass"), True
 
 
 def _export_sync(request: ExportRequestModel) -> ExportToolResponse:
     """Build the export response, truncating oversize content inline."""
     rendered, count = _render_export(request)
     byte_size = len(rendered.encode("utf-8", "surrogatepass"))
-    content, truncated = _truncate_inline(rendered, _MAX_INLINE_CHARS)
+    content, truncated = _truncate_inline(rendered, _MAX_INLINE_BYTES)
     return ExportToolResponse(
         request=request,
         format=request.format,
