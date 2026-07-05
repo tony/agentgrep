@@ -32,6 +32,10 @@ from agentgrep.records import (
     SourceVersionDetectionPayload,
 )
 
+_LEGACY_ORIGIN_PATH_METADATA_KEYS = LEGACY_ORIGIN_METADATA_KEYS - frozenset(
+    {"branch", "cwd_hash", "gitBranch", "project_hash", "projectHash"},
+)
+
 
 def maybe_build_pydantic() -> tuple[
     t.Callable[[SearchRecord], dict[str, object]],
@@ -106,7 +110,7 @@ def serialize_record_metadata(metadata: dict[str, object]) -> dict[str, object]:
     payload: dict[str, object] = {}
     for key, value in metadata.items():
         is_legacy_path = (
-            key in LEGACY_ORIGIN_METADATA_KEYS
+            key in _LEGACY_ORIGIN_PATH_METADATA_KEYS
             and isinstance(value, str)
             and is_path_like_text(value)
         )

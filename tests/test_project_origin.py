@@ -90,6 +90,15 @@ class OriginRepoPathGateCase(t.NamedTuple):
     expected_repo: str | None
 
 
+class LegacyMetadataSerializationCase(t.NamedTuple):
+    """Parametrized case for legacy metadata display rewriting."""
+
+    test_id: str
+    key: str
+    value: str
+    expected: str
+
+
 ORIGIN_TRAILING_SLASH_CASES: tuple[OriginTrailingSlashCase, ...] = (
     OriginTrailingSlashCase(
         test_id="cwd-display-path-matches-stored-path",
@@ -205,6 +214,27 @@ ORIGIN_REPO_PATH_GATE_CASES: tuple[OriginRepoPathGateCase, ...] = (
     ),
 )
 
+LEGACY_METADATA_SERIALIZATION_CASES: tuple[LegacyMetadataSerializationCase, ...] = (
+    LegacyMetadataSerializationCase(
+        test_id="branch-with-slash",
+        key="branch",
+        value="feature/foo",
+        expected="feature/foo",
+    ),
+    LegacyMetadataSerializationCase(
+        test_id="git-branch-with-slash",
+        key="gitBranch",
+        value="feature/foo",
+        expected="feature/foo",
+    ),
+    LegacyMetadataSerializationCase(
+        test_id="directory-path",
+        key="directory",
+        value="work/proj",
+        expected="work/proj/",
+    ),
+)
+
 
 def test_search_record_origin_serialization_scrubs_path_like_values(
     tmp_path: pathlib.Path,
@@ -242,6 +272,30 @@ def test_search_record_origin_serialization_scrubs_path_like_values(
     }
     assert payload["metadata"]["project"] == "~/work/agentgrep/"
     assert str(home) not in json.dumps(payload)
+
+
+@pytest.mark.parametrize(
+    "case",
+    LEGACY_METADATA_SERIALIZATION_CASES,
+    ids=[case.test_id for case in LEGACY_METADATA_SERIALIZATION_CASES],
+)
+def test_legacy_metadata_serialization_rewrites_paths_only(
+    case: LegacyMetadataSerializationCase,
+) -> None:
+    """Legacy metadata serialization rewrites paths, not identifiers."""
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text="metadata serialization",
+        metadata={case.key: case.value},
+    )
+
+    payload = agentgrep.serialize_search_record(record)
+
+    assert payload["metadata"][case.key] == case.expected
 
 
 @pytest.mark.parametrize(
