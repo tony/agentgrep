@@ -56,13 +56,42 @@ jobs:
         if: env.BUILD_DOCS == 'true'
         uses: extractions/setup-just@v4
 
+      - name: Set up Node.js
+        if: env.BUILD_DOCS == 'true'
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Set up pnpm
+        if: env.BUILD_DOCS == 'true'
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11
+          run_install: false
+
       - name: Install dependencies
         if: env.BUILD_DOCS == 'true'
         run: uv sync --all-groups
 
+      - name: Cache Puppeteer browser
+        if: env.BUILD_DOCS == 'true'
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/puppeteer
+          key: puppeteer-${{ runner.os }}-${{ hashFiles('docs/pnpm-lock.yaml') }}
+          restore-keys: |
+            puppeteer-${{ runner.os }}-
+
+      - name: Install diagram toolchain
+        if: env.BUILD_DOCS == 'true'
+        run: |
+          pnpm -C docs install --frozen-lockfile
+          pnpm -C docs rebuild puppeteer
+          pnpm -C docs exec mmdc --version
+
       - name: Cache sphinx fonts
         if: env.BUILD_DOCS == 'true'
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/sphinx-fonts
           key: sphinx-fonts-${{ hashFiles('docs/conf.py') }}
