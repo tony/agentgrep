@@ -30,6 +30,7 @@ jobs:
               - README.*
             docs:
               - 'docs/**'
+              - '.github/workflows/docs.yml'
             python_files:
               - 'src/agentgrep/**'
               - uv.lock
