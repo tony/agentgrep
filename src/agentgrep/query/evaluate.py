@@ -37,7 +37,12 @@ from agentgrep.query.pathmatch import (
     _path_pattern_for,
 )
 from agentgrep.query.registry import FieldRegistry, FieldSpec
-from agentgrep.query.textmatch import _is_wildcard, _string_match, _text_matches
+from agentgrep.query.textmatch import (
+    _is_wildcard,
+    _string_equals,
+    _string_match,
+    _text_matches,
+)
 from agentgrep.records import SearchRecord, SearchScope, SourceHandle
 
 _Trilean = t.Literal["T", "F", "U"]
@@ -268,7 +273,7 @@ def _field_matches_record(
         )
     if spec.name in {"branch", "project", "cwd_hash"}:
         return any(
-            _string_match(value, node.value)
+            _string_equals(value, node.value)
             for value in record_origin_field_values(record, spec.name)
         )
     if spec.name == "text":

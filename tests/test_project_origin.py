@@ -280,6 +280,112 @@ def test_origin_query_fields_filter_records_and_expand_home(
     )
 
 
+class OriginIdentifierEqualityCase(t.NamedTuple):
+    """Parametrized case for whole-value branch/project/cwd_hash matching."""
+
+    test_id: str
+    record_branch: str
+    query: str
+    expected: bool
+
+
+ORIGIN_IDENTIFIER_EQUALITY_CASES: tuple[OriginIdentifierEqualityCase, ...] = (
+    OriginIdentifierEqualityCase(
+        test_id="branch-exact",
+        record_branch="main",
+        query="branch:main",
+        expected=True,
+    ),
+    OriginIdentifierEqualityCase(
+        test_id="branch-casefolded",
+        record_branch="main",
+        query="branch:MAIN",
+        expected=True,
+    ),
+    OriginIdentifierEqualityCase(
+        test_id="branch-superstring-miss",
+        record_branch="maintenance",
+        query="branch:main",
+        expected=False,
+    ),
+    OriginIdentifierEqualityCase(
+        test_id="branch-glob",
+        record_branch="release/2026",
+        query='branch:"release/*"',
+        expected=True,
+    ),
+    OriginIdentifierEqualityCase(
+        test_id="project-basename-exact",
+        record_branch="main",
+        query="project:agentgrep",
+        expected=True,
+    ),
+    OriginIdentifierEqualityCase(
+        test_id="project-substring-miss",
+        record_branch="main",
+        query="project:agent",
+        expected=False,
+    ),
+    OriginIdentifierEqualityCase(
+        test_id="cwd-hash-exact",
+        record_branch="main",
+        query="cwd_hash:hash123",
+        expected=True,
+    ),
+    OriginIdentifierEqualityCase(
+        test_id="cwd-hash-prefix-miss",
+        record_branch="main",
+        query="cwd_hash:hash",
+        expected=False,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    ORIGIN_IDENTIFIER_EQUALITY_CASES,
+    ids=[case.test_id for case in ORIGIN_IDENTIFIER_EQUALITY_CASES],
+)
+def test_origin_identifier_fields_match_whole_values(
+    case: OriginIdentifierEqualityCase,
+) -> None:
+    """branch/project/cwd_hash predicates match whole values, not substrings."""
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text="needle prompt",
+        origin=agentgrep.RecordOrigin(
+            cwd="/work/agentgrep/src",
+            repo="/work/agentgrep",
+            branch=case.record_branch,
+            cwd_hash="hash123",
+        ),
+    )
+    compiled = compile_query(parse_query(case.query, default_registry()), default_registry())
+
+    assert compiled.record_predicate is not None
+    assert compiled.record_predicate(record) is case.expected
+
+
+def test_origin_boost_branch_matches_casefolded() -> None:
+    """The boost's branch check uses the same whole-value casefolded rule."""
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text="needle prompt",
+        origin=agentgrep.RecordOrigin(branch="Main"),
+    )
+
+    assert record_matches_origin(record, agentgrep.RecordOrigin(branch="main")) is True
+    assert record_matches_origin(record, agentgrep.RecordOrigin(branch="ma")) is False
+
+
 @pytest.mark.parametrize(
     "case",
     ORIGIN_TRAILING_SLASH_CASES,

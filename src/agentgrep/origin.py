@@ -162,7 +162,9 @@ def record_matches_origin(record: SearchRecord, origin: RecordOrigin | None) -> 
         return False
     checks: list[bool] = []
     if origin.branch:
-        checks.append(origin.branch in record_origin_field_values(record, "branch"))
+        checks.append(
+            _any_string_equal(record_origin_field_values(record, "branch"), origin.branch),
+        )
     if origin.cwd:
         checks.append(_any_path_related(record_origin_field_values(record, "cwd"), origin.cwd))
     if origin.repo:
@@ -187,8 +189,16 @@ def record_matches_origin(record: SearchRecord, origin: RecordOrigin | None) -> 
             ),
         )
     if origin.cwd_hash:
-        checks.append(origin.cwd_hash in record_origin_field_values(record, "cwd_hash"))
+        checks.append(
+            _any_string_equal(record_origin_field_values(record, "cwd_hash"), origin.cwd_hash),
+        )
     return bool(checks) and all(checks)
+
+
+def _any_string_equal(values: t.Iterable[str], target: str) -> bool:
+    """Casefolded whole-value match, mirroring the branch:/cwd_hash: filters."""
+    target_cmp = target.casefold()
+    return any(value.casefold() == target_cmp for value in values)
 
 
 def _metadata_strings(record: SearchRecord, keys: tuple[str, ...]) -> list[str]:

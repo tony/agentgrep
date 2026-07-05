@@ -115,9 +115,9 @@ def default_registry() -> FieldRegistry:
     ``cwd``       path   record  Project working directory
     ``repo``      path   record  Project repository root
     ``worktree``  path   record  Git worktree root
-    ``branch``    string record  Git branch name
-    ``project``   string record  Project/workspace basename
-    ``cwd_hash``  string record  Opaque project hash when cwd is unavailable
+    ``branch``    string record  Git branch name (whole value, casefolded)
+    ``project``   string record  Project/workspace basename (whole value)
+    ``cwd_hash``  string record  Opaque project hash (whole value)
     ``text``      string record  Implicit field for bare positional terms
     ============= ====== ======= ===========================================
     """
