@@ -675,6 +675,7 @@ def run_similar_command(args: SimilarArgs) -> int:
         top_k=args.top_k,
         threshold=args.threshold,
         exclude_exact=args.exclude_exact,
+        max_candidates=args.max_candidates,
     )
     if args.output_mode in ("json", "ndjson"):
         serialize_search, _, serialize_envelope = maybe_build_pydantic()

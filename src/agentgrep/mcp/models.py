@@ -258,6 +258,9 @@ class SimilarRequestModel(AgentGrepModel):
     top_k: int = 20
     threshold: float = 0.0
     exclude_exact: bool = False
+    # Newest-N corpus scan ceiling (mirrors agentgrep.similar._MAX_CANDIDATES);
+    # null scans the whole corpus.
+    max_candidates: int | None = 2000
 
 
 class SimilarMatchModel(AgentGrepModel):

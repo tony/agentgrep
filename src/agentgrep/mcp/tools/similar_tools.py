@@ -40,6 +40,7 @@ def _find_similar_sync(request: SimilarRequestModel) -> SimilarToolResponse:
         top_k=request.top_k,
         threshold=request.threshold,
         exclude_exact=request.exclude_exact,
+        max_candidates=request.max_candidates,
     )
     return SimilarToolResponse(
         request=request,
@@ -90,6 +91,13 @@ def register(mcp: FastMCP) -> None:
             bool,
             Field(description="Drop neighbors whose text is identical to the seed."),
         ] = False,
+        max_candidates: t.Annotated[
+            int | None,
+            Field(
+                default=2000,
+                description="Cap the corpus scan at the newest N records (null scans all).",
+            ),
+        ] = 2000,
     ) -> SimilarToolResponse:
         request = SimilarRequestModel(
             text=text,
@@ -98,6 +106,7 @@ def register(mcp: FastMCP) -> None:
             top_k=top_k,
             threshold=threshold,
             exclude_exact=exclude_exact,
+            max_candidates=max_candidates,
         )
         return await asyncio.to_thread(_find_similar_sync, request)
 

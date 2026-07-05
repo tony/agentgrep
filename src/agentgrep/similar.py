@@ -12,6 +12,7 @@ never pulls the planner or the scorer onto the cold-start path.
 
 from __future__ import annotations
 
+import logging
 import typing as t
 
 if t.TYPE_CHECKING:
@@ -23,6 +24,8 @@ __all__ = ["run_find_similar"]
 
 _MAX_CANDIDATES: int = 2000
 """Per-call cap on records scanned, so a wide scope cannot hang."""
+
+logger = logging.getLogger(__name__)
 
 
 def run_find_similar(
@@ -90,6 +93,15 @@ def run_find_similar(
         progress=noop_search_progress(),
         control=SearchControl(),
     )
+    if max_candidates is not None and len(records) >= max_candidates:
+        logger.warning(
+            "similarity corpus scan hit the candidate cap",
+            extra={
+                "agentgrep_command": "similar",
+                "agentgrep_scope": scope,
+                "agentgrep_max_candidates": max_candidates,
+            },
+        )
     return score_by_similarity(
         seed_text,
         records,

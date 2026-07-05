@@ -386,11 +386,17 @@ async def test_mcp_find_similar_ranks_records(
             "find_similar",
             {"text": "refactor the parser module", "agent": "codex", "top_k": 5},
         )
+        capped = await client.call_tool(
+            "find_similar",
+            {"text": "refactor the parser module", "agent": "codex", "max_candidates": 1},
+        )
 
     data = t.cast("SimilarToolDataLike", result.data)
     assert data.results[0].record.text == "refactor the parser module"
     assert data.results[0].score == 1.0
     assert data.results[0].score >= data.results[-1].score
+    # max_candidates flows through the tool schema and bounds the corpus scan.
+    assert len(t.cast("SimilarToolDataLike", capped.data).results) == 1
 
 
 def _codex_user_session(session_id: str, text: str) -> list[dict[str, object]]:

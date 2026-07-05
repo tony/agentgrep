@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import pathlib
 import typing as t
 
@@ -12,7 +13,7 @@ import agentgrep
 from agentgrep.identity import record_content_id
 from agentgrep.ranking import score_by_similarity
 from agentgrep.records import SearchRecord
-from agentgrep.similar import run_find_similar
+from agentgrep.similar import _MAX_CANDIDATES, run_find_similar
 
 
 def _record(**overrides: object) -> SearchRecord:
@@ -262,3 +263,62 @@ def test_similar_top_k_rejects_non_positive_value(capsys: pytest.CaptureFixture[
         _ = agentgrep.parse_args(["similar", "--similar-text", "x", "--top-k", "0"])
     assert exc_info.value.code == 2
     assert "--top-k must be greater than 0" in capsys.readouterr().err
+
+
+class _MaxCandArgCase(t.NamedTuple):
+    test_id: str
+    argv: list[str]
+    expected: int | None
+
+
+_MAX_CAND_ARG_CASES = [
+    _MaxCandArgCase("default-uses-ceiling", [], _MAX_CANDIDATES),
+    _MaxCandArgCase("explicit-caps", ["--max-candidates", "50"], 50),
+    _MaxCandArgCase("zero-scans-all", ["--max-candidates", "0"], None),
+]
+
+
+@pytest.mark.parametrize("case", _MAX_CAND_ARG_CASES, ids=[c.test_id for c in _MAX_CAND_ARG_CASES])
+def test_similar_max_candidates_resolution(case: _MaxCandArgCase) -> None:
+    """``--max-candidates`` resolves default->ceiling, N->N, and 0->unlimited."""
+    from agentgrep.cli.parser import SimilarArgs
+
+    args = agentgrep.parse_args(["similar", "--similar-text", "x", *case.argv])
+    assert isinstance(args, SimilarArgs)
+    assert args.max_candidates == case.expected
+
+
+def test_similar_scan_cap_warns(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Hitting the scan ceiling emits a structured warning so the cap is not silent."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    base = tmp_path / ".codex" / "sessions" / "2026" / "01"
+    for index in range(5):
+        path = base / f"{index:02d}" / f"rollout-{index}.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "type": "response_item",
+                    "payload": {"role": "user", "content": f"prompt {index}"},
+                },
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    with caplog.at_level(logging.WARNING, logger="agentgrep"):
+        _ = run_find_similar(
+            tmp_path,
+            seed_text="prompt",
+            agents=t.cast("tuple[t.Any, ...]", ("codex",)),
+            scope="prompts",
+            top_k=20,
+            threshold=0.0,
+            max_candidates=2,
+        )
+    capped = [r for r in caplog.records if getattr(r, "agentgrep_max_candidates", None) == 2]
+    assert capped
+    assert capped[0].levelno == logging.WARNING

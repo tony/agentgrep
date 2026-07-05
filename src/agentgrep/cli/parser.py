@@ -176,6 +176,7 @@ class SimilarArgs:
     top_k: int
     threshold: float
     exclude_exact: bool
+    max_candidates: int | None
     output_mode: OutputMode
     color_mode: ColorMode
 
@@ -667,6 +668,14 @@ def create_parser(
         dest="exclude_exact",
         help="Drop neighbors whose text is identical to the seed",
     )
+    _ = similar_parser.add_argument(
+        "--max-candidates",
+        type=int,
+        default=None,
+        dest="max_candidates",
+        metavar="N",
+        help="Cap the corpus scan at the newest N records (0 scans the full corpus)",
+    )
     add_output_mode_options(similar_parser, allow_ui=False)
 
     return ParserBundle(
@@ -971,6 +980,16 @@ def parse_args(
         if top_k < 1:
             with configured_color_environment(color_mode):
                 bundle.similar_parser.error("--top-k must be greater than 0")
+        raw_cap = t.cast("int | None", namespace.max_candidates)
+        if raw_cap is None:
+            from agentgrep.similar import _MAX_CANDIDATES
+
+            max_candidates: int | None = _MAX_CANDIDATES
+        elif raw_cap <= 0:
+            # An explicit non-positive cap opts out of the scan ceiling entirely.
+            max_candidates = None
+        else:
+            max_candidates = raw_cap
         return SimilarArgs(
             seed_text=t.cast("str", similar_text),
             agents=agents,
@@ -978,6 +997,7 @@ def parse_args(
             top_k=top_k,
             threshold=t.cast("float", namespace.threshold),
             exclude_exact=t.cast("bool", namespace.exclude_exact),
+            max_candidates=max_candidates,
             output_mode=output_mode,
             color_mode=color_mode,
         )
