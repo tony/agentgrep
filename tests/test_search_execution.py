@@ -16,10 +16,12 @@ import pytest
 
 import agentgrep
 import agentgrep._engine.execution as execution
+import agentgrep._engine.matching as matching
 import agentgrep._engine.orchestration as _rm_orch
 import agentgrep._engine.scanning as _rm_scanning
 import agentgrep._engine.scanning as scanning
 import agentgrep._engine.scheduling as scheduling
+import agentgrep.origin as origin
 from agentgrep._engine.execution import (
     ExecutionDriverConfig,
     ExecutionRecordEmitted,
@@ -974,6 +976,47 @@ def test_source_scan_cache_separates_origin_filters(
     stats = runtime.source_scan_cache.stats()
     assert stats.hits == 0
     assert stats.misses == 2
+
+
+def test_compiled_record_matcher_reuses_origin_filter_matcher(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit origin filters are compiled once for a reusable record matcher."""
+    source = _source(tmp_path / "session.jsonl")
+    query = dataclasses.replace(
+        _query(),
+        origin_filter=agentgrep.RecordOrigin(cwd="/workspace/project"),
+    )
+    records = (
+        _record(source, "first bliss", "2026-01-01T00:00:00Z"),
+        _record(source, "second bliss", "2026-01-02T00:00:00Z"),
+    )
+    records = tuple(
+        dataclasses.replace(
+            record,
+            origin=agentgrep.RecordOrigin(cwd=f"/workspace/project/{index}"),
+        )
+        for index, record in enumerate(records)
+    )
+    original_from_origin = origin.OriginMatcher.from_origin
+    compiled_filters = 0
+
+    def traced_from_origin(
+        cls: type[origin.OriginMatcher],
+        origin_filter: agentgrep.RecordOrigin | None,
+    ) -> origin.OriginMatcher:
+        nonlocal compiled_filters
+        _ = cls
+        compiled_filters += 1
+        return original_from_origin(origin_filter)
+
+    monkeypatch.setattr(origin.OriginMatcher, "from_origin", classmethod(traced_from_origin))
+
+    matcher = matching.compile_record_matcher(query)
+
+    assert [matcher.matches(record) for record in records] == [True, True]
+    assert compiled_filters == 1
 
 
 def test_scan_source_task_exempts_cross_file_adapters(

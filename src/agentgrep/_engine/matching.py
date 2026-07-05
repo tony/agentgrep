@@ -6,7 +6,7 @@ import dataclasses
 import re
 
 from agentgrep._engine.orchestration import build_record_match_surface, record_matches_scope
-from agentgrep.origin import record_matches_origin
+from agentgrep.origin import OriginMatcher
 from agentgrep.records import SearchMatchSurface, SearchQuery, SearchRecord
 
 
@@ -18,6 +18,7 @@ class CompiledRecordMatcher:
     needles: tuple[str, ...]
     regexes: tuple[re.Pattern[str], ...]
     use_joined_surface: bool
+    origin_filter_matcher: OriginMatcher | None
 
     def matches(self, record: SearchRecord) -> bool:
         """Return whether ``record`` satisfies the compiled query."""
@@ -33,9 +34,9 @@ class CompiledRecordMatcher:
 
     def _matches_origin_filter(self, record: SearchRecord) -> bool:
         """Return whether ``record`` satisfies an explicit origin filter."""
-        if self.query.origin_filter is None:
+        if self.origin_filter_matcher is None:
             return True
-        return record_matches_origin(record, self.query.origin_filter)
+        return self.origin_filter_matcher.matches(record)
 
     def _matches_query_terms(self, record: SearchRecord) -> bool:
         """Return whether unfielded query terms match ``record``."""
@@ -76,6 +77,9 @@ def compile_record_matcher(query: SearchQuery) -> CompiledRecordMatcher:
         needles=needles,
         regexes=regexes,
         use_joined_surface=_needs_joined_literal_surface(query.terms),
+        origin_filter_matcher=(
+            None if query.origin_filter is None else OriginMatcher.from_origin(query.origin_filter)
+        ),
     )
 
 
