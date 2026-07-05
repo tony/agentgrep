@@ -16,6 +16,7 @@ import pytest
 import agentgrep
 from agentgrep.cli import render as _r_render
 from agentgrep.cli.render import run_search_command
+from agentgrep.origin import record_matches_origin
 
 # ---------------------------------------------------------------------------
 # Argument parsing
@@ -536,6 +537,14 @@ class OnlyHereLinkedWorktreeCase(t.NamedTuple):
     expected: bool
 
 
+class HereLogicalSymlinkCase(t.NamedTuple):
+    """Parametrized case for symlinked current-project detection."""
+
+    test_id: str
+    argv: tuple[str, ...]
+    mode: t.Literal["filter", "boost"]
+
+
 ONLY_HERE_RECORD_CASES: tuple[OnlyHereRecordCase, ...] = (
     OnlyHereRecordCase(
         test_id="inside-project-cwd-only",
@@ -563,6 +572,19 @@ ONLY_HERE_LINKED_WORKTREE_CASES: tuple[OnlyHereLinkedWorktreeCase, ...] = (
         cwd_owner="repo",
         relative_cwd=pathlib.Path("docs"),
         expected=False,
+    ),
+)
+
+HERE_LOGICAL_SYMLINK_CASES: tuple[HereLogicalSymlinkCase, ...] = (
+    HereLogicalSymlinkCase(
+        test_id="only-here-filter",
+        argv=("search", "--only-here", "bliss"),
+        mode="filter",
+    ),
+    HereLogicalSymlinkCase(
+        test_id="here-boost",
+        argv=("search", "--here", "bliss"),
+        mode="boost",
     ),
 )
 
@@ -942,6 +964,61 @@ def test_search_parse_only_here_prefers_linked_worktree(
         compiled=parsed.compiled,
     )
     assert agentgrep.matches_record(record, query) is case.expected
+
+
+@pytest.mark.parametrize(
+    "case",
+    HERE_LOGICAL_SYMLINK_CASES,
+    ids=[case.test_id for case in HERE_LOGICAL_SYMLINK_CASES],
+)
+def test_search_here_preserves_logical_symlink_cwd(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: HereLogicalSymlinkCase,
+) -> None:
+    """--here/--only-here use the logical project path the user launched from."""
+    real = tmp_path / "real"
+    worktree = real / "proj"
+    git_dir = worktree / ".git"
+    git_dir.mkdir(parents=True)
+    _ = (git_dir / "HEAD").write_text("ref: refs/heads/project-context\n", encoding="utf-8")
+    child = worktree / "src"
+    child.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real, target_is_directory=True)
+    logical_worktree = link / "proj"
+    logical_child = logical_worktree / "src"
+    monkeypatch.chdir(logical_child)
+    monkeypatch.setenv("PWD", str(logical_child))
+
+    parsed = agentgrep.parse_args(case.argv)
+
+    assert isinstance(parsed, agentgrep.SearchArgs)
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text="bliss command",
+        origin=agentgrep.RecordOrigin(cwd=str(logical_child)),
+    )
+    if case.mode == "filter":
+        assert parsed.compiled is not None
+        query = agentgrep.SearchQuery(
+            terms=parsed.terms,
+            scope=parsed.scope,
+            any_term=False,
+            regex=False,
+            case_sensitive=parsed.case_sensitive,
+            agents=parsed.agents,
+            limit=parsed.limit,
+            compiled=parsed.compiled,
+        )
+        assert agentgrep.matches_record(record, query)
+    else:
+        assert parsed.origin_boost == agentgrep.RecordOrigin(repo=str(logical_worktree))
+        assert record_matches_origin(record, parsed.origin_boost)
 
 
 def test_search_parse_here_boosts_branchless_project_records(

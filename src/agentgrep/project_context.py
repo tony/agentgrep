@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import os
 import pathlib
 import typing as t
 
@@ -39,7 +40,7 @@ def detect_project_context(cwd: pathlib.Path | None = None) -> ProjectContext:
     ``.git/HEAD`` directly when present, and supports both normal repositories
     and worktrees whose ``.git`` is a ``gitdir:`` pointer file.
     """
-    current = (cwd or pathlib.Path.cwd()).expanduser().resolve(strict=False)
+    current = _logical_cwd(cwd)
     worktree, git_dir = _find_git_root(current)
     if worktree is None:
         return ProjectContext(cwd=current)
@@ -52,6 +53,32 @@ def detect_project_context(cwd: pathlib.Path | None = None) -> ProjectContext:
         git_dir=git_dir,
         branch=branch,
     )
+
+
+def _logical_cwd(cwd: pathlib.Path | None) -> pathlib.Path:
+    if cwd is not None:
+        return _absolute_lexical_path(cwd)
+    physical = pathlib.Path.cwd()
+    pwd = os.environ.get("PWD")
+    if pwd:
+        candidate = _absolute_lexical_path(pathlib.Path(pwd))
+        if candidate.is_absolute() and _same_physical_path(candidate, physical):
+            return candidate
+    return _absolute_lexical_path(physical)
+
+
+def _absolute_lexical_path(path: pathlib.Path) -> pathlib.Path:
+    expanded = path.expanduser()
+    if not expanded.is_absolute():
+        expanded = pathlib.Path.cwd() / expanded
+    return pathlib.Path(os.path.normpath(str(expanded)))
+
+
+def _same_physical_path(left: pathlib.Path, right: pathlib.Path) -> bool:
+    try:
+        return left.resolve(strict=False) == right.resolve(strict=False)
+    except OSError:
+        return False
 
 
 def _find_git_root(start: pathlib.Path) -> tuple[pathlib.Path | None, pathlib.Path | None]:
