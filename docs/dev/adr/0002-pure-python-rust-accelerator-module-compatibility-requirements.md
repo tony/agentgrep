@@ -319,7 +319,7 @@ behavior in tests.
 
 Preferred module layout:
 
-```text
+```tree
 src/
   agentgrep/
     __init__.py

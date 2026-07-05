@@ -34,7 +34,10 @@ The event stream solves both:
 ## Architecture
 
 ::::{mermaid}
-:caption: One typed event stream feeds every frontend.
+:caption: The engine yields one typed stream for search and find.
+:alt: agentgrep engine yielding typed search and find events
+:name: event-stream-engine-diagram
+:responsive: fit
 
 flowchart TD
     engine["agentgrep._engine"]:::cmd
@@ -46,13 +49,32 @@ flowchart TD
     record["Record emitted"]
     finished["Finished envelope"]
 
+    engine --> iterator
+    iterator --> events
+    events --> started
+    events --> source
+    events --> record
+    events --> finished
+::::
+
+The stream is the contract. Each frontend consumes the same events and
+chooses how to present records, progress, and completion.
+
+::::{mermaid}
+:caption: Frontends consume the same event stream.
+:alt: typed event stream feeding CLI, Textual, and MCP consumers
+:name: event-stream-consumers
+:responsive: fit
+
+flowchart TD
+    events["SearchEvent / FindEvent"]:::cmd
+    source["Source progress"]
+    record["Record emitted"]
+    finished["Finished envelope"]
     cli["CLI live output"]
     tui["Textual worker"]
     mcp["MCP collector"]
 
-    engine --> iterator
-    iterator --> events
-    events --> started
     events --> source
     events --> record
     events --> finished
@@ -101,6 +123,9 @@ Their guaranteed sequence:
 
 ::::{mermaid}
 :caption: Search events always open and close an envelope around each source.
+:alt: search event order from started through per-source records to finished
+:name: search-event-sequence
+:responsive: fit
 
 flowchart TD
     search_started["SearchStarted"]:::cmd
@@ -145,6 +170,9 @@ exactly one record — so the sequence simplifies:
 
 ::::{mermaid}
 :caption: Find emits one record per discovered source, then finishes.
+:alt: find event order from started through records to finished
+:name: find-event-sequence
+:responsive: fit
 
 flowchart TD
     find_started["FindStarted"]:::cmd
