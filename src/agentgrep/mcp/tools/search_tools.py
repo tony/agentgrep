@@ -125,7 +125,10 @@ def _compile_request_query(
         repo=normalize_origin_path_text(request.repo),
         branch=request.branch,
     )
-    terms = tuple(term for term in request.terms if term.strip())
+    # Whitespace-split each element: MCP terms have always been words
+    # (the pre-origin path joined and re-split them), unlike CLI argv
+    # elements, which stay whole to match the bare fast path.
+    terms = tuple(word for term in request.terms for word in term.split())
     if not origin_nodes and not terms:
         return base_query
     registry = default_registry()

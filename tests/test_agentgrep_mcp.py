@@ -163,12 +163,14 @@ AGENT_PRODUCT_NAME_CASES: tuple[AgentProductNameCase, ...] = tuple(
 
 MCP_ORIGIN_PHRASE_CASES: tuple[McpOriginPhraseCase, ...] = (
     McpOriginPhraseCase(
-        test_id="single-phrase-term",
+        # MCP terms are words: a space-containing element ANDs its
+        # words, exactly as it does without origin filters.
+        test_id="multiword-term-ands-words",
         terms=["exact phrase"],
         matching_text="exact phrase same",
         nonmatching_text="exact words then phrase same",
         outside_text="exact phrase other",
-        expected_texts=["exact phrase same"],
+        expected_texts=["exact phrase same", "exact words then phrase same"],
     ),
     McpOriginPhraseCase(
         # A single boolean-carrying token parses as query language, the
@@ -949,7 +951,7 @@ async def test_mcp_search_origin_filters_preserve_phrase_terms(
     monkeypatch: pytest.MonkeyPatch,
     case: McpOriginPhraseCase,
 ) -> None:
-    """Generated MCP origin predicates keep phrase terms intact."""
+    """Generated MCP origin predicates leave user term semantics unchanged."""
     agentgrep_mcp = load_agentgrep_mcp_module()
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
@@ -1947,3 +1949,71 @@ async def test_mcp_capabilities_advertises_new_resources() -> None:
         "agentgrep://store-roles",
         "agentgrep://store-formats",
     } <= advertised
+
+
+class McpTermTokenizationCase(t.NamedTuple):
+    """Parametrized case for MCP term word-splitting without origin params."""
+
+    test_id: str
+    terms: list[str]
+    matching_text: str
+    nonmatching_text: str
+    expected_texts: list[str]
+
+
+MCP_TERM_TOKENIZATION_CASES: tuple[McpTermTokenizationCase, ...] = (
+    McpTermTokenizationCase(
+        test_id="multiword-term-ands-words",
+        terms=["error handling"],
+        matching_text="error recovery and handling",
+        nonmatching_text="error only",
+        expected_texts=["error recovery and handling"],
+    ),
+    McpTermTokenizationCase(
+        test_id="padded-term-strips-whitespace",
+        terms=["alpha "],
+        matching_text="deploy alpha.",
+        nonmatching_text="beta only",
+        expected_texts=["deploy alpha."],
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    MCP_TERM_TOKENIZATION_CASES,
+    ids=[case.test_id for case in MCP_TERM_TOKENIZATION_CASES],
+)
+async def test_mcp_search_terms_tokenize_as_words(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: McpTermTokenizationCase,
+) -> None:
+    """MCP terms whitespace-split into ANDed words, with or without origin."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    sessions = home / ".codex" / "sessions" / "2026" / "01" / "01"
+    write_codex_prompt_session(
+        sessions / "match.jsonl",
+        session_id="match",
+        timestamp="2026-06-03T00:00:00Z",
+        text=case.matching_text,
+        cwd="/workspace/agentgrep",
+    )
+    write_codex_prompt_session(
+        sessions / "miss.jsonl",
+        session_id="miss",
+        timestamp="2026-06-02T00:00:00Z",
+        text=case.nonmatching_text,
+        cwd="/workspace/agentgrep",
+    )
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        result = await client.call_tool(
+            "search",
+            {"terms": case.terms, "agent": "codex", "scope": "prompts", "limit": 10},
+        )
+
+    data = tool_payload(result)
+    assert [row["text"] for row in data["results"]] == case.expected_texts
