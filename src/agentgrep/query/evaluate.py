@@ -38,6 +38,7 @@ from agentgrep.query.pathmatch import (
     _eq_value,
     _path_match,
     _path_pattern_for,
+    _PathPatternKey,
 )
 from agentgrep.query.registry import FieldRegistry, FieldSpec
 from agentgrep.query.textmatch import (
@@ -63,7 +64,7 @@ def _evaluate_source(
     node: QueryNode,
     source: SourceHandle,
     registry: FieldRegistry,
-    path_patterns: dict[str, _CompiledPathPattern],
+    path_patterns: dict[_PathPatternKey, _CompiledPathPattern],
 ) -> _Trilean:
     """Evaluate ``node`` against ``source`` using three-valued logic.
 
@@ -123,7 +124,7 @@ def _evaluate_record(
     node: QueryNode,
     record: SearchRecord,
     registry: FieldRegistry,
-    path_patterns: dict[str, _CompiledPathPattern],
+    path_patterns: dict[_PathPatternKey, _CompiledPathPattern],
     *,
     case_sensitive: bool = False,
 ) -> bool:
@@ -223,7 +224,7 @@ def _field_matches_source(
     node: FieldEqNode | FieldCmpNode | FieldRangeNode,
     source: SourceHandle,
     spec: FieldSpec,
-    path_patterns: dict[str, _CompiledPathPattern],
+    path_patterns: dict[_PathPatternKey, _CompiledPathPattern],
 ) -> bool:
     """Decide whether ``source`` matches a source-layer field predicate."""
     if spec.name == "agent":
@@ -246,7 +247,7 @@ def _field_matches_record(
     node: FieldEqNode,
     record: SearchRecord,
     spec: FieldSpec,
-    path_patterns: dict[str, _CompiledPathPattern],
+    path_patterns: dict[_PathPatternKey, _CompiledPathPattern],
     *,
     case_sensitive: bool = False,
 ) -> bool:
@@ -307,7 +308,7 @@ def _field_matches_record_via_source(
     node: FieldEqNode,
     record: SearchRecord,
     spec: FieldSpec,
-    path_patterns: dict[str, _CompiledPathPattern],
+    path_patterns: dict[_PathPatternKey, _CompiledPathPattern],
 ) -> bool:
     """Evaluate a source-layer field against record metadata.
 

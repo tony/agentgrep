@@ -41,6 +41,7 @@ from agentgrep.query import (
 )
 from agentgrep.query.compile import QueryCompileError
 from agentgrep.query.dates import set_now_override
+from agentgrep.query.pathmatch import _compile_path_patterns
 
 
 @pytest.fixture(autouse=True)
@@ -348,6 +349,19 @@ PATH_TRAILING_SLASH_CASES: tuple[PathTrailingSlashCase, ...] = (
 )
 
 
+class PathPatternFieldCacheCase(t.NamedTuple):
+    """Parametrized case for mixed source and origin path predicates."""
+
+    test_id: str
+    fields: tuple[str, str]
+
+
+PATH_PATTERN_FIELD_CACHE_CASES: tuple[PathPatternFieldCacheCase, ...] = (
+    PathPatternFieldCacheCase(test_id="path-then-cwd", fields=("path", "cwd")),
+    PathPatternFieldCacheCase(test_id="cwd-then-path", fields=("cwd", "path")),
+)
+
+
 @pytest.mark.parametrize(
     "case",
     PATH_TRAILING_SLASH_CASES,
@@ -364,6 +378,33 @@ def test_path_query_trailing_separator_preserves_source_boundary(
 
     assert compiled.source_predicate is not None
     assert compiled.source_predicate(_make_source(path=case.source_path)) is case.expected_passes
+
+
+@pytest.mark.parametrize(
+    "case",
+    PATH_PATTERN_FIELD_CACHE_CASES,
+    ids=[case.test_id for case in PATH_PATTERN_FIELD_CACHE_CASES],
+)
+def test_path_patterns_are_cached_by_field(
+    tmp_path: pathlib.Path,
+    case: PathPatternFieldCacheCase,
+) -> None:
+    """``path:`` and ``cwd:`` keep distinct symlink-resolution semantics."""
+    real = tmp_path / "real" / "proj"
+    real.mkdir(parents=True)
+    link = tmp_path / "link"
+    link.symlink_to(tmp_path / "real", target_is_directory=True)
+    logical = str(link / "proj")
+    physical = str(real.resolve(strict=False))
+    query = " ".join(f'{field}:"{logical}"' for field in case.fields)
+
+    patterns = _compile_path_patterns(
+        parse_query(query, default_registry()),
+        path_fields=frozenset({"path", "cwd"}),
+    )
+
+    assert patterns[("path", logical)].variants == (logical,)
+    assert patterns[("cwd", logical)].variants == (logical, physical)
 
 
 def test_path_query_expands_current_user_home_for_source_predicate(

@@ -28,19 +28,22 @@ class _CompiledPathPattern:
     is_glob: bool
 
 
+_PathPatternKey = tuple[str, str]
+
+
 def _compile_path_patterns(
     node: QueryNode,
     *,
     path_fields: frozenset[str] | None = None,
-) -> dict[str, _CompiledPathPattern]:
-    """Return pre-expanded path patterns keyed by their raw query value."""
+) -> dict[_PathPatternKey, _CompiledPathPattern]:
+    """Return pre-expanded path patterns keyed by field and raw query value."""
     fields = frozenset({"path"}) if path_fields is None else path_fields
     if isinstance(node, FieldEqNode) and node.field in fields:
         # Origin paths (cwd/repo/worktree) also match their resolved
         # form so a symlinked filter finds physically recorded paths;
         # `path:` keeps pure substring semantics.
         return {
-            node.value: _compile_path_pattern(
+            (node.field, node.value): _compile_path_pattern(
                 node.value,
                 add_resolved=node.field != "path",
             ),
@@ -48,7 +51,7 @@ def _compile_path_patterns(
     if isinstance(node, NotNode):
         return _compile_path_patterns(node.child, path_fields=fields)
     if isinstance(node, AndNode | OrNode):
-        patterns: dict[str, _CompiledPathPattern] = {}
+        patterns: dict[_PathPatternKey, _CompiledPathPattern] = {}
         for child in node.children:
             patterns.update(_compile_path_patterns(child, path_fields=fields))
         return patterns
@@ -102,14 +105,14 @@ def _path_separators() -> tuple[str, ...]:
 
 def _path_pattern_for(
     node: FieldEqNode | FieldCmpNode | FieldRangeNode,
-    path_patterns: dict[str, _CompiledPathPattern],
+    path_patterns: dict[_PathPatternKey, _CompiledPathPattern],
 ) -> _CompiledPathPattern:
     """Return the precompiled path pattern for a path predicate node."""
     raw = _eq_value(node)
-    compiled = path_patterns.get(raw)
+    compiled = path_patterns.get((node.field, raw))
     if compiled is not None:
         return compiled
-    return _compile_path_pattern(raw)
+    return _compile_path_pattern(raw, add_resolved=node.field != "path")
 
 
 def _path_match(path: str, pattern: _CompiledPathPattern) -> bool:
@@ -144,6 +147,7 @@ def _eq_value(
 
 __all__ = (
     "_CompiledPathPattern",
+    "_PathPatternKey",
     "_compile_path_pattern",
     "_compile_path_patterns",
     "_dedupe_preserving_order",
