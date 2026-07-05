@@ -39,10 +39,13 @@ conf = merge_sphinx_config(
         "sphinx_autodoc_argparse",
         "sphinx_autodoc_fastmcp",
         "sphinx_gp_mermaid",
+        "sphinx_gp_highlighting",
         "docs._ext.storages",
         "docs._ext.widgets",
         "docs._ext.lexers",
     ],
+    gp_highlighting_inline_literals="safe",
+    gp_highlighting_inline_commands=["agentgrep"],
     myst_fence_as_directive=["mermaid"],
     intersphinx_mapping={
         "python": ("https://docs.python.org/3/", None),
