@@ -1482,6 +1482,66 @@ def test_iter_message_candidates_requires_path_like_origin_values(
         assert origin.cwd == case.expected_cwd
 
 
+class MessageCandidateBranchCase(t.NamedTuple):
+    """One ``iter_message_candidates`` walk and its expected origin branch."""
+
+    test_id: str
+    value: object
+    expected_branch: str | None
+
+
+_MESSAGE_CANDIDATE_BRANCH_CASES = (
+    MessageCandidateBranchCase(
+        test_id="bare_branch_without_evidence_dropped",
+        value={
+            "branch": "left",
+            "panels": {},
+            "messages": [{"role": "user", "text": "hi"}],
+        },
+        expected_branch=None,
+    ),
+    MessageCandidateBranchCase(
+        test_id="bare_branch_with_path_evidence_kept",
+        value={
+            "branch": "main",
+            "cwd": "/work/proj",
+            "messages": [{"role": "user", "text": "hi"}],
+        },
+        expected_branch="main",
+    ),
+    MessageCandidateBranchCase(
+        test_id="git_branch_key_always_kept",
+        value={"gitBranch": "main", "messages": [{"role": "user", "text": "hi"}]},
+        expected_branch="main",
+    ),
+    MessageCandidateBranchCase(
+        test_id="git_submapping_branch_kept",
+        value={"git": {"branch": "main"}, "messages": [{"role": "user", "text": "hi"}]},
+        expected_branch="main",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    _MESSAGE_CANDIDATE_BRANCH_CASES,
+    ids=lambda case: case.test_id,
+)
+def test_iter_message_candidates_gates_bare_branch_keys(
+    case: MessageCandidateBranchCase,
+) -> None:
+    """Bare branch keys need git or path evidence to become origins."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    candidates = list(agentgrep.iter_message_candidates(case.value))
+    assert len(candidates) == 1
+    origin = candidates[0].origin
+    if case.expected_branch is None:
+        assert origin is None
+    else:
+        assert origin is not None
+        assert origin.branch == case.expected_branch
+
+
 class CodexNoiseLineCase(t.NamedTuple):
     """One Codex JSONL line and whether it is a function-call-output record."""
 

@@ -333,22 +333,31 @@ def _origin_from_mapping(
     """Extract common cwd/branch/project-hash fields from a JSON mapping."""
     git = mapping.get("git")
     git_mapping = t.cast("dict[str, object]", git) if isinstance(git, dict) else {}
-    return _record_origin(
-        cwd=_path_like_str(mapping.get("cwd"))
+    cwd = (
+        _path_like_str(mapping.get("cwd"))
         or _path_like_str(mapping.get("workspace"))
-        or _path_like_str(mapping.get("directory")),
-        repo=_path_like_str(mapping.get("repo")) or _path_like_str(mapping.get("repository")),
-        worktree=_path_like_str(mapping.get("worktree")),
+        or _path_like_str(mapping.get("directory"))
+    )
+    repo = _path_like_str(mapping.get("repo")) or _path_like_str(mapping.get("repository"))
+    worktree = _path_like_str(mapping.get("worktree"))
+    # Bare `branch`/`remote` are generic UI-state words in store blobs;
+    # accept them only alongside git or path evidence from the same
+    # mapping.
+    trusted = bool(git_mapping) or "gitBranch" in mapping or bool(cwd or repo or worktree)
+    return _record_origin(
+        cwd=cwd,
+        repo=repo,
+        worktree=worktree,
         branch=(
             as_optional_str(mapping.get("gitBranch"))
-            or as_optional_str(mapping.get("branch"))
             or as_optional_str(git_mapping.get("branch"))
+            or (as_optional_str(mapping.get("branch")) if trusted else None)
         ),
         remote=(
-            as_optional_str(mapping.get("remote"))
-            or as_optional_str(git_mapping.get("repository_url"))
+            as_optional_str(git_mapping.get("repository_url"))
             or as_optional_str(git_mapping.get("repositoryUrl"))
             or as_optional_str(git_mapping.get("remote"))
+            or (as_optional_str(mapping.get("remote")) if trusted else None)
         ),
         cwd_hash=(
             as_optional_str(mapping.get("cwd_hash"))
