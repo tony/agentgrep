@@ -37,6 +37,7 @@ from agentgrep.query import (
     default_registry,
     find_unsupported_reason,
     parse_query,
+    scope_widened_for_ast,
 )
 from agentgrep.query.compile import QueryCompileError
 from agentgrep.query.dates import set_now_override
@@ -1050,3 +1051,37 @@ def test_compile_module_split_reexports_are_neutral() -> None:
 
     assert evaluate._string_match is textmatch._string_match
     assert evaluate._path_match is pathmatch._path_match
+
+
+class ScopeWideningCase(t.NamedTuple):
+    """Parametrized case for the shared scope-widening rule."""
+
+    test_id: str
+    query: str | None
+    expected: str
+
+
+SCOPE_WIDENING_CASES: tuple[ScopeWideningCase, ...] = (
+    ScopeWideningCase(
+        test_id="scope-predicate-widens",
+        query="scope:conversations needle",
+        expected="all",
+    ),
+    ScopeWideningCase(
+        test_id="no-scope-predicate-keeps-scope",
+        query="agent:codex needle",
+        expected="prompts",
+    ),
+    ScopeWideningCase(test_id="no-ast-keeps-scope", query=None, expected="prompts"),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    SCOPE_WIDENING_CASES,
+    ids=[case.test_id for case in SCOPE_WIDENING_CASES],
+)
+def test_scope_widened_for_ast(case: ScopeWideningCase) -> None:
+    """The one shared rule widens discovery only for scope: predicates."""
+    ast = None if case.query is None else parse_query(case.query, default_registry())
+    assert scope_widened_for_ast(ast, "prompts") == case.expected

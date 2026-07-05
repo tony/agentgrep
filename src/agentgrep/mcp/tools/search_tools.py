@@ -117,7 +117,7 @@ def _compile_request_query(
         compile_query,
         compose_query_ast,
         default_registry,
-        fields_in_ast,
+        scope_widened_for_ast,
     )
 
     origin_nodes = origin_filter_nodes(
@@ -138,12 +138,7 @@ def _compile_request_query(
     except (QueryParseError, QueryCompileError) as exc:
         message = f"invalid query: {exc}"
         raise ToolError(message) from exc
-    scope = base_query.scope
-    if user_ast is not None and "scope" in fields_in_ast(user_ast):
-        # Mirrors build_query_from_input: a scope: predicate filters
-        # records, so discovery must open both prompt and conversation
-        # stores for it to act on.
-        scope = "all"
+    scope = scope_widened_for_ast(user_ast, base_query.scope)
     return dataclasses.replace(
         base_query,
         terms=compiled.text_terms,

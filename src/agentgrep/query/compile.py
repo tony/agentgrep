@@ -292,11 +292,7 @@ def build_query_from_input(
     result_compiled = None if compiled.is_pure_text else compiled
     # A ``scope:`` predicate filters records, but the coarse discovery scope
     # decides which stores are opened at all. Widen discovery to "all" when
-    # the query references scope so the record-level filter has both prompt
-    # and conversation sources to act on — otherwise ``scope:conversations``
-    # against a prompts-scoped box would open no conversation stores and
-    # match nothing. Mirrors the CLI's ``_effective_search_scope``.
-    scope = "all" if "scope" in fields_in_ast(ast) else base_query.scope
+    scope = scope_widened_for_ast(ast, base_query.scope)
     return QueryBuildResult(
         query=_rebuild(
             base_query,
@@ -437,6 +433,19 @@ def fields_in_ast(node: QueryNode) -> set[str]:
             result |= fields_in_ast(child)
         return result
     return set()
+
+
+def scope_widened_for_ast(ast: QueryNode | None, scope: SearchScope) -> SearchScope:
+    """Return ``all`` when ``ast`` carries a ``scope:`` predicate.
+
+    A ``scope:`` predicate filters records, so discovery must open both
+    prompt and conversation stores for it to act — otherwise
+    ``scope:conversations`` against a prompts-scoped query would open no
+    conversation stores and match nothing.
+    """
+    if ast is not None and "scope" in fields_in_ast(ast):
+        return "all"
+    return scope
 
 
 _FIND_BOOLEAN_TEXT_REASON = (
