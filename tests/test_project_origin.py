@@ -936,3 +936,64 @@ def test_cwd_filter_matches_across_symlinks(
 
     assert compiled.record_predicate is not None
     assert compiled.record_predicate(record)
+
+
+class HistoryOriginGateCase(t.NamedTuple):
+    """Parametrized case for path-likeness gating in history parsers."""
+
+    test_id: str
+    parser: str
+    row: dict[str, object]
+    expected_cwd: str | None
+
+
+HISTORY_ORIGIN_GATE_CASES: tuple[HistoryOriginGateCase, ...] = (
+    HistoryOriginGateCase(
+        test_id="claude-path-project-kept",
+        parser="parse_claude_history_file",
+        row={"display": "hi", "project": "/workspace/agentgrep"},
+        expected_cwd="/workspace/agentgrep",
+    ),
+    HistoryOriginGateCase(
+        test_id="claude-bare-token-project-dropped",
+        parser="parse_claude_history_file",
+        row={"display": "hi", "project": "a1b2-uuid"},
+        expected_cwd=None,
+    ),
+    HistoryOriginGateCase(
+        test_id="antigravity-path-workspace-kept",
+        parser="parse_antigravity_cli_history_file",
+        row={"display": "hi", "workspace": "/workspace/agentgrep"},
+        expected_cwd="/workspace/agentgrep",
+    ),
+    HistoryOriginGateCase(
+        test_id="antigravity-bare-token-workspace-dropped",
+        parser="parse_antigravity_cli_history_file",
+        row={"display": "hi", "workspace": "a1b2-uuid"},
+        expected_cwd=None,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    HISTORY_ORIGIN_GATE_CASES,
+    ids=[case.test_id for case in HISTORY_ORIGIN_GATE_CASES],
+)
+def test_history_parsers_gate_non_path_origin_values(
+    tmp_path: pathlib.Path,
+    case: HistoryOriginGateCase,
+) -> None:
+    """History workspace/project fields become origins only when path-like."""
+    history = tmp_path / "history.jsonl"
+    _write_jsonl(history, [case.row])
+    parser = getattr(agentgrep, case.parser)
+
+    records = list(parser(_source(history)))
+
+    assert len(records) == 1
+    origin = records[0].origin
+    if case.expected_cwd is None:
+        assert origin is None
+    else:
+        assert origin == agentgrep.RecordOrigin(cwd=case.expected_cwd)

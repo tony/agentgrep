@@ -987,7 +987,7 @@ def parse_claude_history_file(
             timestamp=_unix_millis_to_isoformat(mapping.get("timestamp")),
             session_id=session_id,
             conversation_id=session_id,
-            origin=_record_origin(cwd=project),
+            origin=_record_origin(cwd=_path_like_str(project)),
             metadata={"project": project or ""},
         )
 
@@ -1030,7 +1030,7 @@ def parse_antigravity_cli_history_file(
             timestamp=_unix_millis_to_isoformat(mapping.get("timestamp")),
             session_id=session_id,
             conversation_id=session_id,
-            origin=_record_origin(cwd=workspace),
+            origin=_record_origin(cwd=_path_like_str(workspace)),
             metadata={
                 "workspace": workspace or "",
                 "type": as_optional_str(mapping.get("type")) or "",
