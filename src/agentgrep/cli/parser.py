@@ -1100,12 +1100,19 @@ def _build_grep_args(
         pattern_mode = "regex"
 
     patterns_list_raw = t.cast("list[str]", namespace.patterns)
+    # Mirror build_grep_query's rg-style case resolution so the compiled
+    # record predicate agrees with grep's own line matching.
+    grep_case_sensitive = case_mode == "respect" or (
+        case_mode == "smart"
+        and any(any(ch.isupper() for ch in pattern) for pattern in patterns_list_raw)
+    )
     grep_compiled, residual_patterns, grep_query_fields = _maybe_compile_query(
         patterns_list_raw,
         bundle=bundle,
         color_mode=color_mode,
         subparser=bundle.grep_parser,
         explicit_flags=_grep_explicit_flags(namespace),
+        case_sensitive=grep_case_sensitive,
     )
     patterns_list: list[str] = list(residual_patterns)
     if any(not pattern for pattern in patterns_list):

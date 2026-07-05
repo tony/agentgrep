@@ -1455,3 +1455,63 @@ def test_compiled_none_falls_through_to_legacy_path(
         if isinstance(event, ag_events.RecordEmitted)
     ]
     assert len(emitted) == 1
+
+
+class GrepCasePredicateCase(t.NamedTuple):
+    """Parametrized case for grep case flags on compiled query predicates."""
+
+    test_id: str
+    argv: tuple[str, ...]
+    expected: bool
+
+
+GREP_CASE_PREDICATE_CASES: tuple[GrepCasePredicateCase, ...] = (
+    GrepCasePredicateCase(
+        test_id="case-sensitive-flag-excludes-lowercase",
+        argv=("grep", "-s", "text:Foo agent:codex"),
+        expected=False,
+    ),
+    GrepCasePredicateCase(
+        test_id="ignore-case-flag-includes-lowercase",
+        argv=("grep", "-i", "text:Foo agent:codex"),
+        expected=True,
+    ),
+    GrepCasePredicateCase(
+        test_id="smart-case-uppercase-excludes-lowercase",
+        argv=("grep", "text:Foo agent:codex"),
+        expected=False,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    GREP_CASE_PREDICATE_CASES,
+    ids=[c.test_id for c in GREP_CASE_PREDICATE_CASES],
+)
+def test_grep_case_flags_reach_compiled_predicate(
+    case: GrepCasePredicateCase,
+) -> None:
+    """Grep's case resolution governs text: predicates like line matching."""
+    args = agentgrep.parse_args(list(case.argv))
+    assert isinstance(args, agentgrep.GrepArgs)
+    assert args.compiled is not None
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text="foo lowercase only",
+    )
+    query = agentgrep.SearchQuery(
+        terms=args.patterns,
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=(),
+        limit=None,
+        compiled=args.compiled,
+    )
+    assert agentgrep.matches_record(record, query) is case.expected
