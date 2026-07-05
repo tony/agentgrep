@@ -13,7 +13,8 @@ one unenforced sentence, that the Textual TUI must remain non-blocking. The
 explorer already honors that: discovery, ripgrep, JSONL parsing, SQLite reads,
 and ranking run inside `thread=True` workers; streaming results return to the
 pump via `call_from_thread` rather than the message bus; batch application is
-chunked and yields; cancellation is cooperative through `SearchControl`.
+chunked and yields; cancellation is cooperative through
+{class}`~agentgrep.SearchControl`.
 
 But none of that was written down as rules, and nothing stopped a future edit
 from dropping a synchronous `open()`, `json.loads()` of an unbounded transcript,
@@ -48,8 +49,8 @@ input `_on_key` / `_watch_value` overrides, `set_interval` / `set_timer` /
 - **NB-6 — Supersedable worker groups are `exclusive`.** Workers a newer user
   action should cancel run with `exclusive=True` and a stable `group`.
 - **NB-7 — Cancellation is cooperative and polled.** Long loops poll
-  `SearchControl.answer_now_requested()`; superseding a search swaps in a fresh
-  control so a draining worker keeps its stale flag.
+  {meth}`agentgrep.SearchControl.answer_now_requested`; superseding a search
+  swaps in a fresh control so a draining worker keeps its stale flag.
 - **NB-8 — `call_from_thread` callees are themselves pump-safe.** Moving a call
   to a worker does not exempt the callee it schedules back onto the pump from
   NB-1/NB-4/NB-5.

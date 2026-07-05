@@ -126,7 +126,8 @@ step is independently revertable, and the non-blocking guards run at every gate.
 
 The chief risks: `switch_mode` *suspends* rather than destroys the previous
 layout, so a hidden layout's in-flight worker keeps running against the warm
-`SearchRuntime` cache — accepted for now (cheap warm-resume); a cancel-on-suspend
-policy is a follow-up. The opaque-base typing (PL-7) remains a debt. And the
-per-layout transport (PL-5) carries a little boilerplate over the shared
-primitives until a third layout justifies a `present_*` base.
+{class}`~agentgrep.SearchRuntime` cache — accepted for now (cheap warm-resume);
+a cancel-on-suspend policy is a follow-up. The opaque-base typing (PL-7)
+remains a debt. And the per-layout transport (PL-5) carries a little
+boilerplate over the shared primitives until a third layout justifies a
+`present_*` base.

@@ -2,6 +2,11 @@
 
 # Windsurf (unsupported)
 
+Windsurf is catalogued so readers can see that agentgrep looked for the
+backend and why it does not appear in normal search. Its Cascade transcript
+files are opaque encrypted protobuf blobs, so the backend remains documented
+but unsupported.
+
 Base path: `~/.codeium/windsurf` (Codeium's Windsurf "Cascade" agent).
 
 `observed_version`: Windsurf Cascade (observed 2026-06-21).
@@ -27,23 +32,26 @@ but does not parse it.
 
 ## Record schemas
 
-### windsurf.cascade
+### Cascade transcripts
 
-`cascade/<session_uuid>.pb` — per-session Cascade conversation
-transcript, opaque encrypted binary (often multi-megabyte). No readable
-text is recoverable; the row documents the transcript location only. The
-top-level `~/.codeium/cascade/` directory mirrors this for the
-non-Windsurf Codeium install.
+{storage:storeref}`windsurf.cascade` covers per-session Cascade conversation
+transcripts at `cascade/<session_uuid>.pb`. They are opaque encrypted binary
+(often multi-megabyte). No readable text is recoverable; the row documents the
+transcript location only. The top-level `~/.codeium/cascade/` directory mirrors
+this for the non-Windsurf Codeium install.
 
-### windsurf.implicit, windsurf.chat_state, windsurf.memories
+### Implicit, chat-state, and memory blobs
 
-`implicit/<uuid>.pb` (background context capture), `chat_state/<name>.pb`
-(per-file legacy chat state), and `memories/<uuid>.pb` (Cascade memory)
-are all opaque encrypted binary, documented by location only.
+{storage:storeref}`windsurf.implicit`, {storage:storeref}`windsurf.chat_state`, and
+{storage:storeref}`windsurf.memories` cover `implicit/<uuid>.pb` (background context
+capture), `chat_state/<name>.pb` (per-file legacy chat state), and
+`memories/<uuid>.pb` (Cascade memory). They are all opaque encrypted binary,
+documented by location only.
 
-### windsurf.brain and windsurf.global_rules
+### Brain plans and global rules
 
-`brain/<uuid>/plan.md` (agent-authored plans) and
-`memories/global_rules.md` (user-authored global rules — the Windsurf
-analogue of `CLAUDE.md`) are readable Markdown, but documented by
-location only because Windsurf as a whole is unsupported.
+{storage:storeref}`windsurf.brain` and {storage:storeref}`windsurf.global_rules` cover
+`brain/<uuid>/plan.md` (agent-authored plans) and `memories/global_rules.md`
+(user-authored global rules — the Windsurf analogue of `CLAUDE.md`). They are
+readable Markdown, but documented by location only because Windsurf as a whole
+is unsupported.

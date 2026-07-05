@@ -2,12 +2,16 @@
 
 # Pi
 
+pi stores each coding-agent conversation as an append-only JSONL transcript.
+agentgrep projects user turns into the default prompt scope and keeps
+assistant, tool, summary, and branch records available through the conversation
+scope.
+
 Base path: `~/.pi/agent` (env override: `PI_CODING_AGENT_DIR`).
 
 `observed_version`: `pi v0.79.9` (observed 2026-06-21).
 
-pi (the earendil-works "Pi Agent Harness") stores each conversation as
-one append-only JSONL file under `~/.pi/agent/sessions/`, grouped by
+pi (the earendil-works "Pi Agent Harness") groups transcripts by
 working directory. The directory key is the cwd with its leading slash
 stripped and `/`, `\`, and `:` replaced by `-`, wrapped in double
 dashes (e.g. `--home-d-work-python-agentgrep--`). Each session file is
@@ -33,10 +37,10 @@ the directory name.
 
 ## Record schemas
 
-### pi.sessions
+### Session transcripts
 
-The first line is a session header; `version` is `3` and may be absent
-in older (v1) files.
+{storage:storeref}`pi.sessions` files start with a session header; `version` is `3` and
+may be absent in older (v1) files.
 
 ```json
 {"type": "session", "version": 3, "id": "019e5691-...",
@@ -69,16 +73,16 @@ and `label` entries are metadata only. Entry-level timestamps are
 ISO-8601; the inner `message.timestamp` is unix-milliseconds and is used
 only as a fallback.
 
-### pi.context_mode_db
+### Context-mode database
 
-`~/.pi/context-mode/sessions/<project_hash>.db` is a per-project SQLite
-database rooted outside the agent dir; the stem is
-`sha256(project_dir)[:16]`, so it is a hashed `cwd` grouping holding
-multiple sessions (each row carries its own `session_id`). Its
-`session_events` table holds events (`type` = role/intent/decision/
-tool_call/file_read/blocker_resolved/data) with a JSON `data` payload,
-emitted as inspectable records; sibling `session_meta`/`session_resume`/
-`tool_calls` tables exist but only `session_events` is parsed.
+{storage:storeref}`pi.context_mode_db` is a per-project SQLite database at
+`~/.pi/context-mode/sessions/<project_hash>.db`, rooted outside the agent dir.
+The stem is `sha256(project_dir)[:16]`, so it is a hashed `cwd` grouping holding
+multiple sessions (each row carries its own `session_id`). Its `session_events`
+table holds events (`type` = role/intent/decision/tool_call/file_read/
+blocker_resolved/data) with a JSON `data` payload, emitted as inspectable
+records; sibling `session_meta`/`session_resume`/`tool_calls` tables exist but
+only `session_events` is parsed.
 
 ## Documentary stores
 
