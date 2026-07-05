@@ -7,6 +7,9 @@ import typing as t
 
 from agentgrep._engine.orchestration import record_matches_scope
 from agentgrep.origin import (
+    ORIGIN_PATH_QUERY_FIELDS,
+    ORIGIN_QUERY_FIELDS,
+    ORIGIN_STRING_QUERY_FIELDS,
     _origin_path_boundary_text,
     _path_is_equal_or_descendant,
     record_origin_field_values,
@@ -199,7 +202,7 @@ def _field_exists_on_record(field: str, record: SearchRecord) -> bool:
     carries no ``mtime_ns``). Nullable record fields count as absent when
     ``None`` or empty.
     """
-    if field in {"cwd", "repo", "worktree", "branch", "project", "cwd_hash"}:
+    if field in ORIGIN_QUERY_FIELDS:
         return bool(record_origin_field_values(record, field))
     if field in {"agent", "store", "adapter_id", "mtime", "scope"}:
         return True
@@ -265,13 +268,13 @@ def _field_matches_record(
         return record.model is not None and _string_match(record.model, node.value)
     if spec.name == "role":
         return record.role is not None and _string_match(record.role, node.value)
-    if spec.name in {"cwd", "repo", "worktree"}:
+    if spec.name in ORIGIN_PATH_QUERY_FIELDS:
         pattern = _path_pattern_for(node, path_patterns)
         return any(
             _origin_path_match(value, pattern)
             for value in record_origin_field_values(record, spec.name)
         )
-    if spec.name in {"branch", "project", "cwd_hash"}:
+    if spec.name in ORIGIN_STRING_QUERY_FIELDS:
         return any(
             _string_equals(value, node.value)
             for value in record_origin_field_values(record, spec.name)

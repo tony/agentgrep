@@ -17,6 +17,9 @@ if t.TYPE_CHECKING:
 
 __all__ = [
     "LEGACY_ORIGIN_METADATA_KEYS",
+    "ORIGIN_PATH_QUERY_FIELDS",
+    "ORIGIN_QUERY_FIELDS",
+    "ORIGIN_STRING_QUERY_FIELDS",
     "_origin_path_boundary_text",
     "_path_is_equal_or_descendant",
     "normalize_origin_path_text",
@@ -51,6 +54,12 @@ _STRING_FIELD_KEYS: dict[str, tuple[str, ...]] = {
     "branch": ("branch", "gitBranch"),
     "cwd_hash": ("cwd_hash", "project_hash", "projectHash"),
 }
+
+# Query-field names backed by record origin. query.evaluate dispatches on
+# these; a registered origin field missing here would silently never match.
+ORIGIN_PATH_QUERY_FIELDS: frozenset[str] = frozenset(_PATH_FIELD_KEYS)
+ORIGIN_STRING_QUERY_FIELDS: frozenset[str] = frozenset(_STRING_FIELD_KEYS) | {"project"}
+ORIGIN_QUERY_FIELDS: frozenset[str] = ORIGIN_PATH_QUERY_FIELDS | ORIGIN_STRING_QUERY_FIELDS
 
 
 def normalize_origin_path_text(value: str | None) -> str | None:

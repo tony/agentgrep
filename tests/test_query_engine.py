@@ -1148,6 +1148,28 @@ def test_cli_query_field_names_mirror_the_registry() -> None:
     assert expected == cli_parser._QUERY_FIELD_NAMES
 
 
+def test_origin_query_field_sets_mirror_the_registry() -> None:
+    """The origin field-name sets must not drift from the registry.
+
+    ``query.evaluate`` dispatches origin predicates through the
+    ``agentgrep.origin`` constants; a registered origin field missing
+    from them would silently never match (evaluation falls through to
+    ``return False`` with no error).
+    """
+    from agentgrep.origin import ORIGIN_PATH_QUERY_FIELDS, ORIGIN_STRING_QUERY_FIELDS
+
+    registry = default_registry()
+    record_path_fields = {
+        spec.name for spec in registry.specs if spec.layer == "record" and spec.kind == "path"
+    }
+    assert record_path_fields == ORIGIN_PATH_QUERY_FIELDS
+    specs_by_name = {spec.name: spec for spec in registry.specs}
+    for name in sorted(ORIGIN_STRING_QUERY_FIELDS):
+        spec = specs_by_name[name]
+        assert spec.layer == "record"
+        assert spec.kind == "string"
+
+
 class PureTextResidualCase(t.NamedTuple):
     """Parametrized case: query syntax that collapses to clean residual terms."""
 
