@@ -99,9 +99,24 @@ the dataclass-typed field doesn't block
 The {data}`~agentgrep.events.SearchEvent` union has five members.
 Their guaranteed sequence:
 
-```text
-SearchStarted → (SourceStarted → RecordEmitted* → SourceFinished)* → SearchFinished
-```
+::::{mermaid}
+:caption: Search events always open and close an envelope around each source.
+
+flowchart TD
+    search_started["SearchStarted"]:::cmd
+    source_started["SourceStarted"]:::cmd
+    record_emitted["RecordEmitted"]:::cmd
+    source_finished["SourceFinished"]:::cmd
+    search_finished["SearchFinished"]:::cmd
+
+    search_started --> source_started
+    source_started -->|match| record_emitted
+    source_started -->|zero matches| source_finished
+    record_emitted -->|next match| record_emitted
+    record_emitted --> source_finished
+    source_finished -->|next source| source_started
+    source_finished --> search_finished
+::::
 
 - {class}`~agentgrep.events.SearchStarted` — exactly once at the
   head. Carries `source_count` (the number of candidate sources
@@ -128,9 +143,19 @@ The {data}`~agentgrep.events.FindEvent` union has three members.
 Find has no per-source scan loop — each discovered source produces
 exactly one record — so the sequence simplifies:
 
-```text
-FindStarted → FindRecordEmitted* → FindFinished
-```
+::::{mermaid}
+:caption: Find emits one record per discovered source, then finishes.
+
+flowchart TD
+    find_started["FindStarted"]:::cmd
+    find_record["FindRecordEmitted"]:::cmd
+    find_finished["FindFinished"]:::cmd
+
+    find_started -->|record| find_record
+    find_started -->|no records| find_finished
+    find_record -->|next record| find_record
+    find_record --> find_finished
+::::
 
 - {class}`~agentgrep.events.FindStarted`
 - {class}`~agentgrep.events.FindRecordEmitted`
