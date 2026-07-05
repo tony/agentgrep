@@ -93,8 +93,25 @@ def normalize_origin_path_text(value: str | None) -> str | None:
         return None
     path = pathlib.Path(value).expanduser()
     if not path.is_absolute():
-        path = pathlib.Path.cwd() / path
+        path = _logical_cwd() / path
     return os.path.normpath(str(path))
+
+
+def _logical_cwd() -> pathlib.Path:
+    physical = pathlib.Path.cwd()
+    pwd = os.environ.get("PWD")
+    if pwd:
+        candidate = pathlib.Path(pwd).expanduser()
+        if candidate.is_absolute() and _same_physical_path(candidate, physical):
+            return pathlib.Path(os.path.normpath(str(candidate)))
+    return physical
+
+
+def _same_physical_path(left: pathlib.Path, right: pathlib.Path) -> bool:
+    try:
+        return left.resolve(strict=False) == right.resolve(strict=False)
+    except OSError:
+        return False
 
 
 def origin_filter_nodes(

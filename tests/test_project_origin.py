@@ -1004,9 +1004,33 @@ class SymlinkOriginFilterCase(t.NamedTuple):
     record_form: t.Literal["logical", "physical"]
 
 
+class RelativeOriginFilterCase(t.NamedTuple):
+    """Parametrized case for relative origin filters from a symlinked cwd."""
+
+    test_id: str
+    value: str
+    target_relative: pathlib.Path
+    record_relative: pathlib.Path
+
+
 SYMLINK_ORIGIN_FILTER_CASES: tuple[SymlinkOriginFilterCase, ...] = (
     SymlinkOriginFilterCase(test_id="logically-recorded-cwd", record_form="logical"),
     SymlinkOriginFilterCase(test_id="physically-recorded-cwd", record_form="physical"),
+)
+
+RELATIVE_ORIGIN_FILTER_CASES: tuple[RelativeOriginFilterCase, ...] = (
+    RelativeOriginFilterCase(
+        test_id="current-directory",
+        value=".",
+        target_relative=pathlib.Path(),
+        record_relative=pathlib.Path("src"),
+    ),
+    RelativeOriginFilterCase(
+        test_id="child-directory",
+        value="src",
+        target_relative=pathlib.Path("src"),
+        record_relative=pathlib.Path("src/nested"),
+    ),
 )
 
 
@@ -1040,6 +1064,47 @@ def test_cwd_filter_matches_across_symlinks(
         path=pathlib.Path("/tmp/session.jsonl"),
         text="symlinked project notes",
         origin=agentgrep.RecordOrigin(cwd=record_cwd),
+    )
+
+    assert compiled.record_predicate is not None
+    assert compiled.record_predicate(record)
+
+
+@pytest.mark.parametrize(
+    "case",
+    RELATIVE_ORIGIN_FILTER_CASES,
+    ids=[case.test_id for case in RELATIVE_ORIGIN_FILTER_CASES],
+)
+def test_relative_cwd_filter_preserves_logical_pwd(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: RelativeOriginFilterCase,
+) -> None:
+    """Relative origin filters use the logical symlink path from PWD."""
+    real = tmp_path / "real" / "proj"
+    real.mkdir(parents=True)
+    link = tmp_path / "link"
+    link.symlink_to(tmp_path / "real", target_is_directory=True)
+    logical = link / "proj"
+    logical_src = logical / "src"
+    logical_src.mkdir()
+    monkeypatch.chdir(logical)
+    monkeypatch.setenv("PWD", str(logical))
+
+    filter_value = normalize_origin_path_text(case.value)
+
+    assert filter_value == str(logical / case.target_relative)
+    registry = default_registry()
+    ast, _user_ast = compose_query_ast((), origin_filter_nodes(cwd=filter_value), registry)
+    compiled = compile_query(ast, registry)
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text="symlinked project notes",
+        origin=agentgrep.RecordOrigin(cwd=str(logical / case.record_relative)),
     )
 
     assert compiled.record_predicate is not None
