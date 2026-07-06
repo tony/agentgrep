@@ -70,6 +70,13 @@ Inline mentions of `agentgrep` commands and file paths now carry syntax
 highlighting via the shared `sphinx-gp-highlighting` package, and the
 accelerator module layout renders as a highlighted directory tree.
 
+#### Grok CLI and Antigravity in the MCP install picker (#97)
+
+The MCP install docs' client picker now covers Grok CLI and Antigravity
+(Google's agy) alongside Claude, Codex, Gemini, and Cursor. Grok registers
+through its own `grok mcp add` verb; Antigravity has no such verb, so its
+`mcpServers` snippet is pasted into `~/.gemini/config/mcp_config.json`.
+
 ## agentgrep 0.1.0a32 (2026-07-04)
 
 agentgrep 0.1.0a32 realigns every agent backend to the formats today's
