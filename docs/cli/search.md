@@ -28,6 +28,18 @@ Search prompts and conversations together in one sweep:
 $ agentgrep search "deploy" --scope all
 ```
 
+Prefer records from the project you are standing in:
+
+```console
+$ agentgrep search --here deploy
+```
+
+Hard-filter by recorded working directory:
+
+```console
+$ agentgrep search --cwd ~/work/django-project deploy
+```
+
 Keep only strong matches by raising the score bar:
 
 ```console
@@ -102,6 +114,41 @@ conversation, session, assistant, tool, and event records, or
 $ agentgrep search "docs deploy" --scope all
 ```
 
+(cli-search-project-context)=
+
+## Project context
+
+When a backend records where a prompt came from, `search` can use that
+{class}`~agentgrep.RecordOrigin` to find the right project history.
+`--here` keeps global results visible but boosts records from the
+current checkout; `--only-here` hard-filters to that checkout and can be
+used without text terms. The detector preserves the logical `$PWD`, so a
+symlinked checkout is treated the same way the shell sees it.
+
+```console
+$ agentgrep search --here deploy
+```
+
+Use explicit filters when you know the project path or branch you want:
+
+```console
+$ agentgrep search --cwd ~/work/django-project deploy
+```
+
+```console
+$ agentgrep search --branch main agent:codex
+```
+
+`--cwd` and `--repo` accept relative paths and `~`; blank values are
+ignored. Origin filters compose with the user query without changing the
+meaning of punctuation-heavy literals, URLs, or phrases. The same fields
+are available inline as `cwd:`, `repo:`, `worktree:`, `branch:`,
+`project:`, and `cwd_hash:`; see {ref}`library-query-language-origin-fields`.
+
+`--here` affects ranking only, so it is rejected with `--no-rank` and
+with `--ui`. Use `--only-here` when you want the Textual explorer to
+open on current-project results.
+
 ## Output
 
 The default output is ranked, grouped text for terminal reading. For
@@ -116,6 +163,14 @@ scripts and non-MCP agents, two machine-readable modes mirror `grep`:
 ```console
 $ agentgrep search bliss --json
 ```
+
+When a backend exposes project context, each serialized
+{class}`~agentgrep.SearchRecord` can include an `origin` object with
+`cwd`, `repo`, `worktree`, `branch`, `remote`, and `cwd_hash` fields.
+Path values use the same display-safe layer as `path`; credentialed
+remotes are stripped before output, and local `file://` remotes are
+omitted. Filters compare against the recorded origin before display
+rewriting, so privacy formatting does not change match behavior.
 
 ## Interactive UI
 
@@ -137,9 +192,9 @@ $ agentgrep search bliss --ui
 $ agentgrep search agent:codex bliss
 ```
 
-The predicates (`agent:`, `path:`, `timestamp:`) prune and filter
-sources around the text terms. See {ref}`library-query-language` for the
-full grammar.
+The predicates (`agent:`, `path:`, `timestamp:`, `cwd:`, `repo:`,
+`branch:`, and more) prune and filter sources around the text terms.
+See {ref}`library-query-language` for the full grammar.
 
 ## Progress
 

@@ -289,5 +289,16 @@ aware matching; the field predicates (`agent:`, `path:`,
 `timestamp:`) prune sources and filter records around it. A query
 with only field predicates and no text errors out — `grep` needs
 text to match lines against, so steer to `agentgrep find` for
-source-level enumeration. See {ref}`library-query-language` for
-the full grammar.
+source-level enumeration.
+
+`grep` does not have `--cwd`, `--repo`, `--branch`, `--here`, or
+`--only-here` flags. Use origin query fields when line-oriented output
+is what you want:
+
+```console
+$ agentgrep grep 'cwd:~/work/django-project deploy'
+```
+
+Use {ref}`agentgrep search <cli-search-project-context>` for
+origin-only searches or current-project ranking boosts. See
+{ref}`library-query-language` for the full grammar.

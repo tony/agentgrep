@@ -10,11 +10,22 @@ agentgrep's tools are read-only. They return structured Pydantic models and prot
 :no-index:
 ```
 
-**Use when** you need prompt records matching one or more terms. Pass
-`scope="conversations"` for full conversation, assistant, tool, and
-event records, or `scope="all"` for both surfaces.
+**Use when** you need prompt records matching terms, query-language
+fields, or project context. Pass `scope="conversations"` for full
+conversation, assistant, tool, and event records, or `scope="all"` for
+both surfaces. Pass top-level `cwd`, `repo`, or `branch` to apply the
+same origin filters as {ref}`agentgrep search <cli-search-project-context>`;
+use `worktree:`, `project:`, and `cwd_hash:` inside `terms` when you
+need those query-language fields. A request with an origin filter and
+no terms is valid.
 
-**Returns:** request metadata, run status, result stats, page metadata, and normalized records with `ref`, agent, store, adapter, path, text, title, role, timestamp, model, session ID, conversation ID, and metadata. When `page.next_cursor` is present, pass it back as `cursor` to continue the same search without rebuilding the request.
+**Returns:** request metadata, run status, result stats, page metadata, and
+normalized records with `ref`, agent, store, adapter, path, text, title,
+role, timestamp, model, session ID, conversation ID, optional
+{class}`~agentgrep.mcp.RecordOriginModel`, and metadata. When
+`page.next_cursor` is present, pass it back as `cursor` to continue the
+same search, including the same origin filters, without rebuilding the
+request.
 
 **Example:**
 
@@ -25,6 +36,7 @@ event records, or `scope="all"` for both surfaces.
     "terms": ["release notes"],
     "agent": "all",
     "scope": "prompts",
+    "cwd": "~/work/django-project",
     "limit": 20
   }
 }

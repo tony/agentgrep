@@ -24,13 +24,14 @@ _CURSOR_IDE_STORES: tuple[StoreDescriptor, ...] = (
         env_overrides=("AGENTGREP_WSL_USERS_ROOT",),
         observed_version="Cursor IDE (current observed paths)",
         observed_at=_CURSOR_IDE_OBSERVED_AT,
-        upstream_ref=("agentgrep.parse_cursor_state_db / CURSOR_STATE_TOKENS"),
+        upstream_ref=("agentgrep.parse_cursor_state_db / Cursor state key selectors"),
         schema_notes=(
-            "Cursor IDE chat storage; keys in `ItemTable`/`cursorDiskKV` containing "
-            "`chat`/`composer`/`prompt`/`history` tokens hold conversation JSON. "
-            "Cursor does not publish a formal schema — agentgrep's parser is the "
-            "reference implementation. On WSL the store is discovered under the "
-            "Windows-host mount too (see ADR 0009)."
+            "Cursor IDE chat storage; known prompt/chat keys in "
+            "`ItemTable`/`cursorDiskKV` hold conversation JSON. agentgrep does "
+            "not scan arbitrary state values. Cursor does not publish a formal "
+            "schema — agentgrep's parser is the reference implementation. On "
+            "WSL the store is discovered under the Windows-host mount too (see "
+            "ADR 0009)."
         ),
         sample_record=(
             "ItemTable row: key='workbench.panel.aichat.view...prompts', "
@@ -77,12 +78,14 @@ _CURSOR_IDE_STORES: tuple[StoreDescriptor, ...] = (
         env_overrides=("AGENTGREP_WSL_USERS_ROOT",),
         observed_version="Cursor IDE (current observed paths)",
         observed_at=_CURSOR_IDE_OBSERVED_AT,
-        upstream_ref=("agentgrep.parse_cursor_state_db / CURSOR_STATE_TOKENS"),
+        upstream_ref=("agentgrep.parse_cursor_state_db / Cursor state key selectors"),
         schema_notes=(
             "Per-workspace `state.vscdb`, one per opened project under "
             "`workspaceStorage/<hash>/`. Same `ItemTable` shape as the global "
             "store; the `aiService.prompts` key holds that workspace's prompt "
-            "history. Reuses the `cursor_ide.state_vscdb_modern.v1` adapter."
+            "history. The directory hash contributes `origin.cwd_hash`; sibling "
+            "`workspace.json` can contribute `origin.cwd`. Reuses the "
+            "`cursor_ide.state_vscdb_modern.v1` adapter."
         ),
         distinguishes_from=("cursor-ide.state_vscdb",),
         search_notes=(

@@ -11,6 +11,8 @@ FastMCP server factory, payload models, and MCP helpers.
 
 .. autoclass:: agentgrep.mcp.SearchRecordModel
 
+.. autoclass:: agentgrep.mcp.RecordOriginModel
+
 .. autoclass:: agentgrep.mcp.FindRecordModel
 
 .. autoclass:: agentgrep.mcp.SourceRecordModel

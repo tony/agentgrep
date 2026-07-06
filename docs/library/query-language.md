@@ -56,7 +56,7 @@ requires every term); it's accepted for rg compatibility.
 
 ## Field registry
 
-The default registry ships ten fields, split across two evaluation
+The default registry ships sixteen fields, split across two evaluation
 layers:
 
 ### Source-level fields
@@ -84,6 +84,30 @@ predicate has admitted the source.
 | `model` | string | Substring, or `*` / `?` wildcard, against `record.model` (conversation records only) |
 | `role` | string | Substring or `*` / `?` wildcard against `record.role` (prompt records are always `user`) |
 | `text` | string | Substring or `*` / `?` wildcard (against record text); implicit field for bare positional terms |
+
+(library-query-language-origin-fields)=
+
+### Origin fields
+
+Origin fields read from {class}`~agentgrep.RecordOrigin`, plus legacy
+metadata keys that older adapters already emitted. They are record-level
+fields, but a source that carries complete origin facts can be rejected
+before parsing when the predicate cannot match that source.
+
+| Field | Kind | Notes |
+|---|---|---|
+| `cwd` | path | Recorded working directory; matches the exact path or descendants |
+| `repo` | path | Recorded repository root; also accepts recorded worktree/cwd when that is all a backend knows |
+| `worktree` | path | Recorded Git worktree root; matches the exact path or descendants |
+| `branch` | string | Whole branch name, casefolded; use `*` / `?` for glob matching |
+| `project` | string | Whole project/workspace value or basename, casefolded; use globs for prefixes |
+| `cwd_hash` | string | Opaque project/workspace hash for stores that know a hash before a path |
+
+Path-origin fields accept `~`, relative paths from the invoking
+directory, and symlinked logical or resolved variants. Plain values use
+path-boundary matching, so `cwd:~/work/django-project` matches that
+project and its descendants, but not `~/work/django-project-old`.
+String-origin fields are whole-value matches unless you use a glob.
 
 Unknown field names error at parse time with a clean message listing
 the registered fields, so a mistyped predicate (`agnet:codex`) is
@@ -261,6 +285,20 @@ prompt scope; `scope:conversations` is the inline form of
 `--scope conversations`.
 
 ```console
+$ agentgrep search 'cwd:~/work/django-project deploy'
+```
+
+Prompts from records whose captured working directory is
+`~/work/django-project` or a descendant, still ranked against `deploy`.
+
+```console
+$ agentgrep search 'project:docs branch:main deploy'
+```
+
+Prompts from a project whose captured path or basename is `docs`, on the
+`main` branch, mentioning `deploy`.
+
+```console
 $ agentgrep find 'path:*codex* agent:codex'
 ```
 
@@ -286,8 +324,10 @@ $ agentgrep grep --agent codex agent:claude bliss
 agentgrep grep: error: cannot combine --agent flag with agent: field predicate; pick one syntax
 ```
 
-Currently checked: `--agent` × `agent:`, `--scope` × `scope:`. Other
-flags don't yet have query-field counterparts.
+Currently checked: `--agent` × `agent:`, `--scope` × `scope:`,
+`--cwd` × `cwd:`, `--repo` × `repo:`, and `--branch` × `branch:`.
+Pick one spelling for each filter so the command has one source of
+truth.
 
 ## Performance
 
@@ -300,7 +340,9 @@ check. When the syntax is used:
 - **Parse + compile** is sub-millisecond for typical queries.
 - **Source pruning** is O(predicates) per `SourceHandle`. Pruning
   saves multiple seconds on multi-thousand-file trees when a
-  single field rules out most sources.
+  single field rules out most sources. Origin fields are record fields,
+  but sources with complete origin summaries can still be pruned
+  conservatively before parsing.
 - **Record filtering** runs in the existing per-record hot loop and
   short-circuits as soon as a child predicate fails. The net effect
   on records that pass is sub-5% overhead; rejected records save

@@ -198,6 +198,7 @@ CLI_DESCRIPTION = build_description(
             "search",
             (
                 "agentgrep search streaming parser",
+                "agentgrep search --here deploy",
                 "agentgrep search 'ruff OR uv'",
                 "agentgrep search 'agent:codex migration'",
                 "agentgrep search '\"exact phrase\"'",
@@ -209,6 +210,7 @@ CLI_DESCRIPTION = build_description(
                 "agentgrep grep bliss",
                 "agentgrep grep -i 'serene bliss'",
                 "agentgrep grep -F --scope conversations TODO",
+                "agentgrep grep 'cwd:~/work/django-project deploy'",
                 "agentgrep grep --json design",
             ),
         ),
@@ -217,6 +219,7 @@ CLI_DESCRIPTION = build_description(
             (
                 "agentgrep find codex",
                 "agentgrep find -t prompts -e jsonl",
+                "agentgrep find 'path:*workspaceStorage* agent:cursor-ide'",
                 "agentgrep find cursor-cli --json",
             ),
         ),
@@ -225,6 +228,7 @@ CLI_DESCRIPTION = build_description(
             (
                 "agentgrep ui",
                 "agentgrep ui bliss",
+                "agentgrep search --only-here deploy --ui",
             ),
         ),
     ),
@@ -239,6 +243,7 @@ FIND_DESCRIPTION = build_description(
             (
                 "agentgrep find codex",
                 "agentgrep find sessions --agent codex",
+                "agentgrep find 'path:*workspaceStorage* agent:cursor-ide'",
                 "agentgrep find cursor-cli --json",
             ),
         ),
@@ -274,6 +279,8 @@ SEARCH_DESCRIPTION = build_description(
             None,
             (
                 "agentgrep search streaming parser",
+                "agentgrep search --here deploy",
+                "agentgrep search --cwd ~/work/django-project deploy",
                 "agentgrep search --threshold 70 migration",
                 "agentgrep search --no-rank --no-group caching",
                 "agentgrep search bliss --json",
@@ -287,6 +294,8 @@ SEARCH_DESCRIPTION = build_description(
                 "agentgrep search '\"exact phrase\"'",
                 "agentgrep search 'timestamp:>2026-01-01 release'",
                 "agentgrep search 'model:gpt* caching'",
+                "agentgrep search 'cwd:~/work/django-project deploy'",
+                "agentgrep search 'project:docs branch:main deploy'",
                 "agentgrep search 'deploy -agent:cursor-cli'",
             ),
         ),
@@ -321,6 +330,7 @@ GREP_DESCRIPTION = build_description(
             (
                 "agentgrep grep 'agent:codex deploy'",
                 "agentgrep grep 'role:user TODO'",
+                "agentgrep grep 'cwd:~/work/django-project deploy'",
                 "agentgrep grep 'fixme OR todo'",
             ),
         ),

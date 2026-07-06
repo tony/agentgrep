@@ -2,7 +2,13 @@
 
 # Library
 
-Use `agentgrep` as a Python library from your own scripts and tools. The same search, discovery, parsing, serialization, and path-privacy layer powers the terminal CLI and the MCP server, so anything you can do from the command line you can drive directly in code.
+Use `agentgrep` as a Python library from your own scripts and tools.
+The same search, discovery, parsing, serialization, and path-privacy
+layer powers the terminal CLI and the MCP server, so anything you can do
+from the command line you can drive directly in code. Search results may
+carry {class}`~agentgrep.RecordOrigin`; its path fields use the same
+{class}`~agentgrep.PrivatePath` display layer as source paths, and
+remote URLs are serialized without credentials.
 
 ## Install
 

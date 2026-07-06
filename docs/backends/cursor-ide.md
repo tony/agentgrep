@@ -17,8 +17,10 @@ under the platform user-data directory.
 ### Global state database
 
 {storage:storeref}`cursor-ide.state_vscdb` is the platform-specific global SQLite
-database (`state.vscdb`). Keys in `ItemTable`/`cursorDiskKV` containing
-`chat`/`composer`/`prompt`/`history` tokens hold conversation JSON.
+database (`state.vscdb`). agentgrep reads known prompt and chat keys in
+`ItemTable`/`cursorDiskKV`; it does not scan arbitrary state values.
+Global records may not carry project origin because the database is
+shared across workspaces.
 
 | Platform | Path |
 |----------|------|
@@ -34,6 +36,19 @@ project under `workspaceStorage/<hash>/`. These share the global store's
 prompt history. agentgrep enumerates them through the platform
 `workspaceStorage` directory and parses them with the same adapter as the
 global store.
+
+## Project context
+
+Per-workspace Cursor stores contribute `origin.cwd_hash` from the
+`workspaceStorage/<hash>` directory. When the sibling `workspace.json`
+records a folder URI, agentgrep resolves it to `origin.cwd` too. That
+lets `--cwd`, `cwd:`, MCP `cwd`, and `cwd_hash:` target one Cursor
+workspace without opening unrelated workspace databases.
+
+Global `state.vscdb` records stay conservative when no workspace origin
+is known. They remain searchable by text, agent, scope, and other
+non-origin fields, but they do not satisfy a hard current-project
+filter unless the stored record itself carries project metadata.
 
 ## Cross-host discovery on WSL
 

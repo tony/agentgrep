@@ -180,11 +180,13 @@ because they have disjoint data homes and on-disk formats.
   `cursor_ide.state_vscdb_legacy.v1` via VS Code-style `state.vscdb`
   SQLite. `cursor-ide.state_vscdb` covers the global database and
   `cursor-ide.workspace_state` covers the per-workspace
-  `workspaceStorage/<hash>/state.vscdb`; both surface the
-  `aiService.prompts` history alongside composer/chat keys. On WSL,
-  discovery also probes the Windows-host mount under `/mnt/c/Users`
-  (overridable via `AGENTGREP_WSL_USERS_ROOT`) for a Windows-side Cursor
-  editing a WSL project, mirroring the VS Code backend; see
+  `workspaceStorage/<hash>/state.vscdb`. The global database reads
+  known prompt/chat keys, while per-workspace stores contribute
+  `origin.cwd_hash` from the directory hash and can add `origin.cwd`
+  from sibling `workspace.json`. On WSL, discovery also probes the
+  Windows-host mount under `/mnt/c/Users` (overridable via
+  `AGENTGREP_WSL_USERS_ROOT`) for a Windows-side Cursor editing a WSL
+  project, mirroring the VS Code backend; see
   {ref}`adr-cross-host-discovery`.
 
 ### Codex

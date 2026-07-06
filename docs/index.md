@@ -24,6 +24,12 @@ Ranked search across every agent's prompts:
 $ agentgrep search "deploy"
 ```
 
+Prefer matches from the project you are standing in:
+
+```console
+$ agentgrep search --here "deploy"
+```
+
 Sweep prompts and conversations together:
 
 ```console
@@ -93,15 +99,15 @@ Per-agent store layouts, record schemas, and support matrix.
 
 ### Prompt Search
 
-Find prompt records by literal term or regular expression, with explicit opt-in for conversations.
-
-<a class="reference internal" href="mcp/tools/#fastmcp-tool-search"><code>search</code></a>
+Find prompt records by literal term, query field, or current project context,
+with explicit opt-in for conversations. See {ref}`cli-search-project-context`
+for current-project examples, or call {tool}`search` from MCP clients.
 
 ### Discovery
 
 List the stores, session files, and SQLite databases that agentgrep can read.
 
-<a class="reference internal" href="mcp/tools/#fastmcp-tool-find"><code>find</code></a>
+{tool}`find`
 
 ### MCP guidance
 

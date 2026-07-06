@@ -52,10 +52,12 @@ can show where a prompt came from — such as its working directory, repository,
 worktree, branch, or workspace hash — so same-looking sessions from different
 projects are easier to tell apart without opening the raw history files.
 
-The same context powers project-aware search controls. `--only-here`, `--here`,
-`cwd:`, `repo:`, `branch:`, and MCP origin filters can narrow or boost records
-from the current project while keeping symlinked checkouts, branch names, and
-remote URLs in their proper lanes.
+The same context powers {ref}`project-aware search controls <cli-search-project-context>`.
+`--only-here`, `--here`,
+{ref}`origin query fields <library-query-language-origin-fields>`, and
+{tooliconl}`search` origin filters can narrow or boost records from the current
+project while keeping symlinked checkouts, branch names, and remote URLs in
+their proper lanes.
 
 ### Documentation
 

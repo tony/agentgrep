@@ -19,6 +19,9 @@ every surface (CLI, TUI, MCP).
 .. autoclass:: agentgrep.SearchQuery
    :members:
 
+.. autoclass:: agentgrep.RecordOrigin
+   :members:
+
 .. autoclass:: agentgrep.SourceHandle
    :members:
 
@@ -27,6 +30,11 @@ every surface (CLI, TUI, MCP).
 
 .. autoclass:: agentgrep.FindRecord
    :members:
+
+.. autoclass:: agentgrep.ProjectContext
+   :members:
+
+.. autofunction:: agentgrep.detect_project_context
 ```
 
 ## Search control and progress
