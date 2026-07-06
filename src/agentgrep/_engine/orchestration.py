@@ -64,9 +64,10 @@ def search_sources(
     # ``plan_search_sources``) runs on the smaller set. Without this
     # the per-file prefilter runs against every discovered source even
     # when ``agent:codex`` could rule most out from metadata alone.
-    if query.compiled is not None and query.compiled.source_predicate is not None:
-        sources = [s for s in sources if query.compiled.source_predicate(s)]
     from agentgrep._engine.planning import build_physical_search_plan
+    from agentgrep._engine.source_filters import source_may_match_query
+
+    sources = [s for s in sources if source_may_match_query(query, s)]
 
     plan = build_physical_search_plan(
         query,

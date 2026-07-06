@@ -10,6 +10,7 @@ from agentgrep.origin import (
     ORIGIN_PATH_QUERY_FIELDS,
     ORIGIN_QUERY_FIELDS,
     OriginMatcher,
+    origin_field_values,
     record_origin_field_values,
 )
 from agentgrep.query.ast import (
@@ -74,7 +75,11 @@ def _evaluate_source(
         return "U"
     if isinstance(node, FieldExistsNode):
         spec = registry.get(node.field)
-        if spec is None or spec.layer == "record":
+        if spec is None:
+            return "U"
+        if spec.name in ORIGIN_QUERY_FIELDS:
+            return _origin_field_exists_on_source(spec.name, source)
+        if spec.layer == "record":
             return "U"
         # mtime existence is unknown when the stat failed (mtime_ns<=0);
         # otherwise the source carries the field by construction.
@@ -83,7 +88,11 @@ def _evaluate_source(
         return "T"
     if isinstance(node, FieldEqNode | FieldCmpNode | FieldRangeNode):
         spec = registry.get(node.field)
-        if spec is None or spec.layer == "record":
+        if spec is None:
+            return "U"
+        if spec.layer == "record":
+            if isinstance(node, FieldEqNode) and spec.name in ORIGIN_QUERY_FIELDS:
+                return _origin_field_eq_on_source(node, source, spec, path_patterns)
             return "U"
         # mtime with unknown data (stat failed, mtime_ns=0) is "U" — we
         # don't KNOW the file's mtime, so we can't definitively exclude
@@ -193,6 +202,39 @@ def _evaluate_record(
             for c in node.children
         )
     return False
+
+
+def _origin_field_exists_on_source(field: str, source: SourceHandle) -> _Trilean:
+    summary = source.origin_summary
+    if summary is None or field not in summary.complete_fields:
+        return "U"
+    if not summary.origins:
+        return "F"
+    exists = [bool(origin_field_values(origin, field)) for origin in summary.origins]
+    if all(exists):
+        return "T"
+    if any(exists):
+        return "U"
+    return "F"
+
+
+def _origin_field_eq_on_source(
+    node: FieldEqNode,
+    source: SourceHandle,
+    spec: FieldSpec,
+    path_patterns: dict[_PathPatternKey, _CompiledPathPattern],
+) -> _Trilean:
+    if spec.name in ORIGIN_PATH_QUERY_FIELDS:
+        pattern = _path_pattern_for(node, path_patterns)
+        matcher = OriginMatcher.from_field_value(
+            spec.name,
+            node.value,
+            variants=pattern.variants,
+            is_glob=pattern.is_glob,
+        )
+    else:
+        matcher = OriginMatcher.from_field_value(spec.name, node.value)
+    return matcher.evaluate_summary(source.origin_summary)
 
 
 def _field_exists_on_record(field: str, record: SearchRecord) -> bool:

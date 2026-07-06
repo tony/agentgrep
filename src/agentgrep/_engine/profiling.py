@@ -228,6 +228,7 @@ def profile_search_query(
 ) -> ProfiledSearchResult:
     """Run a search query and return engine-only phase timings."""
     from agentgrep._engine.planning import build_physical_search_plan
+    from agentgrep._engine.source_filters import source_may_match_query
 
     profiler = EngineProfiler()
     active_backends = select_backends() if backends is None else backends
@@ -245,11 +246,7 @@ def profile_search_query(
                 version_detail="none",
             )
         _record_source_groups(profiler, "search.discover.group", sources)
-        source_predicate = query.compiled.source_predicate if query.compiled is not None else None
-        if source_predicate is not None:
-            sources_for_plan = [source for source in sources if source_predicate(source)]
-        else:
-            sources_for_plan = sources
+        sources_for_plan = [source for source in sources if source_may_match_query(query, source)]
         with profiler.span(
             "search.plan",
             agentgrep_scope=query.scope,

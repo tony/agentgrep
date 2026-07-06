@@ -22,6 +22,7 @@ from agentgrep._engine.orchestration import (
     source_matches_scope,
     source_order_key,
 )
+from agentgrep._engine.source_filters import source_may_match_query
 from agentgrep.progress import SearchControl, SearchProgress, noop_search_progress
 from agentgrep.records import (
     CONVERSATION_STORE_ROLES,
@@ -307,6 +308,16 @@ def build_physical_search_plan(
             detail=query.scope,
         ),
     ]
+    source_filtered = [source for source in scoped_sources if source_may_match_query(query, source)]
+    if len(source_filtered) != len(scoped_sources):
+        decisions.append(
+            PlannerDecision(
+                name="source_predicate_prune",
+                source_count=len(source_filtered),
+                detail="compiled_or_origin",
+            ),
+        )
+    scoped_sources = source_filtered
 
     if not query.terms:
         return PhysicalSearchPlan(

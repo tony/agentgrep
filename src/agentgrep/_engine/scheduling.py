@@ -17,6 +17,7 @@ from agentgrep._engine.orchestration import (
     source_matches_scope,
 )
 from agentgrep._engine.planning import PhysicalSearchPlan, SourceTask
+from agentgrep._engine.source_filters import source_may_match_query
 from agentgrep.progress import SearchControl, SearchProgress, noop_search_progress
 from agentgrep.readers import _record_engine_profile_sample
 from agentgrep.records import SearchQuery, SearchRecord, SourceHandle
@@ -133,7 +134,6 @@ class InlineExecutionDriver:
         deduped: dict[tuple[str, str, str, str, str], SearchRecord] = {}
         raw_count = 0
         prompt_history_agents = prompt_history_agents_for_sources(task.source for task in tasks)
-        source_predicate = query.compiled.source_predicate if query.compiled is not None else None
 
         def current_count() -> int:
             return len(deduped) if query.dedupe else raw_count
@@ -167,7 +167,7 @@ class InlineExecutionDriver:
                 prompt_history_agents=prompt_history_agents,
             ):
                 continue
-            if source_predicate is not None and not source_predicate(source):
+            if not source_may_match_query(query, source):
                 continue
 
             active_progress.source_started(index, total, source)
@@ -923,7 +923,6 @@ def _eligible_tasks(
     """Yield plan tasks that still match late-bound query predicates."""
     task_list = tuple(tasks)
     prompt_history_agents = prompt_history_agents_for_sources(task.source for task in task_list)
-    source_predicate = query.compiled.source_predicate if query.compiled is not None else None
     for task in task_list:
         if not source_matches_scope(
             task.source,
@@ -931,7 +930,7 @@ def _eligible_tasks(
             prompt_history_agents=prompt_history_agents,
         ):
             continue
-        if source_predicate is not None and not source_predicate(task.source):
+        if not source_may_match_query(query, task.source):
             continue
         yield task
 

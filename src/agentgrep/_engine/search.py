@@ -119,6 +119,7 @@ def iter_search_events(
         select_execution_driver,
     )
     from agentgrep._engine.planning import build_physical_search_plan
+    from agentgrep._engine.source_filters import source_may_match_query
 
     active_backends = select_backends() if backends is None else backends
     active_control = SearchControl() if control is None else control
@@ -130,9 +131,7 @@ def iter_search_events(
         active_backends,
         version_detail="none",
     )
-    source_predicate = query.compiled.source_predicate if query.compiled is not None else None
-    if source_predicate is not None:
-        sources = [s for s in sources if source_predicate(s)]
+    sources = [s for s in sources if source_may_match_query(query, s)]
     plan = build_physical_search_plan(
         query,
         sources,

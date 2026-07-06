@@ -65,6 +65,7 @@ __all__ = [
     "SearchScope",
     "SourceHandle",
     "SourceHandlePayload",
+    "SourceOriginSummary",
     "SourceVersionDetection",
     "SourceVersionDetectionPayload",
     "SummaryRow",
@@ -373,6 +374,7 @@ class SourceHandle:
     mtime_ns: int
     coverage: StoreCoverage = StoreCoverage.DEFAULT_SEARCH
     version_detection: SourceVersionDetection | None = None
+    origin_summary: SourceOriginSummary | None = None
 
 
 @dataclasses.dataclass(slots=True)
@@ -445,6 +447,14 @@ class RecordOrigin:
                 self.cwd_hash,
             ),
         )
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class SourceOriginSummary:
+    """Source-level origin facts safe for conservative pruning."""
+
+    origins: tuple[RecordOrigin, ...] = ()
+    complete_fields: frozenset[str] = frozenset()
 
 
 # --- Store-role classification constants -----------------------------------

@@ -13,7 +13,7 @@ import os
 import pathlib
 import typing as t
 
-from agentgrep.records import RecordOrigin, SearchRecord
+from agentgrep.records import RecordOrigin, SearchRecord, SourceOriginSummary
 
 if t.TYPE_CHECKING:
     from agentgrep.query.ast import FieldEqNode
@@ -66,6 +66,7 @@ ORIGIN_STRING_QUERY_FIELDS: frozenset[str] = frozenset(_STRING_FIELD_KEYS) | {"p
 ORIGIN_QUERY_FIELDS: frozenset[str] = ORIGIN_PATH_QUERY_FIELDS | ORIGIN_STRING_QUERY_FIELDS
 
 _OriginMatchKind = t.Literal["path", "string"]
+_OriginSummaryState = t.Literal["T", "F", "U"]
 
 _CONTEXT_FIELD_VALUES: dict[str, tuple[str, ...]] = {
     "branch": ("branch",),
@@ -120,6 +121,29 @@ class OriginPredicate:
         """Return whether ``record`` satisfies this origin predicate."""
         values = _dedupe(
             value for field in self.fields for value in record_origin_field_values(record, field)
+        )
+        if self.kind == "path":
+            return any(self._path_matches(value) for value in values)
+        return any(
+            _origin_string_equal(value, self.value, is_glob=self.is_glob) for value in values
+        )
+
+    def evaluate_summary(self, summary: SourceOriginSummary | None) -> _OriginSummaryState:
+        """Evaluate this predicate against complete source-origin facts."""
+        if summary is None or any(field not in summary.complete_fields for field in self.fields):
+            return "U"
+        if not summary.origins:
+            return "F"
+        matches = [self._matches_origin(origin) for origin in summary.origins]
+        if all(matches):
+            return "T"
+        if any(matches):
+            return "U"
+        return "F"
+
+    def _matches_origin(self, origin: RecordOrigin) -> bool:
+        values = _dedupe(
+            value for field in self.fields for value in origin_field_values(origin, field)
         )
         if self.kind == "path":
             return any(self._path_matches(value) for value in values)
@@ -185,6 +209,21 @@ class OriginMatcher:
         return bool(self.predicates) and all(
             predicate.matches(record) for predicate in self.predicates
         )
+
+    def may_match_summary(self, summary: SourceOriginSummary | None) -> bool:
+        """Return whether a source summary cannot rule this matcher out."""
+        return self.evaluate_summary(summary) != "F"
+
+    def evaluate_summary(self, summary: SourceOriginSummary | None) -> _OriginSummaryState:
+        """Evaluate every predicate against source-origin facts."""
+        if not self.predicates:
+            return "T"
+        states = [predicate.evaluate_summary(summary) for predicate in self.predicates]
+        if "F" in states:
+            return "F"
+        if "U" in states:
+            return "U"
+        return "T"
 
 
 def is_path_like_text(text: str) -> bool:
@@ -290,6 +329,27 @@ def record_origin_field_values(record: SearchRecord, field: str) -> tuple[str, .
         return _dedupe(values)
     if field == "project":
         return _project_values(record)
+    return ()
+
+
+def origin_field_values(origin: RecordOrigin, field: str) -> tuple[str, ...]:
+    """Return values for an origin query field on one origin object."""
+    if field in _PATH_FIELD_KEYS:
+        values: list[str] = []
+        value = t.cast("str | None", getattr(origin, field))
+        if value:
+            values.append(value)
+        if field == "repo":
+            values.extend(value for value in (origin.worktree, origin.cwd) if value)
+        return _dedupe(values)
+    if field in _STRING_FIELD_KEYS:
+        value = t.cast("str | None", getattr(origin, field))
+        return () if not value else (value,)
+    if field == "project":
+        values: list[str] = []
+        for value in (origin.repo, origin.worktree, origin.cwd):
+            _append_project_value(values, value)
+        return _dedupe(values)
     return ()
 
 
