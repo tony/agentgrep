@@ -17,6 +17,7 @@ import re
 import time
 import typing as t
 
+from agentgrep._engine.source_filters import query_needs_prompt_session_sources
 from agentgrep.adapters import store_role_for_record
 from agentgrep.discovery import discover_sources
 from agentgrep.progress import SearchControl, SearchProgress, noop_search_progress
@@ -695,8 +696,10 @@ def discover_sources_for_search(
         for source in prompt_sources
         if store_role_for_record(source.store, source.adapter_id) == StoreRole.PROMPT_HISTORY
     )
-    fallback_agents = tuple(
-        agent for agent in query.agents if agent not in agents_with_prompt_history
+    fallback_agents = (
+        query.agents
+        if query_needs_prompt_session_sources(query)
+        else tuple(agent for agent in query.agents if agent not in agents_with_prompt_history)
     )
     if not fallback_agents:
         return prompt_sources
@@ -727,6 +730,7 @@ def source_matches_scope(
     scope: SearchScope,
     *,
     prompt_history_agents: frozenset[str] = frozenset(),
+    include_prompt_session_sources: bool = False,
 ) -> bool:
     """Return whether ``source`` can yield records for the requested scope."""
     if scope == "all":
@@ -737,7 +741,7 @@ def source_matches_scope(
     if role == StoreRole.PROMPT_HISTORY:
         return True
     if role in CONVERSATION_STORE_ROLES:
-        return source.agent not in prompt_history_agents
+        return include_prompt_session_sources or source.agent not in prompt_history_agents
     return True
 
 

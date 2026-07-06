@@ -71,6 +71,7 @@ class CompiledQuery:
     record_predicate: t.Callable[[SearchRecord], bool] | None
     text_terms: tuple[str, ...]
     is_pure_text: bool
+    origin_fields: frozenset[str] = frozenset()
 
 
 def compile_query(
@@ -127,6 +128,7 @@ def compile_query(
         record_predicate=record_predicate,
         text_terms=text_terms,
         is_pure_text=False,
+        origin_fields=frozenset(fields_in_ast(ast) & ORIGIN_QUERY_FIELDS),
     )
 
 
