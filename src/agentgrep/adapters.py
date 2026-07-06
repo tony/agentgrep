@@ -49,7 +49,6 @@ from agentgrep.readers import (
 )
 from agentgrep.records import (
     CONVERSATION_STORE_ROLES,
-    CURSOR_STATE_TOKENS,
     PROMPT_HISTORY_STORE_ROLES,
     USER_ROLES,
     DiscoveryStoreRoles,
@@ -62,6 +61,12 @@ from agentgrep.records import (
     SourceHandle,
 )
 from agentgrep.stores import StoreDescriptor, StoreRole
+
+_CURSOR_STATE_EXACT_KEYS: tuple[str, ...] = (
+    "aiService.prompts",
+    "workbench.panel.chat.composerData",
+)
+_CURSOR_STATE_KEY_PREFIXES: tuple[str, ...] = ("workbench.panel.aichat.view",)
 
 
 def iter_source_records(
@@ -2442,7 +2447,8 @@ def parse_cursor_state_db(
             for key, raw_value in iter_key_value_rows(
                 connection,
                 table,
-                key_tokens=CURSOR_STATE_TOKENS,
+                exact_keys=_CURSOR_STATE_EXACT_KEYS,
+                key_prefixes=_CURSOR_STATE_KEY_PREFIXES,
             ):
                 decoded = decode_sqlite_value(raw_value)
                 if decoded is None:
@@ -3203,7 +3209,7 @@ def parse_vscode_inline_history(source: SourceHandle) -> cabc.Iterator[SearchRec
         for _key, raw_value in iter_key_value_rows(
             connection,
             "ItemTable",
-            key_tokens=("inline-chat-history",),
+            exact_keys=("inline-chat-history",),
         ):
             decoded = decode_sqlite_value(raw_value)
             if decoded is None:

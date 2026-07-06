@@ -242,15 +242,16 @@ def iter_key_value_rows(
     connection: sqlite3.Connection,
     table: str,
     *,
+    exact_keys: cabc.Sequence[str] | None = None,
+    key_prefixes: cabc.Sequence[str] | None = None,
     key_tokens: cabc.Sequence[str] | None = None,
 ) -> cabc.Iterator[tuple[str, object]]:
     """Yield likely key/value rows, reading values only for matched keys.
 
-    Stage 1 selects keys only — optionally filtered in SQL by
-    ``key_tokens`` substrings — so large non-matching ``value`` BLOBs are
-    never materialized; on the real Cursor schema the key scan rides a
-    covering index. Stage 2 point-fetches ``value`` per distinct matched
-    key, yielding every row for keys that repeat in index-less databases.
+    Stage 1 selects keys only so large non-matching ``value`` BLOBs are never
+    materialized; on the real Cursor schema the key scan rides a covering
+    index. Stage 2 point-fetches ``value`` per distinct matched key, yielding
+    every row for keys that repeat in index-less databases.
     """
     if table not in {"ItemTable", "cursorDiskKV"}:
         return
@@ -262,18 +263,31 @@ def iter_key_value_rows(
     if "key" not in columns or "value" not in columns:
         return
     key_query = f"SELECT key FROM {table}"  # table validated against the allowlist above
-    parameters: tuple[str, ...] = ()
-    if key_tokens is not None:
+    selectors: list[str] = []
+    parameters: list[str] = []
+    if exact_keys is not None:
+        for key in exact_keys:
+            if key:
+                selectors.append("key = ? COLLATE NOCASE")
+                parameters.append(key)
+    if key_prefixes is not None:
+        for prefix in key_prefixes:
+            if prefix:
+                selectors.append("(key >= ? AND key < ?)")
+                parameters.extend((prefix, _sqlite_prefix_upper_bound(prefix)))
+    if selectors:
+        key_query = f"{key_query} WHERE {' OR '.join(selectors)}"
+    elif key_tokens is not None:
         tokens = tuple(token for token in key_tokens if token)
         if tokens:
             predicates = " OR ".join("key LIKE ? COLLATE NOCASE" for _ in tokens)
             key_query = f"{key_query} WHERE {predicates}"
-            parameters = tuple(f"%{token}%" for token in tokens)
+            parameters = [f"%{token}%" for token in tokens]
     seen_keys: set[str] = set()
     matched_keys: list[str] = []
     key_rows = t.cast(
         "cabc.Iterable[tuple[object]]",
-        connection.execute(key_query, parameters),
+        connection.execute(key_query, tuple(parameters)),
     )
     for (key,) in key_rows:
         if isinstance(key, str) and key not in seen_keys:
@@ -287,6 +301,15 @@ def iter_key_value_rows(
         )
         for (value,) in value_rows:
             yield key, value
+
+
+def _sqlite_prefix_upper_bound(prefix: str) -> str:
+    """Return an exclusive upper bound for a SQLite text prefix range."""
+    for index in range(len(prefix) - 1, -1, -1):
+        codepoint = ord(prefix[index])
+        if codepoint < 0x10FFFF:
+            return f"{prefix[:index]}{chr(codepoint + 1)}"
+    return f"{prefix}\U0010ffff"
 
 
 def iter_conversation_summaries(

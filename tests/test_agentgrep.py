@@ -7521,6 +7521,16 @@ _CURSOR_STATE_TWO_STAGE_CASES: tuple[CursorStateTwoStageCase, ...] = (
         expected_value_fetches=1,
     ),
     CursorStateTwoStageCase(
+        test_id="dynamic-aichat-prefix",
+        table="ItemTable",
+        rows=(
+            ("workbench.panel.aichat.view.abc.prompts", "matched"),
+            ("workbench.panel.explorer.view.cache", "ignored"),
+        ),
+        expected_rows=(("workbench.panel.aichat.view.abc.prompts", "matched"),),
+        expected_value_fetches=1,
+    ),
+    CursorStateTwoStageCase(
         test_id="duplicate-key-no-pk",
         table="ItemTable",
         rows=(
@@ -7590,7 +7600,8 @@ def test_iter_key_value_rows_reads_values_only_for_matched_keys(
         agentgrep.iter_key_value_rows(
             connection,
             table,
-            key_tokens=agentgrep.CURSOR_STATE_TOKENS,
+            exact_keys=("aiService.prompts", "workbench.panel.chat.composerData"),
+            key_prefixes=("workbench.panel.aichat.view",),
         ),
     )
 
@@ -7598,7 +7609,7 @@ def test_iter_key_value_rows_reads_values_only_for_matched_keys(
     key_scans = [trace for trace in traces if trace.upper().startswith("SELECT KEY FROM")]
     assert key_scans
     assert " WHERE " in key_scans[-1].upper()
-    assert " LIKE " in key_scans[-1].upper()
+    assert " LIKE " not in key_scans[-1].upper()
     assert "COLLATE NOCASE" in key_scans[-1].upper()
     assert "VALUE" not in key_scans[-1].upper()
     value_fetches = [trace for trace in traces if trace.upper().startswith("SELECT VALUE FROM")]
@@ -7670,7 +7681,7 @@ def test_cursor_state_parser_skips_irrelevant_blob_values(
     assert len(value_fetches) == len(matching_payloads)
     for trace in value_fetches:
         assert all(key not in trace for key in irrelevant_keys)
-    assert not [trace for trace in traces if "VALUE" in trace.upper() and " LIKE " in trace.upper()]
+    assert not [trace for trace in traces if " LIKE " in trace.upper()]
 
 
 class ProtobufTextCase(t.NamedTuple):
