@@ -36,11 +36,23 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a33 (Yet to be released)
+## agentgrep 0.1.0a34 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a33 (2026-07-05)
+
+agentgrep 0.1.0a33 threads project and workspace context through search
+results, so prompts from different checkouts of the same repository no longer
+look alike. CLI, TUI, JSON, NDJSON, and MCP records can surface the working
+directory, repository, worktree, branch, or workspace hash behind a prompt,
+and new `--only-here` / `--here` controls plus origin query fields narrow or
+boost results to the project you are standing in. The library docs also gain
+rendered Mermaid diagrams of the event-stream engine, highlighted inline
+commands and paths, and Grok CLI plus Antigravity in the MCP install picker.
+See {ref}`cli-search-project-context`.
 
 ### What's new
 
