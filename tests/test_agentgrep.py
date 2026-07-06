@@ -7,6 +7,7 @@ import argparse
 import asyncio
 import contextlib
 import importlib
+import inspect
 import io
 import itertools
 import json
@@ -29,6 +30,7 @@ import agentgrep._engine.planning as _rm_planning
 import agentgrep._engine.scanning as _rm_scanning
 import agentgrep.readers as _rm_readers
 from agentgrep._engine import orchestration
+from agentgrep.records import RecordOrigin, SourceOriginSummary
 
 if t.TYPE_CHECKING:
     import collections.abc as cabc
@@ -1428,6 +1430,127 @@ def test_iter_message_candidates_skips_text_extraction_without_role(
 
     list(agentgrep.iter_message_candidates({"role": "user", "content": "hi"}))
     assert len(calls) == 1  # the single role-bearing node
+
+
+class MessageCandidateOriginCase(t.NamedTuple):
+    """One ``iter_message_candidates`` walk and its expected origin cwd."""
+
+    test_id: str
+    value: object
+    expected_cwd: str | None
+
+
+_MESSAGE_CANDIDATE_ORIGIN_CASES = (
+    MessageCandidateOriginCase(
+        test_id="uuid_workspace_not_a_path",
+        value={"workspace": "a1b2-uuid", "messages": [{"role": "user", "text": "hi"}]},
+        expected_cwd=None,
+    ),
+    MessageCandidateOriginCase(
+        test_id="bare_token_directory_not_a_path",
+        value={"directory": "sidebar", "messages": [{"role": "user", "text": "hi"}]},
+        expected_cwd=None,
+    ),
+    MessageCandidateOriginCase(
+        test_id="path_workspace_extracted",
+        value={"workspace": "/work/proj", "messages": [{"role": "user", "text": "hi"}]},
+        expected_cwd="/work/proj",
+    ),
+    MessageCandidateOriginCase(
+        test_id="home_prefixed_cwd_extracted",
+        value={"cwd": "~/work/proj", "messages": [{"role": "user", "text": "hi"}]},
+        expected_cwd="~/work/proj",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    _MESSAGE_CANDIDATE_ORIGIN_CASES,
+    ids=lambda case: case.test_id,
+)
+def test_iter_message_candidates_requires_path_like_origin_values(
+    case: MessageCandidateOriginCase,
+) -> None:
+    """Bare tokens under path-named keys never become origin paths."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    candidates = list(agentgrep.iter_message_candidates(case.value))
+    assert len(candidates) == 1
+    origin = candidates[0].origin
+    if case.expected_cwd is None:
+        assert origin is None
+    else:
+        assert origin is not None
+        assert origin.cwd == case.expected_cwd
+
+
+class MessageCandidateBranchCase(t.NamedTuple):
+    """One ``iter_message_candidates`` walk and its expected origin branch."""
+
+    test_id: str
+    value: object
+    expected_branch: str | None
+
+
+_MESSAGE_CANDIDATE_BRANCH_CASES = (
+    MessageCandidateBranchCase(
+        test_id="bare_branch_without_evidence_dropped",
+        value={
+            "branch": "left",
+            "panels": {},
+            "messages": [{"role": "user", "text": "hi"}],
+        },
+        expected_branch=None,
+    ),
+    MessageCandidateBranchCase(
+        test_id="bare_branch_with_path_evidence_kept",
+        value={
+            "branch": "main",
+            "cwd": "/work/proj",
+            "messages": [{"role": "user", "text": "hi"}],
+        },
+        expected_branch="main",
+    ),
+    MessageCandidateBranchCase(
+        test_id="git_branch_key_always_kept",
+        value={"gitBranch": "main", "messages": [{"role": "user", "text": "hi"}]},
+        expected_branch="main",
+    ),
+    MessageCandidateBranchCase(
+        test_id="git_submapping_branch_kept",
+        value={"git": {"branch": "main"}, "messages": [{"role": "user", "text": "hi"}]},
+        expected_branch="main",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    _MESSAGE_CANDIDATE_BRANCH_CASES,
+    ids=lambda case: case.test_id,
+)
+def test_iter_message_candidates_gates_bare_branch_keys(
+    case: MessageCandidateBranchCase,
+) -> None:
+    """Bare branch keys need git or path evidence to become origins."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    candidates = list(agentgrep.iter_message_candidates(case.value))
+    assert len(candidates) == 1
+    origin = candidates[0].origin
+    if case.expected_branch is None:
+        assert origin is None
+    else:
+        assert origin is not None
+        assert origin.branch == case.expected_branch
+
+
+def test_origin_mapping_keys_cover_extractor() -> None:
+    """The walk-guard key set lists every key _origin_from_mapping reads."""
+    adapters = importlib.import_module("agentgrep.adapters")
+    source = inspect.getsource(adapters._origin_from_mapping)
+    read_keys = set(re.findall(r'(?<!git_)mapping\.get\("([^"]+)"\)', source))
+    assert read_keys
+    assert read_keys <= adapters._ORIGIN_MAPPING_KEYS
 
 
 class CodexNoiseLineCase(t.NamedTuple):
@@ -6550,6 +6673,56 @@ async def test_show_detail_keeps_text_highlighting_for_plain_body(
         assert any("bold" in style and search_hex in style for style in styled)
 
 
+async def test_show_detail_includes_record_origin_without_io(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The TUI detail header surfaces origin fields already on the record."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    rich_text_module = importlib.import_module("rich.text")
+    home = tmp_path / "home"
+    home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(agentgrep, "run_search_query", lambda *args, **kwargs: [])
+    query = agentgrep.SearchQuery(
+        terms=("origin",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+    control = agentgrep.SearchControl()
+    app = agentgrep.build_streaming_ui_app(home, query, control=control)
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=home / ".codex" / "sessions" / "rollout.jsonl",
+        text="plain origin detail",
+        origin=agentgrep.RecordOrigin(
+            cwd=str(home / "work" / "agentgrep"),
+            branch="project-context",
+        ),
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.screen.show_detail(record)
+        await pilot.pause()
+        rendered = app.screen._detail.content
+        header = next(
+            item
+            for item in rendered.renderables
+            if isinstance(item, rich_text_module.Text) and "Agent:" in item.plain
+        )
+
+    assert "Cwd: ~/work/agentgrep/" in header.plain
+    assert "Branch: project-context" in header.plain
+
+
 def test_pydantic_payloads_reject_wrong_types(tmp_path: pathlib.Path) -> None:
     """Payload models validate field types at construction time."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
@@ -7348,6 +7521,16 @@ _CURSOR_STATE_TWO_STAGE_CASES: tuple[CursorStateTwoStageCase, ...] = (
         expected_value_fetches=1,
     ),
     CursorStateTwoStageCase(
+        test_id="dynamic-aichat-prefix",
+        table="ItemTable",
+        rows=(
+            ("workbench.panel.aichat.view.abc.prompts", "matched"),
+            ("workbench.panel.explorer.view.cache", "ignored"),
+        ),
+        expected_rows=(("workbench.panel.aichat.view.abc.prompts", "matched"),),
+        expected_value_fetches=1,
+    ),
+    CursorStateTwoStageCase(
         test_id="duplicate-key-no-pk",
         table="ItemTable",
         rows=(
@@ -7359,6 +7542,34 @@ _CURSOR_STATE_TWO_STAGE_CASES: tuple[CursorStateTwoStageCase, ...] = (
             ("aiService.prompts", "second"),
         ),
         expected_value_fetches=1,
+    ),
+)
+
+
+class CursorWorkspaceOriginCase(t.NamedTuple):
+    """Parametrized case for Cursor workspace source-origin summaries."""
+
+    test_id: str
+    workspace_payload: dict[str, object] | None
+    expected_summary: SourceOriginSummary
+
+
+_CURSOR_WORKSPACE_ORIGIN_CASES: tuple[CursorWorkspaceOriginCase, ...] = (
+    CursorWorkspaceOriginCase(
+        test_id="folder-uri-adds-cwd-and-hash",
+        workspace_payload={"folder": "vscode-remote://wsl+Ubuntu/home/u/work/proj"},
+        expected_summary=SourceOriginSummary(
+            origins=(RecordOrigin(cwd="/home/u/work/proj", cwd_hash="wshash"),),
+            complete_fields=frozenset({"cwd", "cwd_hash"}),
+        ),
+    ),
+    CursorWorkspaceOriginCase(
+        test_id="missing-workspace-json-keeps-cwd-unknown",
+        workspace_payload=None,
+        expected_summary=SourceOriginSummary(
+            origins=(RecordOrigin(cwd_hash="wshash"),),
+            complete_fields=frozenset({"cwd_hash"}),
+        ),
     ),
 )
 
@@ -7389,7 +7600,8 @@ def test_iter_key_value_rows_reads_values_only_for_matched_keys(
         agentgrep.iter_key_value_rows(
             connection,
             table,
-            key_tokens=agentgrep.CURSOR_STATE_TOKENS,
+            exact_keys=("aiService.prompts", "workbench.panel.chat.composerData"),
+            key_prefixes=("workbench.panel.aichat.view",),
         ),
     )
 
@@ -7397,7 +7609,7 @@ def test_iter_key_value_rows_reads_values_only_for_matched_keys(
     key_scans = [trace for trace in traces if trace.upper().startswith("SELECT KEY FROM")]
     assert key_scans
     assert " WHERE " in key_scans[-1].upper()
-    assert " LIKE " in key_scans[-1].upper()
+    assert " LIKE " not in key_scans[-1].upper()
     assert "COLLATE NOCASE" in key_scans[-1].upper()
     assert "VALUE" not in key_scans[-1].upper()
     value_fetches = [trace for trace in traces if trace.upper().startswith("SELECT VALUE FROM")]
@@ -7469,7 +7681,7 @@ def test_cursor_state_parser_skips_irrelevant_blob_values(
     assert len(value_fetches) == len(matching_payloads)
     for trace in value_fetches:
         assert all(key not in trace for key in irrelevant_keys)
-    assert not [trace for trace in traces if "VALUE" in trace.upper() and " LIKE " in trace.upper()]
+    assert not [trace for trace in traces if " LIKE " in trace.upper()]
 
 
 class ProtobufTextCase(t.NamedTuple):
@@ -7667,6 +7879,46 @@ def test_cursor_ide_workspace_state_extracts_aiservice_prompts(
     assert [r.text for r in records] == ["serenity workspace prompt"]
     assert records[0].role == "user"
     assert records[0].agent == "cursor-ide"
+
+
+@pytest.mark.parametrize(
+    CursorWorkspaceOriginCase._fields,
+    _CURSOR_WORKSPACE_ORIGIN_CASES,
+    ids=[case.test_id for case in _CURSOR_WORKSPACE_ORIGIN_CASES],
+)
+def test_cursor_ide_workspace_state_has_origin_summary(
+    test_id: str,
+    workspace_payload: dict[str, object] | None,
+    expected_summary: SourceOriginSummary,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Per-workspace Cursor state sources expose conservative origin summaries."""
+    _ = test_id
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+
+    workspace_root = agentgrep._cursor_ide_workspace_root(home)
+    workspace_dir = workspace_root / "wshash"
+    db_path = workspace_dir / "state.vscdb"
+    if workspace_payload is not None:
+        workspace_dir.mkdir(parents=True)
+        _ = (workspace_dir / "workspace.json").write_text(
+            json.dumps(workspace_payload),
+            encoding="utf-8",
+        )
+    _write_cursor_state_db(db_path)
+
+    sources = agentgrep.discover_sources(
+        home,
+        ("cursor-ide",),
+        agentgrep.BackendSelection(None, None, None),
+    )
+    workspace_sources = [s for s in sources if s.store == "cursor-ide.workspace_state"]
+
+    assert len(workspace_sources) == 1
+    assert workspace_sources[0].origin_summary == expected_summary
 
 
 def _write_cursor_state_db(path: pathlib.Path) -> None:
@@ -11404,6 +11656,61 @@ def test_search_grok_session_search_db(
     assert db_records[0].session_id == "019729a0-0000-7000-8000-000000000099"
     assert db_records[0].timestamp is not None
     assert db_records[0].timestamp.startswith("2026-")
+
+
+def test_search_grok_session_search_db_without_cwd_column(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Grok databases predating the cwd column still yield records."""
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("GROK_HOME", raising=False)
+    db_path = home / ".grok" / "sessions" / "session_search.sqlite"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "CREATE TABLE session_docs ("
+        "  session_id TEXT PRIMARY KEY,"
+        "  updated_at INTEGER NOT NULL,"
+        "  title TEXT NOT NULL,"
+        "  content TEXT NOT NULL,"
+        "  content_hash TEXT NOT NULL"
+        ")",
+    )
+    conn.execute(
+        "INSERT INTO session_docs VALUES (?, ?, ?, ?, ?)",
+        (
+            "019729a0-0000-7000-8000-000000000042",
+            1779750000,
+            "Refactor auth middleware",
+            "The auth middleware was refactored to use JWT tokens.",
+            "abc123",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    query = t.cast("t.Any", agentgrep).SearchQuery(
+        terms=("middleware",),
+        scope="all",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("grok",),
+        limit=None,
+    )
+    sources = t.cast("t.Any", agentgrep).discover_sources(home, ("grok",), backends)
+    records = t.cast("t.Any", agentgrep).search_sources(query, sources, backends)
+
+    db_records = [r for r in records if r.store == "grok.session_search"]
+    assert db_records, "expected at least one session_search record"
+    assert db_records[0].title == "Refactor auth middleware"
+    assert db_records[0].session_id == "019729a0-0000-7000-8000-000000000042"
+    assert db_records[0].origin is None
 
 
 def _pi_session_header(

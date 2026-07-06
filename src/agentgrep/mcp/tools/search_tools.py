@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import collections.abc as cabc
+import dataclasses
 import datetime
 import pathlib
 import time
@@ -34,7 +34,9 @@ from agentgrep.mcp.models import (
     SearchToolResponse,
     SourceRecordModel,
 )
+from agentgrep.origin import normalize_origin_path_text
 from agentgrep.query.help import query_language_summary
+from agentgrep.records import RecordOrigin
 
 if t.TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -65,8 +67,8 @@ def _page_diagnostics(next_cursor: str | None) -> list[DiagnosticModel]:
 def _request_from_cursor(request: SearchRequestModel) -> tuple[SearchRequestModel, int]:
     """Return the effective request and offset for a search page."""
     if request.cursor is None:
-        if not request.terms:
-            msg = "terms are required unless cursor is provided"
+        if not request.terms and not _request_has_origin_filter(request):
+            msg = "terms or an origin filter are required unless cursor is provided"
             raise ToolError(msg)
         return request, 0
     try:
@@ -81,33 +83,74 @@ def _request_from_cursor(request: SearchRequestModel) -> tuple[SearchRequestMode
             case_sensitive=cursor.case_sensitive,
             limit=cursor.limit,
             cursor=request.cursor,
+            cwd=cursor.cwd,
+            repo=cursor.repo,
+            branch=cursor.branch,
         ),
         cursor.offset,
     )
 
 
+def _request_has_origin_filter(request: SearchRequestModel) -> bool:
+    return bool(
+        (request.cwd or "").strip()
+        or (request.repo or "").strip()
+        or (request.branch or "").strip(),
+    )
+
+
 def _compile_request_query(
     base_query: SearchQuery,
-    terms: cabc.Sequence[str],
+    request: SearchRequestModel,
 ) -> SearchQuery:
-    """Apply the query language to a search request's terms.
+    """Apply the query language and origin filters to a search request.
 
-    Joins the request terms and routes them through
-    :func:`agentgrep.query.build_query_from_input` so MCP clients get the
-    same field predicates, booleans, phrases, and wildcards as the CLI.
-    Bare terms stay literal substrings; a malformed query raises a
-    :class:`ToolError` with the parse/compile message.
+    User terms compile exactly as the CLI's bare path compiles them —
+    field predicates, booleans, phrases, and wildcards all apply, and
+    plain terms stay literal substrings. Origin filters are ANDed in as
+    synthetic AST nodes via :func:`agentgrep.query.compose_query_ast`.
+    A malformed query raises a :class:`ToolError` with the parse/compile
+    message.
     """
-    from agentgrep.query import build_query_from_input, default_registry
+    from agentgrep.query import (
+        QueryCompileError,
+        QueryParseError,
+        compile_query,
+        compose_query_ast,
+        default_registry,
+        scope_widened_for_ast,
+    )
 
-    joined = " ".join(terms).strip()
-    if not joined:
-        return base_query
-    result = build_query_from_input(joined, base_query, default_registry())
-    if result.query is None:
-        message = f"invalid query: {result.error}"
-        raise ToolError(message)
-    return result.query
+    origin_filter = RecordOrigin(
+        cwd=normalize_origin_path_text(request.cwd),
+        repo=normalize_origin_path_text(request.repo),
+        branch=request.branch if request.branch and request.branch.strip() else None,
+    )
+    if origin_filter.is_empty():
+        origin_filter = None
+    # Whitespace-split each element: MCP terms have always been words
+    # (the pre-origin path joined and re-split them), unlike CLI argv
+    # elements, which stay whole to match the bare fast path.
+    terms = tuple(word for term in request.terms for word in term.split())
+    if not terms:
+        if origin_filter is None:
+            return base_query
+        return dataclasses.replace(base_query, terms=(), origin_filter=origin_filter)
+    registry = default_registry()
+    try:
+        ast, user_ast = compose_query_ast(terms, (), registry)
+        compiled = compile_query(ast, registry, case_sensitive=base_query.case_sensitive)
+    except (QueryParseError, QueryCompileError) as exc:
+        message = f"invalid query: {exc}"
+        raise ToolError(message) from exc
+    scope = scope_widened_for_ast(user_ast, base_query.scope)
+    return dataclasses.replace(
+        base_query,
+        terms=compiled.text_terms,
+        compiled=None if compiled.is_pure_text else compiled,
+        scope=scope,
+        origin_filter=origin_filter,
+    )
 
 
 async def _search_async(
@@ -131,7 +174,7 @@ async def _search_async(
             limit=query_limit,
         ),
     )
-    query = _compile_request_query(base_query, effective_request.terms)
+    query = _compile_request_query(base_query, effective_request)
     records: list[SearchRecordLike] = []
     source_count = 0
     searched = 0
@@ -168,6 +211,9 @@ async def _search_async(
                 scope=effective_request.scope,
                 case_sensitive=effective_request.case_sensitive,
                 limit=page_limit,
+                cwd=effective_request.cwd,
+                repo=effective_request.repo,
+                branch=effective_request.branch,
             )
             if has_more
             else None
@@ -264,6 +310,27 @@ def register(mcp: FastMCP, *, runtime: SearchRuntime | None = None) -> None:
                 description="Opaque page cursor returned by a previous search response.",
             ),
         ] = None,
+        cwd: t.Annotated[
+            str | None,
+            Field(
+                default=None,
+                description="Only return records whose recorded cwd matches this path.",
+            ),
+        ] = None,
+        repo: t.Annotated[
+            str | None,
+            Field(
+                default=None,
+                description="Only return records whose recorded repository root matches this path.",
+            ),
+        ] = None,
+        branch: t.Annotated[
+            str | None,
+            Field(
+                default=None,
+                description="Only return records whose recorded git branch matches this name.",
+            ),
+        ] = None,
     ) -> SearchToolResponse:
         request = SearchRequestModel(
             terms=terms or [],
@@ -272,6 +339,9 @@ def register(mcp: FastMCP, *, runtime: SearchRuntime | None = None) -> None:
             case_sensitive=case_sensitive,
             limit=limit,
             cursor=cursor,
+            cwd=cwd,
+            repo=repo,
+            branch=branch,
         )
         return await _search_async(request, runtime=runtime)
 

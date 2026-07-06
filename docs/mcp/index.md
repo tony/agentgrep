@@ -46,11 +46,11 @@ Payload models, server factory, and MCP helpers.
 
 ## Search Tool
 
-<a class="reference internal" href="tools/#fastmcp-tool-search"><code>search</code></a>
+{tool}`search`
 
 ## Discovery
 
-<a class="reference internal" href="tools/#fastmcp-tool-find"><code>find</code></a>
+{tool}`find`
 
 
 ```{toctree}

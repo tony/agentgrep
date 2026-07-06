@@ -145,6 +145,7 @@ class SearchRecordLike(t.Protocol):
     model: str | None
     session_id: str | None
     conversation_id: str | None
+    origin: object | None
     metadata: dict[str, object]
 
 

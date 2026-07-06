@@ -16,6 +16,7 @@ import pytest
 import agentgrep
 from agentgrep.cli import render as _r_render
 from agentgrep.cli.render import run_search_command
+from agentgrep.origin import record_matches_origin
 
 # ---------------------------------------------------------------------------
 # Argument parsing
@@ -209,6 +210,894 @@ def test_search_parse_agent_filter() -> None:
     assert parsed.agents == ("codex",)
 
 
+def test_search_parse_explicit_origin_filters_compile() -> None:
+    """--cwd/--branch keep plain terms on the fast path and filter origin."""
+    parsed = agentgrep.parse_args(
+        (
+            "search",
+            "--cwd",
+            "/workspace/agentgrep",
+            "--branch",
+            "project-context",
+            "bliss",
+        ),
+    )
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text="bliss command",
+        origin=agentgrep.RecordOrigin(
+            cwd="/workspace/agentgrep/src",
+            branch="project-context",
+        ),
+    )
+
+    assert isinstance(parsed, agentgrep.SearchArgs)
+    assert parsed.compiled is None
+    assert parsed.terms == ("bliss",)
+    assert parsed.origin_filter == agentgrep.RecordOrigin(
+        cwd="/workspace/agentgrep",
+        branch="project-context",
+    )
+    query = agentgrep.SearchQuery(
+        terms=parsed.terms,
+        scope=parsed.scope,
+        any_term=False,
+        regex=False,
+        case_sensitive=parsed.case_sensitive,
+        agents=parsed.agents,
+        limit=parsed.limit,
+        compiled=parsed.compiled,
+        origin_filter=parsed.origin_filter,
+    )
+    assert agentgrep.matches_record(record, query)
+    assert not agentgrep.matches_record(
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="codex.sessions",
+            adapter_id="codex.sessions_jsonl.v1",
+            path=pathlib.Path("/tmp/session.jsonl"),
+            text="bliss command",
+            origin=agentgrep.RecordOrigin(
+                cwd="/workspace/other",
+                branch="project-context",
+            ),
+        ),
+        query,
+    )
+
+
+class OriginBooleanFilterCase(t.NamedTuple):
+    """Parametrized record case for generated origin filters and OR queries."""
+
+    test_id: str
+    text: str
+    cwd: str
+    expected: bool
+
+
+ORIGIN_BOOLEAN_FILTER_CASES: tuple[OriginBooleanFilterCase, ...] = (
+    OriginBooleanFilterCase(
+        test_id="inside-cwd-left-branch",
+        text="foo note",
+        cwd="/workspace/agentgrep",
+        expected=True,
+    ),
+    OriginBooleanFilterCase(
+        test_id="inside-cwd-right-branch",
+        text="bar note",
+        cwd="/workspace/agentgrep/src",
+        expected=True,
+    ),
+    OriginBooleanFilterCase(
+        test_id="outside-cwd-right-branch",
+        text="bar note",
+        cwd="/workspace/other",
+        expected=False,
+    ),
+)
+
+
+class OriginPhraseFilterCase(t.NamedTuple):
+    """Parametrized record case for generated origin filters and phrase terms."""
+
+    test_id: str
+    term: str
+    text: str
+    cwd: str
+    expected: bool
+
+
+class OriginCaseSensitiveFilterCase(t.NamedTuple):
+    """Parametrized record case for case-sensitive generated origin filters."""
+
+    test_id: str
+    text: str
+    expected: bool
+
+
+ORIGIN_PHRASE_FILTER_CASES: tuple[OriginPhraseFilterCase, ...] = (
+    OriginPhraseFilterCase(
+        test_id="inside-cwd-exact-phrase",
+        term="exact phrase",
+        text="exact phrase",
+        cwd="/workspace/agentgrep",
+        expected=True,
+    ),
+    OriginPhraseFilterCase(
+        test_id="inside-cwd-separated-words",
+        term="exact phrase",
+        text="exact words then phrase",
+        cwd="/workspace/agentgrep",
+        expected=False,
+    ),
+    OriginPhraseFilterCase(
+        test_id="outside-cwd-exact-phrase",
+        term="exact phrase",
+        text="exact phrase",
+        cwd="/workspace/other",
+        expected=False,
+    ),
+    OriginPhraseFilterCase(
+        test_id="paren-phrase-miss",
+        term="rock (roll)",
+        text="rock roll",
+        cwd="/workspace/agentgrep",
+        expected=False,
+    ),
+)
+
+
+class OriginBooleanTokenCase(t.NamedTuple):
+    """Parametrized case for single-token boolean terms under origin filters."""
+
+    test_id: str
+    term: str
+    text: str
+    cwd: str
+    expected: bool
+
+
+ORIGIN_BOOLEAN_TOKEN_CASES: tuple[OriginBooleanTokenCase, ...] = (
+    OriginBooleanTokenCase(
+        test_id="or-token-matches-either-branch",
+        term="rock OR roll",
+        text="rock only",
+        cwd="/workspace/agentgrep",
+        expected=True,
+    ),
+    OriginBooleanTokenCase(
+        test_id="or-token-still-scoped-to-cwd",
+        term="rock OR roll",
+        text="rock only",
+        cwd="/workspace/other",
+        expected=False,
+    ),
+    OriginBooleanTokenCase(
+        test_id="or-token-neither-branch",
+        term="rock OR roll",
+        text="jazz",
+        cwd="/workspace/agentgrep",
+        expected=False,
+    ),
+    OriginBooleanTokenCase(
+        test_id="not-token-excludes-match",
+        term="rock NOT roll",
+        text="rock and roll",
+        cwd="/workspace/agentgrep",
+        expected=False,
+    ),
+    OriginBooleanTokenCase(
+        test_id="not-token-keeps-plain-match",
+        term="rock NOT roll",
+        text="rock solo",
+        cwd="/workspace/agentgrep",
+        expected=True,
+    ),
+)
+
+ORIGIN_CASE_SENSITIVE_FILTER_CASES: tuple[OriginCaseSensitiveFilterCase, ...] = (
+    OriginCaseSensitiveFilterCase(
+        test_id="exact-case",
+        text="Needle appears here",
+        expected=True,
+    ),
+    OriginCaseSensitiveFilterCase(
+        test_id="lowercase-miss",
+        text="needle appears here",
+        expected=False,
+    ),
+)
+
+
+class OriginLiteralTermCase(t.NamedTuple):
+    """Parametrized record case for literal terms under origin filters."""
+
+    test_id: str
+    term: str
+    text: str
+    expected: bool
+
+
+class OriginKnownPredicateCase(t.NamedTuple):
+    """Parametrized record case for known query predicates under origin filters."""
+
+    test_id: str
+    agent: agentgrep.AgentName
+    expected: bool
+
+
+class OriginRelativePathFlagCase(t.NamedTuple):
+    """Parametrized case for relative origin path flags."""
+
+    test_id: str
+    flag: t.Literal["--cwd", "--repo"]
+    value: str
+    cwd_relative: pathlib.Path
+    expected_relative: pathlib.Path
+    record_relative: pathlib.Path
+    origin_field: t.Literal["cwd", "repo"]
+
+
+ORIGIN_LITERAL_TERM_CASES: tuple[OriginLiteralTermCase, ...] = (
+    OriginLiteralTermCase(
+        test_id="https-url-literal",
+        term="https://example.com",
+        text="please inspect https://example.com",
+        expected=True,
+    ),
+    OriginLiteralTermCase(
+        test_id="unknown-field-looking-literal",
+        term="foo:bar",
+        text="foo:bar appears literally",
+        expected=True,
+    ),
+    OriginLiteralTermCase(
+        test_id="comma-literal",
+        term="foo,bar",
+        text="foo,bar appears literally",
+        expected=True,
+    ),
+    OriginLiteralTermCase(
+        test_id="equals-literal",
+        term="key=value",
+        text="key=value appears literally",
+        expected=True,
+    ),
+    OriginLiteralTermCase(
+        test_id="hash-literal",
+        term="foo#bar",
+        text="foo#bar appears literally",
+        expected=True,
+    ),
+    OriginLiteralTermCase(
+        test_id="emoji-literal",
+        term="\U0001f600",
+        text="emoji \U0001f600 appears literally",
+        expected=True,
+    ),
+    OriginLiteralTermCase(
+        test_id="negative-literal",
+        term="-foo",
+        text="-foo appears literally",
+        expected=True,
+    ),
+    OriginLiteralTermCase(
+        test_id="negative-literal-miss",
+        term="-foo",
+        text="foo appears without dash",
+        expected=False,
+    ),
+    OriginLiteralTermCase(
+        test_id="paren-literal",
+        term="foo(bar)",
+        text="foo(bar) appears literally",
+        expected=True,
+    ),
+    OriginLiteralTermCase(
+        test_id="paren-literal-miss",
+        term="foo(bar)",
+        text="foo and then bar appear separately",
+        expected=False,
+    ),
+    OriginLiteralTermCase(
+        test_id="literal-miss",
+        term="foo:bar",
+        text="foo and bar are split",
+        expected=False,
+    ),
+)
+
+ORIGIN_KNOWN_PREDICATE_CASES: tuple[OriginKnownPredicateCase, ...] = (
+    OriginKnownPredicateCase(test_id="matching-agent", agent="codex", expected=True),
+    OriginKnownPredicateCase(test_id="other-agent", agent="claude", expected=False),
+)
+
+ORIGIN_RELATIVE_PATH_FLAG_CASES: tuple[OriginRelativePathFlagCase, ...] = (
+    OriginRelativePathFlagCase(
+        test_id="cwd-current-directory",
+        flag="--cwd",
+        value=".",
+        cwd_relative=pathlib.Path("repo"),
+        expected_relative=pathlib.Path("repo"),
+        record_relative=pathlib.Path("repo/src"),
+        origin_field="cwd",
+    ),
+    OriginRelativePathFlagCase(
+        test_id="repo-parent-directory",
+        flag="--repo",
+        value="..",
+        cwd_relative=pathlib.Path("parent/project"),
+        expected_relative=pathlib.Path("parent"),
+        record_relative=pathlib.Path("parent"),
+        origin_field="repo",
+    ),
+)
+
+
+class OnlyHereRecordCase(t.NamedTuple):
+    """Parametrized record case for cwd-only ``--only-here`` matching."""
+
+    test_id: str
+    relative_cwd: pathlib.Path | None
+    absolute_cwd: pathlib.Path | None
+    expected: bool
+
+
+class OnlyHereLinkedWorktreeCase(t.NamedTuple):
+    """Parametrized record case for linked-worktree ``--only-here`` matching."""
+
+    test_id: str
+    cwd_owner: t.Literal["worktree", "repo"]
+    relative_cwd: pathlib.Path
+    expected: bool
+
+
+class HereLogicalSymlinkCase(t.NamedTuple):
+    """Parametrized case for symlinked current-project detection."""
+
+    test_id: str
+    argv: tuple[str, ...]
+    mode: t.Literal["filter", "boost"]
+
+
+ONLY_HERE_RECORD_CASES: tuple[OnlyHereRecordCase, ...] = (
+    OnlyHereRecordCase(
+        test_id="inside-project-cwd-only",
+        relative_cwd=pathlib.Path("src"),
+        absolute_cwd=None,
+        expected=True,
+    ),
+    OnlyHereRecordCase(
+        test_id="outside-project-cwd-only",
+        relative_cwd=None,
+        absolute_cwd=pathlib.Path("/workspace/other"),
+        expected=False,
+    ),
+)
+
+ONLY_HERE_LINKED_WORKTREE_CASES: tuple[OnlyHereLinkedWorktreeCase, ...] = (
+    OnlyHereLinkedWorktreeCase(
+        test_id="current-worktree-cwd",
+        cwd_owner="worktree",
+        relative_cwd=pathlib.Path("docs"),
+        expected=True,
+    ),
+    OnlyHereLinkedWorktreeCase(
+        test_id="common-repo-cwd",
+        cwd_owner="repo",
+        relative_cwd=pathlib.Path("docs"),
+        expected=False,
+    ),
+)
+
+HERE_LOGICAL_SYMLINK_CASES: tuple[HereLogicalSymlinkCase, ...] = (
+    HereLogicalSymlinkCase(
+        test_id="only-here-filter",
+        argv=("search", "--only-here", "bliss"),
+        mode="filter",
+    ),
+    HereLogicalSymlinkCase(
+        test_id="here-boost",
+        argv=("search", "--here", "bliss"),
+        mode="boost",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    ORIGIN_BOOLEAN_FILTER_CASES,
+    ids=[case.test_id for case in ORIGIN_BOOLEAN_FILTER_CASES],
+)
+def test_search_origin_flags_scope_boolean_query(
+    case: OriginBooleanFilterCase,
+) -> None:
+    """Generated origin predicates apply to the whole boolean query."""
+    parsed = agentgrep.parse_args(
+        ("search", "--cwd", "/workspace/agentgrep", "foo", "OR", "bar"),
+    )
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text=case.text,
+        origin=agentgrep.RecordOrigin(cwd=case.cwd),
+    )
+
+    assert isinstance(parsed, agentgrep.SearchArgs)
+    assert parsed.compiled is not None
+    query = agentgrep.SearchQuery(
+        terms=parsed.terms,
+        scope=parsed.scope,
+        any_term=False,
+        regex=False,
+        case_sensitive=parsed.case_sensitive,
+        agents=parsed.agents,
+        limit=parsed.limit,
+        compiled=parsed.compiled,
+        origin_filter=parsed.origin_filter,
+    )
+    assert agentgrep.matches_record(record, query) is case.expected
+
+
+@pytest.mark.parametrize(
+    "case",
+    ORIGIN_PHRASE_FILTER_CASES,
+    ids=[case.test_id for case in ORIGIN_PHRASE_FILTER_CASES],
+)
+def test_search_origin_flags_preserve_phrase_term(
+    case: OriginPhraseFilterCase,
+) -> None:
+    """Generated origin predicates keep shell-quoted phrase terms intact."""
+    parsed = agentgrep.parse_args(
+        ("search", "--cwd", "/workspace/agentgrep", case.term),
+    )
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text=case.text,
+        origin=agentgrep.RecordOrigin(cwd=case.cwd),
+    )
+
+    assert isinstance(parsed, agentgrep.SearchArgs)
+    assert parsed.compiled is None
+    assert parsed.terms == (case.term,)
+    query = agentgrep.SearchQuery(
+        terms=parsed.terms,
+        scope=parsed.scope,
+        any_term=False,
+        regex=False,
+        case_sensitive=parsed.case_sensitive,
+        agents=parsed.agents,
+        limit=parsed.limit,
+        compiled=parsed.compiled,
+        origin_filter=parsed.origin_filter,
+    )
+    assert agentgrep.matches_record(record, query) is case.expected
+
+
+@pytest.mark.parametrize(
+    "case",
+    ORIGIN_BOOLEAN_TOKEN_CASES,
+    ids=[case.test_id for case in ORIGIN_BOOLEAN_TOKEN_CASES],
+)
+def test_search_origin_flags_keep_boolean_token_semantics(
+    case: OriginBooleanTokenCase,
+) -> None:
+    """A single boolean-carrying token parses the same with or without --cwd."""
+    parsed = agentgrep.parse_args(
+        ("search", "--cwd", "/workspace/agentgrep", case.term),
+    )
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text=case.text,
+        origin=agentgrep.RecordOrigin(cwd=case.cwd),
+    )
+
+    assert isinstance(parsed, agentgrep.SearchArgs)
+    assert parsed.compiled is not None
+    assert parsed.terms == ("rock", "roll")
+    query = agentgrep.SearchQuery(
+        terms=parsed.terms,
+        scope=parsed.scope,
+        any_term=False,
+        regex=False,
+        case_sensitive=parsed.case_sensitive,
+        agents=parsed.agents,
+        limit=parsed.limit,
+        compiled=parsed.compiled,
+        origin_filter=parsed.origin_filter,
+    )
+    assert agentgrep.matches_record(record, query) is case.expected
+
+
+@pytest.mark.parametrize(
+    "case",
+    ORIGIN_CASE_SENSITIVE_FILTER_CASES,
+    ids=[case.test_id for case in ORIGIN_CASE_SENSITIVE_FILTER_CASES],
+)
+def test_search_origin_flags_preserve_case_sensitive_terms(
+    case: OriginCaseSensitiveFilterCase,
+) -> None:
+    """Generated origin predicates preserve the search case mode."""
+    parsed = agentgrep.parse_args(
+        ("search", "--case-sensitive", "--cwd", "/workspace/agentgrep", "Needle"),
+    )
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text=case.text,
+        origin=agentgrep.RecordOrigin(cwd="/workspace/agentgrep"),
+    )
+
+    assert isinstance(parsed, agentgrep.SearchArgs)
+    assert parsed.compiled is None
+    query = agentgrep.SearchQuery(
+        terms=parsed.terms,
+        scope=parsed.scope,
+        any_term=False,
+        regex=False,
+        case_sensitive=parsed.case_sensitive,
+        agents=parsed.agents,
+        limit=parsed.limit,
+        compiled=parsed.compiled,
+        origin_filter=parsed.origin_filter,
+    )
+    assert agentgrep.matches_record(record, query) is case.expected
+
+
+@pytest.mark.parametrize(
+    "case",
+    ORIGIN_RELATIVE_PATH_FLAG_CASES,
+    ids=[case.test_id for case in ORIGIN_RELATIVE_PATH_FLAG_CASES],
+)
+def test_search_origin_flags_resolve_relative_paths(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: OriginRelativePathFlagCase,
+) -> None:
+    """Explicit origin path flags are resolved against the invocation cwd."""
+    cwd = tmp_path / case.cwd_relative
+    cwd.mkdir(parents=True)
+    monkeypatch.chdir(cwd)
+    expected = tmp_path / case.expected_relative
+    record_path = tmp_path / case.record_relative
+    if case.origin_field == "cwd":
+        origin = agentgrep.RecordOrigin(cwd=str(record_path))
+    else:
+        origin = agentgrep.RecordOrigin(repo=str(record_path))
+
+    parsed = agentgrep.parse_args(("search", case.flag, case.value, "needle"))
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text="needle",
+        origin=origin,
+    )
+
+    assert isinstance(parsed, agentgrep.SearchArgs)
+    assert parsed.compiled is None
+    assert parsed.raw_query.startswith(
+        f'{case.flag.removeprefix("--")}:"{expected}"',
+    )
+    query = agentgrep.SearchQuery(
+        terms=parsed.terms,
+        scope=parsed.scope,
+        any_term=False,
+        regex=False,
+        case_sensitive=parsed.case_sensitive,
+        agents=parsed.agents,
+        limit=parsed.limit,
+        compiled=parsed.compiled,
+        origin_filter=parsed.origin_filter,
+    )
+    assert agentgrep.matches_record(record, query)
+
+
+@pytest.mark.parametrize(
+    "case",
+    ONLY_HERE_RECORD_CASES,
+    ids=[case.test_id for case in ONLY_HERE_RECORD_CASES],
+)
+def test_search_parse_only_here_detects_git_context(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: OnlyHereRecordCase,
+) -> None:
+    """--only-here turns the cwd's git context into a hard origin filter."""
+    worktree = tmp_path / "repo"
+    git_dir = worktree / ".git"
+    git_dir.mkdir(parents=True)
+    _ = (git_dir / "HEAD").write_text("ref: refs/heads/project-context\n", encoding="utf-8")
+    child = worktree / "src"
+    child.mkdir()
+    monkeypatch.chdir(child)
+
+    parsed = agentgrep.parse_args(("search", "--only-here", "bliss"))
+
+    assert isinstance(parsed, agentgrep.SearchArgs)
+    assert parsed.compiled is None
+    assert parsed.terms == ("bliss",)
+    assert parsed.origin_boost is None
+    cwd = case.absolute_cwd
+    if cwd is None:
+        assert case.relative_cwd is not None
+        cwd = worktree / case.relative_cwd
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text="bliss command",
+        origin=agentgrep.RecordOrigin(cwd=str(cwd)),
+    )
+    query = agentgrep.SearchQuery(
+        terms=parsed.terms,
+        scope=parsed.scope,
+        any_term=False,
+        regex=False,
+        case_sensitive=parsed.case_sensitive,
+        agents=parsed.agents,
+        limit=parsed.limit,
+        compiled=parsed.compiled,
+        origin_filter=parsed.origin_filter,
+    )
+    assert agentgrep.matches_record(record, query) is case.expected
+
+
+@pytest.mark.parametrize(
+    "case",
+    ORIGIN_LITERAL_TERM_CASES,
+    ids=[case.test_id for case in ORIGIN_LITERAL_TERM_CASES],
+)
+def test_search_origin_flags_preserve_literal_punctuation_terms(
+    case: OriginLiteralTermCase,
+) -> None:
+    """Generated origin predicates keep punctuation-heavy terms literal."""
+    parsed = agentgrep.parse_args(
+        ("search", "--cwd", "/workspace/agentgrep", "--", case.term),
+    )
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text=case.text,
+        origin=agentgrep.RecordOrigin(cwd="/workspace/agentgrep"),
+    )
+
+    assert isinstance(parsed, agentgrep.SearchArgs)
+    assert parsed.compiled is None
+    assert parsed.terms == (case.term,)
+    query = agentgrep.SearchQuery(
+        terms=parsed.terms,
+        scope=parsed.scope,
+        any_term=False,
+        regex=False,
+        case_sensitive=parsed.case_sensitive,
+        agents=parsed.agents,
+        limit=parsed.limit,
+        compiled=parsed.compiled,
+        origin_filter=parsed.origin_filter,
+    )
+    assert agentgrep.matches_record(record, query) is case.expected
+
+
+@pytest.mark.parametrize(
+    "case",
+    ORIGIN_KNOWN_PREDICATE_CASES,
+    ids=[case.test_id for case in ORIGIN_KNOWN_PREDICATE_CASES],
+)
+def test_search_origin_flags_preserve_known_field_predicates(
+    case: OriginKnownPredicateCase,
+) -> None:
+    """Generated origin predicates keep known query-language fields active."""
+    parsed = agentgrep.parse_args(
+        ("search", "--cwd", "/workspace/agentgrep", "agent:codex"),
+    )
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent=case.agent,
+        store="history",
+        adapter_id="test.history.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text="field predicate",
+        origin=agentgrep.RecordOrigin(cwd="/workspace/agentgrep"),
+    )
+
+    assert isinstance(parsed, agentgrep.SearchArgs)
+    assert parsed.compiled is not None
+    query = agentgrep.SearchQuery(
+        terms=parsed.terms,
+        scope=parsed.scope,
+        any_term=False,
+        regex=False,
+        case_sensitive=parsed.case_sensitive,
+        agents=parsed.agents,
+        limit=parsed.limit,
+        compiled=parsed.compiled,
+        origin_filter=parsed.origin_filter,
+    )
+    assert agentgrep.matches_record(record, query) is case.expected
+
+
+@pytest.mark.parametrize(
+    "case",
+    ONLY_HERE_LINKED_WORKTREE_CASES,
+    ids=[case.test_id for case in ONLY_HERE_LINKED_WORKTREE_CASES],
+)
+def test_search_parse_only_here_prefers_linked_worktree(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: OnlyHereLinkedWorktreeCase,
+) -> None:
+    """--only-here filters against the current linked worktree."""
+    repo = tmp_path / "repo"
+    common_git = repo / ".git"
+    linked = tmp_path / "linked"
+    git_dir = common_git / "worktrees" / "linked"
+    git_dir.mkdir(parents=True)
+    linked.mkdir()
+    _ = (linked / ".git").write_text(f"gitdir: {git_dir}\n", encoding="utf-8")
+    _ = (git_dir / "HEAD").write_text("ref: refs/heads/project-context\n", encoding="utf-8")
+    _ = (git_dir / "commondir").write_text("../..\n", encoding="utf-8")
+    child = linked / "src"
+    child.mkdir()
+    monkeypatch.chdir(child)
+
+    parsed = agentgrep.parse_args(("search", "--only-here", "bliss"))
+
+    assert isinstance(parsed, agentgrep.SearchArgs)
+    assert parsed.compiled is None
+    cwd_root = linked if case.cwd_owner == "worktree" else repo
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text="bliss command",
+        origin=agentgrep.RecordOrigin(cwd=str(cwd_root / case.relative_cwd)),
+    )
+    query = agentgrep.SearchQuery(
+        terms=parsed.terms,
+        scope=parsed.scope,
+        any_term=False,
+        regex=False,
+        case_sensitive=parsed.case_sensitive,
+        agents=parsed.agents,
+        limit=parsed.limit,
+        compiled=parsed.compiled,
+        origin_filter=parsed.origin_filter,
+    )
+    assert agentgrep.matches_record(record, query) is case.expected
+
+
+@pytest.mark.parametrize(
+    "case",
+    HERE_LOGICAL_SYMLINK_CASES,
+    ids=[case.test_id for case in HERE_LOGICAL_SYMLINK_CASES],
+)
+def test_search_here_preserves_logical_symlink_cwd(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: HereLogicalSymlinkCase,
+) -> None:
+    """--here/--only-here use the logical project path the user launched from."""
+    real = tmp_path / "real"
+    worktree = real / "proj"
+    git_dir = worktree / ".git"
+    git_dir.mkdir(parents=True)
+    _ = (git_dir / "HEAD").write_text("ref: refs/heads/project-context\n", encoding="utf-8")
+    child = worktree / "src"
+    child.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real, target_is_directory=True)
+    logical_worktree = link / "proj"
+    logical_child = logical_worktree / "src"
+    monkeypatch.chdir(logical_child)
+    monkeypatch.setenv("PWD", str(logical_child))
+
+    parsed = agentgrep.parse_args(case.argv)
+
+    assert isinstance(parsed, agentgrep.SearchArgs)
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text="bliss command",
+        origin=agentgrep.RecordOrigin(cwd=str(logical_child)),
+    )
+    if case.mode == "filter":
+        assert parsed.compiled is None
+        query = agentgrep.SearchQuery(
+            terms=parsed.terms,
+            scope=parsed.scope,
+            any_term=False,
+            regex=False,
+            case_sensitive=parsed.case_sensitive,
+            agents=parsed.agents,
+            limit=parsed.limit,
+            compiled=parsed.compiled,
+            origin_filter=parsed.origin_filter,
+        )
+        assert agentgrep.matches_record(record, query)
+    else:
+        assert parsed.origin_boost == agentgrep.RecordOrigin(repo=str(logical_worktree))
+        assert record_matches_origin(record, parsed.origin_boost)
+
+
+def test_search_parse_here_boosts_branchless_project_records(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--here ranks same-project records without requiring branch metadata."""
+    worktree = tmp_path / "repo"
+    git_dir = worktree / ".git"
+    git_dir.mkdir(parents=True)
+    _ = (git_dir / "HEAD").write_text("ref: refs/heads/project-context\n", encoding="utf-8")
+    child = worktree / "src"
+    child.mkdir()
+    monkeypatch.chdir(child)
+
+    parsed = agentgrep.parse_args(("search", "--here", "streaming", "parser"))
+
+    assert isinstance(parsed, agentgrep.SearchArgs)
+    assert parsed.origin_boost == agentgrep.RecordOrigin(repo=str(worktree))
+    records = [
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="codex.sessions",
+            adapter_id="codex.sessions_jsonl.v1",
+            path=pathlib.Path("/tmp/other.jsonl"),
+            text="streaming parser notes",
+            origin=agentgrep.RecordOrigin(cwd="/elsewhere"),
+        ),
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="codex.sessions",
+            adapter_id="codex.sessions_jsonl.v1",
+            path=pathlib.Path("/tmp/here.jsonl"),
+            text="streaming parser notes",
+            origin=agentgrep.RecordOrigin(cwd=str(worktree / "docs")),
+        ),
+    ]
+
+    ranked = agentgrep.rank_search_records(
+        records,
+        "streaming parser",
+        origin_boost=parsed.origin_boost,
+    )
+
+    assert ranked[0][0].origin == agentgrep.RecordOrigin(cwd=str(worktree / "docs"))
+
+
 class RemovedSearchFlagCase(t.NamedTuple):
     """Parametrized case for search flags removed pending bounded-memory support."""
 
@@ -273,6 +1162,7 @@ def test_search_scope_field_conversation_record_reaches_compiled_predicate() -> 
         agents=parsed.agents,
         limit=parsed.limit,
         compiled=parsed.compiled,
+        origin_filter=parsed.origin_filter,
     )
 
     assert query.scope == "all"
@@ -300,6 +1190,8 @@ def _make_search_args(**overrides: t.Any) -> agentgrep.SearchArgs:
         "no_rank": False,
         "compiled": None,
         "raw_query": "",
+        "origin_boost": None,
+        "origin_filter": None,
     }
     base.update(overrides)
     return agentgrep.SearchArgs(**base)
@@ -336,6 +1228,113 @@ def _canned_records() -> list[agentgrep.SearchRecord]:
             session_id="sess-1",
         ),
     ]
+
+
+class FieldOnlyHereBoostCase(t.NamedTuple):
+    """Parametrized case for field-only search output modes."""
+
+    test_id: str
+    output_mode: t.Literal["json", "text"]
+
+
+FIELD_ONLY_HERE_BOOST_CASES: tuple[FieldOnlyHereBoostCase, ...] = (
+    FieldOnlyHereBoostCase(test_id="json-output", output_mode="json"),
+    FieldOnlyHereBoostCase(test_id="text-output", output_mode="text"),
+)
+
+
+def test_search_here_boost_reorders_ranked_results(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--here-style origin boost affects ranked search without filtering globally."""
+    records = [
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="test",
+            adapter_id="test.v1",
+            path=pathlib.Path("/tmp/other.jsonl"),
+            text="streaming parser notes",
+            origin=agentgrep.RecordOrigin(cwd="/elsewhere"),
+        ),
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="test",
+            adapter_id="test.v1",
+            path=pathlib.Path("/tmp/here.jsonl"),
+            text="streaming parser notes",
+            origin=agentgrep.RecordOrigin(cwd="/workspace/agentgrep/src"),
+        ),
+    ]
+    monkeypatch.setattr(_r_render, "run_search_query", lambda *_args, **_kwargs: records)
+    args = _make_search_args(
+        terms=("streaming", "parser"),
+        output_mode="json",
+        no_group=True,
+        origin_boost=agentgrep.RecordOrigin(repo="/workspace/agentgrep"),
+    )
+
+    code = run_search_command(args)
+
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["results"][0]["origin"]["cwd"] == "/workspace/agentgrep/src/"
+
+
+@pytest.mark.parametrize(
+    "case",
+    FIELD_ONLY_HERE_BOOST_CASES,
+    ids=[case.test_id for case in FIELD_ONLY_HERE_BOOST_CASES],
+)
+def test_search_here_boost_reorders_field_only_results(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    case: FieldOnlyHereBoostCase,
+) -> None:
+    """--here-style origin boost affects field-only compiled searches."""
+    parsed = agentgrep.parse_args(("search", "agent:codex"))
+    assert isinstance(parsed, agentgrep.SearchArgs)
+    records = [
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="test",
+            adapter_id="test.v1",
+            path=pathlib.Path("/tmp/other.jsonl"),
+            text="field only notes",
+            origin=agentgrep.RecordOrigin(cwd="/elsewhere"),
+        ),
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="test",
+            adapter_id="test.v1",
+            path=pathlib.Path("/tmp/here.jsonl"),
+            text="field only notes",
+            origin=agentgrep.RecordOrigin(cwd="/workspace/agentgrep/src"),
+        ),
+    ]
+    monkeypatch.setattr(_r_render, "run_search_query", lambda *_args, **_kwargs: records)
+    args = _make_search_args(
+        terms=parsed.terms,
+        output_mode=case.output_mode,
+        no_group=True,
+        compiled=parsed.compiled,
+        origin_filter=parsed.origin_filter,
+        origin_boost=agentgrep.RecordOrigin(repo="/workspace/agentgrep"),
+    )
+
+    code = run_search_command(args)
+
+    assert code == 0
+    captured = capsys.readouterr()
+    if case.output_mode == "json":
+        payload = json.loads(captured.out)
+        assert payload["results"][0]["origin"]["cwd"] == "/workspace/agentgrep/src/"
+    else:
+        assert captured.out.index("/tmp/here.jsonl") < captured.out.index("/tmp/other.jsonl")
 
 
 def test_search_command_no_terms_raises() -> None:
@@ -494,3 +1493,42 @@ def test_search_limit_caps_results(
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
     assert len(payload["results"]) == 1
+
+
+class HereConflictCase(t.NamedTuple):
+    """Parametrized case for --here combinations that would drop the boost."""
+
+    test_id: str
+    argv: tuple[str, ...]
+    expected_message_fragment: str
+
+
+HERE_CONFLICT_CASES: tuple[HereConflictCase, ...] = (
+    HereConflictCase(
+        test_id="here-with-no-rank",
+        argv=("search", "--here", "--no-rank", "bliss"),
+        expected_message_fragment="--here has no effect with --no-rank",
+    ),
+    HereConflictCase(
+        test_id="here-with-ui",
+        argv=("search", "--here", "--ui", "bliss"),
+        expected_message_fragment="--here has no effect with --ui",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    HERE_CONFLICT_CASES,
+    ids=[case.test_id for case in HERE_CONFLICT_CASES],
+)
+def test_here_conflicts_error_at_parse_time(
+    case: HereConflictCase,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--here errors in modes where the same-project boost cannot apply."""
+    with pytest.raises(SystemExit) as exc_info:
+        _ = agentgrep.parse_args(list(case.argv))
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert case.expected_message_fragment in captured.err

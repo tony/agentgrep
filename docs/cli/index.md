@@ -95,6 +95,12 @@ Ranked search — deduped and grouped by session:
 $ agentgrep search "deploy"
 ```
 
+Prefer matches from the current project:
+
+```console
+$ agentgrep search --here "deploy"
+```
+
 Sweep prompts and conversations in one pass:
 
 ```console

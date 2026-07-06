@@ -38,6 +38,12 @@ Hand a one-shot `search` straight to the explorer with `--ui`:
 $ agentgrep search bliss --ui
 ```
 
+Open the explorer on current-project results:
+
+```console
+$ agentgrep search --only-here deploy --ui
+```
+
 Open the explorer over prompts and conversations at once:
 
 ```console
@@ -105,6 +111,9 @@ source path and the same scroll percent. Result-row timestamps
 render in the viewer's local timezone with offset
 (`YYYY-MM-DD HH:MM ±HHMM`), formatted via
 {func}`~agentgrep.format_timestamp_tig`.
+When the selected record carries {class}`~agentgrep.RecordOrigin`, the
+detail header also shows available cwd, repo, worktree, branch, and cwd
+hash values.
 
 ## Completion
 

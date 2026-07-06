@@ -48,8 +48,10 @@ from agentgrep.query.compile import (
     QueryCompileError,
     build_query_from_input,
     compile_query,
+    compose_query_ast,
     fields_in_ast,
     find_unsupported_reason,
+    scope_widened_for_ast,
 )
 from agentgrep.query.parser import QueryParseError, parse_query, tokenize
 from agentgrep.query.registry import (
@@ -82,9 +84,11 @@ __all__ = [
     "TokenKind",
     "build_query_from_input",
     "compile_query",
+    "compose_query_ast",
     "default_registry",
     "fields_in_ast",
     "find_unsupported_reason",
     "parse_query",
+    "scope_widened_for_ast",
     "tokenize",
 ]

@@ -68,11 +68,13 @@ prompts. agentgrep reads that key alone (token-filtered in SQL), so the
 
 A chat transcript's sibling `workspace.json` records the opened folder as
 a URI. agentgrep resolves it to a local path and attaches it as the
-record's `cwd` metadata: a `file://` URI is unquoted, and a
+record's `origin.cwd`: a `file://` URI is unquoted, and a
 `vscode-remote://wsl+<distro>/<path>` remote maps to the Linux path
 `<path>`. So a Copilot Chat in a WSL-remote workspace reports its real
 project directory (for example `/home/you/work/proj`) rather than an
-opaque storage hash.
+opaque storage hash. That origin is available to
+{ref}`current-project search <cli-search-project-context>` and the
+`cwd:` field in {ref}`library-query-language-origin-fields`.
 
 ## Cross-host discovery on WSL
 

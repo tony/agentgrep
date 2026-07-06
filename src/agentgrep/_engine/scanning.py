@@ -382,6 +382,9 @@ def _source_scan_cache_key(
             query.limit,
             query.dedupe,
             query.match_surface,
+            # Cached records are already filtered by this value. Keep it in the
+            # key until source scans cache pre-origin text candidates instead.
+            query.origin_filter,
         ),
         task_shape=(
             task.strategy,

@@ -259,6 +259,8 @@ from agentgrep.progress import (
     format_source_progress_detail,
     noop_search_progress,
 )
+from agentgrep.project_context import ProjectContext, detect_project_context
+from agentgrep.ranking import rank_search_records
 
 # Low-level read-only I/O primitives live in agentgrep.readers.
 from agentgrep.readers import (
@@ -337,6 +339,8 @@ from agentgrep.records import (
     OutputMode,
     ProgressMode,
     RawJsonlSkipLine,
+    RecordOrigin,
+    RecordOriginPayload,
     SearchMatchSurface,
     SearchQuery,
     SearchRecord,
@@ -670,11 +674,14 @@ __all__ = (
     "ProgressMode",
     "ProgressSnapshot",
     "ProgressUpdatedPayload",
+    "ProjectContext",
     "PydanticModule",
     "PydanticTypeAdapter",
     "PydanticTypeAdapterFactory",
     "QueryAppLike",
     "RawJsonlSkipLine",
+    "RecordOrigin",
+    "RecordOriginPayload",
     "RecordsAppendedPayload",
     "RichTextModule",
     "RunnableAppLike",
@@ -742,6 +749,7 @@ __all__ = (
     "create_themed_formatter",
     "decode_sqlite_value",
     "detect_content_format",
+    "detect_project_context",
     "detect_source_version",
     "direct_source_matches",
     "discover_antigravity_cli_sources",
@@ -858,6 +866,7 @@ __all__ = (
     "print_find_results",
     "print_grep_results",
     "prompt_history_agents_for_sources",
+    "rank_search_records",
     "read_json_file",
     "read_text_file",
     "record_dedupe_key",

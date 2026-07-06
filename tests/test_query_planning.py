@@ -20,7 +20,9 @@ from agentgrep._engine.planning import (
     build_logical_search_plan,
     build_physical_search_plan,
 )
+from agentgrep.query import compile_query, default_registry, parse_query
 from agentgrep.query.compile import CompiledQuery
+from agentgrep.records import SourceOriginSummary
 
 
 class LogicalPlanCase(t.NamedTuple):
@@ -30,6 +32,14 @@ class LogicalPlanCase(t.NamedTuple):
     scope: agentgrep.SearchScope
     expected_roles: frozenset[agentgrep.StoreRole] | None
     expects_prompt_fallback: bool
+
+
+class SourceOriginPruneCase(t.NamedTuple):
+    """Parametrized case for source-origin summary pruning."""
+
+    test_id: str
+    origin_summary: SourceOriginSummary | None
+    expected_task_count: int
 
 
 LOGICAL_PLAN_CASES: tuple[LogicalPlanCase, ...] = (
@@ -53,6 +63,22 @@ LOGICAL_PLAN_CASES: tuple[LogicalPlanCase, ...] = (
     ),
 )
 
+SOURCE_ORIGIN_PRUNE_CASES: tuple[SourceOriginPruneCase, ...] = (
+    SourceOriginPruneCase(
+        test_id="complete-mismatch-prunes",
+        origin_summary=SourceOriginSummary(
+            origins=(agentgrep.RecordOrigin(cwd="/workspace/other"),),
+            complete_fields=frozenset({"cwd"}),
+        ),
+        expected_task_count=0,
+    ),
+    SourceOriginPruneCase(
+        test_id="unknown-summary-admits",
+        origin_summary=None,
+        expected_task_count=1,
+    ),
+)
+
 
 def _query(
     *,
@@ -63,6 +89,7 @@ def _query(
     limit: int | None = 10,
     compiled: CompiledQuery | None = None,
     agents: tuple[agentgrep.AgentName, ...] = ("codex", "claude"),
+    origin_filter: agentgrep.RecordOrigin | None = None,
 ) -> agentgrep.SearchQuery:
     """Build a search query for planner tests."""
     return agentgrep.SearchQuery(
@@ -76,6 +103,7 @@ def _query(
         dedupe=True,
         compiled=compiled,
         match_surface=match_surface,
+        origin_filter=origin_filter,
     )
 
 
@@ -99,6 +127,7 @@ def _source(
     search_root: pathlib.Path | None = None,
     source_kind: agentgrep.SourceKind = "jsonl",
     mtime_ns: int = 0,
+    origin_summary: SourceOriginSummary | None = None,
 ) -> agentgrep.SourceHandle:
     """Build a synthetic source handle for planning tests."""
     return agentgrep.SourceHandle(
@@ -110,6 +139,7 @@ def _source(
         source_kind=source_kind,
         search_root=search_root,
         mtime_ns=mtime_ns,
+        origin_summary=origin_summary,
     )
 
 
@@ -327,6 +357,78 @@ def test_sqlite_root_source_skips_binary_grep_prefilter(
     ]
     assert plan.decisions[1].source_count == 1
     assert plan.decisions[1].detail == "sqlite_source"
+
+
+@pytest.mark.parametrize(
+    "case",
+    SOURCE_ORIGIN_PRUNE_CASES,
+    ids=[case.test_id for case in SOURCE_ORIGIN_PRUNE_CASES],
+)
+def test_origin_filter_prunes_sqlite_source_before_admission(
+    case: SourceOriginPruneCase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Complete source-origin mismatches prune before SQLite admission."""
+    root = pathlib.Path("/tmp/cursor-workspaces")
+    source = _source(
+        agent="cursor-ide",
+        path="/tmp/cursor-workspaces/project/state.vscdb",
+        store="cursor-ide.workspace_state",
+        adapter_id="cursor_ide.state_vscdb_modern.v1",
+        path_kind="sqlite_db",
+        search_root=root,
+        source_kind="sqlite",
+        mtime_ns=2,
+        origin_summary=case.origin_summary,
+    )
+
+    def fail_prefilter_sources_by_root(
+        _query: agentgrep.SearchQuery,
+        _sources: list[agentgrep.SourceHandle],
+        _grep_program: str,
+        *,
+        progress: agentgrep.SearchProgress | None = None,
+        control: agentgrep.SearchControl | None = None,
+    ) -> list[agentgrep.SourceHandle]:
+        _ = progress, control
+        pytest.fail("SQLite sources should not use binary root grep prefiltering")
+
+    monkeypatch.setattr(_r_planning, "prefilter_sources_by_root", fail_prefilter_sources_by_root)
+
+    plan = build_physical_search_plan(
+        _query(
+            scope="all",
+            agents=("cursor-ide",),
+            origin_filter=agentgrep.RecordOrigin(cwd="/workspace/project"),
+        ),
+        (source,),
+        agentgrep.BackendSelection(find_tool=None, grep_tool="rg", json_tool=None),
+    )
+
+    assert len(plan.tasks) == case.expected_task_count
+
+
+def test_query_language_origin_field_prunes_from_source_summary() -> None:
+    """Compiled origin fields use source summaries before record parsing."""
+    registry = default_registry()
+    compiled = compile_query(parse_query('cwd:"/workspace/project" tmux', registry), registry)
+    source = _source(
+        agent="cursor-ide",
+        path="/tmp/cursor-workspaces/project/state.vscdb",
+        store="cursor-ide.workspace_state",
+        adapter_id="cursor_ide.state_vscdb_modern.v1",
+        path_kind="sqlite_db",
+        search_root=pathlib.Path("/tmp/cursor-workspaces"),
+        source_kind="sqlite",
+        mtime_ns=2,
+        origin_summary=SourceOriginSummary(
+            origins=(agentgrep.RecordOrigin(cwd="/workspace/other"),),
+            complete_fields=frozenset({"cwd"}),
+        ),
+    )
+
+    assert compiled.source_predicate is not None
+    assert not compiled.source_predicate(source)
 
 
 def test_bounded_haystack_root_source_without_path_match_keeps_eager_prefilter(

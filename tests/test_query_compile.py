@@ -37,9 +37,11 @@ from agentgrep.query import (
     default_registry,
     find_unsupported_reason,
     parse_query,
+    scope_widened_for_ast,
 )
 from agentgrep.query.compile import QueryCompileError
 from agentgrep.query.dates import set_now_override
+from agentgrep.query.pathmatch import _compile_path_patterns
 
 
 @pytest.fixture(autouse=True)
@@ -323,6 +325,86 @@ def test_compile_query_source_predicate_prunes(
     assert compiled.source_predicate is not None
     source = _make_source(**case.source_kwargs)
     assert compiled.source_predicate(source) is case.expected_passes
+
+
+class PathTrailingSlashCase(t.NamedTuple):
+    """Parametrized case for literal path predicates with trailing separators."""
+
+    test_id: str
+    source_path: str
+    expected_passes: bool
+
+
+PATH_TRAILING_SLASH_CASES: tuple[PathTrailingSlashCase, ...] = (
+    PathTrailingSlashCase(
+        test_id="child-path",
+        source_path="/tmp/repo/session.jsonl",
+        expected_passes=True,
+    ),
+    PathTrailingSlashCase(
+        test_id="sibling-prefix",
+        source_path="/tmp/repo2/session.jsonl",
+        expected_passes=False,
+    ),
+)
+
+
+class PathPatternFieldCacheCase(t.NamedTuple):
+    """Parametrized case for mixed source and origin path predicates."""
+
+    test_id: str
+    fields: tuple[str, str]
+
+
+PATH_PATTERN_FIELD_CACHE_CASES: tuple[PathPatternFieldCacheCase, ...] = (
+    PathPatternFieldCacheCase(test_id="path-then-cwd", fields=("path", "cwd")),
+    PathPatternFieldCacheCase(test_id="cwd-then-path", fields=("cwd", "path")),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    PATH_TRAILING_SLASH_CASES,
+    ids=[case.test_id for case in PATH_TRAILING_SLASH_CASES],
+)
+def test_path_query_trailing_separator_preserves_source_boundary(
+    case: PathTrailingSlashCase,
+) -> None:
+    """A trailing slash in a literal path predicate keeps sibling paths out."""
+    compiled = compile_query(
+        parse_query('path:"/tmp/repo/"', default_registry()),
+        default_registry(),
+    )
+
+    assert compiled.source_predicate is not None
+    assert compiled.source_predicate(_make_source(path=case.source_path)) is case.expected_passes
+
+
+@pytest.mark.parametrize(
+    "case",
+    PATH_PATTERN_FIELD_CACHE_CASES,
+    ids=[case.test_id for case in PATH_PATTERN_FIELD_CACHE_CASES],
+)
+def test_path_patterns_are_cached_by_field(
+    tmp_path: pathlib.Path,
+    case: PathPatternFieldCacheCase,
+) -> None:
+    """``path:`` and ``cwd:`` keep distinct symlink-resolution semantics."""
+    real = tmp_path / "real" / "proj"
+    real.mkdir(parents=True)
+    link = tmp_path / "link"
+    link.symlink_to(tmp_path / "real", target_is_directory=True)
+    logical = str(link / "proj")
+    physical = str(real.resolve(strict=False))
+    query = " ".join(f'{field}:"{logical}"' for field in case.fields)
+
+    patterns = _compile_path_patterns(
+        parse_query(query, default_registry()),
+        path_fields=frozenset({"path", "cwd"}),
+    )
+
+    assert patterns[("path", logical)].variants == (logical,)
+    assert patterns[("cwd", logical)].variants == (logical, physical)
 
 
 def test_path_query_expands_current_user_home_for_source_predicate(
@@ -1010,3 +1092,37 @@ def test_compile_module_split_reexports_are_neutral() -> None:
 
     assert evaluate._string_match is textmatch._string_match
     assert evaluate._path_match is pathmatch._path_match
+
+
+class ScopeWideningCase(t.NamedTuple):
+    """Parametrized case for the shared scope-widening rule."""
+
+    test_id: str
+    query: str | None
+    expected: str
+
+
+SCOPE_WIDENING_CASES: tuple[ScopeWideningCase, ...] = (
+    ScopeWideningCase(
+        test_id="scope-predicate-widens",
+        query="scope:conversations needle",
+        expected="all",
+    ),
+    ScopeWideningCase(
+        test_id="no-scope-predicate-keeps-scope",
+        query="agent:codex needle",
+        expected="prompts",
+    ),
+    ScopeWideningCase(test_id="no-ast-keeps-scope", query=None, expected="prompts"),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    SCOPE_WIDENING_CASES,
+    ids=[case.test_id for case in SCOPE_WIDENING_CASES],
+)
+def test_scope_widened_for_ast(case: ScopeWideningCase) -> None:
+    """The one shared rule widens discovery only for scope: predicates."""
+    ast = None if case.query is None else parse_query(case.query, default_registry())
+    assert scope_widened_for_ast(ast, "prompts") == case.expected

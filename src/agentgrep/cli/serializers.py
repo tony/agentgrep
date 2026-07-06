@@ -12,6 +12,7 @@ import typing as t
 
 from agentgrep import maybe_use_pydantic
 from agentgrep._text import format_display_path
+from agentgrep.origin_serializers import serialize_record_metadata, serialize_record_origin
 from agentgrep.records import (
     SCHEMA_VERSION,
     EnvelopeFactory,
@@ -62,7 +63,8 @@ def serialize_search_record(record: SearchRecord) -> SearchRecordPayload:
         "model": record.model,
         "session_id": record.session_id,
         "conversation_id": record.conversation_id,
-        "metadata": record.metadata,
+        "origin": serialize_record_origin(record.origin),
+        "metadata": serialize_record_metadata(record.metadata),
     }
 
 

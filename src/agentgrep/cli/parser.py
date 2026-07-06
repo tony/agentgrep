@@ -29,6 +29,8 @@ from agentgrep._text import (
     UI_DESCRIPTION,
 )
 from agentgrep.cli.help_theme import create_themed_formatter
+from agentgrep.origin import normalize_origin_path_text, origin_filter_nodes
+from agentgrep.project_context import ProjectContext, detect_project_context
 from agentgrep.records import (
     AGENT_CHOICES,
     AgentName,
@@ -36,11 +38,12 @@ from agentgrep.records import (
     GrepStyle,
     OutputMode,
     ProgressMode,
+    RecordOrigin,
     SearchScope,
 )
 
 if t.TYPE_CHECKING:
-    from agentgrep.query import CompiledQuery
+    from agentgrep.query import CompiledQuery, FieldEqNode
 
 CaseMode = t.Literal["smart", "ignore", "respect"]
 PatternMode = t.Literal["regex", "fixed", "word"]
@@ -163,6 +166,8 @@ class SearchArgs:
     no_rank: bool = False
     compiled: CompiledQuery | None = None
     raw_query: str = ""
+    origin_boost: RecordOrigin | None = None
+    origin_filter: RecordOrigin | None = None
 
 
 @dataclasses.dataclass(slots=True)
@@ -568,6 +573,32 @@ def create_parser(
         help="Force case-sensitive matching",
     )
     _ = search_parser.add_argument(
+        "--cwd",
+        metavar="PATH",
+        help="Only return records whose recorded cwd matches PATH",
+    )
+    _ = search_parser.add_argument(
+        "--repo",
+        metavar="PATH",
+        help="Only return records whose recorded repository root matches PATH",
+    )
+    _ = search_parser.add_argument(
+        "--branch",
+        metavar="NAME",
+        help="Only return records whose recorded git branch matches NAME",
+    )
+    here_group = search_parser.add_mutually_exclusive_group()
+    _ = here_group.add_argument(
+        "--here",
+        action="store_true",
+        help="Boost records from the current project without filtering",
+    )
+    _ = here_group.add_argument(
+        "--only-here",
+        action="store_true",
+        help="Only return records from the current project",
+    )
+    _ = search_parser.add_argument(
         "--limit",
         type=int,
         metavar="N",
@@ -632,7 +663,57 @@ def _search_explicit_flags(namespace: argparse.Namespace) -> dict[str, str]:
         flags["agent"] = "--agent"
     if t.cast("str | None", namespace.scope) is not None:
         flags["scope"] = "--scope"
+    if t.cast("str", namespace.cwd or "").strip():
+        flags["cwd"] = "--cwd"
+    if t.cast("str", namespace.repo or "").strip():
+        flags["repo"] = "--repo"
+    if t.cast("str", namespace.branch or "").strip():
+        flags["branch"] = "--branch"
     return flags
+
+
+def _search_has_origin_filter(namespace: argparse.Namespace) -> bool:
+    """Return whether ``search`` has a flag that can run without text terms."""
+    return bool(
+        t.cast("str", namespace.cwd or "").strip()
+        or t.cast("str", namespace.repo or "").strip()
+        or t.cast("str", namespace.branch or "").strip()
+        or t.cast("bool", namespace.only_here),
+    )
+
+
+def _build_search_origin_nodes(
+    namespace: argparse.Namespace,
+) -> tuple[tuple[FieldEqNode, ...], RecordOrigin | None, RecordOrigin | None]:
+    """Build display predicates, same-project boost, and hard origin filter."""
+    cwd = normalize_origin_path_text(t.cast("str | None", namespace.cwd))
+    repo = normalize_origin_path_text(t.cast("str | None", namespace.repo))
+    raw_branch = t.cast("str | None", namespace.branch)
+    branch = raw_branch if raw_branch and raw_branch.strip() else None
+    origin_boost: RecordOrigin | None = None
+    if t.cast("bool", namespace.here) or t.cast("bool", namespace.only_here):
+        context = detect_project_context()
+        if t.cast("bool", namespace.here):
+            origin_boost = _search_here_origin_boost(context)
+        if t.cast("bool", namespace.only_here):
+            cwd = cwd or str(context.worktree or context.repo or context.cwd)
+    origin_filter = RecordOrigin(cwd=cwd, repo=repo, branch=branch)
+    if origin_filter.is_empty():
+        origin_filter = None
+    return origin_filter_nodes(cwd=cwd, repo=repo, branch=branch), origin_boost, origin_filter
+
+
+def _search_here_origin_boost(context: ProjectContext) -> RecordOrigin:
+    project_root = context.worktree or context.repo
+    if project_root is not None:
+        return RecordOrigin(repo=str(project_root))
+    return RecordOrigin(cwd=str(context.cwd))
+
+
+def _query_value_display(value: str) -> str:
+    """Quote a generated predicate value for the UI search-box seed."""
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
 
 
 def _grep_explicit_flags(namespace: argparse.Namespace) -> dict[str, str]:
@@ -691,6 +772,12 @@ _QUERY_FIELD_NAMES: frozenset[str] = frozenset(
         "date",
         "model",
         "role",
+        "cwd",
+        "repo",
+        "worktree",
+        "branch",
+        "project",
+        "cwd_hash",
         "text",
     },
 )
@@ -743,6 +830,8 @@ def _maybe_compile_query(
     subparser: argparse.ArgumentParser,
     explicit_flags: dict[str, str] | None = None,
     find_mode: bool = False,
+    case_sensitive: bool = False,
+    extra_nodes: tuple[FieldEqNode, ...] = (),
 ) -> tuple[CompiledQuery | None, tuple[str, ...], set[str]]:
     """Detect Lucene-style query syntax in positionals and compile if present.
 
@@ -762,30 +851,34 @@ def _maybe_compile_query(
     (record-level field predicates, boolean text composition), since
     ``find`` only honors the source predicate and a flat path pattern.
 
+    ``extra_nodes`` carries synthetic predicates (generated origin
+    filters) that are ANDed with the user terms at the AST level, so
+    the terms keep their bare-path semantics. Field collision checks
+    and ``fields`` cover only the user's own query.
+
     Parse / compile errors route through ``subparser.error()`` so the
     user sees an argparse-shaped message instead of a Python
     traceback.
     """
-    if not _query_syntax_present(positionals):
+    if not _query_syntax_present(positionals) and not extra_nodes:
         return None, tuple(positionals), set()
     from agentgrep.query import (
         QueryCompileError,
         QueryParseError,
         compile_query,
+        compose_query_ast,
         default_registry,
         fields_in_ast,
         find_unsupported_reason,
-        parse_query,
     )
 
-    query_text = " ".join(positionals)
     registry = default_registry()
     try:
-        ast = parse_query(query_text, registry)
+        ast, user_ast = compose_query_ast(positionals, extra_nodes, registry)
     except QueryParseError as exc:
         with configured_color_environment(color_mode):
             subparser.error(f"invalid query: {exc}")
-    used_fields = fields_in_ast(ast)
+    used_fields = fields_in_ast(user_ast) if user_ast is not None else set()
     if find_mode:
         reason = find_unsupported_reason(ast, registry)
         if reason is not None:
@@ -800,7 +893,7 @@ def _maybe_compile_query(
                         f"{field_name}: field predicate; pick one syntax",
                     )
     try:
-        compiled = compile_query(ast, registry)
+        compiled = compile_query(ast, registry, case_sensitive=case_sensitive)
     except QueryCompileError as exc:
         with configured_color_environment(color_mode):
             subparser.error(f"invalid query: {exc}")
@@ -911,7 +1004,11 @@ def parse_args(
         # record; show the subcommand help+examples instead, the way
         # bare `agentgrep` shows root help. `--ui` keeps launching the
         # explorer with an empty seed query.
-        if not t.cast("list[str]", namespace.terms) and not t.cast("bool", namespace.ui):
+        if (
+            not t.cast("list[str]", namespace.terms)
+            and not t.cast("bool", namespace.ui)
+            and not _search_has_origin_filter(namespace)
+        ):
             with configured_color_environment(color_mode):
                 bundle.search_parser.print_help()
             return None
@@ -1008,12 +1105,19 @@ def _build_grep_args(
         pattern_mode = "regex"
 
     patterns_list_raw = t.cast("list[str]", namespace.patterns)
+    # Mirror build_grep_query's rg-style case resolution so the compiled
+    # record predicate agrees with grep's own line matching.
+    grep_case_sensitive = case_mode == "respect" or (
+        case_mode == "smart"
+        and any(any(ch.isupper() for ch in pattern) for pattern in patterns_list_raw)
+    )
     grep_compiled, residual_patterns, grep_query_fields = _maybe_compile_query(
         patterns_list_raw,
         bundle=bundle,
         color_mode=color_mode,
         subparser=bundle.grep_parser,
         explicit_flags=_grep_explicit_flags(namespace),
+        case_sensitive=grep_case_sensitive,
     )
     patterns_list: list[str] = list(residual_patterns)
     if any(not pattern for pattern in patterns_list):
@@ -1115,16 +1219,36 @@ def _build_search_args(
             bundle.search_parser.error(
                 "--threshold has no effect with --no-rank (ranking is disabled)",
             )
+    # The --here boost only exists inside ranked CLI output; reject the
+    # modes that would silently drop it.
+    if t.cast("bool", namespace.here) and no_rank:
+        with configured_color_environment(color_mode):
+            bundle.search_parser.error(
+                "--here has no effect with --no-rank (ranking is disabled)",
+            )
+    if t.cast("bool", namespace.here) and output_mode == "ui":
+        with configured_color_environment(color_mode):
+            bundle.search_parser.error(
+                "--here has no effect with --ui (use --only-here to filter)",
+            )
 
+    origin_nodes, origin_boost, origin_filter = _build_search_origin_nodes(namespace)
     search_compiled, residual_terms, search_query_fields = _maybe_compile_query(
         terms_list,
         bundle=bundle,
         color_mode=color_mode,
         subparser=bundle.search_parser,
         explicit_flags=_search_explicit_flags(namespace),
+        case_sensitive=t.cast("bool", namespace.case_sensitive),
     )
     final_terms: tuple[str, ...] = residual_terms
     case_sensitive = t.cast("bool", namespace.case_sensitive)
+    raw_query = " ".join(
+        (
+            *(f"{node.field}:{_query_value_display(node.value)}" for node in origin_nodes),
+            *terms_list,
+        ),
+    )
 
     return SearchArgs(
         terms=final_terms,
@@ -1142,7 +1266,9 @@ def _build_search_args(
         no_group=t.cast("bool", namespace.no_group),
         no_rank=t.cast("bool", namespace.no_rank),
         compiled=search_compiled,
-        raw_query=" ".join(terms_list),
+        raw_query=raw_query,
+        origin_boost=origin_boost,
+        origin_filter=origin_filter,
     )
 
 

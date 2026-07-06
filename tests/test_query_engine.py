@@ -1148,6 +1148,28 @@ def test_cli_query_field_names_mirror_the_registry() -> None:
     assert expected == cli_parser._QUERY_FIELD_NAMES
 
 
+def test_origin_query_field_sets_mirror_the_registry() -> None:
+    """The origin field-name sets must not drift from the registry.
+
+    ``query.evaluate`` dispatches origin predicates through the
+    ``agentgrep.origin`` constants; a registered origin field missing
+    from them would silently never match (evaluation falls through to
+    ``return False`` with no error).
+    """
+    from agentgrep.origin import ORIGIN_PATH_QUERY_FIELDS, ORIGIN_STRING_QUERY_FIELDS
+
+    registry = default_registry()
+    record_path_fields = {
+        spec.name for spec in registry.specs if spec.layer == "record" and spec.kind == "path"
+    }
+    assert record_path_fields == ORIGIN_PATH_QUERY_FIELDS
+    specs_by_name = {spec.name: spec for spec in registry.specs}
+    for name in sorted(ORIGIN_STRING_QUERY_FIELDS):
+        spec = specs_by_name[name]
+        assert spec.layer == "record"
+        assert spec.kind == "string"
+
+
 class PureTextResidualCase(t.NamedTuple):
     """Parametrized case: query syntax that collapses to clean residual terms."""
 
@@ -1330,6 +1352,21 @@ FLAG_FIELD_COLLISION_CASES: tuple[FlagFieldCollisionCase, ...] = (
         argv=("search", "--scope", "prompts", "scope:conversations", "bliss"),
         expected_message_fragment="cannot combine --scope flag with scope: field",
     ),
+    FlagFieldCollisionCase(
+        test_id="search-cwd-flag-and-field",
+        argv=("search", "--cwd", "/workspace/a", "cwd:/workspace/b", "bliss"),
+        expected_message_fragment="cannot combine --cwd flag with cwd: field",
+    ),
+    FlagFieldCollisionCase(
+        test_id="search-repo-flag-and-field",
+        argv=("search", "--repo", "/workspace/a", "repo:/workspace/b", "bliss"),
+        expected_message_fragment="cannot combine --repo flag with repo: field",
+    ),
+    FlagFieldCollisionCase(
+        test_id="search-branch-flag-and-field",
+        argv=("search", "--branch", "main", "branch:feature", "bliss"),
+        expected_message_fragment="cannot combine --branch flag with branch: field",
+    ),
 )
 
 
@@ -1418,3 +1455,63 @@ def test_compiled_none_falls_through_to_legacy_path(
         if isinstance(event, ag_events.RecordEmitted)
     ]
     assert len(emitted) == 1
+
+
+class GrepCasePredicateCase(t.NamedTuple):
+    """Parametrized case for grep case flags on compiled query predicates."""
+
+    test_id: str
+    argv: tuple[str, ...]
+    expected: bool
+
+
+GREP_CASE_PREDICATE_CASES: tuple[GrepCasePredicateCase, ...] = (
+    GrepCasePredicateCase(
+        test_id="case-sensitive-flag-excludes-lowercase",
+        argv=("grep", "-s", "text:Foo agent:codex"),
+        expected=False,
+    ),
+    GrepCasePredicateCase(
+        test_id="ignore-case-flag-includes-lowercase",
+        argv=("grep", "-i", "text:Foo agent:codex"),
+        expected=True,
+    ),
+    GrepCasePredicateCase(
+        test_id="smart-case-uppercase-excludes-lowercase",
+        argv=("grep", "text:Foo agent:codex"),
+        expected=False,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    GREP_CASE_PREDICATE_CASES,
+    ids=[c.test_id for c in GREP_CASE_PREDICATE_CASES],
+)
+def test_grep_case_flags_reach_compiled_predicate(
+    case: GrepCasePredicateCase,
+) -> None:
+    """Grep's case resolution governs text: predicates like line matching."""
+    args = agentgrep.parse_args(list(case.argv))
+    assert isinstance(args, agentgrep.GrepArgs)
+    assert args.compiled is not None
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=pathlib.Path("/tmp/session.jsonl"),
+        text="foo lowercase only",
+    )
+    query = agentgrep.SearchQuery(
+        terms=args.patterns,
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=(),
+        limit=None,
+        compiled=args.compiled,
+    )
+    assert agentgrep.matches_record(record, query) is case.expected

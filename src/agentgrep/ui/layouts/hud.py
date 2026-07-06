@@ -13,6 +13,7 @@ import collections
 import dataclasses
 import functools
 import json
+import pathlib
 import re
 import time
 import typing as t
@@ -32,6 +33,7 @@ from agentgrep._text import (
     detect_content_format,
     find_first_match_line,
     format_compact_path,
+    format_display_path,
     highlight_matches,
     truncate_lines,
 )
@@ -1536,7 +1538,7 @@ class HudLayout(LayoutScreen):
         model_color = ui_theme.resolve(theme_vars, "ag-model")
         path_color = ui_theme.resolve(theme_vars, "ag-muted")
         header = Text(no_wrap=False)
-        for label, value, value_style in (
+        header_rows: list[tuple[str, str, str]] = [
             ("Agent:", record.agent or "", agent_color),
             ("Kind:", record.kind or "", kind_color),
             ("Store:", record.store or "", dim_color),
@@ -1548,7 +1550,26 @@ class HudLayout(LayoutScreen):
                 format_compact_path(record.path, max_width=width - 8),
                 path_color,
             ),
-        ):
+        ]
+        if record.origin is not None:
+            for label, value in (
+                ("Cwd:", record.origin.cwd),
+                ("Repo:", record.origin.repo),
+                ("Worktree:", record.origin.worktree),
+            ):
+                if value:
+                    header_rows.append(
+                        (
+                            label,
+                            format_display_path(pathlib.Path(value), directory=True),
+                            path_color,
+                        ),
+                    )
+            if record.origin.branch:
+                header_rows.append(("Branch:", record.origin.branch, dim_color))
+            if record.origin.cwd_hash:
+                header_rows.append(("Cwd hash:", record.origin.cwd_hash, dim_color))
+        for label, value, value_style in header_rows:
             header.append(f"{label} ", style="bold")
             header.append(f"{value}\n", style=value_style)
         header.append("\n")

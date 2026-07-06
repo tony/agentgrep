@@ -11,6 +11,7 @@ and the rest of _engine.
 from __future__ import annotations
 
 import collections.abc as cabc
+import json
 import pathlib
 import re
 import time
@@ -63,9 +64,10 @@ def search_sources(
     # ``plan_search_sources``) runs on the smaller set. Without this
     # the per-file prefilter runs against every discovered source even
     # when ``agent:codex`` could rule most out from metadata alone.
-    if query.compiled is not None and query.compiled.source_predicate is not None:
-        sources = [s for s in sources if query.compiled.source_predicate(s)]
     from agentgrep._engine.planning import build_physical_search_plan
+    from agentgrep._engine.source_filters import source_may_match_query
+
+    sources = [s for s in sources if source_may_match_query(query, s)]
 
     plan = build_physical_search_plan(
         query,
@@ -240,21 +242,24 @@ def grep_root_paths(
     for term in query.terms:
         if active_control.answer_now_requested():
             return set()
-        command = build_grep_command(
-            grep_program,
-            term,
-            search_root,
-            regex=query.regex,
-            case_sensitive=query.case_sensitive,
-        )
-        completed = run_readonly_command(command, control=active_control)
-        if active_control.answer_now_requested():
-            return set()
-        if completed.returncode not in {0, 1}:
-            return None
-        matched_sets.append(
-            {pathlib.Path(line) for line in completed.stdout.splitlines() if line.strip()},
-        )
+        term_matches: set[pathlib.Path] = set()
+        for grep_term in _root_prefilter_terms(term, regex=query.regex):
+            command = build_grep_command(
+                grep_program,
+                grep_term,
+                search_root,
+                regex=query.regex,
+                case_sensitive=query.case_sensitive,
+            )
+            completed = run_readonly_command(command, control=active_control)
+            if active_control.answer_now_requested():
+                return set()
+            if completed.returncode not in {0, 1}:
+                return None
+            term_matches.update(
+                pathlib.Path(line) for line in completed.stdout.splitlines() if line.strip()
+            )
+        matched_sets.append(term_matches)
 
     if not matched_sets:
         return set()
@@ -268,6 +273,20 @@ def grep_root_paths(
     for matched in matched_sets[1:]:
         intersection.intersection_update(matched)
     return intersection
+
+
+def _root_prefilter_terms(term: str, *, regex: bool) -> tuple[str, ...]:
+    """Return safe grep spellings for one logical search term."""
+    if regex:
+        return (term,)
+    variants = [term]
+    escaped = json.dumps(term, ensure_ascii=True)[1:-1]
+    if escaped != term:
+        variants.append(escaped)
+    solidus_escaped = escaped.replace("/", "\\/")
+    if solidus_escaped not in variants:
+        variants.append(solidus_escaped)
+    return tuple(variants)
 
 
 def direct_source_matches(

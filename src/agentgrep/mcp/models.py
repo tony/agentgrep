@@ -23,6 +23,17 @@ class AgentGrepModel(BaseModel):
     model_config: t.ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
 
+class RecordOriginModel(AgentGrepModel):
+    """Project/workspace origin attached to a search result."""
+
+    cwd: str | None = None
+    repo: str | None = None
+    worktree: str | None = None
+    branch: str | None = None
+    remote: str | None = None
+    cwd_hash: str | None = None
+
+
 class SearchRecordModel(AgentGrepModel):
     """Normalized search result payload."""
 
@@ -53,6 +64,7 @@ class SearchRecordModel(AgentGrepModel):
     model: str | None = None
     session_id: str | None = None
     conversation_id: str | None = None
+    origin: RecordOriginModel | None = None
     metadata: dict[str, t.Any] = Field(default_factory=dict)
 
     @classmethod
@@ -212,6 +224,9 @@ class SearchRequestModel(AgentGrepModel):
     case_sensitive: bool
     limit: int | None = None
     cursor: str | None = None
+    cwd: str | None = None
+    repo: str | None = None
+    branch: str | None = None
 
 
 class SearchToolResponse(AgentGrepModel):

@@ -42,6 +42,9 @@ class _SearchCursorPayload(t.TypedDict):
     scope: SearchScopeName
     case_sensitive: bool
     limit: int
+    cwd: str | None
+    repo: str | None
+    branch: str | None
 
 
 class _FindCursorPayload(t.TypedDict):
@@ -73,6 +76,9 @@ class SearchCursor:
     scope: SearchScopeName
     case_sensitive: bool
     limit: int
+    cwd: str | None = None
+    repo: str | None = None
+    branch: str | None = None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -236,6 +242,9 @@ def make_search_cursor(
     scope: SearchScopeName,
     case_sensitive: bool,
     limit: int,
+    cwd: str | None = None,
+    repo: str | None = None,
+    branch: str | None = None,
 ) -> str:
     """Build an opaque cursor for the next search page."""
     return _encode_token(
@@ -251,6 +260,9 @@ def make_search_cursor(
                 scope=scope,
                 case_sensitive=case_sensitive,
                 limit=limit,
+                cwd=cwd,
+                repo=repo,
+                branch=branch,
             ),
         ),
     )
@@ -268,11 +280,17 @@ def parse_search_cursor(cursor: str) -> SearchCursor:
     scope = payload.get("scope")
     case_sensitive = payload.get("case_sensitive")
     limit = payload.get("limit")
+    cwd = payload.get("cwd")
+    repo = payload.get("repo")
+    branch = payload.get("branch")
     if not isinstance(offset, int) or offset < 0:
         msg = "cursor offset must be non-negative"
         raise McpTokenError(msg)
-    if not isinstance(terms, list) or not terms or not all(isinstance(term, str) for term in terms):
-        msg = "cursor terms must be a non-empty list of strings"
+    if not isinstance(terms, list) or not all(isinstance(term, str) for term in terms):
+        msg = "cursor terms must be a list of strings"
+        raise McpTokenError(msg)
+    if not terms and not any(isinstance(value, str) and value for value in (cwd, repo, branch)):
+        msg = "cursor terms must be a non-empty list of strings unless an origin filter is present"
         raise McpTokenError(msg)
     if agent not in t.get_args(AgentSelector):
         msg = "cursor agent is invalid"
@@ -286,6 +304,15 @@ def parse_search_cursor(cursor: str) -> SearchCursor:
     if not isinstance(limit, int) or limit < 1:
         msg = "cursor limit must be positive"
         raise McpTokenError(msg)
+    if cwd is not None and not isinstance(cwd, str):
+        msg = "cursor cwd must be a string or null"
+        raise McpTokenError(msg)
+    if repo is not None and not isinstance(repo, str):
+        msg = "cursor repo must be a string or null"
+        raise McpTokenError(msg)
+    if branch is not None and not isinstance(branch, str):
+        msg = "cursor branch must be a string or null"
+        raise McpTokenError(msg)
     return SearchCursor(
         offset=offset,
         terms=t.cast("list[str]", terms),
@@ -293,6 +320,9 @@ def parse_search_cursor(cursor: str) -> SearchCursor:
         scope=t.cast("SearchScopeName", scope),
         case_sensitive=case_sensitive,
         limit=limit,
+        cwd=cwd,
+        repo=repo,
+        branch=branch,
     )
 
 

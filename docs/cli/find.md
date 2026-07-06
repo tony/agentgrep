@@ -166,8 +166,11 @@ $ agentgrep find 'path:~/.codex agent:codex'
 $ agentgrep find 'mtime:>2026-01-01'
 ```
 
-Record-level fields (`type:`, `timestamp:`, `model:`, `role:`)
+Record-level fields (`scope:`, `timestamp:`, `model:`, `role:`)
 are accepted by the parser but don't filter find output since
 find emits one record per source. Use `agentgrep grep` if you
-need record-level filtering. See {ref}`library-query-language`
-for the full grammar.
+need record-level filtering. Origin fields (`cwd:`, `repo:`,
+`branch:`, `project:`, `cwd_hash:`) are record fields too; use
+{ref}`agentgrep search <cli-search-project-context>` or
+{ref}`agentgrep grep <cli-grep>` when you need project-aware result
+filtering. See {ref}`library-query-language` for the full grammar.

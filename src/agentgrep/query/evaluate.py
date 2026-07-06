@@ -6,6 +6,13 @@ import datetime as dt
 import typing as t
 
 from agentgrep._engine.orchestration import record_matches_scope
+from agentgrep.origin import (
+    ORIGIN_PATH_QUERY_FIELDS,
+    ORIGIN_QUERY_FIELDS,
+    OriginMatcher,
+    origin_field_values,
+    record_origin_field_values,
+)
 from agentgrep.query.ast import (
     AndNode,
     FieldCmpNode,
@@ -30,9 +37,14 @@ from agentgrep.query.pathmatch import (
     _eq_value,
     _path_match,
     _path_pattern_for,
+    _PathPatternKey,
 )
 from agentgrep.query.registry import FieldRegistry, FieldSpec
-from agentgrep.query.textmatch import _is_wildcard, _string_match, _text_matches
+from agentgrep.query.textmatch import (
+    _is_wildcard,
+    _string_match,
+    _text_matches,
+)
 from agentgrep.records import SearchRecord, SearchScope, SourceHandle
 
 _Trilean = t.Literal["T", "F", "U"]
@@ -50,7 +62,7 @@ def _evaluate_source(
     node: QueryNode,
     source: SourceHandle,
     registry: FieldRegistry,
-    path_patterns: dict[str, _CompiledPathPattern],
+    path_patterns: dict[_PathPatternKey, _CompiledPathPattern],
 ) -> _Trilean:
     """Evaluate ``node`` against ``source`` using three-valued logic.
 
@@ -63,7 +75,11 @@ def _evaluate_source(
         return "U"
     if isinstance(node, FieldExistsNode):
         spec = registry.get(node.field)
-        if spec is None or spec.layer == "record":
+        if spec is None:
+            return "U"
+        if spec.name in ORIGIN_QUERY_FIELDS:
+            return _origin_field_exists_on_source(spec.name, source)
+        if spec.layer == "record":
             return "U"
         # mtime existence is unknown when the stat failed (mtime_ns<=0);
         # otherwise the source carries the field by construction.
@@ -72,7 +88,11 @@ def _evaluate_source(
         return "T"
     if isinstance(node, FieldEqNode | FieldCmpNode | FieldRangeNode):
         spec = registry.get(node.field)
-        if spec is None or spec.layer == "record":
+        if spec is None:
+            return "U"
+        if spec.layer == "record":
+            if isinstance(node, FieldEqNode) and spec.name in ORIGIN_QUERY_FIELDS:
+                return _origin_field_eq_on_source(node, source, spec, path_patterns)
             return "U"
         # mtime with unknown data (stat failed, mtime_ns=0) is "U" — we
         # don't KNOW the file's mtime, so we can't definitively exclude
@@ -110,7 +130,10 @@ def _evaluate_record(
     node: QueryNode,
     record: SearchRecord,
     registry: FieldRegistry,
-    path_patterns: dict[str, _CompiledPathPattern],
+    path_patterns: dict[_PathPatternKey, _CompiledPathPattern],
+    origin_matchers: dict[tuple[str, str], OriginMatcher] | None = None,
+    *,
+    case_sensitive: bool = False,
 ) -> bool:
     """Evaluate ``node`` exactly against ``record``.
 
@@ -120,14 +143,21 @@ def _evaluate_record(
     itself.
     """
     if isinstance(node, TermNode):
-        return _text_matches(record, node.value)
+        return _text_matches(record, node.value, case_sensitive=case_sensitive)
     if isinstance(node, FieldExistsNode):
         return _field_exists_on_record(node.field, record)
     if isinstance(node, FieldEqNode):
         spec = registry.get(node.field)
         if spec is None:
             return False
-        return _field_matches_record(node, record, spec, path_patterns)
+        return _field_matches_record(
+            node,
+            record,
+            spec,
+            path_patterns,
+            origin_matchers,
+            case_sensitive=case_sensitive,
+        )
     if isinstance(node, FieldCmpNode):
         spec = registry.get(node.field)
         if spec is None:
@@ -139,12 +169,72 @@ def _evaluate_record(
             return False
         return _field_range_matches_record(node, record, spec)
     if isinstance(node, NotNode):
-        return not _evaluate_record(node.child, record, registry, path_patterns)
+        return not _evaluate_record(
+            node.child,
+            record,
+            registry,
+            path_patterns,
+            origin_matchers,
+            case_sensitive=case_sensitive,
+        )
     if isinstance(node, AndNode):
-        return all(_evaluate_record(c, record, registry, path_patterns) for c in node.children)
+        return all(
+            _evaluate_record(
+                c,
+                record,
+                registry,
+                path_patterns,
+                origin_matchers,
+                case_sensitive=case_sensitive,
+            )
+            for c in node.children
+        )
     if isinstance(node, OrNode):
-        return any(_evaluate_record(c, record, registry, path_patterns) for c in node.children)
+        return any(
+            _evaluate_record(
+                c,
+                record,
+                registry,
+                path_patterns,
+                origin_matchers,
+                case_sensitive=case_sensitive,
+            )
+            for c in node.children
+        )
     return False
+
+
+def _origin_field_exists_on_source(field: str, source: SourceHandle) -> _Trilean:
+    summary = source.origin_summary
+    if summary is None or field not in summary.complete_fields:
+        return "U"
+    if not summary.origins:
+        return "F"
+    exists = [bool(origin_field_values(origin, field)) for origin in summary.origins]
+    if all(exists):
+        return "T"
+    if any(exists):
+        return "U"
+    return "F"
+
+
+def _origin_field_eq_on_source(
+    node: FieldEqNode,
+    source: SourceHandle,
+    spec: FieldSpec,
+    path_patterns: dict[_PathPatternKey, _CompiledPathPattern],
+) -> _Trilean:
+    if spec.name in ORIGIN_PATH_QUERY_FIELDS:
+        pattern = _path_pattern_for(node, path_patterns)
+        matcher = OriginMatcher.from_field_value(
+            spec.name,
+            node.value,
+            variants=pattern.variants,
+            is_glob=pattern.is_glob,
+        )
+    else:
+        matcher = OriginMatcher.from_field_value(spec.name, node.value)
+    return matcher.evaluate_summary(source.origin_summary)
 
 
 def _field_exists_on_record(field: str, record: SearchRecord) -> bool:
@@ -157,6 +247,8 @@ def _field_exists_on_record(field: str, record: SearchRecord) -> bool:
     carries no ``mtime_ns``). Nullable record fields count as absent when
     ``None`` or empty.
     """
+    if field in ORIGIN_QUERY_FIELDS:
+        return bool(record_origin_field_values(record, field))
     if field in {"agent", "store", "adapter_id", "mtime", "scope"}:
         return True
     if field == "path":
@@ -176,7 +268,7 @@ def _field_matches_source(
     node: FieldEqNode | FieldCmpNode | FieldRangeNode,
     source: SourceHandle,
     spec: FieldSpec,
-    path_patterns: dict[str, _CompiledPathPattern],
+    path_patterns: dict[_PathPatternKey, _CompiledPathPattern],
 ) -> bool:
     """Decide whether ``source`` matches a source-layer field predicate."""
     if spec.name == "agent":
@@ -199,7 +291,10 @@ def _field_matches_record(
     node: FieldEqNode,
     record: SearchRecord,
     spec: FieldSpec,
-    path_patterns: dict[str, _CompiledPathPattern],
+    path_patterns: dict[_PathPatternKey, _CompiledPathPattern],
+    origin_matchers: dict[tuple[str, str], OriginMatcher] | None = None,
+    *,
+    case_sensitive: bool = False,
 ) -> bool:
     """Decide whether ``record`` matches a record-layer FieldEqNode."""
     if spec.layer == "source":
@@ -219,20 +314,48 @@ def _field_matches_record(
         return record.model is not None and _string_match(record.model, node.value)
     if spec.name == "role":
         return record.role is not None and _string_match(record.role, node.value)
+    if spec.name in ORIGIN_QUERY_FIELDS:
+        matcher = _origin_matcher_for_node(node, spec, path_patterns, origin_matchers)
+        return matcher.matches(record)
     if spec.name == "text":
         # A wildcard text value matches the record text only (anchored
         # glob); a plain value keeps the multi-surface substring match.
         if _is_wildcard(node.value):
-            return _string_match(record.text, node.value)
-        return _text_matches(record, node.value)
+            return _string_match(
+                record.text,
+                node.value,
+                case_sensitive=case_sensitive,
+            )
+        return _text_matches(record, node.value, case_sensitive=case_sensitive)
     return False
+
+
+def _origin_matcher_for_node(
+    node: FieldEqNode,
+    spec: FieldSpec,
+    path_patterns: dict[_PathPatternKey, _CompiledPathPattern],
+    origin_matchers: dict[tuple[str, str], OriginMatcher] | None,
+) -> OriginMatcher:
+    """Return the precompiled matcher for an origin field predicate."""
+    matcher = origin_matchers.get((node.field, node.value)) if origin_matchers is not None else None
+    if matcher is not None:
+        return matcher
+    if spec.name in ORIGIN_PATH_QUERY_FIELDS:
+        pattern = _path_pattern_for(node, path_patterns)
+        return OriginMatcher.from_field_value(
+            spec.name,
+            node.value,
+            variants=pattern.variants,
+            is_glob=pattern.is_glob,
+        )
+    return OriginMatcher.from_field_value(spec.name, node.value)
 
 
 def _field_matches_record_via_source(
     node: FieldEqNode,
     record: SearchRecord,
     spec: FieldSpec,
-    path_patterns: dict[str, _CompiledPathPattern],
+    path_patterns: dict[_PathPatternKey, _CompiledPathPattern],
 ) -> bool:
     """Evaluate a source-layer field against record metadata.
 

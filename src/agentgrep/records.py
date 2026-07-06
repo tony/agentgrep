@@ -56,6 +56,8 @@ __all__ = [
     "OutputMode",
     "ProgressMode",
     "RawJsonlSkipLine",
+    "RecordOrigin",
+    "RecordOriginPayload",
     "SearchMatchSurface",
     "SearchQuery",
     "SearchRecord",
@@ -63,6 +65,7 @@ __all__ = [
     "SearchScope",
     "SourceHandle",
     "SourceHandlePayload",
+    "SourceOriginSummary",
     "SourceVersionDetection",
     "SourceVersionDetectionPayload",
     "SummaryRow",
@@ -232,7 +235,19 @@ class SearchRecordPayload(t.TypedDict):
     model: str | None
     session_id: str | None
     conversation_id: str | None
+    origin: RecordOriginPayload | None
     metadata: dict[str, object]
+
+
+class RecordOriginPayload(t.TypedDict, total=False):
+    """JSON payload for project-origin metadata."""
+
+    cwd: str
+    repo: str
+    worktree: str
+    branch: str
+    remote: str
+    cwd_hash: str
 
 
 class FindRecordPayload(t.TypedDict):
@@ -310,6 +325,8 @@ class SearchQuery:
     ``match_surface`` lets line-oriented callers such as ``grep``
     require a match in record text while fuzzy search and filtering
     can keep using the metadata-rich haystack.
+    ``origin_filter`` carries explicit CLI/MCP project filters outside
+    the compiled query so plain text searches keep the legacy fast path.
     """
 
     terms: tuple[str, ...]
@@ -322,6 +339,7 @@ class SearchQuery:
     dedupe: bool = True
     compiled: CompiledQuery | None = None
     match_surface: SearchMatchSurface = "haystack"
+    origin_filter: RecordOrigin | None = None
 
 
 @dataclasses.dataclass(slots=True)
@@ -356,6 +374,7 @@ class SourceHandle:
     mtime_ns: int
     coverage: StoreCoverage = StoreCoverage.DEFAULT_SEARCH
     version_detection: SourceVersionDetection | None = None
+    origin_summary: SourceOriginSummary | None = None
 
 
 @dataclasses.dataclass(slots=True)
@@ -375,6 +394,7 @@ class SearchRecord:
     session_id: str | None = None
     conversation_id: str | None = None
     metadata: dict[str, object] = dataclasses.field(default_factory=dict)
+    origin: RecordOrigin | None = None
 
 
 @dataclasses.dataclass(slots=True)
@@ -401,6 +421,40 @@ class MessageCandidate:
     model: str | None = None
     session_id: str | None = None
     conversation_id: str | None = None
+    origin: RecordOrigin | None = None
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class RecordOrigin:
+    """Project/workspace origin attached to a normalized record."""
+
+    cwd: str | None = None
+    repo: str | None = None
+    worktree: str | None = None
+    branch: str | None = None
+    remote: str | None = None
+    cwd_hash: str | None = None
+
+    def is_empty(self) -> bool:
+        """Return whether this origin carries no useful project signal."""
+        return not any(
+            (
+                self.cwd,
+                self.repo,
+                self.worktree,
+                self.branch,
+                self.remote,
+                self.cwd_hash,
+            ),
+        )
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class SourceOriginSummary:
+    """Source-level origin facts safe for conservative pruning."""
+
+    origins: tuple[RecordOrigin, ...] = ()
+    complete_fields: frozenset[str] = frozenset()
 
 
 # --- Store-role classification constants -----------------------------------

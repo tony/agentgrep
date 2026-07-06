@@ -77,6 +77,35 @@ class AgentProductNameCase(t.NamedTuple):
     product_name: str
 
 
+class McpOriginPhraseCase(t.NamedTuple):
+    """Parametrized case for MCP origin filters with phrase terms."""
+
+    test_id: str
+    terms: list[str]
+    matching_text: str
+    nonmatching_text: str
+    outside_text: str
+    expected_texts: list[str]
+
+
+class McpOriginLiteralTermCase(t.NamedTuple):
+    """Parametrized case for MCP origin filters with literal punctuation terms."""
+
+    test_id: str
+    terms: list[str]
+    matching_text: str
+    nonmatching_text: str
+    expected_texts: list[str]
+
+
+class McpOriginCaseSensitiveCase(t.NamedTuple):
+    """Parametrized case for MCP origin filters with case-sensitive terms."""
+
+    test_id: str
+    text: str
+    expected_texts: list[str]
+
+
 RESULT_SHAPE_CASES = [
     McpResultShapeCase(
         test_id="search",
@@ -93,6 +122,9 @@ RESULT_SHAPE_CASES = [
             "scope": "prompts",
             "case_sensitive": False,
             "limit": 1,
+            "cwd": None,
+            "repo": None,
+            "branch": None,
         },
     ),
     McpResultShapeCase(
@@ -127,6 +159,117 @@ AGENT_PRODUCT_NAMES: dict[agentgrep.AgentName, str] = {
 AGENT_PRODUCT_NAME_CASES: tuple[AgentProductNameCase, ...] = tuple(
     AgentProductNameCase(test_id=agent, agent=agent, product_name=product)
     for agent, product in sorted(AGENT_PRODUCT_NAMES.items())
+)
+
+MCP_ORIGIN_PHRASE_CASES: tuple[McpOriginPhraseCase, ...] = (
+    McpOriginPhraseCase(
+        # MCP terms are words: a space-containing element ANDs its
+        # words, exactly as it does without origin filters.
+        test_id="multiword-term-ands-words",
+        terms=["exact phrase"],
+        matching_text="exact phrase same",
+        nonmatching_text="exact words then phrase same",
+        outside_text="exact phrase other",
+        expected_texts=["exact phrase same", "exact words then phrase same"],
+    ),
+    McpOriginPhraseCase(
+        # A single boolean-carrying token parses as query language, the
+        # same as it does without origin filters.
+        test_id="boolean-word-token",
+        terms=["rock OR roll"],
+        matching_text="rock OR roll same",
+        nonmatching_text="rock same",
+        outside_text="rock OR roll other",
+        expected_texts=["rock OR roll same", "rock same"],
+    ),
+    McpOriginPhraseCase(
+        test_id="not-word-token",
+        terms=["rock NOT roll"],
+        matching_text="rock NOT roll same",
+        nonmatching_text="rock same",
+        outside_text="rock NOT roll other",
+        expected_texts=["rock same"],
+    ),
+    McpOriginPhraseCase(
+        test_id="paren-phrase",
+        terms=["rock (roll)"],
+        matching_text="rock (roll) same",
+        nonmatching_text="rock roll same",
+        outside_text="rock (roll) other",
+        expected_texts=["rock (roll) same"],
+    ),
+)
+
+MCP_ORIGIN_LITERAL_TERM_CASES: tuple[McpOriginLiteralTermCase, ...] = (
+    McpOriginLiteralTermCase(
+        test_id="https-url-literal",
+        terms=["https://example.com"],
+        matching_text="please inspect https://example.com",
+        nonmatching_text="please inspect https and example",
+        expected_texts=["please inspect https://example.com"],
+    ),
+    McpOriginLiteralTermCase(
+        test_id="unknown-field-looking-literal",
+        terms=["foo:bar"],
+        matching_text="foo:bar appears literally",
+        nonmatching_text="foo and bar appear separately",
+        expected_texts=["foo:bar appears literally"],
+    ),
+    McpOriginLiteralTermCase(
+        test_id="comma-literal",
+        terms=["foo,bar"],
+        matching_text="foo,bar appears literally",
+        nonmatching_text="foo and bar appear separately",
+        expected_texts=["foo,bar appears literally"],
+    ),
+    McpOriginLiteralTermCase(
+        test_id="equals-literal",
+        terms=["key=value"],
+        matching_text="key=value appears literally",
+        nonmatching_text="key and value appear separately",
+        expected_texts=["key=value appears literally"],
+    ),
+    McpOriginLiteralTermCase(
+        test_id="hash-literal",
+        terms=["foo#bar"],
+        matching_text="foo#bar appears literally",
+        nonmatching_text="foo and bar appear separately",
+        expected_texts=["foo#bar appears literally"],
+    ),
+    McpOriginLiteralTermCase(
+        test_id="emoji-literal",
+        terms=["\U0001f600"],
+        matching_text="emoji \U0001f600 appears literally",
+        nonmatching_text="emoji appears textually",
+        expected_texts=["emoji \U0001f600 appears literally"],
+    ),
+    McpOriginLiteralTermCase(
+        test_id="negative-literal",
+        terms=["-foo"],
+        matching_text="-foo appears literally",
+        nonmatching_text="foo appears without dash",
+        expected_texts=["-foo appears literally"],
+    ),
+    McpOriginLiteralTermCase(
+        test_id="paren-literal",
+        terms=["foo(bar)"],
+        matching_text="foo(bar) appears literally",
+        nonmatching_text="foo and then bar appear separately",
+        expected_texts=["foo(bar) appears literally"],
+    ),
+)
+
+MCP_ORIGIN_CASE_SENSITIVE_CASES: tuple[McpOriginCaseSensitiveCase, ...] = (
+    McpOriginCaseSensitiveCase(
+        test_id="exact-case",
+        text="Needle appears here",
+        expected_texts=["Needle appears here"],
+    ),
+    McpOriginCaseSensitiveCase(
+        test_id="lowercase-miss",
+        text="needle appears here",
+        expected_texts=[],
+    ),
 )
 
 
@@ -183,14 +326,21 @@ def write_codex_prompt_session(
     session_id: str,
     timestamp: str,
     text: str,
+    cwd: str | None = None,
+    branch: str | None = None,
 ) -> None:
     """Write a minimal Codex session containing one user prompt."""
+    metadata: dict[str, object] = {"id": session_id, "model_provider": "openai"}
+    if cwd is not None:
+        metadata["cwd"] = cwd
+    if branch is not None:
+        metadata["git"] = {"branch": branch}
     write_jsonl(
         path,
         [
             {
                 "type": "session_meta",
-                "payload": {"id": session_id, "model_provider": "openai"},
+                "payload": metadata,
             },
             {
                 "timestamp": timestamp,
@@ -391,6 +541,37 @@ async def test_mcp_search_honors_query_language(
     assert len(wrong_agent_data.results) == 0
 
 
+async def test_mcp_search_honors_query_language_in_single_tokens(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Whitespace-containing terms without origin params stay query language."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    write_jsonl(
+        home / ".codex" / "sessions" / "2026" / "01" / "01" / "rollout.jsonl",
+        _codex_user_session("session-1", "alpha content here"),
+    )
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        union = await client.call_tool(
+            "search",
+            {"terms": ["zzznope OR alpha"], "scope": "prompts", "limit": 5},
+        )
+        predicate = await client.call_tool(
+            "search",
+            {"terms": ["agent:codex alpha"], "scope": "prompts", "limit": 5},
+        )
+
+    union_data = t.cast("SearchToolDataLike", union.data)
+    predicate_data = t.cast("SearchToolDataLike", predicate.data)
+    assert len(union_data.results) == 1
+    assert union_data.results[0].text == "alpha content here"
+    assert len(predicate_data.results) == 1
+    assert predicate_data.results[0].text == "alpha content here"
+
+
 async def test_mcp_search_rejects_invalid_query() -> None:
     """A malformed query predicate raises a ToolError with the reason."""
     from fastmcp.exceptions import ToolError
@@ -578,6 +759,395 @@ async def test_mcp_search_cursor_returns_next_page_without_duplicate(
     assert second_data["status"] == {"state": "complete", "reason": None}
     assert second_data["page"]["next_cursor"] is None
     assert second_data["request"]["terms"] == ["serenity"]
+
+
+async def test_mcp_search_explicit_origin_filters_survive_cursor(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit MCP origin filters narrow results and survive pagination."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    sessions = home / ".codex" / "sessions" / "2026" / "01" / "01"
+    write_codex_prompt_session(
+        sessions / "same-new.jsonl",
+        session_id="same-new",
+        timestamp="2026-06-02T00:00:00Z",
+        text="origin serenity new",
+        cwd="/workspace/agentgrep",
+        branch="project-context",
+    )
+    write_codex_prompt_session(
+        sessions / "same-old.jsonl",
+        session_id="same-old",
+        timestamp="2026-06-01T00:00:00Z",
+        text="origin serenity old",
+        cwd="/workspace/agentgrep",
+        branch="project-context",
+    )
+    write_codex_prompt_session(
+        sessions / "other.jsonl",
+        session_id="other",
+        timestamp="2026-06-03T00:00:00Z",
+        text="origin serenity other",
+        cwd="/workspace/other",
+        branch="main",
+    )
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        first = await client.call_tool(
+            "search",
+            {
+                "terms": ["origin", "serenity"],
+                "agent": "codex",
+                "scope": "prompts",
+                "cwd": "/workspace/agentgrep",
+                "branch": "project-context",
+                "limit": 1,
+            },
+        )
+        first_data = tool_payload(first)
+        cursor = first_data["page"]["next_cursor"]
+        second = await client.call_tool("search", {"cursor": cursor})
+
+    second_data = tool_payload(second)
+    assert [row["text"] for row in first_data["results"]] == ["origin serenity new"]
+    assert [row["text"] for row in second_data["results"]] == ["origin serenity old"]
+    assert second_data["request"]["cwd"] == "/workspace/agentgrep"
+    assert second_data["request"]["branch"] == "project-context"
+    assert second_data["page"]["next_cursor"] is None
+
+
+def test_mcp_explicit_origin_filters_keep_plain_terms_fast_path() -> None:
+    """Explicit MCP origin filters keep plain terms out of compiled predicates."""
+    from agentgrep.mcp import SearchRequestModel
+    from agentgrep.mcp.tools.search_tools import _compile_request_query
+
+    base_query = agentgrep.SearchQuery(
+        terms=("origin", "serenity"),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=10,
+    )
+    request = SearchRequestModel(
+        terms=["origin", "serenity"],
+        agent="codex",
+        scope="prompts",
+        case_sensitive=False,
+        cwd="/workspace/agentgrep",
+        branch="project-context",
+    )
+
+    query = _compile_request_query(base_query, request)
+
+    assert query.compiled is None
+    assert query.terms == ("origin", "serenity")
+    assert query.origin_filter == agentgrep.RecordOrigin(
+        cwd="/workspace/agentgrep",
+        branch="project-context",
+    )
+    assert agentgrep.matches_record(
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="codex.sessions",
+            adapter_id="codex.sessions_jsonl.v1",
+            path=pathlib.Path("/tmp/session.jsonl"),
+            text="origin serenity",
+            origin=agentgrep.RecordOrigin(
+                cwd="/workspace/agentgrep/src",
+                branch="project-context",
+            ),
+        ),
+        query,
+    )
+    assert not agentgrep.matches_record(
+        agentgrep.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="codex.sessions",
+            adapter_id="codex.sessions_jsonl.v1",
+            path=pathlib.Path("/tmp/session.jsonl"),
+            text="origin serenity",
+            origin=agentgrep.RecordOrigin(
+                cwd="/workspace/other",
+                branch="project-context",
+            ),
+        ),
+        query,
+    )
+
+
+async def test_mcp_search_normalizes_origin_path_filters(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Relative and ~-prefixed MCP cwd filters resolve like the CLI flags."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    workspace = home / "work" / "agentgrep"
+    workspace.mkdir(parents=True)
+    sessions = home / ".codex" / "sessions" / "2026" / "01" / "01"
+    write_codex_prompt_session(
+        sessions / "same.jsonl",
+        session_id="same",
+        timestamp="2026-06-02T00:00:00Z",
+        text="origin serenity",
+        cwd=str(workspace.resolve()),
+    )
+    monkeypatch.chdir(workspace)
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        relative = await client.call_tool(
+            "search",
+            {"terms": ["serenity"], "agent": "codex", "scope": "prompts", "cwd": "."},
+        )
+        tilde = await client.call_tool(
+            "search",
+            {
+                "terms": ["serenity"],
+                "agent": "codex",
+                "scope": "prompts",
+                "cwd": "~/work/agentgrep",
+            },
+        )
+
+    relative_data = tool_payload(relative)
+    tilde_data = tool_payload(tilde)
+    assert [row["text"] for row in relative_data["results"]] == ["origin serenity"]
+    assert [row["text"] for row in tilde_data["results"]] == ["origin serenity"]
+
+
+async def test_mcp_search_ignores_blank_origin_filters(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Blank cwd/repo/branch values never filter against the server's cwd."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    sessions = home / ".codex" / "sessions" / "2026" / "01" / "01"
+    write_codex_prompt_session(
+        sessions / "blank.jsonl",
+        session_id="blank",
+        timestamp="2026-06-02T00:00:00Z",
+        text="origin serenity",
+        cwd="/workspace/elsewhere",
+    )
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        blank = await client.call_tool(
+            "search",
+            {
+                "terms": ["serenity"],
+                "agent": "codex",
+                "scope": "prompts",
+                "cwd": "",
+                "repo": " ",
+                "branch": "",
+            },
+        )
+
+    blank_data = tool_payload(blank)
+    assert [row["text"] for row in blank_data["results"]] == ["origin serenity"]
+
+
+async def test_mcp_search_origin_filters_scope_boolean_query(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Generated MCP origin predicates apply to the whole boolean query."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    sessions = home / ".codex" / "sessions" / "2026" / "01" / "01"
+    write_codex_prompt_session(
+        sessions / "same-foo.jsonl",
+        session_id="same-foo",
+        timestamp="2026-06-03T00:00:00Z",
+        text="foo same",
+        cwd="/workspace/agentgrep",
+    )
+    write_codex_prompt_session(
+        sessions / "same-bar.jsonl",
+        session_id="same-bar",
+        timestamp="2026-06-02T00:00:00Z",
+        text="bar same",
+        cwd="/workspace/agentgrep/src",
+    )
+    write_codex_prompt_session(
+        sessions / "other-bar.jsonl",
+        session_id="other-bar",
+        timestamp="2026-06-01T00:00:00Z",
+        text="bar other",
+        cwd="/workspace/other",
+    )
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        result = await client.call_tool(
+            "search",
+            {
+                "terms": ["foo", "OR", "bar"],
+                "agent": "codex",
+                "scope": "prompts",
+                "cwd": "/workspace/agentgrep",
+                "limit": 10,
+            },
+        )
+
+    data = tool_payload(result)
+    assert [row["text"] for row in data["results"]] == ["foo same", "bar same"]
+
+
+@pytest.mark.parametrize(
+    "case",
+    MCP_ORIGIN_PHRASE_CASES,
+    ids=[case.test_id for case in MCP_ORIGIN_PHRASE_CASES],
+)
+async def test_mcp_search_origin_filters_preserve_phrase_terms(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: McpOriginPhraseCase,
+) -> None:
+    """Generated MCP origin predicates leave user term semantics unchanged."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    sessions = home / ".codex" / "sessions" / "2026" / "01" / "01"
+    write_codex_prompt_session(
+        sessions / "same-exact.jsonl",
+        session_id="same-exact",
+        timestamp="2026-06-03T00:00:00Z",
+        text=case.matching_text,
+        cwd="/workspace/agentgrep",
+    )
+    write_codex_prompt_session(
+        sessions / "same-separated.jsonl",
+        session_id="same-separated",
+        timestamp="2026-06-02T00:00:00Z",
+        text=case.nonmatching_text,
+        cwd="/workspace/agentgrep",
+    )
+    write_codex_prompt_session(
+        sessions / "other-exact.jsonl",
+        session_id="other-exact",
+        timestamp="2026-06-01T00:00:00Z",
+        text=case.outside_text,
+        cwd="/workspace/other",
+    )
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        result = await client.call_tool(
+            "search",
+            {
+                "terms": case.terms,
+                "agent": "codex",
+                "scope": "prompts",
+                "cwd": "/workspace/agentgrep",
+                "limit": 10,
+            },
+        )
+
+    data = tool_payload(result)
+    assert [row["text"] for row in data["results"]] == case.expected_texts
+
+
+@pytest.mark.parametrize(
+    "case",
+    MCP_ORIGIN_LITERAL_TERM_CASES,
+    ids=[case.test_id for case in MCP_ORIGIN_LITERAL_TERM_CASES],
+)
+async def test_mcp_search_origin_filters_preserve_literal_punctuation_terms(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: McpOriginLiteralTermCase,
+) -> None:
+    """Generated MCP origin predicates keep punctuation-heavy terms literal."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    sessions = home / ".codex" / "sessions" / "2026" / "01" / "01"
+    write_codex_prompt_session(
+        sessions / "same-match.jsonl",
+        session_id="same-match",
+        timestamp="2026-06-03T00:00:00Z",
+        text=case.matching_text,
+        cwd="/workspace/agentgrep",
+    )
+    write_codex_prompt_session(
+        sessions / "same-miss.jsonl",
+        session_id="same-miss",
+        timestamp="2026-06-02T00:00:00Z",
+        text=case.nonmatching_text,
+        cwd="/workspace/agentgrep",
+    )
+    write_codex_prompt_session(
+        sessions / "other-match.jsonl",
+        session_id="other-match",
+        timestamp="2026-06-01T00:00:00Z",
+        text=case.matching_text,
+        cwd="/workspace/other",
+    )
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        result = await client.call_tool(
+            "search",
+            {
+                "terms": case.terms,
+                "agent": "codex",
+                "scope": "prompts",
+                "cwd": "/workspace/agentgrep",
+                "limit": 10,
+            },
+        )
+
+    data = tool_payload(result)
+    assert [row["text"] for row in data["results"]] == case.expected_texts
+
+
+@pytest.mark.parametrize(
+    "case",
+    MCP_ORIGIN_CASE_SENSITIVE_CASES,
+    ids=[case.test_id for case in MCP_ORIGIN_CASE_SENSITIVE_CASES],
+)
+async def test_mcp_search_origin_filters_preserve_case_sensitive_terms(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: McpOriginCaseSensitiveCase,
+) -> None:
+    """Generated MCP origin predicates preserve the request case mode."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    sessions = home / ".codex" / "sessions" / "2026" / "01" / "01"
+    write_codex_prompt_session(
+        sessions / "same-case.jsonl",
+        session_id="same-case",
+        timestamp="2026-06-03T00:00:00Z",
+        text=case.text,
+        cwd="/workspace/agentgrep",
+    )
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        result = await client.call_tool(
+            "search",
+            {
+                "terms": ["Needle"],
+                "agent": "codex",
+                "scope": "prompts",
+                "cwd": "/workspace/agentgrep",
+                "case_sensitive": True,
+                "limit": 10,
+            },
+        )
+
+    data = tool_payload(result)
+    assert [row["text"] for row in data["results"]] == case.expected_texts
 
 
 async def test_mcp_search_cursor_rejects_empty_terms(
@@ -1442,3 +2012,71 @@ async def test_mcp_capabilities_advertises_new_resources() -> None:
         "agentgrep://store-roles",
         "agentgrep://store-formats",
     } <= advertised
+
+
+class McpTermTokenizationCase(t.NamedTuple):
+    """Parametrized case for MCP term word-splitting without origin params."""
+
+    test_id: str
+    terms: list[str]
+    matching_text: str
+    nonmatching_text: str
+    expected_texts: list[str]
+
+
+MCP_TERM_TOKENIZATION_CASES: tuple[McpTermTokenizationCase, ...] = (
+    McpTermTokenizationCase(
+        test_id="multiword-term-ands-words",
+        terms=["error handling"],
+        matching_text="error recovery and handling",
+        nonmatching_text="error only",
+        expected_texts=["error recovery and handling"],
+    ),
+    McpTermTokenizationCase(
+        test_id="padded-term-strips-whitespace",
+        terms=["alpha "],
+        matching_text="deploy alpha.",
+        nonmatching_text="beta only",
+        expected_texts=["deploy alpha."],
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    MCP_TERM_TOKENIZATION_CASES,
+    ids=[case.test_id for case in MCP_TERM_TOKENIZATION_CASES],
+)
+async def test_mcp_search_terms_tokenize_as_words(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: McpTermTokenizationCase,
+) -> None:
+    """MCP terms whitespace-split into ANDed words, with or without origin."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    sessions = home / ".codex" / "sessions" / "2026" / "01" / "01"
+    write_codex_prompt_session(
+        sessions / "match.jsonl",
+        session_id="match",
+        timestamp="2026-06-03T00:00:00Z",
+        text=case.matching_text,
+        cwd="/workspace/agentgrep",
+    )
+    write_codex_prompt_session(
+        sessions / "miss.jsonl",
+        session_id="miss",
+        timestamp="2026-06-02T00:00:00Z",
+        text=case.nonmatching_text,
+        cwd="/workspace/agentgrep",
+    )
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        result = await client.call_tool(
+            "search",
+            {"terms": case.terms, "agent": "codex", "scope": "prompts", "limit": 10},
+        )
+
+    data = tool_payload(result)
+    assert [row["text"] for row in data["results"]] == case.expected_texts

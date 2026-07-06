@@ -108,6 +108,22 @@ includes dedicated prompt-history logs plus user turns projected from
 transcript-only backends. Full conversation, assistant, tool, and event
 records require `--scope conversations` or `--scope all`.
 
+## Project context availability
+
+Project context is best-effort and store-dependent. When a backend
+records working directories, repository roots, branches, workspace
+hashes, or sibling workspace metadata, agentgrep attaches that data as
+{class}`~agentgrep.RecordOrigin` on search results. Those origins power
+{ref}`current-project search <cli-search-project-context>` and the
+origin fields in {ref}`library-query-language-origin-fields`.
+
+Backends without project context still remain searchable; they simply do
+not match hard origin filters. Some SQLite-backed workspace stores, such
+as {doc}`cursor-ide` and {doc}`vscode`, expose enough source-level
+origin facts for agentgrep to skip mismatched workspace databases before
+parsing. Global stores that do not know their project stay
+conservative.
+
 ## Version detection
 
 Source discovery reports version metadata separately from record

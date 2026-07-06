@@ -27,10 +27,16 @@ through, the record filter will decide". See the design doc at
 
 from __future__ import annotations
 
+import collections.abc as cabc
 import dataclasses
 import re
 import typing as t
 
+from agentgrep.origin import (
+    ORIGIN_PATH_QUERY_FIELDS,
+    ORIGIN_QUERY_FIELDS,
+    OriginMatcher,
+)
 from agentgrep.query.ast import (
     AndNode,
     FieldCmpNode,
@@ -46,7 +52,7 @@ from agentgrep.query.dates import DateParseError, parse_date_literal
 from agentgrep.query.errors import QueryCompileError
 from agentgrep.query.evaluate import _evaluate_record, _evaluate_source
 from agentgrep.query.parser import QueryParseError, parse_query
-from agentgrep.query.pathmatch import _compile_path_patterns
+from agentgrep.query.pathmatch import _compile_path_patterns, _CompiledPathPattern
 from agentgrep.query.registry import FieldRegistry
 from agentgrep.records import SearchQuery, SearchRecord, SearchScope, SourceHandle
 
@@ -67,7 +73,12 @@ class CompiledQuery:
     is_pure_text: bool
 
 
-def compile_query(ast: QueryNode, registry: FieldRegistry) -> CompiledQuery:
+def compile_query(
+    ast: QueryNode,
+    registry: FieldRegistry,
+    *,
+    case_sensitive: bool = False,
+) -> CompiledQuery:
     """Compile an AST into a :class:`CompiledQuery`.
 
     Pure-text queries short-circuit to the fast path; everything
@@ -94,13 +105,22 @@ def compile_query(ast: QueryNode, registry: FieldRegistry) -> CompiledQuery:
 
     _validate_ast(ast, registry)
     text_terms = tuple(_collect_text_terms(ast))
-    path_patterns = _compile_path_patterns(ast)
+    path_fields = frozenset(spec.name for spec in registry.specs if spec.kind == "path")
+    path_patterns = _compile_path_patterns(ast, path_fields=path_fields)
+    origin_matchers = _compile_origin_matchers(ast, registry, path_patterns)
 
     def source_predicate(source: SourceHandle) -> bool:
         return _evaluate_source(ast, source, registry, path_patterns) != "F"
 
     def record_predicate(record: SearchRecord) -> bool:
-        return _evaluate_record(ast, record, registry, path_patterns)
+        return _evaluate_record(
+            ast,
+            record,
+            registry,
+            path_patterns,
+            origin_matchers,
+            case_sensitive=case_sensitive,
+        )
 
     return CompiledQuery(
         source_predicate=source_predicate,
@@ -108,6 +128,37 @@ def compile_query(ast: QueryNode, registry: FieldRegistry) -> CompiledQuery:
         text_terms=text_terms,
         is_pure_text=False,
     )
+
+
+def _compile_origin_matchers(
+    node: QueryNode,
+    registry: FieldRegistry,
+    path_patterns: dict[tuple[str, str], _CompiledPathPattern],
+) -> dict[tuple[str, str], OriginMatcher]:
+    """Return origin matchers keyed by the parsed field/value pair."""
+    if isinstance(node, FieldEqNode):
+        spec = registry.get(node.field)
+        if spec is None or spec.name not in ORIGIN_QUERY_FIELDS:
+            return {}
+        pattern = path_patterns.get((node.field, node.value))
+        if spec.name in ORIGIN_PATH_QUERY_FIELDS and pattern is not None:
+            matcher = OriginMatcher.from_field_value(
+                spec.name,
+                node.value,
+                variants=pattern.variants,
+                is_glob=pattern.is_glob,
+            )
+        else:
+            matcher = OriginMatcher.from_field_value(spec.name, node.value)
+        return {(node.field, node.value): matcher}
+    if isinstance(node, NotNode):
+        return _compile_origin_matchers(node.child, registry, path_patterns)
+    if isinstance(node, AndNode | OrNode):
+        matchers: dict[tuple[str, str], OriginMatcher] = {}
+        for child in node.children:
+            matchers.update(_compile_origin_matchers(child, registry, path_patterns))
+        return matchers
+    return {}
 
 
 def _validate_ast(node: QueryNode, registry: FieldRegistry) -> None:
@@ -270,7 +321,7 @@ def build_query_from_input(
     except QueryParseError as exc:
         return QueryBuildResult(query=None, error=str(exc))
     try:
-        compiled = compile_query(ast, registry)
+        compiled = compile_query(ast, registry, case_sensitive=base_query.case_sensitive)
     except QueryCompileError as exc:
         return QueryBuildResult(query=None, error=str(exc))
     # A pure-text result (phrase, or parenthesized AND of terms) needs no
@@ -279,11 +330,7 @@ def build_query_from_input(
     result_compiled = None if compiled.is_pure_text else compiled
     # A ``scope:`` predicate filters records, but the coarse discovery scope
     # decides which stores are opened at all. Widen discovery to "all" when
-    # the query references scope so the record-level filter has both prompt
-    # and conversation sources to act on — otherwise ``scope:conversations``
-    # against a prompts-scoped box would open no conversation stores and
-    # match nothing. Mirrors the CLI's ``_effective_search_scope``.
-    scope = "all" if "scope" in fields_in_ast(ast) else base_query.scope
+    scope = scope_widened_for_ast(ast, base_query.scope)
     return QueryBuildResult(
         query=_rebuild(
             base_query,
@@ -293,6 +340,53 @@ def build_query_from_input(
         ),
         error=None,
     )
+
+
+def compose_query_ast(
+    terms: cabc.Sequence[str],
+    nodes: cabc.Sequence[QueryNode],
+    registry: FieldRegistry,
+) -> tuple[QueryNode, QueryNode | None]:
+    """AND synthetic ``nodes`` with user terms compiled as the bare path would.
+
+    Frontends inject generated predicates (origin filters) through this
+    helper so user terms keep their no-filter semantics: terms carrying
+    query syntax parse exactly as the bare path parses them, and plain
+    terms become literal :class:`~agentgrep.query.ast.TermNode` children —
+    a single token with spaces stays one substring term instead of being
+    re-parsed as two.
+
+    Parameters
+    ----------
+    terms : Sequence[str]
+        User search terms, one argv/request element each.
+    nodes : Sequence[QueryNode]
+        Synthetic predicate nodes to AND with the user terms.
+    registry : FieldRegistry
+        Registry used for syntax detection and parsing.
+
+    Returns
+    -------
+    tuple[QueryNode, QueryNode | None]
+        The composed root, plus the parsed user AST when the terms
+        carried query syntax (``None`` when every term stayed literal).
+
+    Raises
+    ------
+    QueryParseError
+        When the user terms carry syntax that fails to parse.
+    """
+    cleaned = tuple(term for term in terms if term.strip())
+    children: list[QueryNode] = list(nodes)
+    user_ast: QueryNode | None = None
+    if any(_has_query_syntax(term.strip(), registry) for term in cleaned):
+        user_ast = parse_query(" ".join(cleaned), registry)
+        children.append(user_ast)
+    else:
+        children.extend(TermNode(value=term) for term in cleaned)
+    if len(children) == 1:
+        return children[0], user_ast
+    return AndNode(children=tuple(children)), user_ast
 
 
 _BOOLEAN_KEYWORDS: frozenset[str] = frozenset({"AND", "OR", "NOT"})
@@ -355,6 +449,7 @@ def _rebuild(
         dedupe=base.dedupe,
         compiled=compiled,
         match_surface=base.match_surface,
+        origin_filter=base.origin_filter,
     )
 
 
@@ -377,6 +472,19 @@ def fields_in_ast(node: QueryNode) -> set[str]:
             result |= fields_in_ast(child)
         return result
     return set()
+
+
+def scope_widened_for_ast(ast: QueryNode | None, scope: SearchScope) -> SearchScope:
+    """Return ``all`` when ``ast`` carries a ``scope:`` predicate.
+
+    A ``scope:`` predicate filters records, so discovery must open both
+    prompt and conversation stores for it to act — otherwise
+    ``scope:conversations`` against a prompts-scoped query would open no
+    conversation stores and match nothing.
+    """
+    if ast is not None and "scope" in fields_in_ast(ast):
+        return "all"
+    return scope
 
 
 _FIND_BOOLEAN_TEXT_REASON = (
