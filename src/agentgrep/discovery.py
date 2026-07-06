@@ -17,6 +17,7 @@ import re
 import sys
 import tomllib
 import typing as t
+import urllib.parse
 
 from agentgrep.readers import (
     as_optional_str,
@@ -33,7 +34,9 @@ from agentgrep.records import (
     DiscoveryVersionContext,
     DiscoveryVersionDetail,
     JSONValue,
+    RecordOrigin,
     SourceHandle,
+    SourceOriginSummary,
     SourceVersionDetection,
 )
 from agentgrep.stores import (
@@ -772,6 +775,7 @@ def handles_from_discovery(
                     search_root=None,
                     mtime_ns=file_mtime_ns(candidate),
                     coverage=coverage,
+                    origin_summary=_source_origin_summary(spec, candidate),
                 ),
             )
 
@@ -794,6 +798,7 @@ def handles_from_discovery(
                     search_root=search_root,
                     mtime_ns=file_mtime_ns(path),
                     coverage=coverage,
+                    origin_summary=_source_origin_summary(spec, path),
                 ),
             )
 
@@ -811,10 +816,47 @@ def handles_from_discovery(
                     search_root=None,
                     mtime_ns=file_mtime_ns(candidate),
                     coverage=coverage,
+                    origin_summary=_source_origin_summary(spec, candidate),
                 ),
             )
 
     return sources
+
+
+def _source_origin_summary(spec: DiscoverySpec, path: pathlib.Path) -> SourceOriginSummary | None:
+    """Return source-level origin facts known from discovery metadata."""
+    if spec.store != "cursor-ide.workspace_state" or path.name != "state.vscdb":
+        return None
+    cwd_hash = path.parent.name
+    if not cwd_hash or cwd_hash in {"globalStorage", "User"}:
+        return None
+    cwd = _cursor_workspace_state_cwd(path)
+    complete_fields = {"cwd_hash"}
+    if cwd:
+        complete_fields.add("cwd")
+    return SourceOriginSummary(
+        origins=(RecordOrigin(cwd=cwd, cwd_hash=cwd_hash),),
+        complete_fields=frozenset(complete_fields),
+    )
+
+
+def _cursor_workspace_state_cwd(path: pathlib.Path) -> str | None:
+    payload = read_json_file(path.parent / "workspace.json")
+    if not isinstance(payload, dict):
+        return None
+    folder = as_optional_str(t.cast("dict[str, object]", payload).get("folder"))
+    if not folder:
+        return None
+    return _workspace_uri_to_path(folder)
+
+
+def _workspace_uri_to_path(uri: str) -> str | None:
+    remote = re.match(r"vscode-remote://[^/]+(/.*)$", uri)
+    if remote:
+        return urllib.parse.unquote(remote.group(1)) or None
+    if uri.startswith("file://"):
+        return urllib.parse.unquote(uri[len("file://") :]) or None
+    return None
 
 
 def format_timestamp_tig(value: str | None) -> str:

@@ -30,6 +30,7 @@ import agentgrep._engine.planning as _rm_planning
 import agentgrep._engine.scanning as _rm_scanning
 import agentgrep.readers as _rm_readers
 from agentgrep._engine import orchestration
+from agentgrep.records import RecordOrigin, SourceOriginSummary
 
 if t.TYPE_CHECKING:
     import collections.abc as cabc
@@ -7535,6 +7536,34 @@ _CURSOR_STATE_TWO_STAGE_CASES: tuple[CursorStateTwoStageCase, ...] = (
 )
 
 
+class CursorWorkspaceOriginCase(t.NamedTuple):
+    """Parametrized case for Cursor workspace source-origin summaries."""
+
+    test_id: str
+    workspace_payload: dict[str, object] | None
+    expected_summary: SourceOriginSummary
+
+
+_CURSOR_WORKSPACE_ORIGIN_CASES: tuple[CursorWorkspaceOriginCase, ...] = (
+    CursorWorkspaceOriginCase(
+        test_id="folder-uri-adds-cwd-and-hash",
+        workspace_payload={"folder": "vscode-remote://wsl+Ubuntu/home/u/work/proj"},
+        expected_summary=SourceOriginSummary(
+            origins=(RecordOrigin(cwd="/home/u/work/proj", cwd_hash="wshash"),),
+            complete_fields=frozenset({"cwd", "cwd_hash"}),
+        ),
+    ),
+    CursorWorkspaceOriginCase(
+        test_id="missing-workspace-json-keeps-cwd-unknown",
+        workspace_payload=None,
+        expected_summary=SourceOriginSummary(
+            origins=(RecordOrigin(cwd_hash="wshash"),),
+            complete_fields=frozenset({"cwd_hash"}),
+        ),
+    ),
+)
+
+
 @pytest.mark.parametrize(
     CursorStateTwoStageCase._fields,
     _CURSOR_STATE_TWO_STAGE_CASES,
@@ -7839,6 +7868,46 @@ def test_cursor_ide_workspace_state_extracts_aiservice_prompts(
     assert [r.text for r in records] == ["serenity workspace prompt"]
     assert records[0].role == "user"
     assert records[0].agent == "cursor-ide"
+
+
+@pytest.mark.parametrize(
+    CursorWorkspaceOriginCase._fields,
+    _CURSOR_WORKSPACE_ORIGIN_CASES,
+    ids=[case.test_id for case in _CURSOR_WORKSPACE_ORIGIN_CASES],
+)
+def test_cursor_ide_workspace_state_has_origin_summary(
+    test_id: str,
+    workspace_payload: dict[str, object] | None,
+    expected_summary: SourceOriginSummary,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Per-workspace Cursor state sources expose conservative origin summaries."""
+    _ = test_id
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+
+    workspace_root = agentgrep._cursor_ide_workspace_root(home)
+    workspace_dir = workspace_root / "wshash"
+    db_path = workspace_dir / "state.vscdb"
+    if workspace_payload is not None:
+        workspace_dir.mkdir(parents=True)
+        _ = (workspace_dir / "workspace.json").write_text(
+            json.dumps(workspace_payload),
+            encoding="utf-8",
+        )
+    _write_cursor_state_db(db_path)
+
+    sources = agentgrep.discover_sources(
+        home,
+        ("cursor-ide",),
+        agentgrep.BackendSelection(None, None, None),
+    )
+    workspace_sources = [s for s in sources if s.store == "cursor-ide.workspace_state"]
+
+    assert len(workspace_sources) == 1
+    assert workspace_sources[0].origin_summary == expected_summary
 
 
 def _write_cursor_state_db(path: pathlib.Path) -> None:
