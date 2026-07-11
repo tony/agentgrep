@@ -1740,10 +1740,38 @@ def parse_claude_store_db(
         connection.close()
 
 
+_CodexThreadRow = tuple[
+    object,  # id
+    object,  # first_user_message
+    object,  # preview
+    object,  # title
+    object,  # updated_at_ms
+    object,  # model
+    object,  # cwd
+    object,  # git_branch
+    object,  # git_origin_url
+]
+"""Shape of the ``threads`` projection in :func:`parse_codex_state_db`."""
+
+
 def parse_codex_state_db(
     source: SourceHandle,
 ) -> cabc.Iterator[SearchRecord]:
-    """Parse opt-in Codex ``state_5.sqlite`` prompt-bearing fields."""
+    """Parse opt-in Codex ``state_5.sqlite`` prompt-bearing fields.
+
+    A ``threads`` row carries the thread's ``model`` slug and its git context
+    next to the text columns, so both records a thread yields are identified
+    without re-reading the rollout file. ``git_origin_url`` is a remote URL and
+    lands on :attr:`~agentgrep.records.RecordOrigin.remote`; ``git_sha`` has no
+    origin field and is left on the row. Every one of those columns arrived in
+    a migration, so each is projected through
+    :func:`~agentgrep.readers.sqlite_column_expr` and an older database keeps
+    working with ``NULL``.
+
+    ``agent_jobs`` rows stay origin-less: the shipped table has no
+    ``thread_id`` column to reach a ``threads`` row through, so there is
+    nothing to join the model and cwd back from.
+    """
     connection = open_readonly_sqlite(source.path)
     try:
         tables = sqlite_table_names(connection)
@@ -1753,17 +1781,39 @@ def parse_codex_state_db(
                 preview_expr = sqlite_column_expr(columns, "preview")
                 title_expr = sqlite_column_expr(columns, "title")
                 updated_expr = sqlite_column_expr(columns, "updated_at_ms")
-                rows = t.cast(
-                    "cabc.Iterable[tuple[object, object, object, object, object]]",
+                model_expr = sqlite_column_expr(columns, "model")
+                cwd_expr = sqlite_column_expr(columns, "cwd")
+                branch_expr = sqlite_column_expr(columns, "git_branch")
+                remote_expr = sqlite_column_expr(columns, "git_origin_url")
+                thread_rows = t.cast(
+                    "cabc.Iterable[_CodexThreadRow]",
                     connection.execute(
                         "SELECT id, first_user_message, "
-                        f"{preview_expr}, {title_expr}, {updated_expr} FROM threads",
+                        f"{preview_expr}, {title_expr}, {updated_expr}, "
+                        f"{model_expr}, {cwd_expr}, {branch_expr}, {remote_expr} "
+                        "FROM threads",
                     ),
                 )
-                for thread_id, first_message, preview, title, updated_at in rows:
+                for (
+                    thread_id,
+                    first_message,
+                    preview,
+                    title,
+                    updated_at,
+                    model_raw,
+                    cwd_raw,
+                    branch_raw,
+                    remote_raw,
+                ) in thread_rows:
                     conversation_id = as_optional_str(thread_id)
                     thread_title = as_optional_str(title)
                     timestamp = _unix_millis_to_isoformat(updated_at)
+                    model = as_optional_str(model_raw)
+                    origin = _record_origin(
+                        cwd=_path_like_str(cwd_raw),
+                        branch=as_optional_str(branch_raw),
+                        remote=as_optional_str(remote_raw),
+                    )
                     text = decode_sqlite_value(first_message) or as_optional_str(first_message)
                     if text:
                         yield SearchRecord(
@@ -1776,8 +1826,10 @@ def parse_codex_state_db(
                             title=thread_title or "Codex thread first prompt",
                             role="user",
                             timestamp=timestamp,
+                            model=model,
                             session_id=conversation_id,
                             conversation_id=conversation_id,
+                            origin=origin,
                         )
                     preview_text = decode_sqlite_value(preview) or as_optional_str(preview)
                     if preview_text and preview_text != text:
@@ -1791,9 +1843,11 @@ def parse_codex_state_db(
                             title=thread_title or "Codex thread preview",
                             role="assistant",
                             timestamp=timestamp,
+                            model=model,
                             session_id=conversation_id,
                             conversation_id=conversation_id,
                             metadata={"field": "preview"},
+                            origin=origin,
                         )
         if "agent_jobs" in tables:
             columns = sqlite_column_names(connection, "agent_jobs")

@@ -733,7 +733,6 @@ ADAPTER_COVERAGE_CASES: tuple[AdapterCoverageCase, ...] = (
         seed=seed_codex_state_db,
         expect_model="gpt-5.4",
         expect_origin=frozenset({"cwd", "branch", "remote"}),
-        gap="threads model/cwd/git_branch/git_origin_url columns are never selected",
     ),
     # -- Claude --------------------------------------------------------------
     AdapterCoverageCase(
