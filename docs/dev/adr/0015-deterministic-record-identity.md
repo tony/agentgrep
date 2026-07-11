@@ -95,9 +95,10 @@ namespace.
 A record occurrence requires both a non-null `thread_id` and a validated source
 coordinate. A non-empty native string wins and has `native` stability. Without
 one, a non-boolean, non-negative integer ordinal has `source_order` stability;
-that fallback may change if an upstream store rewrites earlier entries. Missing
-or malformed coordinates, or a missing thread, produce null `record_id` and
-`record_id_stability` values.
+that fallback is scoped by the adapter-owned, path-free `(store, adapter_id)`
+source coordinate domain. It may change if an upstream store rewrites earlier
+entries. Missing or malformed coordinates, or a missing thread, produce null
+`record_id` and `record_id_stability` values.
 
 For native coordinate `msg-1`, the exact payload is:
 
@@ -106,7 +107,10 @@ For native coordinate `msg-1`, the exact payload is:
 ```
 
 It produces `agr1:uuqn9q331f1fcgsr5gr8agefhs`. An ordinal payload changes
-`coordinate_kind` to `ordinal` and uses the integer as `coordinate_value`.
+`coordinate_kind` to `ordinal`, uses the integer as `coordinate_value`, and
+adds `"coordinate_domain":[store,adapter_id]`. The domain prevents unrelated
+aggregate and transcript adapters from treating equal local offsets as one
+occurrence without putting a filesystem path in the ID.
 Parent coordinates describe observed topology but do not enter occurrence
 identity. Native identity also ignores physical store, adapter, and path, so
 duplicate physical views of one native occurrence share the same `record_id`.
@@ -131,8 +135,8 @@ Search candidates use one of six cheap tuple forms. In the forms below,
   `("logical-native", agent, namespace, thread_kind, thread_value, native_id,
   *semantic)`
 - `logical-ordinal`:
-  `("logical-ordinal", agent, namespace, thread_kind, thread_value, ordinal,
-  *semantic)`
+  `("logical-ordinal", agent, namespace, thread_kind, thread_value, store,
+  adapter_id, ordinal, *semantic)`
 - `physical-native`:
   `("physical-native", agent, store, path, native_id, *semantic)`
 - `physical-ordinal`:
@@ -142,10 +146,13 @@ Search candidates use one of six cheap tuple forms. In the forms below,
   *semantic)`
 - `fallback-path`: `("fallback-path", agent, store, path, *semantic)`
 
-A logical form is used only when a namespace and usable thread anchor exist.
-Any truthy session value is usable; a conversation fallback must be
-non-path-shaped. Otherwise a positioned record falls back to its physical
-scope. Positionless records use `fallback-thread` when possible and
+A logical form requires a usable thread anchor. Any truthy session value is
+usable and does not require an identity namespace; a conversation fallback
+must be non-path-shaped. The namespace slot is empty for legacy records that
+do not carry one. An ordinal logical form also carries the adapter-owned
+`(store, adapter_id)` coordinate domain. Otherwise a positioned record falls
+back to its physical scope.
+Positionless records use store-scoped `fallback-thread` when possible and
 `fallback-path` otherwise.
 
 This projection performs no cryptographic hashing on scan candidates. The
@@ -159,9 +166,10 @@ event ordering.
 Conversation grouping describes only observed topology. It groups records with
 a non-null `thread_id`, retains every physical view in a deterministic member
 inventory, and supplies `linear_records` only when every member has a proven,
-unique ordinal and logical occurrence coordinate. A validated native parent
-fact may establish `native_tree` fidelity without establishing sibling order;
-otherwise proven order is `source_order` and ambiguous order is `unordered`.
+unique ordinal and logical occurrence coordinate in one comparable
+`(store, adapter_id)` source domain. A validated native parent fact may
+establish `native_tree` fidelity without establishing sibling order; otherwise
+proven order is `source_order` and ambiguous order is `unordered`.
 
 Those labels do not assert completeness, revision, connectivity, acyclicity, a
 root, an active leaf, branch selection, or transcript order. The grouping layer

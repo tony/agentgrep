@@ -408,6 +408,35 @@ def test_record_identity_distinguishes_equal_content_by_source_ordinal() -> None
     assert second_identity.record_id_stability == "source_order"
 
 
+def test_record_identity_scopes_equal_ordinals_by_source_domain() -> None:
+    """Equal ordinals from different adapter domains are distinct turns."""
+    history = dataclasses.replace(
+        _make_occurrence_record(
+            store="claude.history",
+            adapter_id="claude.history_jsonl.v1",
+            identity_namespace="claude.session",
+            position=RecordPosition(ordinal=7, quality="source_order"),
+        ),
+        agent="claude",
+    )
+    project = dataclasses.replace(
+        history,
+        store="claude.projects",
+        adapter_id="claude.projects_jsonl.v1",
+    )
+
+    history_identity = record_identity(history)
+    project_identity = record_identity(project)
+
+    assert history_identity.thread_id == project_identity.thread_id
+    assert history_identity.content_id == project_identity.content_id
+    assert history_identity.record_id is not None
+    assert project_identity.record_id is not None
+    assert history_identity.record_id != project_identity.record_id
+    assert history_identity.record_id_stability == "source_order"
+    assert project_identity.record_id_stability == "source_order"
+
+
 def test_record_identity_native_coordinate_ignores_physical_view() -> None:
     """Duplicate physical views share the native logical occurrence ID."""
     first = _make_occurrence_record(
