@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import collections.abc as cabc
+import dataclasses
 import functools
 import pathlib
 import re
@@ -15,7 +16,11 @@ from agentgrep.adapters._common import (
     _unix_millis_to_isoformat,
 )
 from agentgrep.adapters._extract import (
+    _record_position,
     build_search_record,
+    extract_message_id,
+    extract_parent_message_id,
+    extract_session_id,
     iter_message_candidates,
 )
 from agentgrep.adapters._generic import (
@@ -51,7 +56,6 @@ def parse_claude_project_file(
 ) -> cabc.Iterator[SearchRecord]:
     """Parse Claude Code project JSONL files using lightweight heuristics."""
     conversation_id = source.path.stem
-    seen: set[tuple[str | None, str, str | None, str | None]] = set()
     events = (
         _iter_jsonl(
             source.path,
@@ -62,23 +66,31 @@ def parse_claude_project_file(
         if raw_skip_line is not None
         else _iter_jsonl(source.path, reverse=reverse)
     )
-    for event in events:
+    ordinal_is_available = not reverse and raw_skip_line is None
+    for raw_index, event in enumerate(events):
         if isinstance(event, dict) and event.get("isCompactSummary") is True:
             # `/compact` machine summaries are derived recaps, not user turns.
             continue
+        mapping = t.cast("dict[str, object]", event) if isinstance(event, dict) else None
+        session_id = extract_session_id(mapping) if mapping is not None else None
         for candidate in iter_message_candidates(
             event,
             fallback_conversation_id=conversation_id,
         ):
-            key = (
-                candidate.role,
-                candidate.text,
-                candidate.timestamp,
-                candidate.conversation_id,
+            candidate = dataclasses.replace(
+                candidate,
+                session_id=session_id or candidate.session_id,
+                identity_namespace=("claude.session" if session_id is not None else None),
+                position=(
+                    _record_position(
+                        native_id=extract_message_id(mapping),
+                        parent_native_id=extract_parent_message_id(mapping),
+                        ordinal=raw_index if ordinal_is_available else None,
+                    )
+                    if mapping is not None
+                    else None
+                ),
             )
-            if key in seen:
-                continue
-            seen.add(key)
             yield build_search_record(source, candidate)
 
 
@@ -262,7 +274,7 @@ def parse_claude_history_file(
 ) -> cabc.Iterator[SearchRecord]:
     """Parse Claude Code's global ``history.jsonl`` prompt audit log."""
     paste_cache_dir = source.path.parent / "paste-cache"
-    for event in iter_jsonl(source.path):
+    for raw_index, event in enumerate(iter_jsonl(source.path)):
         if not isinstance(event, dict):
             continue
         mapping = t.cast("dict[str, object]", event)
@@ -289,6 +301,8 @@ def parse_claude_history_file(
             conversation_id=session_id,
             origin=_record_origin(cwd=_path_like_str(project)),
             metadata={"project": project or ""},
+            identity_namespace=("claude.session" if session_id is not None else None),
+            position=_record_position(ordinal=raw_index),
         )
 
 
