@@ -7551,26 +7551,40 @@ class CursorWorkspaceOriginCase(t.NamedTuple):
     """Parametrized case for Cursor workspace source-origin summaries."""
 
     test_id: str
+    workspace_dir: str
     workspace_payload: dict[str, object] | None
-    expected_summary: SourceOriginSummary
+    expected_summary: SourceOriginSummary | None
 
+
+_CURSOR_WORKSPACE_DIGEST = "9b2a1f0c4d3e5a6b7c8d9e0f1a2b3c4d"
+"""A Cursor ``workspaceStorage`` directory name: md5 of the workspace path."""
 
 _CURSOR_WORKSPACE_ORIGIN_CASES: tuple[CursorWorkspaceOriginCase, ...] = (
     CursorWorkspaceOriginCase(
         test_id="folder-uri-adds-cwd-and-hash",
+        workspace_dir=_CURSOR_WORKSPACE_DIGEST,
         workspace_payload={"folder": "vscode-remote://wsl+Ubuntu/home/u/work/proj"},
         expected_summary=SourceOriginSummary(
-            origins=(RecordOrigin(cwd="/home/u/work/proj", cwd_hash="wshash"),),
-            complete_fields=frozenset({"cwd", "cwd_hash"}),
+            # `cwd` is a fact, not a pruning claim: a composerData bubble can
+            # carry a cwd of its own, so only `cwd_hash` is complete.
+            origins=(RecordOrigin(cwd="/home/u/work/proj", cwd_hash=_CURSOR_WORKSPACE_DIGEST),),
+            complete_fields=frozenset({"cwd_hash"}),
         ),
     ),
     CursorWorkspaceOriginCase(
         test_id="missing-workspace-json-keeps-cwd-unknown",
+        workspace_dir=_CURSOR_WORKSPACE_DIGEST,
         workspace_payload=None,
         expected_summary=SourceOriginSummary(
-            origins=(RecordOrigin(cwd_hash="wshash"),),
+            origins=(RecordOrigin(cwd_hash=_CURSOR_WORKSPACE_DIGEST),),
             complete_fields=frozenset({"cwd_hash"}),
         ),
+    ),
+    CursorWorkspaceOriginCase(
+        test_id="non-digest-directory-has-no-workspace-hash",
+        workspace_dir="wshash",
+        workspace_payload=None,
+        expected_summary=None,
     ),
 )
 
@@ -7889,8 +7903,9 @@ def test_cursor_ide_workspace_state_extracts_aiservice_prompts(
 )
 def test_cursor_ide_workspace_state_has_origin_summary(
     test_id: str,
+    workspace_dir: str,
     workspace_payload: dict[str, object] | None,
-    expected_summary: SourceOriginSummary,
+    expected_summary: SourceOriginSummary | None,
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -7901,11 +7916,11 @@ def test_cursor_ide_workspace_state_has_origin_summary(
     monkeypatch.setenv("HOME", str(home))
 
     workspace_root = agentgrep._cursor_ide_workspace_root(home)
-    workspace_dir = workspace_root / "wshash"
-    db_path = workspace_dir / "state.vscdb"
+    workspace_path = workspace_root / workspace_dir
+    db_path = workspace_path / "state.vscdb"
     if workspace_payload is not None:
-        workspace_dir.mkdir(parents=True)
-        _ = (workspace_dir / "workspace.json").write_text(
+        workspace_path.mkdir(parents=True)
+        _ = (workspace_path / "workspace.json").write_text(
             json.dumps(workspace_payload),
             encoding="utf-8",
         )

@@ -9,14 +9,23 @@ along with it.
 
 from __future__ import annotations
 
+import json
 import pathlib
+import sqlite3
 import typing as t
 
 import pytest
 
 import agentgrep
+from agentgrep import events as ag_events
 from agentgrep._engine.orchestration import discover_sources_for_search, searchable_sources
-from agentgrep.discovery import descriptor_admits_store_roles, discover_sources
+from agentgrep.discovery import (
+    _cursor_ide_workspace_root,
+    descriptor_admits_store_roles,
+    discover_sources,
+)
+from agentgrep.origin import PRUNABLE_ORIGIN_FIELDS
+from agentgrep.query import compile_query, default_registry, parse_query
 from agentgrep.records import (
     CONVERSATION_CONTENT_STORES,
     CONVERSATION_STORE_ROLES,
@@ -203,3 +212,127 @@ def test_searchable_sources_drops_catalog_only_handles() -> None:
     kept = {source.store for source in searchable_sources(handles)}
 
     assert kept == {"codex.history", "codex.state_db"}
+
+
+_WORKSPACE_DIGEST = "9b2a1f0c4d3e5a6b7c8d9e0f1a2b3c4d"
+"""A Cursor ``workspaceStorage`` directory name: md5 of the workspace path."""
+
+
+def _cursor_workspace_home(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> pathlib.Path:
+    """Seed one Cursor workspace whose record disagrees with its ``workspace.json``.
+
+    ``workspace.json`` points the workspace at ``/work/folder``, while the
+    ``composerData`` bubble inside the database carries its own ``cwd`` of
+    ``/work/bubble``. Real workspaces do this: a chat can run against a
+    worktree or a subdirectory that is not the folder the window was opened on.
+    """
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    workspace = _cursor_ide_workspace_root(home) / _WORKSPACE_DIGEST
+    workspace.mkdir(parents=True)
+    _ = (workspace / "workspace.json").write_text(
+        json.dumps({"folder": "file:///work/folder"}),
+        encoding="utf-8",
+    )
+    connection = sqlite3.connect(workspace / "state.vscdb")
+    try:
+        _ = connection.execute("CREATE TABLE ItemTable (key TEXT, value TEXT)")
+        _ = connection.execute(
+            "INSERT INTO ItemTable VALUES (?, ?)",
+            (
+                "workbench.panel.chat.composerData",
+                json.dumps(
+                    {
+                        "conversation": [
+                            {"role": "user", "text": "bliss", "cwd": "/work/bubble"},
+                        ],
+                    },
+                ),
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    return home
+
+
+def _workspace_source(home: pathlib.Path) -> agentgrep.SourceHandle:
+    """Return the discovered per-workspace Cursor state source."""
+    sources = discover_sources(home, ("cursor-ide",), NO_BACKENDS)
+    workspace_sources = [s for s in sources if s.store == "cursor-ide.workspace_state"]
+
+    assert len(workspace_sources) == 1
+    return workspace_sources[0]
+
+
+def test_source_origin_summary_never_claims_cwd_completeness(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A source may only claim completeness for values its records cannot contradict.
+
+    ``complete_fields`` is a claim about *values*, not names: the planner drops
+    a whole source when its summary says the field is complete and no listed
+    value matches. So the invariant is not "the summary populated ``cwd``" — it
+    is "no record carries a ``cwd`` the summary did not list". ``workspace.json``
+    cannot satisfy that for ``cwd``, because the parser reads a ``cwd`` out of
+    the payload, so ``cwd`` is not prunable.
+    """
+    home = _cursor_workspace_home(tmp_path, monkeypatch)
+    source = _workspace_source(home)
+    summary = source.origin_summary
+
+    assert summary is not None
+    assert summary.complete_fields <= PRUNABLE_ORIGIN_FIELDS
+    assert summary.origins == (
+        agentgrep.RecordOrigin(cwd="/work/folder", cwd_hash=_WORKSPACE_DIGEST),
+    )
+
+    for field in summary.complete_fields:
+        claimed = {
+            value
+            for source_origin in summary.origins
+            for value in (getattr(source_origin, field),)
+            if value
+        }
+        for record in agentgrep.iter_source_records(source):
+            assert record.origin is not None
+            value = t.cast("str | None", getattr(record.origin, field))
+            assert value is None or value in claimed, (field, value)
+
+
+def test_source_claiming_a_cwd_does_not_prune_its_own_record(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``cwd:`` must reach a record whose ``cwd`` differs from the workspace folder.
+
+    The source-level prune runs before the file is opened. A summary that claims
+    ``cwd`` completeness from ``workspace.json`` alone therefore answers
+    ``cwd:/work/bubble`` with "this source cannot match" — and the record that
+    does match is deleted, silently, with a successful exit code.
+    """
+    home = _cursor_workspace_home(tmp_path, monkeypatch)
+    registry = default_registry()
+    compiled = compile_query(parse_query("cwd:/work/bubble bliss", registry), registry)
+    query = agentgrep.SearchQuery(
+        terms=("bliss",),
+        scope="all",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("cursor-ide",),
+        limit=10,
+        compiled=compiled,
+    )
+
+    records = [
+        event.record
+        for event in agentgrep.iter_search_events(home, query)
+        if isinstance(event, ag_events.RecordEmitted)
+    ]
+
+    assert [record.text for record in records] == ["bliss"]

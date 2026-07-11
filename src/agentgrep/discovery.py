@@ -19,6 +19,7 @@ import tomllib
 import typing as t
 import urllib.parse
 
+from agentgrep.origin import PRUNABLE_ORIGIN_FIELDS, origin_cwd_hash
 from agentgrep.readers import (
     as_optional_str,
     file_mtime_ns,
@@ -826,19 +827,24 @@ def handles_from_discovery(
 
 
 def _source_origin_summary(spec: DiscoverySpec, path: pathlib.Path) -> SourceOriginSummary | None:
-    """Return source-level origin facts known from discovery metadata."""
+    """Return source-level origin facts known from discovery metadata.
+
+    ``complete_fields`` is the pruning claim, so it is filtered through
+    :data:`~agentgrep.origin.PRUNABLE_ORIGIN_FIELDS`. The workspace ``cwd``
+    read from ``workspace.json`` stays on the summary as a *fact* — it is what
+    the workspace points at — but it is never claimed complete: a
+    ``composerData`` bubble carries its own ``cwd``, and claiming completeness
+    for a value the parser can contradict prunes the very record the user
+    asked for.
+    """
     if spec.store != "cursor-ide.workspace_state" or path.name != "state.vscdb":
         return None
-    cwd_hash = path.parent.name
-    if not cwd_hash or cwd_hash in {"globalStorage", "User"}:
+    cwd_hash = origin_cwd_hash(path.parent.name)
+    if cwd_hash is None:
         return None
-    cwd = _cursor_workspace_state_cwd(path)
-    complete_fields = {"cwd_hash"}
-    if cwd:
-        complete_fields.add("cwd")
     return SourceOriginSummary(
-        origins=(RecordOrigin(cwd=cwd, cwd_hash=cwd_hash),),
-        complete_fields=frozenset(complete_fields),
+        origins=(RecordOrigin(cwd=_cursor_workspace_state_cwd(path), cwd_hash=cwd_hash),),
+        complete_fields=PRUNABLE_ORIGIN_FIELDS,
     )
 
 

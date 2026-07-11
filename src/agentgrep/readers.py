@@ -48,6 +48,7 @@ __all__ = [
     "parse_embedded_json",
     "read_json_file",
     "read_text_file",
+    "sqlite_column_expr",
     "sqlite_column_names",
     "sqlite_table_names",
 ]
@@ -236,6 +237,46 @@ def sqlite_column_names(connection: sqlite3.Connection, table: str) -> set[str]:
         if len(row) > 1 and isinstance(row[1], str):
             columns.add(row[1])
     return columns
+
+
+def sqlite_column_expr(columns: cabc.Container[str], name: str) -> str:
+    """Return a quoted column reference, or the ``NULL`` literal when absent.
+
+    Agent SQLite stores are migrated in place, so a column present on one
+    machine is missing on another. A ``SELECT`` that names a missing column
+    raises :exc:`sqlite3.OperationalError`, and the adapters wrap their whole
+    query in a ``try``/``except`` — so an unguarded projection does not fail
+    loudly, it silently turns an entire store into zero records. Substituting
+    ``NULL`` keeps the projection's shape (and therefore the row unpacking)
+    stable while the existing per-value ``None`` handling absorbs the miss.
+
+    Only the mechanism is shared: each adapter still names its own columns, so
+    a column that exists for one store never becomes vocabulary in another.
+
+    Parameters
+    ----------
+    columns : collections.abc.Container[str]
+        Column names the table actually has, from
+        :func:`sqlite_column_names`.
+    name : str
+        The column the caller wants to project.
+
+    Returns
+    -------
+    str
+        A quoted identifier, or ``"NULL"``.
+
+    Examples
+    --------
+    >>> sqlite_column_expr({"id", "model"}, "model")
+    '"model"'
+    >>> sqlite_column_expr({"id"}, "model")
+    'NULL'
+    """
+    if name not in columns:
+        return "NULL"
+    escaped = name.replace('"', '""')
+    return f'"{escaped}"'
 
 
 def iter_key_value_rows(

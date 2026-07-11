@@ -23,7 +23,7 @@ import tomllib
 import typing as t
 import urllib.parse
 
-from agentgrep.origin import is_path_like_text
+from agentgrep.origin import is_path_like_text, origin_cwd_hash
 from agentgrep.readers import (
     _CODEX_RAW_SKIP_MIN_BYTES,
     _CODEX_SESSION_META_MARKER,
@@ -44,6 +44,7 @@ from agentgrep.readers import (
     parse_embedded_json,
     read_json_file,
     read_text_file,
+    sqlite_column_expr,
     sqlite_column_names,
     sqlite_table_names,
 )
@@ -1749,9 +1750,9 @@ def parse_codex_state_db(
         if "threads" in tables:
             columns = sqlite_column_names(connection, "threads")
             if {"id", "first_user_message"}.issubset(columns):
-                preview_expr = "preview" if "preview" in columns else "NULL"
-                title_expr = "title" if "title" in columns else "NULL"
-                updated_expr = "updated_at_ms" if "updated_at_ms" in columns else "NULL"
+                preview_expr = sqlite_column_expr(columns, "preview")
+                title_expr = sqlite_column_expr(columns, "title")
+                updated_expr = sqlite_column_expr(columns, "updated_at_ms")
                 rows = t.cast(
                     "cabc.Iterable[tuple[object, object, object, object, object]]",
                     connection.execute(
@@ -1797,8 +1798,8 @@ def parse_codex_state_db(
         if "agent_jobs" in tables:
             columns = sqlite_column_names(connection, "agent_jobs")
             if {"id", "instruction"}.issubset(columns):
-                thread_expr = "thread_id" if "thread_id" in columns else "NULL"
-                updated_expr = "updated_at_ms" if "updated_at_ms" in columns else "NULL"
+                thread_expr = sqlite_column_expr(columns, "thread_id")
+                updated_expr = sqlite_column_expr(columns, "updated_at_ms")
                 rows = t.cast(
                     "cabc.Iterable[tuple[object, object, object, object]]",
                     connection.execute(
@@ -1842,11 +1843,11 @@ def parse_codex_logs_db(
         columns = sqlite_column_names(connection, "logs")
         if "feedback_log_body" not in columns:
             return
-        id_expr = "id" if "id" in columns else "NULL"
-        ts_expr = "ts" if "ts" in columns else "NULL"
-        level_expr = "level" if "level" in columns else "NULL"
-        target_expr = "target" if "target" in columns else "NULL"
-        thread_expr = "thread_id" if "thread_id" in columns else "NULL"
+        id_expr = sqlite_column_expr(columns, "id")
+        ts_expr = sqlite_column_expr(columns, "ts")
+        level_expr = sqlite_column_expr(columns, "level")
+        target_expr = sqlite_column_expr(columns, "target")
+        thread_expr = sqlite_column_expr(columns, "thread_id")
         rows = t.cast(
             "cabc.Iterable[tuple[object, object, object, object, object, object]]",
             connection.execute(
@@ -1901,8 +1902,8 @@ def parse_codex_memories_db(
         columns = sqlite_column_names(connection, "stage1_outputs")
         if not {"thread_id", "raw_memory"}.issubset(columns):
             return
-        summary_expr = "rollout_summary" if "rollout_summary" in columns else "NULL"
-        slug_expr = "rollout_slug" if "rollout_slug" in columns else "NULL"
+        summary_expr = sqlite_column_expr(columns, "rollout_summary")
+        slug_expr = sqlite_column_expr(columns, "rollout_slug")
         rows = t.cast(
             "cabc.Iterable[tuple[object, object, object, object]]",
             connection.execute(
@@ -1992,8 +1993,8 @@ def parse_codex_goals_db(
         columns = sqlite_column_names(connection, "thread_goals")
         if not {"thread_id", "goal_id", "objective"}.issubset(columns):
             return
-        status_expr = "status" if "status" in columns else "NULL"
-        updated_expr = "updated_at_ms" if "updated_at_ms" in columns else "NULL"
+        status_expr = sqlite_column_expr(columns, "status")
+        updated_expr = sqlite_column_expr(columns, "updated_at_ms")
         rows = t.cast(
             "cabc.Iterable[tuple[object, object, object, object, object]]",
             connection.execute(
@@ -2449,13 +2450,17 @@ def parse_cursor_state_db(
 
 
 def _cursor_workspace_hash_origin(source: SourceHandle) -> RecordOrigin | None:
-    """Return a hash-only origin for per-workspace Cursor state stores."""
-    parent_name = source.path.parent.name
-    if parent_name in {"globalStorage", "User"}:
-        return None
+    """Return a hash-only origin for per-workspace Cursor state stores.
+
+    Only ``workspaceStorage/<md5>/state.vscdb`` carries a workspace digest. The
+    global and legacy databases sit under an ordinary directory name, so the
+    parent segment is admitted only when it has a digest's shape — otherwise
+    the legacy ``~/.cursor/state.vscdb`` would report a ``cwd_hash`` of
+    ``.cursor``, a searchable value no Cursor build ever wrote.
+    """
     if source.path.name != "state.vscdb":
         return None
-    return _record_origin(cwd_hash=parent_name)
+    return _record_origin(cwd_hash=origin_cwd_hash(source.path.parent.name))
 
 
 def candidate_from_mapping(
