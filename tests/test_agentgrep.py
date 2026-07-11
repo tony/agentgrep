@@ -2183,6 +2183,130 @@ def test_parse_codex_session_reverse_preserves_header(
     assert {record.session_id for record in records} == {"canonical-session-id"}
 
 
+class CodexTurnContextCase(t.NamedTuple):
+    """One read path through a Codex rollout."""
+
+    test_id: str
+    reverse: bool
+    prefilter: bool
+
+
+CODEX_TURN_CONTEXT_CASES: tuple[CodexTurnContextCase, ...] = (
+    CodexTurnContextCase(test_id="forward", reverse=False, prefilter=False),
+    CodexTurnContextCase(test_id="reverse", reverse=True, prefilter=False),
+    CodexTurnContextCase(test_id="raw-prefilter", reverse=False, prefilter=True),
+    CodexTurnContextCase(test_id="raw-prefilter-reverse", reverse=True, prefilter=True),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    CODEX_TURN_CONTEXT_CASES,
+    ids=[c.test_id for c in CODEX_TURN_CONTEXT_CASES],
+)
+def test_parse_codex_session_reads_model_from_turn_context(
+    case: CodexTurnContextCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """The Codex model slug comes from ``turn_context``, on every read path.
+
+    ``session_meta`` names only ``model_provider`` — the provider id — so
+    reading it as the model labelled every Codex record ``openai``.
+
+    The four cases are the four ways the engine reads a rollout: forward,
+    bounded reverse, and either of those behind the raw text prefilter that
+    ``grep`` installs. The prefilter drops the ``turn_context`` line before it
+    is decoded, so a parser that learned the slug in-loop would answer ``grep``
+    with a different model than ``search`` for one and the same record.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    path = tmp_path / "rollout-abc.jsonl"
+    write_jsonl(
+        path,
+        [
+            {
+                "type": "session_meta",
+                "payload": {"id": "session-1", "model_provider": "openai"},
+            },
+            {
+                "type": "turn_context",
+                "payload": {"model": "gpt-5.4-codex", "cwd": "/work/demo"},
+            },
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "type": "response_item",
+                "payload": {"role": "user", "content": "bliss prompt"},
+            },
+            {
+                "timestamp": "2026-01-01T00:01:00Z",
+                "type": "response_item",
+                "payload": {"role": "user", "content": "bliss second"},
+            },
+        ],
+    )
+    source = agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=path,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=1,
+    )
+
+    def raw_skip_line(line: str) -> bool:
+        return "bliss" not in line
+
+    records = list(
+        agentgrep.parse_codex_session_file(
+            source,
+            raw_skip_line=raw_skip_line if case.prefilter else None,
+            reverse=case.reverse,
+        ),
+    )
+
+    assert len(records) == 2
+    assert {record.model for record in records} == {"gpt-5.4-codex"}
+    assert {record.session_id for record in records} == {"session-1"}
+
+
+def test_parse_codex_session_model_falls_back_to_session_meta(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A rollout with no ``turn_context`` keeps whatever ``session_meta`` names."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    path = tmp_path / "rollout-abc.jsonl"
+    write_jsonl(
+        path,
+        [
+            {
+                "type": "session_meta",
+                "payload": {"id": "session-1", "model": "gpt-test-o5"},
+            },
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "type": "response_item",
+                "payload": {"role": "user", "content": "first prompt"},
+            },
+        ],
+    )
+    source = agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=path,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=1,
+    )
+
+    records = list(agentgrep.parse_codex_session_file(source))
+
+    assert [record.model for record in records] == ["gpt-test-o5"]
+
+
 def test_parse_pi_session_reverse_preserves_header(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -7371,6 +7495,49 @@ def test_search_codex_history_json_returns_history_record(
     assert len(records) == 1
     assert records[0].kind == "prompt"
     assert records[0].text == "serenity command example"
+
+
+def test_search_codex_history_json_keeps_millisecond_timestamp(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The legacy ``history.json`` writes ``timestamp`` as a number, not a string.
+
+    A string-only accessor dropped it, and the legacy entry carries no ``ts``
+    key to fall back on, so every record from this store surfaced with no time
+    at all.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+
+    history_path = home / ".codex" / "history.json"
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    _ = history_path.write_text(
+        json.dumps(
+            [{"command": "serenity command example", "timestamp": 1780000000000}],
+        ),
+        encoding="utf-8",
+    )
+
+    query = agentgrep.SearchQuery(
+        terms=("serenity",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+    backends = agentgrep.BackendSelection(None, None, None)
+    sources = agentgrep.discover_sources(home, ("codex",), backends)
+    records = agentgrep.search_sources(query, sources, backends)
+
+    assert len(records) == 1
+    assert records[0].timestamp == "2026-05-28T20:26:40Z"
+    # This store is a flat prompt log: no cwd, branch, or model on disk.
+    assert records[0].origin is None
+    assert records[0].model is None
 
 
 def test_cursor_ai_tracking_summary_is_exposed_as_history(

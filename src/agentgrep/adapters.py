@@ -426,15 +426,119 @@ _ORIGIN_MAPPING_KEYS: frozenset[str] = frozenset(
 )
 
 
+_CODEX_TURN_CONTEXT_MARKER = '"type":"turn_context"'
+"""Space-stripped prefix marker for a Codex per-turn context line."""
+
+_CODEX_HEAD_BYTES = 65536
+"""Bytes of a rollout's head scanned for the first ``turn_context`` line.
+
+Codex writes ``turn_context`` at the first turn, right after the
+``session_meta`` header, so the slug is always within the first few lines.
+Bounding the read keeps the lookup to one small chunk on a multi-megabyte
+rollout, and — because it happens before iteration rather than inside it —
+keeps the answer identical under forward, reverse, and raw-text-prefiltered
+scans, which each see a different subset of the file's lines.
+"""
+
+
+def _codex_session_meta_model(payload: dict[str, object]) -> str | None:
+    """Read whatever model identity ``session_meta`` carries.
+
+    In practice this is ``model_provider`` — a provider id, not a slug. It is
+    the fallback for a rollout with no ``turn_context`` record, never the
+    preferred value.
+
+    Parameters
+    ----------
+    payload : dict[str, object]
+        The ``session_meta`` event's payload mapping.
+
+    Returns
+    -------
+    str or None
+        The model identity, or ``None`` when the header names none.
+
+    Examples
+    --------
+    >>> _codex_session_meta_model({"model_provider": "openai"})
+    'openai'
+    >>> _codex_session_meta_model({"id": "session-1"}) is None
+    True
+    """
+    return (
+        as_optional_str(payload.get("model"))
+        or as_optional_str(payload.get("model_name"))
+        or as_optional_str(payload.get("model_provider"))
+    )
+
+
+def _codex_turn_context_model(path: pathlib.Path) -> str | None:
+    """Read the model slug from a rollout's first ``turn_context`` record.
+
+    Scans only :data:`_CODEX_HEAD_BYTES` of the file head. A rollout with no
+    ``turn_context`` in that window keeps the ``session_meta`` fallback rather
+    than paying a whole extra pass to look for one.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        The rollout JSONL file.
+
+    Returns
+    -------
+    str or None
+        The model slug, or ``None`` when the head carries no ``turn_context``.
+    """
+    try:
+        with path.open("rb") as handle:
+            head = handle.read(_CODEX_HEAD_BYTES)
+    except OSError:
+        return None
+    lines = head.split(b"\n")
+    if len(head) >= _CODEX_HEAD_BYTES:
+        # The final line is probably truncated mid-record.
+        lines = lines[:-1]
+    for raw_line in lines:
+        text = raw_line.decode("utf-8", errors="replace")
+        if _CODEX_TURN_CONTEXT_MARKER not in text[:512].replace(" ", ""):
+            continue
+        try:
+            event = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(event, dict):
+            return None
+        payload = t.cast("dict[str, object]", event).get("payload")
+        if not isinstance(payload, dict):
+            return None
+        return as_optional_str(t.cast("dict[str, object]", payload).get("model"))
+    return None
+
+
 def parse_codex_session_file(
     source: SourceHandle,
     *,
     raw_skip_line: RawJsonlSkipLine | None = None,
     reverse: bool = False,
 ) -> cabc.Iterator[SearchRecord]:
-    """Parse Codex session JSONL files."""
+    """Parse Codex session JSONL files.
+
+    The model slug is not in the ``session_meta`` header: that header names
+    ``model_provider``, the provider id (``openai``). Codex writes the slug
+    into its per-turn ``turn_context`` records, so the session model is seeded
+    from the first of those and takes precedence over anything ``session_meta``
+    offers.
+
+    Codex can change model mid-session, but attributing the change per record
+    would mean decoding every ``turn_context`` line — thousands per session —
+    through the raw text prefilter that exists to avoid exactly that, and the
+    prefilter is installed on some read paths and not others, so the model
+    would then depend on which one ran. The first turn's model is one bounded
+    read, is what the session ran as, and is identical under forward, reverse,
+    and prefiltered iteration.
+    """
     session_id = source.path.stem
-    session_model: str | None = None
+    session_model: str | None = _codex_turn_context_model(source.path)
     session_origin: RecordOrigin | None = None
     if reverse:
         # Reverse iteration reads the leading session_meta header last,
@@ -449,12 +553,7 @@ def parse_codex_session_file(
             payload = t.cast("dict[str, object]", header_payload)
             session_id = as_optional_str(payload.get("id")) or session_id
             session_origin = _origin_from_mapping(payload, fallback=session_origin)
-            session_model = (
-                as_optional_str(payload.get("model"))
-                or as_optional_str(payload.get("model_name"))
-                or as_optional_str(payload.get("model_provider"))
-                or session_model
-            )
+            session_model = session_model or _codex_session_meta_model(payload)
     codex_skip_line = (
         _is_codex_function_call_output_line
         if _file_size(source.path) >= _CODEX_RAW_SKIP_MIN_BYTES
@@ -497,12 +596,8 @@ def parse_codex_session_file(
             payload_map = t.cast("dict[str, object]", payload)
             session_id = as_optional_str(payload_map.get("id")) or session_id
             session_origin = _origin_from_mapping(payload_map, fallback=session_origin)
-            session_model = (
-                as_optional_str(payload_map.get("model"))
-                or as_optional_str(payload_map.get("model_name"))
-                or as_optional_str(payload_map.get("model_provider"))
-                or session_model
-            )
+            # The turn_context slug wins: session_meta offers only a provider id.
+            session_model = session_model or _codex_session_meta_model(payload_map)
             continue
         if event_type != "response_item" or not isinstance(payload, dict):
             continue
@@ -561,7 +656,17 @@ def parse_codex_history_file(
     raw_skip_line: RawJsonlSkipLine | None = None,
     reverse: bool = False,
 ) -> cabc.Iterator[SearchRecord]:
-    """Parse Codex prompt/command history files."""
+    """Parse Codex prompt/command history files.
+
+    Two shapes share this parser. The current ``history.jsonl`` entry is
+    ``{session_id, ts, text}`` with ``ts`` in unix **seconds**; the legacy
+    ``history.json`` entry is ``{command, timestamp}`` with ``timestamp`` a
+    number in **milliseconds**, not the ISO string its name suggests, and no
+    ``ts`` key to fall back on.
+
+    Neither shape records a cwd, a branch, or a model: this is a flat prompt
+    log, so ``origin`` and ``model`` stay ``None`` by design.
+    """
     entries: cabc.Iterable[JSONValue]
     if source.source_kind == "json":
         payload = read_json_file(source.path)
@@ -593,6 +698,10 @@ def parse_codex_history_file(
                 .isoformat()
                 .replace("+00:00", "Z")
             )
+        if timestamp is None:
+            # Legacy history.json: `timestamp` is a millisecond number, so the
+            # string accessor above yields None for it.
+            timestamp = _unix_millis_to_isoformat(entry.get("timestamp"))
         yield SearchRecord(
             kind="prompt",
             agent=source.agent,

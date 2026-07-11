@@ -737,7 +737,6 @@ ADAPTER_COVERAGE_CASES: tuple[AdapterCoverageCase, ...] = (
         seed=seed_codex_sessions,
         expect_model="gpt-5.4-codex",
         expect_origin=frozenset({"cwd", "branch"}),
-        gap="model read from session_meta.model_provider, not turn_context.model (#99)",
     ),
     AdapterCoverageCase(
         test_id="codex-state-db",
