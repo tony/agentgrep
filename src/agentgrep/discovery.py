@@ -27,6 +27,8 @@ from agentgrep.readers import (
     read_json_file,
 )
 from agentgrep.records import (
+    CONVERSATION_CONTENT_STORES,
+    CONVERSATION_STORE_ROLES,
     AgentName,
     BackendSelection,
     DiscoveryRoot,
@@ -894,6 +896,40 @@ def format_timestamp_tig(value: str | None) -> str:
     return moment.astimezone().strftime("%Y-%m-%d %H:%M %z")
 
 
+def descriptor_admits_store_roles(
+    descriptor: StoreDescriptor,
+    store_roles: DiscoveryStoreRoles,
+) -> bool:
+    """Return whether a catalogue row can serve a role-narrowed discovery pass.
+
+    A row normally qualifies on its own ``role``. The exception is the
+    conversation surface: the app-state rows in
+    :data:`agentgrep.records.CONVERSATION_CONTENT_STORES` hold conversation
+    content, and a role check alone would leave them unreachable at every scope.
+    Admitting them here — coarsely, per descriptor, before any filesystem walk —
+    keeps the walk narrow; ``source_matches_scope`` narrows precisely afterwards.
+
+    Parameters
+    ----------
+    descriptor : StoreDescriptor
+        The catalogue row being considered.
+    store_roles : DiscoveryStoreRoles
+        Roles the caller's scope can consume, or ``None`` for every role.
+
+    Returns
+    -------
+    bool
+        Whether the row survives role narrowing.
+    """
+    if store_roles is None:
+        return True
+    if descriptor.role in store_roles:
+        return True
+    if not store_roles & CONVERSATION_STORE_ROLES:
+        return False
+    return any(spec.store in CONVERSATION_CONTENT_STORES for spec in descriptor.discovery)
+
+
 def discover_from_catalog(
     home: pathlib.Path,
     agent: AgentName,
@@ -916,7 +952,9 @@ def discover_from_catalog(
     never enumerated from disk. ``version_detail`` lets latency-sensitive
     callers skip source-version enrichment until a metadata-rich surface asks
     for it. ``store_roles`` restricts enumeration before any filesystem walk,
-    which lets search avoid stores its scope cannot consume.
+    which lets search avoid stores its scope cannot consume — see
+    :func:`descriptor_admits_store_roles` for how the conversation surface still
+    reaches its allowlisted app-state rows.
     """
     from agentgrep.store_catalog import CATALOG
 
@@ -933,7 +971,7 @@ def discover_from_catalog(
         coverage = descriptor.coverage_level
         if coverage is StoreCoverage.PRIVATE:
             continue
-        if store_roles is not None and descriptor.role not in store_roles:
+        if not descriptor_admits_store_roles(descriptor, store_roles):
             continue
         if coverage is not StoreCoverage.DEFAULT_SEARCH and not include_non_default:
             continue

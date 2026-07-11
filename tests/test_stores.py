@@ -12,6 +12,7 @@ import typing as t
 
 import pytest
 
+from agentgrep.records import CONVERSATION_CONTENT_STORES
 from agentgrep.store_catalog import CATALOG, OBSERVED_AT, gemini_project_hash
 from agentgrep.stores import (
     AgentName,
@@ -309,6 +310,50 @@ def test_search_by_default_only_true_for_searchable_roles() -> None:
     for store in CATALOG.stores:
         if store.search_by_default is True:
             assert store.role in searchable, (store.store_id, store.role)
+
+
+def test_conversation_content_stores_are_app_state_rows() -> None:
+    """The scope allowlist only exists for app-state rows that hold recall text.
+
+    ``--scope conversations`` admits
+    :data:`~agentgrep.records.CONVERSATION_CONTENT_STORES` on top of the
+    conversation roles. If one of those rows ever gains a conversation role the
+    entry is dead weight; if a row that is *not* an inspectable app-state store
+    is added, the allowlist is being used to smuggle config and log stores into
+    search, which is exactly what it exists to prevent.
+    """
+    for store_id in CONVERSATION_CONTENT_STORES:
+        descriptor = CATALOG.by_id(store_id)
+        assert descriptor.role is StoreRole.APP_STATE, store_id
+        assert descriptor.coverage_level is StoreCoverage.INSPECTABLE, store_id
+        assert descriptor.discovery, store_id
+
+
+def test_conversation_content_stores_match_catalog_and_runtime_names() -> None:
+    """The allowlist must survive the ``store_id`` vs ``spec.store`` trap.
+
+    :attr:`~agentgrep.records.SourceHandle.store` carries
+    :attr:`~agentgrep.stores.DiscoverySpec.store`, while catalogue-side lookups
+    key on :attr:`~agentgrep.stores.StoreDescriptor.store_id`. Six catalogue
+    rows give those two different strings, so an allowlist keyed on one and
+    consulted with the other would silently admit nothing — no error, no record.
+    Every allowlisted store must therefore agree on both names.
+    """
+    drifting = {
+        descriptor.store_id
+        for descriptor in CATALOG.stores
+        for spec in descriptor.discovery
+        if spec.store != descriptor.store_id
+    }
+    assert drifting, "no drifting rows left; this test's premise needs revisiting"
+
+    for store_id in CONVERSATION_CONTENT_STORES:
+        descriptor = CATALOG.by_id(store_id)
+        for spec in descriptor.discovery:
+            assert spec.store == descriptor.store_id, (
+                f"{store_id} names its runtime store {spec.store!r}; the allowlist "
+                "is consulted with the runtime name and would never match"
+            )
 
 
 def test_encrypted_stores_ship_no_discovery_spec() -> None:
