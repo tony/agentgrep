@@ -270,3 +270,7 @@ testpaths = [
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+# An xfail marker is a claim about a known gap, not a licence to pass quietly.
+# Strict mode fails the suite when such a test starts passing, so a stale
+# expectation has to be removed instead of drifting on as an XPASS.
+xfail_strict = true
