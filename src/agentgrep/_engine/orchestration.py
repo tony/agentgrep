@@ -862,16 +862,15 @@ def record_dedupe_key(record: SearchRecord) -> RecordDedupeKey:
         record.role.casefold() if record.role else None,
         record.text,
     )
-    namespace = record.identity_namespace
+    namespace = record.identity_namespace or ""
     thread_kind: str | None = None
     thread_value: str | None = None
-    if namespace:
-        if record.session_id:
-            thread_kind = "session"
-            thread_value = record.session_id
-        elif record.conversation_id and not is_path_like_text(record.conversation_id):
-            thread_kind = "conversation"
-            thread_value = record.conversation_id
+    if record.session_id:
+        thread_kind = "session"
+        thread_value = record.session_id
+    elif record.conversation_id and not is_path_like_text(record.conversation_id):
+        thread_kind = "conversation"
+        thread_value = record.conversation_id
 
     position = record.position
     native_id = (
@@ -905,6 +904,8 @@ def record_dedupe_key(record: SearchRecord) -> RecordDedupeKey:
                 namespace,
                 thread_kind,
                 thread_value,
+                record.store,
+                record.adapter_id,
                 ordinal,
                 *semantic,
             )

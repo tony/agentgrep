@@ -312,7 +312,8 @@ def parse_codex_history_file(
             else _iter_jsonl(source.path, reverse=reverse)
         )
 
-    for entry in entries:
+    ordinal_is_available = not reverse and raw_skip_line is None
+    for raw_index, entry in enumerate(entries):
         if not isinstance(entry, dict):
             continue
         text = as_optional_str(entry.get("text")) or as_optional_str(entry.get("command"))
@@ -343,6 +344,10 @@ def parse_codex_history_file(
             timestamp=timestamp,
             session_id=session_id,
             conversation_id=session_id,
+            identity_namespace=("codex.session" if session_id is not None else None),
+            position=_record_position(
+                ordinal=raw_index if ordinal_is_available else None,
+            ),
         )
 
 

@@ -12,6 +12,7 @@ from agentgrep.adapters._common import (
     _unix_to_isoformat,
 )
 from agentgrep.adapters._extract import (
+    _record_position,
     flatten_content_value,
 )
 from agentgrep.adapters._generic import (
@@ -90,7 +91,8 @@ def parse_grok_prompt_history(
         if raw_skip_line is not None
         else _iter_jsonl(source.path, reverse=reverse)
     )
-    for event in events:
+    ordinal_is_available = not reverse and raw_skip_line is None
+    for raw_index, event in enumerate(events):
         if not isinstance(event, dict):
             continue
         mapping = t.cast("dict[str, object]", event)
@@ -112,6 +114,10 @@ def parse_grok_prompt_history(
             conversation_id=session_id,
             metadata={"is_bash": mapping.get("is_bash", False)},
             origin=session_origin,
+            identity_namespace=("grok.session" if session_id is not None else None),
+            position=_record_position(
+                ordinal=raw_index if ordinal_is_available else None,
+            ),
         )
 
 

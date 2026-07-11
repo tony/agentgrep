@@ -13,6 +13,7 @@ import typing as t
 
 import pytest
 
+import agentgrep._engine.orchestration as orchestration
 import agentgrep.conversations as conversations
 from agentgrep.conversations import ConversationUnit, group_conversation_units
 from agentgrep.identity import RecordIdentity, record_identity
@@ -231,6 +232,37 @@ def test_group_conversation_units_preserves_repeated_identical_occurrences() -> 
     assert identities[0].content_id == identities[1].content_id
     assert identities[0].record_id != identities[1].record_id
     assert unit.linear_records == (first, second)
+
+
+@pytest.mark.parametrize("project_ordinal", [0, 1], ids=("equal", "unequal"))
+def test_group_conversation_units_does_not_order_cross_domain_ordinals(
+    project_ordinal: int,
+) -> None:
+    """Claude history and project ordinals do not share one timeline."""
+    history = _record(
+        "same turn",
+        agent="claude",
+        store="claude.history",
+        adapter_id="claude.history_jsonl.v1",
+        identity_namespace="claude.session",
+        position=RecordPosition(ordinal=0, quality="source_order"),
+    )
+    project = dataclasses.replace(
+        history,
+        store="claude.projects",
+        adapter_id="claude.projects_jsonl.v1",
+        position=RecordPosition(ordinal=project_ordinal, quality="source_order"),
+    )
+
+    unit = _only_unit((project, history))
+    record_ids = {record_identity(record).record_id for record in unit.records}
+    dedupe_keys = {orchestration.record_dedupe_key(record) for record in unit.records}
+
+    assert None not in record_ids
+    assert len(record_ids) == 2
+    assert len(dedupe_keys) == 2
+    assert unit.linear_records is None
+    assert unit.fidelity == "unordered"
 
 
 def test_group_conversation_units_retains_duplicate_views_but_withholds_linearity() -> None:

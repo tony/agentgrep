@@ -35,6 +35,7 @@ class _PreparedRecord:
 
     record: SearchRecord
     identity: RecordIdentity
+    ordinal_domain: tuple[str, str]
     ordinal: int | None
     raw_ordinal_key: _RawTopologyKey
     native_id: str | None
@@ -161,6 +162,7 @@ def _prepare_record(record: SearchRecord, identity: RecordIdentity) -> _Prepared
     return _PreparedRecord(
         record=record,
         identity=identity,
+        ordinal_domain=(record.store, record.adapter_id),
         ordinal=_validated_ordinal(raw_ordinal),
         raw_ordinal_key=_raw_topology_sort_key(raw_ordinal),
         native_id=_validated_native_coordinate(raw_native_id),
@@ -229,6 +231,8 @@ def _can_linearize(records: list[_PreparedRecord]) -> bool:
     if any(ordinal is None for ordinal in ordinals):
         return False
     if len(set(ordinals)) != len(ordinals):
+        return False
+    if len({prepared.ordinal_domain for prepared in records}) != 1:
         return False
 
     record_ids = [prepared.identity.record_id for prepared in records]
