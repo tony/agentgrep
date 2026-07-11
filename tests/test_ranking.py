@@ -1,7 +1,6 @@
 """Tests for the ranking engine (``agentgrep.ranking``).
 
-Covers the three-stage pipeline: rapidfuzz scoring, near-duplicate
-collapsing, and session grouping.
+Covers the two-stage pipeline: rapidfuzz scoring and session grouping.
 """
 
 from __future__ import annotations
@@ -12,11 +11,7 @@ import typing as t
 import pytest
 
 import agentgrep
-from agentgrep.ranking import (
-    collapse_near_duplicates,
-    group_by_session,
-    rank_search_records,
-)
+from agentgrep.ranking import group_by_session, rank_search_records
 
 
 def _record(
@@ -114,82 +109,6 @@ def test_rank_scores_are_descending() -> None:
     result = rank_search_records(records, "streaming parser")
     scores = [score for _, score in result]
     assert scores == sorted(scores, reverse=True)
-
-
-# ---------------------------------------------------------------------------
-# collapse_near_duplicates
-# ---------------------------------------------------------------------------
-
-
-class CollapseCase(t.NamedTuple):
-    """Parametrized case for :func:`collapse_near_duplicates`."""
-
-    test_id: str
-    texts: list[str]
-    expected_count: int
-    expected_any_similar: bool
-
-
-COLLAPSE_CASES: tuple[CollapseCase, ...] = (
-    CollapseCase(
-        "identical-texts-collapse",
-        ["hello world", "hello world", "hello world"],
-        1,
-        True,
-    ),
-    CollapseCase(
-        "different-texts-stay",
-        ["apple pie recipe", "quantum mechanics lecture", "jazz improvisation"],
-        3,
-        False,
-    ),
-    CollapseCase(
-        "empty-input",
-        [],
-        0,
-        False,
-    ),
-    CollapseCase(
-        "near-identical-collapse",
-        ["hello world today", "hello world today!"],
-        1,
-        True,
-    ),
-)
-
-
-@pytest.mark.parametrize(
-    CollapseCase._fields,
-    COLLAPSE_CASES,
-    ids=[case.test_id for case in COLLAPSE_CASES],
-)
-def test_collapse_near_duplicates(
-    test_id: str,
-    texts: list[str],
-    expected_count: int,
-    expected_any_similar: bool,
-) -> None:
-    """Near-duplicate collapsing produces expected representative count."""
-    _ = test_id
-    scored = [(r, 50.0) for r in (_record(text) for text in texts)]
-    result = collapse_near_duplicates(scored)
-    assert len(result) == expected_count
-    if expected_any_similar:
-        assert any(similar > 0 for _, _, similar in result)
-    elif result:
-        assert all(similar == 0 for _, _, similar in result)
-
-
-def test_collapse_preserves_score_order() -> None:
-    """Collapsed output preserves the pre-sorted score order."""
-    scored: list[tuple[agentgrep.SearchRecord, float]] = [
-        (_record("best match"), 95.0),
-        (_record("good match"), 80.0),
-        (_record("okay match"), 60.0),
-    ]
-    result = collapse_near_duplicates(scored)
-    result_scores = [score for _, score, _ in result]
-    assert result_scores == sorted(result_scores, reverse=True)
 
 
 # ---------------------------------------------------------------------------

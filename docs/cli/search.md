@@ -3,9 +3,9 @@
 # agentgrep search
 
 The `agentgrep search` command is the smart default for "what did I say
-about X?" — it ranks matches by relevance, collapses near-duplicates,
-and groups the survivors by session, so the best answer rises to the top
-instead of scrolling past in discovery order. Where {ref}`grep
+about X?" — it ranks matches by relevance and groups them by session, so
+the best answer rises to the top instead of scrolling past in discovery
+order. Where {ref}`grep
 <cli-grep>` is `rg`-shaped (every matching line, newest-first), `search`
 is results-shaped: fewer, better rows.
 
@@ -91,12 +91,13 @@ $ agentgrep search --no-rank release
 
 ## Deduplication and grouping
 
-AI conversation stores replay near-identical text across a session. To
-keep one chatty session from dominating, `search` always collapses
-near-duplicate records into their highest-scoring representative.
-Survivors are then grouped by session, with the best match opening each
-group. Pass `--no-group` for a flat ranked list with no session
-headings:
+AI conversation stores replay the same text across a session. To keep
+one chatty session from dominating, `search` deduplicates repeated
+record text per session before ranking — the same
+{ref}`session deduplication <cli-grep-dedupe>` `grep` applies, minus the
+`--no-dedupe` escape hatch. Survivors are then grouped by session, with
+the best match opening each group. Pass `--no-group` for a flat ranked
+list with no session headings:
 
 ```console
 $ agentgrep search --no-group caching

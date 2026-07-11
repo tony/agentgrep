@@ -148,9 +148,8 @@ class GrepArgs:
 class SearchArgs:
     """Typed arguments for ``agentgrep search``.
 
-    Differentiates from ``grep`` by applying rapidfuzz relevance scoring,
-    near-duplicate collapsing (WRatio > 90), and session grouping to
-    produce a best-first result set.
+    Differentiates from ``grep`` by applying rapidfuzz relevance scoring
+    and session grouping to produce a best-first result set.
     """
 
     terms: tuple[str, ...]
