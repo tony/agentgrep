@@ -724,6 +724,7 @@ class SearchRecord:
     conversation_id: str | None = None
     metadata: dict[str, object] = dataclasses.field(default_factory=dict)
     origin: RecordOrigin | None = None
+    identity_namespace: str | None = None
 
 
 @dataclasses.dataclass(slots=True)
@@ -794,6 +795,7 @@ class MessageCandidate:
     session_id: str | None = None
     conversation_id: str | None = None
     origin: RecordOrigin | None = None
+    identity_namespace: str | None = None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
