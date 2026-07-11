@@ -79,6 +79,33 @@ class AgentProductNameCase(t.NamedTuple):
     product_name: str
 
 
+class ToolAnnotationCase(t.NamedTuple):
+    """Parametrized case for one client-visible MCP tool behavior hint."""
+
+    test_id: str
+    hint: str
+    expected: bool
+
+
+TOOL_ANNOTATION_CASES: list[ToolAnnotationCase] = [
+    ToolAnnotationCase(
+        test_id="read-only",
+        hint="readOnlyHint",
+        expected=True,
+    ),
+    ToolAnnotationCase(
+        test_id="idempotent",
+        hint="idempotentHint",
+        expected=True,
+    ),
+    ToolAnnotationCase(
+        test_id="closed-world",
+        hint="openWorldHint",
+        expected=False,
+    ),
+]
+
+
 class McpOriginPhraseCase(t.NamedTuple):
     """Parametrized case for MCP origin filters with phrase terms."""
 
@@ -281,10 +308,19 @@ class ResourceTextLike(t.Protocol):
     text: str | None
 
 
+class ToolAnnotationsLike(t.Protocol):
+    """Minimal MCP tool-annotation surface (client-visible behavior hints)."""
+
+    readOnlyHint: bool | None
+    idempotentHint: bool | None
+    openWorldHint: bool | None
+
+
 class ToolLike(t.Protocol):
     """Minimal MCP tool metadata surface."""
 
     name: str
+    annotations: ToolAnnotationsLike | None
 
 
 class PromptLike(t.Protocol):
@@ -436,6 +472,32 @@ async def test_mcp_lists_tools_resources_prompts_and_templates() -> None:
     assert any(str(resource.uri) == "agentgrep://sources" for resource in resources)
     assert any(prompt.name == "search_prompts" for prompt in prompts)
     assert any(template.uriTemplate == "agentgrep://sources/{agent}" for template in templates)
+
+
+@pytest.mark.parametrize(
+    "case",
+    TOOL_ANNOTATION_CASES,
+    ids=[case.test_id for case in TOOL_ANNOTATION_CASES],
+)
+async def test_mcp_tools_advertise_readonly_annotations(case: ToolAnnotationCase) -> None:
+    """Every registered tool carries the hints that let a client auto-approve it.
+
+    ``READONLY_TAGS`` is a FastMCP-internal selection filter and never crosses
+    the wire; ``annotations`` are the protocol-level metadata a host reads back
+    on ``tools/list``. Asserting over the live tool list rather than a frozen
+    name set means a newly registered tool cannot silently omit these hints.
+    """
+    agentgrep_mcp = load_agentgrep_mcp_module()
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        tools = t.cast("list[ToolLike]", await client.list_tools())
+
+    assert tools
+    advertised = {
+        tool.name: getattr(tool.annotations, case.hint, None) if tool.annotations else None
+        for tool in tools
+    }
+    assert advertised == dict.fromkeys(advertised, case.expected)
 
 
 async def test_mcp_search_tool_returns_full_prompt(

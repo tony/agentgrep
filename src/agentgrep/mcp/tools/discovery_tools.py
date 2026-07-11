@@ -14,6 +14,7 @@ from agentgrep import events as ag_events
 from agentgrep.mcp import refs
 from agentgrep.mcp._library import (
     READONLY_TAGS,
+    TOOL_ANNOTATIONS,
     AgentSelector,
     FindRecordLike,
     agentgrep,
@@ -204,6 +205,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(
         name="find",
         tags=READONLY_TAGS | {"discovery"},
+        annotations=TOOL_ANNOTATIONS,
         description="Find known agent stores, session files, and SQLite databases.",
     )
     async def find_tool(
@@ -242,6 +244,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(
         name="list_sources",
         tags=READONLY_TAGS | {"discovery"},
+        annotations=TOOL_ANNOTATIONS,
         description="List discovered sources with structured path-kind/source-kind filters.",
     )
     async def list_sources_tool(
@@ -288,6 +291,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(
         name="filter_sources",
         tags=READONLY_TAGS | {"discovery"},
+        annotations=TOOL_ANNOTATIONS,
         description="Filter discovered sources by required substring pattern.",
     )
     async def filter_sources_tool(
@@ -328,6 +332,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(
         name="summarize_discovery",
         tags=READONLY_TAGS | {"discovery"},
+        annotations=TOOL_ANNOTATIONS,
         description="Aggregate counts of discovered sources by agent, format, and kind.",
     )
     async def summarize_discovery_tool(

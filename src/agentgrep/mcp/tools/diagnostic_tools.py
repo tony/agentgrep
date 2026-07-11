@@ -8,7 +8,7 @@ import typing as t
 
 from pydantic import Field
 
-from agentgrep.mcp._library import READONLY_TAGS, agentgrep
+from agentgrep.mcp._library import READONLY_TAGS, TOOL_ANNOTATIONS, agentgrep
 from agentgrep.mcp.models import ValidateQueryRequest, ValidateQueryResponse
 
 if t.TYPE_CHECKING:
@@ -76,6 +76,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(
         name="validate_query",
         tags=READONLY_TAGS | {"diagnostic"},
+        annotations=TOOL_ANNOTATIONS,
         description=(
             "Dry-run terms against sample text and/or validate query-language "
             "syntax (field predicates, booleans, phrases) without searching files."

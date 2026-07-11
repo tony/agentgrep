@@ -17,6 +17,7 @@ from agentgrep import events as ag_events
 from agentgrep.mcp import refs
 from agentgrep.mcp._library import (
     READONLY_TAGS,
+    TOOL_ANNOTATIONS,
     AgentSelector,
     SearchRecordLike,
     SearchScopeName,
@@ -279,6 +280,7 @@ def register(mcp: FastMCP, *, runtime: SearchRuntime | None = None) -> None:
     @mcp.tool(
         name="search",
         tags=READONLY_TAGS | {"search"},
+        annotations=TOOL_ANNOTATIONS,
         description=(
             "Search normalized prompts by default; opt into conversations with "
             "scope. Terms accept agentgrep's query language (field predicates, "
@@ -360,6 +362,7 @@ def register(mcp: FastMCP, *, runtime: SearchRuntime | None = None) -> None:
     @mcp.tool(
         name="recent_sessions",
         tags=READONLY_TAGS | {"search"},
+        annotations=TOOL_ANNOTATIONS,
         description="Return sources modified in the last N hours, newest-first.",
     )
     async def recent_sessions_tool(

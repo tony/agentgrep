@@ -12,6 +12,7 @@ from pydantic import Field
 from agentgrep.mcp import refs
 from agentgrep.mcp._library import (
     READONLY_TAGS,
+    TOOL_ANNOTATIONS,
     agentgrep,
 )
 from agentgrep.mcp.models import (
@@ -200,6 +201,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(
         name="list_stores",
         tags=READONLY_TAGS | {"catalog"},
+        annotations=TOOL_ANNOTATIONS,
         description="List on-disk agent stores from the agentgrep catalog.",
     )
     async def list_stores_tool(
@@ -237,6 +239,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(
         name="get_store_descriptor",
         tags=READONLY_TAGS | {"catalog"},
+        annotations=TOOL_ANNOTATIONS,
         description="Return the catalog descriptor for a single store by id.",
     )
     async def get_store_descriptor_tool(
@@ -256,6 +259,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(
         name="inspect_record_sample",
         tags=READONLY_TAGS | {"catalog"},
+        annotations=TOOL_ANNOTATIONS,
         description="Read the first N records from one adapter+path for schema inspection.",
     )
     async def inspect_record_sample_tool(
@@ -295,6 +299,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(
         name="inspect_result",
         tags=READONLY_TAGS | {"search", "discovery"},
+        annotations=TOOL_ANNOTATIONS,
         description="Inspect records behind an opaque search/find result ref.",
     )
     async def inspect_result_tool(
