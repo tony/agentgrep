@@ -17,11 +17,15 @@ import collections.abc as cabc
 import typing as t
 
 from agentgrep.adapters._extract import (
+    _normalize_native_id,
+    _record_position,
     build_search_record,
     candidate_from_mapping,
     extract_conversation_id,
+    extract_message_id,
     extract_message_text,
     extract_model,
+    extract_parent_message_id,
     extract_role,
     extract_session_id,
     extract_timestamp,
@@ -134,8 +138,10 @@ __all__ = (
     "claude_history_paste_text",
     "expand_claude_history_pastes",
     "extract_conversation_id",
+    "extract_message_id",
     "extract_message_text",
     "extract_model",
+    "extract_parent_message_id",
     "extract_role",
     "extract_session_id",
     "extract_timestamp",
