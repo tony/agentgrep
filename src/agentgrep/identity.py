@@ -85,6 +85,16 @@ class _RecordIdentityRecord(_ContentIdentityRecord, _ThreadIdentityRecord, t.Pro
     """Structural input required to derive one prepared identity bundle."""
 
     @property
+    def store(self) -> str:
+        """Return the normalized store name."""
+        ...
+
+    @property
+    def adapter_id(self) -> str:
+        """Return the normalized adapter identifier."""
+        ...
+
+    @property
     def position(self) -> _RecordPosition | None:
         """Return the normalized logical occurrence position, when present."""
         ...
@@ -254,18 +264,18 @@ def record_identity(record: _RecordIdentityRecord) -> RecordIdentity:
     if coordinate_kind is None or coordinate_value is None:
         record_id = None
     else:
-        record_id = _format_id(
-            _RECORD_PREFIX,
-            {
-                "agent": record.agent,
-                "content_id": content_id,
-                "coordinate_kind": coordinate_kind,
-                "coordinate_value": coordinate_value,
-                "thread_id": thread_id,
-                "type": "record",
-                "v": 1,
-            },
-        )
+        payload: dict[str, object] = {
+            "agent": record.agent,
+            "content_id": content_id,
+            "coordinate_kind": coordinate_kind,
+            "coordinate_value": coordinate_value,
+            "thread_id": thread_id,
+            "type": "record",
+            "v": 1,
+        }
+        if coordinate_kind == "ordinal":
+            payload["coordinate_domain"] = (record.store, record.adapter_id)
+        record_id = _format_id(_RECORD_PREFIX, payload)
 
     return RecordIdentity(
         text_sha256=text_sha256,
