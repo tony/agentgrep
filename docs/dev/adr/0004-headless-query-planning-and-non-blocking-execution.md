@@ -220,6 +220,26 @@ then expose that state through the frontend result payload.
 `RunStatus` values are compatibility-sensitive. Additive values require tests
 for every sink that renders or serializes run status.
 
+### Reachability today
+
+Only `complete` and `bounded` have a producer. The rest are declared in the MCP
+`RunStatusModel` literal but no code path constructs them, so a caller cannot
+learn from the payload that a run was cut short, cancelled, approximated, or
+failed. A state with no producer is a promise the payload cannot keep, so each
+one below names the layer that owes it.
+
+| State | Producer today | Owed by |
+| --- | --- | --- |
+| `complete` | `_page_status`, in the MCP search and discovery tool modules, when a page has no `next_cursor` | — |
+| `bounded` | the same helpers, with `reason="page_limit"`, when a page has a `next_cursor` | — |
+| `truncated` | none | the sinks that own an output budget: MCP response limits, and the JSON/NDJSON writers |
+| `cancelled` | none | the execution driver's cancellation path (`SearchControl`), surfaced through the collectors |
+| `approximate` | none | the planner, wherever mtime-as-recency or a bounded newest-first scan is used (see {ref}`adr-result-order-limit-and-streaming-merge`, OL-1) |
+| `failed` | none | the collectors, on an unrecovered source or run error |
+
+The CLI JSON and NDJSON payloads carry no run status at all yet; only the MCP
+tool responses do.
+
 ### Result payload fields
 
 `SearchResult` / `FindResult`
@@ -429,7 +449,8 @@ worker must follow {ref}`adr-native-boundary-execution-architecture`.
 - Adapters must describe capabilities honestly, not just expose parser
   functions.
 - Deterministic ordering and dedupe need explicit merge rules once execution
-  becomes concurrent.
+  becomes concurrent. Those rules are settled in
+  {ref}`adr-result-order-limit-and-streaming-merge`.
 - Sinks must handle events incrementally instead of assuming a completed list.
 
 ### Risks
