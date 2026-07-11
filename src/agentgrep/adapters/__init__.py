@@ -101,6 +101,7 @@ from agentgrep.adapters.cursor_ide import (
 )
 from agentgrep.adapters.gemini import (
     _GEMINI_PARSERS,
+    _replay_gemini_chat_events as _replay_gemini_chat_events,
     parse_gemini_chat_file,
     parse_gemini_chat_legacy_file,
     parse_gemini_logs_file,

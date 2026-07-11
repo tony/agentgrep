@@ -13,6 +13,7 @@ from agentgrep.adapters._common import (
     _record_origin,
     _unix_millis_to_isoformat,
 )
+from agentgrep.adapters._extract import _record_position
 from agentgrep.adapters._registry import AnyParserSpec, ParserSpec
 from agentgrep.readers import (
     as_optional_str,
@@ -55,13 +56,14 @@ def parse_vscode_chat_session(source: SourceHandle) -> cabc.Iterator[SearchRecor
     if not isinstance(requests, list):
         return
     session_id = as_optional_str(mapping.get("sessionId"))
+    identity_namespace = "vscode.chat" if session_id is not None else None
     base_metadata: dict[str, object] = {}
     cwd = _vscode_workspace_cwd(source.path)
     origin = _record_origin(cwd=cwd)
     if cwd:
         base_metadata["cwd"] = cwd
     title: str | None = None
-    for entry in requests:
+    for request_index, entry in enumerate(requests):
         if not isinstance(entry, dict):
             continue
         request = t.cast("dict[str, object]", entry)
@@ -89,6 +91,11 @@ def parse_vscode_chat_session(source: SourceHandle) -> cabc.Iterator[SearchRecor
                 conversation_id=session_id,
                 origin=origin,
                 metadata=dict(base_metadata),
+                identity_namespace=identity_namespace,
+                position=_record_position(
+                    native_id=request.get("requestId"),
+                    ordinal=2 * request_index,
+                ),
             )
         reply = _vscode_response_text(request.get("response"))
         if reply:
@@ -111,6 +118,8 @@ def parse_vscode_chat_session(source: SourceHandle) -> cabc.Iterator[SearchRecor
                 conversation_id=session_id,
                 origin=origin,
                 metadata=metadata,
+                identity_namespace=identity_namespace,
+                position=_record_position(ordinal=2 * request_index + 1),
             )
 
 

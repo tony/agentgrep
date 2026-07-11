@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import collections.abc as cabc
+import dataclasses
 import pathlib
 import typing as t
 
@@ -11,7 +12,9 @@ from agentgrep.adapters._common import (
     _record_origin,
 )
 from agentgrep.adapters._extract import (
+    _normalize_native_id,
     _origin_from_mapping,
+    _record_position,
     build_search_record,
     flatten_content_value,
 )
@@ -165,6 +168,85 @@ def _gemini_directories_cwd(mapping: dict[str, object]) -> str | None:
     return _path_like_str(t.cast("list[object]", directories)[0])
 
 
+def _replay_gemini_chat_events(
+    events: cabc.Iterable[object],
+) -> tuple[
+    dict[str, object],
+    dict[tuple[str, str | int], dict[str, object]],
+]:
+    """Replay Gemini chat mutations into the final active message map."""
+    metadata: dict[str, object] = {}
+    active: dict[tuple[str, str | int], dict[str, object]] = {}
+    anonymous_sequence = 0
+
+    def insert_message(message: dict[str, object]) -> None:
+        nonlocal anonymous_sequence
+        native_id = _normalize_native_id(message.get("id"))
+        if native_id is None:
+            key: tuple[str, str | int] = ("anonymous", anonymous_sequence)
+            anonymous_sequence += 1
+        else:
+            key = ("native", native_id)
+        active[key] = message
+
+    def apply_event(event: object) -> None:
+        """Apply one event without retaining its mutation payload locals."""
+        if not isinstance(event, dict):
+            return
+        mapping = t.cast("dict[str, object]", event)
+        if "$rewindTo" in mapping:
+            rewind_id = mapping.get("$rewindTo")
+            if not isinstance(rewind_id, str):
+                return
+            target = ("native", rewind_id)
+            if target not in active:
+                active.clear()
+                return
+            while active:
+                key, _ = active.popitem()
+                if key == target:
+                    break
+            return
+        role = as_optional_str(mapping.get("type"))
+        has_message_shape = _normalize_native_id(mapping.get("id")) is not None or role in {
+            "user",
+            "gemini",
+        }
+        if has_message_shape:
+            insert_message(mapping)
+            return
+        if "$set" in mapping:
+            update = mapping.get("$set")
+            if not isinstance(update, dict):
+                return
+            update_mapping = t.cast("dict[str, object]", update)
+            checkpoint = update_mapping.get("messages")
+            if isinstance(checkpoint, list):
+                active.clear()
+                for entry in checkpoint:
+                    if isinstance(entry, dict):
+                        insert_message(t.cast("dict[str, object]", entry))
+            metadata.update(
+                (key, value) for key, value in update_mapping.items() if key != "messages"
+            )
+            return
+        has_partial_metadata_shape = (
+            as_optional_str(mapping.get("sessionId")) is not None
+            and as_optional_str(mapping.get("projectHash")) is not None
+        )
+        if has_partial_metadata_shape:
+            messages = mapping.get("messages")
+            if isinstance(messages, list):
+                for entry in messages:
+                    if isinstance(entry, dict):
+                        insert_message(t.cast("dict[str, object]", entry))
+            metadata.update((key, value) for key, value in mapping.items() if key != "messages")
+
+    for event in events:
+        apply_event(event)
+    return metadata, active
+
+
 def parse_gemini_chat_file(
     source: SourceHandle,
 ) -> cabc.Iterator[SearchRecord]:
@@ -183,32 +265,29 @@ def parse_gemini_chat_file(
     sits at ``tmp/<project_hash>/chats/session-*.jsonl``, so the project
     directory — the ``cwd_hash`` — is two levels up.
     """
-    session_id: str | None = None
     project_dir = source.path.parent.parent
-    session_origin: RecordOrigin | None = _record_origin(
-        cwd=_gemini_project_root_cwd(project_dir),
-        cwd_hash=project_dir.name,
+    metadata, active = _replay_gemini_chat_events(iter_jsonl(source.path))
+    session_id = as_optional_str(metadata.get("sessionId"))
+    session_origin = _record_origin(
+        cwd=_gemini_directories_cwd(metadata),
+        fallback=_origin_from_mapping(
+            metadata,
+            fallback=_record_origin(
+                cwd=_gemini_project_root_cwd(project_dir),
+                cwd_hash=project_dir.name,
+            ),
+        ),
     )
-    for event in iter_jsonl(source.path):
-        if not isinstance(event, dict):
-            continue
-        mapping = t.cast("dict[str, object]", event)
-        if "$set" in mapping:
-            continue
-        if "kind" in mapping:
-            # SessionMetadataRecord: upstream discriminates by ``kind``
-            # (e.g. ``"main"``) rather than by the absence of ``type``,
-            # so this stays correct even if a future schema adds a
-            # ``type`` field to the metadata record.
-            session_id = as_optional_str(mapping.get("sessionId"))
-            session_origin = _record_origin(
-                cwd=_gemini_directories_cwd(mapping),
-                fallback=_origin_from_mapping(mapping, fallback=session_origin),
-            )
-            continue
+    identity_namespace = "gemini.chat" if session_id is not None else None
+    for ordinal, mapping in enumerate(active.values()):
         candidate = _gemini_message_record_to_candidate(mapping, session_id, session_origin)
         if candidate is None:
             continue
+        candidate = dataclasses.replace(
+            candidate,
+            identity_namespace=identity_namespace,
+            position=_record_position(native_id=mapping.get("id"), ordinal=ordinal),
+        )
         yield build_search_record(source, candidate)
 
 
@@ -244,13 +323,19 @@ def parse_gemini_chat_legacy_file(
     messages = container.get("messages")
     if not isinstance(messages, list):
         return
-    for entry in messages:
+    identity_namespace = "gemini.chat" if session_id is not None else None
+    for raw_index, entry in enumerate(messages):
         if not isinstance(entry, dict):
             continue
         mapping = t.cast("dict[str, object]", entry)
         candidate = _gemini_message_record_to_candidate(mapping, session_id, session_origin)
         if candidate is None:
             continue
+        candidate = dataclasses.replace(
+            candidate,
+            identity_namespace=identity_namespace,
+            position=_record_position(native_id=mapping.get("id"), ordinal=raw_index),
+        )
         yield build_search_record(source, candidate)
 
 
@@ -273,7 +358,7 @@ def parse_gemini_logs_file(
         cwd_hash=project_dir.name,
     )
     entries = payload if isinstance(payload, list) else []
-    for entry in entries:
+    for raw_index, entry in enumerate(entries):
         if not isinstance(entry, dict):
             continue
         mapping = t.cast("dict[str, object]", entry)
@@ -294,6 +379,11 @@ def parse_gemini_logs_file(
             session_id=session_id,
             conversation_id=session_id,
             origin=_origin_from_mapping(mapping, fallback=origin),
+            identity_namespace=("gemini.chat" if session_id is not None else None),
+            position=_record_position(
+                native_id=mapping.get("messageId"),
+                ordinal=raw_index,
+            ),
         )
 
 
