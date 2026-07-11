@@ -103,6 +103,7 @@ from agentgrep.ui.widgets.welcome import (
 
 if t.TYPE_CHECKING:
     from agentgrep._engine.matching import CompiledRecordMatcher
+    from agentgrep.identity import RecordIdentity
     from agentgrep.ui.workflows import Workflow
 
 
@@ -118,6 +119,36 @@ _DetailCacheKey = tuple[int, tuple[str, ...], bool, bool, tuple[str, ...]]
 _DetailBody = tuple[object, str]
 _DETAIL_RICH_FORMAT_MAX_CHARS = 2048
 _RichSyntaxType = _RichSyntax
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _PreparedDetail:
+    """Worker-prepared identity and optional body for one detail generation."""
+
+    record: SearchRecord
+    identity: RecordIdentity
+    body: _DetailBody | None
+    query_terms: tuple[str, ...]
+    body_cache_key: _DetailCacheKey
+    present_body: bool
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _DetailSnapshot:
+    """Immutable inputs captured on the pump for one detail worker."""
+
+    record: SearchRecord
+    identity: RecordIdentity | None
+    body: _DetailBody | None
+    body_text: str
+    query_terms: tuple[str, ...]
+    body_cache_key: _DetailCacheKey
+    case_sensitive: bool
+    regex: bool
+    filter_terms: tuple[str, ...]
+    match_styles: _DetailMatchStyles
+    syntax_theme: str
+    build_body: bool
 
 
 class HudLayout(LayoutScreen):
@@ -205,6 +236,7 @@ class HudLayout(LayoutScreen):
         self._detail: StaticLike | None = None
         self._detail_row: SlowSourceDiagnosticsRow | None = None
         self._chrome_generation: int = 0
+        self._detail_generation: int = 0
         self._last_detail_text: str = ""
         self._last_right_text: str = ""
         self._detail_visible: bool = False
@@ -253,6 +285,10 @@ class HudLayout(LayoutScreen):
         self._detail_body_cache: collections.OrderedDict[
             _DetailCacheKey,
             tuple[SearchRecord, object, str],
+        ] = collections.OrderedDict()
+        self._detail_identity_cache: collections.OrderedDict[
+            int,
+            tuple[SearchRecord, RecordIdentity],
         ] = collections.OrderedDict()
         self._presented_detail_cache_key: _DetailCacheKey | None = None
         self._detail_build_generation = 0
@@ -689,6 +725,8 @@ class HudLayout(LayoutScreen):
         callers that replace or clear a running search must signal the
         old control first so the new worker starts with a clean slate.
         """
+        self.workers.cancel_group(self, "detail")
+        self._detail_generation += 1
         self.control = SearchControl()
         self._filter_generation += 1
         self._records_generation += 1
@@ -696,6 +734,7 @@ class HudLayout(LayoutScreen):
         clear_haystack_cache()
         self._detail_body_cache.clear()
         self._presented_detail_cache_key = None
+        self._detail_identity_cache.clear()
         self._detail_scroll_positions.clear()
         self._detail_find_state.clear()
         # A fresh search wipes the detail; close any open find bar.
@@ -1493,6 +1532,8 @@ class HudLayout(LayoutScreen):
                     self.show_detail(record)
             else:
                 find_had_focus = self.app.focused is self._detail_find_input
+                self.workers.cancel_group(self, "detail")
+                self._detail_generation += 1
                 if self._detail_find_active:
                     self._remember_detail_find()
                 self._detail_build_generation += 1
@@ -1668,6 +1709,9 @@ class HudLayout(LayoutScreen):
         viewed before restores the scroll position the user left it at (see
         :meth:`_restore_detail_scroll`).
         """
+        self.workers.cancel_group(self, "detail")
+        self._detail_generation += 1
+        generation = self._detail_generation
         if self._detail is None:
             return
         # A record switch while the find bar is open would leave a stale
@@ -1689,7 +1733,112 @@ class HudLayout(LayoutScreen):
         self._current_detail_record = record
         self._detail_build_generation += 1
         detail_generation = self._detail_build_generation
+        query_terms = tuple(self.search_query.terms)
+        case_sensitive = self.search_query.case_sensitive
+        regex = self.search_query.regex
+        filter_terms = self._filter_terms
+        body_cache_key = self._detail_cache_key_for(
+            record,
+            query_terms,
+            case_sensitive=case_sensitive,
+            regex=regex,
+            filter_terms=filter_terms,
+        )
+        identity = self._cached_detail_identity(record)
         width = max(20, self._detail.size.width or 80)
+        header = self._build_detail_header(record, identity, width=width)
+        body_truncated = truncate_lines(
+            record.text,
+            DETAIL_BODY_MAX_LINES,
+            max_chars=DETAIL_BODY_MAX_CHARS,
+        )
+        body = self._cached_detail_body(record, body_cache_key)
+        match_styles = _DetailMatchStyles(
+            search=self._match_style("search"),
+            filter=self._match_style("filter"),
+        )
+        syntax_theme = ui_theme.detail_syntax_theme(
+            dark=self.app.current_theme.dark,
+            theme_name=self.app.theme,
+        )
+        json_like = body_truncated.lstrip(" \t\r\n").startswith(("{", "["))
+        if (
+            body is None
+            and len(body_truncated) <= self._DETAIL_ASYNC_BODY_THRESHOLD
+            and not json_like
+        ):
+            body = self._build_detail_body(
+                body_truncated,
+                query_terms,
+                match_styles,
+                case_sensitive=case_sensitive,
+                regex=regex,
+                filter_terms=filter_terms,
+                syntax_theme=syntax_theme,
+            )
+
+        # Keep the header + body text so find-in-detail can operate against the
+        # new record while a large body render is still pending.
+        self._detail_header_text = header
+        self._detail_body_text = body_truncated
+        self._detail_find_source = ""
+        self._detail_find_json_syntax = False
+        if body is None:
+            self._detail.update(_RichGroup(header))
+        else:
+            self._present_detail(
+                record,
+                header,
+                body,
+                query_terms,
+                generation=detail_generation,
+                cache_key=body_cache_key,
+            )
+
+        needs_body = body is None
+        if identity is not None and not needs_body:
+            return
+
+        emit = _runtime.make_gated_emitter(
+            self.app.call_from_thread,
+            self._apply_prepared_detail,
+            generation,
+        )
+        streaming = t.cast("StreamingAppLike", t.cast("object", self))
+        streaming.run_worker(
+            functools.partial(
+                self._prepare_detail_in_thread,
+                _DetailSnapshot(
+                    record=record,
+                    identity=identity,
+                    body=body,
+                    body_text=body_truncated,
+                    query_terms=query_terms,
+                    body_cache_key=body_cache_key,
+                    case_sensitive=case_sensitive,
+                    regex=regex,
+                    filter_terms=filter_terms,
+                    match_styles=match_styles,
+                    syntax_theme=syntax_theme,
+                    build_body=needs_body,
+                ),
+                emit,
+            ),
+            name="detail",
+            group="detail",
+            description="prepare record detail",
+            thread=True,
+            exclusive=True,
+        )
+
+    def _build_detail_header(
+        self,
+        record: SearchRecord,
+        identity: RecordIdentity | None,
+        *,
+        width: int,
+    ) -> Text:
+        """Build the bounded metadata header for one selected record."""
         theme_vars = self.app.theme_variables
         agent_color = ui_theme.resolve(
             theme_vars,
@@ -1703,11 +1852,13 @@ class HudLayout(LayoutScreen):
         model_color = ui_theme.resolve(theme_vars, "ag-model")
         path_color = ui_theme.resolve(theme_vars, "ag-muted")
         header = Text(no_wrap=False)
-        header_rows: list[tuple[str, str, str]] = [
+        leading_rows: tuple[tuple[str, str, str], ...] = (
             ("Agent:", record.agent or "", agent_color),
             ("Kind:", record.kind or "", kind_color),
             ("Store:", record.store or "", dim_color),
             ("Adapter:", record.adapter_id or "", dim_color),
+        )
+        trailing_rows: list[tuple[str, str, str]] = [
             ("Timestamp:", record.timestamp or "unknown", dim_color),
             ("Model:", record.model or "unknown", model_color),
             (
@@ -1723,7 +1874,7 @@ class HudLayout(LayoutScreen):
                 ("Worktree:", record.origin.worktree),
             ):
                 if value:
-                    header_rows.append(
+                    trailing_rows.append(
                         (
                             label,
                             format_display_path(pathlib.Path(value), directory=True),
@@ -1731,94 +1882,35 @@ class HudLayout(LayoutScreen):
                         ),
                     )
             if record.origin.branch:
-                header_rows.append(("Branch:", record.origin.branch, dim_color))
+                trailing_rows.append(("Branch:", record.origin.branch, dim_color))
             if record.origin.cwd_hash:
-                header_rows.append(("Cwd hash:", record.origin.cwd_hash, dim_color))
-        for label, value, value_style in header_rows:
+                trailing_rows.append(("Cwd hash:", record.origin.cwd_hash, dim_color))
+        for label, value, value_style in leading_rows:
+            header.append(f"{label} ", style="bold")
+            header.append(f"{value}\n", style=value_style)
+        for label, value in (
+            ("Record:", None if identity is None else identity.record_id),
+            ("Content:", None if identity is None else identity.content_id),
+            ("Thread:", None if identity is None else identity.thread_id),
+        ):
+            header.append(f"{label} ", style="dim")
+            if identity is None:
+                header.append("…\n", style="dim")
+            else:
+                header.append(f"{value or '—'}\n")
+        for label, value, value_style in trailing_rows:
             header.append(f"{label} ", style="bold")
             header.append(f"{value}\n", style=value_style)
         header.append("\n")
-        body_truncated = truncate_lines(
-            record.text,
-            DETAIL_BODY_MAX_LINES,
-            max_chars=DETAIL_BODY_MAX_CHARS,
-        )
-        query_terms = tuple(self.search_query.terms)
-        case_sensitive = self.search_query.case_sensitive
-        regex = self.search_query.regex
-        filter_terms = self._filter_terms
-        cache_key = self._detail_cache_key(query_terms, record)
-        # Keep the header + body text so find-in-detail can re-highlight the
-        # body (without rebuilding the header) and scroll to matches.
-        self._detail_header_text = header
-        self._detail_body_text = body_truncated
-        self._detail_find_source = ""
-        self._detail_find_json_syntax = False
-        match_styles = _DetailMatchStyles(
-            search=self._match_style("search"),
-            filter=self._match_style("filter"),
-        )
-        syntax_theme = ui_theme.detail_syntax_theme(
-            dark=self.app.current_theme.dark,
-            theme_name=self.app.theme,
-        )
-        cached = self._cached_detail_body(record, cache_key)
-        if cached is not None:
-            self._present_detail(
-                record,
-                header,
-                cached,
-                query_terms,
-                generation=detail_generation,
-                cache_key=cache_key,
-            )
-            return
-        json_like = body_truncated.lstrip(" \t\r\n").startswith(("{", "["))
-        if len(body_truncated) <= self._DETAIL_ASYNC_BODY_THRESHOLD and not json_like:
-            self._present_detail(
-                record,
-                header,
-                self._build_detail_body(
-                    body_truncated,
-                    query_terms,
-                    match_styles,
-                    case_sensitive=case_sensitive,
-                    regex=regex,
-                    filter_terms=filter_terms,
-                    syntax_theme=syntax_theme,
-                ),
-                query_terms,
-                generation=detail_generation,
-                cache_key=cache_key,
-            )
-            return
-        # Large, uncached body: show the header now and build the heavy
-        # renderable off the UI thread. ``exclusive=True`` cancels a prior
-        # detail build, and ``_present_detail`` discards any result whose
-        # record is no longer the one on screen.
-        self._detail.update(_RichGroup(header))
-        streaming = t.cast("StreamingAppLike", t.cast("object", self))
-        streaming.run_worker(
-            functools.partial(
-                self._build_detail_in_thread,
-                record,
-                header,
-                body_truncated,
-                query_terms,
-                match_styles,
-                syntax_theme,
-                detail_generation,
-                cache_key,
-                case_sensitive,
-                regex,
-                filter_terms,
-            ),
-            name="detail",
-            group="detail",
-            description="build detail body",
-            thread=True,
-            exclusive=True,
-        )
+        return header
+
+    def _cached_detail_identity(self, record: SearchRecord) -> RecordIdentity | None:
+        """Return a retained-record identity cache hit, rejecting reused IDs."""
+        cached = self._detail_identity_cache.get(id(record))
+        if cached is None or cached[0] is not record:
+            return None
+        self._detail_identity_cache.move_to_end(id(record))
+        return cached[1]
 
     def _detail_body_is_cached(self, query_terms: cabc.Sequence[str]) -> bool:
         """Return whether the detail body for the current record is memoized."""
@@ -1845,41 +1937,85 @@ class HudLayout(LayoutScreen):
         return renderable, source
 
     @_runtime.offload
-    def _build_detail_in_thread(
+    def _prepare_detail_in_thread(
         self,
-        record: SearchRecord,
-        header: object,
-        body_truncated: str,
-        query_terms: cabc.Sequence[str],
-        match_styles: _DetailMatchStyles,
-        syntax_theme: str,
-        generation: int,
-        cache_key: _DetailCacheKey | None,
-        case_sensitive: bool,
-        regex: bool,
-        filter_terms: tuple[str, ...],
+        snapshot: _DetailSnapshot,
+        emit: cabc.Callable[[object], None],
     ) -> None:
-        """Build the detail body off the UI thread, then apply it on the loop."""
-        body = self._build_detail_body(
-            body_truncated,
-            query_terms,
-            match_styles,
-            case_sensitive=case_sensitive,
-            regex=regex,
-            filter_terms=filter_terms,
-            syntax_theme=syntax_theme,
-        )
-        self.app.call_from_thread(
-            functools.partial(
-                self._present_detail,
-                record,
-                header,
-                body,
-                query_terms,
-                generation=generation,
-                cache_key=cache_key,
+        """Prepare missing identity/body data without reading pump-owned state."""
+        identity = snapshot.identity
+        if identity is None:
+            from agentgrep.identity import record_identity
+
+            identity = record_identity(snapshot.record)
+        body = snapshot.body
+        if snapshot.build_body:
+            body = self._build_detail_body(
+                snapshot.body_text,
+                snapshot.query_terms,
+                snapshot.match_styles,
+                case_sensitive=snapshot.case_sensitive,
+                regex=snapshot.regex,
+                filter_terms=snapshot.filter_terms,
+                syntax_theme=snapshot.syntax_theme,
+            )
+        emit(
+            _PreparedDetail(
+                record=snapshot.record,
+                identity=identity,
+                body=body,
+                query_terms=snapshot.query_terms,
+                body_cache_key=snapshot.body_cache_key,
+                present_body=snapshot.build_body,
             ),
         )
+
+    @_runtime.pump_only
+    def _apply_prepared_detail(self, generation: int, event: object) -> None:
+        """Cache and paint one worker result when its exact selection is live."""
+        if (
+            generation != self._detail_generation
+            or not isinstance(event, _PreparedDetail)
+            or self._current_detail_record is not event.record
+        ):
+            return
+        self._remember_detail_identity(event.record, event.identity)
+        width = max(20, self._detail.size.width or 80) if self._detail is not None else 80
+        header = self._build_detail_header(event.record, event.identity, width=width)
+        if event.present_body and event.body is not None:
+            self._present_detail(
+                event.record,
+                header,
+                event.body,
+                event.query_terms,
+                generation=self._detail_build_generation,
+                cache_key=event.body_cache_key,
+            )
+        else:
+            self._replace_detail_header(header)
+
+    def _remember_detail_identity(
+        self,
+        record: SearchRecord,
+        identity: RecordIdentity,
+    ) -> None:
+        """Store one object-safe prepared identity in the bounded LRU."""
+        key = id(record)
+        self._detail_identity_cache[key] = (record, identity)
+        self._detail_identity_cache.move_to_end(key)
+        if len(self._detail_identity_cache) > self._DETAIL_CACHE_MAX:
+            self._detail_identity_cache.popitem(last=False)
+
+    def _replace_detail_header(self, header: Text) -> None:
+        """Replace only the detail header, preserving the exact live body."""
+        if self._detail is None:
+            return
+        renderables = tuple(getattr(self._detail.content, "renderables", ()))
+        self._detail_header_text = header
+        if len(renderables) < 2:
+            self._detail.update(_RichGroup(header))
+            return
+        self._detail.update(_RichGroup(header, *renderables[1:]))
 
     @_runtime.pump_only
     def _present_detail(
@@ -1904,6 +2040,7 @@ class HudLayout(LayoutScreen):
             or (generation is not None and generation != self._detail_build_generation)
         ):
             return
+        self._detail_header_text = header
         body_renderable, body_for_scroll = body
         if cache_key is not None:
             self._detail_body_cache[cache_key] = (record, body_renderable, body_for_scroll)
@@ -1958,12 +2095,30 @@ class HudLayout(LayoutScreen):
         record = record if record is not None else self._current_detail_record
         if record is None:
             return None
+        return self._detail_cache_key_for(
+            record,
+            tuple(query_terms),
+            case_sensitive=self.search_query.case_sensitive,
+            regex=self.search_query.regex,
+            filter_terms=self._filter_terms,
+        )
+
+    @staticmethod
+    def _detail_cache_key_for(
+        record: SearchRecord,
+        query_terms: tuple[str, ...],
+        *,
+        case_sensitive: bool,
+        regex: bool,
+        filter_terms: tuple[str, ...],
+    ) -> _DetailCacheKey:
+        """Return one body-cache key from pump-captured inputs."""
         return (
             id(record),
-            tuple(query_terms),
-            self.search_query.case_sensitive,
-            self.search_query.regex,
-            self._filter_terms,
+            query_terms,
+            case_sensitive,
+            regex,
+            filter_terms,
         )
 
     def _match_style(self, kind: str) -> str:
@@ -2315,7 +2470,11 @@ class HudLayout(LayoutScreen):
                 case_sensitive=self.search_query.case_sensitive,
                 style=self._match_style("search"),
             )
-        self._apply_filter_highlight(text)
+        self._apply_filter_highlight(
+            text,
+            self._match_style("filter"),
+            terms=self._filter_terms,
+        )
         self._detail_find_base = text
         self._detail_find_base_key = key
         return text
