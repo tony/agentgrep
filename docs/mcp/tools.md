@@ -37,12 +37,23 @@ policy, not the result limit. The independent MCP result `limit` still defaults
 to 20 when omitted.
 
 **Returns:** request metadata, effort, run status, coverage, diagnostics,
-next actions, result-window metadata, and
-normalized records with `ref`, agent, store, adapter, path, text, title,
+next actions, result-window metadata, and normalized records with `ref`,
+`content_id`, `record_id`,
+`record_id_stability`, `thread_id`, agent, store, adapter, path, text, title,
 role, timestamp, model, session ID, conversation ID, optional
-{class}`~agentgrep.mcp.RecordOriginModel`, and metadata. Search responses are
-cursorless. `status.reason="result_limit"` means more matches may exist; refine
-the query or rerun it with a higher limit. `status.state="truncated"` means the
+{class}`~agentgrep.mcp.RecordOriginModel`, and metadata. `content_id` is always a
+full string; the record, stability, and thread fields are required but nullable
+when the source lacks a defensible coordinate or thread. See the
+{ref}`deterministic record identity contract
+<adr-deterministic-record-identity>` for their separate meanings.
+
+Canonical IDs compare content, logical occurrences, and namespaced threads;
+they do not locate stored results. For inspection, only `ref` is accepted by
+`inspect_result`, and the existing opaque ref remains unchanged.
+
+Search responses are cursorless. `status.reason="result_limit"` means more
+matches may exist; refine the query or rerun it with a higher limit.
+`status.state="truncated"` means the
 MCP response budget omitted whole trailing records while preserving the
 structured envelope only when the zero-record envelope fits. Otherwise the
 client receives a bounded MCP error without `structuredContent`. Results use
