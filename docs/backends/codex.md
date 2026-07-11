@@ -135,3 +135,35 @@ summaries.
 Auth, installation id, secrets, `.env`, and policy state are private;
 caches, SQLite sidecars, and temp directories are catalogued for audits
 but stay outside default search.
+
+## Project context
+
+| Store | `model` | `cwd` | `branch` |
+|-------|---------|-------|----------|
+| {storage:storeref}`codex.sessions` | first `turn_context` payload's `model` | `session_meta` `cwd` | `session_meta` `git.branch` |
+| {storage:storeref}`codex.state_db` | `threads.model` | `threads.cwd` | `threads.git_branch` |
+| {storage:storeref}`codex.history` | — | — | — |
+
+The two stores that know where a session ran write the path literally, so
+they land in the {ref}`lossless tier <backend-cwd-tiers>` and answer
+`--cwd`, `cwd:`, and `branch:` with the real values.
+
+A rollout's `session_meta` header names `model_provider` — the provider
+id, not a model slug — so the session model is read from the first
+per-turn `turn_context` record instead, which is where Codex writes the
+slug the session actually ran as. `session_meta` is the fallback for a
+rollout that has no `turn_context` at all.
+
+A {storage:storeref}`codex.state_db` `threads` row keeps the model, the
+working directory, the git branch, and the remote URL beside the prompt
+text, so those records carry an origin without re-reading the rollout
+file. `git_origin_url` lands on `origin.remote`. The `agent_jobs` rows in
+the same database stay origin-less: the shipped table has no `thread_id`
+column to reach a `threads` row through. The database is reachable at
+`--scope conversations`, not at the default prompt scope.
+
+{storage:storeref}`codex.history` carries no project context in any shape
+Codex has shipped: the JSONL rows are `session_id`, `ts`, and `text`, and
+the legacy JSON rows are `command` and `timestamp`. That store is
+searchable by text, agent, and time, and it does not satisfy an origin
+filter.

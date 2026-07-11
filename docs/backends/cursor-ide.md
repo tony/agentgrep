@@ -39,16 +39,39 @@ global store.
 
 ## Project context
 
-Per-workspace Cursor stores contribute `origin.cwd_hash` from the
-`workspaceStorage/<hash>` directory. When the sibling `workspace.json`
-records a folder URI, agentgrep resolves it to `origin.cwd` too. That
-lets `--cwd`, `cwd:`, MCP `cwd`, and `cwd_hash:` target one Cursor
-workspace without opening unrelated workspace databases.
+| Store | `model` | `cwd` | `branch` |
+|-------|---------|-------|----------|
+| {storage:storeref}`cursor-ide.state_vscdb` | `composerData` `modelConfig.modelName`, `bubbleId` `modelInfo.modelName` | `composerData` `gitWorktree.worktreePath` | `composerData` `gitWorktree.branchName` |
+| {storage:storeref}`cursor-ide.workspace_state` | same composer keys | sibling `workspace.json` folder URI | `composerData` `gitWorktree.branchName` |
 
-Global `state.vscdb` records stay conservative when no workspace origin
-is known. They remain searchable by text, agent, scope, and other
-non-origin fields, but they do not satisfy a hard current-project
-filter unless the stored record itself carries project metadata.
+Cursor keeps the interesting metadata in `cursorDiskKV`, not in the
+prompt keys: `composerData:<uuid>` is the session document, carrying the
+model it ran under and a `gitWorktree` block with the worktree path and
+branch name, and `bubbleId:<uuid>:<uuid>` is one turn of that session,
+naming its own model. Both are read, and both are
+{ref}`lossless <backend-cwd-tiers>` — Cursor writes the path, so `--cwd`,
+`cwd:`, and `branch:` answer with the real values. A turn that ran in its
+own worktree keeps its own origin rather than inheriting the session's.
+
+Per-workspace stores also contribute `origin.cwd_hash` from the
+`workspaceStorage/<hash>` directory, and agentgrep resolves the sibling
+`workspace.json` folder URI to `origin.cwd`. That pair lets `--cwd`,
+`cwd:`, MCP `cwd`, and `cwd_hash:` target one Cursor workspace without
+opening unrelated workspace databases. The workspace `cwd` is a fact
+about the database, not a promise about every record in it, so a
+composer bubble that names a different worktree still wins for its own
+record.
+
+Global `state.vscdb` records stay conservative when no composer origin is
+known. They remain searchable by text, agent, scope, and other non-origin
+fields, but they do not satisfy a hard current-project filter unless the
+stored record itself carries project metadata.
+
+```{note}
+The `composerData` and `bubbleId` key paths are verified against a Cursor
+backup, not yet against a live install. Every read is guarded, so a
+schema change degrades to an absent field rather than a wrong one.
+```
 
 ## Cross-host discovery on WSL
 

@@ -59,3 +59,25 @@ project-basename directory names. Discovery does not depend on the
 scheme — agentgrep walks `tmp/` recursively — but agentgrep still
 exposes {func}`~agentgrep.store_catalog.gemini_project_hash` to
 reproduce the legacy hash directories.
+
+## Project context
+
+| Store | `model` | `cwd` | `branch` |
+|-------|---------|-------|----------|
+| {storage:storeref}`gemini.tmp.chats` | assistant turn's `model` | metadata line's `directories[0]`, else sibling `.project_root` | — |
+| {storage:storeref}`gemini.tmp.chats_legacy` | — | sibling `.project_root` | — |
+| {storage:storeref}`gemini.tmp.logs` | — | sibling `.project_root` | — |
+
+All three prompt stores live under `tmp/<project_hash>/`, so the
+directory name gives every record its `origin.cwd_hash`. The literal path
+is on disk too, in two places: the session metadata line names it in a
+plural `directories` array — where every other agent writes a scalar
+`cwd` — and Gemini drops a `.project_root` file next to the hashed
+directory. agentgrep reads both, so Gemini records carry `cwd` and
+`cwd_hash` together and answer `--cwd`, `cwd:`, `repo:`, and `project:`
+alongside `cwd_hash:`. Both sources are
+{ref}`lossless <backend-cwd-tiers>`; a missing `.project_root` is ordinary
+on older trees and simply leaves the record without a `cwd`.
+
+Gemini records no git branch in any of its prompt stores, so `branch:`
+does not reach this backend.

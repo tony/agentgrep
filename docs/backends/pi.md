@@ -84,10 +84,30 @@ blocker_resolved/data) with a JSON `data` payload, emitted as inspectable
 records; sibling `session_meta`/`session_resume`/`tool_calls` tables exist but
 only `session_events` is parsed.
 
-Every event repeats the absolute `project_dir` the stem hashes, so a
-context-mode record reports the working directory it came from *and* the digest
-Pi filed it under. Both are searchable: `--cwd` reaches this store like any
-other, and `cwd_hash:` still answers with the digest Pi itself wrote.
+## Project context
+
+| Store | `model` | `cwd` | `branch` |
+|-------|---------|-------|----------|
+| {storage:storeref}`pi.sessions` | turn's `message.model` | `session` entry's `cwd` | — |
+| {storage:storeref}`pi.context_mode_db` | — | `session_events.project_dir` | — |
+
+Pi names a context-mode database after `sha256(project_dir)[:16]`, and it
+repeats that absolute `project_dir` on every `session_events` row — so a
+record reports the working directory it came from *and* the digest Pi
+filed it under. Both are searchable: `--cwd` reaches this store like any
+other ({ref}`lossless <backend-cwd-tiers>`, straight from the column), and
+`cwd_hash:` still answers with the digest Pi itself wrote. agentgrep reads
+the digest off the file stem and never computes it from the recovered
+path, and it admits the stem only when it has a digest's shape, so a
+hand-copied `backup.db` beside a real database does not publish its own
+name as a project identity. The database is reachable at
+`--scope conversations`, not at the default prompt scope.
+
+The `project_dir` column arrived in a Pi migration. A database that
+predates it reads back as records without a `cwd` rather than as no
+records at all.
+
+Pi records no git branch, so `branch:` does not reach this backend.
 
 ## Documentary stores
 
