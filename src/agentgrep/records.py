@@ -58,8 +58,10 @@ __all__ = [
     "OutputMode",
     "ProgressMode",
     "RawJsonlSkipLine",
+    "RecordIdStability",
     "RecordOrigin",
     "RecordOriginPayload",
+    "RecordPosition",
     "SearchEffort",
     "SearchMatchSurface",
     "SearchQuery",
@@ -117,6 +119,7 @@ type SummaryRow = tuple[object, object, object, object, object, object, object, 
 type KeyValueRow = tuple[object, object]
 type DiscoveryRoot = pathlib.Path | tuple[pathlib.Path, ...]
 type FindSourceTypeFilter = t.Literal["prompts", "history", "sessions", "all"]
+type RecordIdStability = t.Literal["native", "source_order"]
 
 # --- Domain constants ------------------------------------------------------
 
@@ -670,6 +673,16 @@ class SourceHandle:
     origin_summary: SourceOriginSummary | None = None
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class RecordPosition:
+    """Backend-native or source-order position of one normalized record."""
+
+    native_id: str | None = None
+    parent_native_id: str | None = None
+    ordinal: int | None = None
+    quality: RecordIdStability | None = None
+
+
 @dataclasses.dataclass(slots=True)
 class SearchRecord:
     """Normalized prompt/history record.
@@ -725,6 +738,7 @@ class SearchRecord:
     metadata: dict[str, object] = dataclasses.field(default_factory=dict)
     origin: RecordOrigin | None = None
     identity_namespace: str | None = None
+    position: RecordPosition | None = None
 
 
 @dataclasses.dataclass(slots=True)
@@ -796,6 +810,7 @@ class MessageCandidate:
     conversation_id: str | None = None
     origin: RecordOrigin | None = None
     identity_namespace: str | None = None
+    position: RecordPosition | None = None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
