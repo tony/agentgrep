@@ -12456,8 +12456,15 @@ def _build_antigravity_steps_db(
     db_path: pathlib.Path,
     *,
     text: str,
+    metadata_table: str | None = None,
+    metadata_text: str | None = None,
 ) -> None:
-    """Build a minimal Antigravity CLI conversation database."""
+    """Build a minimal Antigravity CLI conversation database.
+
+    ``metadata_table`` adds one protobuf metadata row beside ``steps``. Leaving
+    it unset reproduces a database written before Antigravity shipped those
+    tables: ``steps`` and nothing else.
+    """
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path))
     try:
@@ -12468,6 +12475,10 @@ def _build_antigravity_steps_db(
             "INSERT INTO steps VALUES (?, ?, ?)",
             (1, _protobuf_field(text), 1),
         )
+        if metadata_table is not None:
+            conn.execute(f"CREATE TABLE {metadata_table} (idx INTEGER PRIMARY KEY, data BLOB)")
+            payload = None if metadata_text is None else _protobuf_field(metadata_text)
+            conn.execute(f"INSERT INTO {metadata_table} VALUES (?, ?)", (1, payload))
         conn.commit()
     finally:
         conn.close()
@@ -12741,6 +12752,96 @@ def test_antigravity_cli_conversation_db_rejects_encrypted_blobs(
     source = next(source for source in inventory_sources if source.path == source_path)
 
     assert list(t.cast("t.Any", agentgrep).iter_source_records(source)) == []
+
+
+class AntigravityModelCase(t.NamedTuple):
+    """Parametrized case for the model on an Antigravity CLI conversation."""
+
+    test_id: str
+    metadata_table: str | None
+    metadata_text: str | None
+    expected_model: str | None
+
+
+ANTIGRAVITY_MODEL_CASES: tuple[AntigravityModelCase, ...] = (
+    AntigravityModelCase(
+        test_id="gen-metadata",
+        metadata_table="gen_metadata",
+        metadata_text="gemini-pro-agent",
+        expected_model="gemini-pro-agent",
+    ),
+    AntigravityModelCase(
+        test_id="executor-metadata-fallback",
+        metadata_table="executor_metadata",
+        metadata_text="gemini-pro-agent",
+        expected_model="gemini-pro-agent",
+    ),
+    AntigravityModelCase(
+        test_id="no-metadata-table",
+        metadata_table=None,
+        metadata_text=None,
+        expected_model=None,
+    ),
+    AntigravityModelCase(
+        test_id="null-metadata-blob",
+        metadata_table="gen_metadata",
+        metadata_text=None,
+        expected_model=None,
+    ),
+    AntigravityModelCase(
+        test_id="metadata-names-no-model",
+        metadata_table="gen_metadata",
+        metadata_text="running_tasks_reminder",
+        expected_model=None,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    AntigravityModelCase._fields,
+    ANTIGRAVITY_MODEL_CASES,
+    ids=[case.test_id for case in ANTIGRAVITY_MODEL_CASES],
+)
+def test_antigravity_cli_conversation_db_model(
+    test_id: str,
+    metadata_table: str | None,
+    metadata_text: str | None,
+    expected_model: str | None,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The conversation model comes from the metadata tables, never from ``steps``.
+
+    A database that predates those tables — and one whose metadata names no
+    model — still yields its step records, with no model rather than no records.
+    """
+    del test_id
+
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    source_path = home / ".gemini/antigravity-cli/conversations/conv-model.db"
+    text = "antigravity conversation step text"
+    _build_antigravity_steps_db(
+        source_path,
+        text=text,
+        metadata_table=metadata_table,
+        metadata_text=metadata_text,
+    )
+
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    agents: tuple[AgentName, ...] = ("antigravity-cli",)
+    inventory_sources = t.cast("t.Any", agentgrep).discover_sources(
+        home,
+        agents,
+        backends,
+        include_non_default=True,
+    )
+    source = next(source for source in inventory_sources if source.path == source_path)
+    records = list(t.cast("t.Any", agentgrep).iter_source_records(source))
+
+    assert [record.text for record in records] == [text]
+    assert records[0].model == expected_model
 
 
 def _parse_opencode_records(

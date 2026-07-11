@@ -2502,17 +2502,82 @@ Applies to the plaintext protobuf blobs inside the Antigravity CLI
 ``conversations/*.pb`` artifacts are encrypted and are not parsed at all.
 """
 
+_ANTIGRAVITY_MODEL_TABLES: tuple[str, ...] = ("gen_metadata", "executor_metadata")
+"""Metadata tables whose protobuf ``data`` blob names the conversation's model.
+
+``gen_metadata`` is the one that carries it; ``executor_metadata`` is read as a
+fallback for databases that shape the metadata differently. Neither table is
+guaranteed to exist: a conversation database written before Antigravity added
+them has ``steps`` and nothing else, and must still yield its records.
+"""
+
+_ANTIGRAVITY_MODEL_PREFIX = "gemini-"
+"""Prefix the ``model_enum`` values carry (``gemini-pro-agent``).
+
+The blob is an unschema'd protobuf ``Struct``, so agentgrep matches the value's
+shape rather than reading a key: the run stored *next to* the ``model_enum`` key
+is an internal placeholder token, not a slug, so a key-directed lookup would
+surface a name no user ever typed and no model breakdown could group.
+"""
+
+
+def _antigravity_conversation_model(connection: sqlite3.Connection) -> str | None:
+    """Read the conversation model from an Antigravity CLI metadata table.
+
+    The ``steps`` table this adapter parses carries no model. The model sits one
+    table over, in a protobuf ``Struct`` in ``gen_metadata.data``, as a coarse
+    ``model_enum`` value (``gemini-pro-agent``) rather than a version-pinned
+    slug. It is a session-level property, so one read serves every record the
+    database yields.
+
+    Every lookup is guarded rather than attempted. The caller wraps its scan in
+    ``except sqlite3.DatabaseError``, so naming a table or a column an older
+    database lacks would not fail loudly — it would swallow the error and turn a
+    readable conversation into zero records.
+
+    Parameters
+    ----------
+    connection : sqlite3.Connection
+        Read-only connection to one ``conversations/<uuid>.db``.
+
+    Returns
+    -------
+    str or None
+        The model enum value, or ``None`` when no metadata table names one.
+    """
+    tables = sqlite_table_names(connection)
+    for table in _ANTIGRAVITY_MODEL_TABLES:
+        if table not in tables or "data" not in sqlite_column_names(connection, table):
+            continue
+        rows = t.cast(
+            "cabc.Iterable[tuple[object]]",
+            # The table name is one of two module constants, never user input.
+            connection.execute(f"SELECT data FROM {table}"),
+        )
+        for (blob,) in rows:
+            if not isinstance(blob, (bytes, bytearray)):
+                continue
+            for text in iter_protobuf_text_fields(bytes(blob), min_length=1):
+                value = text.strip()
+                if value.startswith(_ANTIGRAVITY_MODEL_PREFIX):
+                    return value
+    return None
+
 
 def parse_antigravity_cli_conversation_db(
     source: SourceHandle,
 ) -> cabc.Iterator[SearchRecord]:
-    """Best-effort parse of an Antigravity CLI conversation SQLite database."""
+    """Best-effort parse of an Antigravity CLI conversation SQLite database.
+
+    The model is not in ``steps``; see :func:`_antigravity_conversation_model`.
+    """
     session_id = source.path.stem
     timestamp = isoformat_from_mtime_ns(source.mtime_ns)
     connection = open_readonly_sqlite(source.path)
     try:
         if "steps" not in sqlite_table_names(connection):
             return
+        model = _antigravity_conversation_model(connection)
         rows = t.cast(
             "cabc.Iterable[tuple[object, object, object]]",
             connection.execute("SELECT idx, step_payload, step_format FROM steps ORDER BY idx"),
@@ -2539,6 +2604,7 @@ def parse_antigravity_cli_conversation_db(
                     title="Antigravity CLI conversation",
                     role=None,
                     timestamp=timestamp,
+                    model=model,
                     session_id=session_id,
                     conversation_id=session_id,
                     metadata={

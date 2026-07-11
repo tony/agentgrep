@@ -901,7 +901,6 @@ ADAPTER_COVERAGE_CASES: tuple[AdapterCoverageCase, ...] = (
         seed=seed_antigravity_cli_conversations,
         expect_model="gemini-pro-agent",
         expect_origin=frozenset(),
-        gap="the gen_metadata table is never opened",
     ),
     AdapterCoverageCase(
         test_id="antigravity-cli-history",
