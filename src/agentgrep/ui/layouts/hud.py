@@ -67,6 +67,7 @@ from agentgrep.ui.widgets.welcome import (
 
 if t.TYPE_CHECKING:
     from agentgrep._engine.matching import CompiledRecordMatcher
+    from agentgrep.identity import RecordIdentity
     from agentgrep.ui.workflows import Workflow
 
 
@@ -166,6 +167,7 @@ class HudLayout(_HudSearchBase):
         self._detail_body: StaticLike | None = None
         self._detail_row: SlowSourceDiagnosticsRow | None = None
         self._chrome_generation: int = 0
+        self._detail_generation: int = 0
         self._last_detail_text: str = ""
         self._last_right_text: str = ""
         self._detail_visible: bool = False
@@ -214,6 +216,10 @@ class HudLayout(_HudSearchBase):
         self._detail_body_cache: collections.OrderedDict[
             _DetailCacheKey,
             tuple[SearchRecord, object, str, str],
+        ] = collections.OrderedDict()
+        self._detail_identity_cache: collections.OrderedDict[
+            int,
+            tuple[SearchRecord, RecordIdentity],
         ] = collections.OrderedDict()
         self._presented_detail_cache_key: _DetailCacheKey | None = None
         self._detail_build_generation = 0
