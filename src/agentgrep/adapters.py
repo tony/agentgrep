@@ -1227,6 +1227,45 @@ def _gemini_message_record_to_candidate(
     )
 
 
+_GEMINI_PROJECT_ROOT_FILE = ".project_root"
+
+
+def _gemini_project_root_cwd(project_dir: pathlib.Path) -> str | None:
+    """Resolve the literal cwd of a Gemini ``tmp/<project_hash>/`` directory.
+
+    Gemini names the directory after a hash of the project and writes the
+    literal path into a sibling ``.project_root`` file. All three Gemini
+    prompt stores live under that one directory, so all three resolve their
+    ``cwd`` here.
+
+    A missing ``.project_root`` is ordinary — older trees have none — and
+    yields ``None`` rather than raising; the ``cwd_hash`` taken from the
+    directory name stands on its own.
+
+    The resolved path is a *record* fact, not a source-level completeness
+    claim: the per-record walk in :func:`_origin_from_mapping` can still read
+    a different directory out of the payload, and a source that claimed
+    ``cwd`` completeness while emitting a different ``cwd`` would prune away
+    its own matching record.
+    """
+    return _path_like_str(read_text_file(project_dir / _GEMINI_PROJECT_ROOT_FILE))
+
+
+def _gemini_directories_cwd(mapping: dict[str, object]) -> str | None:
+    """Read ``directories[0]`` from a Gemini session-metadata record.
+
+    Gemini names the session directory with a plural array where every other
+    store uses a scalar, which is why ``_ORIGIN_MAPPING_KEYS`` — which knows
+    ``cwd``, ``directory``, and ``workspace`` — cannot see it. The key is
+    named here rather than added to that shared set, because the set is
+    consulted at every nested node of every store's document walk.
+    """
+    directories = mapping.get("directories")
+    if not isinstance(directories, list) or not directories:
+        return None
+    return _path_like_str(t.cast("list[object]", directories)[0])
+
+
 def parse_gemini_chat_file(
     source: SourceHandle,
 ) -> cabc.Iterator[SearchRecord]:
@@ -1239,9 +1278,18 @@ def parse_gemini_chat_file(
     Gemini stores the role in a ``type`` key — not the ``role`` key the
     shared ``extract_role`` helper recognises — so this adapter extracts
     fields directly rather than going through ``iter_message_candidates``.
+
+    The literal ``cwd`` is the metadata record's ``directories[0]``, falling
+    back to the sibling ``.project_root`` when the array is absent. The file
+    sits at ``tmp/<project_hash>/chats/session-*.jsonl``, so the project
+    directory — the ``cwd_hash`` — is two levels up.
     """
     session_id: str | None = None
-    session_origin: RecordOrigin | None = _record_origin(cwd_hash=source.path.parent.parent.name)
+    project_dir = source.path.parent.parent
+    session_origin: RecordOrigin | None = _record_origin(
+        cwd=_gemini_project_root_cwd(project_dir),
+        cwd_hash=project_dir.name,
+    )
     for event in iter_jsonl(source.path):
         if not isinstance(event, dict):
             continue
@@ -1254,7 +1302,10 @@ def parse_gemini_chat_file(
             # so this stays correct even if a future schema adds a
             # ``type`` field to the metadata record.
             session_id = as_optional_str(mapping.get("sessionId"))
-            session_origin = _origin_from_mapping(mapping, fallback=session_origin)
+            session_origin = _record_origin(
+                cwd=_gemini_directories_cwd(mapping),
+                fallback=_origin_from_mapping(mapping, fallback=session_origin),
+            )
             continue
         candidate = _gemini_message_record_to_candidate(mapping, session_id, session_origin)
         if candidate is None:
@@ -1273,13 +1324,24 @@ def parse_gemini_chat_legacy_file(
     ``packages/core/src/services/chatRecordingService.ts``. Each entry of
     ``messages`` carries the same per-turn fields the JSONL format uses,
     so record extraction is shared with :func:`parse_gemini_chat_file`.
+
+    The legacy record names only ``projectHash`` and never the path, so the
+    literal ``cwd`` can come only from the sibling ``.project_root``. The
+    file sits at ``tmp/<project_hash>/chats/session-*.json``.
     """
     payload = read_json_file(source.path)
     if not isinstance(payload, dict):
         return
     container = t.cast("dict[str, object]", payload)
     session_id = as_optional_str(container.get("sessionId"))
-    session_origin = _origin_from_mapping(container)
+    project_dir = source.path.parent.parent
+    session_origin = _origin_from_mapping(
+        container,
+        fallback=_record_origin(
+            cwd=_gemini_project_root_cwd(project_dir),
+            cwd_hash=project_dir.name,
+        ),
+    )
     messages = container.get("messages")
     if not isinstance(messages, list):
         return
@@ -1300,9 +1362,17 @@ def parse_gemini_logs_file(
 
     Records are emitted as ``kind="prompt"`` — the file is an audit log of
     user prompts, the same role ``codex.history`` plays for Codex.
+
+    No log entry carries a working directory, so the literal ``cwd`` comes
+    from the sibling ``.project_root``. The file sits at
+    ``tmp/<project_hash>/logs.json``, so the project directory is its parent.
     """
     payload = read_json_file(source.path)
-    origin = _record_origin(cwd_hash=source.path.parent.name)
+    project_dir = source.path.parent
+    origin = _record_origin(
+        cwd=_gemini_project_root_cwd(project_dir),
+        cwd_hash=project_dir.name,
+    )
     entries = payload if isinstance(payload, list) else []
     for entry in entries:
         if not isinstance(entry, dict):

@@ -817,7 +817,6 @@ ADAPTER_COVERAGE_CASES: tuple[AdapterCoverageCase, ...] = (
         seed=seed_gemini_tmp_chats,
         expect_model="gemini-3-pro",
         expect_origin=frozenset({"cwd", "cwd_hash"}),
-        gap="the session metadata line's directories[0] is never read",
     ),
     AdapterCoverageCase(
         test_id="gemini-tmp-chats-legacy",
@@ -827,7 +826,6 @@ ADAPTER_COVERAGE_CASES: tuple[AdapterCoverageCase, ...] = (
         seed=seed_gemini_tmp_chats_legacy,
         expect_model=None,
         expect_origin=frozenset({"cwd", "cwd_hash"}),
-        gap="the sibling .project_root file is never read",
     ),
     AdapterCoverageCase(
         test_id="gemini-tmp-logs",
@@ -837,7 +835,6 @@ ADAPTER_COVERAGE_CASES: tuple[AdapterCoverageCase, ...] = (
         seed=seed_gemini_tmp_logs,
         expect_model=None,
         expect_origin=frozenset({"cwd", "cwd_hash"}),
-        gap="the sibling .project_root file is never read",
     ),
     # -- Grok ----------------------------------------------------------------
     AdapterCoverageCase(
