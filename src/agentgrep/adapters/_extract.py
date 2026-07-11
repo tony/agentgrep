@@ -350,6 +350,15 @@ def _record_position(
         A validated position preferring native identity, or ``None`` when no
         usable native or source-order coordinate exists.
     """
+    if (
+        native_id is None
+        and parent_native_id is None
+        and isinstance(ordinal, int)
+        and not isinstance(ordinal, bool)
+        and ordinal >= 0
+    ):
+        return RecordPosition(ordinal=ordinal, quality="source_order")
+
     normalized_native_id = _normalize_native_id(native_id)
     normalized_parent_id = _normalize_native_id(parent_native_id)
     normalized_ordinal = (
