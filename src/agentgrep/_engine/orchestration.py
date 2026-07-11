@@ -887,41 +887,64 @@ def record_dedupe_key(record: SearchRecord) -> RecordDedupeKey:
         else None
     )
     if thread_kind is not None and thread_value is not None:
-        if native_id is not None:
+        if namespace:
+            if native_id is not None:
+                return (
+                    "logical-native",
+                    record.agent,
+                    namespace,
+                    thread_kind,
+                    thread_value,
+                    native_id,
+                    *semantic,
+                )
+            if ordinal is not None:
+                return (
+                    "logical-ordinal",
+                    record.agent,
+                    namespace,
+                    thread_kind,
+                    thread_value,
+                    record.store,
+                    record.adapter_id,
+                    ordinal,
+                    *semantic,
+                )
             return (
-                "logical-native",
+                "fallback-thread",
                 record.agent,
-                namespace,
-                thread_kind,
-                thread_value,
-                native_id,
-                *semantic,
-            )
-        if ordinal is not None:
-            return (
-                "logical-ordinal",
-                record.agent,
-                namespace,
-                thread_kind,
-                thread_value,
                 record.store,
-                record.adapter_id,
-                ordinal,
+                namespace,
+                thread_kind,
+                thread_value,
                 *semantic,
             )
+        coordinate_kind: str | None
+        coordinate_value: str | int | None
+        if native_id is not None:
+            coordinate_kind = "native"
+            coordinate_value = native_id
+        elif ordinal is not None:
+            coordinate_kind = "ordinal"
+            coordinate_value = ordinal
+        else:
+            coordinate_kind = None
+            coordinate_value = None
+        return (
+            "source-thread",
+            record.agent,
+            record.store,
+            record.adapter_id,
+            str(record.path),
+            thread_kind,
+            thread_value,
+            coordinate_kind,
+            coordinate_value,
+            *semantic,
+        )
     physical = (record.agent, record.store, str(record.path))
     if native_id is not None:
         return ("physical-native", *physical, native_id, *semantic)
     if ordinal is not None:
         return ("physical-ordinal", *physical, ordinal, *semantic)
-    if thread_kind is not None and thread_value is not None:
-        return (
-            "fallback-thread",
-            record.agent,
-            record.store,
-            namespace,
-            thread_kind,
-            thread_value,
-            *semantic,
-        )
     return ("fallback-path", *physical, *semantic)
