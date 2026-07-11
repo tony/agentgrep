@@ -331,6 +331,11 @@ def seed_claude_projects_session(home: pathlib.Path) -> None:
 def seed_cursor_ide_state_vscdb(home: pathlib.Path) -> None:
     """Cursor IDE global state: the composer names its model and its worktree.
 
+    The turns carry a numeric ``type`` and no ``role`` — the shape a real
+    ``cursorDiskKV`` writes. A reader that only knows ``role`` walks past every
+    one of them, so this fixture is what tells a passing row apart from a fix
+    that emits nothing at all.
+
     ``globalStorage`` is not a digest, so this store must never report a
     ``cwd_hash`` — a fabricated digest answers ``cwd_hash:`` predicates with a
     value no Cursor build ever wrote.
@@ -340,9 +345,14 @@ def seed_cursor_ide_state_vscdb(home: pathlib.Path) -> None:
         "modelConfig": {"modelName": "claude-4.5-sonnet"},
         "gitWorktree": {"worktreePath": PROJECT_DIR, "branchName": BRANCH},
         "conversation": [
-            {"role": "user", "text": f"{TERM} cursor ide composer prompt"},
-            {"role": "assistant", "text": f"{TERM} cursor ide composer reply"},
+            {"type": 1, "text": f"{TERM} cursor ide composer prompt"},
+            {"type": 2, "text": f"{TERM} cursor ide composer reply"},
         ],
+    }
+    bubble = {
+        "type": 1,
+        "text": f"{TERM} cursor ide bubble prompt",
+        "modelInfo": {"modelName": "claude-4.5-sonnet"},
     }
     _write_sqlite(
         _cursor_ide_user_dir(home) / "globalStorage" / "state.vscdb",
@@ -350,7 +360,11 @@ def seed_cursor_ide_state_vscdb(home: pathlib.Path) -> None:
         (
             (
                 "INSERT INTO cursorDiskKV VALUES (?, ?)",
-                ("workbench.panel.chat.composerData", json.dumps(composer)),
+                ("composerData:composer-1", json.dumps(composer)),
+            ),
+            (
+                "INSERT INTO cursorDiskKV VALUES (?, ?)",
+                ("bubbleId:composer-1:bubble-1", json.dumps(bubble)),
             ),
         ),
     )
@@ -754,7 +768,6 @@ ADAPTER_COVERAGE_CASES: tuple[AdapterCoverageCase, ...] = (
         expect_model="claude-4.5-sonnet",
         expect_origin=frozenset({"cwd", "branch"}),
         forbid_origin=frozenset({"cwd_hash"}),
-        gap="composer modelConfig.modelName and gitWorktree are never read",
     ),
     AdapterCoverageCase(
         test_id="cursor-ide-workspace-state",
@@ -764,7 +777,6 @@ ADAPTER_COVERAGE_CASES: tuple[AdapterCoverageCase, ...] = (
         seed=seed_cursor_ide_workspace_state,
         expect_model=None,
         expect_origin=frozenset({"cwd", "cwd_hash"}),
-        gap="workspace.json folder reaches the source summary but not the records",
     ),
     # -- Cursor CLI ----------------------------------------------------------
     AdapterCoverageCase(
