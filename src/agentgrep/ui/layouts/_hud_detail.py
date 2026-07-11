@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import pathlib
 import typing as t
@@ -31,11 +32,37 @@ from agentgrep.ui.format import scroll_percent
 from agentgrep.ui.layouts._base import LayoutScreen
 from agentgrep.ui.widgets import DetailScrollChanged
 
+if t.TYPE_CHECKING:
+    from agentgrep.identity import RecordIdentity
+
 # The trailing ``int`` is the body render width: markdown is baked to a styled
 # ``Text`` at a fixed pane width off-thread, so a resize-then-revisit must miss
 # the LRU rather than return a stale-width render.
 _DetailCacheKey = tuple[int, tuple[str, ...], bool, bool, tuple[str, ...], int]
 _RichSyntaxType = _RichSyntax
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _PreparedDetail:
+    """Worker-prepared identity and optional body for one detail generation."""
+
+    record: SearchRecord
+    identity: RecordIdentity
+    body: DetailRenderResult | None
+    query_terms: tuple[str, ...]
+    cache_key: _DetailCacheKey | None
+    present_body: bool
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _DetailSnapshot:
+    """Immutable inputs captured on the pump for one detail worker."""
+
+    record: SearchRecord
+    identity: RecordIdentity | None
+    render_request: DetailRenderRequest | None
+    query_terms: tuple[str, ...]
+    cache_key: _DetailCacheKey | None
 
 
 class _HudDetailBase(LayoutScreen):
@@ -102,6 +129,9 @@ class _HudDetailBase(LayoutScreen):
         viewed before restores the scroll position the user left through
         ``DetailScroll.activate_record``.
         """
+        self.workers.cancel_group(self, "detail")
+        self._detail_generation += 1
+        generation = self._detail_generation
         if self._detail_body is None:
             return
         # A record switch while the find bar is open would leave a stale
@@ -130,54 +160,8 @@ class _HudDetailBase(LayoutScreen):
         self._detail_build_generation += 1
         detail_generation = self._detail_build_generation
         width = self._detail_render_width()
-        theme_vars = self.app.theme_variables
-        agent_color = ui_theme.resolve(
-            theme_vars,
-            ui_theme.AGENT_TOKEN_BY_NAME.get(record.agent or ""),
-        )
-        kind_color = ui_theme.resolve(
-            theme_vars,
-            ui_theme.KIND_TOKEN_BY_NAME.get(record.kind or ""),
-        )
-        dim_color = ui_theme.resolve(theme_vars, "ag-dim")
-        model_color = ui_theme.resolve(theme_vars, "ag-model")
-        path_color = ui_theme.resolve(theme_vars, "ag-muted")
-        header = Text(no_wrap=False)
-        header_rows: list[tuple[str, str, str]] = [
-            ("Agent:", record.agent or "", agent_color),
-            ("Kind:", record.kind or "", kind_color),
-            ("Store:", record.store or "", dim_color),
-            ("Adapter:", record.adapter_id or "", dim_color),
-            ("Timestamp:", record.timestamp or "unknown", dim_color),
-            ("Model:", record.model or "unknown", model_color),
-            (
-                "Path:",
-                format_compact_path(record.path, max_width=width - 8),
-                path_color,
-            ),
-        ]
-        if record.origin is not None:
-            for label, value in (
-                ("Cwd:", record.origin.cwd),
-                ("Repo:", record.origin.repo),
-                ("Worktree:", record.origin.worktree),
-            ):
-                if value:
-                    header_rows.append(
-                        (
-                            label,
-                            format_display_path(pathlib.Path(value), directory=True),
-                            path_color,
-                        ),
-                    )
-            if record.origin.branch:
-                header_rows.append(("Branch:", record.origin.branch, dim_color))
-            if record.origin.cwd_hash:
-                header_rows.append(("Cwd hash:", record.origin.cwd_hash, dim_color))
-        for label, value, value_style in header_rows:
-            header.append(f"{label} ", style="bold")
-            header.append(f"{value}\n", style=value_style)
-        header.append("\n")
+        identity = self._cached_detail_identity(record)
+        header = self._build_detail_header(record, identity, width=width)
         body_truncated = truncate_lines(
             record.text,
             DETAIL_BODY_MAX_LINES,
@@ -206,75 +190,159 @@ class _HudDetailBase(LayoutScreen):
             dark=self.app.current_theme.dark,
             theme_name=self.app.theme,
         )
-        cached = self._cached_detail_body(record, cache_key)
-        if cached is not None:
+        body = self._cached_detail_body(record, cache_key)
+        render_request: DetailRenderRequest | None = None
+        if body is None:
+            # Route by format: JSON and markdown always offload (their Rich
+            # tokenize/flatten is the pump-blocking work), and any large body
+            # offloads regardless. Only a small plain-text body builds inline
+            # so cursor navigation stays synchronous.
+            fmt = detect_content_format(body_truncated)
+            inline_ok = (
+                fmt == "text"
+                and len(body_truncated) <= self._DETAIL_ASYNC_BODY_THRESHOLD
+                and not looks_like_code(body_truncated)
+            )
+            request = DetailRenderRequest(
+                body_text=body_truncated,
+                query_terms=query_terms,
+                case_sensitive=case_sensitive,
+                regex=regex,
+                filter_terms=filter_terms,
+                search_style=search_style,
+                filter_style=filter_style,
+                syntax_theme=syntax_theme,
+                render_width=width,
+                guess_code=not inline_ok,
+            )
+            if inline_ok:
+                body = build_detail_body(request)
+            else:
+                render_request = request
+
+        if body is None:
+            # Raw mode can paint the resident source immediately; rendered
+            # mode shows a blank body until the worker result lands.
+            if self._detail_meta is not None:
+                self._detail_meta.update(header)
+            self._paint_detail_body()
+        else:
             self._present_detail(
                 record,
                 header,
-                cached,
+                body,
                 query_terms,
                 generation=detail_generation,
                 cache_key=cache_key,
             )
+
+        if identity is not None and render_request is None:
             return
-        # Route by format: JSON and markdown always offload (their Rich
-        # tokenize/flatten is the pump-blocking work), and any large body
-        # offloads regardless. Only a small plain-text body builds inline so
-        # cursor navigation stays synchronous. ``detect_content_format`` is a
-        # bounded scan over <=64 KiB (pump-safe).
-        fmt = detect_content_format(body_truncated)
-        inline_ok = (
-            fmt == "text"
-            and len(body_truncated) <= self._DETAIL_ASYNC_BODY_THRESHOLD
-            and not looks_like_code(body_truncated)
+        emit = _runtime.make_gated_emitter(
+            self.app.call_from_thread,
+            self._apply_prepared_detail,
+            generation,
         )
-        render_request = DetailRenderRequest(
-            body_text=body_truncated,
-            query_terms=query_terms,
-            case_sensitive=case_sensitive,
-            regex=regex,
-            filter_terms=filter_terms,
-            search_style=search_style,
-            filter_style=filter_style,
-            syntax_theme=syntax_theme,
-            render_width=width,
-            guess_code=not inline_ok,
-        )
-        if inline_ok:
-            self._present_detail(
-                record,
-                header,
-                build_detail_body(render_request),
-                query_terms,
-                generation=detail_generation,
-                cache_key=cache_key,
-            )
-            return
-        # Large / formatted uncached body: show the header now and build the
-        # heavy renderable off the UI thread. ``exclusive=True`` cancels a prior
-        # detail build, and ``_present_detail`` discards any result whose
-        # record is no longer the one on screen.
-        self._detail_meta.update(header)
-        # Raw mode can paint the resident source immediately; rendered mode
-        # shows a blank body until the worker's present arrives.
-        self._paint_detail_body()
         streaming = t.cast("StreamingAppLike", t.cast("object", self))
         streaming.run_worker(
             functools.partial(
-                self._build_detail_in_thread,
-                record,
-                header,
-                render_request,
-                query_terms,
-                detail_generation,
-                cache_key,
+                self._prepare_detail_in_thread,
+                _DetailSnapshot(
+                    record=record,
+                    identity=identity,
+                    render_request=render_request,
+                    query_terms=query_terms,
+                    cache_key=cache_key,
+                ),
+                emit,
             ),
             name="detail",
             group="detail",
-            description="build detail body",
+            description="prepare record detail",
             thread=True,
             exclusive=True,
         )
+
+    def _build_detail_header(
+        self,
+        record: SearchRecord,
+        identity: RecordIdentity | None,
+        *,
+        width: int,
+    ) -> Text:
+        """Build the bounded metadata header for one selected record."""
+        theme_vars = self.app.theme_variables
+        agent_color = ui_theme.resolve(
+            theme_vars,
+            ui_theme.AGENT_TOKEN_BY_NAME.get(record.agent or ""),
+        )
+        kind_color = ui_theme.resolve(
+            theme_vars,
+            ui_theme.KIND_TOKEN_BY_NAME.get(record.kind or ""),
+        )
+        dim_color = ui_theme.resolve(theme_vars, "ag-dim")
+        model_color = ui_theme.resolve(theme_vars, "ag-model")
+        path_color = ui_theme.resolve(theme_vars, "ag-muted")
+        header = Text(no_wrap=False)
+        leading_rows: tuple[tuple[str, str, str], ...] = (
+            ("Agent:", record.agent or "", agent_color),
+            ("Kind:", record.kind or "", kind_color),
+            ("Store:", record.store or "", dim_color),
+            ("Adapter:", record.adapter_id or "", dim_color),
+        )
+        trailing_rows: list[tuple[str, str, str]] = [
+            ("Timestamp:", record.timestamp or "unknown", dim_color),
+            ("Model:", record.model or "unknown", model_color),
+            (
+                "Path:",
+                format_compact_path(record.path, max_width=width - 8),
+                path_color,
+            ),
+        ]
+        if record.origin is not None:
+            for label, value in (
+                ("Cwd:", record.origin.cwd),
+                ("Repo:", record.origin.repo),
+                ("Worktree:", record.origin.worktree),
+            ):
+                if value:
+                    trailing_rows.append(
+                        (
+                            label,
+                            format_display_path(pathlib.Path(value), directory=True),
+                            path_color,
+                        ),
+                    )
+            if record.origin.branch:
+                trailing_rows.append(("Branch:", record.origin.branch, dim_color))
+            if record.origin.cwd_hash:
+                trailing_rows.append(("Cwd hash:", record.origin.cwd_hash, dim_color))
+        for label, value, value_style in leading_rows:
+            header.append(f"{label} ", style="bold")
+            header.append(f"{value}\n", style=value_style)
+        for label, value in (
+            ("Record:", None if identity is None else identity.record_id),
+            ("Content:", None if identity is None else identity.content_id),
+            ("Thread:", None if identity is None else identity.thread_id),
+        ):
+            header.append(f"{label} ", style="dim")
+            if identity is None:
+                header.append("…\n", style="dim")
+            else:
+                header.append(f"{value or '—'}\n")
+        for label, value, value_style in trailing_rows:
+            header.append(f"{label} ", style="bold")
+            header.append(f"{value}\n", style=value_style)
+        header.append("\n")
+        return header
+
+    def _cached_detail_identity(self, record: SearchRecord) -> RecordIdentity | None:
+        """Return a retained-record identity cache hit, rejecting reused IDs."""
+        cached = self._detail_identity_cache.get(id(record))
+        if cached is None or cached[0] is not record:
+            return None
+        self._detail_identity_cache.move_to_end(id(record))
+        return cached[1]
 
     def _detail_body_is_cached(self, query_terms: cabc.Sequence[str]) -> bool:
         """Return whether the detail body for the current record is memoized."""
@@ -301,33 +369,78 @@ class _HudDetailBase(LayoutScreen):
         return DetailRenderResult(renderable, source, rendered_plain)
 
     @_runtime.offload
-    def _build_detail_in_thread(
+    def _prepare_detail_in_thread(
         self,
-        record: SearchRecord,
-        header: object,
-        render_request: DetailRenderRequest,
-        query_terms: cabc.Sequence[str],
-        generation: int,
-        cache_key: _DetailCacheKey | None,
+        snapshot: _DetailSnapshot,
+        emit: cabc.Callable[[object], None],
     ) -> None:
-        """Build the detail body off the UI thread, then apply it on the loop.
+        """Prepare missing identity/body data without reading pump-owned state."""
+        identity = snapshot.identity
+        if identity is None:
+            from agentgrep.identity import record_identity
 
-        The ``rich.markdown.Markdown`` -> styled ``Text`` flatten and the JSON
-        pretty-print both run here (off the pump), so a full-document render
-        can never blow the frame budget (ADR 0011 NB-2).
-        """
-        body = build_detail_body(render_request)
-        self.app.call_from_thread(
-            functools.partial(
-                self._present_detail,
-                record,
-                header,
-                body,
-                query_terms,
-                generation=generation,
-                cache_key=cache_key,
+            identity = record_identity(snapshot.record)
+        body = (
+            None
+            if snapshot.render_request is None
+            else build_detail_body(snapshot.render_request)
+        )
+        emit(
+            _PreparedDetail(
+                record=snapshot.record,
+                identity=identity,
+                body=body,
+                query_terms=snapshot.query_terms,
+                cache_key=snapshot.cache_key,
+                present_body=snapshot.render_request is not None,
             ),
         )
+
+    @_runtime.pump_only
+    def _apply_prepared_detail(self, generation: int, event: object) -> None:
+        """Cache and paint one worker result when its exact selection is live."""
+        if (
+            generation != self._detail_generation
+            or not isinstance(event, _PreparedDetail)
+            or self._current_detail_record is not event.record
+        ):
+            return
+        self._remember_detail_identity(event.record, event.identity)
+        header = self._build_detail_header(
+            event.record,
+            event.identity,
+            width=self._detail_render_width(),
+        )
+        if event.present_body and event.body is not None:
+            self._present_detail(
+                event.record,
+                header,
+                event.body,
+                event.query_terms,
+                generation=self._detail_build_generation,
+                cache_key=event.cache_key,
+            )
+        else:
+            self._replace_detail_header(header)
+
+    def _remember_detail_identity(
+        self,
+        record: SearchRecord,
+        identity: RecordIdentity,
+    ) -> None:
+        """Store one object-safe prepared identity in the bounded LRU."""
+        key = id(record)
+        self._detail_identity_cache[key] = (record, identity)
+        self._detail_identity_cache.move_to_end(key)
+        if len(self._detail_identity_cache) > self._DETAIL_CACHE_MAX:
+            self._detail_identity_cache.popitem(last=False)
+
+    def _replace_detail_header(self, header: Text) -> None:
+        """Replace only the detail header, preserving the exact live body."""
+        if self._detail_meta is None:
+            return
+        self._detail_header_text = header
+        self._detail_meta.update(header)
 
     @_runtime.pump_only
     def _present_detail(
