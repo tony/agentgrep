@@ -233,7 +233,7 @@ class AgentGrepModule(t.Protocol):
         *,
         backends: BackendSelectionLike | None = None,
         runtime: object | None = None,
-    ) -> t.AsyncIterator[object]: ...
+    ) -> t.AsyncGenerator[object]: ...
 
     def iter_find_events(
         self,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
 import datetime
 import pathlib
@@ -179,20 +180,29 @@ async def _search_async(
     source_count = 0
     searched = 0
     matched = 0
-    async for event in agentgrep.aiter_search_events(
-        pathlib.Path.home(),
-        query,
-        runtime=runtime,
-    ):
-        if isinstance(event, ag_events.SearchStarted):
-            source_count = event.source_count
-        elif isinstance(event, ag_events.SourceFinished):
-            searched += event.records_seen
-            matched += event.matches_seen
-        elif isinstance(event, ag_events.RecordEmitted):
-            records.append(t.cast("SearchRecordLike", event.record))
-        elif isinstance(event, ag_events.SearchFinished):
-            matched = max(matched, event.match_count)
+    # The engine only stops scanning when this generator is finalized: its
+    # cancellation request lives in the stream's finally block. A client cancel
+    # finalizes it today only because the loop body below is await-free, which
+    # keeps the generator frame innermost at every suspension point. aclosing()
+    # stops that from being load-bearing, so an early break or an awaiting body
+    # cannot strand a live scan until the loop's asyncgen hook collects it.
+    async with contextlib.aclosing(
+        agentgrep.aiter_search_events(
+            pathlib.Path.home(),
+            query,
+            runtime=runtime,
+        )
+    ) as stream:
+        async for event in stream:
+            if isinstance(event, ag_events.SearchStarted):
+                source_count = event.source_count
+            elif isinstance(event, ag_events.SourceFinished):
+                searched += event.records_seen
+                matched += event.matches_seen
+            elif isinstance(event, ag_events.RecordEmitted):
+                records.append(t.cast("SearchRecordLike", event.record))
+            elif isinstance(event, ag_events.SearchFinished):
+                matched = max(matched, event.match_count)
     # The inline execution driver emits records per source, not in final
     # result order; restore the newest-first contract the list-returning
     # search path guarantees before building the response.

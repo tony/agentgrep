@@ -178,8 +178,14 @@ async def aiter_search_events(
     control: SearchControl | None = None,
     runtime: SearchRuntime | None = None,
     max_queue_size: int = 32,
-) -> cabc.AsyncIterator[_events.SearchEvent]:
+) -> cabc.AsyncGenerator[_events.SearchEvent]:
     """Yield search events from a worker thread through an async queue.
+
+    Closing the returned generator — via :func:`contextlib.aclosing`, or by
+    any exception that unwinds through it — requests cancellation and stops
+    the worker. Consumers that may leave the stream partially consumed must
+    close it explicitly rather than relying on the event loop's async-generator
+    finalization hook.
 
     Parameters
     ----------

@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -2080,3 +2082,78 @@ async def test_mcp_search_terms_tokenize_as_words(
 
     data = tool_payload(result)
     assert [row["text"] for row in data["results"]] == case.expected_texts
+
+
+class SearchStreamCloseCase(t.NamedTuple):
+    """Parametrized case for an exit path out of the MCP search event loop."""
+
+    test_id: str
+    cancel_mid_scan: bool
+
+
+SEARCH_STREAM_CLOSE_CASES = [
+    SearchStreamCloseCase(test_id="cancelled-mid-scan", cancel_mid_scan=True),
+    SearchStreamCloseCase(test_id="stream-exhausted", cancel_mid_scan=False),
+]
+
+
+@pytest.mark.parametrize(
+    "case",
+    SEARCH_STREAM_CLOSE_CASES,
+    ids=[case.test_id for case in SEARCH_STREAM_CLOSE_CASES],
+)
+async def test_mcp_search_closes_event_stream(
+    case: SearchStreamCloseCase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The search tool finalizes its event stream on every exit path.
+
+    The engine requests cancellation from the stream's ``finally`` block, so a
+    client that cancels mid-scan only stops the scan if the tool closes the
+    generator it opened.
+    """
+    from agentgrep import events as ag_events
+    from agentgrep.mcp import SearchRequestModel
+    from agentgrep.mcp.tools import search_tools
+
+    scanning = asyncio.Event()
+    closed = asyncio.Event()
+
+    async def fake_stream(
+        home: pathlib.Path,
+        query: object,
+        *,
+        runtime: object | None = None,
+    ) -> t.AsyncGenerator[object]:
+        try:
+            yield ag_events.SearchStarted(source_count=1)
+            scanning.set()
+            if not case.cancel_mid_scan:
+                yield ag_events.SearchFinished(match_count=0, elapsed_seconds=0.0)
+                return
+            while True:  # a scan the consumer never drains
+                await asyncio.sleep(0.01)
+        finally:
+            closed.set()
+
+    monkeypatch.setattr(agentgrep, "aiter_search_events", fake_stream)
+    request = SearchRequestModel(
+        terms=["bliss"],
+        agent="all",
+        scope="prompts",
+        case_sensitive=False,
+        limit=5,
+    )
+
+    task = asyncio.create_task(search_tools._search_async(request))
+    async with asyncio.timeout(5.0):
+        if case.cancel_mid_scan:
+            await scanning.wait()
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        else:
+            await task
+        await closed.wait()
+
+    assert closed.is_set()
