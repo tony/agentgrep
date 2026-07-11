@@ -86,7 +86,6 @@ class _InventoryKey(t.NamedTuple):
     record_id_missing: bool
     record_id: str
     content_id: str
-    text: str
     agent: str
     identity_namespace: _OptionalTextKey
     session_id: _OptionalTextKey
@@ -107,6 +106,7 @@ class _InventoryKey(t.NamedTuple):
     origin_remote: _OptionalTextKey
     origin_cwd_hash: _OptionalTextKey
     metadata: _CanonicalValueKey
+    text: str
 
 
 def _optional_text_sort_key(value: str | None) -> _OptionalTextKey:
@@ -306,7 +306,6 @@ def _inventory_sort_key(prepared: _PreparedRecord) -> _InventoryKey:
         record_id_missing=record_id is None,
         record_id=record_id or "",
         content_id=prepared.identity.content_id,
-        text=record.text,
         agent=record.agent,
         identity_namespace=_optional_text_sort_key(record.identity_namespace),
         session_id=_optional_text_sort_key(record.session_id),
@@ -331,6 +330,7 @@ def _inventory_sort_key(prepared: _PreparedRecord) -> _InventoryKey:
             origin.cwd_hash if origin is not None else None,
         ),
         metadata=_canonical_value_sort_key(record.metadata),
+        text=record.text,
     )
 
 

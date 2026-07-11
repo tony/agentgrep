@@ -142,6 +142,7 @@ def test_identity_adr_records_dedupe_and_observed_topology_limits() -> None:
     dedupe_forms = (
         "logical-native",
         "logical-ordinal",
+        "source-thread",
         "physical-native",
         "physical-ordinal",
         "fallback-thread",
@@ -159,13 +160,16 @@ def test_identity_adr_records_dedupe_and_observed_topology_limits() -> None:
     )
 
     assert all(f"`{form}`" in adr for form in dedupe_forms)
+    assert "seven cheap tuple forms" in adr
+    assert '("source-thread", agent, store, adapter_id, path, thread_kind,' in adr
+    assert "coordinate_kind, coordinate_value, *semantic)" in adr
     assert "(kind, normalized role, exact text)" in adr
     assert "no cryptographic hashing" in adr
     assert "Any truthy `session_id` is accepted without path-shape filtering." in adr
     assert "A fallback `conversation_id` must be non-path-shaped." in adr
     assert "`(store, adapter_id)`" in adr
-    assert "store-scoped `fallback-thread`" in adr
-    assert "does not require an identity namespace" in adr
+    assert "any usable unnamespaced thread anchor" in adr
+    assert "Namespaced positionless records use `fallback-thread`" in adr
     assert "observed topology" in adr
     assert all(limit in adr for limit in topology_limits)
     assert "issue #81" in adr
