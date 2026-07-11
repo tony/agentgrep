@@ -23,7 +23,12 @@ import tomllib
 import typing as t
 import urllib.parse
 
-from agentgrep.origin import is_path_like_text, origin_cwd_hash
+from agentgrep.origin import (
+    OriginEncoding,
+    decode_project_dir,
+    is_path_like_text,
+    origin_cwd_hash,
+)
 from agentgrep.readers import (
     _CODEX_RAW_SKIP_MIN_BYTES,
     _CODEX_SESSION_META_MARKER,
@@ -1323,6 +1328,32 @@ def parse_gemini_logs_file(
         )
 
 
+def _grok_project_dir_origin(directory: pathlib.Path) -> RecordOrigin | None:
+    """Return the ``cwd`` origin for a Grok project directory.
+
+    Grok keys its session tree by the working directory with the separators
+    percent-escaped (``sessions/%2Fwork%2Fproj/``). ``%2F`` is a lossless
+    escape, so the decode is a recovery rather than a guess — and it recovers
+    the same absolute path ``grok.session_search`` records literally in
+    ``session_docs.cwd``, which is what lets the JSONL transcript and the FTS
+    index answer a ``cwd:`` filter with one working directory instead of two.
+
+    A directory whose decoded name is not path-shaped is not a project
+    directory and yields no origin.
+
+    Examples
+    --------
+    >>> origin = _grok_project_dir_origin(pathlib.Path("%2Fwork%2Fproj"))
+    >>> origin.cwd if origin else None
+    '/work/proj'
+    >>> _grok_project_dir_origin(pathlib.Path("session-1234")) is None
+    True
+    """
+    return _record_origin(
+        cwd=decode_project_dir(directory.name, encoding=OriginEncoding.URL),
+    )
+
+
 def parse_grok_prompt_history(
     source: SourceHandle,
     *,
@@ -1334,7 +1365,12 @@ def parse_grok_prompt_history(
     Each line is ``{"timestamp": "…", "session_id": "…", "prompt": "…",
     "is_bash": bool}`` — one record per user prompt, append-only across
     all sessions within one project directory.
+
+    No line carries a working directory, but the file's own parent does:
+    ``sessions/<url-encoded-cwd>/prompt_history.jsonl``. Decoding that name
+    gives every prompt the ``cwd`` its session ran in.
     """
+    session_origin = _grok_project_dir_origin(source.path.parent)
     events = (
         _iter_jsonl(
             source.path,
@@ -1366,6 +1402,7 @@ def parse_grok_prompt_history(
             session_id=session_id,
             conversation_id=session_id,
             metadata={"is_bash": mapping.get("is_bash", False)},
+            origin=session_origin,
         )
 
 
@@ -1382,8 +1419,18 @@ def parse_grok_chat_history(
     array). Records without ``content`` — every ``reasoning`` and
     ``backend_tool_call`` record, plus any ``assistant`` record whose content
     is empty — are skipped.
+
+    An ``assistant`` line names the model that answered in ``model_id``. That
+    key is Grok's alone — ``extract_model`` reads the ``model``/``modelName``
+    spellings the other stores use, and teaching it ``model_id`` would apply a
+    Grok-specific guess to every store's payload — so the parser names it here.
+
+    The transcript sits one level below the project directory
+    (``sessions/<url-encoded-cwd>/<session_uuid>/chat_history.jsonl``), so the
+    ``cwd`` is decoded from the grandparent rather than the parent.
     """
     conversation_id = source.path.parent.name
+    session_origin = _grok_project_dir_origin(source.path.parent.parent)
     events = (
         _iter_jsonl(
             source.path,
@@ -1415,8 +1462,10 @@ def parse_grok_chat_history(
             text=content_text,
             role=record_type,
             timestamp=as_optional_str(mapping.get("timestamp")),
+            model=as_optional_str(mapping.get("model_id")),
             session_id=conversation_id,
             conversation_id=conversation_id,
+            origin=session_origin,
         )
 
 

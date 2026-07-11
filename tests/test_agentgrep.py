@@ -22,6 +22,7 @@ import sys
 import threading
 import time
 import typing as t
+import urllib.parse
 
 import pytest
 
@@ -13171,3 +13172,232 @@ def test_parse_pi_context_mode_db_origin(
         # The free round trip: the directory the row names hashes to the digest
         # the file is named after, so the two encodings agree.
         assert hashlib.sha256(origin.cwd.encode("utf-8")).hexdigest()[:16] == origin.cwd_hash
+
+
+GROK_PAIRED_TERM = "authflow"
+"""The one term every record of the paired Grok fixture contains."""
+
+GROK_PAIRED_SESSION = "019729a0-0000-7000-8000-0000000000aa"
+
+
+def _seed_grok_project(
+    home: pathlib.Path,
+    *,
+    project_dir_name: str,
+    session_id: str = GROK_PAIRED_SESSION,
+) -> None:
+    """Seed one Grok project directory with a transcript and a prompt log.
+
+    Both stores hang off the same directory name at different depths —
+    ``sessions/<name>/prompt_history.jsonl`` and
+    ``sessions/<name>/<session>/chat_history.jsonl`` — so seeding them together
+    is what makes the parent/grandparent decode disagree loudly if it ever does.
+    """
+    project = home / ".grok" / "sessions" / project_dir_name
+    write_jsonl(
+        project / session_id / "chat_history.jsonl",
+        [
+            {
+                "type": "user",
+                "content": f"trace the {GROK_PAIRED_TERM} redirect",
+                "timestamp": "2026-05-25T10:00:00.000000000Z",
+            },
+            {
+                "type": "assistant",
+                "content": f"the {GROK_PAIRED_TERM} redirect is signed server-side",
+                "model_id": "grok-4-fast",
+                "timestamp": "2026-05-25T10:00:05.000000000Z",
+            },
+        ],
+    )
+    write_jsonl(
+        project / "prompt_history.jsonl",
+        [
+            {
+                "timestamp": "2026-05-25T10:00:00.000000000Z",
+                "session_id": session_id,
+                "prompt": f"trace the {GROK_PAIRED_TERM} redirect",
+                "is_bash": False,
+            },
+        ],
+    )
+
+
+def _seed_grok_session_search(
+    home: pathlib.Path,
+    *,
+    cwd: str,
+    session_id: str = GROK_PAIRED_SESSION,
+) -> None:
+    """Seed the Grok FTS index with one row for ``session_id``."""
+    db_path = home / ".grok" / "sessions" / "session_search.sqlite"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        _ = conn.execute(
+            "CREATE TABLE session_docs ("
+            "  session_id TEXT PRIMARY KEY,"
+            "  cwd TEXT NOT NULL,"
+            "  updated_at INTEGER NOT NULL,"
+            "  title TEXT NOT NULL,"
+            "  content TEXT NOT NULL,"
+            "  content_hash TEXT NOT NULL"
+            ")",
+        )
+        _ = conn.execute(
+            "INSERT INTO session_docs VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                session_id,
+                cwd,
+                1779750000,
+                "Auth redirect",
+                f"the {GROK_PAIRED_TERM} redirect is signed server-side",
+                "abc123",
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _grok_record_cwd(record: t.Any) -> str | None:
+    """Return the working directory one Grok record reports, if any."""
+    origin = t.cast("RecordOrigin | None", record.origin)
+    return origin.cwd if origin is not None else None
+
+
+def _search_grok(
+    home: pathlib.Path,
+    term: str,
+) -> list[t.Any]:
+    """Search Grok through the public discovery and execution surface."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    backends = agentgrep.BackendSelection(None, None, None)
+    query = agentgrep.SearchQuery(
+        terms=(term,),
+        scope="all",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("grok",),
+        limit=None,
+        dedupe=False,
+    )
+    sources = agentgrep.discover_sources(home, ("grok",), backends)
+    return t.cast("list[t.Any]", agentgrep.search_sources(query, sources, backends))
+
+
+class GrokProjectOriginCase(t.NamedTuple):
+    """One Grok project-directory name and the ``cwd`` it may yield."""
+
+    test_id: str
+
+    project_dir_name: str
+    """The directory name Grok wrote under ``sessions/``."""
+
+    expect_cwd: str | None
+    """The decoded working directory, or ``None`` when the name is not one."""
+
+
+GROK_PROJECT_ORIGIN_CASES: tuple[GrokProjectOriginCase, ...] = (
+    GrokProjectOriginCase(
+        test_id="url-encoded-project-path",
+        project_dir_name=urllib.parse.quote("/work/python/agentgrep", safe=""),
+        expect_cwd="/work/python/agentgrep",
+    ),
+    GrokProjectOriginCase(
+        test_id="url-encoded-path-with-a-space",
+        project_dir_name=urllib.parse.quote("/work/my proj", safe=""),
+        expect_cwd="/work/my proj",
+    ),
+    GrokProjectOriginCase(
+        test_id="name-that-is-not-a-path",
+        project_dir_name="session-1234",
+        expect_cwd=None,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    GROK_PROJECT_ORIGIN_CASES,
+    ids=[c.test_id for c in GROK_PROJECT_ORIGIN_CASES],
+)
+def test_grok_jsonl_stores_decode_the_project_directory(
+    case: GrokProjectOriginCase,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both Grok JSONL stores recover the working directory from the same name.
+
+    ``%2F`` is a lossless escape, so decoding it is a recovery. A directory
+    whose name does not decode to a path is not a project directory, and gets no
+    ``cwd`` rather than a plausible-looking one: a fabricated working directory
+    does not merely omit a result, it makes a repo-scoped filter silently skip
+    the user's own project.
+    """
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("GROK_HOME", raising=False)
+    _seed_grok_project(home, project_dir_name=case.project_dir_name)
+
+    records = _search_grok(home, GROK_PAIRED_TERM)
+
+    stores = {record.store for record in records}
+    assert stores == {"grok.sessions", "grok.prompt_history"}
+    for record in records:
+        cwd = _grok_record_cwd(record)
+        assert cwd == case.expect_cwd, f"{record.store} decoded {cwd!r}"
+
+
+def test_grok_chat_history_reads_the_assistant_model_id(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``model_id`` names the model that answered; a user turn names none.
+
+    Grok spells the slug ``model_id`` where the other stores spell it ``model``,
+    and only an assistant line carries it. Reading the key in the Grok parser
+    keeps the shared ``extract_model`` helper from applying a Grok-specific
+    spelling to every other store's payload.
+    """
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("GROK_HOME", raising=False)
+    _seed_grok_project(home, project_dir_name=urllib.parse.quote("/work/proj", safe=""))
+
+    records = [
+        record for record in _search_grok(home, GROK_PAIRED_TERM) if record.store == "grok.sessions"
+    ]
+
+    assert records
+    models = {record.role: record.model for record in records}
+    assert models == {"user": None, "assistant": "grok-4-fast"}
+
+
+def test_grok_stores_agree_on_the_session_cwd(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One Grok session reports one working directory across all three stores.
+
+    ``grok.session_search`` reads the ``cwd`` Grok recorded in
+    ``session_docs``; the two JSONL stores decode it from the directory name
+    Grok filed the session under. They are two encodings of the same fact, and a
+    search that returned both a literal and a decoded path for one session would
+    answer a single ``cwd:`` filter with two working directories — matching the
+    session through the index and missing it through the transcript.
+    """
+    project_dir = "/work/python/agentgrep"
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("GROK_HOME", raising=False)
+    _seed_grok_project(home, project_dir_name=urllib.parse.quote(project_dir, safe=""))
+    _seed_grok_session_search(home, cwd=project_dir)
+
+    records = _search_grok(home, GROK_PAIRED_TERM)
+
+    session_records = [record for record in records if record.session_id == GROK_PAIRED_SESSION]
+    stores = {record.store for record in session_records}
+    assert stores == {"grok.sessions", "grok.prompt_history", "grok.session_search"}
+    assert {_grok_record_cwd(record) for record in session_records} == {project_dir}

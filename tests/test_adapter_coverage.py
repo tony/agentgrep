@@ -848,7 +848,6 @@ ADAPTER_COVERAGE_CASES: tuple[AdapterCoverageCase, ...] = (
         seed=seed_grok_sessions,
         expect_model="grok-4-fast",
         expect_origin=frozenset({"cwd"}),
-        gap="model_id is ignored and the URL-encoded project directory is never decoded",
     ),
     AdapterCoverageCase(
         test_id="grok-prompt-history",
@@ -858,7 +857,6 @@ ADAPTER_COVERAGE_CASES: tuple[AdapterCoverageCase, ...] = (
         seed=seed_grok_prompt_history,
         expect_model=None,
         expect_origin=frozenset({"cwd"}),
-        gap="the URL-encoded project directory is never decoded",
     ),
     AdapterCoverageCase(
         test_id="grok-session-search",
