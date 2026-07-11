@@ -128,7 +128,7 @@ previously could not be encoded. It does not change ordinary ref bytes.
 
 ### Coordinate-aware engine deduplication
 
-Search candidates use one of six cheap tuple forms. In the forms below,
+Search candidates use one of seven cheap tuple forms. In the forms below,
 `semantic` is exactly `(kind, normalized role, exact text)`:
 
 - `logical-native`:
@@ -137,6 +137,9 @@ Search candidates use one of six cheap tuple forms. In the forms below,
 - `logical-ordinal`:
   `("logical-ordinal", agent, namespace, thread_kind, thread_value, store,
   adapter_id, ordinal, *semantic)`
+- `source-thread`:
+  `("source-thread", agent, store, adapter_id, path, thread_kind,
+  thread_value, coordinate_kind, coordinate_value, *semantic)`
 - `physical-native`:
   `("physical-native", agent, store, path, native_id, *semantic)`
 - `physical-ordinal`:
@@ -146,14 +149,18 @@ Search candidates use one of six cheap tuple forms. In the forms below,
   *semantic)`
 - `fallback-path`: `("fallback-path", agent, store, path, *semantic)`
 
-A logical form requires a usable thread anchor. Any truthy session value is
-usable and does not require an identity namespace; a conversation fallback
-must be non-path-shaped. The namespace slot is empty for legacy records that
-do not carry one. An ordinal logical form also carries the adapter-owned
-`(store, adapter_id)` coordinate domain. Otherwise a positioned record falls
-back to its physical scope.
-Positionless records use store-scoped `fallback-thread` when possible and
-`fallback-path` otherwise.
+A logical form requires a usable thread anchor and a non-empty identity
+namespace. Any truthy session value is usable; a conversation fallback must be
+non-path-shaped. An ordinal logical form also carries the adapter-owned
+`(store, adapter_id)` coordinate domain.
+
+The `source-thread` form scopes any usable unnamespaced thread anchor to one
+physical source. Its coordinate pair is `("native", native_id)` when a native
+ID is usable, `("ordinal", ordinal)` for a valid ordinal, and `(None, None)`
+for a positionless or malformed coordinate.
+Namespaced positionless records use `fallback-thread`. Records without a usable
+thread use the appropriate `physical-native`, `physical-ordinal`, or
+`fallback-path` form.
 
 This projection performs no cryptographic hashing on scan candidates. The
 driver still owns representative and event order: inline execution keeps the

@@ -336,6 +336,15 @@ def test_group_conversation_units_orders_units_and_members_under_input_permutati
     assert [unit.thread_id for unit in units] == sorted(unit.thread_id for unit in units)
 
 
+def test_inventory_key_compares_physical_fields_before_exact_text() -> None:
+    """Cheap physical fields break ties before potentially large exact text."""
+    fields = conversations._InventoryKey._fields
+    text_index = fields.index("text")
+
+    assert fields[-1] == "text"
+    assert all(fields.index(field) < text_index for field in ("store", "adapter_id", "path"))
+
+
 def test_group_conversation_units_orders_timestamps_under_all_permutations() -> None:
     """Timestamp is a deterministic inventory tie-breaker, not chronology."""
     base = _record("same", position=RecordPosition(native_id="same"))
