@@ -2910,7 +2910,26 @@ def _cursor_bubble_role(mapping: dict[str, object]) -> str | None:
     """Return the role of one Cursor turn.
 
     The turn's role is the numeric ``type`` discriminator; ``bool`` is excluded
-    because it is an ``int`` subclass and ``type: true`` is not a role.
+    because it is an ``int`` subclass and ``type: true`` is not a role. The two
+    live values are pinned below because transposing them stays silent: the same
+    turns are still emitted, only every ``role:`` predicate now answers with the
+    other speaker.
+
+    A turn carrying no numeric ``type`` falls back to the generic role walk,
+    which is what a ``composerData:`` document itself takes.
+
+    Examples
+    --------
+    >>> _cursor_bubble_role({"type": 1, "text": "a prompt"})
+    'user'
+    >>> _cursor_bubble_role({"type": 2, "text": "a reply"})
+    'assistant'
+    >>> _cursor_bubble_role({"type": 99}) is None
+    True
+    >>> _cursor_bubble_role({"type": True}) is None
+    True
+    >>> _cursor_bubble_role({"role": "user"})
+    'user'
     """
     bubble_type = mapping.get("type")
     if isinstance(bubble_type, bool) or not isinstance(bubble_type, int):

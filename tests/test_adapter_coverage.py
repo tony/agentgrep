@@ -1,7 +1,8 @@
 """The adapter x field coverage ledger.
 
 One hand-written row per store, declaring what that store's records must carry:
-the model slug, and which :class:`~agentgrep.RecordOrigin` fields are populated.
+the model slug, the speaker roles, and which :class:`~agentgrep.RecordOrigin`
+fields are populated.
 Every row is exercised through the *public search surface* —
 :func:`~agentgrep.discover_sources_for_search` then
 :func:`~agentgrep.search_sources`, the two calls the CLI and the MCP server both
@@ -13,11 +14,14 @@ reachability
     The store's sources survive discovery at the row's documented scope, and
     emit at least one record.
 population
-    ``model`` equals the exact slug the fixture wrote, and every origin field in
-    ``expect_origin`` carries a value. ``expect_model`` is a slug rather than a
-    boolean because the values that fail here are *plausible*: Codex records the
-    provider (``openai``) next to the model, and a boolean row is satisfied by
-    either.
+    ``model`` equals the exact slug the fixture wrote, ``role`` is exactly the
+    vocabulary in ``expect_roles``, and every origin field in ``expect_origin``
+    carries a value. ``expect_model`` is a slug rather than a boolean because the
+    values that fail here are *plausible*: Codex records the provider
+    (``openai``) next to the model, and a boolean row is satisfied by either.
+    ``role`` is named for the same reason it is easy to lose: it is a search
+    predicate, not a payload, so a store that stops writing it keeps emitting
+    every record it always did and only ``role:user`` goes quiet.
 no fabrication
     No origin field in ``forbid_origin`` is ever set, and no origin value
     appears that the fixture never wrote. A superset check passes vacuously when
@@ -719,6 +723,14 @@ class AdapterCoverageCase(t.NamedTuple):
     expect_model: str | None
     """The exact model slug, or ``None`` when the store records no model."""
 
+    expect_roles: frozenset[str]
+    """Every role the store's records carry, exactly — empty when it writes none.
+
+    The set is closed, not a floor: a store that grows a role, drops one, or
+    renames the speaker changes what ``role:`` answers, and no other assertion
+    here would notice.
+    """
+
     expect_origin: frozenset[str]
     forbid_origin: frozenset[str] = frozenset()
     """Origin fields that must stay unset — the answer a lossy name has no right to."""
@@ -736,6 +748,7 @@ ADAPTER_COVERAGE_CASES: tuple[AdapterCoverageCase, ...] = (
         scope="conversations",
         seed=seed_codex_sessions,
         expect_model="gpt-5.4-codex",
+        expect_roles=frozenset({"user"}),
         expect_origin=frozenset({"cwd", "branch"}),
     ),
     AdapterCoverageCase(
@@ -745,6 +758,7 @@ ADAPTER_COVERAGE_CASES: tuple[AdapterCoverageCase, ...] = (
         scope="conversations",
         seed=seed_codex_state_db,
         expect_model="gpt-5.4",
+        expect_roles=frozenset({"assistant", "user"}),
         expect_origin=frozenset({"cwd", "branch", "remote"}),
     ),
     # -- Claude --------------------------------------------------------------
@@ -755,6 +769,7 @@ ADAPTER_COVERAGE_CASES: tuple[AdapterCoverageCase, ...] = (
         scope="conversations",
         seed=seed_claude_projects_session,
         expect_model="claude-opus-4-8",
+        expect_roles=frozenset({"assistant", "user"}),
         expect_origin=frozenset({"cwd", "branch"}),
     ),
     # -- Cursor IDE ----------------------------------------------------------
@@ -765,6 +780,7 @@ ADAPTER_COVERAGE_CASES: tuple[AdapterCoverageCase, ...] = (
         scope="conversations",
         seed=seed_cursor_ide_state_vscdb,
         expect_model="claude-4.5-sonnet",
+        expect_roles=frozenset({"assistant", "user"}),
         expect_origin=frozenset({"cwd", "branch"}),
         forbid_origin=frozenset({"cwd_hash"}),
     ),
@@ -775,6 +791,7 @@ ADAPTER_COVERAGE_CASES: tuple[AdapterCoverageCase, ...] = (
         scope="conversations",
         seed=seed_cursor_ide_workspace_state,
         expect_model=None,
+        expect_roles=frozenset({"user"}),
         expect_origin=frozenset({"cwd", "cwd_hash"}),
     ),
     # -- Cursor CLI ----------------------------------------------------------
@@ -785,6 +802,7 @@ ADAPTER_COVERAGE_CASES: tuple[AdapterCoverageCase, ...] = (
         scope="conversations",
         seed=seed_cursor_cli_transcripts,
         expect_model=None,
+        expect_roles=frozenset({"user"}),
         expect_origin=frozenset({"cwd"}),
     ),
     AdapterCoverageCase(
@@ -794,6 +812,7 @@ ADAPTER_COVERAGE_CASES: tuple[AdapterCoverageCase, ...] = (
         scope="conversations",
         seed=seed_cursor_cli_transcripts_unresolvable,
         expect_model=None,
+        expect_roles=frozenset({"user"}),
         expect_origin=frozenset(),
         forbid_origin=frozenset({"cwd", "cwd_hash"}),
     ),
@@ -804,6 +823,7 @@ ADAPTER_COVERAGE_CASES: tuple[AdapterCoverageCase, ...] = (
         scope="conversations",
         seed=seed_cursor_cli_subagent_transcripts,
         expect_model=None,
+        expect_roles=frozenset({"user"}),
         expect_origin=frozenset({"cwd"}),
     ),
     AdapterCoverageCase(
@@ -813,6 +833,10 @@ ADAPTER_COVERAGE_CASES: tuple[AdapterCoverageCase, ...] = (
         scope="conversations",
         seed=seed_cursor_cli_chats,
         expect_model="claude-4.5-sonnet",
+        # Schema-less protobuf: the walk recovers text from the wire format, and
+        # no field there names a speaker. Empty is the honest claim, and it fails
+        # the day a role is guessed rather than read.
+        expect_roles=frozenset(),
         expect_origin=frozenset({"cwd_hash"}),
         forbid_origin=frozenset({"cwd"}),
     ),
@@ -824,6 +848,9 @@ ADAPTER_COVERAGE_CASES: tuple[AdapterCoverageCase, ...] = (
         scope="conversations",
         seed=seed_gemini_tmp_chats,
         expect_model="gemini-3-pro",
+        # Gemini names its own speaker ``gemini`` rather than ``assistant``, and
+        # agentgrep passes the on-disk role through untranslated.
+        expect_roles=frozenset({"gemini", "user"}),
         expect_origin=frozenset({"cwd", "cwd_hash"}),
     ),
     AdapterCoverageCase(
@@ -833,6 +860,7 @@ ADAPTER_COVERAGE_CASES: tuple[AdapterCoverageCase, ...] = (
         scope="conversations",
         seed=seed_gemini_tmp_chats_legacy,
         expect_model=None,
+        expect_roles=frozenset({"user"}),
         expect_origin=frozenset({"cwd", "cwd_hash"}),
     ),
     AdapterCoverageCase(
@@ -842,6 +870,7 @@ ADAPTER_COVERAGE_CASES: tuple[AdapterCoverageCase, ...] = (
         scope="prompts",
         seed=seed_gemini_tmp_logs,
         expect_model=None,
+        expect_roles=frozenset({"user"}),
         expect_origin=frozenset({"cwd", "cwd_hash"}),
     ),
     # -- Grok ----------------------------------------------------------------
@@ -852,6 +881,7 @@ ADAPTER_COVERAGE_CASES: tuple[AdapterCoverageCase, ...] = (
         scope="conversations",
         seed=seed_grok_sessions,
         expect_model="grok-4-fast",
+        expect_roles=frozenset({"assistant", "user"}),
         expect_origin=frozenset({"cwd"}),
     ),
     AdapterCoverageCase(
@@ -861,6 +891,7 @@ ADAPTER_COVERAGE_CASES: tuple[AdapterCoverageCase, ...] = (
         scope="prompts",
         seed=seed_grok_prompt_history,
         expect_model=None,
+        expect_roles=frozenset({"user"}),
         expect_origin=frozenset({"cwd"}),
     ),
     AdapterCoverageCase(
@@ -870,6 +901,7 @@ ADAPTER_COVERAGE_CASES: tuple[AdapterCoverageCase, ...] = (
         scope="conversations",
         seed=seed_grok_session_search,
         expect_model=None,
+        expect_roles=frozenset({"assistant"}),
         expect_origin=frozenset({"cwd"}),
     ),
     # -- Pi ------------------------------------------------------------------
@@ -880,6 +912,7 @@ ADAPTER_COVERAGE_CASES: tuple[AdapterCoverageCase, ...] = (
         scope="conversations",
         seed=seed_pi_sessions,
         expect_model="pi-sonnet",
+        expect_roles=frozenset({"user"}),
         expect_origin=frozenset({"cwd"}),
     ),
     AdapterCoverageCase(
@@ -889,6 +922,9 @@ ADAPTER_COVERAGE_CASES: tuple[AdapterCoverageCase, ...] = (
         scope="conversations",
         seed=seed_pi_context_mode_db,
         expect_model=None,
+        # The event ``type`` column, which is not a speaker. Recorded as what it
+        # is: ``role:user`` does not reach this store's rows.
+        expect_roles=frozenset({"decision"}),
         expect_origin=frozenset({"cwd", "cwd_hash"}),
     ),
     # -- Antigravity ---------------------------------------------------------
@@ -899,6 +935,9 @@ ADAPTER_COVERAGE_CASES: tuple[AdapterCoverageCase, ...] = (
         scope="conversations",
         seed=seed_antigravity_cli_conversations,
         expect_model="gemini-pro-agent",
+        # Schema-less protobuf, same as ``cursor-cli.chats``: no speaker on the
+        # wire, so no role to read.
+        expect_roles=frozenset(),
         expect_origin=frozenset(),
     ),
     AdapterCoverageCase(
@@ -908,6 +947,7 @@ ADAPTER_COVERAGE_CASES: tuple[AdapterCoverageCase, ...] = (
         scope="prompts",
         seed=seed_antigravity_cli_history,
         expect_model=None,
+        expect_roles=frozenset({"user"}),
         expect_origin=frozenset({"cwd"}),
     ),
 )
@@ -1113,6 +1153,7 @@ def test_adapter_coverage(
     scope: agentgrep.SearchScope,
     seed: SeedStore,
     expect_model: str | None,
+    expect_roles: frozenset[str],
     expect_origin: frozenset[str],
     forbid_origin: frozenset[str],
     gap: str | None,
@@ -1146,6 +1187,10 @@ def test_adapter_coverage(
         assert expect_model in models, (
             f"{test_id}: {store_id} model {sorted(models)} does not include {expect_model!r}"
         )
+    roles = frozenset(record.role for record in records if record.role)
+    assert roles == expect_roles, (
+        f"{test_id}: {store_id} records carry roles {sorted(roles)}, not {sorted(expect_roles)}"
+    )
     populated = _populated_origin_fields(records)
     missing = sorted(expect_origin - populated)
     assert not missing, f"{test_id}: {store_id} never populates origin fields {missing}"
