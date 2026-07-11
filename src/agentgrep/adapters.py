@@ -109,13 +109,6 @@ def iter_source_records(
     if source.adapter_id == "antigravity_cli.conversations_sqlite_protobuf.v1":
         yield from parse_antigravity_cli_conversation_db(source)
         return
-    if source.adapter_id in {
-        "antigravity_cli.implicit_protobuf.v1",
-        "antigravity_ide.conversations_protobuf.v1",
-        "antigravity_ide.implicit_protobuf.v1",
-    }:
-        yield from parse_antigravity_protobuf_file(source)
-        return
     if source.adapter_id == "claude.projects_jsonl.v1":
         yield from parse_claude_project_file(
             source,
@@ -2292,7 +2285,12 @@ length check ever applies.
 """
 
 _ANTIGRAVITY_PROTOBUF_MIN_TEXT = 16
-"""Shortest decoded protobuf run treated as Antigravity transcript text."""
+"""Shortest decoded protobuf run treated as Antigravity transcript text.
+
+Applies to the plaintext protobuf blobs inside the Antigravity CLI
+``conversations/<uuid>.db`` ``steps`` rows. The loose ``implicit/*.pb`` and
+``conversations/*.pb`` artifacts are encrypted and are not parsed at all.
+"""
 
 
 def parse_antigravity_cli_conversation_db(
@@ -2342,42 +2340,6 @@ def parse_antigravity_cli_conversation_db(
         return
     finally:
         connection.close()
-
-
-def parse_antigravity_protobuf_file(
-    source: SourceHandle,
-) -> cabc.Iterator[SearchRecord]:
-    """Best-effort parse of an Antigravity protobuf transcript file."""
-    try:
-        payload = source.path.read_bytes()
-    except OSError:
-        return
-    session_id = source.path.stem
-    timestamp = isoformat_from_mtime_ns(source.mtime_ns)
-    title = (
-        "Antigravity CLI transcript"
-        if source.agent == "antigravity-cli"
-        else "Antigravity IDE transcript"
-    )
-    seen: set[str] = set()
-    for text in iter_protobuf_text_fields(payload, min_length=_ANTIGRAVITY_PROTOBUF_MIN_TEXT):
-        normalized = text.strip()
-        if len(normalized) < _ANTIGRAVITY_PROTOBUF_MIN_TEXT or normalized in seen:
-            continue
-        seen.add(normalized)
-        yield SearchRecord(
-            kind="history",
-            agent=source.agent,
-            store=source.store,
-            adapter_id=source.adapter_id,
-            path=source.path,
-            text=normalized,
-            title=title,
-            role=None,
-            timestamp=timestamp,
-            session_id=session_id,
-            conversation_id=session_id,
-        )
 
 
 def parse_cursor_cli_chats_db(

@@ -311,6 +311,29 @@ def test_search_by_default_only_true_for_searchable_roles() -> None:
             assert store.role in searchable, (store.store_id, store.role)
 
 
+def test_encrypted_stores_ship_no_discovery_spec() -> None:
+    """A store agentgrep cannot decode must not advertise a sample or a spec.
+
+    Windsurf is the precedent: ``CATALOG_ONLY``, no ``DiscoverySpec``, no
+    ``sample_record``. The three Antigravity ``.pb`` stores follow it — they
+    previously claimed to be "inspectable via the generic protobuf text
+    extractor" while decoding to zero records, and one of them shipped a
+    fabricated ``sample_record`` to match.
+    """
+    encrypted = (
+        "windsurf.cascade",
+        "windsurf.implicit",
+        "antigravity-cli.implicit",
+        "antigravity-ide.conversations",
+        "antigravity-ide.implicit",
+    )
+    for store_id in encrypted:
+        descriptor = CATALOG.by_id(store_id)
+        assert descriptor.coverage_level is StoreCoverage.CATALOG_ONLY, store_id
+        assert descriptor.discovery == (), store_id
+        assert descriptor.sample_record is None, store_id
+
+
 def test_runtime_adapter_ids_match_catalogue_discovery() -> None:
     """Every runtime adapter id is declared by a catalogue DiscoverySpec.
 
@@ -334,9 +357,6 @@ def test_runtime_adapter_ids_match_catalogue_discovery() -> None:
     assert "gemini.tmp_logs_json.v1" in runtime_adapter_ids
     assert "antigravity_cli.history_jsonl.v1" in runtime_adapter_ids
     assert "antigravity_cli.conversations_sqlite_protobuf.v1" in runtime_adapter_ids
-    assert "antigravity_cli.implicit_protobuf.v1" in runtime_adapter_ids
-    assert "antigravity_ide.conversations_protobuf.v1" in runtime_adapter_ids
-    assert "antigravity_ide.implicit_protobuf.v1" in runtime_adapter_ids
     assert "grok.prompt_history_jsonl.v1" in runtime_adapter_ids
     assert "grok.sessions_jsonl.v1" in runtime_adapter_ids
     assert "grok.session_search_sqlite.v1" in runtime_adapter_ids

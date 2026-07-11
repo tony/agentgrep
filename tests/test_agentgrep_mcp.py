@@ -1354,7 +1354,7 @@ async def test_mcp_capabilities_lists_every_supported_agent_and_adapter() -> Non
         "gemini.tmp_logs_json.v1",
         "antigravity_cli.history_jsonl.v1",
         "antigravity_cli.conversations_sqlite_protobuf.v1",
-        "antigravity_ide.conversations_protobuf.v1",
+        "antigravity_ide.skills_text.v1",
     ):
         assert adapter_id in advertised_adapters, adapter_id
 

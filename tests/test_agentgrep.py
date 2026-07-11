@@ -31,6 +31,7 @@ import agentgrep._engine.scanning as _rm_scanning
 import agentgrep.readers as _rm_readers
 from agentgrep._engine import orchestration
 from agentgrep.records import RecordOrigin, SourceOriginSummary
+from agentgrep.store_catalog import CATALOG
 
 if t.TYPE_CHECKING:
     import collections.abc as cabc
@@ -12347,79 +12348,82 @@ def test_search_antigravity_cli_history(
     assert record.metadata == {"workspace": expected_workspace, "type": entry.get("type", "")}
 
 
-class AntigravityProtobufCase(t.NamedTuple):
-    """Parametrized case for inspectable Antigravity protobuf transcript stores."""
+def _encrypted_pb_bytes(length: int = 4096) -> bytes:
+    """Return high-entropy bytes with no valid protobuf framing.
+
+    The real loose ``.pb`` artifacts are encrypted: ~8.0 bits/byte of entropy,
+    no printable run long enough for the extractor's 16-byte gate, and no
+    protobuf field varint at the head. The superseded fixture wrote *fabricated
+    plaintext protobuf* into these paths and then asserted it could be read back
+    — which is how three stores shipped advertising readable prompt strings they
+    never contained.
+
+    Parameters
+    ----------
+    length : int
+        Number of bytes to synthesize.
+
+    Returns
+    -------
+    bytes
+        A deterministic byte stream standing in for an encrypted payload.
+    """
+    return bytes((index * 167 + 13) % 256 for index in range(length))
+
+
+class AntigravityEncryptedCase(t.NamedTuple):
+    """Parametrized case for an Antigravity store whose payloads are encrypted."""
 
     test_id: str
     agent: AgentName
     relative_path: pathlib.Path
     store: str
-    adapter_id: str
-    sqlite_steps: bool
 
 
-ANTIGRAVITY_PROTOBUF_CASES: tuple[AntigravityProtobufCase, ...] = (
-    AntigravityProtobufCase(
-        test_id="cli-conversation-db",
-        agent="antigravity-cli",
-        relative_path=pathlib.Path(".gemini/antigravity-cli/conversations/conv-1.db"),
-        store="antigravity-cli.conversations",
-        adapter_id="antigravity_cli.conversations_sqlite_protobuf.v1",
-        sqlite_steps=True,
-    ),
-    AntigravityProtobufCase(
+ANTIGRAVITY_ENCRYPTED_CASES: tuple[AntigravityEncryptedCase, ...] = (
+    AntigravityEncryptedCase(
         test_id="cli-implicit-pb",
         agent="antigravity-cli",
         relative_path=pathlib.Path(".gemini/antigravity-cli/implicit/implicit-1.pb"),
         store="antigravity-cli.implicit",
-        adapter_id="antigravity_cli.implicit_protobuf.v1",
-        sqlite_steps=False,
     ),
-    AntigravityProtobufCase(
+    AntigravityEncryptedCase(
         test_id="ide-conversation-pb",
         agent="antigravity-ide",
         relative_path=pathlib.Path(".gemini/antigravity/conversations/ide-1.pb"),
         store="antigravity-ide.conversations",
-        adapter_id="antigravity_ide.conversations_protobuf.v1",
-        sqlite_steps=False,
     ),
-    AntigravityProtobufCase(
+    AntigravityEncryptedCase(
         test_id="ide-implicit-pb",
         agent="antigravity-ide",
         relative_path=pathlib.Path(".gemini/antigravity/implicit/implicit-1.pb"),
         store="antigravity-ide.implicit",
-        adapter_id="antigravity_ide.implicit_protobuf.v1",
-        sqlite_steps=False,
     ),
 )
 
 
 @pytest.mark.parametrize(
-    AntigravityProtobufCase._fields,
-    ANTIGRAVITY_PROTOBUF_CASES,
-    ids=[case.test_id for case in ANTIGRAVITY_PROTOBUF_CASES],
+    AntigravityEncryptedCase._fields,
+    ANTIGRAVITY_ENCRYPTED_CASES,
+    ids=[case.test_id for case in ANTIGRAVITY_ENCRYPTED_CASES],
 )
-def test_antigravity_protobuf_sources_are_inspectable(
+def test_antigravity_encrypted_pb_stores_are_catalog_only(
     test_id: str,
     agent: AgentName,
     relative_path: pathlib.Path,
     store: str,
-    adapter_id: str,
-    sqlite_steps: bool,
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Opaque Antigravity transcript stores stay opt-in but expose readable text."""
+    """Encrypted Antigravity ``.pb`` stores are catalogued, never enumerated."""
+    del test_id
+
     agentgrep = load_agentgrep_module()
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
     source_path = home / relative_path
-    text = f"inspectable antigravity transcript text from {test_id}"
-    if sqlite_steps:
-        _build_antigravity_steps_db(source_path, text=text)
-    else:
-        source_path.parent.mkdir(parents=True, exist_ok=True)
-        _ = source_path.write_bytes(_protobuf_field(text))
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    _ = source_path.write_bytes(_encrypted_pb_bytes())
 
     backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
     agents: tuple[AgentName, ...] = (agent,)
@@ -12431,23 +12435,90 @@ def test_antigravity_protobuf_sources_are_inspectable(
         include_non_default=True,
     )
 
+    descriptor = CATALOG.by_id(store)
+
+    assert descriptor.coverage_level.value == "catalog_only"
+    assert descriptor.discovery == ()
+    assert descriptor.sample_record is None
+    assert source_path not in {source.path for source in default_sources}
+    assert source_path not in {source.path for source in inventory_sources}
+
+
+def test_antigravity_cli_conversation_db_decodes_sqlite_protobuf(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Antigravity CLI conversation SQLite blobs *are* plaintext protobuf.
+
+    This is the store the generic extractor genuinely reads: the encryption
+    boundary is the loose ``.pb`` file, not the protobuf format.
+    """
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    source_path = home / ".gemini/antigravity-cli/conversations/conv-1.db"
+    text = "inspectable antigravity conversation text"
+    _build_antigravity_steps_db(source_path, text=text)
+
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    agents: tuple[AgentName, ...] = ("antigravity-cli",)
+    default_sources = t.cast("t.Any", agentgrep).discover_sources(home, agents, backends)
+    inventory_sources = t.cast("t.Any", agentgrep).discover_sources(
+        home,
+        agents,
+        backends,
+        include_non_default=True,
+    )
+
     assert source_path not in {source.path for source in default_sources}
     source = next(source for source in inventory_sources if source.path == source_path)
-    assert source.store == store
-    assert source.adapter_id == adapter_id
+
+    assert source.store == "antigravity-cli.conversations"
+    assert source.adapter_id == "antigravity_cli.conversations_sqlite_protobuf.v1"
     assert source.coverage.value == "inspectable"
 
     records = list(t.cast("t.Any", agentgrep).iter_source_records(source))
 
     assert len(records) == 1
-    record = records[0]
-    assert record.agent == agent
-    assert record.store == store
-    assert record.adapter_id == adapter_id
-    assert record.kind == "history"
-    assert record.text == text
-    assert record.session_id == source_path.stem
-    assert record.conversation_id == source_path.stem
+    assert records[0].kind == "history"
+    assert records[0].text == text
+    assert records[0].session_id == source_path.stem
+
+
+def test_antigravity_cli_conversation_db_rejects_encrypted_blobs(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Encrypted-shaped step blobs yield zero records instead of decoding to noise."""
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    source_path = home / ".gemini/antigravity-cli/conversations/conv-enc.db"
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(source_path))
+    try:
+        _ = conn.execute(
+            "CREATE TABLE steps (idx INTEGER PRIMARY KEY, step_payload BLOB, step_format INTEGER)",
+        )
+        _ = conn.execute(
+            "INSERT INTO steps VALUES (?, ?, ?)",
+            (1, _encrypted_pb_bytes(), 1),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    agents: tuple[AgentName, ...] = ("antigravity-cli",)
+    inventory_sources = t.cast("t.Any", agentgrep).discover_sources(
+        home,
+        agents,
+        backends,
+        include_non_default=True,
+    )
+    source = next(source for source in inventory_sources if source.path == source_path)
+
+    assert list(t.cast("t.Any", agentgrep).iter_source_records(source)) == []
 
 
 def _parse_opencode_records(

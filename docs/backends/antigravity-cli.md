@@ -51,9 +51,14 @@ the brain Markdown glob cannot. agentgrep discovers the untruncated
 `transcript_full.jsonl` (skipping the `transcript.jsonl` sibling) and exposes
 it as an inspectable store.
 
-### Implicit protobuf artifacts
+### Implicit artifacts (encrypted, unsupported)
 
 {storage:storeref}`antigravity-cli.implicit` files at
-`implicit/<conversation_uuid>.pb` are protobuf transcript artifacts without a
-published schema. They are inspectable only and share the same best-effort
-protobuf text extraction path as conversation databases.
+`implicit/<conversation_uuid>.pb` are high-entropy bytes with no extractable
+UTF-8 runs and no protobuf field framing: they are encrypted or custom-encoded,
+so agentgrep cannot read them. The store is catalogued for storage inventory
+only and is never searched.
+
+The encryption is on the loose `.pb` file, not on protobuf — the protobuf blobs
+inside {storage:storeref}`antigravity-cli.conversations`' SQLite rows still
+decode.

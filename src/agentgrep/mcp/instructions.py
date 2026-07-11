@@ -10,9 +10,9 @@ from __future__ import annotations
 
 _INSTR_HEADER = (
     "agentgrep MCP server. Read-only search over local AI-agent prompts and "
-    "opt-in conversations across Codex, Claude Code, Cursor, Gemini, Antigravity, "
-    "Grok, Pi, OpenCode, and VS Code (GitHub Copilot Chat). All tools are "
-    "read-only and never spawn writes."
+    "opt-in conversations across Codex, Claude Code, Cursor, Gemini, "
+    "Antigravity CLI, Grok, Pi, OpenCode, and VS Code (GitHub Copilot Chat). "
+    "All tools are read-only and never spawn writes."
 )
 
 _INSTR_SCOPE = (
@@ -28,7 +28,12 @@ _INSTR_SCOPE = (
     "agent-history scoped.\n"
     "Windsurf (Codeium Cascade) is catalogued for storage inventory but "
     "UNSUPPORTED for search — its conversation transcripts are encrypted, so "
-    "agentgrep cannot read them."
+    "agentgrep cannot read them.\n"
+    "Antigravity is two agent ids and they are not equally searchable: "
+    "'antigravity-cli' has searchable prompt history plus opt-in conversation "
+    "records, while 'antigravity-ide' is catalogued for storage inventory only "
+    "— its conversation and implicit `.pb` artifacts are encrypted, so only its "
+    "Markdown skills and brain notes are readable."
 )
 
 _INSTR_SEARCH_VS_DISCOVERY = (
