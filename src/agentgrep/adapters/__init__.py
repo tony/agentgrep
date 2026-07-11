@@ -16,6 +16,7 @@ from __future__ import annotations
 import collections.abc as cabc
 import typing as t
 
+from agentgrep.adapters._common import _catalog_uuid_path_token as _catalog_uuid_path_token
 from agentgrep.adapters._extract import (
     _normalize_native_id,
     _record_position,
