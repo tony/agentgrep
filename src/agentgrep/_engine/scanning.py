@@ -12,6 +12,7 @@ import typing as t
 
 from agentgrep._engine.matching import compile_record_matcher
 from agentgrep._engine.orchestration import (
+    RecordDedupeKey,
     _source_profile_attributes,
     matches_text,
     record_dedupe_key,
@@ -458,7 +459,7 @@ def iter_source_task_batches(
     yielded_final = False
     yielded_batch = False
     matching_records: list[SearchRecord] = []
-    source_deduped: set[tuple[str, str, str, str, str]] = set()
+    source_deduped: set[RecordDedupeKey] = set()
     matcher = compile_record_matcher(query)
 
     def source_limit_satisfied() -> bool:

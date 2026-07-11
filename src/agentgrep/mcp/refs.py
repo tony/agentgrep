@@ -141,8 +141,16 @@ def _record_fingerprint(payload: dict[str, object]) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
-def search_record_fingerprint(record: SearchRecordLike) -> str:
+def search_record_fingerprint(
+    record: SearchRecordLike,
+    *,
+    text_sha256: str | None = None,
+) -> str:
     """Return a stable privacy-preserving fingerprint for a search record."""
+    if text_sha256 is None:
+        text_sha256 = hashlib.sha256(
+            record.text.encode("utf-8", "surrogatepass"),
+        ).hexdigest()
     return _record_fingerprint(
         {
             "kind": "search",
@@ -155,7 +163,7 @@ def search_record_fingerprint(record: SearchRecordLike) -> str:
             "timestamp": record.timestamp,
             "session_id": record.session_id,
             "conversation_id": record.conversation_id,
-            "text_sha256": hashlib.sha256(record.text.encode("utf-8")).hexdigest(),
+            "text_sha256": text_sha256,
         },
     )
 
@@ -174,7 +182,11 @@ def find_record_fingerprint(record: FindRecordLike) -> str:
     )
 
 
-def make_search_ref(record: SearchRecordLike) -> str:
+def make_search_ref(
+    record: SearchRecordLike,
+    *,
+    text_sha256: str | None = None,
+) -> str:
     """Build an opaque ref for a search result."""
     return _encode_token(
         _REF_PREFIX,
@@ -185,7 +197,10 @@ def make_search_ref(record: SearchRecordLike) -> str:
                 kind="search",
                 adapter_id=record.adapter_id,
                 path=agentgrep.format_display_path(record.path),
-                fingerprint=search_record_fingerprint(record),
+                fingerprint=search_record_fingerprint(
+                    record,
+                    text_sha256=text_sha256,
+                ),
             ),
         ),
     )

@@ -11,6 +11,7 @@ import typing as t
 
 from agentgrep._engine import scanning
 from agentgrep._engine.orchestration import (
+    RecordDedupeKey,
     prompt_history_agents_for_sources,
     record_dedupe_key,
     search_record_sort_key,
@@ -190,7 +191,7 @@ class InlineExecutionDriver:
         active_control = SearchControl() if control is None else control
         tasks = plan.tasks
         total = len(tasks)
-        deduped: dict[tuple[str, str, str, str, str], SearchRecord] = {}
+        deduped: dict[RecordDedupeKey, SearchRecord] = {}
         raw_count = 0
         canonical_authority_keys: set[_CodexAuthorityKey] = set()
         pending_state_records: list[tuple[SearchRecord, tuple[_CodexAuthorityKey, ...]]] = []
@@ -1049,7 +1050,7 @@ class _FrontierState:
         self._source_authority = (
             SourceAuthorityPlan() if source_authority is None else source_authority
         )
-        self._deduped: dict[tuple[str, str, str, str, str], SearchRecord] = {}
+        self._deduped: dict[RecordDedupeKey, SearchRecord] = {}
         self._records: list[SearchRecord] = []
         self._canonical_authority_keys: set[_CodexAuthorityKey] = set()
 

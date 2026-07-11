@@ -236,6 +236,10 @@ class SearchRecordPayload(t.TypedDict):
     model: str | None
     session_id: str | None
     conversation_id: str | None
+    content_id: str
+    record_id: str | None
+    record_id_stability: RecordIdStability | None
+    thread_id: str | None
     origin: RecordOriginPayload | None
     metadata: dict[str, object]
 

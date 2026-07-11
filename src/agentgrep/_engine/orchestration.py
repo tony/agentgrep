@@ -19,6 +19,7 @@ import typing as t
 
 from agentgrep.adapters import store_role_for_record
 from agentgrep.discovery import discover_sources
+from agentgrep.origin import is_path_like_text
 from agentgrep.progress import SearchControl, SearchProgress, noop_search_progress
 from agentgrep.readers import (
     _record_engine_profile_sample,
@@ -42,6 +43,8 @@ from agentgrep.records import (
     SourceHandle,
 )
 from agentgrep.stores import SEARCHABLE_COVERAGE, StoreRole
+
+type RecordDedupeKey = tuple[str | int | None, ...]
 
 if t.TYPE_CHECKING:
     from agentgrep._engine.planning import PhysicalSearchPlan
@@ -852,13 +855,72 @@ def search_record_sort_key(record: SearchRecord) -> tuple[str, str, str]:
     return (record.timestamp or "", record.agent, str(record.path))
 
 
-def record_dedupe_key(record: SearchRecord) -> tuple[str, str, str, str, str]:
-    """Return the per-session dedupe key for a search record."""
-    session_identity = record.session_id or record.conversation_id or str(record.path)
-    return (
+def record_dedupe_key(record: SearchRecord) -> RecordDedupeKey:
+    """Return the shared coordinate-and-content dedupe key."""
+    semantic: RecordDedupeKey = (
         record.kind,
-        record.agent,
-        record.store,
-        session_identity,
+        record.role.casefold() if record.role else None,
         record.text,
     )
+    namespace = record.identity_namespace
+    thread_kind: str | None = None
+    thread_value: str | None = None
+    if namespace:
+        if record.session_id:
+            thread_kind = "session"
+            thread_value = record.session_id
+        elif record.conversation_id and not is_path_like_text(record.conversation_id):
+            thread_kind = "conversation"
+            thread_value = record.conversation_id
+
+    position = record.position
+    native_id = (
+        position.native_id
+        if position is not None and isinstance(position.native_id, str) and position.native_id
+        else None
+    )
+    ordinal = (
+        position.ordinal
+        if position is not None
+        and isinstance(position.ordinal, int)
+        and not isinstance(position.ordinal, bool)
+        and position.ordinal >= 0
+        else None
+    )
+    if thread_kind is not None and thread_value is not None:
+        if native_id is not None:
+            return (
+                "logical-native",
+                record.agent,
+                namespace,
+                thread_kind,
+                thread_value,
+                native_id,
+                *semantic,
+            )
+        if ordinal is not None:
+            return (
+                "logical-ordinal",
+                record.agent,
+                namespace,
+                thread_kind,
+                thread_value,
+                ordinal,
+                *semantic,
+            )
+    physical = (record.agent, record.store, str(record.path))
+    if native_id is not None:
+        return ("physical-native", *physical, native_id, *semantic)
+    if ordinal is not None:
+        return ("physical-ordinal", *physical, ordinal, *semantic)
+    if thread_kind is not None and thread_value is not None:
+        return (
+            "fallback-thread",
+            record.agent,
+            record.store,
+            namespace,
+            thread_kind,
+            thread_value,
+            *semantic,
+        )
+    return ("fallback-path", *physical, *semantic)
