@@ -309,4 +309,5 @@ def build_search_record(source: SourceHandle, candidate: MessageCandidate) -> Se
         conversation_id=candidate.conversation_id,
         origin=candidate.origin,
         identity_namespace=candidate.identity_namespace,
+        position=candidate.position,
     )
