@@ -9,7 +9,7 @@ import pathlib
 OBSERVED_AT = datetime.date(2026, 5, 17)
 _GROK_OBSERVED_AT = datetime.date(2026, 6, 21)
 _CLAUDE_OBSERVED_AT = datetime.date(2026, 6, 21)
-_CURSOR_IDE_OBSERVED_AT = datetime.date(2026, 6, 21)
+_CURSOR_IDE_OBSERVED_AT = datetime.date(2026, 7, 11)
 _PI_OBSERVED_AT = datetime.date(2026, 6, 21)
 _OPENCODE_OBSERVED_AT = datetime.date(2026, 6, 21)
 _ANTIGRAVITY_OBSERVED_AT = datetime.date(2026, 6, 21)

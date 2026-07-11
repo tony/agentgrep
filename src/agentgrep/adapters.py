@@ -83,9 +83,8 @@ _CURSOR_COMPOSER_KEY_PREFIXES: tuple[str, ...] = ("composerData:", "bubbleId:")
 
 .. note::
 
-   SPIKE: these key paths are verified against a Cursor **backup** only. They
-   still need confirming on a live Cursor install, so every read is guarded and
-   a schema drift degrades to an absent field rather than a wrong one.
+   Cursor publishes no schema for these keys, so every read is guarded and a
+   schema drift degrades to an absent field rather than a wrong one.
 """
 
 _CURSOR_STATE_KEY_PREFIXES: tuple[str, ...] = (

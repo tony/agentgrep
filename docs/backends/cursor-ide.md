@@ -68,9 +68,9 @@ fields, but they do not satisfy a hard current-project filter unless the
 stored record itself carries project metadata.
 
 ```{note}
-The `composerData` and `bubbleId` key paths are verified against a Cursor
-backup, not yet against a live install. Every read is guarded, so a
-schema change degrades to an absent field rather than a wrong one.
+Cursor publishes no schema for the `composerData` and `bubbleId` keys.
+Every read is guarded, so a schema change degrades to an absent field
+rather than a wrong one.
 ```
 
 ## Cross-host discovery on WSL
