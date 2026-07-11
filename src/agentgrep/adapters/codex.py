@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import collections.abc as cabc
+import dataclasses
 import datetime
 import functools
 import pathlib
@@ -16,6 +17,7 @@ from agentgrep.adapters._common import (
 )
 from agentgrep.adapters._extract import (
     _origin_from_mapping,
+    _record_position,
     build_search_record,
     candidate_from_mapping,
 )
@@ -146,6 +148,7 @@ def parse_codex_session_file(
     prefiltered iteration.
     """
     session_id = source.path.stem
+    native_session_id: str | None = None
     session_model: str | None = _codex_turn_context_model(source.path)
     session_origin: RecordOrigin | None = None
     if reverse:
@@ -163,7 +166,8 @@ def parse_codex_session_file(
             and isinstance(header_payload, dict)
         ):
             payload = t.cast("dict[str, object]", header_payload)
-            session_id = as_optional_str(payload.get("id")) or session_id
+            native_session_id = as_optional_str(payload.get("id"))
+            session_id = native_session_id or session_id
             session_origin = _origin_from_mapping(payload, fallback=session_origin)
             session_model = session_model or _codex_session_meta_model(payload)
     codex_skip_line = (
@@ -199,22 +203,27 @@ def parse_codex_session_file(
         )
     else:
         events = _iter_jsonl(source.path, reverse=reverse)
-    for event in events:
+    ordinal_is_available = not reverse and raw_skip_line is None and codex_skip_line is None
+    for raw_index, event in enumerate(events):
         if not isinstance(event, dict):
             continue
         event_type = str(event.get("type", ""))
         payload = event.get("payload")
         if event_type == "session_meta" and isinstance(payload, dict):
             payload_map = t.cast("dict[str, object]", payload)
-            session_id = as_optional_str(payload_map.get("id")) or session_id
+            observed_session_id = as_optional_str(payload_map.get("id"))
+            if observed_session_id is not None:
+                native_session_id = observed_session_id
+                session_id = observed_session_id
             session_origin = _origin_from_mapping(payload_map, fallback=session_origin)
             # The turn_context slug wins: session_meta offers only a provider id.
             session_model = session_model or _codex_session_meta_model(payload_map)
             continue
         if event_type != "response_item" or not isinstance(payload, dict):
             continue
+        payload_map = t.cast("dict[str, object]", payload)
         candidate = candidate_from_mapping(
-            t.cast("dict[str, object]", payload),
+            payload_map,
             timestamp=as_optional_str(event.get("timestamp")),
             model=session_model,
             session_id=session_id,
@@ -223,6 +232,14 @@ def parse_codex_session_file(
         )
         if candidate is None:
             continue
+        candidate = dataclasses.replace(
+            candidate,
+            identity_namespace=("codex.session" if native_session_id is not None else None),
+            position=_record_position(
+                native_id=payload_map.get("id"),
+                ordinal=raw_index if ordinal_is_available else None,
+            ),
+        )
         yield build_search_record(source, candidate)
 
 

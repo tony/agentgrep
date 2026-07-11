@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import collections.abc as cabc
+import dataclasses
 import sqlite3
 import typing as t
 
@@ -12,7 +13,9 @@ from agentgrep.adapters._common import (
     _unix_millis_to_isoformat,
 )
 from agentgrep.adapters._extract import (
+    _record_position,
     build_search_record,
+    extract_parent_message_id,
     flatten_content_value,
 )
 from agentgrep.adapters._registry import AnyParserSpec, ParserSpec, StreamParserSpec
@@ -119,6 +122,7 @@ def parse_pi_session_file(
     are emitted as history text. Metadata-only entries are skipped.
     """
     session_id: str | None = source.path.stem
+    native_session_id: str | None = None
     conversation_id: str | None = None
     session_origin: RecordOrigin | None = None
     if reverse:
@@ -130,7 +134,8 @@ def parse_pi_session_file(
             accept_record=lambda record: record.get("type") == "session",
         )
         if header is not None and as_optional_str(header.get("type")) == "session":
-            session_id = as_optional_str(header.get("id")) or session_id
+            native_session_id = as_optional_str(header.get("id"))
+            session_id = native_session_id or session_id
             conversation_id = as_optional_str(header.get("cwd"))
             session_origin = _record_origin(cwd=conversation_id)
     # The session header feeds session_id/cwd into later records, so the
@@ -145,7 +150,8 @@ def parse_pi_session_file(
         if raw_skip_line is not None
         else _iter_jsonl(source.path, reverse=reverse)
     )
-    for event in events:
+    ordinal_is_available = not reverse and raw_skip_line is None
+    for raw_index, event in enumerate(events):
         if not isinstance(event, dict):
             continue
         mapping = t.cast("dict[str, object]", event)
@@ -153,7 +159,10 @@ def parse_pi_session_file(
         if not entry_type:
             continue
         if entry_type == "session":
-            session_id = as_optional_str(mapping.get("id")) or session_id
+            observed_session_id = as_optional_str(mapping.get("id"))
+            if observed_session_id is not None:
+                native_session_id = observed_session_id
+                session_id = observed_session_id
             conversation_id = as_optional_str(mapping.get("cwd"))
             session_origin = _record_origin(cwd=conversation_id, fallback=session_origin)
             continue
@@ -167,6 +176,15 @@ def parse_pi_session_file(
                 session_origin,
             )
             if candidate is not None:
+                candidate = dataclasses.replace(
+                    candidate,
+                    identity_namespace=("pi.session" if native_session_id is not None else None),
+                    position=_record_position(
+                        native_id=mapping.get("id"),
+                        parent_native_id=extract_parent_message_id(mapping),
+                        ordinal=raw_index if ordinal_is_available else None,
+                    ),
+                )
                 yield build_search_record(source, candidate)
             continue
         text = _pi_entry_text(entry_type, mapping)
@@ -184,6 +202,12 @@ def parse_pi_session_file(
             session_id=session_id,
             conversation_id=conversation_id,
             origin=session_origin,
+            identity_namespace=("pi.session" if native_session_id is not None else None),
+            position=_record_position(
+                native_id=mapping.get("id"),
+                parent_native_id=extract_parent_message_id(mapping),
+                ordinal=raw_index if ordinal_is_available else None,
+            ),
         )
 
 
