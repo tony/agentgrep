@@ -24,6 +24,7 @@ import time
 import typing as t
 import urllib.parse
 
+import pydantic
 import pytest
 
 import agentgrep as _agentgrep_module
@@ -6874,9 +6875,9 @@ def test_pydantic_payloads_reject_wrong_types(tmp_path: pathlib.Path) -> None:
     assert fcp.text == "abc"
 
     # Wrong types raise ValidationError
-    with pytest.raises(agentgrep.pydantic.ValidationError):
+    with pytest.raises(pydantic.ValidationError):
         agentgrep.SearchFinishedPayload(outcome="not-a-valid-outcome", total=0, elapsed=0.0)
-    with pytest.raises(agentgrep.pydantic.ValidationError):
+    with pytest.raises(pydantic.ValidationError):
         agentgrep.FilterRequestedPayload(text=None)  # type: ignore[arg-type]
 
 
@@ -8540,6 +8541,14 @@ def test_find_record_serialization_uses_private_paths(
 
 
 def test_json_output_falls_back_without_pydantic(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``maybe_build_pydantic`` selects the pure-Python serializers.
+
+    This covers the serializer *selection* branch only. It cannot observe the
+    import boundary: ``agentgrep`` is already imported by the time it runs, so
+    every module-scope ``import pydantic`` is already satisfied and patching
+    ``importlib`` cannot un-satisfy it. See
+    ``test_cli_json_survives_missing_pydantic`` for the boundary test.
+    """
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     record = agentgrep.SearchRecord(
         kind="prompt",
@@ -8569,6 +8578,99 @@ def test_json_output_falls_back_without_pydantic(monkeypatch: pytest.MonkeyPatch
     assert envelope["schema_version"] == "agentgrep.v1"
     results = t.cast("list[dict[str, object]]", envelope["results"])
     assert results[0]["text"] == "serenity and bliss"
+
+
+NO_PYDANTIC_RUNNER = '''\
+"""Run ``python -m agentgrep`` with ``pydantic`` made un-importable."""
+
+from __future__ import annotations
+
+import runpy
+import sys
+
+
+class PydanticBlocker:
+    """Meta-path finder that hides ``pydantic`` from the import system."""
+
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "pydantic" or fullname.startswith("pydantic."):
+            raise ModuleNotFoundError(f"No module named {fullname!r}", name=fullname)
+        return None
+
+
+sys.meta_path.insert(0, PydanticBlocker())
+sys.argv = ["agentgrep", *sys.argv[1:]]
+runpy.run_module("agentgrep", run_name="__main__")
+'''
+
+
+class PydanticFreeCase(t.NamedTuple):
+    """A CLI output mode that must survive a pydantic-free interpreter."""
+
+    test_id: str
+    flag: str
+
+
+PYDANTIC_FREE_CASES = [
+    PydanticFreeCase(test_id="json", flag="--json"),
+    PydanticFreeCase(test_id="ndjson", flag="--ndjson"),
+]
+
+
+@pytest.mark.xfail(
+    reason=(
+        "The pydantic-free JSON fallback is not reachable from the CLI. "
+        "agentgrep.stores, agentgrep.progress, and agentgrep.query.ast each "
+        "subclass pydantic.BaseModel at module scope and are all imported on "
+        "the search path, so `python -m agentgrep search` raises ImportError "
+        "before maybe_use_pydantic() ever picks a serializer. Restoring the "
+        "fallback means giving those three modules a pydantic-free "
+        "definition; this test pins the gap so it cannot be silently lost."
+    ),
+    raises=AssertionError,
+)
+@pytest.mark.parametrize(
+    "case",
+    PYDANTIC_FREE_CASES,
+    ids=[c.test_id for c in PYDANTIC_FREE_CASES],
+)
+def test_cli_json_survives_missing_pydantic(
+    case: PydanticFreeCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """The CLI emits JSON when ``pydantic`` cannot be imported.
+
+    Runs the real ``python -m agentgrep`` entry point in a subprocess whose
+    import system refuses to load ``pydantic``. A subprocess is the only way
+    to observe this boundary: patching ``importlib`` inside an already-imported
+    ``agentgrep`` leaves every module-scope ``import pydantic`` satisfied, so
+    an in-process test passes whether or not the fallback exists.
+    """
+    home = tmp_path / "home"
+    session_path = home / ".codex" / "sessions" / "2026" / "01" / "01" / "rollout.jsonl"
+    write_jsonl(
+        session_path,
+        [{"type": "response_item", "payload": {"role": "user", "content": "bliss"}}],
+    )
+    runner = tmp_path / "run_without_pydantic.py"
+    runner.write_text(NO_PYDANTIC_RUNNER, encoding="utf-8")
+
+    completed = subprocess.run(
+        [sys.executable, str(runner), "search", "bliss", "--agent", "codex", case.flag],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "HOME": str(home), "NO_COLOR": "1"},
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    payloads = (
+        [json.loads(line) for line in completed.stdout.splitlines() if line.strip()]
+        if case.flag == "--ndjson"
+        else [json.loads(completed.stdout)]
+    )
+    assert payloads
+    assert "pydantic" not in completed.stderr
 
 
 def test_json_output_default_does_not_emit_progress(tmp_path: pathlib.Path) -> None:

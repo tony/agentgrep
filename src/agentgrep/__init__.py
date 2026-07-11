@@ -57,7 +57,6 @@ import tomllib
 import typing as t
 import urllib.parse
 
-import pydantic
 from rich.console import Group as _RichGroup
 from rich.markdown import Markdown as _RichMarkdown
 from rich.syntax import Syntax as _RichSyntax
