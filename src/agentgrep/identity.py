@@ -12,12 +12,15 @@ from agentgrep.origin import is_path_like_text
 
 __all__ = (
     "ContentIdentityKey",
+    "RecordIdentity",
     "content_identity_key",
     "record_content_id",
+    "record_identity",
     "record_thread_id",
 )
 
 _CONTENT_PREFIX = "agc1:"
+_RECORD_PREFIX = "agr1:"
 _THREAD_PREFIX = "agt1:"
 
 
@@ -64,6 +67,29 @@ class _ThreadIdentityRecord(t.Protocol):
         ...
 
 
+class _RecordPosition(t.Protocol):
+    """Structural source coordinate required for occurrence identity."""
+
+    @property
+    def native_id(self) -> str | None:
+        """Return the backend-native occurrence identifier, when present."""
+        ...
+
+    @property
+    def ordinal(self) -> int | None:
+        """Return the stable source ordinal, when present."""
+        ...
+
+
+class _RecordIdentityRecord(_ContentIdentityRecord, _ThreadIdentityRecord, t.Protocol):
+    """Structural input required to derive one prepared identity bundle."""
+
+    @property
+    def position(self) -> _RecordPosition | None:
+        """Return the normalized logical occurrence position, when present."""
+        ...
+
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class ContentIdentityKey:
     """Unhashed semantic key for one normalized record's content."""
@@ -71,6 +97,17 @@ class ContentIdentityKey:
     kind: str
     role: str | None
     text: str
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class RecordIdentity:
+    """Prepared canonical identifiers for one normalized record."""
+
+    text_sha256: str
+    content_id: str
+    record_id: str | None
+    record_id_stability: t.Literal["native", "source_order"] | None
+    thread_id: str | None
 
 
 def content_identity_key(record: _ContentIdentityRecord) -> ContentIdentityKey:
@@ -107,6 +144,20 @@ def _format_id(prefix: str, payload: t.Mapping[str, object]) -> str:
     return f"{prefix}{encoded}"
 
 
+def _content_id(key: ContentIdentityKey, text_sha256: str) -> str:
+    """Return the canonical content ID for one prepared text digest."""
+    return _format_id(
+        _CONTENT_PREFIX,
+        {
+            "kind": key.kind,
+            "role": key.role,
+            "text_sha256": text_sha256,
+            "type": "record-content",
+            "v": 1,
+        },
+    )
+
+
 def record_content_id(record: _ContentIdentityRecord) -> str:
     """Return the fixed-width canonical content identifier for ``record``.
 
@@ -122,16 +173,7 @@ def record_content_id(record: _ContentIdentityRecord) -> str:
     """
     key = content_identity_key(record)
     text_sha256 = hashlib.sha256(key.text.encode("utf-8", "surrogatepass")).hexdigest()
-    return _format_id(
-        _CONTENT_PREFIX,
-        {
-            "kind": key.kind,
-            "role": key.role,
-            "text_sha256": text_sha256,
-            "type": "record-content",
-            "v": 1,
-        },
-    )
+    return _content_id(key, text_sha256)
 
 
 def record_thread_id(record: _ThreadIdentityRecord) -> str | None:
@@ -170,4 +212,65 @@ def record_thread_id(record: _ThreadIdentityRecord) -> str | None:
             "type": "thread",
             "v": 1,
         },
+    )
+
+
+def record_identity(record: _RecordIdentityRecord) -> RecordIdentity:
+    """Return one prepared canonical identity bundle for ``record``.
+
+    Parameters
+    ----------
+    record
+        Normalized record-like value.
+
+    Returns
+    -------
+    RecordIdentity
+        Canonical content, record, and thread identifiers.
+    """
+    key = content_identity_key(record)
+    text_sha256 = hashlib.sha256(key.text.encode("utf-8", "surrogatepass")).hexdigest()
+    content_id = _content_id(key, text_sha256)
+    thread_id = record_thread_id(record)
+    position = record.position
+
+    coordinate_kind: str | None = None
+    coordinate_value: str | int | None = None
+    record_id_stability: t.Literal["native", "source_order"] | None = None
+    if thread_id is not None and position is not None:
+        if isinstance(position.native_id, str) and position.native_id:
+            coordinate_kind = "native"
+            coordinate_value = position.native_id
+            record_id_stability = "native"
+        elif (
+            isinstance(position.ordinal, int)
+            and not isinstance(position.ordinal, bool)
+            and position.ordinal >= 0
+        ):
+            coordinate_kind = "ordinal"
+            coordinate_value = position.ordinal
+            record_id_stability = "source_order"
+
+    if coordinate_kind is None or coordinate_value is None:
+        record_id = None
+    else:
+        record_id = _format_id(
+            _RECORD_PREFIX,
+            {
+                "agent": record.agent,
+                "content_id": content_id,
+                "coordinate_kind": coordinate_kind,
+                "coordinate_value": coordinate_value,
+                "thread_id": thread_id,
+                "type": "record",
+                "v": 1,
+            },
+        )
+
+    return RecordIdentity(
+        text_sha256=text_sha256,
+        content_id=content_id,
+        record_id=record_id,
+        record_id_stability=record_id_stability,
+        thread_id=thread_id,
     )
