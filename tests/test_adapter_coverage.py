@@ -887,7 +887,6 @@ ADAPTER_COVERAGE_CASES: tuple[AdapterCoverageCase, ...] = (
         seed=seed_pi_context_mode_db,
         expect_model=None,
         expect_origin=frozenset({"cwd", "cwd_hash"}),
-        gap="the project_dir column is never selected",
     ),
     # -- Antigravity ---------------------------------------------------------
     AdapterCoverageCase(

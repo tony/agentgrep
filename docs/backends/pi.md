@@ -84,6 +84,11 @@ blocker_resolved/data) with a JSON `data` payload, emitted as inspectable
 records; sibling `session_meta`/`session_resume`/`tool_calls` tables exist but
 only `session_events` is parsed.
 
+Every event repeats the absolute `project_dir` the stem hashes, so a
+context-mode record reports the working directory it came from *and* the digest
+Pi filed it under. Both are searchable: `--cwd` reaches this store like any
+other, and `cwd_hash:` still answers with the digest Pi itself wrote.
+
 ## Documentary stores
 
 The remaining `pi.*` rows are catalogued for completeness but not

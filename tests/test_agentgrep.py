@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import hashlib
 import importlib
 import inspect
 import io
@@ -13038,3 +13039,135 @@ def test_parse_pi_context_mode_db_emits_events(tmp_path: pathlib.Path) -> None:
     assert "login" in records[0].text
     assert records[0].role == "tool_call"
     assert records[0].kind == "history"
+
+
+class PiContextModeOriginCase(t.NamedTuple):
+    """One context-mode database shape and the origin its records must carry."""
+
+    test_id: str
+
+    stem_is_digest: bool
+    """Whether the file is named ``sha256(project_dir)[:16]``, as Pi names it."""
+
+    has_project_dir_column: bool
+    """``False`` reproduces a database from before the ``project_dir`` migration."""
+
+    writes_project_dir: bool
+    """``False`` leaves the column at the empty string the shipped schema defaults to."""
+
+    expect_cwd: bool
+    expect_cwd_hash: bool
+
+
+PI_CONTEXT_MODE_ORIGIN_CASES: tuple[PiContextModeOriginCase, ...] = (
+    PiContextModeOriginCase(
+        test_id="digest-stem-with-project-dir",
+        stem_is_digest=True,
+        has_project_dir_column=True,
+        writes_project_dir=True,
+        expect_cwd=True,
+        expect_cwd_hash=True,
+    ),
+    PiContextModeOriginCase(
+        test_id="empty-project-dir-keeps-the-digest",
+        stem_is_digest=True,
+        has_project_dir_column=True,
+        writes_project_dir=False,
+        expect_cwd=False,
+        expect_cwd_hash=True,
+    ),
+    PiContextModeOriginCase(
+        test_id="pre-migration-schema-keeps-the-digest",
+        stem_is_digest=True,
+        has_project_dir_column=False,
+        writes_project_dir=False,
+        expect_cwd=False,
+        expect_cwd_hash=True,
+    ),
+    PiContextModeOriginCase(
+        test_id="non-digest-stem-is-no-digest",
+        stem_is_digest=False,
+        has_project_dir_column=True,
+        writes_project_dir=True,
+        expect_cwd=True,
+        expect_cwd_hash=False,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    PI_CONTEXT_MODE_ORIGIN_CASES,
+    ids=[c.test_id for c in PI_CONTEXT_MODE_ORIGIN_CASES],
+)
+def test_parse_pi_context_mode_db_origin(
+    case: PiContextModeOriginCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """A context-mode record carries the cwd its row names and the digest its file does.
+
+    Both are the same fact in two encodings: Pi names the database
+    ``sha256(project_dir)[:16]`` and repeats the absolute ``project_dir`` on
+    every row, so the round trip is free to check and this test checks it —
+    hashing the recovered ``cwd`` has to reproduce the stem the store chose.
+    That is a check, never a construction: the ``cwd_hash`` agentgrep reports is
+    read off the file name, so a file whose stem is not a digest reports no
+    ``cwd_hash`` rather than one agentgrep computed for it.
+
+    A database that predates the ``project_dir`` migration still yields its
+    records; the missing column reads back as ``NULL``, not as an
+    ``OperationalError`` that would zero the store.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    project_dir = str(tmp_path / "work" / "agentgrep")
+    digest = hashlib.sha256(project_dir.encode("utf-8")).hexdigest()[:16]
+    stem = digest if case.stem_is_digest else "context-mode-backup"
+    db = tmp_path / f"{stem}.db"
+
+    columns = "id INTEGER PRIMARY KEY, session_id TEXT, type TEXT, data TEXT, created_at TEXT"
+    if case.has_project_dir_column:
+        columns = f"{columns}, project_dir TEXT NOT NULL DEFAULT ''"
+    connection = sqlite3.connect(db)
+    try:
+        _ = connection.execute(f"CREATE TABLE session_events ({columns})")
+        values: tuple[object, ...] = ("s1", "decision", '{"note":"login"}', "2026-06-21")
+        if case.has_project_dir_column:
+            _ = connection.execute(
+                "INSERT INTO session_events "
+                "(session_id, type, data, created_at, project_dir) VALUES (?, ?, ?, ?, ?)",
+                (*values, project_dir if case.writes_project_dir else ""),
+            )
+        else:
+            _ = connection.execute(
+                "INSERT INTO session_events "
+                "(session_id, type, data, created_at) VALUES (?, ?, ?, ?)",
+                values,
+            )
+        connection.commit()
+    finally:
+        connection.close()
+
+    source = agentgrep.SourceHandle(
+        agent="pi",
+        store="pi.context_mode_db",
+        adapter_id="pi.context_mode_sqlite.v1",
+        path=db,
+        path_kind="sqlite_db",
+        source_kind="sqlite",
+        search_root=None,
+        mtime_ns=1,
+    )
+
+    records = list(agentgrep.iter_source_records(source))
+
+    assert len(records) == 1
+    origin = t.cast("RecordOrigin | None", records[0].origin)
+    expected_cwd = project_dir if case.expect_cwd else None
+    expected_cwd_hash = digest if case.expect_cwd_hash else None
+    assert origin is not None
+    assert origin.cwd == expected_cwd
+    assert origin.cwd_hash == expected_cwd_hash
+    if origin.cwd is not None and origin.cwd_hash is not None:
+        # The free round trip: the directory the row names hashes to the digest
+        # the file is named after, so the two encodings agree.
+        assert hashlib.sha256(origin.cwd.encode("utf-8")).hexdigest()[:16] == origin.cwd_hash

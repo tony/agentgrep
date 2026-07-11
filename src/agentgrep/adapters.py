@@ -2889,6 +2889,15 @@ def parse_claude_usage_facet(
     )
 
 
+_PI_CWD_DIGEST_LENGTH: int = 16
+"""Hex length of the digest Pi names a context-mode database after.
+
+Pi truncates ``sha256(project_dir)`` to its first 16 characters, so the shape
+guard in :func:`~agentgrep.origin.origin_cwd_hash` needs this width rather than
+the 32-character default.
+"""
+
+
 def parse_pi_context_mode_db(
     source: SourceHandle,
 ) -> cabc.Iterator[SearchRecord]:
@@ -2900,21 +2909,48 @@ def parse_pi_context_mode_db(
     record. Rooted under ``~/.pi/context-mode/sessions/``; the file stem is
     ``sha256(project_dir)[:16]`` — a hashed ``cwd`` grouping holding multiple
     sessions, with each row carrying its own ``session_id``.
+
+    The directory that digest hashes is not lost: each row carries the absolute
+    ``project_dir`` beside its payload, so a record gets a literal ``cwd`` *and*
+    the ``cwd_hash`` the store named its file after. The two are the same fact
+    in two encodings — ``sha256(cwd)[:16]`` reproduces the stem — so ``cwd_hash``
+    keeps answering the hashed identity Pi itself uses while ``cwd`` makes the
+    store reachable from a repo-scoped filter.
+
+    ``project_dir`` is projected through
+    :func:`~agentgrep.readers.sqlite_column_expr`: the column arrived in a
+    migration, and naming it unconditionally would raise
+    :exc:`sqlite3.OperationalError` into the swallowing ``except`` below, turning
+    an older database into zero records rather than into records without a cwd.
+    The stem is admitted as a ``cwd_hash`` only when it has a digest's shape, so
+    a hand-copied ``backup.db`` sitting in the same directory does not publish
+    its own name as a searchable project identity.
     """
     connection = open_readonly_sqlite(source.path)
-    origin = _record_origin(cwd_hash=source.path.stem)
+    hash_origin = _record_origin(
+        cwd_hash=origin_cwd_hash(source.path.stem, length=_PI_CWD_DIGEST_LENGTH),
+    )
+    # One database is one project directory, so the per-row column repeats. Memo
+    # the origins rather than rebuilding one per event.
+    origins: dict[str | None, RecordOrigin | None] = {}
     try:
         if "session_events" not in sqlite_table_names(connection):
             return
+        columns = sqlite_column_names(connection, "session_events")
+        project_dir_expr = sqlite_column_expr(columns, "project_dir")
         cursor = connection.execute(
-            "SELECT session_id, type, data, created_at FROM session_events ORDER BY id",
+            f"SELECT session_id, type, data, created_at, {project_dir_expr} "
+            "FROM session_events ORDER BY id",
         )
-        for session_id_raw, type_raw, data_raw, created_raw in cursor:
+        for session_id_raw, type_raw, data_raw, created_raw, project_dir_raw in cursor:
             data_text = as_optional_str(data_raw)
             if not data_text or not data_text.strip():
                 continue
             event_type = as_optional_str(type_raw) or "event"
             session_id = as_optional_str(session_id_raw)
+            project_dir = _path_like_str(project_dir_raw)
+            if project_dir not in origins:
+                origins[project_dir] = _record_origin(cwd=project_dir, fallback=hash_origin)
             yield SearchRecord(
                 kind="history",
                 agent=source.agent,
@@ -2927,7 +2963,7 @@ def parse_pi_context_mode_db(
                 timestamp=as_optional_str(created_raw),
                 session_id=session_id,
                 conversation_id=session_id,
-                origin=origin,
+                origin=origins[project_dir],
             )
     except sqlite3.DatabaseError:
         return
