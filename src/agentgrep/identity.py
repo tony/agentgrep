@@ -225,13 +225,20 @@ def record_thread_id(record: _ThreadIdentityRecord) -> str | None:
     )
 
 
-def record_identity(record: _RecordIdentityRecord) -> RecordIdentity:
+def record_identity(
+    record: _RecordIdentityRecord,
+    *,
+    prepared_thread_id: str | None = None,
+) -> RecordIdentity:
     """Return one prepared canonical identity bundle for ``record``.
 
     Parameters
     ----------
     record
         Normalized record-like value.
+    prepared_thread_id
+        Previously computed non-null thread identifier to reuse. ``None``
+        derives the thread identifier from ``record``.
 
     Returns
     -------
@@ -241,7 +248,7 @@ def record_identity(record: _RecordIdentityRecord) -> RecordIdentity:
     key = content_identity_key(record)
     text_sha256 = hashlib.sha256(key.text.encode("utf-8", "surrogatepass")).hexdigest()
     content_id = _content_id(key, text_sha256)
-    thread_id = record_thread_id(record)
+    thread_id = prepared_thread_id if prepared_thread_id is not None else record_thread_id(record)
     position = record.position
 
     coordinate_kind: str | None = None
