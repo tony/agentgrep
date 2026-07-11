@@ -22,6 +22,7 @@ from agentgrep.mcp._library import (
 
 if t.TYPE_CHECKING:
     from agentgrep._query_gate import UnregisteredFieldToken
+    from agentgrep.identity import RecordIdentity
     from agentgrep.results import NextAction, RunCoverage, RunDiagnostic, RunSummary
 
 
@@ -72,16 +73,32 @@ class SearchRecordModel(AgentGrepModel):
     model: str | None = None
     session_id: str | None = None
     conversation_id: str | None = None
+    content_id: str
+    record_id: str | None
+    record_id_stability: t.Literal["native", "source_order"] | None
+    thread_id: str | None
     origin: RecordOriginModel | None = None
     metadata: dict[str, t.Any] = Field(default_factory=dict)
 
     @classmethod
-    def from_record(cls, record: SearchRecordLike) -> SearchRecordModel:
+    def from_record(
+        cls,
+        record: SearchRecordLike,
+        *,
+        prepared: RecordIdentity | None = None,
+    ) -> SearchRecordModel:
         """Build a typed result from an ``agentgrep`` search record."""
         from agentgrep.mcp import refs
 
-        payload = agentgrep.serialize_search_record(record)
-        payload["ref"] = refs.make_search_ref(record)
+        if prepared is None:
+            from agentgrep.identity import record_identity
+
+            prepared = record_identity(record)
+        payload = agentgrep.serialize_search_record(record, prepared=prepared)
+        payload["ref"] = refs.make_search_ref(
+            record,
+            text_sha256=prepared.text_sha256,
+        )
         return cls.model_validate(payload)
 
 

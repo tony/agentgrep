@@ -13,7 +13,7 @@ import typing as t
 
 import pytest
 
-import agentgrep.conversations as conversations
+from agentgrep import conversations
 from agentgrep.conversations import ConversationUnit, group_conversation_units
 from agentgrep.identity import RecordIdentity, record_identity
 from agentgrep.records import AgentName, RecordPosition, SearchRecord
