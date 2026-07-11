@@ -171,6 +171,14 @@ unique ordinal and logical occurrence coordinate in one comparable
 establish `native_tree` fidelity without establishing sibling order; otherwise
 proven order is `source_order` and ambiguous order is `unordered`.
 
+The member inventory is non-chronological. Its total tie-breaker covers every
+normalized public scalar with presence preserved, exact text and role, position
+quality, every origin field, and a type-ranked canonical projection of nested
+JSON-compatible metadata. Unsupported metadata uses a type-level fallback and
+never an object representation or memory address. Records without a defensible
+thread are rejected before content hashing; retained records reuse their
+prepared thread identifier.
+
 Those labels do not assert completeness, revision, connectivity, acyclicity, a
 root, an active leaf, branch selection, or transcript order. The grouping layer
 does not choose representatives or claim that its observed subset is the full

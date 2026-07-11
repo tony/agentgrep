@@ -6,6 +6,7 @@ import collections.abc as cabc
 import dataclasses
 import importlib.util
 import itertools
+import json
 import pathlib
 import struct
 import sys
@@ -15,9 +16,10 @@ import pytest
 
 import agentgrep._engine.orchestration as orchestration
 import agentgrep.conversations as conversations
+import agentgrep.identity as identity
 from agentgrep.conversations import ConversationUnit, group_conversation_units
-from agentgrep.identity import RecordIdentity, record_identity
-from agentgrep.records import AgentName, RecordPosition, SearchRecord
+from agentgrep.identity import RecordIdentity, record_identity, record_thread_id
+from agentgrep.records import AgentName, RecordOrigin, RecordPosition, SearchRecord
 
 
 class OrdinalCase(t.NamedTuple):
@@ -125,6 +127,17 @@ def _only_unit(records: cabc.Iterable[SearchRecord]) -> ConversationUnit:
     units = group_conversation_units(records)
     assert len(units) == 1
     return units[0]
+
+
+def _inventory_orders(
+    records: tuple[SearchRecord, ...],
+    project: t.Callable[[SearchRecord], str],
+) -> set[tuple[str, ...]]:
+    """Return projected inventory orders under every input permutation."""
+    return {
+        tuple(project(record) for record in _only_unit(permutation).records)
+        for permutation in itertools.permutations(records)
+    }
 
 
 def _raw_topology_position(
@@ -322,6 +335,151 @@ def test_group_conversation_units_orders_units_and_members_under_input_permutati
     units = group_conversation_units(records)
     assert len(units) == 2
     assert [unit.thread_id for unit in units] == sorted(unit.thread_id for unit in units)
+
+
+def test_group_conversation_units_orders_timestamps_under_all_permutations() -> None:
+    """Timestamp is a deterministic inventory tie-breaker, not chronology."""
+    base = _record("same", position=RecordPosition(native_id="same"))
+    records = tuple(
+        dataclasses.replace(base, timestamp=timestamp)
+        for timestamp in ("2030-01-01T00:00:00Z", "2020-01-01T00:00:00Z")
+    )
+
+    orders = _inventory_orders(records, lambda record: record.timestamp or "")
+
+    assert len(orders) == 1
+    assert set(next(iter(orders))) == {"2030-01-01T00:00:00Z", "2020-01-01T00:00:00Z"}
+
+
+@pytest.mark.parametrize("field", ("title", "model", "conversation_id"))
+def test_group_conversation_units_orders_original_optional_scalars(
+    field: str,
+) -> None:
+    """Optional public scalars retain absence and exact value in the key."""
+    base = _record("same", position=RecordPosition(native_id="same"))
+    records: list[SearchRecord] = []
+    for value in (None, ""):
+        record = dataclasses.replace(base)
+        setattr(record, field, value)
+        records.append(record)
+
+    orders = _inventory_orders(
+        tuple(records),
+        lambda record: json.dumps(getattr(record, field)),
+    )
+
+    assert len(orders) == 1
+    assert set(next(iter(orders))) == {"null", '""'}
+
+
+@pytest.mark.parametrize(
+    "roles",
+    (("USER", "user"), (None, "")),
+    ids=("exact-case", "absence"),
+)
+def test_group_conversation_units_orders_original_roles(
+    roles: tuple[str | None, str | None],
+) -> None:
+    """Role casefolding for identity does not erase the public role value."""
+    base = _record("same", position=RecordPosition(native_id="same"))
+    records = tuple(dataclasses.replace(base, role=role) for role in roles)
+
+    orders = _inventory_orders(records, lambda record: json.dumps(record.role))
+
+    assert len(orders) == 1
+    assert set(next(iter(orders))) == {json.dumps(role) for role in roles}
+
+
+def test_group_conversation_units_orders_position_presence_and_quality() -> None:
+    """Position presence and quality complete otherwise equal topology keys."""
+    base = _record("same", position=None)
+    presence_records = (base, dataclasses.replace(base, position=RecordPosition()))
+    quality_records = tuple(
+        dataclasses.replace(
+            base,
+            position=RecordPosition(quality=quality),
+        )
+        for quality in ("native", "source_order")
+    )
+
+    presence_orders = _inventory_orders(
+        presence_records,
+        lambda record: "missing" if record.position is None else "present",
+    )
+    quality_orders = _inventory_orders(
+        quality_records,
+        lambda record: (
+            (record.position.quality or "none") if record.position is not None else "missing"
+        ),
+    )
+
+    assert len(presence_orders) == 1
+    assert len(quality_orders) == 1
+
+
+@pytest.mark.parametrize(
+    "field",
+    ("cwd", "repo", "worktree", "branch", "remote", "cwd_hash"),
+)
+def test_group_conversation_units_orders_each_origin_field_under_all_permutations(
+    field: str,
+) -> None:
+    """Every origin scalar participates in deterministic inventory order."""
+    base = _record("same", position=RecordPosition(native_id="same"))
+    records: list[SearchRecord] = []
+    for value in ("zeta", "alpha"):
+        values = {field: value}
+        records.append(
+            dataclasses.replace(
+                base,
+                origin=RecordOrigin(**t.cast("t.Any", values)),
+            ),
+        )
+
+    orders = _inventory_orders(
+        tuple(records),
+        lambda record: t.cast("str", getattr(record.origin, field)),
+    )
+
+    assert len(orders) == 1
+    assert set(next(iter(orders))) == {"zeta", "alpha"}
+
+
+def test_group_conversation_units_orders_origin_presence_under_all_permutations() -> None:
+    """A missing origin differs deterministically from an empty origin value."""
+    base = _record("same", position=RecordPosition(native_id="same"))
+    records = (base, dataclasses.replace(base, origin=RecordOrigin()))
+
+    orders = _inventory_orders(
+        records,
+        lambda record: "missing" if record.origin is None else "present",
+    )
+
+    assert len(orders) == 1
+
+
+def test_group_conversation_units_orders_nested_metadata_under_all_permutations() -> None:
+    """Nested JSON-compatible metadata has one typed canonical order."""
+    base = _record("same", position=RecordPosition(native_id="same"))
+    records = tuple(
+        dataclasses.replace(
+            base,
+            metadata={
+                "nested": {
+                    "items": [None, False, 1, 1.5, {"value": value}],
+                },
+            },
+        )
+        for value in ("zeta", "alpha", "middle")
+    )
+
+    orders = _inventory_orders(
+        records,
+        lambda record: json.dumps(record.metadata, sort_keys=True),
+    )
+
+    assert len(orders) == 1
+    assert len(next(iter(orders))) == 3
 
 
 @pytest.mark.parametrize(
@@ -595,31 +753,87 @@ def test_group_conversation_units_keeps_dangling_native_parents_without_complete
     assert unit.linear_records is None
 
 
-def test_group_conversation_units_calls_record_identity_once_per_input_record(
+def test_group_conversation_units_never_hashes_threadless_records(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Grouping reuses one prepared identity bundle for every input view."""
-    records = (
-        _record("first", position=RecordPosition(ordinal=0, quality="source_order")),
-        _record("second", position=RecordPosition(ordinal=1, quality="source_order")),
-        _record("flat", session_id=None, identity_namespace=None),
+    """Missing topology is rejected before any cryptographic preparation."""
+    flat = _record(
+        "flat",
+        session_id=None,
+        identity_namespace=None,
+        position=RecordPosition(ordinal=0, quality="source_order"),
     )
-    calls: list[SearchRecord] = []
 
-    def counting_record_identity(record: SearchRecord) -> RecordIdentity:
-        calls.append(record)
-        return record_identity(record)
+    def fail_sha256(*_args: object, **_kwargs: object) -> t.NoReturn:
+        pytest.fail("threadless grouping reached SHA-256")
+
+    monkeypatch.setattr(identity.hashlib, "sha256", fail_sha256)
+
+    assert group_conversation_units((flat,)) == ()
+
+
+def test_group_conversation_units_reuses_retained_thread_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One retained input prepares its thread and full identity exactly once."""
+    record = _record(
+        "threaded",
+        position=RecordPosition(ordinal=0, quality="source_order"),
+    )
+    expected_thread_id = record_thread_id(record)
+    thread_calls: list[SearchRecord] = []
+    identity_calls: list[tuple[SearchRecord, str | None]] = []
+
+    def counting_record_thread_id(value: SearchRecord) -> str | None:
+        thread_calls.append(value)
+        return record_thread_id(value)
+
+    def counting_record_identity(
+        value: SearchRecord,
+        *,
+        prepared_thread_id: str | None = None,
+    ) -> RecordIdentity:
+        identity_calls.append((value, prepared_thread_id))
+        if prepared_thread_id is None:
+            return record_identity(value)
+        return record_identity(value, prepared_thread_id=prepared_thread_id)
 
     monkeypatch.setattr(
         conversations,
-        "record_identity",
-        counting_record_identity,
+        "record_thread_id",
+        counting_record_thread_id,
         raising=False,
     )
+    monkeypatch.setattr(conversations, "record_identity", counting_record_identity)
 
-    _ = group_conversation_units(records)
+    unit = _only_unit((record,))
 
-    assert calls == list(records)
+    assert unit.records == (record,)
+    assert thread_calls == [record]
+    assert identity_calls == [(record, expected_thread_id)]
+
+
+def test_group_conversation_units_threadless_megabyte_probe_hashes_no_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 1 MiB threadless body stays outside the identity hashing budget."""
+    flat = _record(
+        "x" * (1024 * 1024),
+        session_id=None,
+        identity_namespace=None,
+    )
+    real_sha256 = identity.hashlib.sha256
+    hashed_lengths: list[int] = []
+
+    def tracking_sha256(data: bytes = b"") -> t.Any:
+        hashed_lengths.append(len(data))
+        return real_sha256(data)
+
+    monkeypatch.setattr(identity.hashlib, "sha256", tracking_sha256)
+
+    assert group_conversation_units((flat,)) == ()
+
+    assert sum(hashed_lengths) == 0
 
 
 def test_group_conversation_units_consumes_input_once() -> None:
