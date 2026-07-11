@@ -115,6 +115,17 @@ When the selected record carries {class}`~agentgrep.RecordOrigin`, the
 detail header also shows available cwd, repo, worktree, branch, and cwd
 hash values.
 
+The HUD detail header places full `Record:`, `Content:`, and `Thread:` handles
+immediately after `Adapter:`. On the first selection, dim `…` values reserve
+those rows while identity is prepared away from the Textual message pump. A
+missing logical occurrence or thread renders as `—`; the content handle is
+always available once preparation finishes. The handles are comparison
+vocabulary, not copy shortcuts or resolvers. See the {ref}`deterministic record
+identity contract <adr-deterministic-record-identity>` for the exact boundary.
+
+This is a HUD detail feature only. Compact result rows, the greplog layout, and
+pane status lines keep their existing shapes.
+
 ## Completion
 
 Both the search bar and the in-list filter offer

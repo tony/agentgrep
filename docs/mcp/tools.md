@@ -20,12 +20,20 @@ need those query-language fields. A request with an origin filter and
 no terms is valid.
 
 **Returns:** request metadata, run status, result stats, page metadata, and
-normalized records with `ref`, agent, store, adapter, path, text, title,
+normalized records with `ref`, `content_id`, `record_id`,
+`record_id_stability`, `thread_id`, agent, store, adapter, path, text, title,
 role, timestamp, model, session ID, conversation ID, optional
-{class}`~agentgrep.mcp.RecordOriginModel`, and metadata. When
-`page.next_cursor` is present, pass it back as `cursor` to continue the
-same search, including the same origin filters, without rebuilding the
-request.
+{class}`~agentgrep.mcp.RecordOriginModel`, and metadata. `content_id` is always a
+full string; the record, stability, and thread fields are required but nullable
+when the source lacks a defensible coordinate or thread. See the
+{ref}`deterministic record identity contract
+<adr-deterministic-record-identity>` for their separate meanings.
+
+Canonical IDs compare content, logical occurrences, and namespaced threads;
+they do not locate stored results. For inspection, only `ref` is accepted by
+`inspect_result`, and the existing opaque ref remains unchanged. When
+`page.next_cursor` is present, pass it back as `cursor` to continue the same
+search, including the same origin filters, without rebuilding the request.
 
 **Example:**
 
