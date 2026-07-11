@@ -7860,6 +7860,211 @@ def test_cursor_cli_chats_db_is_opt_in_and_extracts_protobuf_text(
     assert records[0].session_id == "sess-1234"
 
 
+_CURSOR_CLI_CHAT_TEXT = "Reviewing the engine lazy imports for merge readiness"
+"""One chat blob's text, long enough to clear the protobuf minimum run length."""
+
+_CURSOR_CLI_CHATS_DIGEST = "1a2b3c4d5e6f708192a3b4c5d6e7f809"
+"""A Cursor CLI ``chats`` directory name: md5 of the workspace path."""
+
+_CURSOR_CLI_META_SCHEMA = "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)"
+
+
+def _cursor_cli_meta_value(payload: dict[str, object]) -> str:
+    """Encode session metadata the way Cursor CLI stores it: hex-encoded JSON."""
+    return json.dumps(payload).encode("utf-8").hex()
+
+
+def _write_cursor_cli_chats_db(
+    path: pathlib.Path,
+    *,
+    meta_schema: str,
+    meta_rows: tuple[tuple[str, ...], ...],
+) -> None:
+    """Create one Cursor CLI ``chats/*/store.db`` with a single protobuf blob."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(path)
+    try:
+        _ = connection.execute("CREATE TABLE blobs (id TEXT PRIMARY KEY, data BLOB)")
+        payload = _CURSOR_CLI_CHAT_TEXT.encode("utf-8")
+        _ = connection.execute(
+            "INSERT INTO blobs VALUES (?, ?)",
+            ("h1", b"\x0a" + bytes([len(payload)]) + payload),
+        )
+        if meta_schema:
+            _ = connection.execute(meta_schema)
+        for row in meta_rows:
+            placeholders = ", ".join("?" * len(row))
+            _ = connection.execute(f"INSERT INTO meta VALUES ({placeholders})", row)
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def _cursor_cli_chat_records(
+    agentgrep: t.Any,
+    home: pathlib.Path,
+) -> list[t.Any]:
+    """Discover the opt-in chats store and parse it, as an inventory caller would."""
+    sources = agentgrep.discover_sources(
+        home,
+        ("cursor-cli",),
+        agentgrep.BackendSelection(None, None, None),
+        include_non_default=True,
+    )
+    chat_sources = [source for source in sources if source.store == "cursor-cli.chats"]
+    assert len(chat_sources) == 1
+    return list(agentgrep.iter_source_records(chat_sources[0]))
+
+
+class CursorCliChatsMetaCase(t.NamedTuple):
+    """One ``meta`` table shape and the model its chat records may carry."""
+
+    test_id: str
+    meta_schema: str
+    meta_rows: tuple[tuple[str, ...], ...]
+    expected_model: str | None
+
+
+_CURSOR_CLI_CHATS_META_CASES: tuple[CursorCliChatsMetaCase, ...] = (
+    CursorCliChatsMetaCase(
+        test_id="hex-json-names-the-model",
+        meta_schema=_CURSOR_CLI_META_SCHEMA,
+        meta_rows=(("0", _cursor_cli_meta_value({"lastUsedModel": "claude-4.5-sonnet"})),),
+        expected_model="claude-4.5-sonnet",
+    ),
+    CursorCliChatsMetaCase(
+        test_id="default-sentinel-is-not-a-model",
+        meta_schema=_CURSOR_CLI_META_SCHEMA,
+        meta_rows=(("0", _cursor_cli_meta_value({"lastUsedModel": "default"})),),
+        expected_model=None,
+    ),
+    CursorCliChatsMetaCase(
+        test_id="session-metadata-without-a-model",
+        meta_schema=_CURSOR_CLI_META_SCHEMA,
+        meta_rows=(("0", _cursor_cli_meta_value({"agentId": "agent-1"})),),
+        expected_model=None,
+    ),
+    CursorCliChatsMetaCase(
+        test_id="value-is-not-hex",
+        meta_schema=_CURSOR_CLI_META_SCHEMA,
+        meta_rows=(("0", "not hex at all"),),
+        expected_model=None,
+    ),
+    CursorCliChatsMetaCase(
+        test_id="no-row-keyed-zero",
+        meta_schema=_CURSOR_CLI_META_SCHEMA,
+        meta_rows=(("1", _cursor_cli_meta_value({"lastUsedModel": "claude-4.5-sonnet"})),),
+        expected_model=None,
+    ),
+    # The store is unofficial and migrated in place. A `SELECT value` against a
+    # `meta` that has no such column raises into the scan's own
+    # `except sqlite3.DatabaseError`, which would not fail loudly — it would
+    # turn every chat record in the store into nothing.
+    CursorCliChatsMetaCase(
+        test_id="meta-without-a-value-column-keeps-the-records",
+        meta_schema="CREATE TABLE meta (key TEXT PRIMARY KEY)",
+        meta_rows=(("0",),),
+        expected_model=None,
+    ),
+    CursorCliChatsMetaCase(
+        test_id="no-meta-table-keeps-the-records",
+        meta_schema="",
+        meta_rows=(),
+        expected_model=None,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    CursorCliChatsMetaCase._fields,
+    _CURSOR_CLI_CHATS_META_CASES,
+    ids=[case.test_id for case in _CURSOR_CLI_CHATS_META_CASES],
+)
+def test_cursor_cli_chats_model_comes_from_the_meta_row(
+    test_id: str,
+    meta_schema: str,
+    meta_rows: tuple[tuple[str, ...], ...],
+    expected_model: str | None,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The session model is the ``meta`` row's ``lastUsedModel``, or nothing."""
+    _ = test_id
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    _write_cursor_cli_chats_db(
+        home / ".config" / "cursor" / "chats" / _CURSOR_CLI_CHATS_DIGEST / "sess-1" / "store.db",
+        meta_schema=meta_schema,
+        meta_rows=meta_rows,
+    )
+
+    records = _cursor_cli_chat_records(agentgrep, home)
+
+    assert [record.text for record in records] == [_CURSOR_CLI_CHAT_TEXT]
+    assert {record.model for record in records} == {expected_model}
+
+
+class CursorCliChatsDigestCase(t.NamedTuple):
+    """One ``chats/<project_hash>/`` directory name and the hash it may report."""
+
+    test_id: str
+    project_dir: str
+    expected_cwd_hash: str | None
+
+
+_CURSOR_CLI_CHATS_DIGEST_CASES: tuple[CursorCliChatsDigestCase, ...] = (
+    CursorCliChatsDigestCase(
+        test_id="digest-directory-is-a-cwd-hash",
+        project_dir=_CURSOR_CLI_CHATS_DIGEST,
+        expected_cwd_hash=_CURSOR_CLI_CHATS_DIGEST,
+    ),
+    CursorCliChatsDigestCase(
+        test_id="non-digest-directory-is-not-a-cwd-hash",
+        project_dir="phash",
+        expected_cwd_hash=None,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    CursorCliChatsDigestCase._fields,
+    _CURSOR_CLI_CHATS_DIGEST_CASES,
+    ids=[case.test_id for case in _CURSOR_CLI_CHATS_DIGEST_CASES],
+)
+def test_cursor_cli_chats_cwd_hash_needs_a_digest(
+    test_id: str,
+    project_dir: str,
+    expected_cwd_hash: str | None,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A chats directory becomes a ``cwd_hash`` only when it has a digest's shape.
+
+    The literal workspace path is nowhere in this store, so ``cwd`` stays unset
+    however the directory is named — agentgrep does not hash a path it recovered
+    elsewhere to manufacture an identity Cursor never wrote, and it does not
+    promote a sibling directory's name to one either.
+    """
+    _ = test_id
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    _write_cursor_cli_chats_db(
+        home / ".config" / "cursor" / "chats" / project_dir / "sess-1" / "store.db",
+        meta_schema=_CURSOR_CLI_META_SCHEMA,
+        meta_rows=(),
+    )
+
+    records = _cursor_cli_chat_records(agentgrep, home)
+
+    assert records
+    assert {None if record.origin is None else record.origin.cwd_hash for record in records} == {
+        expected_cwd_hash
+    }
+    assert all(record.origin is None or record.origin.cwd is None for record in records)
+
+
 def test_cursor_ide_workspace_state_extracts_aiservice_prompts(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

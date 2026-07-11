@@ -1139,14 +1139,23 @@ def parse_cursor_cli_transcript(
     ``iter_message_candidates`` handles the nested shape directly. Cursor
     transcripts carry no native per-turn timestamp, so the file's mtime is
     used as a session-level fallback.
+
+    The working directory is not in the file either: Cursor CLI dash-encodes it
+    into the ``projects/<name>/`` path segment, and discovery decodes that name
+    against the filesystem. Records therefore carry ``origin.cwd`` only when the
+    name reconstructs to exactly one directory that exists — a name consistent
+    with two paths, or with none, leaves ``cwd`` unset rather than guessing at
+    the repo the user would then filter on.
     """
     conversation_id = source.path.stem
     fallback_timestamp = isoformat_from_mtime_ns(source.mtime_ns)
+    session_origin = _discovered_origin(source)
     seen: set[tuple[str | None, str, str | None, str | None]] = set()
     for event in iter_jsonl(source.path):
         for candidate in iter_message_candidates(
             event,
             fallback_conversation_id=conversation_id,
+            fallback_origin=session_origin,
         ):
             if candidate.timestamp is None and fallback_timestamp is not None:
                 candidate = dataclasses.replace(candidate, timestamp=fallback_timestamp)
@@ -2543,27 +2552,82 @@ def parse_antigravity_cli_conversation_db(
         connection.close()
 
 
+_CURSOR_CLI_MODEL_SENTINEL = "default"
+"""``lastUsedModel`` placeholder Cursor CLI writes before a model is chosen.
+
+It names no model. Surfacing it would make ``model:default`` a searchable
+identity and would put a fake slug next to the real ones in a model breakdown.
+"""
+
+
+def _cursor_cli_chats_model(connection: sqlite3.Connection) -> str | None:
+    """Read the session model from a Cursor CLI chat store's ``meta`` table.
+
+    ``meta`` holds a single row keyed ``'0'`` whose value is hex-encoded UTF-8
+    JSON; ``lastUsedModel`` inside it is the model the whole ``store.db``
+    ran on, so one read serves every record the store yields.
+
+    The projection is guarded rather than attempted: the caller wraps its scan
+    in ``except sqlite3.DatabaseError``, so naming a column an older store lacks
+    would not fail loudly — it would swallow the error and turn the entire store
+    into zero records.
+    """
+    if "meta" not in sqlite_table_names(connection):
+        return None
+    if not {"key", "value"} <= sqlite_column_names(connection, "meta"):
+        return None
+    row = t.cast(
+        "tuple[object] | None",
+        connection.execute("SELECT value FROM meta WHERE key = '0'").fetchone(),
+    )
+    if row is None:
+        return None
+    encoded = as_optional_str(decode_sqlite_value(row[0]))
+    if encoded is None:
+        return None
+    try:
+        payload: object = json.loads(bytes.fromhex(encoded))
+    except ValueError:
+        # Covers the hex decode, the UTF-8 decode, and the JSON parse: the
+        # value is unofficial, and a shape change must degrade to "no model".
+        return None
+    if not isinstance(payload, dict):
+        return None
+    model = as_optional_str(t.cast("dict[str, object]", payload).get("lastUsedModel"))
+    if model is None or model == _CURSOR_CLI_MODEL_SENTINEL:
+        return None
+    return model
+
+
 def parse_cursor_cli_chats_db(
     source: SourceHandle,
 ) -> cabc.Iterator[SearchRecord]:
     """Best-effort parse of a Cursor CLI ``chats/*/store.db`` blob store.
 
     The CLI persists each session as content-addressed protobuf blobs in
-    a ``blobs(id, data)`` table; agentgrep reads every blob (the sibling
-    ``meta`` row's hex-encoded JSON metadata is not required).
+    a ``blobs(id, data)`` table; agentgrep reads every blob, and the sibling
+    ``meta`` row names the session's model.
     Cursor publishes no schema, so agentgrep walks the protobuf wire
     format generically (:func:`iter_protobuf_text_fields`) and surfaces
     the readable UTF-8 runs it finds. The adapter is versioned by
     observation date (``cursor_cli.chats_protobuf.v1``) because the layout
     is unofficial and may shift. The session UUID comes from the parent
     directory name.
+
+    The grandparent segment is a workspace digest, so it is a ``cwd_hash`` and
+    never a ``cwd``: the literal path appears in this store only as unstructured
+    bytes inside the blobs, interleaved with unrelated file paths, with no key
+    that reliably yields it. ``origin.cwd`` therefore stays unset here — and a
+    ``cwd_hash`` is never manufactured by hashing a path recovered elsewhere.
     """
     session_uuid = source.path.parent.name
     timestamp = isoformat_from_mtime_ns(source.mtime_ns)
+    origin = _record_origin(cwd_hash=origin_cwd_hash(source.path.parent.parent.name))
     connection = open_readonly_sqlite(source.path)
     try:
         if "blobs" not in sqlite_table_names(connection):
             return
+        model = _cursor_cli_chats_model(connection)
         rows = t.cast(
             "cabc.Iterable[tuple[object]]",
             connection.execute("SELECT data FROM blobs"),
@@ -2587,8 +2651,10 @@ def parse_cursor_cli_chats_db(
                     title="Cursor CLI chat",
                     role=None,
                     timestamp=timestamp,
+                    model=model,
                     session_id=session_uuid,
                     conversation_id=session_uuid,
+                    origin=origin,
                 )
     except sqlite3.DatabaseError:
         return
@@ -2796,13 +2862,24 @@ def parse_cursor_state_db(
         connection.close()
 
 
+def _discovered_origin(source: SourceHandle) -> RecordOrigin | None:
+    """Return the origin discovery already recovered for one source.
+
+    Some stores keep the working directory outside the file the adapter opens —
+    in a sibling ``workspace.json``, or in a directory name that has to be
+    decoded against the filesystem. Discovery resolves those and parks the
+    result on :attr:`~agentgrep.records.SourceHandle.origin_summary`; reading it
+    back here is what puts the value on the records, without a second file read
+    or a second decode.
+    """
+    summary = source.origin_summary
+    if summary is None or not summary.origins:
+        return None
+    return summary.origins[0]
+
+
 def _cursor_workspace_origin(source: SourceHandle) -> RecordOrigin | None:
     """Return the source-level origin for a per-workspace Cursor state store.
-
-    Discovery already resolves the sibling ``workspace.json`` ``folder`` key
-    onto :attr:`~agentgrep.records.SourceHandle.origin_summary`; reading it back
-    here is what puts that literal working directory on the records, at no
-    second file read.
 
     Only ``workspaceStorage/<md5>/state.vscdb`` carries a workspace digest. The
     global and legacy databases sit under an ordinary directory name, so the
@@ -2812,9 +2889,9 @@ def _cursor_workspace_origin(source: SourceHandle) -> RecordOrigin | None:
     """
     if source.path.name != "state.vscdb":
         return None
-    summary = source.origin_summary
-    if summary is not None and summary.origins:
-        return summary.origins[0]
+    discovered = _discovered_origin(source)
+    if discovered is not None:
+        return discovered
     return _record_origin(cwd_hash=origin_cwd_hash(source.path.parent.name))
 
 

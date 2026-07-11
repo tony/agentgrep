@@ -19,7 +19,13 @@ import tomllib
 import typing as t
 import urllib.parse
 
-from agentgrep.origin import PRUNABLE_ORIGIN_FIELDS, origin_cwd_hash
+from agentgrep.origin import (
+    PRUNABLE_ORIGIN_FIELDS,
+    OriginEncoding,
+    ProjectDirCache,
+    decode_project_dir,
+    origin_cwd_hash,
+)
 from agentgrep.readers import (
     as_optional_str,
     file_mtime_ns,
@@ -753,6 +759,8 @@ def handles_from_discovery(
     root: pathlib.Path,
     backends: BackendSelection,
     coverage: StoreCoverage,
+    *,
+    project_dirs: ProjectDirCache | None = None,
 ) -> list[SourceHandle]:
     """Produce ``SourceHandle``s from a :class:`DiscoverySpec`.
 
@@ -760,6 +768,12 @@ def handles_from_discovery(
     root, then enumerates source files via ``files`` (single-file lookups),
     ``glob`` (recursive walk with optional path-part filters), and
     ``platform_paths`` (absolute paths).
+
+    ``project_dirs`` is the caller's memo for the filesystem-probing decode of
+    a dash-encoded project directory name (see :func:`_source_origin_summary`).
+    One project directory backs every transcript of every session it ran, so
+    the decode is worth remembering — but only for as long as the discovery
+    pass that owns it, since the directory layout it probed can change.
     """
     sources: list[SourceHandle] = []
     search_root = root.joinpath(*spec.home_subpath) if spec.home_subpath else root
@@ -778,7 +792,11 @@ def handles_from_discovery(
                     search_root=None,
                     mtime_ns=file_mtime_ns(candidate),
                     coverage=coverage,
-                    origin_summary=_source_origin_summary(spec, candidate),
+                    origin_summary=_source_origin_summary(
+                        spec,
+                        candidate,
+                        project_dirs=project_dirs,
+                    ),
                 ),
             )
 
@@ -801,7 +819,7 @@ def handles_from_discovery(
                     search_root=search_root,
                     mtime_ns=file_mtime_ns(path),
                     coverage=coverage,
-                    origin_summary=_source_origin_summary(spec, path),
+                    origin_summary=_source_origin_summary(spec, path, project_dirs=project_dirs),
                 ),
             )
 
@@ -819,14 +837,32 @@ def handles_from_discovery(
                     search_root=None,
                     mtime_ns=file_mtime_ns(candidate),
                     coverage=coverage,
-                    origin_summary=_source_origin_summary(spec, candidate),
+                    origin_summary=_source_origin_summary(
+                        spec,
+                        candidate,
+                        project_dirs=project_dirs,
+                    ),
                 ),
             )
 
     return sources
 
 
-def _source_origin_summary(spec: DiscoverySpec, path: pathlib.Path) -> SourceOriginSummary | None:
+_CURSOR_CLI_TRANSCRIPT_STORES: frozenset[str] = frozenset(
+    {"cursor-cli.transcripts", "cursor-cli.subagent_transcripts"},
+)
+"""Cursor CLI stores whose working directory exists only in the path."""
+
+_CURSOR_CLI_PROJECT_PARENT = "agent-transcripts"
+"""Path segment the dash-encoded Cursor CLI project directory sits above."""
+
+
+def _source_origin_summary(
+    spec: DiscoverySpec,
+    path: pathlib.Path,
+    *,
+    project_dirs: ProjectDirCache | None = None,
+) -> SourceOriginSummary | None:
     """Return source-level origin facts known from discovery metadata.
 
     ``complete_fields`` is the pruning claim, so it is filtered through
@@ -835,8 +871,12 @@ def _source_origin_summary(spec: DiscoverySpec, path: pathlib.Path) -> SourceOri
     the workspace points at — but it is never claimed complete: a
     ``composerData`` bubble carries its own ``cwd``, and claiming completeness
     for a value the parser can contradict prunes the very record the user
-    asked for.
+    asked for. The Cursor CLI project directory is the same kind of fact and
+    gets the same treatment.
     """
+    if spec.store in _CURSOR_CLI_TRANSCRIPT_STORES:
+        cwd = _cursor_cli_project_cwd(path, cache=project_dirs)
+        return None if cwd is None else SourceOriginSummary(origins=(RecordOrigin(cwd=cwd),))
     if spec.store != "cursor-ide.workspace_state" or path.name != "state.vscdb":
         return None
     cwd_hash = origin_cwd_hash(path.parent.name)
@@ -846,6 +886,37 @@ def _source_origin_summary(spec: DiscoverySpec, path: pathlib.Path) -> SourceOri
         origins=(RecordOrigin(cwd=_cursor_workspace_state_cwd(path), cwd_hash=cwd_hash),),
         complete_fields=PRUNABLE_ORIGIN_FIELDS,
     )
+
+
+def _cursor_cli_project_cwd(
+    path: pathlib.Path,
+    *,
+    cache: ProjectDirCache | None,
+) -> str | None:
+    """Recover the working directory Cursor CLI dash-encoded into ``path``.
+
+    A transcript lives at
+    ``~/.cursor/projects/<name>/agent-transcripts/<session>/…``, and ``<name>``
+    is the absolute working directory with every separator replaced by ``-``.
+    Nothing inside the JSONL says where the session ran, so this is the only
+    place to learn it — and the encoding is lossy, so
+    :func:`~agentgrep.origin.decode_project_dir` answers only when exactly one
+    reconstruction exists on disk.
+
+    Resolving it here rather than in the adapter means the filesystem-probing
+    decode runs once per project *name* per discovery pass instead of once per
+    transcript file, and the memo dies with the pass that owns it.
+    """
+    parts = path.parts
+    for index in range(len(parts) - 1, 0, -1):
+        if parts[index] != _CURSOR_CLI_PROJECT_PARENT:
+            continue
+        return decode_project_dir(
+            parts[index - 1],
+            encoding=OriginEncoding.DASH,
+            cache=cache,
+        )
+    return None
 
 
 def _cursor_workspace_state_cwd(path: pathlib.Path) -> str | None:
@@ -972,6 +1043,10 @@ def discover_from_catalog(
         elif value:
             primary_roots[key] = value[0]
     version_context = build_discovery_version_context(agent, primary_roots, version_detail)
+    # Owned by this pass and discarded with it: the dash decode probes the
+    # filesystem, and a memo that outlived the walk would answer from a
+    # directory layout that has since changed.
+    project_dirs: ProjectDirCache = {}
     sources: list[SourceHandle] = []
     for descriptor in CATALOG.for_agent(agent):
         coverage = descriptor.coverage_level
@@ -992,7 +1067,14 @@ def discover_from_catalog(
                 continue
             root_paths = root_value if isinstance(root_value, tuple) else (root_value,)
             for root in root_paths:
-                for handle in handles_from_discovery(spec, agent, root, backends, coverage):
+                for handle in handles_from_discovery(
+                    spec,
+                    agent,
+                    root,
+                    backends,
+                    coverage,
+                    project_dirs=project_dirs,
+                ):
                     if handle.path in seen_paths:
                         continue
                     seen_paths.add(handle.path)

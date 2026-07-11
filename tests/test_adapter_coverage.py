@@ -787,7 +787,6 @@ ADAPTER_COVERAGE_CASES: tuple[AdapterCoverageCase, ...] = (
         seed=seed_cursor_cli_transcripts,
         expect_model=None,
         expect_origin=frozenset({"cwd"}),
-        gap="the dash-encoded project directory name is never decoded",
     ),
     AdapterCoverageCase(
         test_id="cursor-cli-transcripts-unresolvable",
@@ -807,7 +806,6 @@ ADAPTER_COVERAGE_CASES: tuple[AdapterCoverageCase, ...] = (
         seed=seed_cursor_cli_subagent_transcripts,
         expect_model=None,
         expect_origin=frozenset({"cwd"}),
-        gap="the dash-encoded project directory name is never decoded",
     ),
     AdapterCoverageCase(
         test_id="cursor-cli-chats",
@@ -818,7 +816,6 @@ ADAPTER_COVERAGE_CASES: tuple[AdapterCoverageCase, ...] = (
         expect_model="claude-4.5-sonnet",
         expect_origin=frozenset({"cwd_hash"}),
         forbid_origin=frozenset({"cwd"}),
-        gap="meta.lastUsedModel and the workspace digest directory are never read",
     ),
     # -- Gemini --------------------------------------------------------------
     AdapterCoverageCase(
