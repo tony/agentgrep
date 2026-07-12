@@ -12,7 +12,7 @@ import typing as t
 
 import pytest
 
-import agentgrep.bookmarks as bookmarks
+from agentgrep import bookmarks
 from agentgrep.bookmarks import (
     BookmarkCapacityError,
     BookmarkEntry,
