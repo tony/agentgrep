@@ -19,11 +19,9 @@ match span. On TTY a per-record heading line opens with
 agent · timestamp · path. The one deliberate divergence is session
 deduplication — see {ref}`cli-grep-dedupe` below.
 
-```{image} ../_static/demos/posters/agentgrep-grep.png
+```{terminal-demo} ../_static/demos/vhs/agentgrep-grep.mp4
+:poster: ../_static/demos/posters/agentgrep-grep.png
 :alt: agentgrep grep highlighting matches across local agent prompts
-:width: 100%
-:loading: lazy
-:target: https://agentgrep.org/_static/demos/vhs/agentgrep-grep.mp4
 ```
 
 ## Examples
