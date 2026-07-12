@@ -798,6 +798,37 @@ def test_write_private_export_enforces_directory_mode_and_collision_suffix(
     assert "private" not in first.name
 
 
+def test_write_private_export_keeps_secured_directory_when_path_is_replaced(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A path replacement cannot redirect output after its directory is secured."""
+    directory = tmp_path / "exports"
+    secured_directory = tmp_path / "secured-exports"
+    artifact = _writer_artifact()
+    real_open_directory = record_export._open_directory
+    swapped = False
+
+    def swap_after_open(path: pathlib.Path, *, create_private: bool) -> int:
+        nonlocal swapped
+        directory_fd = real_open_directory(path, create_private=create_private)
+        if create_private and not swapped:
+            directory.rename(secured_directory)
+            directory.mkdir(mode=0o700)
+            swapped = True
+        return directory_fd
+
+    monkeypatch.setattr(record_export, "_open_directory", swap_after_open)
+
+    destination = write_private_export(artifact, directory=directory)
+
+    assert destination.parent == directory
+    assert list(directory.iterdir()) == []
+    installed = tuple(secured_directory.iterdir())
+    assert len(installed) == 1
+    assert installed[0].read_bytes() == artifact.text.encode("utf-8")
+
+
 def test_write_private_export_uses_thread_id_slug(tmp_path: pathlib.Path) -> None:
     """Observed thread names derive only from their canonical thread ID."""
     artifact = render_export(

@@ -483,6 +483,65 @@ def _write_all(file_fd: int, payload: bytes) -> None:
         offset += written
 
 
+def _install_export(
+    payload: bytes,
+    directory_fd: int,
+    name: str,
+    *,
+    force: bool,
+    destination: pathlib.Path,
+    protected_paths: _ProtectedPaths,
+) -> None:
+    """Install artifact bytes relative to one secured directory descriptor."""
+    temporary: str | None = None
+    try:
+        existing = _destination_stat(directory_fd, name)
+        _reject_protected_alias(destination, existing, protected_paths)
+        if existing is not None and not force:
+            message = "export destination already exists"
+            raise ExportExistsError(message)
+
+        temporary, file_fd = _new_temporary(directory_fd)
+        try:
+            _write_all(file_fd, payload)
+            os.fsync(file_fd)
+        finally:
+            _close_quietly(file_fd)
+
+        if force:
+            current = _destination_stat(directory_fd, name)
+            _reject_protected_alias(destination, current, protected_paths)
+            os.replace(
+                temporary,
+                name,
+                src_dir_fd=directory_fd,
+                dst_dir_fd=directory_fd,
+            )
+        else:
+            try:
+                os.link(
+                    temporary,
+                    name,
+                    src_dir_fd=directory_fd,
+                    dst_dir_fd=directory_fd,
+                    follow_symlinks=False,
+                )
+            except FileExistsError:
+                message = "export destination already exists"
+                raise ExportExistsError(message) from None
+            os.unlink(temporary, dir_fd=directory_fd)
+        temporary = None
+        os.fsync(directory_fd)
+    except ExportError:
+        raise
+    except OSError:
+        message = "export destination could not be written"
+        raise ExportWriteError(message) from None
+    finally:
+        if temporary is not None:
+            _unlink_quietly(directory_fd, temporary)
+
+
 def write_export(
     artifact: ExportArtifact,
     destination: str | os.PathLike[str],
@@ -518,53 +577,16 @@ def write_export(
     protected = tuple(protected_paths)
     _reject_protected_alias(absolute, None, protected)
     directory_fd = _open_directory(absolute.parent, create_private=False)
-    temporary: str | None = None
     try:
-        existing = _destination_stat(directory_fd, absolute.name)
-        _reject_protected_alias(absolute, existing, protected)
-        if existing is not None and not force:
-            message = "export destination already exists"
-            raise ExportExistsError(message)
-
-        temporary, file_fd = _new_temporary(directory_fd)
-        try:
-            _write_all(file_fd, payload)
-            os.fsync(file_fd)
-        finally:
-            _close_quietly(file_fd)
-
-        if force:
-            current = _destination_stat(directory_fd, absolute.name)
-            _reject_protected_alias(absolute, current, protected)
-            os.replace(
-                temporary,
-                absolute.name,
-                src_dir_fd=directory_fd,
-                dst_dir_fd=directory_fd,
-            )
-        else:
-            try:
-                os.link(
-                    temporary,
-                    absolute.name,
-                    src_dir_fd=directory_fd,
-                    dst_dir_fd=directory_fd,
-                    follow_symlinks=False,
-                )
-            except FileExistsError:
-                message = "export destination already exists"
-                raise ExportExistsError(message) from None
-            os.unlink(temporary, dir_fd=directory_fd)
-        temporary = None
-        os.fsync(directory_fd)
-    except ExportError:
-        raise
-    except OSError:
-        message = "export destination could not be written"
-        raise ExportWriteError(message) from None
+        _install_export(
+            payload,
+            directory_fd,
+            absolute.name,
+            force=force,
+            destination=absolute,
+            protected_paths=protected,
+        )
     finally:
-        if temporary is not None:
-            _unlink_quietly(directory_fd, temporary)
         _close_quietly(directory_fd)
     return result
 
@@ -624,15 +646,27 @@ def write_private_export(
     private_directory = (
         _default_private_directory() if directory is None else pathlib.Path(directory)
     )
-    directory_fd = _open_directory(private_directory, create_private=True)
-    _close_quietly(directory_fd)
+    payload = _artifact_bytes(artifact)
     extension = "ndjson" if artifact.format == "ndjson" else "md"
     basename = f"agentgrep-{_artifact_slug(artifact)}"
-    index = 1
-    while True:
-        suffix = "" if index == 1 else f"-{index}"
-        destination = private_directory / f"{basename}{suffix}.{extension}"
-        try:
-            return write_export(artifact, destination)
-        except ExportExistsError:
-            index += 1
+    directory_fd = _open_directory(private_directory, create_private=True)
+    try:
+        index = 1
+        while True:
+            suffix = "" if index == 1 else f"-{index}"
+            destination = private_directory / f"{basename}{suffix}.{extension}"
+            try:
+                _install_export(
+                    payload,
+                    directory_fd,
+                    destination.name,
+                    force=False,
+                    destination=_absolute(destination),
+                    protected_paths=(),
+                )
+            except ExportExistsError:
+                index += 1
+                continue
+            return destination
+    finally:
+        _close_quietly(directory_fd)
