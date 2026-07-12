@@ -146,7 +146,10 @@ def _display_path_to_path(value: object, home: pathlib.Path) -> pathlib.Path:
         return home
     if value.startswith("~/"):
         return home / value[2:]
-    return pathlib.Path(value).expanduser()
+    if value.startswith("~"):
+        msg = "token path has unsupported leading tilde"
+        raise McpTokenError(msg)
+    return pathlib.Path(value)
 
 
 def _record_fingerprint(payload: dict[str, object]) -> str:
