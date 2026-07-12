@@ -13,12 +13,13 @@ import dataclasses
 import json
 import pathlib
 import sys
+import typing as t
 
 from agentgrep import run_ui
 from agentgrep._engine import iter_find_events, iter_search_events
 from agentgrep._engine.orchestration import run_search_query
 from agentgrep._text import AnsiColors, format_display_path
-from agentgrep.cli.parser import FindArgs, GrepArgs, SearchArgs, UIArgs
+from agentgrep.cli.parser import BookmarkArgs, FindArgs, GrepArgs, SearchArgs, UIArgs
 from agentgrep.cli.renderers import (
     GrepSummary,
     _compile_search_patterns,
@@ -52,6 +53,9 @@ from agentgrep.progress import (
 )
 from agentgrep.records import AGENT_CHOICES, FindRecord, SearchQuery, SearchRecord, SearchScope
 
+if t.TYPE_CHECKING:
+    from agentgrep.bookmarks import BookmarkEntry, BookmarkMutation
+
 __all__ = [
     "GrepSummary",
     "build_envelope",
@@ -67,6 +71,7 @@ __all__ = [
     "iter_match_lines",
     "print_find_results",
     "print_grep_results",
+    "run_bookmark_command",
     "run_find_command",
     "run_grep_command",
     "run_search_command",
@@ -99,6 +104,96 @@ def _launch_ui(
         )
     except UiQueryTooLongError as error:
         raise SystemExit(str(error)) from None
+
+
+def _bookmark_entry_payload(entry: BookmarkEntry) -> dict[str, object]:
+    """Return one deterministic public bookmark entry payload."""
+    return {
+        "target_id": entry.target_id,
+        "scope": entry.scope,
+        "content_id": entry.content_id,
+        "created_at": entry.created_at,
+    }
+
+
+def _print_bookmark_json(payload: object) -> None:
+    """Print compact, key-sorted bookmark JSON."""
+    print(
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    )
+
+
+def _print_bookmark_mutation(
+    mutation: BookmarkMutation,
+    *,
+    target_id: str,
+    json_output: bool,
+) -> None:
+    """Print one mutation in machine or human form."""
+    if json_output:
+        entry_payload = (
+            _bookmark_entry_payload(mutation.entry) if mutation.entry is not None else None
+        )
+        _print_bookmark_json({"action": mutation.action, "entry": entry_payload})
+        return
+    print(f"{mutation.action} {target_id}")
+
+
+def run_bookmark_command(args: BookmarkArgs) -> int:
+    """Execute ``agentgrep bookmark`` without importing persistence for help.
+
+    Parameters
+    ----------
+    args
+        Parsed bookmark action and output selection.
+
+    Returns
+    -------
+    int
+        Zero for a successful idempotent operation, one for a storage failure.
+    """
+    from agentgrep.bookmarks import BookmarkError, BookmarkStore
+
+    try:
+        store = BookmarkStore()
+        if args.action == "list":
+            entries = store.list()
+            if args.json:
+                _print_bookmark_json(
+                    {"bookmarks": [_bookmark_entry_payload(entry) for entry in entries]}
+                )
+            elif not entries:
+                print("No bookmarks.")
+            else:
+                for entry in entries:
+                    content_id = entry.content_id if entry.content_id is not None else "-"
+                    print(f"{entry.scope}\t{entry.target_id}\t{content_id}\t{entry.created_at}")
+        else:
+            if args.target_id is None:
+                print("bookmark: target ID is required", file=sys.stderr)
+                return 1
+            if args.action == "add":
+                mutation = store.add(args.target_id, content_id=args.content_id)
+            else:
+                mutation = store.remove(args.target_id)
+            _print_bookmark_mutation(
+                mutation,
+                target_id=args.target_id,
+                json_output=args.json,
+            )
+    except BookmarkError as exc:
+        print(f"bookmark: {exc}", file=sys.stderr)
+        return 1
+    except OSError:
+        print("bookmark: storage operation failed", file=sys.stderr)
+        return 1
+    else:
+        return 0
 
 
 def print_find_results(records: list[FindRecord], args: FindArgs) -> None:

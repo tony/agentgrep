@@ -1,7 +1,7 @@
 """argparse subcommands and arg-parsing entry points for agentgrep.
 
 This module owns the CLI grammar: the root parser, each subparser
-(``grep``, ``find``, ``ui``), the typed argument dataclasses
+(``grep``, ``find``, ``bookmark``, ``ui``), the typed argument dataclasses
 returned by :func:`parse_args`, and the helpers that resolve color mode
 and inject default subcommands.
 
@@ -51,6 +51,7 @@ FindPatternMode = t.Literal["regex", "glob", "fixed", "exact"]
 FindTypeFilter = t.Literal["prompts", "history", "sessions", "all"]
 
 __all__ = [
+    "BookmarkArgs",
     "CaseMode",
     "FindArgs",
     "FindPatternMode",
@@ -70,6 +71,18 @@ __all__ = [
     "parse_args",
     "parse_output_mode",
 ]
+
+_BOOKMARK_ID_RE = re.compile(r"ag[crt]1:[0-9a-v]{26}")
+
+
+@dataclasses.dataclass(slots=True)
+class BookmarkArgs:
+    """Typed arguments for ``agentgrep bookmark``."""
+
+    action: t.Literal["add", "remove", "list"]
+    target_id: str | None
+    content_id: str | None
+    json: bool
 
 
 @dataclasses.dataclass(slots=True)
@@ -174,6 +187,7 @@ class ParserBundle:
     """CLI parsers used for root and subcommand help."""
 
     parser: argparse.ArgumentParser
+    bookmark_parser: argparse.ArgumentParser
     find_parser: argparse.ArgumentParser
     grep_parser: argparse.ArgumentParser
     search_parser: argparse.ArgumentParser
@@ -199,6 +213,23 @@ class _GrepLimitAction(argparse.Action):
             parser.error(f"{previous} and {spelling} disagree")
         setattr(namespace, self.dest, value)
         setattr(namespace, spelling_dest, spelling)
+
+
+def _bookmark_id(value: str) -> str:
+    """Return one complete canonical bookmark target for argparse."""
+    if _BOOKMARK_ID_RE.fullmatch(value) is None:
+        msg = "must be a complete canonical agc1:, agr1:, or agt1: ID"
+        raise argparse.ArgumentTypeError(msg)
+    return value
+
+
+def _bookmark_content_id(value: str) -> str:
+    """Return one complete canonical content validation ID for argparse."""
+    value = _bookmark_id(value)
+    if not value.startswith("agc1:"):
+        msg = "must be a complete canonical agc1: content ID"
+        raise argparse.ArgumentTypeError(msg)
+    return value
 
 
 def normalize_color_mode(argv: cabc.Sequence[str] | None) -> ColorMode:
@@ -250,6 +281,69 @@ def create_parser(
         help="when to use colors: auto (default), always, or never",
     )
     subparsers = parser.add_subparsers(dest="command")
+
+    bookmark_parser = subparsers.add_parser(
+        "bookmark",
+        help="Add, remove, or list durable canonical bookmarks",
+        description="Manage privacy-minimal bookmarks by canonical ID.",
+        formatter_class=formatter_class,
+        color=color_mode != "never",
+    )
+    bookmark_actions = bookmark_parser.add_subparsers(
+        dest="bookmark_action",
+        required=True,
+    )
+    bookmark_add_parser = bookmark_actions.add_parser(
+        "add",
+        help="Add a bookmark idempotently",
+        formatter_class=formatter_class,
+        color=color_mode != "never",
+    )
+    _ = bookmark_add_parser.add_argument(
+        "target_id",
+        type=_bookmark_id,
+        metavar="ID",
+        help="Complete agc1:, agr1:, or agt1: target ID",
+    )
+    _ = bookmark_add_parser.add_argument(
+        "--content-id",
+        type=_bookmark_content_id,
+        metavar="AGC1",
+        help="Required agc1: validation ID for an agr1: target",
+    )
+    _ = bookmark_add_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit deterministic JSON",
+    )
+    bookmark_remove_parser = bookmark_actions.add_parser(
+        "remove",
+        help="Remove a bookmark idempotently",
+        formatter_class=formatter_class,
+        color=color_mode != "never",
+    )
+    _ = bookmark_remove_parser.add_argument(
+        "target_id",
+        type=_bookmark_id,
+        metavar="ID",
+        help="Complete agc1:, agr1:, or agt1: target ID",
+    )
+    _ = bookmark_remove_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit deterministic JSON",
+    )
+    bookmark_list_parser = bookmark_actions.add_parser(
+        "list",
+        help="List saved bookmarks",
+        formatter_class=formatter_class,
+        color=color_mode != "never",
+    )
+    _ = bookmark_list_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit deterministic JSON",
+    )
 
     grep_parser = subparsers.add_parser(
         "grep",
@@ -622,6 +716,7 @@ def create_parser(
 
     return ParserBundle(
         parser=parser,
+        bookmark_parser=bookmark_parser,
         find_parser=find_parser,
         grep_parser=grep_parser,
         search_parser=search_parser,
@@ -951,7 +1046,7 @@ def _check_for_mangled_field_predicate(
 
 def parse_args(
     argv: cabc.Sequence[str] | None = None,
-) -> FindArgs | UIArgs | GrepArgs | SearchArgs | None:
+) -> BookmarkArgs | FindArgs | UIArgs | GrepArgs | SearchArgs | None:
     """Parse CLI arguments into typed dataclasses."""
     color_mode = normalize_color_mode(argv)
     effective_argv = list(argv) if argv is not None else list(sys.argv[1:])
@@ -969,6 +1064,25 @@ def parse_args(
         return None
 
     command = t.cast("str", namespace.command)
+    if command == "bookmark":
+        action = t.cast("t.Literal['add', 'remove', 'list']", namespace.bookmark_action)
+        target_id = t.cast("str | None", getattr(namespace, "target_id", None))
+        content_id = t.cast("str | None", getattr(namespace, "content_id", None))
+        if action == "add" and target_id is not None:
+            if target_id.startswith("agr1:") and content_id is None:
+                with configured_color_environment(color_mode):
+                    bundle.bookmark_parser.error("agr1: targets require --content-id AGC1")
+            if not target_id.startswith("agr1:") and content_id is not None:
+                with configured_color_environment(color_mode):
+                    bundle.bookmark_parser.error(
+                        "--content-id is only valid for agr1: targets",
+                    )
+        return BookmarkArgs(
+            action=action,
+            target_id=target_id,
+            content_id=content_id,
+            json=t.cast("bool", namespace.json),
+        )
     if command == "ui":
         return UIArgs(
             initial_query=t.cast("str", namespace.initial_query),
