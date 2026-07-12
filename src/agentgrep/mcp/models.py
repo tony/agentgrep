@@ -533,7 +533,7 @@ class ExportRecordsRequest(AgentGrepModel):
 
     @model_validator(mode="after")
     def _require_unique_refs(self) -> ExportRecordsRequest:
-        """Reject duplicate physical selections before reading any source."""
+        """Reject identical raw ref strings before source discovery."""
         if len(set(self.refs)) != len(self.refs):
             message = "refs must not contain duplicates"
             raise ValueError(message)
