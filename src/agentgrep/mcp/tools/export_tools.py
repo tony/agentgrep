@@ -17,7 +17,7 @@ from agentgrep.mcp._library import (
     TOOL_ANNOTATIONS,
 )
 from agentgrep.mcp.models import ExportRecordsRequest, ExportRecordsResponse
-from agentgrep.mcp.resolver import resolve_record_refs
+from agentgrep.mcp.resolver import PhysicalRecordSelection, resolve_record_refs
 from agentgrep.record_export import ExportError, render_export
 
 if t.TYPE_CHECKING:
@@ -34,6 +34,7 @@ def _export_records_sync(request: ExportRecordsRequest) -> ToolResult:
     """Resolve selected records and render one bounded inline artifact."""
     resolved = resolve_record_refs(request.refs)
     records: list[SearchRecord] = []
+    physical_selections: set[PhysicalRecordSelection] = set()
     for index, item in enumerate(resolved, start=1):
         if item.error_message is not None:
             message = f"ref {index} could not be resolved: {item.error_message}"
@@ -41,6 +42,13 @@ def _export_records_sync(request: ExportRecordsRequest) -> ToolResult:
         if item.kind != "search" or len(item.records) != 1:
             message = f"ref {index} does not identify an exportable record"
             raise ToolError(message)
+        if item.physical_selection is None:
+            message = f"ref {index} has no physical record selection"
+            raise ToolError(message)
+        if item.physical_selection in physical_selections:
+            message = "refs resolve to a duplicate physical record"
+            raise ToolError(message)
+        physical_selections.add(item.physical_selection)
         records.append(t.cast("SearchRecord", item.records[0]))
     try:
         artifact = render_export(
