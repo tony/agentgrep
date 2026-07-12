@@ -11,6 +11,7 @@ import json
 import os
 import pathlib
 import re
+import stat
 import tempfile
 import typing as t
 
@@ -238,6 +239,31 @@ def _write_all(fd: int, data: bytes) -> None:
         remaining = remaining[written:]
 
 
+def _read_all(fd: int) -> bytes:
+    """Read every byte from an open snapshot descriptor."""
+    data = bytearray()
+    while chunk := os.read(fd, 64 * 1024):
+        data.extend(chunk)
+    return bytes(data)
+
+
+def _call_without_storage_details[**P, R](
+    operation: t.Callable[P, R],
+    /,
+    *args: P.args,
+    **kwargs: P.kwargs,
+) -> R:
+    """Translate filesystem failures without retaining sensitive details."""
+    try:
+        result = operation(*args, **kwargs)
+    except OSError:
+        pass
+    else:
+        return result
+    msg = "bookmark storage operation failed"
+    raise BookmarkError(msg)
+
+
 def _fsync_directory(path: pathlib.Path) -> None:
     """Synchronize directory metadata after atomic replacement."""
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
@@ -274,7 +300,7 @@ class BookmarkStore:
         Maximum number of entries. The default is 200.
     """
 
-    __slots__ = ("capacity", "path")
+    __slots__ = ("_owns_directory", "capacity", "path")
 
     def __init__(
         self,
@@ -285,6 +311,7 @@ class BookmarkStore:
         if not isinstance(capacity, int) or isinstance(capacity, bool) or capacity < 1:
             msg = "bookmark capacity must be a positive integer"
             raise ValueError(msg)
+        self._owns_directory = path is None
         self.path = path if path is not None else _default_path()
         self.capacity = capacity
 
@@ -295,15 +322,31 @@ class BookmarkStore:
 
     def _ensure_directory(self) -> None:
         """Create the private application directory when needed."""
-        self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if self._owns_directory:
+            self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            self.path.parent.chmod(0o700)
+            return
+        try:
+            self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=False)
+        except FileExistsError:
+            return
         self.path.parent.chmod(0o700)
 
     def _read_unlocked(self) -> builtins.list[BookmarkEntry]:
         """Read and validate the snapshot while the caller holds the lock."""
+        flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0)
         try:
-            raw = self.path.read_bytes()
+            fd = os.open(self.path, flags)
         except FileNotFoundError:
             return []
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                msg = "bookmark snapshot is not a regular file"
+                raise IsADirectoryError(msg)
+            os.fchmod(fd, 0o600)
+            raw = _read_all(fd)
+        finally:
+            os.close(fd)
         return _decode_snapshot(raw, capacity=self.capacity)
 
     def _write_unlocked(self, entries: t.Sequence[BookmarkEntry]) -> None:
@@ -330,11 +373,36 @@ class BookmarkStore:
             with contextlib.suppress(FileNotFoundError):
                 temporary_path.unlink()
 
-    def list(self) -> builtins.list[BookmarkEntry]:
-        """Return a validated copy of the stored entries."""
+    def _list(self) -> builtins.list[BookmarkEntry]:
+        """List entries without translating filesystem failures."""
         self._ensure_directory()
         with _exclusive_lock(self._lock_path):
             return self._read_unlocked()
+
+    def list(self) -> builtins.list[BookmarkEntry]:
+        """Return a validated copy of the stored entries."""
+        return _call_without_storage_details(self._list)
+
+    def _add(self, entry: BookmarkEntry) -> BookmarkMutation:
+        """Add a validated entry without translating filesystem failures."""
+        self._ensure_directory()
+        with _exclusive_lock(self._lock_path):
+            entries = self._read_unlocked()
+            existing = next(
+                (item for item in entries if item.target_id == entry.target_id),
+                None,
+            )
+            if existing is not None:
+                if existing.content_id != entry.content_id:
+                    msg = "bookmark target already has a different content validation ID"
+                    raise BookmarkValidationError(msg)
+                return BookmarkMutation("unchanged", existing)
+            if len(entries) >= self.capacity:
+                msg = f"bookmark capacity reached ({self.capacity} entries)"
+                raise BookmarkCapacityError(msg)
+            entries.append(entry)
+            self._write_unlocked(entries)
+            return BookmarkMutation("added", entry)
 
     def add(
         self,
@@ -366,38 +434,27 @@ class BookmarkStore:
             content_id=content_id,
             created_at=created_at if created_at is not None else _created_at_now(),
         )
+        return _call_without_storage_details(self._add, entry)
+
+    def _remove(self, target_id: str) -> BookmarkMutation:
+        """Remove a validated target without translating filesystem failures."""
         self._ensure_directory()
         with _exclusive_lock(self._lock_path):
             entries = self._read_unlocked()
             existing = next((item for item in entries if item.target_id == target_id), None)
             if existing is not None:
-                if existing.content_id != entry.content_id:
-                    msg = "bookmark target already has a different content validation ID"
-                    raise BookmarkValidationError(msg)
-                return BookmarkMutation("unchanged", existing)
-            if len(entries) >= self.capacity:
-                msg = f"bookmark capacity reached ({self.capacity} entries)"
-                raise BookmarkCapacityError(msg)
-            entries.append(entry)
-            self._write_unlocked(entries)
-            return BookmarkMutation("added", entry)
+                remaining = [item for item in entries if item.target_id != target_id]
+                self._write_unlocked(remaining)
+                return BookmarkMutation("removed", existing)
+            return BookmarkMutation("unchanged", None)
 
     def remove(self, target_id: str) -> BookmarkMutation:
         """Remove one bookmark idempotently."""
         _scope_for_target(target_id)
-        self._ensure_directory()
-        with _exclusive_lock(self._lock_path):
-            entries = self._read_unlocked()
-            existing = next((item for item in entries if item.target_id == target_id), None)
-            if existing is None:
-                return BookmarkMutation("unchanged", None)
-            remaining = [item for item in entries if item.target_id != target_id]
-            self._write_unlocked(remaining)
-            return BookmarkMutation("removed", existing)
+        return _call_without_storage_details(self._remove, target_id)
 
-    def toggle(self, entry: BookmarkEntry) -> BookmarkMutation:
-        """Remove an existing target or add the supplied entry."""
-        _validate_entry(entry)
+    def _toggle(self, entry: BookmarkEntry) -> BookmarkMutation:
+        """Toggle a validated entry without translating filesystem failures."""
         self._ensure_directory()
         with _exclusive_lock(self._lock_path):
             entries = self._read_unlocked()
@@ -415,6 +472,11 @@ class BookmarkStore:
             entries.append(entry)
             self._write_unlocked(entries)
             return BookmarkMutation("added", entry)
+
+    def toggle(self, entry: BookmarkEntry) -> BookmarkMutation:
+        """Remove an existing target or add the supplied entry."""
+        _validate_entry(entry)
+        return _call_without_storage_details(self._toggle, entry)
 
 
 def bookmark_entry_for_record(
