@@ -20,6 +20,7 @@ from agentgrep.adapters._extract import (
     _record_position,
     build_search_record,
     candidate_from_mapping,
+    extract_message_id,
 )
 from agentgrep.adapters._generic import (
     parse_file_metadata_summary_file,
@@ -252,7 +253,8 @@ def parse_codex_legacy_session_file(
         return
     session_raw = payload.get("session")
     session = t.cast("dict[str, object]", session_raw) if isinstance(session_raw, dict) else {}
-    session_id = as_optional_str(session.get("id")) or source.path.stem
+    native_session_id = as_optional_str(session.get("id"))
+    session_id = native_session_id or source.path.stem
     timestamp = as_optional_str(session.get("timestamp")) or as_optional_str(
         session.get("created_at"),
     )
@@ -264,7 +266,7 @@ def parse_codex_legacy_session_file(
     items = payload.get("items")
     if not isinstance(items, list):
         return
-    for item in items:
+    for raw_index, item in enumerate(items):
         if not isinstance(item, dict):
             continue
         candidate = candidate_from_mapping(
@@ -276,6 +278,14 @@ def parse_codex_legacy_session_file(
         )
         if candidate is None:
             continue
+        candidate = dataclasses.replace(
+            candidate,
+            identity_namespace=("codex.session" if native_session_id is not None else None),
+            position=_record_position(
+                native_id=extract_message_id(t.cast("dict[str, object]", item)),
+                ordinal=raw_index,
+            ),
+        )
         yield build_search_record(source, candidate)
 
 
@@ -355,7 +365,7 @@ def parse_codex_session_index_file(
     source: SourceHandle,
 ) -> cabc.Iterator[SearchRecord]:
     """Parse Codex ``session_index.jsonl`` records as opt-in thread summaries."""
-    for entry in iter_jsonl(source.path):
+    for raw_index, entry in enumerate(iter_jsonl(source.path)):
         if not isinstance(entry, dict):
             continue
         mapping = t.cast("dict[str, object]", entry)
@@ -375,6 +385,8 @@ def parse_codex_session_index_file(
             timestamp=as_optional_str(mapping.get("updated_at")),
             session_id=session_id,
             conversation_id=session_id,
+            identity_namespace=("codex.session" if session_id is not None else None),
+            position=_record_position(ordinal=raw_index),
         )
 
 
@@ -478,6 +490,9 @@ def parse_codex_state_db(
                             conversation_id=conversation_id,
                             metadata=metadata,
                             origin=origin,
+                            identity_namespace=(
+                                "codex.session" if conversation_id is not None else None
+                            ),
                         )
                     preview_text = decode_sqlite_value(preview) or as_optional_str(preview)
                     if preview_text and preview_text != text:
@@ -499,6 +514,9 @@ def parse_codex_state_db(
                             conversation_id=conversation_id,
                             metadata=metadata,
                             origin=origin,
+                            identity_namespace=(
+                                "codex.session" if conversation_id is not None else None
+                            ),
                         )
         if "agent_jobs" in tables:
             columns = sqlite_column_names(connection, "agent_jobs")
@@ -529,6 +547,10 @@ def parse_codex_state_db(
                         session_id=conversation_id,
                         conversation_id=conversation_id,
                         metadata={"job_id": as_optional_str(job_id) or ""},
+                        identity_namespace=(
+                            "codex.session" if conversation_id is not None else None
+                        ),
+                        position=_record_position(native_id=job_id),
                     )
     except sqlite3.DatabaseError:
         return
@@ -588,6 +610,8 @@ def parse_codex_logs_db(
                 session_id=conversation_id,
                 conversation_id=conversation_id,
                 metadata=metadata,
+                identity_namespace=("codex.session" if conversation_id is not None else None),
+                position=_record_position(native_id=row_id),
             )
     except sqlite3.DatabaseError:
         return
@@ -636,6 +660,7 @@ def parse_codex_memories_db(
                     session_id=conversation_id,
                     conversation_id=conversation_id,
                     metadata={"field": field_name},
+                    identity_namespace=("codex.session" if conversation_id is not None else None),
                 )
     except sqlite3.DatabaseError:
         return
@@ -728,6 +753,8 @@ def parse_codex_goals_db(
                     "goal_id": as_optional_str(goal_id) or "",
                     "status": as_optional_str(status) or "",
                 },
+                identity_namespace=("codex.session" if conversation_id is not None else None),
+                position=_record_position(native_id=goal_id),
             )
     except sqlite3.DatabaseError:
         return

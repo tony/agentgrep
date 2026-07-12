@@ -400,6 +400,8 @@ def parse_claude_store_db(
                     timestamp=as_optional_str(timestamp),
                     session_id=session_id,
                     conversation_id=session_id or as_optional_str(uuid),
+                    identity_namespace=("claude.session" if session_id is not None else None),
+                    position=_record_position(native_id=uuid),
                 )
         if "assistant_messages" in tables:
             query = (
@@ -433,6 +435,8 @@ def parse_claude_store_db(
                     model=as_optional_str(model),
                     session_id=session_id,
                     conversation_id=session_id or as_optional_str(uuid),
+                    identity_namespace=("claude.session" if session_id is not None else None),
+                    position=_record_position(native_id=uuid),
                 )
         if "conversation_summaries" in tables:
             query = (
@@ -465,6 +469,7 @@ def parse_claude_store_db(
                     timestamp=as_optional_str(updated_at),
                     session_id=session_id,
                     conversation_id=session_id or as_optional_str(leaf_uuid),
+                    identity_namespace=("claude.session" if session_id is not None else None),
                 )
     except sqlite3.DatabaseError:
         return
@@ -506,6 +511,7 @@ def parse_claude_usage_facet(
         session_id=session_id,
         conversation_id=session_id,
         metadata={"coverage": source.coverage.value},
+        identity_namespace=("claude.session" if session_id is not None else None),
     )
 
 

@@ -224,6 +224,8 @@ def parse_grok_session_search_db(
                 session_id=session_id,
                 conversation_id=session_id,
                 origin=_record_origin(cwd=as_optional_str(cwd_raw)),
+                identity_namespace=("grok.session" if session_id is not None else None),
+                position=_record_position(native_id=session_id),
             )
     except sqlite3.DatabaseError:
         return
@@ -252,6 +254,7 @@ def parse_grok_subagents(source: SourceHandle) -> cabc.Iterator[SearchRecord]:
         return
     child_session_id = as_optional_str(mapping.get("child_session_id"))
     parent_session_id = as_optional_str(mapping.get("parent_session_id"))
+    session_id = child_session_id or parent_session_id
     subagent_type = as_optional_str(mapping.get("subagent_type"))
     metadata: dict[str, object] = {}
     if subagent_type:
@@ -268,9 +271,11 @@ def parse_grok_subagents(source: SourceHandle) -> cabc.Iterator[SearchRecord]:
         title=description or "Grok subagent",
         role="user",
         timestamp=as_optional_str(mapping.get("started_at")),
-        session_id=child_session_id,
-        conversation_id=child_session_id or parent_session_id,
+        session_id=session_id,
+        conversation_id=session_id,
         metadata=metadata,
+        identity_namespace=("grok.session" if session_id is not None else None),
+        position=_record_position(native_id=mapping.get("subagent_id")),
     )
 
 

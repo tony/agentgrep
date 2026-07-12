@@ -120,6 +120,7 @@ def parse_cursor_ai_tracking_db(
             ]
             if not text_parts:
                 continue
+            native_conversation_id = as_optional_str(conversation_id)
             yield SearchRecord(
                 kind="history",
                 agent=source.agent,
@@ -131,8 +132,13 @@ def parse_cursor_ai_tracking_db(
                 role="assistant",
                 timestamp=as_optional_str(updated_at),
                 model=as_optional_str(model),
-                conversation_id=as_optional_str(conversation_id),
+                session_id=native_conversation_id,
+                conversation_id=native_conversation_id,
                 metadata={"mode": as_optional_str(mode) or ""},
+                identity_namespace=(
+                    "cursor.session" if native_conversation_id is not None else None
+                ),
+                position=_record_position(native_id=native_conversation_id),
             )
     except sqlite3.DatabaseError:
         return

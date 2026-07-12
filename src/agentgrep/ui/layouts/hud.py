@@ -194,6 +194,10 @@ class HudLayout(LayoutScreen):
     syntax-highlight — is heavy enough to stall the event loop.
     """
 
+    # Detail width below which compact labels keep fixed-width identity
+    # handles on one visual row after the Static's horizontal padding.
+    _DETAIL_COMPACT_IDENTITY_WIDTH: t.ClassVar[int] = 42
+
     # Body width (cells) below which the detail pane moves from the
     # right (side-by-side) to the bottom (stacked) — each side wants
     # ~50 cells to stay readable. Distinct from the statusline
@@ -1851,7 +1855,7 @@ class HudLayout(LayoutScreen):
         dim_color = ui_theme.resolve(theme_vars, "ag-dim")
         model_color = ui_theme.resolve(theme_vars, "ag-model")
         path_color = ui_theme.resolve(theme_vars, "ag-muted")
-        header = Text(no_wrap=False)
+        header = Text(no_wrap=True, overflow="ellipsis")
         leading_rows: tuple[tuple[str, str, str], ...] = (
             ("Agent:", record.agent or "", agent_color),
             ("Kind:", record.kind or "", kind_color),
@@ -1888,11 +1892,21 @@ class HudLayout(LayoutScreen):
         for label, value, value_style in leading_rows:
             header.append(f"{label} ", style="bold")
             header.append(f"{value}\n", style=value_style)
-        for label, value in (
+        identity_rows = (
             ("Record:", None if identity is None else identity.record_id),
             ("Content:", None if identity is None else identity.content_id),
             ("Thread:", None if identity is None else identity.thread_id),
-        ):
+        )
+        if width < self._DETAIL_COMPACT_IDENTITY_WIDTH:
+            identity_rows = tuple(
+                (compact_label, value)
+                for compact_label, (_label, value) in zip(
+                    ("R:", "C:", "T:"),
+                    identity_rows,
+                    strict=True,
+                )
+            )
+        for label, value in identity_rows:
             header.append(f"{label} ", style="dim")
             if identity is None:
                 header.append("…\n", style="dim")
@@ -2533,13 +2547,13 @@ class HudLayout(LayoutScreen):
 
     @staticmethod
     def _wrap_aware_row(offset: int, width: int, header_text: str, body: str) -> int:
-        """Count header wrapped rows, then body wrapped rows up to ``offset``."""
+        """Count no-wrap header rows, then wrapped body rows to ``offset``."""
         from rich._wrap import divide_line
 
         def rows(line: str) -> int:
             return len(divide_line(line, width)) + 1
 
-        row = sum(rows(line) for line in header_text.split("\n"))
+        row = header_text.count("\n")
         pos = 0
         for line in body.split("\n"):
             if pos + len(line) >= offset:
@@ -2612,6 +2626,7 @@ class HudLayout(LayoutScreen):
             timer.stop()
         self._resize_debounce_timer = self.set_timer(0.05, self._after_resize)
 
+    @_runtime.pump_only
     def _after_resize(self) -> None:
         """Refresh chrome; the detail pane scroll wrapper handles its own reflow."""
         # Recompute (not just repaint) because the result viewport's new height
@@ -2624,6 +2639,16 @@ class HudLayout(LayoutScreen):
         # Crossing the split breakpoint moves the detail pane between
         # the right side and the bottom.
         self._apply_responsive_layout()
+        if self._detail is not None and self._current_detail_record is not None:
+            identity = self._cached_detail_identity(self._current_detail_record)
+            width = max(20, self._detail.size.width or 80)
+            self._replace_detail_header(
+                self._build_detail_header(
+                    self._current_detail_record,
+                    identity,
+                    width=width,
+                ),
+            )
 
     def action_stop_search(self) -> None:
         """``Esc``: cooperative early-exit of the worker (no-op when finished)."""

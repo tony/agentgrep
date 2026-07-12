@@ -179,6 +179,51 @@ async def test_detail_identity_handles_prepare_off_pump(
 
 
 @pytest.mark.slow
+async def test_detail_identity_handles_do_not_wrap_in_narrow_hud(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Narrow detail rows keep each complete identity on one visual line."""
+    from rich.console import Console
+
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    record = _identity_ui_record(agentgrep, tmp_path / "narrow.jsonl", "serenity")
+    expected = record_identity(record)
+
+    async with _mounted_detail_app(tmp_path, monkeypatch) as (app, pilot):
+        app.screen.show_detail(record)
+        await _drain_detail_workers(app, pilot)
+        original_renderables = tuple(app.screen._detail.content.renderables)
+        original_body = original_renderables[1]
+        original_generation = app.screen._detail_generation
+
+        await pilot.resize_terminal(40, 30)
+        await pilot.pause(0.1)
+
+        # A 40-column pane leaves 38 content cells after #detail's horizontal
+        # padding. Render at that effective width to reproduce Textual's wrap.
+        content_width = 38
+        header = _detail_header_renderable(app.screen)
+        lines = [line.plain for line in header.wrap(Console(), content_width)]
+        assert lines[4:7] == [
+            f"R: {expected.record_id}",
+            f"C: {expected.content_id}",
+            f"T: {expected.thread_id}",
+        ]
+        assert tuple(app.screen._detail.content.renderables)[1] is original_body
+        assert app.screen._detail_generation == original_generation
+
+        await pilot.resize_terminal(120, 30)
+        await pilot.pause(0.1)
+        wide_lines = _detail_header_renderable(app.screen).plain.splitlines()
+        assert wide_lines[4:7] == [
+            f"Record: {expected.record_id}",
+            f"Content: {expected.content_id}",
+            f"Thread: {expected.thread_id}",
+        ]
+
+
+@pytest.mark.slow
 async def test_detail_identity_null_handles_use_em_dash(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -203,6 +248,15 @@ async def test_detail_identity_null_handles_use_em_dash(
             f"Content: {expected.content_id}",
             "Thread: —",
         ]
+
+
+def test_detail_find_visual_row_does_not_wrap_header() -> None:
+    """No-wrap metadata contributes logical rows, even when a value is long."""
+    from agentgrep.ui.layouts.hud import HudLayout
+
+    header = f"Branch: {'x' * 100}\n"
+
+    assert HudLayout._wrap_aware_row(0, 38, header, "needle") == 1
 
 
 class DetailWorkerMatrixCase(t.NamedTuple):
