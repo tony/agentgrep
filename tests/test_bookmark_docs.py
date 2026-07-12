@@ -54,6 +54,23 @@ def test_bookmark_cli_docs_define_canonical_mutation_contract() -> None:
     assert not missing, f"docs/cli/bookmark.md is missing {missing!r}"
 
 
+def test_bookmark_cli_docs_distinguish_record_add_and_remove() -> None:
+    """Record validation is required only for add and must match on re-add."""
+    guide = _read_text("docs/cli/bookmark.md")
+    required = (
+        "`--content-id` is required for `bookmark add`",
+        "`bookmark remove`",
+        "removal needs only the complete target ID",
+        "same saved content validator",
+        "different valid `agc1:` validator",
+        "validation failure",
+        "exits `1`",
+    )
+
+    missing = tuple(term for term in required if term not in guide)
+    assert not missing, f"record validator semantics are missing {missing!r}"
+
+
 def test_bookmark_tui_docs_define_toggle_and_recall_contract() -> None:
     """The TUI guide explains pi-like toggles and current-store recall."""
     tui = _read_text("docs/tui/index.md")
