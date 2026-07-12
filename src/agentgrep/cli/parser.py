@@ -1186,7 +1186,7 @@ def _effective_search_scope(
     explicit = t.cast("SearchScope | None", namespace.scope)
     if explicit is not None:
         return explicit
-    if query_scope is None and t.cast("bool", namespace.deep):
+    if query_scope is None and bool(getattr(namespace, "deep", False)):
         return "all"
     return "prompts" if query_scope is None else query_scope
 
@@ -1622,7 +1622,7 @@ def _build_export_args(
             bundle.export_parser.error("--force requires a file output")
 
     terms_list = t.cast("list[str]", namespace.terms)
-    compiled, residual_terms, query_fields = _maybe_compile_query(
+    compiled, residual_terms, query_scope = _maybe_compile_query(
         terms_list,
         bundle=bundle,
         color_mode=color_mode,
@@ -1633,7 +1633,7 @@ def _build_export_args(
     return ExportArgs(
         terms=residual_terms,
         agents=agents,
-        scope=_effective_search_scope(namespace, query_fields=query_fields),
+        scope=_effective_search_scope(namespace, query_scope=query_scope),
         case_sensitive=t.cast("bool", namespace.case_sensitive),
         limit=limit,
         format=t.cast("ExportFormat", namespace.format),

@@ -18,6 +18,7 @@ import sys
 
 from agentgrep import run_ui
 from agentgrep._engine import iter_find_events, iter_search_events, run_search_result
+from agentgrep._engine.orchestration import run_search_query
 from agentgrep._text import AnsiColors, format_display_path
 from agentgrep.cli.parser import ExportArgs, FindArgs, GrepArgs, SearchArgs, UIArgs
 from agentgrep.cli.renderers import (
@@ -45,6 +46,7 @@ from agentgrep.cli.serializers import (
     serialize_search_record,
     serialize_source_handle,
 )
+from agentgrep.discovery import discover_sources
 from agentgrep.progress import (
     AnswerNowInputListener,
     ConsoleSearchProgress,
@@ -52,6 +54,7 @@ from agentgrep.progress import (
     SearchProgress,
     noop_search_progress,
 )
+from agentgrep.readers import select_backends
 from agentgrep.records import (
     AGENT_CHOICES,
     ColorMode,
@@ -161,6 +164,7 @@ def run_export_command(args: ExportArgs) -> int:
     """Execute ``agentgrep export`` over the shared search engine."""
     from agentgrep.record_export import ExportError, render_export, write_export
 
+    home = pathlib.Path.home()
     query = SearchQuery(
         terms=args.terms,
         scope=args.scope,
@@ -171,13 +175,28 @@ def run_export_command(args: ExportArgs) -> int:
         limit=args.limit,
         compiled=args.compiled,
     )
+    protected_paths: set[pathlib.Path] = set()
     try:
+        backends = select_backends()
         records = run_search_query(
-            pathlib.Path.home(),
+            home,
             query,
+            backends=backends,
             progress=noop_search_progress(),
             control=SearchControl(),
         )
+        if args.output != "-":
+            protected_paths.update(record.path for record in records)
+            protected_paths.update(
+                source.path
+                for source in discover_sources(
+                    home,
+                    AGENT_CHOICES,
+                    backends,
+                    include_non_default=True,
+                    version_detail="none",
+                )
+            )
     except OSError:
         _write_export_error("export source could not be read")
         return 2
@@ -194,7 +213,7 @@ def run_export_command(args: ExportArgs) -> int:
                 artifact,
                 args.output,
                 force=args.force,
-                protected_paths=(record.path for record in records),
+                protected_paths=protected_paths,
             )
     except ExportError as exc:
         _write_export_error(str(exc))
