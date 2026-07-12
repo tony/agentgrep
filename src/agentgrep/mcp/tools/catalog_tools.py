@@ -169,7 +169,7 @@ def _inspect_result_sync(request: InspectResultRequest) -> InspectResultResponse
         records: list[SearchRecordModel] = []
         for record in agentgrep.iter_source_records(target):
             if parsed.kind == "search" and (
-                refs.search_record_fingerprint(record) != parsed.fingerprint
+                not refs.search_record_fingerprint_matches(record, parsed.fingerprint)
             ):
                 continue
             records.append(SearchRecordModel.from_record(record))
