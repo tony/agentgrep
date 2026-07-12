@@ -4,31 +4,26 @@ Output docs/_static/demos/vhs/agentgrep-ui-filter.gif
 Output docs/_static/demos/vhs/agentgrep-ui-filter.mp4
 Output docs/_static/demos/vhs/agentgrep-ui-filter.webm
 
-Set FontSize 16
-Set Width 1900
+Set FontSize 18
+Set Width 1200
 Set Height 700
 Source docs/_static/demos/vhs/_preamble.tape
 
-Sleep 1s
+Sleep 500ms
 Type "agentgrep ui"
 Enter
-Sleep 4s
+Sleep 3s
 Type "cache OR retry"
-Sleep 1s
 Enter
-Sleep 3500ms
+Sleep 2200ms
 Down
-Sleep 300ms
+Sleep 350ms
 Type "codex"
-Sleep 1800ms
-Ctrl+U
-Sleep 300ms
-Type "gemini"
-Sleep 1800ms
-Ctrl+U
-Sleep 1200ms
+Sleep 1500ms
+Ctrl+C
+Sleep 350ms
 Ctrl+C
 Sleep 350ms
 Ctrl+C
 Wait
-Sleep 1500ms
+Sleep 800ms
