@@ -888,3 +888,63 @@ def test_group_conversation_units_consumes_input_once() -> None:
     _ = group_conversation_units(one_shot)
 
     assert one_shot.iterations == 1
+
+
+def test_group_prepared_conversation_units_matches_compatibility_wrapper() -> None:
+    """Caller-prepared identities produce the established public units."""
+    records = (
+        _record("late", position=RecordPosition(ordinal=4, quality="source_order")),
+        _record("early", position=RecordPosition(ordinal=1, quality="source_order")),
+    )
+    prepared = tuple((record, record_identity(record)) for record in records)
+
+    units = conversations.group_prepared_conversation_units(prepared)
+
+    assert _unit_projection(units) == _unit_projection(group_conversation_units(records))
+
+
+def test_group_prepared_conversation_units_consumes_input_once() -> None:
+    """Prepared one-shot iterables are neither replayed nor rescanned."""
+    record = _record(
+        "threaded",
+        position=RecordPosition(ordinal=0, quality="source_order"),
+    )
+    prepared = ((record, record_identity(record)),)
+
+    class OneShotPreparedRecords:
+        def __init__(self) -> None:
+            self.iterations = 0
+
+        def __iter__(self) -> t.Iterator[tuple[SearchRecord, RecordIdentity]]:
+            self.iterations += 1
+            if self.iterations > 1:
+                message = "prepared records consumed more than once"
+                raise AssertionError(message)
+            return iter(prepared)
+
+    one_shot = OneShotPreparedRecords()
+
+    _ = conversations.group_prepared_conversation_units(one_shot)
+
+    assert one_shot.iterations == 1
+
+
+def test_group_prepared_conversation_units_never_rehashes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Supplied identity bundles remain the only identity work performed."""
+    record = _record(
+        "threaded",
+        position=RecordPosition(ordinal=0, quality="source_order"),
+    )
+    prepared = ((record, record_identity(record)),)
+
+    def fail_identity(*_args: object, **_kwargs: object) -> t.NoReturn:
+        pytest.fail("prepared conversation grouping recomputed identity")
+
+    monkeypatch.setattr(conversations, "record_thread_id", fail_identity)
+    monkeypatch.setattr(conversations, "record_identity", fail_identity)
+
+    units = conversations.group_prepared_conversation_units(prepared)
+
+    assert units[0].records == (record,)
