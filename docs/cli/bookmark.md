@@ -30,7 +30,9 @@ $ agentgrep bookmark add agc1:2vlm1978v1np5kg5fkqv539kic
 Save an exact record bookmark with its content validator:
 
 ```console
-$ agentgrep bookmark add agr1:uuqn9q331f1fcgsr5gr8agefhs --content-id agc1:2vlm1978v1np5kg5fkqv539kic
+$ agentgrep bookmark add \
+    --content-id agc1:2vlm1978v1np5kg5fkqv539kic \
+    agr1:uuqn9q331f1fcgsr5gr8agefhs
 ```
 
 Save a thread bookmark:
