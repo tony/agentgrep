@@ -12,6 +12,10 @@ from agentgrep.mcp import refs
 from agentgrep.mcp._library import SearchRecordLike, SourceHandleLike, agentgrep
 
 
+class RecordRefResolverError(RuntimeError):
+    """A resolver-wide failure that cannot be assigned to one ref."""
+
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class PhysicalRecordSelection:
     """Privacy-safe physical source key and scan ordinal for one record."""
@@ -48,7 +52,7 @@ def _path_key(path: pathlib.Path) -> pathlib.Path | None:
         return None
 
 
-def _discover_sources(home: pathlib.Path) -> tuple[SourceHandleLike, ...] | None:
+def _discover_sources(home: pathlib.Path) -> tuple[SourceHandleLike, ...]:
     """Discover every inspectable source behind a path-free error boundary."""
     try:
         backends = agentgrep.select_backends()
@@ -62,7 +66,8 @@ def _discover_sources(home: pathlib.Path) -> tuple[SourceHandleLike, ...] | None
             )
         )
     except Exception:
-        return None
+        message = "source discovery failed"
+        raise RecordRefResolverError(message) from None
 
 
 def _source_index(
@@ -188,45 +193,37 @@ def resolve_record_refs(
 
     if parsed_requests:
         sources = _discover_sources(home)
-        if sources is None:
-            for item in parsed_requests:
+        indexed_sources = _source_index(sources)
+        grouped: dict[
+            tuple[str, pathlib.Path],
+            list[_ParsedRequest],
+        ] = {}
+        for item in parsed_requests:
+            path = _path_key(item.parsed.path)
+            if path is None:
                 results[item.index] = ResolvedRecordRef(
                     ref=item.ref,
                     kind=item.parsed.kind,
-                    error_message="source discovery failed",
+                    error_message="source not found",
                 )
-        else:
-            indexed_sources = _source_index(sources)
-            grouped: dict[
-                tuple[str, pathlib.Path],
-                list[_ParsedRequest],
-            ] = {}
-            for item in parsed_requests:
-                path = _path_key(item.parsed.path)
-                if path is None:
-                    results[item.index] = ResolvedRecordRef(
-                        ref=item.ref,
-                        kind=item.parsed.kind,
-                        error_message="source not found",
-                    )
-                    continue
-                key = (item.parsed.adapter_id, path)
-                source = indexed_sources.get(key)
-                if source is None:
-                    results[item.index] = ResolvedRecordRef(
-                        ref=item.ref,
-                        kind=item.parsed.kind,
-                        error_message="source not found",
-                    )
-                    continue
-                grouped.setdefault(key, []).append(item)
-            for key, group in grouped.items():
-                _resolve_source_group(
-                    indexed_sources[key],
-                    group,
-                    results,
-                    source_key=_physical_source_key(*key),
-                    sample_size=sample_size,
+                continue
+            key = (item.parsed.adapter_id, path)
+            source = indexed_sources.get(key)
+            if source is None:
+                results[item.index] = ResolvedRecordRef(
+                    ref=item.ref,
+                    kind=item.parsed.kind,
+                    error_message="source not found",
                 )
+                continue
+            grouped.setdefault(key, []).append(item)
+        for key, group in grouped.items():
+            _resolve_source_group(
+                indexed_sources[key],
+                group,
+                results,
+                source_key=_physical_source_key(*key),
+                sample_size=sample_size,
+            )
 
     return tuple(t.cast("ResolvedRecordRef", result) for result in results)
