@@ -770,6 +770,7 @@ class HudLayout(_HudSearchBase):
             ),
             name="bookmark-load",
             group="bookmark-load",
+            description="load bookmark snapshot",
             thread=True,
             exclusive=True,
         )
@@ -878,6 +879,7 @@ class HudLayout(_HudSearchBase):
             ),
             name="bookmark-write",
             group="bookmark-write",
+            description="persist bookmark change",
             thread=True,
             exclusive=True,
         )
@@ -1011,6 +1013,7 @@ class HudLayout(_HudSearchBase):
             ),
             name="bookmark-resolve",
             group="bookmark-resolve",
+            description="resolve bookmark targets",
             thread=True,
             exclusive=True,
         )
