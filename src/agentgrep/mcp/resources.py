@@ -90,6 +90,7 @@ def build_capabilities() -> CapabilitiesModel:
             "get_store_descriptor",
             "inspect_record_sample",
             "inspect_result",
+            "export_records",
             "validate_query",
         ],
         resources=[
