@@ -36,7 +36,7 @@ from agentgrep.ui import _runtime
 from agentgrep.ui._context import UiContext
 from agentgrep.ui._source_diagnostics import UiProgressSnapshot
 from agentgrep.ui.layouts._base import LayoutScreen
-from agentgrep.ui.widgets import SearchInput, SearchRequested
+from agentgrep.ui.widgets import CompletionDropdown, SearchInput, SearchRequested
 
 if t.TYPE_CHECKING:
     from agentgrep._engine.matching import CompiledRecordMatcher
@@ -89,6 +89,7 @@ class GrepLogLayout(LayoutScreen):
             else " ".join(self.context.query.terms)
         )
         yield SearchInput(value=initial, placeholder="grep prompts", id="search")
+        yield CompletionDropdown(id="enum-dropdown", target_input_id="search")
         yield RichLog(id="greplog", highlight=False, markup=False, wrap=False, max_lines=5000)
         yield Static("", id="greplog-status")
         yield Footer()
@@ -96,12 +97,29 @@ class GrepLogLayout(LayoutScreen):
     def on_mount(self) -> None:
         """Cache widgets, then attach the workflow (its initial dispatch streams)."""
         self._search_input = self.query_one("#search")
+        self._enum_dropdown = self.query_one("#enum-dropdown")
+        self._enum_dropdown.display = False
         self._log = self.query_one("#greplog")
         self._status = self.query_one("#greplog-status")
         self._search_input.cursor_blink = False
         self._search_emit = self._make_gated_emit()
         super().on_mount()
         self._search_input.focus()
+
+    @_runtime.pump_only
+    def on_input_changed(self, event: object) -> None:
+        """Update the shared slash menu as grep-log input changes."""
+        source = getattr(event, "input", None)
+        if getattr(source, "id", None) != "search":
+            return
+        value = str(getattr(event, "value", ""))
+        if not self._update_command_completion(value):
+            self._hide_command_completion()
+
+    @_runtime.pump_only
+    def on_option_list_option_selected(self, event: object) -> None:
+        """Run a selected row from the shared slash-command menu."""
+        self._select_command_option(event)
 
     @_runtime.pump_only
     def on_search_requested(self, message: SearchRequested) -> None:

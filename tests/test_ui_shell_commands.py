@@ -442,6 +442,82 @@ async def test_common_commands_run_in_greplog(
         assert layout._search_input.value == ""
 
 
+async def test_greplog_slash_menu_lists_filters_and_selects_at_77_columns(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Grep-log exposes the full shared slash menu in a narrow terminal."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(77, 30)) as pilot:
+        await pilot.pause()
+        layout = await _mount_greplog(app, pilot)
+
+        await pilot.press("/")
+        await pilot.pause()
+
+        dropdown = layout.query_one("#enum-dropdown")
+        assert dropdown.display is True
+        assert [command.name for command in layout._command_matches] == [
+            "clear",
+            "exit",
+            "help",
+            "keys",
+            "screenshot",
+            "theme",
+            "maximize",
+            "minimize",
+        ]
+        assert dropdown.option_count == len(layout._command_matches)
+
+        await pilot.press("t", "h")
+        await pilot.pause()
+
+        assert [command.name for command in layout._command_matches] == ["theme"]
+        assert dropdown.option_count == 1
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert app.theme == ui_theme.LIGHT_THEME_NAME
+        assert layout._search_input.value == ""
+        assert dropdown.display is False
+
+
+async def test_greplog_keys_theme_and_screenshot_match_hud_commands(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Grep-log runs the direct keys, theme, and screenshot command forms."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(77, 30)) as pilot:
+        await pilot.pause()
+        layout = await _mount_greplog(app, pilot)
+        notes: list[tuple[tuple[object, ...], dict[str, object]]] = []
+        delivered: list[tuple[str, bool]] = []
+        monkeypatch.setattr(layout, "notify", lambda *a, **k: notes.append((a, k)))
+        monkeypatch.setattr(
+            app,
+            "deliver_screenshot",
+            lambda: delivered.append(
+                (
+                    str(layout._search_input.value),
+                    bool(layout._enum_dropdown.display),
+                ),
+            ),
+        )
+
+        await _submit(pilot, layout, "/keys")
+        assert len(notes) == 1
+        assert layout._search_input.value == ""
+
+        await _submit(pilot, layout, "/theme light")
+        assert app.theme == ui_theme.LIGHT_THEME_NAME
+        assert layout._search_input.value == ""
+
+        await _submit(pilot, layout, "/screenshot")
+        assert delivered == [("", False)]
+        assert layout._search_input.value == ""
+
+
 @pytest.mark.parametrize("text", ("/exit", "/quit"))
 async def test_exit_aliases_run_in_greplog(
     tmp_path: pathlib.Path,

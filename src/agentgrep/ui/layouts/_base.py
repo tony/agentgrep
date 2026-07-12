@@ -54,6 +54,8 @@ class LayoutScreen(_SCREEN_BASE):
         self._ctx = ctx
         self._workflow = workflow
         self._workflow_attach_pending = False
+        self._command_matches: tuple[commands.SlashCommand, ...] = ()
+        self._enum_dropdown: t.Any = None
 
     @property
     def context(self) -> UiContext:
@@ -129,7 +131,64 @@ class LayoutScreen(_SCREEN_BASE):
         search_input.focus()
 
     def _hide_command_completion(self) -> None:
-        """Hide command-completion chrome when a layout provides it."""
+        """Hide the shared slash-command dropdown after execution."""
+        if self._enum_dropdown is not None:
+            self._enum_dropdown.display = False
+        self._command_matches = ()
+
+    def _update_command_completion(self, value: str) -> bool:
+        """Update slash-command completion and report whether it owns ``value``."""
+        if not value.lstrip().startswith("/"):
+            self._command_matches = ()
+            if self._enum_dropdown is not None:
+                self._enum_dropdown.remove_class("-commands")
+            return False
+        self._update_command_dropdown(value)
+        return True
+
+    def _update_command_dropdown(self, value: str) -> None:
+        """Show the shared pi-style command menu filtered by ``value``."""
+        from textual.content import Content
+        from textual.widgets.option_list import Option
+
+        token, args = commands.parse_command(value)
+        matches = () if args else commands.command_matches(token, self.slash_commands)
+        self._command_matches = matches
+        dropdown = self._enum_dropdown
+        if dropdown is None:
+            return
+        if not matches:
+            dropdown.display = False
+            return
+        dropdown.add_class("-commands")
+        dropdown.clear_options()
+        name_width = max(len(commands.command_menu_label(command)) for command in matches) + 2
+        for command in matches:
+            label = commands.command_menu_label(command)
+            prompt = Content.assemble(
+                (label.ljust(name_width), ""),
+                (command.description, "dim"),
+            )
+            dropdown.add_option(Option(prompt))
+        dropdown.styles.offset = (0, 0)
+        dropdown.display = True
+        dropdown.highlighted = 0
+
+    def _select_command_option(self, event: object) -> bool:
+        """Dispatch a selected slash-menu row and report whether it was one."""
+        option_list = getattr(event, "option_list", None)
+        if option_list is not self._enum_dropdown or not self._command_matches:
+            return False
+        index = int(getattr(event, "option_index", 0) or 0)
+        self._run_command_at(index)
+        return True
+
+    def _run_command_at(self, index: int) -> None:
+        """Dispatch the slash command at ``index`` in the open command menu."""
+        if not (0 <= index < len(self._command_matches)):
+            return
+        command = self._command_matches[index]
+        self._dispatch_slash_text(f"/{command.name}")
 
     @_runtime.pump_only
     def request_screenshot(self) -> bool:

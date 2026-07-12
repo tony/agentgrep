@@ -3272,6 +3272,9 @@ async def test_slash_opens_and_filters_command_menu(
             "exit",
             "help",
             "keys",
+            "maximize",
+            "minimize",
+            "screenshot",
             "theme",
         }
         assert dropdown.option_count == len(app.screen._command_matches)

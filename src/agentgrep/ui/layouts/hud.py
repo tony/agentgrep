@@ -51,7 +51,7 @@ from agentgrep.progress import (
 )
 from agentgrep.query import default_registry
 from agentgrep.records import SearchQuery, SearchRecord
-from agentgrep.ui import _history, _runtime, commands, theme as ui_theme
+from agentgrep.ui import _history, _runtime, theme as ui_theme
 from agentgrep.ui._context import UiContext
 from agentgrep.ui._source_diagnostics import (
     SourceScanFinished,
@@ -180,9 +180,6 @@ class HudLayout(LayoutScreen):
             [] if self._history_disabled else _history.load_history(self._history_path)
         )
         self._last_recorded_text = self._history[0].text if self._history else ""
-        # The slash commands currently shown in the search dropdown, parallel
-        # to its option rows; empty when the dropdown isn't in command mode.
-        self._command_matches: tuple[commands.SlashCommand, ...] = ()
         self._theme_generation: int = 0
         self._results: SearchResultsList | None = None
         self._detail: StaticLike | None = None
@@ -199,7 +196,6 @@ class HudLayout(LayoutScreen):
         self._completion_suggester = QuerySuggester(default_registry())
         # One highlighter syntax-colors the typed query on both inputs.
         self._query_highlighter = QueryHighlighter()
-        self._enum_dropdown: t.Any = None
         self._enum_values: tuple[str, ...] = ()
         self._filter_dropdown: t.Any = None
         self._filter_dropdown_values: tuple[str, ...] = ()
@@ -682,6 +678,7 @@ class HudLayout(LayoutScreen):
                 str(event.error) if event.error else None,
             )
 
+    @_runtime.pump_only
     def on_input_changed(self, event: object) -> None:
         """Refresh the relevant completion dropdown as an input value changes."""
         source = getattr(event, "input", None)
@@ -700,55 +697,11 @@ class HudLayout(LayoutScreen):
 
     def _update_search_dropdown(self, value: str) -> None:
         """Populate the search dropdown — slash commands, else keyword completion."""
-        if value.lstrip().startswith("/"):
-            self._update_command_dropdown(value)
+        if self._update_command_completion(value):
             return
-        self._command_matches = ()
-        if self._enum_dropdown is not None:
-            t.cast("t.Any", self._enum_dropdown).remove_class("-commands")
         values = keyword_completion_candidates(value, default_registry()) or ()
         self._enum_values = values
         self._populate_dropdown(self._enum_dropdown, self._search_input, values)
-
-    def _update_command_dropdown(self, value: str) -> None:
-        """Show the pi-style slash-command menu, prefix-filtered by the typed token.
-
-        Rows are an aligned ``name`` column + a dim description (no inline
-        aliases, which bloat the row); the ``-commands`` class swaps the
-        bordered keyword picker for pi's flush, borderless list. The rows are
-        stored in ``self._command_matches`` parallel to the option list so
-        :meth:`on_option_list_option_selected` can dispatch the chosen one.
-        """
-        from textual.content import Content
-        from textual.widgets.option_list import Option
-
-        token, args = commands.parse_command(value)
-        # Argument text closes the menu; the exact dispatcher decides whether
-        # an argument-aware command consumes it or it remains literal search.
-        matches = () if args else commands.command_matches(token, self.slash_commands)
-        self._command_matches = matches
-        dropdown = self._enum_dropdown
-        if dropdown is None:
-            return
-        if not matches:
-            dropdown.display = False
-            return
-        t.cast("t.Any", dropdown).add_class("-commands")
-        dropdown.clear_options()
-        # Pad the name column so the dim descriptions line up (pi's padEnd).
-        name_width = max(len(commands.command_menu_label(command)) for command in matches) + 2
-        for command in matches:
-            label = commands.command_menu_label(command)
-            prompt = Content.assemble(
-                (label.ljust(name_width), ""),
-                (command.description, "dim"),
-            )
-            dropdown.add_option(Option(prompt))
-        # The menu lists whole commands, so anchor it at the input's left edge
-        # rather than the cursor column (unlike a token completion).
-        dropdown.styles.offset = (0, 0)
-        dropdown.display = True
-        dropdown.highlighted = 0
 
     def _update_filter_dropdown(self, value: str) -> None:
         """Populate and show/hide the filter box's keyword dropdown."""
@@ -787,13 +740,13 @@ class HudLayout(LayoutScreen):
         cursor_x = int(t.cast("t.Any", target_input).cursor_screen_offset.x)
         dropdown.styles.offset = (max(cursor_x - 1, 0), 0)
 
+    @_runtime.pump_only
     def on_option_list_option_selected(self, event: object) -> None:
         """Accept a completion choice — or run a slash command — from the dropdown."""
         option_list = getattr(event, "option_list", None)
         index = int(getattr(event, "option_index", 0) or 0)
         if option_list is self._enum_dropdown:
-            if self._command_matches:
-                self._run_command_at(index)
+            if self._select_command_option(event):
                 return
             self._accept_dropdown_choice(
                 self._search_input,
@@ -884,19 +837,6 @@ class HudLayout(LayoutScreen):
     def request_cancel(self) -> None:
         """Cooperatively signal the in-flight search to wrap up (host surface)."""
         self.control.request_answer_now()
-
-    def _hide_command_completion(self) -> None:
-        """Hide the HUD's slash-command dropdown after successful execution."""
-        if self._enum_dropdown is not None:
-            self._enum_dropdown.display = False
-        self._command_matches = ()
-
-    def _run_command_at(self, index: int) -> None:
-        """Dispatch the slash command at ``index`` in the open command menu."""
-        if not (0 <= index < len(self._command_matches)):
-            return
-        command = self._command_matches[index]
-        self._dispatch_slash_text(f"/{command.name}")
 
     def _record_history(self, text: str) -> None:
         """Append a submitted, non-empty query to the persisted history.
