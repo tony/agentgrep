@@ -7,7 +7,7 @@ import typing as t
 
 import pytest
 from textual.command import CommandPalette
-from textual.widgets import Footer
+from textual.widgets import Footer, HelpPanel
 
 from agentgrep.records import SearchRecord
 from agentgrep.ui import theme as ui_theme
@@ -135,33 +135,47 @@ async def test_ctrl_p_preserves_mounted_shell_state(
         assert body.region == body_region
 
 
-async def test_slash_keys_notifies_visible_layout_bindings_without_reflow(
+async def test_slash_keys_toggles_one_help_panel_without_notifications(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``/keys`` reports App/Screen bindings without mounting a help panel."""
+    """Repeated ``/keys`` opens one help panel, then closes it cleanly."""
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
         layout = app.screen
-        notes: list[tuple[tuple[object, ...], dict[str, object]]] = []
-        monkeypatch.setattr(layout, "notify", lambda *a, **k: notes.append((a, k)))
         screen_stack = tuple(app.screen_stack)
-        body_region = layout.query_one("#body").region
+        record = _zoom_record(tmp_path, 0)
+        layout.all_records = [record]
+        layout.filtered_records = [record]
+        layout._results.append_records((record,))
+        query = layout.search_query
+        results = layout._results
+        assert layout.handle_maximize_command("results") is True
 
         await _submit(pilot, layout, "/keys")
 
         assert tuple(app.screen_stack) == screen_stack
-        assert layout.query_one("#body").region == body_region
+        assert len(layout.query(HelpPanel)) == 1
+        assert len(app._notifications) == 0
+        assert layout._zoomed_pane == "results"
+        assert layout.search_query is query
+        assert layout._results is results
+        assert results._records == [record]
         assert layout._search_input.value == ""
-        assert len(notes) == 1
-        message = str(notes[0][0][0]).lower()
-        assert "layout" in message
-        assert "workflow" in message
-        assert "switch focus" in message
-        assert "delete" not in message
-        assert "cut" not in message
-        assert "paste" not in message
+        assert app.focused is layout._search_input
+
+        await _submit(pilot, layout, "/keys")
+
+        assert len(layout.query(HelpPanel)) == 0
+        assert len(app._notifications) == 0
+        assert layout._zoomed_pane == "results"
+        assert layout.search_query is query
+        assert layout._results is results
+        assert results._records == [record]
+        assert app.focused is layout._search_input
+        await pilot.press("u", "s", "a", "b", "l", "e")
+        assert layout._search_input.value == "usable"
 
 
 async def test_slash_theme_selects_and_toggles_agentgrep_themes(
@@ -491,9 +505,7 @@ async def test_greplog_keys_theme_and_screenshot_match_hud_commands(
     async with app.run_test(size=(77, 30)) as pilot:
         await pilot.pause()
         layout = await _mount_greplog(app, pilot)
-        notes: list[tuple[tuple[object, ...], dict[str, object]]] = []
         delivered: list[tuple[str, bool]] = []
-        monkeypatch.setattr(layout, "notify", lambda *a, **k: notes.append((a, k)))
         monkeypatch.setattr(
             app,
             "deliver_screenshot",
@@ -506,7 +518,13 @@ async def test_greplog_keys_theme_and_screenshot_match_hud_commands(
         )
 
         await _submit(pilot, layout, "/keys")
-        assert len(notes) == 1
+        assert len(layout.query(HelpPanel)) == 1
+        assert len(app._notifications) == 0
+        assert layout._search_input.value == ""
+
+        await _submit(pilot, layout, "/keys")
+        assert len(layout.query(HelpPanel)) == 0
+        assert len(app._notifications) == 0
         assert layout._search_input.value == ""
 
         await _submit(pilot, layout, "/theme light")

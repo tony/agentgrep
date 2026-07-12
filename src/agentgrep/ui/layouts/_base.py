@@ -207,26 +207,12 @@ class LayoutScreen(_SCREEN_BASE):
         self.app.deliver_screenshot()
 
     @_runtime.pump_only
-    def notify_key_bindings(self) -> None:
-        """Notify enabled, visible App/Screen bindings for the active layout."""
-        lines: list[str] = []
-        seen: set[tuple[int, str, str]] = set()
-        for active in self.app.active_bindings.values():
-            binding = active.binding
-            if (
-                (active.node is not self and active.node is not self.app)
-                or not active.enabled
-                or not binding.show
-                or not binding.description
-            ):
-                continue
-            marker = (id(active.node), binding.action, binding.description)
-            if marker in seen:
-                continue
-            seen.add(marker)
-            key = binding.key_display or binding.key
-            lines.append(f"{key} — {binding.description}")
-        self.notify("\n".join(lines), title="Keys", timeout=10)
+    def toggle_help_panel(self) -> None:
+        """Toggle Textual's singleton key-help panel on the active layout."""
+        if self.query("HelpPanel"):
+            self.app.action_hide_help_panel()
+        else:
+            self.app.action_show_help_panel()
 
     @_runtime.pump_only
     def select_theme(self, argument: str) -> bool:

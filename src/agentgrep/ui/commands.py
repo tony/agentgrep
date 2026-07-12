@@ -73,9 +73,9 @@ def _run_help(app: t.Any, args: str) -> bool:
 
 
 def _run_keys(app: t.Any, args: str) -> bool:
-    """Show the active layout bindings without mounting another screen."""
+    """Toggle the active layout's singleton key-help panel."""
     del args
-    app.notify_key_bindings()
+    app.toggle_help_panel()
     return True
 
 
@@ -120,7 +120,7 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
     SlashCommand("clear", ("new", "reset"), "Clear search and results", _run_clear),
     SlashCommand("exit", ("quit",), "Quit agentgrep", _run_exit),
     SlashCommand("help", (), "List slash commands", _run_help),
-    SlashCommand("keys", (), "List active key bindings", _run_keys),
+    SlashCommand("keys", (), "Toggle key bindings help", _run_keys),
     SlashCommand("screenshot", (), "Save a clean screenshot", _run_screenshot),
     SlashCommand(
         "theme",
