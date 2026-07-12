@@ -109,11 +109,19 @@ def _decode_token(prefix: str, token: str) -> dict[str, object]:
     encoded = token.removeprefix(prefix)
     padded = encoded + "=" * (-len(encoded) % 4)
     try:
-        raw = base64.urlsafe_b64decode(padded.encode("ascii"))
+        raw = base64.b64decode(
+            padded.encode("ascii"),
+            altchars=b"-_",
+            validate=True,
+        )
         payload = json.loads(raw.decode("utf-8"))
     except (UnicodeEncodeError, ValueError, json.JSONDecodeError) as exc:
         msg = "token is not valid encoded JSON"
         raise McpTokenError(msg) from exc
+    canonical = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+    if encoded != canonical:
+        msg = "token is not valid encoded JSON"
+        raise McpTokenError(msg)
     if not isinstance(payload, dict):
         msg = "token payload must be an object"
         raise McpTokenError(msg)
@@ -276,7 +284,8 @@ def make_find_ref(record: FindRecordLike) -> str:
 def parse_record_ref(ref: str, *, home: pathlib.Path) -> ParsedRecordRef:
     """Parse an opaque result ref."""
     payload = _decode_token(_REF_PREFIX, ref)
-    if payload.get("v") != 1:
+    version = payload.get("v")
+    if not isinstance(version, int) or isinstance(version, bool) or version != 1:
         msg = "unsupported ref version"
         raise McpTokenError(msg)
     kind = payload.get("kind")
@@ -336,7 +345,13 @@ def make_search_cursor(
 def parse_search_cursor(cursor: str) -> SearchCursor:
     """Parse an opaque search page cursor."""
     payload = _decode_token(_CURSOR_PREFIX, cursor)
-    if payload.get("v") != 1 or payload.get("tool") != "search":
+    version = payload.get("v")
+    if (
+        not isinstance(version, int)
+        or isinstance(version, bool)
+        or version != 1
+        or payload.get("tool") != "search"
+    ):
         msg = "cursor is not a search cursor"
         raise McpTokenError(msg)
     offset = payload.get("offset")
@@ -348,7 +363,7 @@ def parse_search_cursor(cursor: str) -> SearchCursor:
     cwd = payload.get("cwd")
     repo = payload.get("repo")
     branch = payload.get("branch")
-    if not isinstance(offset, int) or offset < 0:
+    if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
         msg = "cursor offset must be non-negative"
         raise McpTokenError(msg)
     if not isinstance(terms, list) or not all(isinstance(term, str) for term in terms):
@@ -366,7 +381,7 @@ def parse_search_cursor(cursor: str) -> SearchCursor:
     if not isinstance(case_sensitive, bool):
         msg = "cursor case_sensitive must be a boolean"
         raise McpTokenError(msg)
-    if not isinstance(limit, int) or limit < 1:
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
         msg = "cursor limit must be positive"
         raise McpTokenError(msg)
     if cwd is not None and not isinstance(cwd, str):
@@ -418,14 +433,20 @@ def make_find_cursor(
 def parse_find_cursor(cursor: str) -> FindCursor:
     """Parse an opaque find page cursor."""
     payload = _decode_token(_CURSOR_PREFIX, cursor)
-    if payload.get("v") != 1 or payload.get("tool") != "find":
+    version = payload.get("v")
+    if (
+        not isinstance(version, int)
+        or isinstance(version, bool)
+        or version != 1
+        or payload.get("tool") != "find"
+    ):
         msg = "cursor is not a find cursor"
         raise McpTokenError(msg)
     offset = payload.get("offset")
     pattern = payload.get("pattern")
     agent = payload.get("agent")
     limit = payload.get("limit")
-    if not isinstance(offset, int) or offset < 0:
+    if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
         msg = "cursor offset must be non-negative"
         raise McpTokenError(msg)
     if pattern is not None and not isinstance(pattern, str):
@@ -434,7 +455,7 @@ def parse_find_cursor(cursor: str) -> FindCursor:
     if agent not in t.get_args(AgentSelector):
         msg = "cursor agent is invalid"
         raise McpTokenError(msg)
-    if not isinstance(limit, int) or limit < 1:
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
         msg = "cursor limit must be positive"
         raise McpTokenError(msg)
     return FindCursor(
