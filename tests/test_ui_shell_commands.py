@@ -7,7 +7,9 @@ import typing as t
 
 import pytest
 from textual.command import CommandPalette
+from textual.widgets import Footer
 
+from agentgrep.records import SearchRecord
 from agentgrep.ui import theme as ui_theme
 from agentgrep.ui._shell import ExplorerApp
 from tests.test_agentgrep import _build_empty_ui_app
@@ -44,6 +46,24 @@ async def _submit(pilot: t.Any, layout: t.Any, text: str) -> None:
     layout._search_input.focus()
     await pilot.pause()
     await pilot.press("enter")
+    await pilot.pause()
+
+
+def _zoom_record(tmp_path: pathlib.Path, index: int) -> SearchRecord:
+    """Build one visible detail record for logical-zoom Pilot tests."""
+    return SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / f"zoom-{index}.jsonl",
+        text=f"ZOOM DETAIL RECORD {index}",
+    )
+
+
+async def _type_command(pilot: t.Any, text: str) -> None:
+    """Type and submit a slash command through the focused search input."""
+    await pilot.press(*text, "enter")
     await pilot.pause()
 
 
@@ -230,3 +250,284 @@ async def test_unsupported_command_arguments_remain_greplog_search_text(
         await _submit(pilot, layout, "/help find prompts")
 
         assert queries == ["/help find prompts"]
+
+
+async def test_hud_zoom_help_names_its_logical_panes(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HUD command metadata advertises results/detail rather than widgets."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        by_name = {command.name: command for command in app.screen.slash_commands}
+
+        assert by_name["maximize"].argument_hint == "[results|detail]"
+        assert by_name["minimize"].argument_hint == ""
+
+
+async def test_wide_hud_zoom_keeps_shell_usable_and_restores_geometry(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A wide results zoom leaves slash input usable and restores the split."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        layout = app.screen
+        layout._set_empty_state(empty=False)
+        await pilot.pause()
+        search = layout.query_one("#search")
+        dropdown = layout.query_one("#enum-dropdown")
+        footer = layout.query_one(Footer)
+        body = layout.query_one("#body")
+        results_column = layout.query_one("#results-column")
+        detail_column = layout.query_one("#detail-column")
+        original = (
+            body.region,
+            results_column.region,
+            detail_column.region,
+            body.has_class("-stacked"),
+            detail_column.has_class("-collapsed"),
+        )
+        assert layout.maximized is None
+
+        await _submit(pilot, layout, "/maximize")
+
+        assert layout.maximized is None
+        assert body.has_class("-zoom-results")
+        assert not body.has_class("-zoom-detail")
+        assert results_column.region == body.region
+        assert detail_column.region.width == 0
+        assert search.region.height == 3
+        assert footer.region.height > 0
+        assert app.focused is search
+
+        await pilot.press("/")
+        await pilot.pause()
+        assert search.value == "/"
+        assert dropdown.display is True
+        await _type_command(pilot, "minimize")
+
+        assert layout.maximized is None
+        assert not body.has_class("-zoom-results")
+        assert not body.has_class("-zoom-detail")
+        assert (
+            body.region,
+            results_column.region,
+            detail_column.region,
+            body.has_class("-stacked"),
+            detail_column.has_class("-collapsed"),
+        ) == original
+        assert app.focused is search
+
+
+async def test_narrow_detail_zoom_renders_selection_without_losing_collapse(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 77-column detail zoom renders first, then restores collapsed geometry."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = [_zoom_record(tmp_path, index) for index in range(3)]
+    async with app.run_test(size=(77, 30)) as pilot:
+        await pilot.pause()
+        layout = app.screen
+        layout._set_empty_state(empty=False)
+        layout.all_records.extend(records)
+        layout.filtered_records = list(records)
+        layout._results.append_records(records)
+        layout._results._reactive_highlighted = 2
+        layout._current_detail_record = records[0]
+        layout._detail_opened = False
+        layout._apply_responsive_layout()
+        await pilot.pause()
+        body = layout.query_one("#body")
+        results_column = layout.query_one("#results-column")
+        detail_column = layout.query_one("#detail-column")
+        dropdown = layout.query_one("#enum-dropdown")
+        footer = layout.query_one(Footer)
+        original = (
+            body.region,
+            results_column.region,
+            detail_column.region,
+            body.has_class("-stacked"),
+            detail_column.has_class("-collapsed"),
+        )
+        assert original[-2:] == (True, True)
+        assert layout.maximized is None
+
+        await _submit(pilot, layout, "/maximize detail")
+
+        assert layout.maximized is None
+        assert body.has_class("-zoom-detail")
+        assert not body.has_class("-zoom-results")
+        assert body.has_class("-stacked")
+        assert detail_column.has_class("-collapsed")
+        assert layout._detail_opened is False
+        assert layout._current_detail_record is records[2]
+        assert results_column.region.height == 0
+        assert detail_column.region == body.region
+        assert app.focused is layout._search_input
+        assert "ZOOM&#160;DETAIL&#160;RECORD&#160;2" in app.export_screenshot(simplify=True)
+        assert layout.query_one(Footer) is footer
+        assert layout.query_one("#enum-dropdown") is dropdown
+        assert footer.is_mounted and footer.region.height > 0
+        assert dropdown.is_mounted
+
+        await pilot.press("/")
+        await pilot.pause()
+        assert dropdown.display is True
+        await _type_command(pilot, "minimize")
+
+        assert layout.maximized is None
+        assert not body.has_class("-zoom-detail")
+        assert (
+            body.region,
+            results_column.region,
+            detail_column.region,
+            body.has_class("-stacked"),
+            detail_column.has_class("-collapsed"),
+        ) == original
+        assert layout.query_one(Footer) is footer
+        assert layout.query_one("#enum-dropdown") is dropdown
+        assert footer.is_mounted and footer.region.height > 0
+        assert dropdown.is_mounted
+
+
+async def test_maximize_cached_small_detail_preserves_find_and_search_focus(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The cached fast path preserves find state and returns focus to search."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "cached-small.jsonl",
+        text="needle before needle after",
+    )
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        layout = app.screen
+        layout._set_empty_state(empty=False)
+        layout.all_records.append(record)
+        layout.filtered_records = [record]
+        layout._results.append_records((record,))
+        layout.show_detail(record)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        layout.action_open_detail_find()
+        layout._detail_find_input.load_query("needle")
+        layout._run_detail_find("needle", reset_cursor=True)
+        expected_matches = list(layout._detail_find_matches)
+        layout._results._reactive_highlighted = 0
+
+        await _submit(pilot, layout, "/maximize detail")
+
+        assert layout._detail_body_is_cached(())
+        assert layout._current_detail_record is record
+        assert layout._detail_find_active is True
+        assert layout._detail_find_query == "needle"
+        assert layout._detail_find_matches == expected_matches
+        assert layout._body.has_class("-zoom-detail")
+        assert app.focused is layout._search_input
+
+
+async def test_hud_bare_zoom_tracks_last_pane_and_explicit_target_selects(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bare maximize toggles last-use; named targets switch without toggling."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = _zoom_record(tmp_path, 0)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        layout = app.screen
+        layout._set_empty_state(empty=False)
+        layout.all_records.append(record)
+        layout.filtered_records = [record]
+        layout._results.append_records((record,))
+        layout.show_detail(record)
+        layout._detail_scroll.focus()
+        await pilot.pause()
+        layout._search_input.focus()
+        await pilot.pause()
+
+        await _submit(pilot, layout, "/maximize")
+        assert layout._body.has_class("-zoom-detail")
+
+        await _submit(pilot, layout, "/maximize results")
+        assert layout._body.has_class("-zoom-results")
+        assert not layout._body.has_class("-zoom-detail")
+
+        await _submit(pilot, layout, "/maximize results")
+        assert layout._body.has_class("-zoom-results")
+
+        await _submit(pilot, layout, "/maximize detail")
+        assert layout._body.has_class("-zoom-detail")
+
+        await _submit(pilot, layout, "/maximize")
+        assert not layout._body.has_class("-zoom-detail")
+        assert not layout._body.has_class("-zoom-results")
+        assert layout.maximized is None
+
+
+async def test_hud_filter_focus_makes_bare_zoom_target_results(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Filter focus makes the results side the last-used content pane."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = _zoom_record(tmp_path, 0)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        layout = app.screen
+        layout._set_empty_state(empty=False)
+        layout.all_records.append(record)
+        layout.filtered_records = [record]
+        layout._results.append_records((record,))
+        layout.show_detail(record)
+        layout._detail_scroll.focus()
+        await pilot.pause()
+        assert layout._last_content_pane == "detail"
+
+        layout._filter_input.focus()
+        await pilot.pause()
+        assert layout._last_content_pane == "results"
+
+        await _submit(pilot, layout, "/maximize")
+        assert layout._body.has_class("-zoom-results")
+
+
+async def test_hud_empty_detail_zoom_warns_and_retains_command(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A detail zoom without a record keeps layout and command text retryable."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(77, 30)) as pilot:
+        await pilot.pause()
+        layout = app.screen
+        notes: list[tuple[tuple[object, ...], dict[str, object]]] = []
+        monkeypatch.setattr(layout, "notify", lambda *a, **k: notes.append((a, k)))
+        original = (
+            layout._body.region,
+            layout._body.has_class("-stacked"),
+            layout._detail_column.has_class("-collapsed"),
+        )
+
+        await _submit(pilot, layout, "/maximize detail")
+
+        assert layout._search_input.value == "/maximize detail"
+        assert not layout._body.has_class("-zoom-detail")
+        assert (
+            layout._body.region,
+            layout._body.has_class("-stacked"),
+            layout._detail_column.has_class("-collapsed"),
+        ) == original
+        assert len(notes) == 1
+        assert notes[0][1].get("severity") == "warning"
+        assert "detail" in str(notes[0][0][0]).lower()
+        assert layout.maximized is None

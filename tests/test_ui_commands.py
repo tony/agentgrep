@@ -105,3 +105,26 @@ def test_command_menu_label_includes_argument_hint() -> None:
     theme = commands.resolve_command("theme")
     assert theme is not None
     assert commands.command_menu_label(theme) == "theme [dark|light]"
+
+
+def test_zoom_commands_use_layout_safe_named_hooks() -> None:
+    """Zoom metadata stays layout-aware and dispatch avoids Screen methods."""
+    calls: list[tuple[str, str]] = []
+
+    class Host:
+        def handle_maximize_command(self, argument: str) -> bool:
+            calls.append(("maximize", argument))
+            return True
+
+        def handle_minimize_command(self) -> bool:
+            calls.append(("minimize", ""))
+            return True
+
+    maximize, minimize = commands.zoom_commands("[results|detail]")
+
+    assert commands.command_menu_label(maximize) == "maximize [results|detail]"
+    assert maximize.accepts_args is True
+    assert minimize.accepts_args is False
+    assert maximize.run(Host(), "detail") is True
+    assert minimize.run(Host(), "") is True
+    assert calls == [("maximize", "detail"), ("minimize", "")]

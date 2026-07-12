@@ -27,6 +27,7 @@ __all__ = [
     "command_menu_label",
     "parse_command",
     "resolve_command",
+    "zoom_commands",
 ]
 
 
@@ -83,6 +84,17 @@ def _run_theme(app: t.Any, args: str) -> bool:
     return bool(app.select_theme(args))
 
 
+def _run_maximize(app: t.Any, args: str) -> bool:
+    """Select or toggle a layout-owned logical pane zoom."""
+    return bool(app.handle_maximize_command(args))
+
+
+def _run_minimize(app: t.Any, args: str) -> bool:
+    """Restore a layout-owned logical pane split."""
+    del args
+    return bool(app.handle_minimize_command())
+
+
 def _command_label(cmd: SlashCommand) -> str:
     """Render ``/name (/alias1, /alias2)`` for menus and help (argparse-style)."""
     label = f"/{command_menu_label(cmd)}"
@@ -119,6 +131,21 @@ _COMMAND_BY_TOKEN: dict[str, SlashCommand] = {
     token: cmd for cmd in SLASH_COMMANDS for token in (cmd.name, *cmd.aliases)
 }
 """Flat token -> command lookup; one entry per name and per alias."""
+
+
+def zoom_commands(argument_hint: str) -> tuple[SlashCommand, SlashCommand]:
+    """Return logical zoom commands with layout-specific target guidance."""
+    return (
+        SlashCommand(
+            "maximize",
+            (),
+            "Zoom or restore a content pane",
+            _run_maximize,
+            argument_hint,
+            accepts_args=True,
+        ),
+        SlashCommand("minimize", (), "Restore the content split", _run_minimize),
+    )
 
 
 def resolve_command(

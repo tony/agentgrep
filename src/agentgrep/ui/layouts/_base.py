@@ -46,6 +46,9 @@ class LayoutScreen(_SCREEN_BASE):
     EXTRA_SLASH_COMMANDS: t.ClassVar[tuple[commands.SlashCommand, ...]] = ()
     """Layout-specific commands appended to the common slash surface."""
 
+    ZOOM_ARGUMENT_HINT: t.ClassVar[str | None] = None
+    """Layout-specific logical pane targets, or ``None`` when unsupported."""
+
     def __init__(self, ctx: UiContext, workflow: Workflow) -> None:
         super().__init__()
         self._ctx = ctx
@@ -60,7 +63,8 @@ class LayoutScreen(_SCREEN_BASE):
     @property
     def slash_commands(self) -> tuple[commands.SlashCommand, ...]:
         """Return common commands plus this layout's extension commands."""
-        return (*commands.SLASH_COMMANDS, *self.EXTRA_SLASH_COMMANDS)
+        zoom = commands.zoom_commands(self.ZOOM_ARGUMENT_HINT) if self.ZOOM_ARGUMENT_HINT else ()
+        return (*commands.SLASH_COMMANDS, *zoom, *self.EXTRA_SLASH_COMMANDS)
 
     @property
     def workflow(self) -> Workflow:

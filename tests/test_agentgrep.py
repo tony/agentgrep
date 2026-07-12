@@ -5546,6 +5546,47 @@ async def test_focus_detail_renders_record_when_opening_stacked_streaming_result
         assert f"record&#160;{case.expected_index}" in screenshot
 
 
+async def test_detail_focus_membership_uses_ids_maintained_at_all_mutation_seams(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Current-detail visibility is O(1) after reset, append, and replace."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    first, second = _seed_records(agentgrep, tmp_path, 2)
+    iteration_error = "current-detail membership scanned the result list"
+
+    class NoIdentityIteration(list[t.Any]):
+        def __iter__(self) -> t.NoReturn:
+            raise AssertionError(iteration_error)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app.screen._results.append_records((first,))
+        app.screen._reset_search_chrome()
+        assert app.screen._results.contains_record(first) is False
+
+        await app.screen._apply_records_batch((first, second), total=2)
+        assert app.screen._results.contains_record(first) is True
+        assert app.screen._results.contains_record(second) is True
+
+        app.screen.on_filter_completed(
+            _FakeFilterCompleted(
+                payload=agentgrep.FilterCompletedPayload(
+                    text="",
+                    matching=(second,),
+                ),
+            ),
+        )
+        assert app.screen._results.contains_record(first) is False
+        assert app.screen._results.contains_record(second) is True
+
+        app.screen._results._reactive_highlighted = None
+        app.screen._current_detail_record = second
+        app.screen.filtered_records = NoIdentityIteration((second,))
+        assert app.screen._record_for_detail_focus() is second
+
+
 class _FakeFilterCompleted(t.NamedTuple):
     """Minimal ``FilterCompleted`` stand-in carrying just the payload."""
 
@@ -6859,6 +6900,36 @@ async def test_wide_detail_always_visible(
         app.screen.on_option_list_option_highlighted(_FakeHighlight(0))
         await pilot.pause()
         assert not app.screen._detail_column.has_class("-collapsed")
+
+
+async def test_responsive_layout_classes_stay_orthogonal_to_detail_zoom(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Responsive recomputation leaves logical zoom and collapse state independent."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 2)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.screen._set_empty_state(empty=False)
+        app.screen.all_records.extend(records)
+        app.screen.filtered_records = list(records)
+        app.screen._results.set_records(records)
+        app.screen._detail_opened = False
+        app.screen._apply_responsive_layout()
+
+        app.screen._search_input.value = "/maximize detail"
+        app.screen._search_input.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        app.screen._apply_responsive_layout()
+        await pilot.pause()
+
+        assert app.screen._body.has_class("-zoom-detail")
+        assert app.screen._body.has_class("-stacked")
+        assert app.screen._detail_column.has_class("-collapsed")
+        assert app.screen._detail_opened is False
 
 
 async def test_new_search_recollapses_narrow_detail(

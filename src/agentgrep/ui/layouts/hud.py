@@ -105,6 +105,8 @@ _DetailFindBaseKey = tuple[str, tuple[str, ...], bool, bool, tuple[str, ...]]
 class HudLayout(LayoutScreen):
     """Search box, streaming results list, detail pane, and status chrome."""
 
+    ZOOM_ARGUMENT_HINT: t.ClassVar[str] = "[results|detail]"
+
     # ``priority=True`` on the directional ``ctrl+hjkl`` bindings pushes
     # them into Textual's priority dispatch lane so they win over any
     # widget binding for the same key (e.g. ``Input``'s readline
@@ -219,6 +221,8 @@ class HudLayout(LayoutScreen):
         # patching (``_pending_autohighlights``) must not trip it.
         self._stacked: bool = False
         self._detail_opened: bool = False
+        self._zoomed_pane: t.Literal["results", "detail"] | None = None
+        self._last_content_pane: t.Literal["results", "detail"] = "results"
         self._pending_autohighlights: int = 0
         # Literal terms of the active filter, highlighted in the detail
         # pane in a distinct color from the search-query terms.
@@ -534,6 +538,10 @@ class HudLayout(LayoutScreen):
         filter_active = focused_id == "filter"
         results_active = focused_id == "results"
         detail_active = focused_id in {"detail-scroll", "detail-find"}
+        if filter_active or results_active:
+            self._last_content_pane = "results"
+        elif detail_active:
+            self._last_content_pane = "detail"
         if self._filter_header is not None:
             t.cast("t.Any", self._filter_header).set_class(filter_active, "-active")
         if self._results_header is not None:
@@ -1120,6 +1128,48 @@ class HudLayout(LayoutScreen):
         # set stranded in a hidden pane.
         collapsed = stacked and not self._detail_opened
         t.cast("t.Any", self._detail_column).set_class(collapsed, "-collapsed")
+
+    @_runtime.pump_only
+    def handle_maximize_command(self, argument: str) -> bool:
+        """Toggle or select a logical results/detail column zoom."""
+        target = argument.strip().lower()
+        if not target:
+            if self._zoomed_pane is not None:
+                return self.handle_minimize_command()
+            target = self._last_content_pane
+        if target not in {"results", "detail"}:
+            self.notify(
+                "Maximize target must be results or detail.",
+                title="Maximize",
+                severity="warning",
+            )
+            return False
+        if target == "detail":
+            record = self._record_for_detail_focus()
+            if record is None:
+                self.notify(
+                    "No detail is available to maximize.",
+                    title="Maximize",
+                    severity="warning",
+                )
+                return False
+            self.show_detail(record)
+        zoomed: t.Literal["results", "detail"] = "detail" if target == "detail" else "results"
+        self._zoomed_pane = zoomed
+        body = self._body
+        body.set_class(target == "results", "-zoom-results")
+        body.set_class(target == "detail", "-zoom-detail")
+        return True
+
+    @_runtime.pump_only
+    def handle_minimize_command(self) -> bool:
+        """Restore the responsive results/detail split without moving focus."""
+        self._zoomed_pane = None
+        if self._body is not None:
+            body = t.cast("t.Any", self._body)
+            body.remove_class("-zoom-results", "-zoom-detail")
+        self._apply_responsive_layout()
+        return True
 
     @_runtime.pump_only
     def action_toggle_detail_progress(self) -> None:
@@ -2214,7 +2264,11 @@ class HudLayout(LayoutScreen):
         if highlighted is not None and 0 <= highlighted < len(self.filtered_records):
             return self.filtered_records[highlighted]
         current = self._current_detail_record
-        if current is not None and any(record is current for record in self.filtered_records):
+        if (
+            current is not None
+            and self._results is not None
+            and self._results.contains_record(current)
+        ):
             return current
         return self.filtered_records[0] if self.filtered_records else None
 

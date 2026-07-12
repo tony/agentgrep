@@ -49,11 +49,14 @@ _APPLY_CHUNK_SIZE = 200
 class GrepLogLayout(LayoutScreen):
     """A query input over an append-only :class:`RichLog` of streamed records."""
 
+    ZOOM_ARGUMENT_HINT: t.ClassVar[str] = "[log]"
+
     DEFAULT_CSS = """
     GrepLogLayout { layout: vertical; }
     GrepLogLayout #search { height: 3; }
     GrepLogLayout #greplog { height: 1fr; }
     GrepLogLayout #greplog-status { height: 1; padding: 0 1; color: $text-muted; }
+    GrepLogLayout.-zoom-log #greplog-status { display: none; }
     """
 
     BINDINGS: t.ClassVar[list[t.Any]] = [
@@ -111,6 +114,26 @@ class GrepLogLayout(LayoutScreen):
     def action_stop_search(self) -> None:
         """``Esc``: cooperatively stop the in-flight grep."""
         self.request_cancel()
+
+    @_runtime.pump_only
+    def handle_maximize_command(self, argument: str) -> bool:
+        """Give the log all available content rows without hiding the shell."""
+        target = argument.strip().lower()
+        if target not in {"", "log"}:
+            self.notify(
+                "Maximize target must be log.",
+                title="Maximize",
+                severity="warning",
+            )
+            return False
+        self.add_class("-zoom-log")
+        return True
+
+    @_runtime.pump_only
+    def handle_minimize_command(self) -> bool:
+        """Restore the grep-log status chrome."""
+        self.remove_class("-zoom-log")
+        return True
 
     # --- WorkflowHost surface -------------------------------------------------
     def build_query(self, text: str) -> SearchQuery:

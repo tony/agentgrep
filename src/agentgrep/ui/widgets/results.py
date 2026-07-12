@@ -66,6 +66,7 @@ class SearchResultsList(OptionList, can_focus=True):
     ) -> None:
         super().__init__(id=id)
         self._records: list[SearchRecord] = []
+        self._record_ids: set[int] = set()
         # Rendered rows memoized by record id (rows bake theme hex but are stable
         # within a palette): a filter rebuild reuses them instead of paying the
         # dominant _render_record cost again. Cleared on clear() / rerender.
@@ -82,6 +83,7 @@ class SearchResultsList(OptionList, can_focus=True):
             return
         self._records.extend(records)
         for record in records:
+            self._record_ids.add(id(record))
             cached_haystack(record)
         self.add_options(
             [Option(self._render_record(r), id=str(id(r))) for r in records],
@@ -110,16 +112,17 @@ class SearchResultsList(OptionList, can_focus=True):
         """
         new_records = list(records)
         new_ids: set[int] = {id(record) for record in new_records}
+        self._record_ids = new_ids
         current_records = self._records
         if not current_records:
-            self._rebuild_options(new_records)
+            self._rebuild_options(new_records, record_ids=new_ids)
             return 0
         current_index_by_id: dict[int, int] = {
             id(record): idx for idx, record in enumerate(current_records)
         }
         additions = [record for record in new_records if id(record) not in current_index_by_id]
         if additions:
-            self._rebuild_options(new_records)
+            self._rebuild_options(new_records, record_ids=new_ids)
             return 0
         to_remove_indices = sorted(
             (
@@ -133,7 +136,7 @@ class SearchResultsList(OptionList, can_focus=True):
             # More than half goes — a single clear+rebuild is cheaper
             # than N ``remove_option_at_index`` calls (each shifts the
             # internal options list).
-            self._rebuild_options(new_records)
+            self._rebuild_options(new_records, record_ids=new_ids)
             return 0
         programmatic_highlights = 0
         for idx in to_remove_indices:
@@ -145,9 +148,17 @@ class SearchResultsList(OptionList, can_focus=True):
         self._records = new_records
         return programmatic_highlights
 
-    def _rebuild_options(self, records: cabc.Sequence[SearchRecord]) -> None:
+    def _rebuild_options(
+        self,
+        records: cabc.Sequence[SearchRecord],
+        *,
+        record_ids: set[int] | None = None,
+    ) -> None:
         """Full clear + rebuild path. Used when delta-apply isn't safe."""
         self._records = list(records)
+        self._record_ids = (
+            record_ids if record_ids is not None else {id(record) for record in self._records}
+        )
         self.clear_options()
         if self._records:
             for record in self._records:
@@ -173,8 +184,13 @@ class SearchResultsList(OptionList, can_focus=True):
     def clear(self) -> None:
         """Empty the list."""
         self._records = []
+        self._record_ids.clear()
         self._render_cache.clear()
         self.clear_options()
+
+    def contains_record(self, record: SearchRecord) -> bool:
+        """Return whether ``record`` is in the current filtered result set."""
+        return id(record) in self._record_ids
 
     def _scroll_percent(self) -> int:
         """Compute the current scroll percent, clamped to ``[0, 100]``."""
