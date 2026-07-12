@@ -110,8 +110,11 @@ and require `include_bodies=true`. The UTF-8 artifact is capped at 400 KiB and
 must also fit the server's response-envelope limit. {tooliconl}`search` owns
 discovery and pagination.
 
-Each opaque search ref is limited to 8,192 characters. Both MCP consumers
-enforce that bound before token decoding or source discovery, and audit
+Each opaque search ref is limited to 49,152 characters (48 KiB). Linux
+`PATH_MAX` leaves 4,095 path bytes after its trailing NUL; worst-case JSON
+escaping expands those bytes sixfold and base64url adds another four-thirds,
+for 32,760 characters before the versioned envelope. Both MCP consumers
+enforce the ceiling before token decoding or source discovery, and audit
 redaction hashes only a bounded prefix of oversized sensitive inputs.
 
 ### Durable file output

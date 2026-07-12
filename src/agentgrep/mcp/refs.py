@@ -20,12 +20,14 @@ from agentgrep.mcp._library import (
 _REF_PREFIX = "agref1:"
 _CURSOR_PREFIX = "agcur1:"
 
-MAX_RECORD_REF_CHARS = 8192
+MAX_RECORD_REF_CHARS = 48 * 1024
 """Maximum opaque record-ref length accepted at MCP boundaries.
 
-A common Linux ``PATH_MAX`` path expands to less than 5.5 KiB in base64url;
-8 KiB leaves room for the versioned JSON coordinates while bounding decode and
-audit work on untrusted input.
+Linux ``PATH_MAX`` includes the trailing NUL, leaving at most 4,095 path bytes.
+JSON can expand each byte to a six-byte ``\\u00xx`` escape, and base64url then
+expands by four thirds: ``4,095 * 6 * 4 / 3 = 32,760`` characters. The 48 KiB
+ceiling leaves more than 16 KiB for the versioned envelope while still bounding
+decode and audit work on untrusted input.
 """
 
 
