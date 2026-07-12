@@ -17,7 +17,11 @@ from agentgrep.mcp._library import (
     TOOL_ANNOTATIONS,
 )
 from agentgrep.mcp.models import ExportRecordsRequest, ExportRecordsResponse
-from agentgrep.mcp.resolver import PhysicalRecordSelection, resolve_record_refs
+from agentgrep.mcp.resolver import (
+    PhysicalRecordSelection,
+    RecordRefResolverError,
+    resolve_record_refs,
+)
 from agentgrep.record_export import ExportError, render_export
 
 if t.TYPE_CHECKING:
@@ -32,7 +36,10 @@ MAX_INLINE_EXPORT_BYTES = 400 * 1024
 
 def _export_records_sync(request: ExportRecordsRequest) -> ToolResult:
     """Resolve selected records and render one bounded inline artifact."""
-    resolved = resolve_record_refs(request.refs)
+    try:
+        resolved = resolve_record_refs(request.refs)
+    except RecordRefResolverError as exc:
+        raise ToolError(str(exc)) from None
     records: list[SearchRecord] = []
     physical_selections: set[PhysicalRecordSelection] = set()
     for index, item in enumerate(resolved, start=1):
