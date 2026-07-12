@@ -436,6 +436,62 @@ def test_export_protection_discovery_io_failure_is_path_free(
     assert "Traceback" not in error
 
 
+@pytest.mark.parametrize(
+    ("phase", "expected_error"),
+    (
+        ("search", "export source could not be read"),
+        ("discovery", "export source could not be read"),
+        ("render", "export artifact could not be rendered"),
+        ("output", "export output could not be written"),
+    ),
+)
+def test_export_unexpected_failures_are_path_and_body_free(
+    export_home: pathlib.Path,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    phase: str,
+    expected_error: str,
+) -> None:
+    """Unexpected phase failures expose neither store paths nor record bodies."""
+    import agentgrep.record_export as record_export
+
+    monkeypatch.setenv("HOME", str(export_home))
+    monkeypatch.setenv("CODEX_HOME", str(export_home / ".codex"))
+    private_path = export_home / ".codex" / "private-store.jsonl"
+    private_body = "private prompt body"
+    destination = tmp_path / "private-destination.ndjson"
+
+    def fail(*_args: object, **_kwargs: object) -> t.NoReturn:
+        message = f"failed near {private_path}: {private_body}"
+        raise RuntimeError(message)
+
+    if phase == "search":
+        monkeypatch.setattr(cli_render, "run_search_query", fail)
+    elif phase == "discovery":
+        monkeypatch.setattr(cli_render, "discover_sources", fail)
+    elif phase == "render":
+        monkeypatch.setattr(record_export, "render_export", fail)
+    else:
+        monkeypatch.setattr(record_export, "write_export", fail)
+
+    argv = ["export", "bliss", "--agent", "codex"]
+    if phase in {"discovery", "output"}:
+        argv.extend(("-o", str(destination)))
+    parsed = agentgrep.parse_args(argv)
+    assert isinstance(parsed, agentgrep.ExportArgs)
+
+    result = agentgrep.run_export_command(parsed)
+
+    assert result == 2
+    error = capsys.readouterr().err
+    assert expected_error in error
+    assert str(private_path) not in error
+    assert str(destination) not in error
+    assert private_body not in error
+    assert "Traceback" not in error
+
+
 def test_export_stdout_skips_protection_discovery(
     export_home: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
