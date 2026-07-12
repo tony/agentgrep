@@ -1,7 +1,7 @@
 """argparse subcommands and arg-parsing entry points for agentgrep.
 
 This module owns the CLI grammar: the root parser, each subparser
-(``grep``, ``find``, ``ui``), the typed argument dataclasses
+(``grep``, ``find``, ``search``, ``export``, ``ui``), the typed argument dataclasses
 returned by :func:`parse_args`, and the helpers that resolve color mode
 and inject default subcommands.
 
@@ -44,6 +44,7 @@ from agentgrep.records import (
 
 if t.TYPE_CHECKING:
     from agentgrep.query import CompiledQuery, FieldEqNode
+    from agentgrep.record_export import ExportFormat
 
 CaseMode = t.Literal["smart", "ignore", "respect"]
 PatternMode = t.Literal["regex", "fixed", "word"]
@@ -52,6 +53,7 @@ FindTypeFilter = t.Literal["prompts", "history", "sessions", "all"]
 
 __all__ = [
     "CaseMode",
+    "ExportArgs",
     "FindArgs",
     "FindPatternMode",
     "FindTypeFilter",
@@ -170,10 +172,28 @@ class SearchArgs:
 
 
 @dataclasses.dataclass(slots=True)
+class ExportArgs:
+    """Typed arguments for ``agentgrep export``."""
+
+    terms: tuple[str, ...]
+    agents: tuple[AgentName, ...]
+    scope: SearchScope
+    case_sensitive: bool
+    limit: int
+    format: ExportFormat
+    output: str
+    force: bool
+    include_bodies: bool
+    compiled: CompiledQuery | None = None
+    raw_query: str = ""
+
+
+@dataclasses.dataclass(slots=True)
 class ParserBundle:
     """CLI parsers used for root and subcommand help."""
 
     parser: argparse.ArgumentParser
+    export_parser: argparse.ArgumentParser
     find_parser: argparse.ArgumentParser
     grep_parser: argparse.ArgumentParser
     search_parser: argparse.ArgumentParser
@@ -250,6 +270,66 @@ def create_parser(
         help="when to use colors: auto (default), always, or never",
     )
     subparsers = parser.add_subparsers(dest="command")
+
+    export_parser = subparsers.add_parser(
+        "export",
+        help="Export matching records as NDJSON or Markdown",
+        description=(
+            "Export matching normalized records deterministically without modifying source stores."
+        ),
+        formatter_class=formatter_class,
+        color=color_mode != "never",
+    )
+    add_common_agent_options(export_parser)
+    _ = export_parser.add_argument(
+        "terms",
+        nargs="*",
+        metavar="TERM",
+        help="Search terms (combined as AND by default)",
+    )
+    _ = export_parser.add_argument(
+        "--scope",
+        choices=["prompts", "conversations", "all"],
+        dest="scope",
+        help="Search scope: prompts, conversations, or all (default: prompts)",
+    )
+    _ = export_parser.add_argument(
+        "--case-sensitive",
+        action="store_true",
+        help="Force case-sensitive matching",
+    )
+    _ = export_parser.add_argument(
+        "--limit",
+        type=int,
+        default=100,
+        metavar="N",
+        help="Limit exported records to 1-1000 (default: %(default)s)",
+    )
+    _ = export_parser.add_argument(
+        "--format",
+        choices=["ndjson", "markdown"],
+        default="ndjson",
+        help="Export format (default: %(default)s)",
+    )
+    _ = export_parser.add_argument(
+        "-o",
+        "--output",
+        default="-",
+        metavar="FILE",
+        help="Write to FILE, or - for stdout (default: -)",
+    )
+    _ = export_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Replace an existing regular output file",
+    )
+    _ = export_parser.add_argument(
+        "--no-bodies",
+        dest="include_bodies",
+        action="store_false",
+        default=True,
+        help="Exclude record text from the export",
+    )
 
     grep_parser = subparsers.add_parser(
         "grep",
@@ -622,6 +702,7 @@ def create_parser(
 
     return ParserBundle(
         parser=parser,
+        export_parser=export_parser,
         find_parser=find_parser,
         grep_parser=grep_parser,
         search_parser=search_parser,
@@ -717,6 +798,16 @@ def _find_explicit_flags(namespace: argparse.Namespace) -> dict[str, str]:
         flags["agent"] = "--agent"
     if t.cast("str | None", namespace.find_type) is not None:
         flags["type"] = "--type"
+    return flags
+
+
+def _export_explicit_flags(namespace: argparse.Namespace) -> dict[str, str]:
+    """Map query-field names to colliding explicit export flags."""
+    flags: dict[str, str] = {}
+    if t.cast("list[str]", namespace.agent):
+        flags["agent"] = "--agent"
+    if t.cast("str | None", namespace.scope) is not None:
+        flags["scope"] = "--scope"
     return flags
 
 
@@ -951,7 +1042,7 @@ def _check_for_mangled_field_predicate(
 
 def parse_args(
     argv: cabc.Sequence[str] | None = None,
-) -> FindArgs | UIArgs | GrepArgs | SearchArgs | None:
+) -> ExportArgs | FindArgs | UIArgs | GrepArgs | SearchArgs | None:
     """Parse CLI arguments into typed dataclasses."""
     color_mode = normalize_color_mode(argv)
     effective_argv = list(argv) if argv is not None else list(sys.argv[1:])
@@ -976,6 +1067,19 @@ def parse_args(
         )
 
     agents = parse_agents(t.cast("list[str]", namespace.agent))
+    if command == "export":
+        terms = t.cast("list[str]", namespace.terms)
+        if not terms:
+            with configured_color_environment(color_mode):
+                bundle.export_parser.print_help()
+            return None
+        return _build_export_args(
+            namespace,
+            agents=agents,
+            color_mode=color_mode,
+            bundle=bundle,
+        )
+
     output_mode = parse_output_mode(namespace)
 
     if command == "grep":
@@ -1061,6 +1165,48 @@ def parse_args(
         progress_mode=t.cast("ProgressMode", namespace.progress),
         compiled=find_compiled,
         raw_query=raw_pattern or "",
+    )
+
+
+def _build_export_args(
+    namespace: argparse.Namespace,
+    *,
+    agents: tuple[AgentName, ...],
+    color_mode: ColorMode,
+    bundle: ParserBundle,
+) -> ExportArgs:
+    """Build :class:`ExportArgs` from a parsed argparse namespace."""
+    limit = t.cast("int", namespace.limit)
+    if limit < 1 or limit > 1000:
+        with configured_color_environment(color_mode):
+            bundle.export_parser.error("--limit must be between 1 and 1000")
+    output = t.cast("str", namespace.output)
+    force = t.cast("bool", namespace.force)
+    if force and output == "-":
+        with configured_color_environment(color_mode):
+            bundle.export_parser.error("--force requires a file output")
+
+    terms_list = t.cast("list[str]", namespace.terms)
+    compiled, residual_terms, query_fields = _maybe_compile_query(
+        terms_list,
+        bundle=bundle,
+        color_mode=color_mode,
+        subparser=bundle.export_parser,
+        explicit_flags=_export_explicit_flags(namespace),
+        case_sensitive=t.cast("bool", namespace.case_sensitive),
+    )
+    return ExportArgs(
+        terms=residual_terms,
+        agents=agents,
+        scope=_effective_search_scope(namespace, query_fields=query_fields),
+        case_sensitive=t.cast("bool", namespace.case_sensitive),
+        limit=limit,
+        format=t.cast("ExportFormat", namespace.format),
+        output=output,
+        force=force,
+        include_bodies=t.cast("bool", namespace.include_bodies),
+        compiled=compiled,
+        raw_query=" ".join(terms_list),
     )
 
 

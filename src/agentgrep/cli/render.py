@@ -9,8 +9,10 @@ in :mod:`agentgrep.cli.renderers`.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import json
+import os
 import pathlib
 import sys
 
@@ -18,7 +20,7 @@ from agentgrep import run_ui
 from agentgrep._engine import iter_find_events, iter_search_events
 from agentgrep._engine.orchestration import run_search_query
 from agentgrep._text import AnsiColors, format_display_path
-from agentgrep.cli.parser import FindArgs, GrepArgs, SearchArgs, UIArgs
+from agentgrep.cli.parser import ExportArgs, FindArgs, GrepArgs, SearchArgs, UIArgs
 from agentgrep.cli.renderers import (
     GrepSummary,
     _compile_search_patterns,
@@ -67,6 +69,7 @@ __all__ = [
     "iter_match_lines",
     "print_find_results",
     "print_grep_results",
+    "run_export_command",
     "run_find_command",
     "run_grep_command",
     "run_search_command",
@@ -99,6 +102,95 @@ def _launch_ui(
         )
     except UiQueryTooLongError as error:
         raise SystemExit(str(error)) from None
+
+
+def _write_export_stdout(text: str) -> None:
+    """Write and flush every export byte, including after short writes."""
+    payload = text.encode("utf-8")
+    buffer = getattr(sys.stdout, "buffer", None)
+    if buffer is None:
+        offset = 0
+        while offset < len(text):
+            written = sys.stdout.write(text[offset:])
+            if written <= 0:
+                raise OSError
+            offset += written
+    else:
+        offset = 0
+        while offset < len(payload):
+            written = buffer.write(payload[offset:])
+            if written is None or written <= 0:
+                raise OSError
+            offset += written
+    sys.stdout.flush()
+
+
+def _write_export_error(message: str) -> None:
+    """Emit one path-free export diagnostic without masking the failure."""
+    with contextlib.suppress(OSError, ValueError):
+        sys.stderr.write(f"error: {message}\n")
+        sys.stderr.flush()
+
+
+def _silence_broken_stdout() -> None:
+    """Prevent interpreter shutdown from flushing a failed stdout again."""
+    with contextlib.suppress(AttributeError, OSError, ValueError):
+        stdout_fd = sys.stdout.fileno()
+        null_fd = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(null_fd, stdout_fd)
+        finally:
+            os.close(null_fd)
+
+
+def run_export_command(args: ExportArgs) -> int:
+    """Execute ``agentgrep export`` over the shared search engine."""
+    from agentgrep.record_export import ExportError, render_export, write_export
+
+    query = SearchQuery(
+        terms=args.terms,
+        scope=args.scope,
+        any_term=False,
+        regex=False,
+        case_sensitive=args.case_sensitive,
+        agents=args.agents,
+        limit=args.limit,
+        compiled=args.compiled,
+    )
+    try:
+        records = run_search_query(
+            pathlib.Path.home(),
+            query,
+            progress=noop_search_progress(),
+            control=SearchControl(),
+        )
+    except OSError:
+        _write_export_error("export source could not be read")
+        return 2
+    try:
+        artifact = render_export(
+            records,
+            format=args.format,
+            include_bodies=args.include_bodies,
+        )
+        if args.output == "-":
+            _write_export_stdout(artifact.text)
+        else:
+            _ = write_export(
+                artifact,
+                args.output,
+                force=args.force,
+                protected_paths=(record.path for record in records),
+            )
+    except ExportError as exc:
+        _write_export_error(str(exc))
+        return 2
+    except OSError, UnicodeError:
+        if args.output == "-":
+            _silence_broken_stdout()
+        _write_export_error("export output could not be written")
+        return 2
+    return 0 if records else 1
 
 
 def print_find_results(records: list[FindRecord], args: FindArgs) -> None:
