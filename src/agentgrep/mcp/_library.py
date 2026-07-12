@@ -61,6 +61,10 @@ CatalogAgentSelector = t.Literal[
 SearchScopeName = t.Literal["prompts", "conversations", "all"]
 
 SERVER_VERSION = "0.1.0"
+#: Byte ceiling shared by the response middleware and tools that must avoid
+#: producing a response which the middleware can only truncate. A typical
+#: record is about 1 KiB, so 512 KiB retains a useful bounded result slice.
+DEFAULT_RESPONSE_LIMIT_BYTES = 512 * 1024
 KNOWN_ADAPTERS: tuple[str, ...] = (
     "codex.history_json.v1",
     "codex.history_jsonl.v1",

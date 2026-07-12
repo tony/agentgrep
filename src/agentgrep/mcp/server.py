@@ -7,7 +7,7 @@ from fastmcp.server.middleware.error_handling import ErrorHandlingMiddleware
 from fastmcp.server.middleware.timing import TimingMiddleware
 
 from agentgrep._engine.runtime import SearchRuntime
-from agentgrep.mcp._library import SERVER_VERSION
+from agentgrep.mcp._library import DEFAULT_RESPONSE_LIMIT_BYTES, SERVER_VERSION
 from agentgrep.mcp.instructions import _build_instructions
 from agentgrep.mcp.middleware import (
     AgentgrepAuditMiddleware,
@@ -16,11 +16,6 @@ from agentgrep.mcp.middleware import (
 from agentgrep.mcp.prompts import register_prompts
 from agentgrep.mcp.resources import register_resources
 from agentgrep.mcp.tools import register_tools
-
-#: Byte ceiling for response truncation. Sized to fit a generous slice of
-#: prompt/history records (a typical record is ~1 KB; 512 KB allows a few
-#: hundred records before truncation fires).
-DEFAULT_RESPONSE_LIMIT_BYTES = 512 * 1024
 
 
 def build_mcp_server() -> FastMCP:

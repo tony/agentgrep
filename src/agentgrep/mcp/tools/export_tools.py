@@ -5,10 +5,17 @@ from __future__ import annotations
 import asyncio
 import typing as t
 
+import pydantic_core
 from fastmcp.exceptions import ToolError
+from fastmcp.tools.base import ToolResult
+from mcp.types import TextContent
 from pydantic import Field, ValidationError
 
-from agentgrep.mcp._library import READONLY_TAGS, TOOL_ANNOTATIONS
+from agentgrep.mcp._library import (
+    DEFAULT_RESPONSE_LIMIT_BYTES,
+    READONLY_TAGS,
+    TOOL_ANNOTATIONS,
+)
 from agentgrep.mcp.models import ExportRecordsRequest, ExportRecordsResponse
 from agentgrep.mcp.resolver import resolve_record_refs
 from agentgrep.record_export import ExportError, render_export
@@ -23,7 +30,7 @@ MAX_INLINE_EXPORT_BYTES = 400 * 1024
 """Maximum UTF-8 artifact size returned by ``export_records``."""
 
 
-def _export_records_sync(request: ExportRecordsRequest) -> ExportRecordsResponse:
+def _export_records_sync(request: ExportRecordsRequest) -> ToolResult:
     """Resolve selected records and render one bounded inline artifact."""
     resolved = resolve_record_refs(request.refs)
     records: list[SearchRecord] = []
@@ -50,14 +57,21 @@ def _export_records_sync(request: ExportRecordsRequest) -> ExportRecordsResponse
     if artifact.byte_count > MAX_INLINE_EXPORT_BYTES:
         message = "export artifact exceeds the 400 KiB inline limit"
         raise ToolError(message)
-    return ExportRecordsResponse(
+    response = ExportRecordsResponse(
         format=artifact.format,
         selection=artifact.selection,
         include_bodies=request.include_bodies,
         record_count=artifact.record_count,
         byte_count=artifact.byte_count,
-        artifact=artifact.text,
     )
+    result = ToolResult(
+        content=[TextContent(type="text", text=artifact.text)],
+        structured_content=response.model_dump(mode="json"),
+    )
+    if len(pydantic_core.to_json(result, fallback=str)) > DEFAULT_RESPONSE_LIMIT_BYTES:
+        message = "export artifact exceeds the MCP response limit"
+        raise ToolError(message)
+    return result
 
 
 def register(mcp: FastMCP) -> None:
@@ -67,7 +81,11 @@ def register(mcp: FastMCP) -> None:
         name="export_records",
         tags=READONLY_TAGS | {"export"},
         annotations=TOOL_ANNOTATIONS,
-        description="Render selected search-result refs as bounded NDJSON or Markdown.",
+        output_schema=ExportRecordsResponse.model_json_schema(),
+        description=(
+            "Return selected refs as one NDJSON or Markdown TextContent artifact "
+            "with structured export metadata."
+        ),
     )
     async def export_records_tool(
         # FastMCP logs pre-handler validation inputs. Publish the exact wire
@@ -97,7 +115,7 @@ def register(mcp: FastMCP) -> None:
             bool,
             Field(description="Include prompt/history text in the artifact."),
         ] = False,
-    ) -> ExportRecordsResponse:
+    ) -> ToolResult:
         try:
             request = ExportRecordsRequest(
                 refs=refs,
