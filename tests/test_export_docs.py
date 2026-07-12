@@ -155,6 +155,20 @@ def test_export_docs_shim_registers_bounded_public_signature() -> None:
     assert metadata.annotations.openWorldHint is False
 
 
+async def test_docs_inspect_result_ref_schema_matches_runtime() -> None:
+    """The docs-only ref bound stays byte-for-byte aligned with the tool."""
+    from agentgrep.mcp import build_mcp_server
+    from docs._ext import agentgrep_fastmcp
+
+    hints = t.get_type_hints(agentgrep_fastmcp.inspect_result, include_extras=True)
+    docs_schema = TypeAdapter(hints["ref"]).json_schema()
+    runtime_tool = await build_mcp_server().get_tool("inspect_result")
+
+    assert runtime_tool is not None
+    assert docs_schema == runtime_tool.parameters["properties"]["ref"]
+    assert docs_schema["maxLength"] == 48 * 1024
+
+
 def test_documented_markdown_runtime_emits_schema_version_once() -> None:
     """The documented Markdown format carries its schema contract at runtime."""
     from agentgrep.record_export import render_export
