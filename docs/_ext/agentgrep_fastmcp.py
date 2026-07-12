@@ -16,6 +16,7 @@ from pydantic import Field
 from agentgrep.mcp import (
     AgentSelector,
     CatalogAgentSelector,
+    ExportRecordsResponse,
     FindToolResponse,
     SearchScopeName,
     SearchToolResponse,
@@ -106,6 +107,44 @@ t.cast(t.Any, search).__fastmcp__ = types.SimpleNamespace(
     title="Search",
     tags=READONLY_TAGS | {"search"},
     annotations=None,
+)
+
+
+async def export_records(
+    refs: t.Annotated[
+        list[str],
+        Field(
+            min_length=1,
+            max_length=20,
+            description="One to 20 opaque refs returned by search.",
+        ),
+    ],
+    format: t.Annotated[  # noqa: A002 - public MCP argument name.
+        t.Literal["ndjson", "markdown"],
+        Field(description="Inline artifact format."),
+    ] = "ndjson",
+    selection: t.Annotated[
+        t.Literal["records", "thread"],
+        Field(description="Export flat records or one observed thread."),
+    ] = "records",
+    include_bodies: t.Annotated[
+        bool,
+        Field(description="Include prompt and history text in the artifact."),
+    ] = False,
+) -> ExportRecordsResponse:
+    """Return selected search refs as one bounded inline artifact."""
+    raise NotImplementedError(DOCS_ONLY_MESSAGE)
+
+
+t.cast(t.Any, export_records).__fastmcp__ = types.SimpleNamespace(
+    name="export_records",
+    title="Export Records",
+    tags=READONLY_TAGS | {"export"},
+    annotations=types.SimpleNamespace(
+        readOnlyHint=True,
+        idempotentHint=True,
+        openWorldHint=False,
+    ),
 )
 
 

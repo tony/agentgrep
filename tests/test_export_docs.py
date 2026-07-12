@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+import inspect
 import pathlib
 import re
+import typing as t
+
+from pydantic import TypeAdapter
+
+from agentgrep.mcp import ExportRecordsResponse
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -113,6 +119,47 @@ def test_export_mcp_docs_define_bounded_inline_contract() -> None:
 
     missing = _missing_terms(tools, required)
     assert not missing, f"docs/mcp/tools.md is missing {missing!r}"
+
+
+def test_export_docs_shim_registers_bounded_public_signature() -> None:
+    """The collector shim mirrors the bounded public MCP schema and metadata."""
+    from docs._ext import agentgrep_fastmcp
+
+    tool = agentgrep_fastmcp.export_records
+    parameters = inspect.signature(tool).parameters
+    hints = t.get_type_hints(tool, include_extras=True)
+    refs_schema = TypeAdapter(hints["refs"]).json_schema()
+    format_schema = TypeAdapter(hints["format"]).json_schema()
+    selection_schema = TypeAdapter(hints["selection"]).json_schema()
+    metadata = t.cast(t.Any, tool).__fastmcp__
+
+    assert tuple(parameters) == ("refs", "format", "selection", "include_bodies")
+    assert refs_schema["type"] == "array"
+    assert refs_schema["items"] == {"type": "string"}
+    assert refs_schema["minItems"] == 1
+    assert refs_schema["maxItems"] == 20
+    assert format_schema["enum"] == ["ndjson", "markdown"]
+    assert selection_schema["enum"] == ["records", "thread"]
+    assert parameters["format"].default == "ndjson"
+    assert parameters["selection"].default == "records"
+    assert parameters["include_bodies"].default is False
+    assert hints["return"] is ExportRecordsResponse
+    assert metadata.name == "export_records"
+    assert metadata.title == "Export Records"
+    assert metadata.tags == {"agentgrep", "export", "readonly"}
+    assert metadata.annotations.readOnlyHint is True
+    assert metadata.annotations.idempotentHint is True
+    assert metadata.annotations.openWorldHint is False
+
+
+def test_export_models_are_in_public_docs_reference_inventory() -> None:
+    """Both request and response models render through config and API reference."""
+    config = _read_text("docs/conf.py")
+    reference = _read_text("docs/mcp/reference.md")
+
+    for model_name in ("ExportRecordsRequest", "ExportRecordsResponse"):
+        assert f'"{model_name}"' in config
+        assert f".. autoclass:: agentgrep.mcp.{model_name}" in reference
 
 
 def test_export_adr_pins_portability_privacy_and_fidelity() -> None:
