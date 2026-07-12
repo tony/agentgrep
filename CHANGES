@@ -49,9 +49,9 @@ $ uvx --from 'agentgrep' --prerelease allow python
 Search results now share one identity vocabulary across terminal and agent
 surfaces: content handles compare normalized content, record handles
 distinguish stored turns, and thread handles group records only when the
-backend exposes a defensible conversation anchor. In particular, repeated
-content can share one content handle while stored turns keep separate record
-handles. Persisted MCP refs remain inspectable; newly emitted refs use a
+backend exposes a defensible conversation anchor. In particular,
+repeated content can share one content handle while stored turns keep separate
+record handles. Persisted MCP refs remain inspectable; newly emitted refs use a
 position-aware fingerprint when the source exposes a defensible coordinate.
 Canonical handles sit alongside them.
 
