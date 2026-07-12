@@ -37,6 +37,7 @@ from agentgrep._engine.planning import (
     SourceStrategy,
     SourceTask,
     build_logical_search_plan,
+    build_source_authority_plan,
 )
 from agentgrep._engine.profiling import EngineProfiler, use_engine_profiler
 
@@ -158,6 +159,7 @@ def _plan(
             ),
         ),
         decisions=(),
+        source_authority=build_source_authority_plan((source,)),
     )
 
 
@@ -200,6 +202,7 @@ def _multi_plan(
             for source in sources
         ),
         decisions=(),
+        source_authority=build_source_authority_plan(sources),
     )
 
 
@@ -1918,6 +1921,60 @@ def test_select_execution_driver_can_schedule_bounded_text_search_with_workers(
     )
 
     assert isinstance(driver, FrontierExecutionDriver)
+
+
+class CodexAuthorityDriverCase(t.NamedTuple):
+    """One limit shape and its authority-aware execution driver."""
+
+    test_id: str
+    limit: int | None
+    expected_driver: type[InlineExecutionDriver] | type[FrontierExecutionDriver]
+
+
+CODEX_AUTHORITY_DRIVER_CASES: tuple[CodexAuthorityDriverCase, ...] = (
+    CodexAuthorityDriverCase(
+        test_id="unlimited-keeps-streaming-inline",
+        limit=None,
+        expected_driver=InlineExecutionDriver,
+    ),
+    CodexAuthorityDriverCase(
+        test_id="finite-uses-resolving-frontier",
+        limit=2,
+        expected_driver=FrontierExecutionDriver,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    CodexAuthorityDriverCase._fields,
+    [pytest.param(*case, id=case.test_id) for case in CODEX_AUTHORITY_DRIVER_CASES],
+)
+def test_select_execution_driver_limits_codex_authority_buffering(
+    test_id: str,
+    limit: int | None,
+    expected_driver: type[InlineExecutionDriver] | type[FrontierExecutionDriver],
+    tmp_path: pathlib.Path,
+) -> None:
+    """Only finite authority plans need the fully buffered frontier."""
+    _ = test_id
+    query = _query(limit=limit)
+    plan = _multi_plan(
+        query,
+        (
+            _source(tmp_path / "rollout.jsonl"),
+            _source(
+                tmp_path / "state_5.sqlite",
+                store="codex.state_db",
+                adapter_id="codex.state_sqlite.v1",
+                path_kind="sqlite_db",
+                source_kind="sqlite",
+            ),
+        ),
+    )
+
+    driver = execution.select_execution_driver(query, plan)
+
+    assert isinstance(driver, expected_driver)
 
 
 def test_limit_policy_records_source_order_frontier_satisfaction() -> None:

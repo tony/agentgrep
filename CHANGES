@@ -42,6 +42,21 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### Fixes
+
+#### Reliable Codex model and conversation identity (#112)
+
+Codex rollout model discovery now scans complete records until the first valid
+model-bearing turn context, including when earlier content exceeds the former
+fixed prefix. The provider id from session metadata remains a fallback only
+when no such turn context exists.
+
+Conversation searches now treat `codex.state_db` as an index and fallback for
+matching canonical rollout prompts. Candidate identity is resolved before
+ranking and limits, while state-only metadata matches, explicit physical-store
+filters, `--no-dedupe`, and distinct previews remain available. Async partial
+answers also retain resolved fallback records and their terminal event.
+
 ## agentgrep 0.1.0a33 (2026-07-05)
 
 agentgrep 0.1.0a33 threads project and workspace context through search

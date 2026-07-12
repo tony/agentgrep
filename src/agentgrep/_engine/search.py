@@ -218,12 +218,11 @@ async def aiter_search_events(
 
     def put_from_worker(
         item: _events.SearchEvent | _AsyncSearchDone | _AsyncSearchError,
-        *,
-        force: bool = False,
     ) -> None:
+        # ``active_control`` stops producer work; only ``delivery_closed``
+        # stops transport. The producer still owns partial-result resolution
+        # and the terminal event after an answer-now request.
         while not delivery_closed.is_set():
-            if not force and active_control.answer_now_requested():
-                return
             future = asyncio.run_coroutine_threadsafe(event_queue.put(item), loop)
             try:
                 future.result(timeout=0.05)
@@ -242,12 +241,10 @@ async def aiter_search_events(
                 runtime=runtime,
             ):
                 put_from_worker(event)
-                if active_control.answer_now_requested():
-                    break
         except BaseException as error:
-            put_from_worker(_AsyncSearchError(error=error), force=True)
+            put_from_worker(_AsyncSearchError(error=error))
         finally:
-            put_from_worker(_AsyncSearchDone(), force=True)
+            put_from_worker(_AsyncSearchDone())
 
     worker_task = asyncio.create_task(asyncio.to_thread(run_worker))
     try:

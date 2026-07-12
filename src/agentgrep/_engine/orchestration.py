@@ -374,6 +374,7 @@ def collect_search_records(
         PhysicalSearchPlan,
         SourceTask,
         build_logical_search_plan,
+        build_source_authority_plan,
     )
 
     plan = PhysicalSearchPlan(
@@ -390,6 +391,7 @@ def collect_search_records(
             for source in sources
         ),
         decisions=(),
+        source_authority=build_source_authority_plan(sources),
     )
     return collect_search_records_from_plan(
         query,

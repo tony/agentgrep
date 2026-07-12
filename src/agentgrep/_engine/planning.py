@@ -208,12 +208,61 @@ class SourceTask:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class SourceAuthorityPlan:
+    """Selected source families that may need candidate-level resolution."""
+
+    codex_rollout_selected: bool = False
+    codex_state_selected: bool = False
+
+    @property
+    def resolves_codex_candidates(self) -> bool:
+        """Return whether matched Codex rollout/state candidates may overlap.
+
+        Returns
+        -------
+        bool
+            ``True`` when both physical source families were selected.
+        """
+        return self.codex_rollout_selected and self.codex_state_selected
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class PhysicalSearchPlan:
     """Executable source-task plan consumed by search drivers."""
 
     logical: LogicalSearchPlan
     tasks: tuple[SourceTask, ...]
     decisions: tuple[PlannerDecision, ...]
+    source_authority: SourceAuthorityPlan = dataclasses.field(
+        default_factory=SourceAuthorityPlan,
+    )
+
+
+def build_source_authority_plan(
+    sources: cabc.Iterable[SourceHandle],
+) -> SourceAuthorityPlan:
+    """Describe candidate authority families in query-selected sources.
+
+    Parameters
+    ----------
+    sources : collections.abc.Iterable of SourceHandle
+        Sources that survived scope, source predicates, and prefiltering.
+
+    Returns
+    -------
+    SourceAuthorityPlan
+        Immutable source-family presence flags. No filesystem probes or
+        transcript parsing are performed.
+    """
+    selected = tuple(sources)
+    return SourceAuthorityPlan(
+        codex_rollout_selected=any(
+            source.agent == "codex" and source.store == "codex.sessions" for source in selected
+        ),
+        codex_state_selected=any(
+            source.agent == "codex" and source.store == "codex.state_db" for source in selected
+        ),
+    )
 
 
 def build_query_request(query: SearchQuery) -> QueryRequest:
@@ -324,6 +373,7 @@ def build_physical_search_plan(
             logical=logical,
             tasks=tuple(_source_task(source, "metadata_only") for source in scoped_sources),
             decisions=tuple(decisions),
+            source_authority=build_source_authority_plan(scoped_sources),
         )
 
     planned_sources = scoped_sources
@@ -437,6 +487,7 @@ def build_physical_search_plan(
             for source in ordered_sources
         ),
         decisions=tuple(decisions),
+        source_authority=build_source_authority_plan(ordered_sources),
     )
 
 

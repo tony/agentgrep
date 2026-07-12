@@ -348,4 +348,4 @@ async def test_aiter_search_events_finishes_when_control_is_already_requested(
             )
         ]
 
-    assert out == []
+    assert [event.type for event in out] == ["search_started", "search_finished"]

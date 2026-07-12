@@ -1995,6 +1995,7 @@ def parse_claude_store_db(
 
 _CodexThreadRow = tuple[
     object,  # id
+    object,  # rollout_path
     object,  # first_user_message
     object,  # preview
     object,  # title
@@ -2012,12 +2013,12 @@ def parse_codex_state_db(
 ) -> cabc.Iterator[SearchRecord]:
     """Parse opt-in Codex ``state_5.sqlite`` prompt-bearing fields.
 
-    A ``threads`` row carries the thread's ``model`` slug and its git context
-    next to the text columns, so both records a thread yields are identified
-    without re-reading the rollout file. ``git_origin_url`` is a remote URL and
-    lands on :attr:`~agentgrep.records.RecordOrigin.remote`; ``git_sha`` has no
-    origin field and is left on the row. Every one of those columns arrived in
-    a migration, so each is projected through
+    A ``threads`` row carries its canonical ``rollout_path``, ``model`` slug,
+    and git context next to the text columns, so both records a thread yields
+    are identified without re-reading the rollout file. ``git_origin_url`` is
+    a remote URL and lands on :attr:`~agentgrep.records.RecordOrigin.remote`;
+    ``git_sha`` has no origin field and is left on the row. Every one of those
+    columns arrived in a migration, so each is projected through
     :func:`~agentgrep.readers.sqlite_column_expr` and an older database keeps
     working with ``NULL``.
 
@@ -2031,6 +2032,7 @@ def parse_codex_state_db(
         if "threads" in tables:
             columns = sqlite_column_names(connection, "threads")
             if {"id", "first_user_message"}.issubset(columns):
+                rollout_path_expr = sqlite_column_expr(columns, "rollout_path")
                 preview_expr = sqlite_column_expr(columns, "preview")
                 title_expr = sqlite_column_expr(columns, "title")
                 updated_expr = sqlite_column_expr(columns, "updated_at_ms")
@@ -2041,7 +2043,7 @@ def parse_codex_state_db(
                 thread_rows = t.cast(
                     "cabc.Iterable[_CodexThreadRow]",
                     connection.execute(
-                        "SELECT id, first_user_message, "
+                        f"SELECT id, {rollout_path_expr}, first_user_message, "
                         f"{preview_expr}, {title_expr}, {updated_expr}, "
                         f"{model_expr}, {cwd_expr}, {branch_expr}, {remote_expr} "
                         "FROM threads",
@@ -2049,6 +2051,7 @@ def parse_codex_state_db(
                 )
                 for (
                     thread_id,
+                    rollout_path_raw,
                     first_message,
                     preview,
                     title,
@@ -2059,6 +2062,9 @@ def parse_codex_state_db(
                     remote_raw,
                 ) in thread_rows:
                     conversation_id = as_optional_str(thread_id)
+                    rollout_path = decode_sqlite_value(rollout_path_raw) or as_optional_str(
+                        rollout_path_raw,
+                    )
                     thread_title = as_optional_str(title)
                     timestamp = _unix_millis_to_isoformat(updated_at)
                     model = as_optional_str(model_raw)
@@ -2069,6 +2075,9 @@ def parse_codex_state_db(
                     )
                     text = decode_sqlite_value(first_message) or as_optional_str(first_message)
                     if text:
+                        metadata: dict[str, object] = {"field": "first_user_message"}
+                        if rollout_path is not None:
+                            metadata["rollout_path"] = rollout_path
                         yield SearchRecord(
                             kind="prompt",
                             agent=source.agent,
@@ -2082,10 +2091,14 @@ def parse_codex_state_db(
                             model=model,
                             session_id=conversation_id,
                             conversation_id=conversation_id,
+                            metadata=metadata,
                             origin=origin,
                         )
                     preview_text = decode_sqlite_value(preview) or as_optional_str(preview)
                     if preview_text and preview_text != text:
+                        metadata = {"field": "preview"}
+                        if rollout_path is not None:
+                            metadata["rollout_path"] = rollout_path
                         yield SearchRecord(
                             kind="history",
                             agent=source.agent,
@@ -2099,7 +2112,7 @@ def parse_codex_state_db(
                             model=model,
                             session_id=conversation_id,
                             conversation_id=conversation_id,
-                            metadata={"field": "preview"},
+                            metadata=metadata,
                             origin=origin,
                         )
         if "agent_jobs" in tables:

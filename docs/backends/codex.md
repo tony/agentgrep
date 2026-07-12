@@ -164,6 +164,15 @@ the same database stay origin-less: the shipped table has no `thread_id`
 column to reach a `threads` row through. The database is reachable at
 `--scope conversations`, not at the default prompt scope.
 
+The state database is an index and fallback, not a second canonical
+transcript. When a matching `first_user_message` row and a matching rollout
+prompt have the same text and identify the same conversation by exact rollout
+path or thread id, agentgrep keeps the rollout result. Resolution happens
+across matching candidates before ranking and limits, so index-only matches
+such as a state-database title, model, or working directory remain searchable.
+Explicit store, path, and adapter filters still select the physical state row;
+`--no-dedupe` and genuinely different state previews remain unchanged.
+
 {storage:storeref}`codex.history` carries no project context in any shape
 Codex has shipped: the JSONL rows are `session_id`, `ts`, and `text`, and
 the legacy JSON rows are `command` and `timestamp`. That store is

@@ -16,7 +16,7 @@ from agentgrep._engine.orchestration import (
     search_record_sort_key,
     source_matches_scope,
 )
-from agentgrep._engine.planning import PhysicalSearchPlan, SourceTask
+from agentgrep._engine.planning import PhysicalSearchPlan, SourceAuthorityPlan, SourceTask
 from agentgrep._engine.source_filters import source_may_match_query
 from agentgrep.progress import SearchControl, SearchProgress, noop_search_progress
 from agentgrep.readers import _record_engine_profile_sample
@@ -127,12 +127,27 @@ class InlineExecutionDriver:
         runtime: SearchRuntime | None = None,
     ) -> cabc.Iterator[SearchExecutionEvent]:
         """Yield internal search execution events for ``plan``."""
+        if (
+            query.limit is not None
+            and query.dedupe
+            and plan.source_authority.resolves_codex_candidates
+        ):
+            yield from FrontierExecutionDriver().iter_search_plan(
+                query,
+                plan,
+                progress=progress,
+                control=control,
+                runtime=runtime,
+            )
+            return
         active_progress = noop_search_progress() if progress is None else progress
         active_control = SearchControl() if control is None else control
         tasks = plan.tasks
         total = len(tasks)
         deduped: dict[tuple[str, str, str, str, str], SearchRecord] = {}
         raw_count = 0
+        canonical_authority_keys: set[_CodexAuthorityKey] = set()
+        pending_state_records: list[tuple[SearchRecord, tuple[_CodexAuthorityKey, ...]]] = []
         prompt_history_agents = prompt_history_agents_for_sources(task.source for task in tasks)
 
         def current_count() -> int:
@@ -140,9 +155,17 @@ class InlineExecutionDriver:
 
         def accept_matching_record(
             record: SearchRecord,
+            *,
+            resolve_authority: bool = True,
         ) -> ExecutionRecordEmitted | None:
             nonlocal raw_count
             if query.dedupe:
+                if resolve_authority and plan.source_authority.resolves_codex_candidates:
+                    canonical_authority_keys.update(_codex_rollout_authority_keys(record))
+                    state_keys = _codex_state_authority_keys(record)
+                    if state_keys:
+                        pending_state_records.append((record, state_keys))
+                        return None
                 dedupe_key = record_dedupe_key(record)
                 if dedupe_key in deduped:
                     return None
@@ -208,6 +231,13 @@ class InlineExecutionDriver:
                 matches_seen=result.matches_seen,
             )
 
+        for record, state_keys in pending_state_records:
+            if any(key in canonical_authority_keys for key in state_keys):
+                continue
+            emitted = accept_matching_record(record, resolve_authority=False)
+            if emitted is not None:
+                yield emitted
+
 
 class FrontierExecutionDriver:
     """Concurrent source-task executor with deterministic top-K merging."""
@@ -232,7 +262,7 @@ class FrontierExecutionDriver:
         if total == 0:
             return
 
-        frontier = _FrontierState(query)
+        frontier = _FrontierState(query, plan.source_authority)
         submitted_count = 0
         completed_count = 0
         skipped_count = 0
@@ -252,6 +282,7 @@ class FrontierExecutionDriver:
                 control=active_control,
                 scheduler_started_at=scheduler_started_at,
                 max_workers=max_workers,
+                source_authority=plan.source_authority,
                 runtime=runtime,
             )
             return
@@ -262,6 +293,7 @@ class FrontierExecutionDriver:
                 progress=active_progress,
                 control=active_control,
                 scheduler_started_at=scheduler_started_at,
+                source_authority=plan.source_authority,
                 runtime=runtime,
             )
             return
@@ -529,11 +561,12 @@ def _iter_search_plan_whole_sources(
     control: SearchControl,
     scheduler_started_at: float,
     max_workers: int,
+    source_authority: SourceAuthorityPlan,
     runtime: SearchRuntime | None = None,
 ) -> cabc.Iterator[SearchExecutionEvent]:
     """Yield search events by scheduling whole-source scan results."""
     total = len(tasks)
-    frontier = _FrontierState(query)
+    frontier = _FrontierState(query, source_authority)
     submitted_count = 0
     completed_count = 0
     skipped_count = 0
@@ -662,11 +695,12 @@ def _iter_search_plan_single_worker_batches(
     progress: SearchProgress,
     control: SearchControl,
     scheduler_started_at: float,
+    source_authority: SourceAuthorityPlan,
     runtime: SearchRuntime | None = None,
 ) -> cabc.Iterator[SearchExecutionEvent]:
     """Yield search events by consuming source batches on the owner thread."""
     total = len(tasks)
-    frontier = _FrontierState(query)
+    frontier = _FrontierState(query, source_authority)
     cache = runtime.source_scan_cache if runtime is not None else None
     submitted_count = 0
     completed_count = 0
@@ -881,15 +915,30 @@ def _scan_source_task_to_queue(
 class _FrontierState:
     """Owner-thread state for deterministic top-K result selection."""
 
-    def __init__(self, query: SearchQuery) -> None:
+    def __init__(
+        self,
+        query: SearchQuery,
+        source_authority: SourceAuthorityPlan | None = None,
+    ) -> None:
         self._query = query
+        self._source_authority = (
+            SourceAuthorityPlan() if source_authority is None else source_authority
+        )
         self._deduped: dict[tuple[str, str, str, str, str], SearchRecord] = {}
         self._records: list[SearchRecord] = []
+        self._canonical_authority_keys: set[_CodexAuthorityKey] = set()
 
     def add_records(self, records: cabc.Iterable[SearchRecord]) -> None:
         """Merge source-local candidates into the global frontier."""
         if self._query.dedupe:
             for record in records:
+                if self._source_authority.resolves_codex_candidates:
+                    # Authority evidence belongs to the matching physical
+                    # candidate. Generic dedupe may replace that record with a
+                    # newer copy before cross-store resolution runs.
+                    self._canonical_authority_keys.update(
+                        _codex_rollout_authority_keys(record),
+                    )
                 key = record_dedupe_key(record)
                 current = self._deduped.get(key)
                 if current is None or search_record_sort_key(
@@ -902,6 +951,15 @@ class _FrontierState:
     def records(self) -> tuple[SearchRecord, ...]:
         """Return accepted records in final newest-first order."""
         records = list(self._deduped.values()) if self._query.dedupe else list(self._records)
+        if self._query.dedupe and self._source_authority.resolves_codex_candidates:
+            records = [
+                record
+                for record in records
+                if not any(
+                    key in self._canonical_authority_keys
+                    for key in _codex_state_authority_keys(record)
+                )
+            ]
         records.sort(key=search_record_sort_key, reverse=True)
         if self._query.limit is not None:
             records = records[: self._query.limit]
@@ -912,8 +970,43 @@ class _FrontierState:
         """Return whether the query limit has enough accepted candidates."""
         if self._query.limit is None:
             return False
+        if self._source_authority.resolves_codex_candidates:
+            return False
         accepted_count = len(self._deduped) if self._query.dedupe else len(self._records)
         return accepted_count >= self._query.limit
+
+
+type _CodexAuthorityKey = tuple[t.Literal["path", "thread"], str, str]
+
+
+def _codex_rollout_authority_keys(record: SearchRecord) -> tuple[_CodexAuthorityKey, ...]:
+    """Return exact path and logical-thread keys for a canonical prompt."""
+    if record.agent != "codex" or record.store != "codex.sessions" or record.kind != "prompt":
+        return ()
+    keys: list[_CodexAuthorityKey] = [("path", str(record.path), record.text)]
+    session_id = record.session_id or record.conversation_id
+    if session_id is not None:
+        keys.append(("thread", session_id, record.text))
+    return tuple(keys)
+
+
+def _codex_state_authority_keys(record: SearchRecord) -> tuple[_CodexAuthorityKey, ...]:
+    """Return corroborating keys for a matching state-index first prompt."""
+    if (
+        record.agent != "codex"
+        or record.store != "codex.state_db"
+        or record.kind != "prompt"
+        or record.metadata.get("field") != "first_user_message"
+    ):
+        return ()
+    keys: list[_CodexAuthorityKey] = []
+    rollout_path = record.metadata.get("rollout_path")
+    if isinstance(rollout_path, str) and rollout_path:
+        keys.append(("path", rollout_path, record.text))
+    session_id = record.session_id or record.conversation_id
+    if session_id is not None:
+        keys.append(("thread", session_id, record.text))
+    return tuple(keys)
 
 
 def _eligible_tasks(
@@ -982,6 +1075,8 @@ def _should_use_frontier_driver(
     config: ExecutionDriverConfig,
 ) -> bool:
     """Return whether the plan benefits from source-level scheduling."""
+    if query.limit is not None and query.dedupe and plan.source_authority.resolves_codex_candidates:
+        return True
     if (
         query.limit is None
         or len(plan.tasks) <= 1
