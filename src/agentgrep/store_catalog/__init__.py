@@ -7,7 +7,7 @@ modules; this package facade only aggregates them.
 
 from __future__ import annotations
 
-from agentgrep.store_catalog._common import _VSCODE_OBSERVED_AT, OBSERVED_AT, gemini_project_hash
+from agentgrep.store_catalog._common import _CATALOG_CAPTURED_AT, OBSERVED_AT, gemini_project_hash
 from agentgrep.store_catalog.antigravity_cli import _ANTIGRAVITY_CLI_STORES
 from agentgrep.store_catalog.antigravity_ide import _ANTIGRAVITY_IDE_STORES
 from agentgrep.store_catalog.claude import _CLAUDE_STORES
@@ -24,7 +24,7 @@ from agentgrep.stores import StoreCatalog
 
 CATALOG = StoreCatalog(
     catalog_version=35,
-    captured_at=_VSCODE_OBSERVED_AT,
+    captured_at=_CATALOG_CAPTURED_AT,
     stores=(
         *_CLAUDE_STORES,
         *_CURSOR_CLI_STORES,

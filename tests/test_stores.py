@@ -6,6 +6,7 @@ should be able to rely on. They run on the static catalogue data; no I/O.
 
 from __future__ import annotations
 
+import datetime
 import pathlib
 import re
 import typing as t
@@ -63,6 +64,12 @@ def test_catalog_has_known_metadata() -> None:
     assert CATALOG.catalog_version >= 1
     assert CATALOG.captured_at.year >= 2026
     assert len(CATALOG.stores) > 0
+
+
+def test_catalog_capture_is_not_older_than_store_observations() -> None:
+    """A catalogue snapshot cannot predate any descriptor it contains."""
+    assert CATALOG.captured_at == datetime.date(2026, 7, 11)
+    assert CATALOG.captured_at >= max(store.observed_at for store in CATALOG.stores)
 
 
 def test_every_store_has_known_agent() -> None:
