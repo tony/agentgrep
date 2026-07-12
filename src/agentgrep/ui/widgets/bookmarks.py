@@ -80,7 +80,7 @@ class BookmarkRecall(ModalScreen[t.Optional[BookmarkChoice]]):  # noqa: UP045
         with Vertical(id="bookmark-dialog"):
             yield Static("Bookmarks", id="bookmark-title")
             yield OptionList(id="bookmark-list", markup=False)
-            yield Static("", id="bookmark-preview")
+            yield Static("", id="bookmark-preview", markup=False)
             yield Input(placeholder="Filter bookmarks", id="bookmark-filter")
             yield Static(
                 "↑/↓ to navigate · Enter to open · Esc to cancel",
