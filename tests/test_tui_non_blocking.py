@@ -389,7 +389,17 @@ def test_forbidden_call_detector_resolves_aliases_and_families() -> None:
 
 def test_classifier_sees_scheduled_callables_and_on_handlers() -> None:
     """Scheduler / call_from_thread targets and @on handlers classify as pump."""
-    assert {"_after_resize", "_on_theme_changed"} <= _SCHEDULED_PUMP_NAMES  # real sites
+    assert {
+        "_after_resize",
+        "_deliver_screenshot_after_refresh",
+        "_on_theme_changed",
+    } <= _SCHEDULED_PUMP_NAMES  # real sites
+    screenshot_callback = next(
+        method
+        for method in _all_methods()
+        if method.cls == "LayoutScreen" and method.name == "_deliver_screenshot_after_refresh"
+    )
+    assert "pump_only" in screenshot_callback.decorators
     # Data args passed alongside the callable must NOT be seeded (NB-8 false alarm).
     assert not ({"record", "header", "body", "query_terms", "self"} & _SCHEDULED_PUMP_NAMES)
     node = t.cast("ast.FunctionDef", ast.parse("def f(self): ...").body[0])

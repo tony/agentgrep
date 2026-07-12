@@ -14,12 +14,14 @@ from agentgrep.ui import commands
 def test_registry_has_common_layout_commands() -> None:
     """The common registry exposes the compact cross-layout slash surface."""
     by_name = {cmd.name: cmd for cmd in commands.SLASH_COMMANDS}
-    assert {"clear", "exit", "help", "keys", "theme"} <= set(by_name)
+    assert {"clear", "exit", "help", "keys", "screenshot", "theme"} <= set(by_name)
     assert by_name["clear"].aliases == ("new", "reset")
     assert by_name["exit"].aliases == ("quit",)
     assert by_name["help"].aliases == ()
     assert by_name["theme"].argument_hint == "[dark|light]"
     assert by_name["theme"].accepts_args is True
+    assert by_name["screenshot"].aliases == ()
+    assert by_name["screenshot"].accepts_args is False
 
 
 def test_argument_hint_and_acceptance_are_independent_metadata() -> None:
@@ -75,6 +77,7 @@ def test_command_matches_prefix_filters() -> None:
     assert {"clear", "help"} <= everything
     assert [cmd.name for cmd in commands.command_matches("cl")] == ["clear"]
     assert [cmd.name for cmd in commands.command_matches("he")] == ["help"]
+    assert [cmd.name for cmd in commands.command_matches("scr")] == ["screenshot"]
     # An alias prefix matches its command (no duplicate rows).
     assert [cmd.name for cmd in commands.command_matches("re")] == ["clear"]
     assert commands.command_matches("zzz") == ()

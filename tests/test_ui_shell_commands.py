@@ -49,6 +49,28 @@ async def _submit(pilot: t.Any, layout: t.Any, text: str) -> None:
     await pilot.pause()
 
 
+def _capture_screenshot_callbacks(
+    layout: t.Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[t.Callable[[], None]]:
+    """Retain only screenshot delivery callbacks without disturbing Textual."""
+    callbacks: list[t.Callable[[], None]] = []
+    original = layout.call_after_refresh
+
+    def capture(
+        callback: t.Callable[..., object],
+        *args: object,
+        **kwargs: object,
+    ) -> bool:
+        if getattr(callback, "__name__", "") == "_deliver_screenshot_after_refresh":
+            callbacks.append(t.cast("t.Callable[[], None]", callback))
+            return True
+        return bool(original(callback, *args, **kwargs))
+
+    monkeypatch.setattr(layout, "call_after_refresh", capture)
+    return callbacks
+
+
 def _zoom_record(tmp_path: pathlib.Path, index: int) -> SearchRecord:
     """Build one visible detail record for logical-zoom Pilot tests."""
     return SearchRecord(
@@ -165,6 +187,211 @@ async def test_slash_theme_selects_and_toggles_agentgrep_themes(
         await _submit(pilot, app.screen, "/theme")
         assert app.theme == ui_theme.DARK_THEME_NAME
         assert app.screen._search_input.value == ""
+
+
+async def test_slash_screenshot_delivers_after_command_chrome_clears(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``/screenshot`` captures the active layout without its command chrome."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        layout = app.screen
+        record = _zoom_record(tmp_path, 0)
+        layout.all_records = [record]
+        layout.filtered_records = [record]
+        layout._results.append_records((record,))
+        query = layout.search_query
+        control = layout.control
+        all_records = layout.all_records
+        filtered_records = layout.filtered_records
+        results = layout._results
+        result_records = results._records
+        workers = tuple(app.workers)
+        delivered: list[tuple[str, bool, bool, bool, bool, bool, bool, bool, bool, bool]] = []
+
+        def deliver_screenshot() -> str:
+            delivered.append(
+                (
+                    str(layout._search_input.value),
+                    bool(layout._enum_dropdown.display),
+                    layout._body.has_class("-zoom-results"),
+                    layout.search_query is query,
+                    layout.control is control,
+                    layout.all_records is all_records,
+                    layout.filtered_records is filtered_records,
+                    layout._results is results,
+                    results._records is result_records,
+                    tuple(app.workers) == workers,
+                ),
+            )
+            return "screenshot-key"
+
+        monkeypatch.setattr(app, "deliver_screenshot", deliver_screenshot)
+        layout._set_empty_state(empty=False)
+        assert layout.handle_maximize_command("results") is True
+
+        layout._search_input.value = "/screenshot"
+        layout._search_input.cursor_position = len("/screenshot")
+        layout._search_input.focus()
+        await pilot.pause()
+        assert layout._enum_dropdown.display is True
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert delivered == [("", False, True, True, True, True, True, True, True, True)]
+        assert app.screen is layout
+        assert app.focused is layout._search_input
+        assert control.answer_now_requested() is False
+        assert result_records == [record]
+
+
+async def test_screenshot_prefix_dispatches_highlighted_menu_command(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A short prefix narrows the menu and Enter runs the highlighted command."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        layout = app.screen
+        queries: list[str] = []
+        delivered: list[object] = []
+        monkeypatch.setattr(layout.workflow, "on_query", lambda _host, text: queries.append(text))
+        monkeypatch.setattr(app, "deliver_screenshot", lambda: delivered.append(object()))
+
+        layout._search_input.value = "/scr"
+        layout._search_input.cursor_position = len("/scr")
+        layout._search_input.focus()
+        await pilot.pause()
+
+        assert [command.name for command in layout._command_matches] == ["screenshot"]
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert queries == []
+        assert len(delivered) == 1
+
+
+async def test_slash_screenshot_retains_command_when_scheduling_fails(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed refresh callback schedule leaves the command editable."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        layout = app.screen
+        original = layout.call_after_refresh
+        delivered: list[object] = []
+
+        def reject_screenshot(
+            callback: t.Callable[..., object],
+            *args: object,
+            **kwargs: object,
+        ) -> bool:
+            if getattr(callback, "__name__", "") == "_deliver_screenshot_after_refresh":
+                return False
+            return bool(original(callback, *args, **kwargs))
+
+        monkeypatch.setattr(layout, "call_after_refresh", reject_screenshot)
+        monkeypatch.setattr(app, "deliver_screenshot", lambda: delivered.append(object()))
+
+        await _submit(pilot, layout, "/screenshot")
+
+        assert layout._search_input.value == "/screenshot"
+        assert layout._enum_dropdown.display is True
+        assert delivered == []
+
+
+async def test_slash_screenshot_rejects_path_argument_as_search_text(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Screenshot filenames stay Textual-owned in the initial command surface."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        layout = app.screen
+        queries: list[str] = []
+        delivered: list[object] = []
+        monkeypatch.setattr(layout.workflow, "on_query", lambda _host, text: queries.append(text))
+        monkeypatch.setattr(app, "deliver_screenshot", lambda: delivered.append(object()))
+
+        await _submit(pilot, layout, "/screenshot named.svg")
+
+        assert queries == ["/screenshot named.svg"]
+        assert delivered == []
+
+
+async def test_slash_screenshot_drops_delivery_after_layout_switch(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A callback retained by its origin cannot capture the next F2 layout."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        origin = app.screen
+        callbacks = _capture_screenshot_callbacks(origin, monkeypatch)
+        delivered: list[object] = []
+        monkeypatch.setattr(app, "deliver_screenshot", lambda: delivered.append(object()))
+
+        await _submit(pilot, origin, "/screenshot")
+        assert len(callbacks) == 1
+        await pilot.press("f2")
+        await pilot.pause()
+        assert app.screen is not origin
+
+        callbacks[0]()
+
+        assert delivered == []
+
+
+async def test_slash_screenshot_drops_delivery_for_empty_stack(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The deferred callback tolerates an empty stack during app teardown."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        origin = app.screen
+        callbacks = _capture_screenshot_callbacks(origin, monkeypatch)
+        delivered: list[object] = []
+        monkeypatch.setattr(app, "deliver_screenshot", lambda: delivered.append(object()))
+
+        await _submit(pilot, origin, "/screenshot")
+        assert len(callbacks) == 1
+        with monkeypatch.context() as context:
+            context.setattr(type(app), "screen_stack", property(lambda _app: []))
+            callbacks[0]()
+
+        assert delivered == []
+
+
+async def test_slash_screenshot_drops_delivery_after_origin_detaches(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An app-teardown layout's retained callback is a safe no-op."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    callbacks: list[t.Callable[[], None]] = []
+    delivered: list[object] = []
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        origin = app.screen
+        callbacks = _capture_screenshot_callbacks(origin, monkeypatch)
+        monkeypatch.setattr(app, "deliver_screenshot", lambda: delivered.append(object()))
+
+        await _submit(pilot, origin, "/screenshot")
+        assert len(callbacks) == 1
+
+    assert origin.is_attached is False
+    callbacks[0]()
+
+    assert delivered == []
 
 
 async def test_invalid_slash_theme_remains_editable_and_does_not_search(

@@ -79,6 +79,12 @@ def _run_keys(app: t.Any, args: str) -> bool:
     return True
 
 
+def _run_screenshot(app: t.Any, args: str) -> bool:
+    """Deliver a screenshot after the command chrome has cleared."""
+    del args
+    return bool(app.request_screenshot())
+
+
 def _run_theme(app: t.Any, args: str) -> bool:
     """Toggle or select one of agentgrep's two themes."""
     return bool(app.select_theme(args))
@@ -115,6 +121,7 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
     SlashCommand("exit", ("quit",), "Quit agentgrep", _run_exit),
     SlashCommand("help", (), "List slash commands", _run_help),
     SlashCommand("keys", (), "List active key bindings", _run_keys),
+    SlashCommand("screenshot", (), "Save a clean screenshot", _run_screenshot),
     SlashCommand(
         "theme",
         (),

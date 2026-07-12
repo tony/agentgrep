@@ -132,6 +132,22 @@ class LayoutScreen(_SCREEN_BASE):
         """Hide command-completion chrome when a layout provides it."""
 
     @_runtime.pump_only
+    def request_screenshot(self) -> bool:
+        """Deliver this layout after command chrome changes have refreshed."""
+        self.refresh()
+        return bool(self.call_after_refresh(self._deliver_screenshot_after_refresh))
+
+    @_runtime.pump_only
+    def _deliver_screenshot_after_refresh(self) -> None:
+        """Deliver only while this layout remains mounted and active."""
+        if not self.is_mounted or not self.is_attached:
+            return
+        stack = self.app.screen_stack
+        if not stack or stack[-1] is not self:
+            return
+        self.app.deliver_screenshot()
+
+    @_runtime.pump_only
     def notify_key_bindings(self) -> None:
         """Notify enabled, visible App/Screen bindings for the active layout."""
         lines: list[str] = []
