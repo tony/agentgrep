@@ -73,6 +73,18 @@ captures a clean SVG without changing the active search. `/keys`, theme
 switching, filtered-row colors, focus repair, and repeated-key quit
 confirmation now behave consistently across the two layouts.
 
+#### Portable record export across CLI, TUI, and MCP (#81)
+
+agentgrep can now turn selected search records into deterministic NDJSON or
+human-readable Markdown without changing the underlying histories. The CLI
+exports matching records to standard output or a chosen file, the HUD exports
+one selected record or its observed thread, and MCP returns a bounded inline
+artifact for existing search refs.
+
+Machine clients must opt in before an MCP export includes prompt or history
+bodies, and file output refuses accidental replacement. See {ref}`the export
+guide <cli-export>` for formats, selection, and privacy details.
+
 ## agentgrep 0.1.0a41 (2026-07-19)
 
 agentgrep 0.1.0a41 makes Pydantic a required dependency and removes the

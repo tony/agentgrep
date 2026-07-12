@@ -168,6 +168,38 @@ To inspect the full body, rerun the same query with the CLI's `--json` or
 the result's opaque `ref` to {tooliconl}`inspect_result` as
 `inspect_result(ref=...)`.
 
+(tui-export)=
+
+## Export
+
+The HUD offers two pi-like slash commands:
+
+- `/export [PATH]` exports exactly the selected record.
+- `/export-thread [PATH]` exports the selected record's observed thread from
+  the current result set after the in-list filter. A record without a canonical
+  thread handle cannot be exported as a thread.
+
+Without `PATH`, both commands write a collision-free Markdown artifact to
+agentgrep's private export directory. Its root follows `XDG_DATA_HOME`; when
+set, artifacts go under `$XDG_DATA_HOME/agentgrep/exports`, and otherwise the
+standard XDG data location is used. The directory uses mode `0700`, and each
+artifact uses mode `0600`. With an explicit path, the destination must be new:
+the TUI refuses to overwrite an existing file and rejects symlinks or an alias
+of a selected source store. Use {ref}`agentgrep export <cli-export>` when an
+explicit replacement is needed.
+
+TUI exports include bodies and use Markdown. A success notification shows only
+the artifact's basename, format, selection, and record count; failures omit
+local paths. Work stays off the Textual message pump. Identity, rendering, and
+disk I/O all run in the export worker. A second request reports that an export
+is already in progress, and an observed-thread export cancels if its result
+view changes while the HUD is taking the snapshot.
+
+Export does not replace the loaded results or change the detail selection.
+Only the new artifact is written; source stores remain read-only. See
+{ref}`ADR 0017 <adr-portable-record-export>` for the payload, fidelity, and
+file-safety contract.
+
 ## Completion
 
 Both the search bar and the in-list filter offer

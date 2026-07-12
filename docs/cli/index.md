@@ -46,6 +46,12 @@ Ranked, deduped search grouped by session — best matches first.
 Enumerate on-disk stores with fd-shaped flag grammar.
 :::
 
+:::{grid-item-card} agentgrep export
+:link: export
+:link-type: doc
+Save deterministic NDJSON or Markdown without changing source histories.
+:::
+
 :::{grid-item-card} agentgrep ui
 :link: tui
 :link-type: ref
@@ -160,5 +166,6 @@ $ agentgrep
 grep
 search
 find
+export
 reference
 ```
