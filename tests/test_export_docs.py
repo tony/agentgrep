@@ -105,7 +105,7 @@ def test_export_mcp_docs_define_bounded_inline_contract() -> None:
         "defaults to false",
         "`include_bodies=true`",
         "400 KiB",
-        "8,192 characters",
+        "49,152 characters",
         "one `TextContent` artifact",
         "structured metadata",
         "local destination",
@@ -135,7 +135,7 @@ def test_export_docs_shim_registers_bounded_public_signature() -> None:
     assert tuple(parameters) == ("refs", "format", "selection", "include_bodies")
     assert refs_schema["type"] == "array"
     assert refs_schema["items"] == {
-        "maxLength": 8192,
+        "maxLength": 48 * 1024,
         "minLength": 1,
         "type": "string",
     }
