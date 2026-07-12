@@ -25,9 +25,7 @@ def _missing_terms(text: str, required: tuple[str, ...]) -> tuple[str, ...]:
     """Return required prose terms missing after Markdown line wrapping."""
     normalized = re.sub(r"\s+", " ", text).casefold()
     return tuple(
-        term
-        for term in required
-        if re.sub(r"\s+", " ", term).casefold() not in normalized
+        term for term in required if re.sub(r"\s+", " ", term).casefold() not in normalized
     )
 
 
@@ -155,6 +153,22 @@ def test_export_docs_shim_registers_bounded_public_signature() -> None:
     assert metadata.annotations.readOnlyHint is True
     assert metadata.annotations.idempotentHint is True
     assert metadata.annotations.openWorldHint is False
+
+
+def test_documented_markdown_runtime_emits_schema_version_once() -> None:
+    """The documented Markdown format carries its schema contract at runtime."""
+    from agentgrep.record_export import render_export
+
+    artifact = render_export((), format="markdown", include_bodies=False)
+
+    assert artifact.text.splitlines()[:5] == [
+        "# agentgrep record export",
+        "",
+        "- Schema version: agentgrep.v1",
+        "- Selection: records",
+        "- Record count: 0",
+    ]
+    assert artifact.text.count("Schema version: agentgrep.v1") == 1
 
 
 def test_export_models_are_in_public_docs_reference_inventory() -> None:

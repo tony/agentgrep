@@ -192,7 +192,12 @@ def _render_markdown(
 ) -> str:
     """Render allowlisted human-readable Markdown."""
     noun = "observed thread" if selection == "thread" else "record"
-    lines = [f"# agentgrep {noun} export", "", f"- Selection: {selection}"]
+    lines = [
+        f"# agentgrep {noun} export",
+        "",
+        f"- Schema version: {SCHEMA_VERSION}",
+        f"- Selection: {selection}",
+    ]
     lines.append(f"- Record count: {len(records)}")
     if thread_id is not None:
         lines.append(f"- Thread ID: {_markdown_scalar(thread_id)}")

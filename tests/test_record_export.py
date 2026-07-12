@@ -106,6 +106,48 @@ def test_render_export_covers_cardinality_format_and_body_permutations(
         assert artifact.text.startswith("# agentgrep record export\n")
 
 
+@pytest.mark.parametrize("selection", ("records", "thread"))
+@pytest.mark.parametrize("include_bodies", (False, True), ids=("metadata", "bodies"))
+@pytest.mark.parametrize("record_count", (0, 1, 3), ids=("zero", "one", "many"))
+def test_markdown_schema_version_is_once_per_artifact_permutation(
+    selection: record_export.ExportSelection,
+    include_bodies: bool,
+    record_count: int,
+) -> None:
+    """Every Markdown selection emits one artifact-level schema version."""
+    records = tuple(
+        _record(
+            f"body-{index}",
+            session_id="session-1",
+            position=RecordPosition(ordinal=index, quality="source_order"),
+        )
+        for index in range(record_count)
+    )
+
+    if selection == "thread" and record_count == 0:
+        with pytest.raises(ExportSelectionError, match="exactly one observed thread"):
+            render_export(
+                records,
+                format="markdown",
+                include_bodies=include_bodies,
+                selection=selection,
+            )
+        return
+
+    artifact = render_export(
+        records,
+        format="markdown",
+        include_bodies=include_bodies,
+        selection=selection,
+    )
+
+    assert artifact.text.splitlines().count("- Schema version: agentgrep.v1") == 1
+    if record_count:
+        assert artifact.text.index("- Schema version:") < artifact.text.index("## Record 1")
+    for index in range(record_count):
+        assert (f"body-{index}" in artifact.text) is include_bodies
+
+
 @pytest.mark.parametrize(
     ("kind", "role", "timestamp", "model"),
     tuple(
