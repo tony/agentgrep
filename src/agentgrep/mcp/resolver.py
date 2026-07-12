@@ -42,13 +42,14 @@ class _ParsedRequest:
     index: int
     ref: str
     parsed: refs.ParsedRecordRef
+    path_key: pathlib.Path
 
 
 def _path_key(path: pathlib.Path) -> pathlib.Path | None:
     """Return a normalized lookup path or ``None`` on unsafe input."""
     try:
         return path.resolve()
-    except OSError, RuntimeError:
+    except OSError, RuntimeError, ValueError:
         return None
 
 
@@ -189,7 +190,22 @@ def resolve_record_refs(
                 error_message=f"invalid ref: {exc}",
             )
         else:
-            parsed_requests.append(_ParsedRequest(index=index, ref=ref, parsed=parsed))
+            path = _path_key(parsed.path)
+            if path is None:
+                results[index] = ResolvedRecordRef(
+                    ref=ref,
+                    kind=parsed.kind,
+                    error_message="source not found",
+                )
+            else:
+                parsed_requests.append(
+                    _ParsedRequest(
+                        index=index,
+                        ref=ref,
+                        parsed=parsed,
+                        path_key=path,
+                    ),
+                )
 
     if parsed_requests:
         sources = _discover_sources(home)
@@ -199,15 +215,7 @@ def resolve_record_refs(
             list[_ParsedRequest],
         ] = {}
         for item in parsed_requests:
-            path = _path_key(item.parsed.path)
-            if path is None:
-                results[item.index] = ResolvedRecordRef(
-                    ref=item.ref,
-                    kind=item.parsed.kind,
-                    error_message="source not found",
-                )
-                continue
-            key = (item.parsed.adapter_id, path)
+            key = (item.parsed.adapter_id, item.path_key)
             source = indexed_sources.get(key)
             if source is None:
                 results[item.index] = ResolvedRecordRef(
