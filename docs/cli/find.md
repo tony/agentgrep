@@ -22,6 +22,13 @@ shape. Display output collapses the current user's home directory to
 tool needs real filesystem paths. Use `-l/--list-details` to add
 metadata (agent, kind, store, adapter_id) as tab-separated columns.
 
+```{image} ../_static/demos/posters/agentgrep-find.png
+:alt: agentgrep find listing discovered local agent stores
+:width: 100%
+:loading: lazy
+:target: https://agentgrep.org/_static/demos/vhs/agentgrep-find.mp4
+```
+
 ## Examples
 
 List every store agentgrep can read (no positional pattern needed —
