@@ -469,8 +469,6 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
         if parsed is None:
             return 0
         if isinstance(parsed, BookmarkArgs):
-            from agentgrep.cli.render import run_bookmark_command
-
             return run_bookmark_command(parsed)
         if isinstance(parsed, GrepArgs):
             return run_grep_command(parsed)
@@ -558,6 +556,7 @@ from agentgrep.cli.render import (  # noqa: E402  (re-exports must follow main d
     format_grep_record,
     print_find_results,
     print_grep_results,
+    run_bookmark_command,
     run_find_command,
     run_grep_command,
     run_search_command,
@@ -834,6 +833,7 @@ __all__ = (
     "record_matches_scope",
     "resolve_codex_sqlite_root",
     "resolve_env_root",
+    "run_bookmark_command",
     "run_find_command",
     "run_find_query",
     "run_grep_command",
