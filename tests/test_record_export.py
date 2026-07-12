@@ -21,6 +21,7 @@ from agentgrep.record_export import (
     ExportArtifact,
     ExportEncodingError,
     ExportExistsError,
+    ExportFormatError,
     ExportSafetyError,
     ExportSelectionError,
     ExportWriteError,
@@ -538,6 +539,48 @@ def _writer_artifact(
         format=export_format,
         include_bodies=True,
     )
+
+
+@pytest.mark.parametrize("private", (False, True), ids=("explicit", "private"))
+def test_export_writers_reject_forged_format_without_file_side_effects(
+    tmp_path: pathlib.Path,
+    private: bool,
+) -> None:
+    """Writer boundaries reject artifacts with non-contract format values."""
+    artifact = dataclasses.replace(
+        _writer_artifact(),
+        format=t.cast("record_export.ExportFormat", "json"),
+    )
+    destination = tmp_path / ("exports" if private else "artifact.ndjson")
+
+    with pytest.raises(ExportFormatError, match="unsupported export format"):
+        if private:
+            write_private_export(artifact, directory=destination)
+        else:
+            write_export(artifact, destination)
+
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("private", (False, True), ids=("explicit", "private"))
+def test_export_writers_reject_forged_selection_without_file_side_effects(
+    tmp_path: pathlib.Path,
+    private: bool,
+) -> None:
+    """Writer boundaries reject artifacts with non-contract selection values."""
+    artifact = dataclasses.replace(
+        _writer_artifact(),
+        selection=t.cast("record_export.ExportSelection", "conversation"),
+    )
+    destination = tmp_path / ("exports" if private else "artifact.ndjson")
+
+    with pytest.raises(ExportSelectionError, match="unsupported export selection"):
+        if private:
+            write_private_export(artifact, directory=destination)
+        else:
+            write_export(artifact, destination)
+
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_write_export_writes_exact_artifact_bytes_without_stdout(
