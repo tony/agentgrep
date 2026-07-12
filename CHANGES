@@ -51,8 +51,9 @@ surfaces: content handles compare normalized content, record handles
 distinguish stored turns, and thread handles group records only when the
 backend exposes a defensible conversation anchor. In particular, repeated
 content can share one content handle while stored turns keep separate record
-handles. Existing MCP refs remain unchanged and continue to drive result
-inspection; canonical handles sit alongside them.
+handles. Persisted MCP refs remain inspectable; newly emitted refs use a
+position-aware fingerprint when the source exposes a defensible coordinate.
+Canonical handles sit alongside them.
 
 Stores with missing occurrence or thread topology report null values instead
 of inventing relationships from filenames or timestamps. That conservative
