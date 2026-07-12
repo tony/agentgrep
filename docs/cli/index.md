@@ -14,11 +14,9 @@ directory of choices listing every subcommand with example
 invocations — the same `tmuxp` / `vcspull` pattern. See {ref}`tui`
 for the interactive Textual explorer.
 
-```{image} ../_static/demos/posters/agentgrep-help.png
+```{terminal-demo} ../_static/demos/vhs/agentgrep-help.mp4
+:poster: ../_static/demos/posters/agentgrep-help.png
 :alt: agentgrep help listing the search, grep, find, and ui commands
-:width: 100%
-:loading: lazy
-:target: https://agentgrep.org/_static/demos/vhs/agentgrep-help.mp4
 ```
 
 ```{note}
