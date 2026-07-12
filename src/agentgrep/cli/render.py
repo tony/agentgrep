@@ -185,12 +185,25 @@ def run_export_command(args: ExportArgs) -> int:
     except OSError:
         _write_export_error("export source could not be read")
         return 2
+    except Exception:
+        _write_export_error("export source could not be read")
+        return 2
     try:
         artifact = render_export(
             records,
             format=args.format,
             include_bodies=args.include_bodies,
         )
+    except ExportError as exc:
+        _write_export_error(str(exc))
+        return 2
+    except OSError, UnicodeError:
+        _write_export_error("export output could not be written")
+        return 2
+    except Exception:
+        _write_export_error("export artifact could not be rendered")
+        return 2
+    try:
         if args.output == "-":
             _write_export_stdout(artifact.text)
         else:
@@ -204,6 +217,11 @@ def run_export_command(args: ExportArgs) -> int:
         _write_export_error(str(exc))
         return 2
     except OSError, UnicodeError:
+        if args.output == "-":
+            _silence_broken_stdout()
+        _write_export_error("export output could not be written")
+        return 2
+    except Exception:
         if args.output == "-":
             _silence_broken_stdout()
         _write_export_error("export output could not be written")
