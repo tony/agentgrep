@@ -73,6 +73,18 @@ captures a clean SVG without changing the active search. `/keys`, theme
 switching, filtered-row colors, focus repair, and repeated-key quit
 confirmation now behave consistently across the two layouts.
 
+#### Durable bookmarks across CLI and TUI (#79)
+
+agentgrep can now save content, record, or thread handles without copying
+prompt bodies or changing the underlying histories. `agentgrep bookmark`
+offers idempotent add, remove, list, and JSON output for terminal workflows,
+while the HUD adds a focus-safe `b` shortcut and `/bookmark` command.
+
+The `/bookmarks` recall list resolves saved handles against the current stores,
+keeps unavailable choices visible, and reopens available records without
+replacing the active search results. See {ref}`the bookmark guide
+<cli-bookmark>` for scope and privacy details.
+
 ## agentgrep 0.1.0a41 (2026-07-19)
 
 agentgrep 0.1.0a41 makes Pydantic a required dependency and removes the

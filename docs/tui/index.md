@@ -168,6 +168,43 @@ To inspect the full body, rerun the same query with the CLI's `--json` or
 the result's opaque `ref` to {tooliconl}`inspect_result` as
 `inspect_result(ref=...)`.
 
+(tui-bookmarks)=
+
+## Bookmarks
+
+The HUD can save and reopen private pointers to selected results. With the
+results list or detail pane focused, press `b` to toggle an exact record
+bookmark. A saved exact record shows `★` beside its `Record:` handle. The key is
+focus-safe: while the search bar or filter owns focus, `b` remains ordinary
+input.
+
+Slash commands expose all three canonical scopes:
+
+- `/bookmark` and `/bookmark record` toggle the selected logical occurrence.
+- `/bookmark thread` toggles its conversation thread when the backend exposes
+  one.
+- `/bookmark content` toggles the content-equality handle shared by equivalent
+  records.
+
+Record and thread bookmarks are unavailable when the selected result does not
+carry that identity; content identity is always available. Bookmark changes
+touch only agentgrep-owned state. Every agent history source remains read-only.
+See {ref}`the CLI bookmark guide <cli-bookmark>` for the scope and persistence
+contract.
+
+Run `/bookmarks` to scan the current stores and open the compact recall list.
+Each row says `resolved` or `unresolved`; a missing target stays saved instead
+of being discarded. Type in the filter to narrow the list, use the arrow keys
+to move, and press `Enter` to reopen the highlighted record in detail. `Esc`
+closes the list. `Ctrl-C` clears a non-empty filter first, then closes it.
+
+Recall does not replace the loaded search results or the sticky filter. A
+record bookmark reopens only the matching occurrence whose content validator
+also agrees. A thread bookmark opens a representative record from that thread,
+and a content bookmark opens an equal-content occurrence. Which representative
+is available can change with the current stores; unresolved bookmarks can
+resolve on a later visit.
+
 ## Completion
 
 Both the search bar and the in-list filter offer
