@@ -1697,10 +1697,10 @@ class HudLayout(LayoutScreen):
     def show_detail(self, record: SearchRecord) -> None:
         """Render ``record`` with colored labels + format-aware body + scroll-to-match.
 
-        The body is truncated to :data:`DETAIL_BODY_MAX_CHARS` characters and
-        :data:`DETAIL_BODY_MAX_LINES` lines (the ``VerticalScroll`` wrapper
-        handles letting the user scroll within the visible window). The body
-        renderable is chosen by
+        The body is capped at :data:`DETAIL_BODY_MAX_LINES` (1,000) lines and
+        :data:`DETAIL_BODY_MAX_CHARS` (65,536) characters. The
+        ``VerticalScroll`` wrapper lets the user scroll within that bounded
+        view. The body renderable is chosen by
         :func:`detect_content_format`:
 
         * Small JSON bodies are pretty-printed and rendered via

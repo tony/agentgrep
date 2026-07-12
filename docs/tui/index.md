@@ -129,6 +129,18 @@ shortcuts or resolvers. See the {ref}`deterministic record identity contract
 This is a HUD detail feature only. Compact result rows, the greplog layout, and
 pane status lines keep their existing shapes.
 
+### Bounded detail view
+
+The HUD caps the displayed detail body at 1,000 lines and 65,536 characters so
+formatting and find-in-detail cannot stall the interface on a very large
+record. An overflow marker reports that more lines or characters remain. This
+only bounds the TUI render; agentgrep does not change the source record.
+
+To inspect the full body, rerun the same query with the CLI's `--json` or
+`--ndjson` output and read the result's `text` field. From an MCP client, pass
+the result's opaque `ref` to {tooliconl}`inspect_result` as
+`inspect_result(ref=...)`.
+
 ## Completion
 
 Both the search bar and the in-list filter offer
