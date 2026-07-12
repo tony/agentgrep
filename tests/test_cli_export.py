@@ -81,7 +81,7 @@ def _export_env(home: pathlib.Path) -> dict[str, str]:
     return env
 
 
-@pytest.mark.parametrize("output_args", ((), ("-o", "-")))
+@pytest.mark.parametrize("output_args", [(), ("-o", "-")])
 def test_export_ndjson_writes_default_and_explicit_stdout(
     export_home: pathlib.Path,
     output_args: tuple[str, ...],
@@ -254,7 +254,7 @@ def test_export_protects_every_selected_record_source_path(
 
 @pytest.mark.parametrize(
     ("relative_path", "original"),
-    (
+    [
         (
             pathlib.Path(
                 ".codex/sessions/rollout-2025-04-21-unmatched-source.json",
@@ -280,7 +280,7 @@ def test_export_protects_every_selected_record_source_path(
             pathlib.Path(".claude/settings.json"),
             '{"theme":"dark"}\n',
         ),
-    ),
+    ],
     ids=("selected-agent", "outside-agent-non-default"),
 )
 def test_export_force_protects_unmatched_discovered_source(

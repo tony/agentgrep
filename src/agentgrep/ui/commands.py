@@ -25,6 +25,7 @@ __all__ = [
     "SlashCommand",
     "command_matches",
     "command_menu_label",
+    "export_commands",
     "parse_command",
     "resolve_command",
     "zoom_commands",
@@ -101,6 +102,16 @@ def _run_minimize(app: t.Any, args: str) -> bool:
     return bool(app.handle_minimize_command())
 
 
+def _run_export(app: t.Any, args: str) -> bool:
+    """Export the selected record to a private or explicit destination."""
+    return bool(app.request_export(args, selection="records"))
+
+
+def _run_export_thread(app: t.Any, args: str) -> bool:
+    """Export the selected record's observed thread."""
+    return bool(app.request_export(args, selection="thread"))
+
+
 def _command_label(cmd: SlashCommand) -> str:
     """Render ``/name (/alias1, /alias2)`` for menus and help (argparse-style)."""
     label = f"/{command_menu_label(cmd)}"
@@ -152,6 +163,28 @@ def zoom_commands(argument_hint: str) -> tuple[SlashCommand, SlashCommand]:
             accepts_args=True,
         ),
         SlashCommand("minimize", (), "Restore the content split", _run_minimize),
+    )
+
+
+def export_commands() -> tuple[SlashCommand, SlashCommand]:
+    """Return the export commands supported only by the HUD layout."""
+    return (
+        SlashCommand(
+            "export",
+            (),
+            "Export selected record",
+            _run_export,
+            "[PATH]",
+            accepts_args=True,
+        ),
+        SlashCommand(
+            "export-thread",
+            (),
+            "Export observed thread",
+            _run_export_thread,
+            "[PATH]",
+            accepts_args=True,
+        ),
     )
 
 

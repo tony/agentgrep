@@ -9,6 +9,7 @@ the tests), so ``import agentgrep`` stays Textual-free (ADR 0010).
 
 from __future__ import annotations
 
+import asyncio
 import collections
 import contextlib
 import dataclasses
@@ -16,6 +17,7 @@ import functools
 import json
 import pathlib
 import re
+import threading
 import time
 import typing as t
 from collections import abc as cabc
@@ -53,7 +55,7 @@ from agentgrep.progress import (
 )
 from agentgrep.query import default_registry
 from agentgrep.records import SearchQuery, SearchRecord
-from agentgrep.ui import _history, _runtime, _streaming, theme as ui_theme
+from agentgrep.ui import _history, _runtime, _streaming, commands, theme as ui_theme
 from agentgrep.ui._context import UiContext
 from agentgrep.ui._source_diagnostics import (
     SourceScanFinished,
@@ -151,10 +153,66 @@ class _DetailSnapshot:
     build_body: bool
 
 
+type _ExportSelection = t.Literal["records", "thread"]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _ExportSnapshot:
+    """Pump-captured values owned by one export worker."""
+
+    selected: SearchRecord
+    records: list[SearchRecord]
+    destination: str | None
+    selection: _ExportSelection
+    canceled: threading.Event
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _ExportCompleted:
+    """Path-safe worker outcome delivered to the pump."""
+
+    filename: str | None
+    format: str
+    selection: _ExportSelection
+    record_count: int
+    error: str | None
+
+
+class _ExportSnapshotChangedError(Exception):
+    """Stop a chunked snapshot when its displayed result set changes."""
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _ExportRecordView(cabc.Sequence[SearchRecord]):
+    """A zero-copy sequence capped at the result count seen on acceptance."""
+
+    records: list[SearchRecord]
+    count: int
+
+    def __len__(self) -> int:
+        return self.count
+
+    @t.overload
+    def __getitem__(self, index: int) -> SearchRecord: ...
+
+    @t.overload
+    def __getitem__(self, index: slice) -> list[SearchRecord]: ...
+
+    def __getitem__(self, index: int | slice) -> SearchRecord | list[SearchRecord]:
+        if isinstance(index, slice):
+            start, stop, step = index.indices(self.count)
+            return self.records[start:stop:step]
+        normalized = index + self.count if index < 0 else index
+        if not 0 <= normalized < self.count:
+            raise IndexError(index)
+        return self.records[normalized]
+
+
 class HudLayout(LayoutScreen):
     """Search box, streaming results list, detail pane, and status chrome."""
 
     ZOOM_ARGUMENT_HINT: t.ClassVar[str] = "[results|detail]"
+    EXTRA_SLASH_COMMANDS: t.ClassVar[tuple[commands.SlashCommand, ...]] = commands.export_commands()
 
     # ``priority=True`` on the directional ``ctrl+hjkl`` bindings pushes
     # them into Textual's priority dispatch lane so they win over any
@@ -236,6 +294,13 @@ class HudLayout(LayoutScreen):
         self._history_path = _history.history_path(self.home)
         self._history = list(ctx.history)
         self._last_recorded_text = self._history[0].text if self._history else ""
+        # Export is a non-supersedable durable action. The pump prepares one
+        # point-in-time result snapshot in bounded chunks, then transfers sole
+        # ownership to a thread worker. A second request remains blocked until
+        # the first worker reports a terminal outcome.
+        self._export_pending: bool = False
+        self._export_generation: int = 0
+        self._export_cancel_event: threading.Event | None = None
         self._results: SearchResultsList | None = None
         self._detail: StaticLike | None = None
         self._detail_row: SlowSourceDiagnosticsRow | None = None
@@ -561,6 +626,16 @@ class HudLayout(LayoutScreen):
         # mount focus there even when an initial search hides the filter.
         self._search_input.focus()
         self._update_pane_focus()
+
+    @_runtime.pump_only
+    def on_unmount(self) -> None:
+        """Invalidate export callbacks and cancel work during screen teardown."""
+        self._export_generation += 1
+        self._export_pending = False
+        if self._export_cancel_event is not None:
+            self._export_cancel_event.set()
+            self._export_cancel_event = None
+        self.workers.cancel_group(self, "export")
 
     def _set_empty_state(self, *, empty: bool) -> None:
         """Toggle the pre-search bare-canvas state on ``#body``.
@@ -983,6 +1058,290 @@ class HudLayout(LayoutScreen):
     def request_cancel(self) -> None:
         """Cooperatively signal the in-flight search to wrap up (host surface)."""
         self.control.request_answer_now()
+
+    @_runtime.pump_only
+    def request_export(self, destination: str, *, selection: _ExportSelection) -> bool:
+        """Accept one selected-record or observed-thread export request.
+
+        Only bounded state capture happens synchronously. Thread exports copy
+        the displayed result set through :func:`stream_apply`; identity,
+        rendering, path handling, and durable output stay in the export worker.
+        """
+        if self._export_pending:
+            self.notify(
+                "Export already in progress",
+                title="Export busy",
+                severity="warning",
+            )
+            return False
+        selected = self._selected_export_record()
+        if selected is None:
+            self.notify(
+                "Select a record before exporting",
+                title="Export failed",
+                severity="error",
+            )
+            return False
+
+        self._export_generation += 1
+        generation = self._export_generation
+        canceled = threading.Event()
+        self._export_cancel_event = canceled
+        self._export_pending = True
+        active_records = self.filtered_records
+        active_count = len(active_records)
+        chrome_generation = self._chrome_generation
+        self.call_later(
+            self._snapshot_and_start_export,
+            generation,
+            selected,
+            selection,
+            destination or None,
+            active_records,
+            active_count,
+            chrome_generation,
+            canceled,
+        )
+        return True
+
+    def _selected_export_record(self) -> SearchRecord | None:
+        """Return the selected result without scanning the full result set."""
+        highlighted = None
+        if self._results is not None:
+            highlighted = t.cast("int | None", getattr(self._results, "highlighted", None))
+        if highlighted is not None and 0 <= highlighted < len(self.filtered_records):
+            return self.filtered_records[highlighted]
+        if self._current_detail_record is not None:
+            return self._current_detail_record
+        return self.filtered_records[0] if self.filtered_records else None
+
+    def _export_snapshot_is_live(
+        self,
+        generation: int,
+        active_records: list[SearchRecord],
+        chrome_generation: int,
+        canceled: threading.Event,
+    ) -> bool:
+        """Return whether a pump-side snapshot still describes one result view."""
+        return (
+            generation == self._export_generation
+            and self._export_pending
+            and not canceled.is_set()
+            and self.is_mounted
+            and active_records is self.filtered_records
+            and chrome_generation == self._chrome_generation
+        )
+
+    @_runtime.pump_only
+    async def _snapshot_and_start_export(
+        self,
+        generation: int,
+        selected: SearchRecord,
+        selection: _ExportSelection,
+        destination: str | None,
+        active_records: list[SearchRecord],
+        active_count: int,
+        chrome_generation: int,
+        canceled: threading.Event,
+    ) -> None:
+        """Copy a coherent result view in bounded chunks, then start the worker."""
+        if not self._export_snapshot_is_live(
+            generation,
+            active_records,
+            chrome_generation,
+            canceled,
+        ):
+            self._abort_export_snapshot(generation, canceled)
+            return
+
+        records: list[SearchRecord] = []
+        if selection == "records":
+            records.append(selected)
+        else:
+
+            async def yield_and_gate() -> None:
+                await asyncio.sleep(0)
+                if not self._export_snapshot_is_live(
+                    generation,
+                    active_records,
+                    chrome_generation,
+                    canceled,
+                ):
+                    raise _ExportSnapshotChangedError
+
+            try:
+                await _runtime.stream_apply(
+                    _ExportRecordView(active_records, active_count),
+                    records.extend,
+                    chunk_size=self._APPLY_CHUNK_SIZE,
+                    yield_between=yield_and_gate,
+                )
+            except _ExportSnapshotChangedError:
+                self._abort_export_snapshot(generation, canceled)
+                return
+
+        if not self._export_snapshot_is_live(
+            generation,
+            active_records,
+            chrome_generation,
+            canceled,
+        ):
+            self._abort_export_snapshot(generation, canceled)
+            return
+
+        snapshot = _ExportSnapshot(
+            selected=selected,
+            records=records,
+            destination=destination,
+            selection=selection,
+            canceled=canceled,
+        )
+        emit = _runtime.make_gated_emitter(
+            self.app.call_from_thread,
+            self._apply_export_completed,
+            generation,
+        )
+        streaming = t.cast("StreamingAppLike", t.cast("object", self))
+        streaming.run_worker(
+            functools.partial(self._run_export_in_thread, snapshot, emit),
+            name="export",
+            group="export",
+            description="render and write export",
+            thread=True,
+            exclusive=True,
+        )
+
+    def _abort_export_snapshot(
+        self,
+        generation: int,
+        canceled: threading.Event,
+    ) -> None:
+        """Release a pre-worker export whose displayed results changed."""
+        canceled.set()
+        if generation != self._export_generation:
+            return
+        self._export_pending = False
+        if self._export_cancel_event is canceled:
+            self._export_cancel_event = None
+        if self.is_mounted:
+            self.notify(
+                "Export canceled because results changed",
+                title="Export canceled",
+                severity="warning",
+            )
+
+    @_runtime.offload
+    def _run_export_in_thread(
+        self,
+        snapshot: _ExportSnapshot,
+        emit: cabc.Callable[[object], None],
+    ) -> None:
+        """Resolve, render, and durably write one pump-owned export snapshot."""
+        from agentgrep.record_export import (
+            ExportError,
+            render_export,
+            write_export,
+            write_private_export,
+        )
+
+        if snapshot.canceled.is_set():
+            return
+        try:
+            records = self._select_export_records(snapshot)
+            artifact = render_export(
+                records,
+                format="markdown",
+                include_bodies=True,
+                selection=snapshot.selection,
+            )
+            if snapshot.canceled.is_set():
+                return
+            if snapshot.destination is None:
+                written = write_private_export(artifact)
+            else:
+                destination = pathlib.Path(snapshot.destination).expanduser()
+                written = write_export(
+                    artifact,
+                    destination,
+                    protected_paths=(record.path for record in snapshot.records),
+                )
+            if snapshot.canceled.is_set():
+                return
+            completed = _ExportCompleted(
+                filename=self._safe_export_filename(written),
+                format=artifact.format,
+                selection=snapshot.selection,
+                record_count=artifact.record_count,
+                error=None,
+            )
+        except ExportError as exc:
+            completed = _ExportCompleted(
+                filename=None,
+                format="markdown",
+                selection=snapshot.selection,
+                record_count=0,
+                error=str(exc),
+            )
+        except Exception:
+            completed = _ExportCompleted(
+                filename=None,
+                format="markdown",
+                selection=snapshot.selection,
+                record_count=0,
+                error="export could not be completed",
+            )
+        if not snapshot.canceled.is_set():
+            emit(completed)
+
+    @staticmethod
+    def _select_export_records(snapshot: _ExportSnapshot) -> cabc.Iterable[SearchRecord]:
+        """Return the exact selected record or matching canonical thread."""
+        if snapshot.selection == "records":
+            return (snapshot.selected,)
+        from agentgrep.identity import record_identity
+        from agentgrep.record_export import ExportSelectionError
+
+        selected_identity = record_identity(snapshot.selected)
+        if selected_identity.thread_id is None:
+            message = "selected record has no observed thread"
+            raise ExportSelectionError(message)
+        return tuple(
+            record
+            for record in snapshot.records
+            if (
+                selected_identity if record is snapshot.selected else record_identity(record)
+            ).thread_id
+            == selected_identity.thread_id
+        )
+
+    @staticmethod
+    def _safe_export_filename(path: pathlib.Path) -> str:
+        """Return one bounded control-free basename for a notification."""
+        name = path.name or "export"
+        safe = "".join(char if char.isprintable() else "?" for char in name)
+        return safe[:160] or "export"
+
+    @_runtime.pump_only
+    def _apply_export_completed(self, generation: int, event: object) -> None:
+        """Release pending state and show a path-safe terminal notification."""
+        if generation != self._export_generation or not isinstance(event, _ExportCompleted):
+            return
+        self._export_pending = False
+        self._export_cancel_event = None
+        if not self.is_mounted:
+            return
+        if event.error is not None:
+            self.notify(
+                event.error,
+                title="Export failed",
+                severity="error",
+            )
+            return
+        noun = "record" if event.record_count == 1 else "records"
+        self.notify(
+            f"{event.filename} · {event.format} · {event.selection} · {event.record_count} {noun}",
+            title="Export complete",
+        )
 
     def _record_history(self, text: str) -> None:
         """Append a submitted, non-empty query to the persisted history.

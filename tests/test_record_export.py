@@ -71,9 +71,9 @@ def _ndjson_rows(artifact: ExportArtifact) -> list[dict[str, object]]:
     return [json.loads(line) for line in artifact.text.splitlines()]
 
 
-@pytest.mark.parametrize("export_format", ("ndjson", "markdown"))
-@pytest.mark.parametrize("include_bodies", (False, True), ids=("metadata", "bodies"))
-@pytest.mark.parametrize("record_count", (0, 1, 3), ids=("zero", "one", "many"))
+@pytest.mark.parametrize("export_format", ["ndjson", "markdown"])
+@pytest.mark.parametrize("include_bodies", [False, True], ids=("metadata", "bodies"))
+@pytest.mark.parametrize("record_count", [0, 1, 3], ids=("zero", "one", "many"))
 def test_render_export_covers_cardinality_format_and_body_permutations(
     export_format: record_export.ExportFormat,
     include_bodies: bool,
@@ -140,7 +140,7 @@ def test_ndjson_render_preserves_allowed_role_kind_and_null_metadata(
     assert row["model"] == model
 
 
-@pytest.mark.parametrize("include_bodies", (False, True), ids=("metadata", "bodies"))
+@pytest.mark.parametrize("include_bodies", [False, True], ids=("metadata", "bodies"))
 def test_ndjson_render_uses_exact_allowlist(include_bodies: bool) -> None:
     """Export rows never inherit the broader search serializer surface."""
     artifact = render_export(
@@ -185,8 +185,8 @@ def test_ndjson_render_preserves_repeated_content_occurrences() -> None:
     assert [row["text"] for row in rows] == ["repeat", "repeat"]
 
 
-@pytest.mark.parametrize("export_format", ("ndjson", "markdown"))
-@pytest.mark.parametrize("include_bodies", (False, True), ids=("metadata", "bodies"))
+@pytest.mark.parametrize("export_format", ["ndjson", "markdown"])
+@pytest.mark.parametrize("include_bodies", [False, True], ids=("metadata", "bodies"))
 def test_render_export_bytes_are_stable_under_every_input_permutation(
     export_format: record_export.ExportFormat,
     include_bodies: bool,
@@ -240,7 +240,7 @@ def test_ndjson_render_escapes_lone_surrogates_to_valid_utf8() -> None:
     assert artifact.byte_count == len(encoded)
 
 
-@pytest.mark.parametrize("include_bodies", (False, True), ids=("metadata", "bodies"))
+@pytest.mark.parametrize("include_bodies", [False, True], ids=("metadata", "bodies"))
 def test_markdown_render_rejects_emitted_lone_surrogates(include_bodies: bool) -> None:
     """Markdown refuses invalid UTF-8 scalars instead of altering them."""
     record = _record("body\ud800" if include_bodies else "hidden\ud800", model="model\udfff")
@@ -258,12 +258,12 @@ def test_markdown_render_rejects_emitted_lone_surrogates(include_bodies: bool) -
 
 @pytest.mark.parametrize(
     ("body", "expected_fence_length"),
-    (
+    [
         pytest.param("plain", 3, id="no-backticks"),
         pytest.param("before ``` after", 4, id="triple"),
         pytest.param("before ```` after", 5, id="quadruple"),
         pytest.param("before ````````````````` after", 18, id="long-run"),
-    ),
+    ],
 )
 def test_markdown_render_uses_dynamic_backtick_fences(
     body: str,
@@ -302,7 +302,7 @@ def test_render_thread_rejects_null_and_mixed_thread_identity() -> None:
 
 @pytest.mark.parametrize(
     ("records", "expected_fidelity"),
-    (
+    [
         pytest.param(
             (
                 _record(
@@ -349,7 +349,7 @@ def test_render_thread_rejects_null_and_mixed_thread_identity() -> None:
             "unordered",
             id="unordered",
         ),
-    ),
+    ],
 )
 def test_markdown_render_thread_discloses_every_fidelity(
     records: tuple[SearchRecord, ...],
@@ -372,8 +372,8 @@ def test_markdown_render_thread_discloses_every_fidelity(
     assert f"- Thread ID: {artifact.thread_id}\n" in artifact.text
 
 
-@pytest.mark.parametrize("export_format", ("ndjson", "markdown"))
-@pytest.mark.parametrize("include_bodies", (False, True), ids=("metadata", "bodies"))
+@pytest.mark.parametrize("export_format", ["ndjson", "markdown"])
+@pytest.mark.parametrize("include_bodies", [False, True], ids=("metadata", "bodies"))
 def test_render_thread_uses_export_order_under_all_input_permutations(
     export_format: record_export.ExportFormat,
     include_bodies: bool,
@@ -413,8 +413,8 @@ def test_render_thread_uses_export_order_under_all_input_permutations(
         assert text.index("early body") < text.index("late body")
 
 
-@pytest.mark.parametrize("export_format", ("ndjson", "markdown"))
-@pytest.mark.parametrize("include_bodies", (False, True), ids=("metadata", "bodies"))
+@pytest.mark.parametrize("export_format", ["ndjson", "markdown"])
+@pytest.mark.parametrize("include_bodies", [False, True], ids=("metadata", "bodies"))
 def test_render_export_never_leaks_excluded_record_fields(
     export_format: record_export.ExportFormat,
     include_bodies: bool,
@@ -445,7 +445,7 @@ def test_render_export_never_leaks_excluded_record_fields(
     assert all(value not in artifact.text for value in excluded)
 
 
-@pytest.mark.parametrize("selection", ("records", "thread"))
+@pytest.mark.parametrize("selection", ["records", "thread"])
 def test_render_export_prepares_each_record_identity_once(
     monkeypatch: pytest.MonkeyPatch,
     selection: record_export.ExportSelection,
@@ -541,7 +541,7 @@ def _writer_artifact(
     )
 
 
-@pytest.mark.parametrize("private", (False, True), ids=("explicit", "private"))
+@pytest.mark.parametrize("private", [False, True], ids=("explicit", "private"))
 def test_export_writers_reject_forged_format_without_file_side_effects(
     tmp_path: pathlib.Path,
     private: bool,
@@ -553,16 +553,19 @@ def test_export_writers_reject_forged_format_without_file_side_effects(
     )
     destination = tmp_path / ("exports" if private else "artifact.ndjson")
 
-    with pytest.raises(ExportFormatError, match="unsupported export format"):
+    def write_forged_artifact() -> None:
         if private:
             write_private_export(artifact, directory=destination)
         else:
             write_export(artifact, destination)
 
+    with pytest.raises(ExportFormatError, match="unsupported export format"):
+        write_forged_artifact()
+
     assert list(tmp_path.iterdir()) == []
 
 
-@pytest.mark.parametrize("private", (False, True), ids=("explicit", "private"))
+@pytest.mark.parametrize("private", [False, True], ids=("explicit", "private"))
 def test_export_writers_reject_forged_selection_without_file_side_effects(
     tmp_path: pathlib.Path,
     private: bool,
@@ -574,11 +577,14 @@ def test_export_writers_reject_forged_selection_without_file_side_effects(
     )
     destination = tmp_path / ("exports" if private else "artifact.ndjson")
 
-    with pytest.raises(ExportSelectionError, match="unsupported export selection"):
+    def write_forged_artifact() -> None:
         if private:
             write_private_export(artifact, directory=destination)
         else:
             write_export(artifact, destination)
+
+    with pytest.raises(ExportSelectionError, match="unsupported export selection"):
+        write_forged_artifact()
 
     assert list(tmp_path.iterdir()) == []
 
@@ -637,7 +643,7 @@ def test_write_export_force_atomically_replaces_regular_file(tmp_path: pathlib.P
     assert stat.S_IMODE(destination.stat().st_mode) == 0o600
 
 
-@pytest.mark.parametrize("force", (False, True), ids=("no-force", "force"))
+@pytest.mark.parametrize("force", [False, True], ids=("no-force", "force"))
 def test_write_export_rejects_destination_symlink_without_following_it(
     tmp_path: pathlib.Path,
     force: bool,
