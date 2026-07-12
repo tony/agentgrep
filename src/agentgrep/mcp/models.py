@@ -521,3 +521,32 @@ class InspectResultResponse(AgentGrepModel):
     sample_count: int
     records: list[SearchRecordModel]
     error_message: str | None = None
+
+
+class ExportRecordsRequest(AgentGrepModel):
+    """Validated bounded inline-export request."""
+
+    refs: list[str] = Field(min_length=1, max_length=20)
+    format: t.Literal["ndjson", "markdown"] = "ndjson"
+    selection: t.Literal["records", "thread"] = "records"
+    include_bodies: bool = False
+
+    @model_validator(mode="after")
+    def _require_unique_refs(self) -> ExportRecordsRequest:
+        """Reject duplicate physical selections before reading any source."""
+        if len(set(self.refs)) != len(self.refs):
+            message = "refs must not contain duplicates"
+            raise ValueError(message)
+        return self
+
+
+class ExportRecordsResponse(AgentGrepModel):
+    """Bounded inline export artifact returned through MCP."""
+
+    schema_version: str = agentgrep.SCHEMA_VERSION
+    format: t.Literal["ndjson", "markdown"]
+    selection: t.Literal["records", "thread"]
+    include_bodies: bool
+    record_count: int
+    byte_count: int
+    artifact: str
