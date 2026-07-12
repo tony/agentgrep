@@ -6,6 +6,7 @@ import asyncio
 import collections.abc as cabc
 import pathlib
 import threading
+import time
 import typing as t
 
 import pytest
@@ -182,6 +183,37 @@ async def test_modal_option_selection_returns_choice() -> None:
         await pilot.press("enter")
         await pilot.pause()
         assert app.result is choices[1]
+
+
+async def test_modal_filters_and_navigates_full_200_entry_capacity() -> None:
+    """The mounted modal keeps its full bounded-capacity list navigable."""
+    BookmarkChoice, _BookmarkRecall = _bookmark_widgets()
+    choices = [
+        BookmarkChoice(
+            BookmarkEntry(f"agc1:{index:026x}", "content", None, _CREATED_AT),
+            _record(
+                suffix=f"capacity-{index}",
+                title=f"bookmark {index:03d} " + ("x" * 10_000),
+            ),
+        )
+        for index in range(200)
+    ]
+    app = _BookmarkHostApp(choices)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        option_list = app.screen.query_one("#bookmark-list", OptionList)
+        assert option_list.option_count == 200
+        await pilot.press("end")
+        await pilot.pause()
+        assert option_list.highlighted == 199
+        assert "bookmark 199" in _status_text(app)
+        for char in "bookmark 199":
+            await pilot.press(char)
+        await pilot.pause()
+        assert option_list.option_count == 1
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.result is choices[199]
 
 
 def test_modal_bounds_large_single_line_preview_and_filter_text() -> None:
@@ -696,6 +728,87 @@ async def test_resolution_uses_scope_all_and_stops_when_targets_resolve(
         assert all(thread_id != threading.get_ident() for _record, thread_id in calls)
         _bookmark_choice, bookmark_recall = _bookmark_widgets()
         assert isinstance(app.screen, bookmark_recall)
+
+
+class BookmarkResolverScanCase(t.NamedTuple):
+    """One full candidate scan with the target last or absent."""
+
+    test_id: str
+    target_last: bool
+
+
+BOOKMARK_RESOLVER_SCAN_CASES = (
+    BookmarkResolverScanCase("target-last", True),
+    BookmarkResolverScanCase("target-absent", False),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    BOOKMARK_RESOLVER_SCAN_CASES,
+    ids=[case.test_id for case in BOOKMARK_RESOLVER_SCAN_CASES],
+)
+async def test_watchdog_resolver_scans_every_candidate_off_pump(
+    case: BookmarkResolverScanCase,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Target-last and target-absent recall exercise all 200 candidates."""
+    import agentgrep.identity as identity
+    from agentgrep.ui import _runtime
+
+    records = tuple(
+        _record(suffix=f"resolver-{index}", text=f"candidate {index}")
+        for index in range(200)
+    )
+    target = record_identity(records[-1])
+    assert target.record_id is not None
+    entry = (
+        BookmarkEntry(target.record_id, "record", target.content_id, _CREATED_AT)
+        if case.target_last
+        else BookmarkEntry(_MISSING_ID, "content", None, _CREATED_AT)
+    )
+    calls: list[SearchRecord] = []
+    real_identity = identity.record_identity
+
+    def guarded_identity(record: SearchRecord) -> identity.RecordIdentity:
+        _runtime.assert_off_pump("full bookmark candidate scan")
+        calls.append(record)
+        time.sleep(0.002)
+        return real_identity(record)
+
+    real_start_watchdog = _runtime.start_pump_watchdog
+    monkeypatch.setattr(identity, "record_identity", guarded_identity)
+    monkeypatch.setattr(_runtime, "HEARTBEAT_INTERVAL", 0.01)
+    monkeypatch.setattr(
+        _runtime,
+        "start_pump_watchdog",
+        lambda: real_start_watchdog(stall_threshold_ms=250, poll_seconds=0.01),
+    )
+    monkeypatch.setenv("AGENTGREP_TUI_WATCHDOG", "1")
+    invoker = _ResolutionInvoker(records)
+    app = _bookmark_app(tmp_path, monkeypatch, invoker=invoker)
+
+    with caplog.at_level(logging.WARNING, logger="agentgrep.ui._runtime"):
+        async with app.run_test(size=(120, 30)) as pilot:
+            await _settle_workers(app, pilot)
+            app.screen._bookmark_entries = [entry]
+            app.screen._bookmarked_ids = {entry.target_id}
+            app.screen.open_bookmarks()
+            await _settle_workers(app, pilot)
+
+            _BookmarkChoice, BookmarkRecall = _bookmark_widgets()
+            assert isinstance(app.screen, BookmarkRecall)
+            assert calls == list(records)
+            assert invoker.controls[0].answer_now_requested() is case.target_last
+            assert (app.screen._matches[0].record is records[-1]) is case.target_last
+            assert not [
+                record
+                for record in caplog.records
+                if hasattr(record, "agentgrep_pump_stall_ms")
+                or hasattr(record, "agentgrep_pump_blocking_event")
+            ]
 
 
 async def test_toggle_during_resolution_invalidates_stale_modal_and_later_recall(
