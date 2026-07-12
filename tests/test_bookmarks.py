@@ -223,6 +223,73 @@ def test_store_creates_private_directory_snapshot_and_lock(tmp_path: pathlib.Pat
     assert _mode(path.parent / "bookmarks.lock") == 0o600
 
 
+@pytest.mark.skipif(
+    getattr(os, "O_NOFOLLOW", 0) == 0,
+    reason="platform does not expose O_NOFOLLOW",
+)
+def test_lock_symlink_is_refused_without_touching_target(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "bookmarks.json"
+    lock_path = path.parent / "bookmarks.lock"
+    target = tmp_path / "lock-target"
+    target.write_bytes(b"keep this lock target unchanged")
+    target.chmod(0o640)
+    lock_path.symlink_to(target)
+    original_stat = target.stat()
+    flock_calls: list[int] = []
+
+    def tracking_flock(fd: int, operation: int) -> None:
+        flock_calls.append(operation)
+
+    monkeypatch.setattr(bookmarks.fcntl, "flock", tracking_flock)
+
+    with pytest.raises(BookmarkError) as exc_info:
+        BookmarkStore(path).list()
+
+    _assert_path_free_storage_error(exc_info.value, lock_path)
+    assert flock_calls == []
+    assert lock_path.is_symlink()
+    assert target.read_bytes() == b"keep this lock target unchanged"
+    assert stat.S_IMODE(target.stat().st_mode) == stat.S_IMODE(original_stat.st_mode)
+
+
+def test_lock_descriptor_must_be_a_regular_file(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "bookmarks.json"
+    lock_path = path.parent / "bookmarks.lock"
+    read_fd, write_fd = os.pipe()
+    real_open = bookmarks.os.open
+    flock_calls: list[int] = []
+
+    def open_pipe_for_lock(
+        candidate: os.PathLike[str] | str,
+        flags: int,
+        mode: int = 0o777,
+    ) -> int:
+        if pathlib.Path(candidate) == lock_path:
+            return os.dup(read_fd)
+        return real_open(candidate, flags, mode)
+
+    def tracking_flock(fd: int, operation: int) -> None:
+        flock_calls.append(operation)
+
+    monkeypatch.setattr(bookmarks.os, "open", open_pipe_for_lock)
+    monkeypatch.setattr(bookmarks.fcntl, "flock", tracking_flock)
+    try:
+        with pytest.raises(BookmarkError) as exc_info:
+            BookmarkStore(path).list()
+    finally:
+        os.close(read_fd)
+        os.close(write_fd)
+
+    _assert_path_free_storage_error(exc_info.value, lock_path)
+    assert flock_calls == []
+
+
 @pytest.mark.parametrize("method", ["list", "add"], ids=["list", "idempotent-add"])
 def test_existing_snapshot_mode_is_repaired_under_lock(
     tmp_path: pathlib.Path,
