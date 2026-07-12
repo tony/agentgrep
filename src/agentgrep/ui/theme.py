@@ -243,9 +243,9 @@ def ag_variable_defaults() -> dict[str, str]:
 
     Supplied via :meth:`textual.app.App.get_theme_variable_defaults` so the
     stylesheet's ``$ag-*`` references resolve under *any* active theme: the
-    pi-lite themes override these with their own light/dark values, while a
-    built-in theme (selected from the command palette) falls back to this dark
-    set rather than raising an unresolved-variable error.
+    pi-lite themes override these with their own light/dark values, while an
+    activated built-in theme falls back to this dark set rather than raising an
+    unresolved-variable error.
 
     Returns
     -------

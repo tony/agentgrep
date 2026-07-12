@@ -117,8 +117,7 @@ class HudLayout(LayoutScreen):
         ("escape", "stop_search", "Stop search"),
         ("ctrl+backslash", "toggle_detail_progress", "Detail"),
         ("ctrl+c", "smart_quit", "Stop / Quit"),
-        # priority so the focused search Input doesn't swallow it, matching
-        # Textual's own command-palette ctrl+p.
+        # Priority so the focused search Input cannot intercept recall.
         Binding("ctrl+r", "recall_history", "History", priority=True),
         Binding("ctrl+h", "focus_pane_left", "← Pane", priority=True),
         Binding("ctrl+j", "focus_pane_down", "↓ Pane", priority=True),
@@ -440,9 +439,9 @@ class HudLayout(LayoutScreen):
             typed_input.cursor_blink = False
             typed_input.select_on_focus = False
         self._search_emit = self._make_gated_emit()
-        # Rebuild Rich-baked rows/detail when the user switches palette
-        # (e.g. dark <-> light via the command palette). The pump-thread bind
-        # and watchdog are owned by the App shell (it owns the pump).
+        # Rebuild Rich-baked rows/detail when the active color palette changes.
+        # The pump-thread bind and watchdog are owned by the App shell (it owns
+        # the pump).
         self.app.theme_changed_signal.subscribe(self, self._on_theme_changed)
         self._apply_responsive_layout()
         # Attach the workflow (base.on_mount): it seeds the initial dispatch —

@@ -1,8 +1,8 @@
 """Tests for the pi-lite theme, semantic tokens, and global stylesheet.
 
 Pure tests cover the token maps and computed contrast offline; Pilot tests
-confirm both themes register, the stylesheet parses *and applies*, the palette
-switches (including to a built-in theme without ``$ag-*`` tokens, which the
+confirm both themes register, the stylesheet parses *and applies*, theme
+switching remains safe (including to a built-in theme without ``$ag-*`` tokens, which the
 ``get_theme_variable_defaults`` safety net must keep resolvable), and that
 Rich-baked rows re-render against the new palette.
 """

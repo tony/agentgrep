@@ -35,6 +35,8 @@ __all__ = ["ExplorerApp"]
 class ExplorerApp(App[None]):
     """Layout-agnostic shell: theme, pump lifecycle, and pluggable layout switching."""
 
+    ENABLE_COMMAND_PALETTE: t.ClassVar[bool] = False
+    COMMANDS: t.ClassVar[set[t.Any]] = set()
     #: The pi-lite global stylesheet (semantic tokens + all-widget rules). The
     #: ``$ag-*`` tokens it references always resolve via
     #: :meth:`get_theme_variable_defaults`, regardless of the active theme.
