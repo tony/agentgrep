@@ -9,7 +9,7 @@ import typing as t
 from fastmcp.exceptions import ToolError
 from pydantic import Field
 
-from agentgrep.mcp import refs
+from agentgrep.mcp import resolver
 from agentgrep.mcp._library import (
     READONLY_TAGS,
     TOOL_ANNOTATIONS,
@@ -131,68 +131,24 @@ def _inspect_record_sample_sync(request: InspectSampleRequest) -> InspectSampleR
 
 def _inspect_result_sync(request: InspectResultRequest) -> InspectResultResponse:
     """Resolve an opaque result ref and return source records."""
-    home = pathlib.Path.home()
+    resolved = resolver.resolve_record_refs(
+        (request.ref,),
+        sample_size=request.sample_size,
+    )[0]
     try:
-        parsed = refs.parse_record_ref(request.ref, home=home)
-    except refs.McpTokenError as exc:
+        records = [SearchRecordModel.from_record(record) for record in resolved.records]
+    except Exception:
         return InspectResultResponse(
             ref=request.ref,
             sample_count=0,
             records=[],
-            error_message=f"invalid ref: {exc}",
-        )
-    backends = agentgrep.select_backends()
-    sources = agentgrep.discover_sources(
-        home,
-        agentgrep.AGENT_CHOICES,
-        backends,
-        include_non_default=True,
-        version_detail="none",
-    )
-    target = next(
-        (
-            source
-            for source in sources
-            if source.adapter_id == parsed.adapter_id
-            and pathlib.Path(source.path).resolve() == parsed.path.resolve()
-        ),
-        None,
-    )
-    if target is None:
-        return InspectResultResponse(
-            ref=request.ref,
-            sample_count=0,
-            records=[],
-            error_message="source not found",
-        )
-    try:
-        records: list[SearchRecordModel] = []
-        for record in agentgrep.iter_source_records(target):
-            if parsed.kind == "search" and (
-                not refs.search_record_fingerprint_matches(record, parsed.fingerprint)
-            ):
-                continue
-            records.append(SearchRecordModel.from_record(record))
-            if parsed.kind == "search" or len(records) >= request.sample_size:
-                break
-    except Exception as exc:
-        return InspectResultResponse(
-            ref=request.ref,
-            sample_count=0,
-            records=[],
-            error_message=f"{type(exc).__name__}: {exc}",
-        )
-    if not records:
-        return InspectResultResponse(
-            ref=request.ref,
-            sample_count=0,
-            records=[],
-            error_message="record not found",
+            error_message="source record could not be represented",
         )
     return InspectResultResponse(
         ref=request.ref,
         sample_count=len(records),
         records=records,
+        error_message=resolved.error_message,
     )
 
 

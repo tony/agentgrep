@@ -16,6 +16,7 @@ def register_tools(mcp: FastMCP, *, runtime: SearchRuntime | None = None) -> Non
         catalog_tools,
         diagnostic_tools,
         discovery_tools,
+        export_tools,
         search_tools,
     )
 
@@ -23,3 +24,4 @@ def register_tools(mcp: FastMCP, *, runtime: SearchRuntime | None = None) -> Non
     discovery_tools.register(mcp)
     catalog_tools.register(mcp)
     diagnostic_tools.register(mcp)
+    export_tools.register(mcp)
