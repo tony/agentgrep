@@ -303,6 +303,9 @@ convention = "numpy"
 "src/agentgrep/_engine/search.py" = ["BLE001"]
 "src/agentgrep/ui/layouts/_hud_search.py" = ["PLC0414", "BLE001"]
 "src/agentgrep/ui/layouts/greplog.py" = ["BLE001"]
+# The export worker redacts arbitrary renderer and filesystem failures at the
+# thread boundary so backend details and destination paths cannot reach the UI.
+"src/agentgrep/ui/layouts/hud.py" = ["BLE001"]
 # Ref resolution and inline export are path-redacting MCP boundaries over
 # arbitrary adapters and renderers. They convert every implementation failure
 # into a stable, path-free client error rather than leaking backend details.

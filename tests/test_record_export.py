@@ -553,12 +553,17 @@ def test_export_writers_reject_forged_format_without_file_side_effects(
     )
     destination = tmp_path / ("exports" if private else "artifact.ndjson")
 
-    if private:
-        with pytest.raises(ExportFormatError, match="unsupported export format"):
+    def write_forged_artifact() -> None:
+        if private:
             write_private_export(artifact, directory=destination)
-    else:
-        with pytest.raises(ExportFormatError, match="unsupported export format"):
+        else:
             write_export(artifact, destination)
+
+    with pytest.raises(ExportFormatError, match="unsupported export format"):
+        write_forged_artifact()
+
+    with pytest.raises(ExportFormatError, match="unsupported export format"):
+        write_forged_artifact()
 
     assert list(tmp_path.iterdir()) == []
 
@@ -575,12 +580,17 @@ def test_export_writers_reject_forged_selection_without_file_side_effects(
     )
     destination = tmp_path / ("exports" if private else "artifact.ndjson")
 
-    if private:
-        with pytest.raises(ExportSelectionError, match="unsupported export selection"):
+    def write_forged_artifact() -> None:
+        if private:
             write_private_export(artifact, directory=destination)
-    else:
-        with pytest.raises(ExportSelectionError, match="unsupported export selection"):
+        else:
             write_export(artifact, destination)
+
+    with pytest.raises(ExportSelectionError, match="unsupported export selection"):
+        write_forged_artifact()
+
+    with pytest.raises(ExportSelectionError, match="unsupported export selection"):
+        write_forged_artifact()
 
     assert list(tmp_path.iterdir()) == []
 
