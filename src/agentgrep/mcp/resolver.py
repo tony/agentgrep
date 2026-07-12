@@ -100,19 +100,19 @@ def _resolve_source_group(
     """Resolve every request for one source in a single record scan."""
     search_requests = [item for item in requests if item.parsed.kind == "search"]
     find_requests = [item for item in requests if item.parsed.kind == "find"]
-    unresolved_search = {item.index: item for item in search_requests}
+    unresolved_search: dict[str, list[_ParsedRequest]] = {}
+    for item in search_requests:
+        unresolved_search.setdefault(item.parsed.fingerprint, []).append(item)
+    unresolved_count = len(search_requests)
     find_records: list[SearchRecordLike] = []
     read_failed = False
     try:
         for record_ordinal, record in enumerate(agentgrep.iter_source_records(source)):
             if len(find_records) < sample_size:
                 find_records.append(record)
-            for index, item in tuple(unresolved_search.items()):
-                if refs.search_record_fingerprint_matches(
-                    record,
-                    item.parsed.fingerprint,
-                ):
-                    results[index] = ResolvedRecordRef(
+            for fingerprint in refs.search_record_fingerprint_candidates(record):
+                for item in unresolved_search.pop(fingerprint, ()):
+                    results[item.index] = ResolvedRecordRef(
                         ref=item.ref,
                         kind="search",
                         records=(record,),
@@ -121,18 +121,19 @@ def _resolve_source_group(
                             record_ordinal=record_ordinal,
                         ),
                     )
-                    del unresolved_search[index]
-            if not unresolved_search and (not find_requests or len(find_records) >= sample_size):
+                    unresolved_count -= 1
+            if unresolved_count == 0 and (not find_requests or len(find_records) >= sample_size):
                 break
     except Exception:
         read_failed = True
 
-    for item in unresolved_search.values():
-        results[item.index] = ResolvedRecordRef(
-            ref=item.ref,
-            kind="search",
-            error_message="source could not be read" if read_failed else "record not found",
-        )
+    for items in unresolved_search.values():
+        for item in items:
+            results[item.index] = ResolvedRecordRef(
+                ref=item.ref,
+                kind="search",
+                error_message="source could not be read" if read_failed else "record not found",
+            )
     for item in find_requests:
         if read_failed:
             results[item.index] = ResolvedRecordRef(

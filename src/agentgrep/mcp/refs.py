@@ -214,16 +214,21 @@ def search_record_fingerprint(
     return _record_fingerprint(payload)
 
 
-def search_record_fingerprint_matches(record: SearchRecordLike, fingerprint: str) -> bool:
-    """Match current fields with a position-blind v1 fallback."""
+def search_record_fingerprint_candidates(record: SearchRecordLike) -> tuple[str, ...]:
+    """Prepare current and position-blind v1 fingerprints once for a record."""
     text_sha256 = hashlib.sha256(
         record.text.encode("utf-8", "surrogatepass"),
     ).hexdigest()
-    if search_record_fingerprint(record, text_sha256=text_sha256) == fingerprint:
-        return True
+    current = search_record_fingerprint(record, text_sha256=text_sha256)
     if _search_record_coordinate(record) is None:
-        return False
-    return _legacy_search_record_fingerprint(record, text_sha256=text_sha256) == fingerprint
+        return (current,)
+    legacy = _legacy_search_record_fingerprint(record, text_sha256=text_sha256)
+    return (current, legacy)
+
+
+def search_record_fingerprint_matches(record: SearchRecordLike, fingerprint: str) -> bool:
+    """Match current fields with a position-blind v1 fallback."""
+    return fingerprint in search_record_fingerprint_candidates(record)
 
 
 def find_record_fingerprint(record: FindRecordLike) -> str:
