@@ -15,7 +15,6 @@ __all__ = (
     "ConversationFidelity",
     "ConversationUnit",
     "group_conversation_units",
-    "group_prepared_conversation_units",
 )
 
 type ConversationFidelity = t.Literal["native_tree", "source_order", "unordered"]
@@ -408,7 +407,7 @@ def _build_conversation_unit(
     )
 
 
-def group_prepared_conversation_units(
+def _group_prepared_conversation_units(
     records: cabc.Iterable[tuple[SearchRecord, RecordIdentity]],
 ) -> tuple[ConversationUnit, ...]:
     """Group records whose canonical identities are already prepared.
@@ -468,4 +467,4 @@ def group_conversation_units(
                 continue
             yield record, record_identity(record, prepared_thread_id=thread_id)
 
-    return group_prepared_conversation_units(prepare())
+    return _group_prepared_conversation_units(prepare())
