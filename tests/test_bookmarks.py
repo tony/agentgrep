@@ -16,6 +16,7 @@ import agentgrep.bookmarks as bookmarks
 from agentgrep.bookmarks import (
     BookmarkCapacityError,
     BookmarkEntry,
+    BookmarkError,
     BookmarkFormatError,
     BookmarkMutation,
     BookmarkStore,
@@ -52,6 +53,30 @@ def _record(tmp_path: pathlib.Path) -> SearchRecord:
         identity_namespace="codex.session",
         position=RecordPosition(native_id="msg-1"),
     )
+
+
+def _call_store_method(store: BookmarkStore, method: str) -> object:
+    """Call one public storage method with valid bookmark input."""
+    if method == "list":
+        return store.list()
+    if method == "add":
+        return store.add(THREAD_ID, created_at=CREATED_AT)
+    if method == "remove":
+        return store.remove(THREAD_ID)
+    if method == "toggle":
+        return store.toggle(BookmarkEntry(THREAD_ID, "thread", None, CREATED_AT))
+    msg = f"unsupported test method: {method}"
+    raise AssertionError(msg)
+
+
+def _assert_path_free_storage_error(error: BookmarkError, path: pathlib.Path) -> None:
+    """Assert a storage error exposes neither a path nor a chained cause."""
+    sensitive = str(path)
+    assert type(error) is BookmarkError
+    assert sensitive not in str(error)
+    assert sensitive not in repr(error)
+    assert error.__cause__ is None
+    assert error.__context__ is None
 
 
 def test_default_path_uses_xdg_data_home(
@@ -196,6 +221,120 @@ def test_store_creates_private_directory_snapshot_and_lock(tmp_path: pathlib.Pat
     assert _mode(path.parent) == 0o700
     assert _mode(path) == 0o600
     assert _mode(path.parent / "bookmarks.lock") == 0o600
+
+
+@pytest.mark.parametrize("method", ["list", "add"], ids=["list", "idempotent-add"])
+def test_existing_snapshot_mode_is_repaired_under_lock(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+) -> None:
+    """flock/fchmod instrumentation is needed to prove repair ordering."""
+    path = tmp_path / "bookmarks.json"
+    store = BookmarkStore(path)
+    entry = BookmarkEntry(THREAD_ID, "thread", None, CREATED_AT)
+    store.add(THREAD_ID, created_at=CREATED_AT)
+    path.chmod(0o644)
+    snapshot_stat = path.stat()
+    real_fchmod = bookmarks.os.fchmod
+    real_flock = bookmarks.fcntl.flock
+    lock_held = False
+    snapshot_repairs = 0
+
+    def tracking_flock(fd: int, operation: int) -> None:
+        nonlocal lock_held
+        if operation & bookmarks.fcntl.LOCK_UN:
+            assert lock_held
+            real_flock(fd, operation)
+            lock_held = False
+            return
+        real_flock(fd, operation)
+        assert not lock_held
+        lock_held = True
+
+    def tracking_fchmod(fd: int, mode: int) -> None:
+        nonlocal snapshot_repairs
+        descriptor_stat = os.fstat(fd)
+        if (
+            descriptor_stat.st_dev == snapshot_stat.st_dev
+            and descriptor_stat.st_ino == snapshot_stat.st_ino
+        ):
+            assert lock_held
+            assert mode == 0o600
+            snapshot_repairs += 1
+        real_fchmod(fd, mode)
+
+    monkeypatch.setattr(bookmarks.fcntl, "flock", tracking_flock)
+    monkeypatch.setattr(bookmarks.os, "fchmod", tracking_fchmod)
+
+    result = _call_store_method(store, method)
+
+    if method == "list":
+        assert result == [entry]
+    else:
+        assert result == BookmarkMutation("unchanged", entry)
+    assert snapshot_repairs == 1
+    assert _mode(path) == 0o600
+
+
+def test_existing_explicit_parent_permissions_are_preserved(tmp_path: pathlib.Path) -> None:
+    parent = tmp_path / "shared"
+    parent.mkdir()
+    parent.chmod(0o755)
+
+    assert BookmarkStore(parent / "bookmarks.json").list() == []
+
+    assert _mode(parent) == 0o755
+
+
+def test_existing_default_app_directory_is_repaired(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_home = tmp_path / "xdg-data"
+    app_directory = data_home / "agentgrep"
+    app_directory.mkdir(parents=True)
+    app_directory.chmod(0o755)
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+
+    assert BookmarkStore().list() == []
+
+    assert _mode(app_directory) == 0o700
+
+
+@pytest.mark.parametrize("method", ["list", "add", "remove", "toggle"])
+def test_public_store_methods_hide_is_a_directory_failures(
+    tmp_path: pathlib.Path,
+    method: str,
+) -> None:
+    path = tmp_path / "bookmarks.json"
+    path.mkdir()
+
+    with pytest.raises(BookmarkError) as exc_info:
+        _call_store_method(BookmarkStore(path), method)
+
+    _assert_path_free_storage_error(exc_info.value, path)
+
+
+@pytest.mark.parametrize("method", ["list", "add", "remove", "toggle"])
+def test_public_store_methods_hide_permission_failures(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+) -> None:
+    """Monkeypatching is required because elevated CI can bypass mode denial."""
+    path = tmp_path / "private" / "bookmarks.json"
+
+    def deny_directory(_store: BookmarkStore) -> None:
+        message = f"permission denied: {path}"
+        raise PermissionError(message)
+
+    monkeypatch.setattr(BookmarkStore, "_ensure_directory", deny_directory)
+
+    with pytest.raises(BookmarkError) as exc_info:
+        _call_store_method(BookmarkStore(path), method)
+
+    _assert_path_free_storage_error(exc_info.value, path)
 
 
 @pytest.mark.parametrize(
@@ -371,14 +510,15 @@ def test_failed_atomic_replace_preserves_snapshot_and_cleans_temp(
         _source: pathlib.Path,
         _target: os.PathLike[str] | str,
     ) -> pathlib.Path:
-        message = "replace failed"
+        message = f"replace failed for {path}"
         raise OSError(message)
 
     monkeypatch.setattr(bookmarks.pathlib.Path, "replace", fail_replace)
 
-    with pytest.raises(OSError, match="replace failed"):
+    with pytest.raises(BookmarkError) as exc_info:
         store.add(OTHER_THREAD_ID, created_at=CREATED_AT)
 
+    _assert_path_free_storage_error(exc_info.value, path)
     assert path.read_bytes() == original
     assert [item for item in tmp_path.iterdir() if item.suffix == ".tmp"] == []
 
