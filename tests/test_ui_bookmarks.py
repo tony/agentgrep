@@ -700,6 +700,53 @@ async def test_record_switch_during_mutation_does_not_repaint_old_record(
         assert "★" not in header
 
 
+async def test_mutation_marks_distinct_live_record_with_same_identity(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A mutation refreshes an equivalent live record by cached canonical ID."""
+    import agentgrep.identity as identity
+    from agentgrep.ui.layouts import hud
+
+    toggled = _record(suffix="canonical-match")
+    equivalent = _record(suffix="canonical-match")
+    unrelated = _record(suffix="canonical-other")
+    prepared = record_identity(toggled)
+    assert toggled is not equivalent
+    assert prepared.record_id is not None
+    entry = BookmarkEntry(prepared.record_id, "record", prepared.content_id, _CREATED_AT)
+    app = _bookmark_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await _settle_workers(app, pilot)
+        screen = app.screen
+        screen.show_detail(unrelated)
+        await _settle_workers(app, pilot)
+        screen.show_detail(equivalent)
+        await _settle_workers(app, pilot)
+        monkeypatch.setattr(
+            identity,
+            "record_identity",
+            lambda _record: pytest.fail("mutation refresh must reuse cached identities"),
+        )
+        screen._bookmark_write_pending = True
+        screen._bookmark_write_generation += 1
+
+        screen._apply_bookmark_mutation(
+            screen._bookmark_write_generation,
+            hud._BookmarkToggleResult(
+                toggled,
+                BookmarkMutation("added", entry),
+                None,
+            ),
+        )
+
+        assert f"Record: ★ {prepared.record_id}" in screen._detail_header_text.plain
+        screen.show_detail(unrelated)
+        await pilot.pause()
+        assert "★" not in screen._detail_header_text.plain
+
+
 async def test_resolution_uses_scope_all_and_stops_when_targets_resolve(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

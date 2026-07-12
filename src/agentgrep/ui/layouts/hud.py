@@ -1300,7 +1300,9 @@ class HudLayout(LayoutScreen):
                 item for item in self._bookmark_entries if item.target_id != entry.target_id
             ]
             self._bookmarked_ids.discard(entry.target_id)
-        self._refresh_current_bookmark_marker(event.record)
+        self._refresh_current_bookmark_marker(
+            entry.target_id if entry is not None else None,
+        )
         if mutation.action == "added":
             self.notify(f"Bookmarked {entry.scope if entry is not None else 'record'}.")
         elif mutation.action == "removed":
@@ -1308,14 +1310,16 @@ class HudLayout(LayoutScreen):
 
     def _refresh_current_bookmark_marker(
         self,
-        record: SearchRecord | None = None,
+        target_id: str | None = None,
     ) -> None:
         """Rebuild only the current header from an already-prepared identity."""
         current = self._current_detail_record
-        if current is None or (record is not None and current is not record):
+        if current is None:
             return
         identity = self._cached_detail_identity(current)
         if identity is None or self._detail is None:
+            return
+        if target_id is not None and identity.record_id != target_id:
             return
         width = max(20, self._detail.size.width or 80)
         self._replace_detail_header(self._build_detail_header(current, identity, width=width))
