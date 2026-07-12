@@ -16,6 +16,7 @@ from agentgrep.mcp._library import (
     SourceHandleLike,
     agentgrep,
 )
+from agentgrep.mcp.refs import MAX_RECORD_REF_CHARS
 
 if t.TYPE_CHECKING:
     from agentgrep.identity import RecordIdentity
@@ -499,7 +500,7 @@ class InspectSampleRequest(AgentGrepModel):
 class InspectResultRequest(AgentGrepModel):
     """Validated inspect-result request payload."""
 
-    ref: str = Field(min_length=1)
+    ref: str = Field(min_length=1, max_length=MAX_RECORD_REF_CHARS)
     sample_size: int = Field(default=1, ge=1, le=20)
 
 
@@ -526,7 +527,12 @@ class InspectResultResponse(AgentGrepModel):
 class ExportRecordsRequest(AgentGrepModel):
     """Validated bounded inline-export request."""
 
-    refs: list[str] = Field(min_length=1, max_length=20)
+    refs: list[
+        t.Annotated[
+            str,
+            Field(min_length=1, max_length=MAX_RECORD_REF_CHARS),
+        ]
+    ] = Field(min_length=1, max_length=20)
     format: t.Literal["ndjson", "markdown"] = "ndjson"
     selection: t.Literal["records", "thread"] = "records"
     include_bodies: bool = False

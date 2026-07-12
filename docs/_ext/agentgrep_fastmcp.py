@@ -31,6 +31,7 @@ from agentgrep.mcp.models import (
     StoreDescriptorModel,
     ValidateQueryResponse,
 )
+from agentgrep.mcp.refs import MAX_RECORD_REF_CHARS
 from agentgrep.query.help import query_language_summary
 
 READONLY_TAGS = {"readonly", "agentgrep"}
@@ -112,7 +113,12 @@ t.cast(t.Any, search).__fastmcp__ = types.SimpleNamespace(
 
 async def export_records(
     refs: t.Annotated[
-        list[str],
+        list[
+            t.Annotated[
+                str,
+                Field(min_length=1, max_length=MAX_RECORD_REF_CHARS),
+            ]
+        ],
         Field(
             min_length=1,
             max_length=20,

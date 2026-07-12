@@ -17,6 +17,7 @@ from agentgrep.mcp._library import (
     TOOL_ANNOTATIONS,
 )
 from agentgrep.mcp.models import ExportRecordsRequest, ExportRecordsResponse
+from agentgrep.mcp.refs import MAX_RECORD_REF_CHARS
 from agentgrep.mcp.resolver import (
     PhysicalRecordSelection,
     RecordRefResolverError,
@@ -112,7 +113,11 @@ def register(mcp: FastMCP) -> None:
                 description="One to 20 opaque refs returned by search.",
                 json_schema_extra={
                     "type": "array",
-                    "items": {"type": "string"},
+                    "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": MAX_RECORD_REF_CHARS,
+                    },
                     "minItems": 1,
                     "maxItems": 20,
                 },

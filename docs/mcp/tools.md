@@ -80,6 +80,8 @@ cursor argument and never writes a server-local file. Use {tooliconl}`search`
 for discovery and pagination, then pass refs from the desired page. Refs use
 the same exact repeated-occurrence and historical compatibility behavior as
 {tooliconl}`inspect_result`; duplicate physical selections are refused.
+Each ref is limited to 8,192 characters and is rejected before decoding or
+source discovery when it exceeds that bound.
 
 The deterministic allowlist and observed-thread fidelity are shared with the
 {ref}`CLI export guide <cli-export>`. The tool remains read-only, idempotent,

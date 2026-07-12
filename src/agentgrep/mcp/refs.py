@@ -20,6 +20,14 @@ from agentgrep.mcp._library import (
 _REF_PREFIX = "agref1:"
 _CURSOR_PREFIX = "agcur1:"
 
+MAX_RECORD_REF_CHARS = 8192
+"""Maximum opaque record-ref length accepted at MCP boundaries.
+
+A common Linux ``PATH_MAX`` path expands to less than 5.5 KiB in base64url;
+8 KiB leaves room for the versioned JSON coordinates while bounding decode and
+audit work on untrusted input.
+"""
+
 
 class McpTokenError(ValueError):
     """Raised when an MCP ref or cursor token cannot be parsed."""
@@ -288,6 +296,9 @@ def make_find_ref(record: FindRecordLike) -> str:
 
 def parse_record_ref(ref: str, *, home: pathlib.Path) -> ParsedRecordRef:
     """Parse an opaque result ref."""
+    if len(ref) > MAX_RECORD_REF_CHARS:
+        msg = "ref exceeds maximum length"
+        raise McpTokenError(msg)
     payload = _decode_token(_REF_PREFIX, ref)
     version = payload.get("v")
     if not isinstance(version, int) or isinstance(version, bool) or version != 1:

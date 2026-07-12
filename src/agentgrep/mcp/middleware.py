@@ -16,6 +16,8 @@ from fastmcp.server.middleware import Middleware, MiddlewareContext
 from fastmcp.server.middleware.response_limiting import ResponseLimitingMiddleware
 from fastmcp.tools.base import ToolResult
 
+from agentgrep.mcp.refs import MAX_RECORD_REF_CHARS
+
 _SENSITIVE_ARG_NAMES: frozenset[str] = frozenset(
     {"terms", "pattern", "sample_text", "cursor", "ref", "refs", "source_path"},
 )
@@ -29,6 +31,7 @@ coordinates and receive the same treatment.
 """
 
 _MAX_LOGGED_STR_LEN: int = 200
+_MAX_SENSITIVE_LIST_ITEMS: int = 20
 
 
 class AgentgrepResponseLimitingMiddleware(ResponseLimitingMiddleware):
@@ -65,21 +68,27 @@ def _redact_digest(value: str) -> dict[str, t.Any]:
     >>> _redact_digest("")
     {'len': 0, 'sha256_prefix': 'e3b0c44298fc'}
     """
-    return {
+    truncated = len(value) > MAX_RECORD_REF_CHARS
+    digest_value = value[:MAX_RECORD_REF_CHARS] if truncated else value
+    summary: dict[str, t.Any] = {
         "len": len(value),
         "sha256_prefix": hashlib.sha256(
-            value.encode("utf-8", "surrogatepass"),
+            digest_value.encode("utf-8", "surrogatepass"),
         ).hexdigest()[:12],
     }
+    if truncated:
+        summary["truncated"] = True
+    return summary
 
 
 def _summarize_args(args: dict[str, t.Any]) -> dict[str, t.Any]:
     """Summarize tool arguments for audit logging.
 
-    Sensitive scalars get replaced by a digest dict. Sensitive list payloads
-    (e.g. ``terms`` is ``list[str]``) get each string element digested; invalid
-    non-string members expose only their type. Long non-sensitive strings get
-    truncated with a marker. Everything else passes through as-is.
+    Sensitive scalars get replaced by a bounded digest dict. Sensitive list
+    payloads (e.g. ``terms`` is ``list[str]``) get each string element digested
+    up to a fixed item cap; invalid non-string members expose only their type.
+    Long non-sensitive strings get truncated with a marker. Everything else
+    passes through as-is.
 
     Examples
     --------
@@ -120,10 +129,18 @@ def _summarize_args(args: dict[str, t.Any]) -> dict[str, t.Any]:
         if key in _SENSITIVE_ARG_NAMES and isinstance(value, str):
             summary[key] = _redact_digest(value)
         elif key in _SENSITIVE_ARG_NAMES and isinstance(value, list):
-            summary[key] = [
+            items = [
                 _redact_digest(item) if isinstance(item, str) else {"type": type(item).__name__}
-                for item in value
+                for item in value[:_MAX_SENSITIVE_LIST_ITEMS]
             ]
+            if len(value) > _MAX_SENSITIVE_LIST_ITEMS:
+                summary[key] = {
+                    "len": len(value),
+                    "items": items,
+                    "truncated": True,
+                }
+            else:
+                summary[key] = items
         elif key in _SENSITIVE_ARG_NAMES:
             summary[key] = {"type": type(value).__name__}
         elif isinstance(value, str) and len(value) > _MAX_LOGGED_STR_LEN:

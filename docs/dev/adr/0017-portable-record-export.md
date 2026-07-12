@@ -110,6 +110,10 @@ and require `include_bodies=true`. The UTF-8 artifact is capped at 400 KiB and
 must also fit the server's response-envelope limit. {tooliconl}`search` owns
 discovery and pagination.
 
+Each opaque search ref is limited to 8,192 characters. Both MCP consumers
+enforce that bound before token decoding or source discovery, and audit
+redaction hashes only a bounded prefix of oversized sensitive inputs.
+
 ### Durable file output
 
 Explicit file output uses a same-directory private temporary file. Complete
