@@ -64,24 +64,6 @@ def _catalog_uuid_path_token(source: SourceHandle) -> str | None:
             "antigravity_cli.conversations_sqlite_protobuf.v1",
         ) if path.parent.name == "conversations" and path.suffix == ".db":
             token = path.stem
-        case (
-            "antigravity-cli",
-            "antigravity-cli.implicit",
-            "antigravity_cli.implicit_protobuf.v1",
-        ) if path.parent.name == "implicit" and path.suffix == ".pb":
-            token = path.stem
-        case (
-            "antigravity-ide",
-            "antigravity-ide.conversations",
-            "antigravity_ide.conversations_protobuf.v1",
-        ) if path.parent.name == "conversations" and path.suffix == ".pb":
-            token = path.stem
-        case (
-            "antigravity-ide",
-            "antigravity-ide.implicit",
-            "antigravity_ide.implicit_protobuf.v1",
-        ) if path.parent.name == "implicit" and path.suffix == ".pb":
-            token = path.stem
     return token if token is not None and _CATALOG_UUID_RE.fullmatch(token) else None
 
 
