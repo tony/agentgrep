@@ -202,18 +202,19 @@ def test_identity_changelog_has_one_unreleased_deliverable() -> None:
     """The unreleased section describes one product-level issue 80 outcome."""
     changes = _read_text("CHANGES")
     release_match = re.search(
-        r"^## agentgrep 0\.1\.0a38 \(Yet to be released\)\n"
+        r"^## agentgrep (?P<version>\d+\.\d+\.\d+\w*) \(Yet to be released\)\n"
         r"(?P<body>.*?)(?=^## agentgrep |\Z)",
         changes,
         flags=re.MULTILINE | re.DOTALL,
     )
     assert release_match is not None
+    version = release_match.group("version")
     release = release_match.group("body")
     heading = "#### Consistent record handles across search (#80)"
 
     assert release.count(heading) == 1
     assert changes.count(heading) == 1
-    assert not re.search(r"agentgrep 0\.1\.0a38 (?:is|ships|focuses)", release)
+    assert not re.search(rf"agentgrep {re.escape(version)} (?:is|ships|focuses)", release)
     assert "### What's new" in release
     assert "adr-deterministic-record-identity" in release
     assert re.search(r"repeated\s+content", release)
