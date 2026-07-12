@@ -1095,10 +1095,7 @@ class HudLayout(LayoutScreen):
                 return False
             self.show_detail(record)
         zoomed: t.Literal["results", "detail"] = "detail" if target == "detail" else "results"
-        self._zoomed_pane = zoomed
-        body = self._body
-        body.set_class(target == "results", "-zoom-results")
-        body.set_class(target == "detail", "-zoom-detail")
+        self._set_zoomed_pane(zoomed)
         return True
 
     @_runtime.pump_only
@@ -2189,11 +2186,28 @@ class HudLayout(LayoutScreen):
     # it side-by-side. Focusable regions: #search (top), then in the
     # body #filter and #results, and #detail-scroll (right or bottom).
 
+    @_runtime.pump_only
+    def _set_zoomed_pane(self, pane: t.Literal["results", "detail"]) -> None:
+        """Paint one logical content pane without moving focus."""
+        self._zoomed_pane = pane
+        if self._body is None:
+            return
+        body = t.cast("t.Any", self._body)
+        body.set_class(pane == "results", "-zoom-results")
+        body.set_class(pane == "detail", "-zoom-detail")
+
     def _focus_widget_by_id(self, widget_id: str) -> None:
         try:
             target = self.query_one(f"#{widget_id}")
         except Exception:
             return
+        target_pane: t.Literal["results", "detail"] | None = None
+        if widget_id in {"results", "filter"}:
+            target_pane = "results"
+        elif widget_id in {"detail-scroll", "detail-find"}:
+            target_pane = "detail"
+        if target_pane is not None and self._zoomed_pane not in {None, target_pane}:
+            self._set_zoomed_pane(target_pane)
         target.focus()
 
     def _record_for_detail_focus(self) -> SearchRecord | None:

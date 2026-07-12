@@ -83,6 +83,25 @@ def _zoom_record(tmp_path: pathlib.Path, index: int) -> SearchRecord:
     )
 
 
+def _seed_zoom_layout(layout: t.Any, record: SearchRecord) -> None:
+    """Populate one mounted HUD layout for logical-zoom focus tests."""
+    layout._set_empty_state(empty=False)
+    layout.all_records.append(record)
+    layout.filtered_records = [record]
+    layout._results.set_records([record])
+
+
+def _assert_zoomed_focus(layout: t.Any, pane: str, target: t.Any) -> None:
+    """Assert one focused content target is visible in the selected zoom."""
+    other = "detail" if pane == "results" else "results"
+    assert layout._zoomed_pane == pane
+    assert layout._body.has_class(f"-zoom-{pane}")
+    assert not layout._body.has_class(f"-zoom-{other}")
+    assert layout.app.focused is target
+    assert target.is_on_screen
+    assert layout._search_input.is_on_screen
+
+
 async def _type_command(pilot: t.Any, text: str) -> None:
     """Type and submit a slash command through the focused search input."""
     await pilot.press(*text, "enter")
@@ -641,6 +660,88 @@ async def test_wide_hud_zoom_keeps_shell_usable_and_restores_geometry(
             detail_column.has_class("-collapsed"),
         ) == original
         assert app.focused is search
+
+
+async def test_wide_zoom_navigation_switches_to_visible_sibling(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Horizontal pane traversal switches zoom before moving focus."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = _zoom_record(tmp_path, 0)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        layout = app.screen
+        _seed_zoom_layout(layout, record)
+
+        await _submit(pilot, layout, "/maximize results")
+        layout._results.focus()
+        await pilot.pause()
+        await pilot.press("ctrl+l")
+        await pilot.pause()
+
+        _assert_zoomed_focus(layout, "detail", layout._detail_scroll)
+
+        await pilot.press("ctrl+h")
+        await pilot.pause()
+
+        _assert_zoomed_focus(layout, "results", layout._results)
+
+
+async def test_stacked_zoom_navigation_switches_to_visible_sibling(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Vertical pane traversal switches zoom before moving focus."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = _zoom_record(tmp_path, 0)
+    async with app.run_test(size=(77, 30)) as pilot:
+        await pilot.pause()
+        layout = app.screen
+        _seed_zoom_layout(layout, record)
+
+        await _submit(pilot, layout, "/maximize results")
+        layout._results.focus()
+        await pilot.pause()
+        await pilot.press("ctrl+j")
+        await pilot.pause()
+
+        _assert_zoomed_focus(layout, "detail", layout._detail_scroll)
+
+        await pilot.press("ctrl+k")
+        await pilot.pause()
+
+        _assert_zoomed_focus(layout, "results", layout._results)
+
+
+@pytest.mark.parametrize("size", [(120, 30), (77, 30)], ids=["wide", "stacked"])
+async def test_detail_zoom_navigation_never_focuses_hidden_results_widgets(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    size: tuple[int, int],
+) -> None:
+    """Search-down and detail-up keep every focus target on-screen."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = _zoom_record(tmp_path, 0)
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        layout = app.screen
+        _seed_zoom_layout(layout, record)
+
+        await _submit(pilot, layout, "/maximize detail")
+        await pilot.press("ctrl+j")
+        await pilot.pause()
+
+        _assert_zoomed_focus(layout, "results", layout._filter_input)
+
+        await _submit(pilot, layout, "/maximize detail")
+        layout._detail_scroll.focus()
+        await pilot.pause()
+        await pilot.press("ctrl+k")
+        await pilot.pause()
+
+        expected = layout._results if layout._stacked else layout._filter_input
+        _assert_zoomed_focus(layout, "results", expected)
 
 
 async def test_narrow_detail_zoom_renders_selection_without_losing_collapse(
