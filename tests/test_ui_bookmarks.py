@@ -164,6 +164,21 @@ async def test_modal_navigation_updates_one_line_preview() -> None:
         assert "\n" not in status
 
 
+async def test_modal_preview_renders_record_text_literally() -> None:
+    """Record markup-like text stays literal in the mounted preview."""
+    BookmarkChoice, _BookmarkRecall = _bookmark_widgets()
+    record = _record(title="literal [/bold] preview")
+    choice = BookmarkChoice(
+        BookmarkEntry(_RECORD_ID, "record", _CONTENT_ID, _CREATED_AT),
+        record,
+    )
+    app = _BookmarkHostApp([choice])
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert "literal [/bold] preview" in _status_text(app)
+
+
 async def test_modal_escape_cancels() -> None:
     """Escape dismisses with ``None`` and never accepts the highlighted row."""
     app = _BookmarkHostApp(_choices())
