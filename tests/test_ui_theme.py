@@ -223,6 +223,39 @@ async def test_theme_switch_rerenders_rows(
         assert any("#0087af" in style for style in agent_span_styles())
 
 
+async def test_theme_switch_invalidates_filtered_out_row_cache(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rows hidden during a theme switch recolor when filtering widens."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        records = [
+            _ui_record(
+                agentgrep,
+                tmp_path / f"filtered-{index}.jsonl",
+                f"codex prompt body {index}",
+                f"filtered-{index}",
+            )
+            for index in range(2)
+        ]
+        results = app.screen._results
+        results._rebuild_options(records)
+        results.set_records(records[:1])
+
+        app.theme = theme.LIGHT_THEME_NAME
+        await pilot.pause()
+        results.set_records(records)
+
+        for index in range(2):
+            option = results.get_option_at_index(index)
+            styles = [str(span.style) for span in option.prompt.spans]
+            assert any("#0087af" in style for style in styles)
+            assert not any("#00d7ff" in style for style in styles)
+
+
 async def test_theme_switch_rebuilds_rows_in_bounded_chunks(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

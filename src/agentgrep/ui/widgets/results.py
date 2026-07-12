@@ -67,10 +67,11 @@ class SearchResultsList(OptionList, can_focus=True):
         super().__init__(id=id)
         self._records: list[SearchRecord] = []
         self._record_ids: set[int] = set()
-        # Rendered rows memoized by record id (rows bake theme hex but are stable
-        # within a palette): a filter rebuild reuses them instead of paying the
-        # dominant _render_record cost again. Cleared on clear() / rerender.
-        self._render_cache: dict[int, rich_text.Text] = {}
+        # Rows bake theme hex, so the palette name participates in the key.
+        # Filtering can then reuse rows without resurfacing stale colors after
+        # a theme switch. Agentgrep has two fixed palettes, bounding retention
+        # to at most two renderings per retained record.
+        self._render_cache: dict[tuple[str, int], rich_text.Text] = {}
 
     def append_records(self, records: cabc.Sequence[SearchRecord]) -> None:
         """Append a batch of records — invoked via ``app.call_from_thread``.
@@ -174,7 +175,6 @@ class SearchResultsList(OptionList, can_focus=True):
     def apply_theme_rerender(self, records: cabc.Sequence[SearchRecord]) -> None:
         """Replace one bounded record slice with current-theme row prompts."""
         for record in records:
-            self._render_cache.pop(id(record), None)
             try:
                 index = self.get_option_index(str(id(record)))
             except OptionDoesNotExist:
@@ -232,12 +232,13 @@ class SearchResultsList(OptionList, can_focus=True):
         self._post_scroll_changed(cursor=highlighted)
 
     def _render_record(self, record: SearchRecord) -> rich_text.Text:
-        """Return the rendered row for ``record``, memoized by id."""
-        cached = self._render_cache.get(id(record))
+        """Return the rendered row, memoized by palette and record identity."""
+        cache_key = (str(self.app.theme), id(record))
+        cached = self._render_cache.get(cache_key)
         if cached is not None:
             return cached
         row = self._build_row(record)
-        self._render_cache[id(record)] = row
+        self._render_cache[cache_key] = row
         return row
 
     def _build_row(self, record: SearchRecord) -> rich_text.Text:
