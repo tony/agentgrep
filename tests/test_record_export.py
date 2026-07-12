@@ -474,15 +474,15 @@ def test_render_export_prepares_each_record_identity_once(
     assert calls == list(records)
 
 
-def test_render_thread_reuses_conversation_grouping(
+def test_render_thread_reuses_private_conversation_grouping(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Thread validation and fidelity stay owned by conversations."""
+    """Thread validation reuses the conversations package-private seam."""
     record = _record(
         "one",
         position=RecordPosition(ordinal=0, quality="source_order"),
     )
-    real_group = record_export.group_prepared_conversation_units
+    real_group = record_export._group_prepared_conversation_units
     calls: list[tuple[tuple[SearchRecord, RecordIdentity], ...]] = []
 
     def counting_group(
@@ -492,7 +492,7 @@ def test_render_thread_reuses_conversation_grouping(
         calls.append(consumed)
         return real_group(consumed)
 
-    monkeypatch.setattr(record_export, "group_prepared_conversation_units", counting_group)
+    monkeypatch.setattr(record_export, "_group_prepared_conversation_units", counting_group)
 
     _ = render_export(
         (record,),
