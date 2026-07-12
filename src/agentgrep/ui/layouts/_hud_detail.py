@@ -283,7 +283,7 @@ class _HudDetailBase(LayoutScreen):
         dim_color = ui_theme.resolve(theme_vars, "ag-dim")
         model_color = ui_theme.resolve(theme_vars, "ag-model")
         path_color = ui_theme.resolve(theme_vars, "ag-muted")
-        header = Text(no_wrap=False)
+        header = Text(no_wrap=True, overflow="ellipsis")
         leading_rows: tuple[tuple[str, str, str], ...] = (
             ("Agent:", record.agent or "", agent_color),
             ("Kind:", record.kind or "", kind_color),
@@ -320,11 +320,21 @@ class _HudDetailBase(LayoutScreen):
         for label, value, value_style in leading_rows:
             header.append(f"{label} ", style="bold")
             header.append(f"{value}\n", style=value_style)
-        for label, value in (
+        identity_rows = (
             ("Record:", None if identity is None else identity.record_id),
             ("Content:", None if identity is None else identity.content_id),
             ("Thread:", None if identity is None else identity.thread_id),
-        ):
+        )
+        if width < self._DETAIL_COMPACT_IDENTITY_WIDTH:
+            identity_rows = tuple(
+                (compact_label, value)
+                for compact_label, (_label, value) in zip(
+                    ("R:", "C:", "T:"),
+                    identity_rows,
+                    strict=True,
+                )
+            )
+        for label, value in identity_rows:
             header.append(f"{label} ", style="dim")
             if identity is None:
                 header.append("…\n", style="dim")

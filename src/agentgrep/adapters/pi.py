@@ -261,10 +261,17 @@ def parse_pi_context_mode_db(
         columns = sqlite_column_names(connection, "session_events")
         project_dir_expr = sqlite_column_expr(columns, "project_dir")
         cursor = connection.execute(
-            f"SELECT session_id, type, data, created_at, {project_dir_expr} "
+            f"SELECT id, session_id, type, data, created_at, {project_dir_expr} "
             "FROM session_events ORDER BY id",
         )
-        for session_id_raw, type_raw, data_raw, created_raw, project_dir_raw in cursor:
+        for (
+            event_id_raw,
+            session_id_raw,
+            type_raw,
+            data_raw,
+            created_raw,
+            project_dir_raw,
+        ) in cursor:
             data_text = as_optional_str(data_raw)
             if not data_text or not data_text.strip():
                 continue
@@ -286,6 +293,8 @@ def parse_pi_context_mode_db(
                 session_id=session_id,
                 conversation_id=session_id,
                 origin=origins[project_dir],
+                identity_namespace=("pi.session" if session_id is not None else None),
+                position=_record_position(native_id=event_id_raw),
             )
     except sqlite3.DatabaseError:
         return
