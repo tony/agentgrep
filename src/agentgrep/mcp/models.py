@@ -737,7 +737,7 @@ class ExportRecordsRequest(AgentGrepModel):
 
 
 class ExportRecordsResponse(AgentGrepModel):
-    """Bounded inline export artifact returned through MCP."""
+    """Structured metadata for a bounded inline MCP export artifact."""
 
     schema_version: str = agentgrep.SCHEMA_VERSION
     format: t.Literal["ndjson", "markdown"]
@@ -745,4 +745,3 @@ class ExportRecordsResponse(AgentGrepModel):
     include_bodies: bool
     record_count: int
     byte_count: int
-    artifact: str
