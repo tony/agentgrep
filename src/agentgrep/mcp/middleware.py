@@ -31,14 +31,15 @@ TOOL_ARGUMENT_NAMES_STATE_KEY = "agentgrep.tool_argument_names"
 """Request-local FastMCP state key for caller-supplied tool argument names."""
 
 _SENSITIVE_ARG_NAMES: frozenset[str] = frozenset(
-    {"terms", "pattern", "sample_text", "cursor"},
+    {"terms", "pattern", "sample_text", "cursor", "ref", "refs", "source_path"},
 )
 """Tool argument names whose values get redacted before logging.
 
 ``terms`` and ``pattern`` can carry user secrets when an agent searches its
 own history for tokens; find-page ``cursor`` values encode the original
 pattern; ``sample_text`` is the validate-query payload and may contain
-anything the caller pastes in.
+anything the caller pastes in. Record refs and source paths encode or reveal
+local source coordinates and receive the same treatment.
 """
 
 _MAX_LOGGED_STR_LEN: int = 200
@@ -357,7 +358,9 @@ def _redact_digest(value: str) -> dict[str, t.Any]:
     """
     return {
         "len": len(value),
-        "sha256_prefix": hashlib.sha256(value.encode("utf-8")).hexdigest()[:12],
+        "sha256_prefix": hashlib.sha256(
+            value.encode("utf-8", "surrogatepass"),
+        ).hexdigest()[:12],
     }
 
 
@@ -365,9 +368,9 @@ def _summarize_args(args: dict[str, t.Any]) -> dict[str, t.Any]:
     """Summarize tool arguments for audit logging.
 
     Sensitive scalars get replaced by a digest dict. Sensitive list payloads
-    (e.g. ``terms`` is ``list[str]``) get each element digested. Long
-    non-sensitive strings get truncated with a marker. Everything else passes
-    through as-is.
+    (e.g. ``terms`` is ``list[str]``) get each string element digested; invalid
+    non-string members expose only their type. Long non-sensitive strings get
+    truncated with a marker. Everything else passes through as-is.
 
     Examples
     --------
@@ -394,6 +397,14 @@ def _summarize_args(args: dict[str, t.Any]) -> dict[str, t.Any]:
 
     >>> _summarize_args({"cursor": "agcur1:secret"})["cursor"]["len"]
     13
+
+    Record refs are redacted individually, including list inputs:
+
+    >>> refs = _summarize_args({"refs": ["agref1:first", "agref1:second"]})
+    >>> [item["len"] for item in refs["refs"]]
+    [12, 13]
+    >>> "agref1" in str(refs)
+    False
     """
     summary: dict[str, t.Any] = {}
     for key, value in args.items():
@@ -401,8 +412,11 @@ def _summarize_args(args: dict[str, t.Any]) -> dict[str, t.Any]:
             summary[key] = _redact_digest(value)
         elif key in _SENSITIVE_ARG_NAMES and isinstance(value, list):
             summary[key] = [
-                _redact_digest(str(item)) if isinstance(item, str) else item for item in value
+                _redact_digest(item) if isinstance(item, str) else {"type": type(item).__name__}
+                for item in value
             ]
+        elif key in _SENSITIVE_ARG_NAMES:
+            summary[key] = {"type": type(value).__name__}
         elif isinstance(value, str) and len(value) > _MAX_LOGGED_STR_LEN:
             summary[key] = value[:_MAX_LOGGED_STR_LEN] + "...<truncated>"
         else:

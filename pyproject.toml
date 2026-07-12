@@ -303,6 +303,11 @@ convention = "numpy"
 "src/agentgrep/_engine/search.py" = ["BLE001"]
 "src/agentgrep/ui/layouts/_hud_search.py" = ["PLC0414", "BLE001"]
 "src/agentgrep/ui/layouts/greplog.py" = ["BLE001"]
+# Ref resolution and inline export are path-redacting MCP boundaries over
+# arbitrary adapters and renderers. They convert every implementation failure
+# into a stable, path-free client error rather than leaking backend details.
+"src/agentgrep/mcp/resolver.py" = ["BLE001"]
+"src/agentgrep/mcp/tools/export_tools.py" = ["BLE001"]
 # Catalog inspection walks whatever an adapter can parse out of a real store,
 # so any reader failure is data the client asked about. The MCP contract is to
 # return it as `error_message` with its exception type, not to fail the tool
