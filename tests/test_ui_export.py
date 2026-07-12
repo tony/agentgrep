@@ -15,6 +15,7 @@ import agentgrep.identity as identity
 import agentgrep.record_export as record_export
 from agentgrep.records import RecordPosition, SearchRecord
 from agentgrep.ui import _runtime
+from agentgrep.ui.widgets import FilterCompleted
 from tests._agentgrep_tui_support import _build_empty_ui_app
 from tests.test_agentgrep_tui import _search_requested
 
@@ -77,6 +78,42 @@ def _capture_notifications(
     notes: list[tuple[tuple[object, ...], dict[str, object]]] = []
     monkeypatch.setattr(screen, "notify", lambda *a, **k: notes.append((a, k)))
     return notes
+
+
+def _defer_export_start(
+    screen: t.Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[tuple[t.Callable[..., t.Awaitable[None]], tuple[object, ...]]]:
+    """Capture the one pump callback scheduled by an accepted export."""
+    scheduled: list[tuple[t.Callable[..., t.Awaitable[None]], tuple[object, ...]]] = []
+
+    def defer(
+        callback: t.Callable[..., t.Awaitable[None]],
+        *args: object,
+    ) -> None:
+        scheduled.append((callback, args))
+
+    monkeypatch.setattr(screen, "call_later", defer)
+    return scheduled
+
+
+def _change_results(screen: t.Any, change: str, replacement: SearchRecord) -> None:
+    """Apply one mounted result-view change before deferred export startup."""
+    if change == "reset":
+        screen._reset_search_chrome()
+    elif change == "filter":
+        screen._filter_input.value = "replacement"
+        screen.on_filter_completed(
+            FilterCompleted(
+                text="replacement",
+                records=[replacement],
+                record_ids={id(replacement)},
+                generation=screen._filter_generation,
+                records_generation=screen._records_generation,
+            ),
+        )
+    else:
+        screen._start_search_worker(screen._build_search_query("replacement"))
 
 
 @pytest.mark.slow
@@ -268,15 +305,7 @@ async def test_thread_export_freezes_result_count_when_accepted(
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
         await _load_records(app.screen, (first,))
-        scheduled: list[tuple[t.Callable[..., t.Awaitable[None]], tuple[object, ...]]] = []
-
-        def defer(
-            callback: t.Callable[..., t.Awaitable[None]],
-            *args: object,
-        ) -> None:
-            scheduled.append((callback, args))
-
-        monkeypatch.setattr(app.screen, "call_later", defer)
+        scheduled = _defer_export_start(app.screen, monkeypatch)
         app.screen.on_search_requested(_search_requested(f"/export-thread {destination}"))
         assert len(scheduled) == 1
 
@@ -289,6 +318,68 @@ async def test_thread_export_freezes_result_count_when_accepted(
         assert "accepted turn" in text
         assert "late turn" not in text
         assert "- Record count: 1" in text
+
+
+@pytest.mark.parametrize("change", ["reset", "filter", "new-search"])
+@pytest.mark.slow
+async def test_record_export_survives_result_change_before_deferred_start(
+    change: str,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An accepted exact record is independent of later result-view changes."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    selected = _record(tmp_path, "accepted exact record", ordinal=1)
+    replacement = _record(tmp_path, "replacement record", ordinal=2, session_id="other")
+    destination = tmp_path / f"record-{change}.md"
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await _load_records(app.screen, (selected,))
+        notes = _capture_notifications(app.screen, monkeypatch)
+        scheduled = _defer_export_start(app.screen, monkeypatch)
+
+        app.screen.on_search_requested(_search_requested(f"/export {destination}"))
+        assert len(scheduled) == 1
+        _change_results(app.screen, change, replacement)
+        callback, args = scheduled.pop()
+        await callback(*args)
+        await _wait_for(destination.exists)
+        await pilot.pause()
+
+        text = destination.read_text(encoding="utf-8")
+        assert "accepted exact record" in text
+        assert "replacement record" not in text
+        assert not any("canceled" in str(note[0][0]).lower() for note in notes)
+
+
+@pytest.mark.parametrize("change", ["reset", "filter", "new-search"])
+@pytest.mark.slow
+async def test_thread_export_cancels_result_change_before_deferred_start(
+    change: str,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An observed-thread snapshot still requires its accepted result view."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    selected = _record(tmp_path, "accepted thread", ordinal=1)
+    replacement = _record(tmp_path, "replacement record", ordinal=2, session_id="other")
+    destination = tmp_path / f"thread-{change}.md"
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await _load_records(app.screen, (selected,))
+        notes = _capture_notifications(app.screen, monkeypatch)
+        scheduled = _defer_export_start(app.screen, monkeypatch)
+
+        app.screen.on_search_requested(_search_requested(f"/export-thread {destination}"))
+        assert len(scheduled) == 1
+        _change_results(app.screen, change, replacement)
+        callback, args = scheduled.pop()
+        await callback(*args)
+        await pilot.pause()
+
+        assert not destination.exists()
+        assert app.screen._export_pending is False
+        assert any("changed" in str(note[0][0]).lower() for note in notes)
 
 
 @pytest.mark.slow

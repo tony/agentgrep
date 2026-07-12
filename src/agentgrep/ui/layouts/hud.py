@@ -1115,19 +1115,29 @@ class HudLayout(LayoutScreen):
             return self._current_detail_record
         return self.filtered_records[0] if self.filtered_records else None
 
-    def _export_snapshot_is_live(
+    def _export_request_is_live(
+        self,
+        generation: int,
+        canceled: threading.Event,
+    ) -> bool:
+        """Return whether an accepted export may still start or report."""
+        return (
+            generation == self._export_generation
+            and self._export_pending
+            and not canceled.is_set()
+            and self.is_mounted
+        )
+
+    def _thread_snapshot_is_live(
         self,
         generation: int,
         active_records: list[SearchRecord],
         chrome_generation: int,
         canceled: threading.Event,
     ) -> bool:
-        """Return whether a pump-side snapshot still describes one result view."""
+        """Return whether an observed-thread snapshot still has one result view."""
         return (
-            generation == self._export_generation
-            and self._export_pending
-            and not canceled.is_set()
-            and self.is_mounted
+            self._export_request_is_live(generation, canceled)
             and active_records is self.filtered_records
             and chrome_generation == self._chrome_generation
         )
@@ -1145,13 +1155,16 @@ class HudLayout(LayoutScreen):
         canceled: threading.Event,
     ) -> None:
         """Copy a coherent result view in bounded chunks, then start the worker."""
-        if not self._export_snapshot_is_live(
+        if not self._export_request_is_live(generation, canceled):
+            self._abort_export_snapshot(generation, canceled, results_changed=False)
+            return
+        if selection == "thread" and not self._thread_snapshot_is_live(
             generation,
             active_records,
             chrome_generation,
             canceled,
         ):
-            self._abort_export_snapshot(generation, canceled)
+            self._abort_export_snapshot(generation, canceled, results_changed=True)
             return
 
         records: list[SearchRecord] = []
@@ -1161,7 +1174,7 @@ class HudLayout(LayoutScreen):
 
             async def yield_and_gate() -> None:
                 await asyncio.sleep(0)
-                if not self._export_snapshot_is_live(
+                if not self._thread_snapshot_is_live(
                     generation,
                     active_records,
                     chrome_generation,
@@ -1177,16 +1190,19 @@ class HudLayout(LayoutScreen):
                     yield_between=yield_and_gate,
                 )
             except _ExportSnapshotChangedError:
-                self._abort_export_snapshot(generation, canceled)
+                self._abort_export_snapshot(generation, canceled, results_changed=True)
                 return
 
-        if not self._export_snapshot_is_live(
+        if not self._export_request_is_live(generation, canceled):
+            self._abort_export_snapshot(generation, canceled, results_changed=False)
+            return
+        if selection == "thread" and not self._thread_snapshot_is_live(
             generation,
             active_records,
             chrome_generation,
             canceled,
         ):
-            self._abort_export_snapshot(generation, canceled)
+            self._abort_export_snapshot(generation, canceled, results_changed=True)
             return
 
         snapshot = _ExportSnapshot(
@@ -1215,15 +1231,17 @@ class HudLayout(LayoutScreen):
         self,
         generation: int,
         canceled: threading.Event,
+        *,
+        results_changed: bool,
     ) -> None:
-        """Release a pre-worker export whose displayed results changed."""
+        """Release a pre-worker export and optionally report result invalidation."""
         canceled.set()
         if generation != self._export_generation:
             return
         self._export_pending = False
         if self._export_cancel_event is canceled:
             self._export_cancel_event = None
-        if self.is_mounted:
+        if results_changed and self.is_mounted:
             self.notify(
                 "Export canceled because results changed",
                 title="Export canceled",
