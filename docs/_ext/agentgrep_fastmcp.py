@@ -296,6 +296,7 @@ async def inspect_result(
         str,
         Field(
             min_length=1,
+            max_length=MAX_RECORD_REF_CHARS,
             description="Opaque ref from a search or find result.",
         ),
     ],
