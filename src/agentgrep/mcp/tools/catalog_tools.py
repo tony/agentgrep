@@ -131,10 +131,13 @@ def _inspect_record_sample_sync(request: InspectSampleRequest) -> InspectSampleR
 
 def _inspect_result_sync(request: InspectResultRequest) -> InspectResultResponse:
     """Resolve an opaque result ref and return source records."""
-    resolved = resolver.resolve_record_refs(
-        (request.ref,),
-        sample_size=request.sample_size,
-    )[0]
+    try:
+        resolved = resolver.resolve_record_refs(
+            (request.ref,),
+            sample_size=request.sample_size,
+        )[0]
+    except resolver.RecordRefResolverError as exc:
+        raise ToolError(str(exc)) from None
     try:
         records = [SearchRecordModel.from_record(record) for record in resolved.records]
     except Exception:
