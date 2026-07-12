@@ -438,12 +438,12 @@ def test_export_protection_discovery_io_failure_is_path_free(
 
 @pytest.mark.parametrize(
     ("phase", "expected_error"),
-    (
+    [
         ("search", "export source could not be read"),
         ("discovery", "export source could not be read"),
         ("render", "export artifact could not be rendered"),
         ("output", "export output could not be written"),
-    ),
+    ],
 )
 def test_export_unexpected_failures_are_path_and_body_free(
     export_home: pathlib.Path,

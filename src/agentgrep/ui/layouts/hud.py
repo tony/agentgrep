@@ -1359,6 +1359,7 @@ class HudLayout(LayoutScreen):
         self.notify(
             f"{event.filename} · {event.format} · {event.selection} · {event.record_count} {noun}",
             title="Export complete",
+            markup=False,
         )
 
     def _record_history(self, text: str) -> None:

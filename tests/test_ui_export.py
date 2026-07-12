@@ -731,6 +731,36 @@ async def test_stale_export_callback_cannot_clear_live_pending_state(
 
 
 @pytest.mark.slow
+async def test_export_success_notification_treats_filename_as_literal(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Printable bracket markup in an exported basename stays literal."""
+    from agentgrep.ui.layouts.hud import _ExportCompleted
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        notes = _capture_notifications(app.screen, monkeypatch)
+        app.screen._export_generation = 1
+        app.screen._export_pending = True
+
+        app.screen._apply_export_completed(
+            1,
+            _ExportCompleted(
+                filename="[bold]spoof[/].md",
+                format="markdown",
+                selection="records",
+                record_count=1,
+                error=None,
+            ),
+        )
+
+        assert notes[0][0][0] == "[bold]spoof[/].md · markdown · records · 1 record"
+        assert notes[0][1]["markup"] is False
+
+
+@pytest.mark.slow
 async def test_large_export_worker_keeps_pump_responsive(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
