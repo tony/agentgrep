@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import pathlib
 import subprocess
@@ -26,6 +27,39 @@ def test_bookmark_cli_contracts_are_public() -> None:
 
     assert agentgrep.BookmarkArgs is BookmarkArgs
     assert agentgrep.run_bookmark_command is run_bookmark_command
+
+
+def test_parser_bundle_preserves_positional_constructor() -> None:
+    parsers = tuple(argparse.ArgumentParser() for _ in range(4))
+
+    bundle = agentgrep.ParserBundle(*parsers)
+
+    assert (
+        bundle.parser,
+        bundle.find_parser,
+        bundle.grep_parser,
+        bundle.search_parser,
+    ) == parsers
+    assert bundle.bookmark_parser is None
+
+
+def test_parser_bundle_preserves_keyword_constructor() -> None:
+    parsers = tuple(argparse.ArgumentParser() for _ in range(4))
+
+    bundle = agentgrep.ParserBundle(
+        parser=parsers[0],
+        find_parser=parsers[1],
+        grep_parser=parsers[2],
+        search_parser=parsers[3],
+    )
+
+    assert (
+        bundle.parser,
+        bundle.find_parser,
+        bundle.grep_parser,
+        bundle.search_parser,
+    ) == parsers
+    assert bundle.bookmark_parser is None
 
 
 @pytest.mark.parametrize(

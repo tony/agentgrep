@@ -187,10 +187,10 @@ class ParserBundle:
     """CLI parsers used for root and subcommand help."""
 
     parser: argparse.ArgumentParser
-    bookmark_parser: argparse.ArgumentParser
     find_parser: argparse.ArgumentParser
     grep_parser: argparse.ArgumentParser
     search_parser: argparse.ArgumentParser
+    bookmark_parser: argparse.ArgumentParser | None = None
 
 
 class _GrepLimitAction(argparse.Action):
@@ -1065,16 +1065,17 @@ def parse_args(
 
     command = t.cast("str", namespace.command)
     if command == "bookmark":
+        bookmark_parser = bundle.bookmark_parser or bundle.parser
         action = t.cast("t.Literal['add', 'remove', 'list']", namespace.bookmark_action)
         target_id = t.cast("str | None", getattr(namespace, "target_id", None))
         content_id = t.cast("str | None", getattr(namespace, "content_id", None))
         if action == "add" and target_id is not None:
             if target_id.startswith("agr1:") and content_id is None:
                 with configured_color_environment(color_mode):
-                    bundle.bookmark_parser.error("agr1: targets require --content-id AGC1")
+                    bookmark_parser.error("agr1: targets require --content-id AGC1")
             if not target_id.startswith("agr1:") and content_id is not None:
                 with configured_color_environment(color_mode):
-                    bundle.bookmark_parser.error(
+                    bookmark_parser.error(
                         "--content-id is only valid for agr1: targets",
                     )
         return BookmarkArgs(
