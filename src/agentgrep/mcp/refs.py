@@ -137,8 +137,56 @@ def _record_fingerprint(payload: dict[str, object]) -> str:
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
-    ).encode("utf-8")
+    ).encode("utf-8", "surrogatepass")
     return hashlib.sha256(raw).hexdigest()
+
+
+def _search_record_coordinate(record: SearchRecordLike) -> tuple[str, str | int] | None:
+    """Return the validated occurrence coordinate for a search record."""
+    position = record.position
+    if position is None:
+        return None
+    if isinstance(position.native_id, str) and position.native_id:
+        return ("native", position.native_id)
+    if (
+        isinstance(position.ordinal, int)
+        and not isinstance(position.ordinal, bool)
+        and position.ordinal >= 0
+    ):
+        return ("ordinal", position.ordinal)
+    return None
+
+
+def _search_record_fingerprint_payload(
+    record: SearchRecordLike,
+    *,
+    text_sha256: str,
+) -> dict[str, object]:
+    """Build the position-blind v1 search fingerprint payload."""
+    return {
+        "kind": "search",
+        "record_kind": record.kind,
+        "role": record.role,
+        "agent": record.agent,
+        "store": record.store,
+        "adapter_id": record.adapter_id,
+        "path": agentgrep.format_display_path(record.path),
+        "timestamp": record.timestamp,
+        "session_id": record.session_id,
+        "conversation_id": record.conversation_id,
+        "text_sha256": text_sha256,
+    }
+
+
+def _legacy_search_record_fingerprint(
+    record: SearchRecordLike,
+    *,
+    text_sha256: str,
+) -> str:
+    """Return the historical position-blind v1 search fingerprint."""
+    return _record_fingerprint(
+        _search_record_fingerprint_payload(record, text_sha256=text_sha256),
+    )
 
 
 def search_record_fingerprint(
@@ -151,21 +199,23 @@ def search_record_fingerprint(
         text_sha256 = hashlib.sha256(
             record.text.encode("utf-8", "surrogatepass"),
         ).hexdigest()
-    return _record_fingerprint(
-        {
-            "kind": "search",
-            "record_kind": record.kind,
-            "role": record.role,
-            "agent": record.agent,
-            "store": record.store,
-            "adapter_id": record.adapter_id,
-            "path": agentgrep.format_display_path(record.path),
-            "timestamp": record.timestamp,
-            "session_id": record.session_id,
-            "conversation_id": record.conversation_id,
-            "text_sha256": text_sha256,
-        },
-    )
+    payload = _search_record_fingerprint_payload(record, text_sha256=text_sha256)
+    coordinate = _search_record_coordinate(record)
+    if coordinate is not None:
+        payload["position"] = coordinate
+    return _record_fingerprint(payload)
+
+
+def search_record_fingerprint_matches(record: SearchRecordLike, fingerprint: str) -> bool:
+    """Match a current fingerprint with a positional v1 legacy fallback."""
+    text_sha256 = hashlib.sha256(
+        record.text.encode("utf-8", "surrogatepass"),
+    ).hexdigest()
+    if search_record_fingerprint(record, text_sha256=text_sha256) == fingerprint:
+        return True
+    if _search_record_coordinate(record) is None:
+        return False
+    return _legacy_search_record_fingerprint(record, text_sha256=text_sha256) == fingerprint
 
 
 def find_record_fingerprint(record: FindRecordLike) -> str:

@@ -117,14 +117,23 @@ duplicate physical views of one native occurrence share the same `record_id`.
 
 ### Physical refs and cursors
 
-Ordinary `agref1:` and `agcur1:` bytes remain unchanged. Canonical IDs are
-sibling result fields, not additions to either token. An `agref1:` value remains
-the physical locator accepted by `inspect_result`; `agc1:`, `agr1:`, and `agt1:`
-values are not accepted refs. Ref-only inspection therefore keeps its existing
-bounded physical lookup semantics rather than launching a global ID scan.
+Persisted `agref1:` and `agcur1:` values remain inspectable. Find refs and
+positionless search refs retain their exact version 1 bytes. When a search
+record has a valid native or ordinal position, its physical fingerprint is
+position-aware: the validated coordinate kind and value join the existing
+fingerprint input. The raw coordinate remains inside the digest input; the
+opaque token keeps the same five-field payload, prefix, and length.
+
+`inspect_result` compares the position-aware fingerprint first, then the
+historical position-blind fingerprint as a compatibility fallback. Historical
+ambiguous refs therefore retain their first-match behavior, while newly
+emitted refs select repeated stored turns exactly. Lookup remains bounded to
+the adapter and path carried by the ref. Canonical IDs remain sibling result
+fields: `agc1:`, `agr1:`, and `agt1:` values are not accepted refs, so physical
+locator inspection never launches a global ID scan.
 
 UTF-8 `surrogatepass` extends physical ref fingerprinting only to text that
-previously could not be encoded. It does not change ordinary ref bytes.
+previously could not be encoded. It does not change positionless ref bytes.
 
 ### Coordinate-aware engine deduplication
 
