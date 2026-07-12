@@ -72,12 +72,9 @@ KNOWN_ADAPTERS: tuple[str, ...] = (
     "antigravity_cli.brain_text.v1",
     "antigravity_cli.conversations_sqlite_protobuf.v1",
     "antigravity_cli.history_jsonl.v1",
-    "antigravity_cli.implicit_protobuf.v1",
     "antigravity_cli.transcript_jsonl.v1",
     "antigravity_ide.brain_text.v1",
     "antigravity_ide.brain_resolved_text.v1",
-    "antigravity_ide.conversations_protobuf.v1",
-    "antigravity_ide.implicit_protobuf.v1",
     "antigravity_ide.skills_text.v1",
     "claude.history_jsonl.v1",
     "claude.projects_jsonl.v1",
@@ -126,7 +123,26 @@ KNOWN_ADAPTERS: tuple[str, ...] = (
     "vscode.chat_sessions_json.v1",
     "vscode.inline_history_sqlite.v1",
 )
+#: Tags applied to every MCP tool and resource. These are a FastMCP-internal
+#: filter (used for include/exclude selection at registration time); they are
+#: not part of the MCP wire protocol and never reach the client.
 READONLY_TAGS = {"readonly", "agentgrep"}
+
+#: MCP behavior hints attached to every tool. Unlike :data:`READONLY_TAGS`,
+#: annotations are protocol-level metadata the client receives on
+#: ``tools/list``, and they are what lets a host auto-approve a call instead of
+#: prompting the user. agentgrep never writes (``readOnlyHint``), repeats the
+#: same call for the same store state without additional effect
+#: (``idempotentHint``), and reads only local on-disk agent stores rather than
+#: unbounded external entities (``openWorldHint``).
+TOOL_ANNOTATIONS = {
+    "readOnlyHint": True,
+    "idempotentHint": True,
+    "openWorldHint": False,
+}
+
+#: MCP behavior hints attached to every resource. Resource annotations carry no
+#: ``openWorldHint``, so this is the tool set minus that key.
 RESOURCE_ANNOTATIONS = {"readOnlyHint": True, "idempotentHint": True}
 
 
@@ -236,7 +252,7 @@ class AgentGrepModule(t.Protocol):
         *,
         backends: BackendSelectionLike | None = None,
         runtime: object | None = None,
-    ) -> t.AsyncIterator[object]: ...
+    ) -> t.AsyncGenerator[object]: ...
 
     def iter_find_events(
         self,

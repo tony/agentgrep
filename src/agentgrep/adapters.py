@@ -23,7 +23,12 @@ import tomllib
 import typing as t
 import urllib.parse
 
-from agentgrep.origin import is_path_like_text
+from agentgrep.origin import (
+    OriginEncoding,
+    decode_project_dir,
+    is_path_like_text,
+    origin_cwd_hash,
+)
 from agentgrep.readers import (
     _CODEX_RAW_SKIP_MIN_BYTES,
     _CODEX_SESSION_META_MARKER,
@@ -32,7 +37,7 @@ from agentgrep.readers import (
     _is_codex_function_call_output_line,
     _iter_jsonl,
     _keep_jsonl_header_lines,
-    _read_first_jsonl_header,
+    _read_first_matching_jsonl_record,
     as_optional_str,
     decode_sqlite_value,
     isoformat_from_mtime_ns,
@@ -44,6 +49,7 @@ from agentgrep.readers import (
     parse_embedded_json,
     read_json_file,
     read_text_file,
+    sqlite_column_expr,
     sqlite_column_names,
     sqlite_table_names,
 )
@@ -66,7 +72,33 @@ _CURSOR_STATE_EXACT_KEYS: tuple[str, ...] = (
     "aiService.prompts",
     "workbench.panel.chat.composerData",
 )
-_CURSOR_STATE_KEY_PREFIXES: tuple[str, ...] = ("workbench.panel.aichat.view",)
+
+_CURSOR_COMPOSER_KEY_PREFIXES: tuple[str, ...] = ("composerData:", "bubbleId:")
+"""``cursorDiskKV`` prefixes holding composer turns, model, cwd, and branch.
+
+``composerData:<uuid>`` is the session document — ``modelConfig.modelName``,
+``gitWorktree.worktreePath``, ``gitWorktree.branchName`` — and
+``bubbleId:<uuid>:<uuid>`` is one turn of it, naming its own model under
+``modelInfo.modelName``.
+
+.. note::
+
+   Cursor publishes no schema for these keys, so every read is guarded and a
+   schema drift degrades to an absent field rather than a wrong one.
+"""
+
+_CURSOR_STATE_KEY_PREFIXES: tuple[str, ...] = (
+    "workbench.panel.aichat.view",
+    *_CURSOR_COMPOSER_KEY_PREFIXES,
+)
+
+_CURSOR_BUBBLE_ROLES: dict[int, str] = {1: "user", 2: "assistant"}
+"""Cursor's numeric turn discriminator.
+
+A composer turn carries ``type: 1`` / ``type: 2`` and **no** ``role`` key, so
+:func:`extract_role` walks straight past it. Without this map the composer
+records are read and then dropped, and the store emits nothing.
+"""
 
 
 def iter_source_records(
@@ -108,13 +140,6 @@ def iter_source_records(
         return
     if source.adapter_id == "antigravity_cli.conversations_sqlite_protobuf.v1":
         yield from parse_antigravity_cli_conversation_db(source)
-        return
-    if source.adapter_id in {
-        "antigravity_cli.implicit_protobuf.v1",
-        "antigravity_ide.conversations_protobuf.v1",
-        "antigravity_ide.implicit_protobuf.v1",
-    }:
-        yield from parse_antigravity_protobuf_file(source)
         return
     if source.adapter_id == "claude.projects_jsonl.v1":
         yield from parse_claude_project_file(
@@ -400,20 +425,110 @@ _ORIGIN_MAPPING_KEYS: frozenset[str] = frozenset(
 )
 
 
+_CODEX_TURN_CONTEXT_MARKER = '"type":"turn_context"'
+"""Space-stripped prefix marker for a Codex per-turn context line."""
+
+
+def _codex_session_meta_model(payload: dict[str, object]) -> str | None:
+    """Read whatever model identity ``session_meta`` carries.
+
+    In practice this is ``model_provider`` — a provider id, not a slug. It is
+    the fallback for a rollout with no ``turn_context`` record, never the
+    preferred value.
+
+    Parameters
+    ----------
+    payload : dict[str, object]
+        The ``session_meta`` event's payload mapping.
+
+    Returns
+    -------
+    str or None
+        The model identity, or ``None`` when the header names none.
+
+    Examples
+    --------
+    >>> _codex_session_meta_model({"model_provider": "openai"})
+    'openai'
+    >>> _codex_session_meta_model({"id": "session-1"}) is None
+    True
+    """
+    return (
+        as_optional_str(payload.get("model"))
+        or as_optional_str(payload.get("model_name"))
+        or as_optional_str(payload.get("model_provider"))
+    )
+
+
+def _codex_turn_context_model(path: pathlib.Path) -> str | None:
+    """Read the model slug from a rollout's first ``turn_context`` record.
+
+    The complete-record scanner checks bounded prefixes and discards unrelated
+    oversized lines in chunks, so model discovery is independent of an
+    arbitrary byte offset without materializing those lines.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        The rollout JSONL file.
+
+    Returns
+    -------
+    str or None
+        The model slug, or ``None`` when the rollout carries no valid
+        ``turn_context``.
+    """
+
+    def has_model(event: dict[str, object]) -> bool:
+        if event.get("type") != "turn_context":
+            return False
+        payload = event.get("payload")
+        return isinstance(payload, dict) and as_optional_str(payload.get("model")) is not None
+
+    event = _read_first_matching_jsonl_record(
+        path,
+        _CODEX_TURN_CONTEXT_MARKER,
+        accept_record=has_model,
+    )
+    payload = event.get("payload") if event is not None else None
+    if not isinstance(payload, dict):
+        return None
+    return as_optional_str(t.cast("dict[str, object]", payload).get("model"))
+
+
 def parse_codex_session_file(
     source: SourceHandle,
     *,
     raw_skip_line: RawJsonlSkipLine | None = None,
     reverse: bool = False,
 ) -> cabc.Iterator[SearchRecord]:
-    """Parse Codex session JSONL files."""
+    """Parse Codex session JSONL files.
+
+    The model slug is not in the ``session_meta`` header: that header names
+    ``model_provider``, the provider id (``openai``). Codex writes the slug
+    into its per-turn ``turn_context`` records, so the session model is seeded
+    from the first of those and takes precedence over anything ``session_meta``
+    offers.
+
+    Codex can change model mid-session, but attributing the change per record
+    would mean decoding every ``turn_context`` line — thousands per session —
+    through the raw text prefilter that exists to avoid exactly that, and the
+    prefilter is installed on some read paths and not others, so the model
+    would then depend on which one ran. A prefix-gated forward scan finds the
+    first valid turn model and keeps it identical under forward, reverse, and
+    prefiltered iteration.
+    """
     session_id = source.path.stem
-    session_model: str | None = None
+    session_model: str | None = _codex_turn_context_model(source.path)
     session_origin: RecordOrigin | None = None
     if reverse:
         # Reverse iteration reads the leading session_meta header last,
         # so seed its state up front to keep emitted records canonical.
-        header = _read_first_jsonl_header(source.path, _CODEX_SESSION_META_MARKER)
+        header = _read_first_matching_jsonl_record(
+            source.path,
+            _CODEX_SESSION_META_MARKER,
+            accept_record=lambda record: record.get("type") == "session_meta",
+        )
         header_payload = header.get("payload") if header is not None else None
         if (
             header is not None
@@ -423,12 +538,7 @@ def parse_codex_session_file(
             payload = t.cast("dict[str, object]", header_payload)
             session_id = as_optional_str(payload.get("id")) or session_id
             session_origin = _origin_from_mapping(payload, fallback=session_origin)
-            session_model = (
-                as_optional_str(payload.get("model"))
-                or as_optional_str(payload.get("model_name"))
-                or as_optional_str(payload.get("model_provider"))
-                or session_model
-            )
+            session_model = session_model or _codex_session_meta_model(payload)
     codex_skip_line = (
         _is_codex_function_call_output_line
         if _file_size(source.path) >= _CODEX_RAW_SKIP_MIN_BYTES
@@ -471,12 +581,8 @@ def parse_codex_session_file(
             payload_map = t.cast("dict[str, object]", payload)
             session_id = as_optional_str(payload_map.get("id")) or session_id
             session_origin = _origin_from_mapping(payload_map, fallback=session_origin)
-            session_model = (
-                as_optional_str(payload_map.get("model"))
-                or as_optional_str(payload_map.get("model_name"))
-                or as_optional_str(payload_map.get("model_provider"))
-                or session_model
-            )
+            # The turn_context slug wins: session_meta offers only a provider id.
+            session_model = session_model or _codex_session_meta_model(payload_map)
             continue
         if event_type != "response_item" or not isinstance(payload, dict):
             continue
@@ -535,7 +641,17 @@ def parse_codex_history_file(
     raw_skip_line: RawJsonlSkipLine | None = None,
     reverse: bool = False,
 ) -> cabc.Iterator[SearchRecord]:
-    """Parse Codex prompt/command history files."""
+    """Parse Codex prompt/command history files.
+
+    Two shapes share this parser. The current ``history.jsonl`` entry is
+    ``{session_id, ts, text}`` with ``ts`` in unix **seconds**; the legacy
+    ``history.json`` entry is ``{command, timestamp}`` with ``timestamp`` a
+    number in **milliseconds**, not the ISO string its name suggests, and no
+    ``ts`` key to fall back on.
+
+    Neither shape records a cwd, a branch, or a model: this is a flat prompt
+    log, so ``origin`` and ``model`` stay ``None`` by design.
+    """
     entries: cabc.Iterable[JSONValue]
     if source.source_kind == "json":
         payload = read_json_file(source.path)
@@ -567,6 +683,10 @@ def parse_codex_history_file(
                 .isoformat()
                 .replace("+00:00", "Z")
             )
+        if timestamp is None:
+            # Legacy history.json: `timestamp` is a millisecond number, so the
+            # string accessor above yields None for it.
+            timestamp = _unix_millis_to_isoformat(entry.get("timestamp"))
         yield SearchRecord(
             kind="prompt",
             agent=source.agent,
@@ -1113,14 +1233,23 @@ def parse_cursor_cli_transcript(
     ``iter_message_candidates`` handles the nested shape directly. Cursor
     transcripts carry no native per-turn timestamp, so the file's mtime is
     used as a session-level fallback.
+
+    The working directory is not in the file either: Cursor CLI dash-encodes it
+    into the ``projects/<name>/`` path segment, and discovery decodes that name
+    against the filesystem. Records therefore carry ``origin.cwd`` only when the
+    name reconstructs to exactly one directory that exists — a name consistent
+    with two paths, or with none, leaves ``cwd`` unset rather than guessing at
+    the repo the user would then filter on.
     """
     conversation_id = source.path.stem
     fallback_timestamp = isoformat_from_mtime_ns(source.mtime_ns)
+    session_origin = _discovered_origin(source)
     seen: set[tuple[str | None, str, str | None, str | None]] = set()
     for event in iter_jsonl(source.path):
         for candidate in iter_message_candidates(
             event,
             fallback_conversation_id=conversation_id,
+            fallback_origin=session_origin,
         ):
             if candidate.timestamp is None and fallback_timestamp is not None:
                 candidate = dataclasses.replace(candidate, timestamp=fallback_timestamp)
@@ -1228,6 +1357,45 @@ def _gemini_message_record_to_candidate(
     )
 
 
+_GEMINI_PROJECT_ROOT_FILE = ".project_root"
+
+
+def _gemini_project_root_cwd(project_dir: pathlib.Path) -> str | None:
+    """Resolve the literal cwd of a Gemini ``tmp/<project_hash>/`` directory.
+
+    Gemini names the directory after a hash of the project and writes the
+    literal path into a sibling ``.project_root`` file. All three Gemini
+    prompt stores live under that one directory, so all three resolve their
+    ``cwd`` here.
+
+    A missing ``.project_root`` is ordinary — older trees have none — and
+    yields ``None`` rather than raising; the ``cwd_hash`` taken from the
+    directory name stands on its own.
+
+    The resolved path is a *record* fact, not a source-level completeness
+    claim: the per-record walk in :func:`_origin_from_mapping` can still read
+    a different directory out of the payload, and a source that claimed
+    ``cwd`` completeness while emitting a different ``cwd`` would prune away
+    its own matching record.
+    """
+    return _path_like_str(read_text_file(project_dir / _GEMINI_PROJECT_ROOT_FILE))
+
+
+def _gemini_directories_cwd(mapping: dict[str, object]) -> str | None:
+    """Read ``directories[0]`` from a Gemini session-metadata record.
+
+    Gemini names the session directory with a plural array where every other
+    store uses a scalar, which is why ``_ORIGIN_MAPPING_KEYS`` — which knows
+    ``cwd``, ``directory``, and ``workspace`` — cannot see it. The key is
+    named here rather than added to that shared set, because the set is
+    consulted at every nested node of every store's document walk.
+    """
+    directories = mapping.get("directories")
+    if not isinstance(directories, list) or not directories:
+        return None
+    return _path_like_str(t.cast("list[object]", directories)[0])
+
+
 def parse_gemini_chat_file(
     source: SourceHandle,
 ) -> cabc.Iterator[SearchRecord]:
@@ -1240,9 +1408,18 @@ def parse_gemini_chat_file(
     Gemini stores the role in a ``type`` key — not the ``role`` key the
     shared ``extract_role`` helper recognises — so this adapter extracts
     fields directly rather than going through ``iter_message_candidates``.
+
+    The literal ``cwd`` is the metadata record's ``directories[0]``, falling
+    back to the sibling ``.project_root`` when the array is absent. The file
+    sits at ``tmp/<project_hash>/chats/session-*.jsonl``, so the project
+    directory — the ``cwd_hash`` — is two levels up.
     """
     session_id: str | None = None
-    session_origin: RecordOrigin | None = _record_origin(cwd_hash=source.path.parent.parent.name)
+    project_dir = source.path.parent.parent
+    session_origin: RecordOrigin | None = _record_origin(
+        cwd=_gemini_project_root_cwd(project_dir),
+        cwd_hash=project_dir.name,
+    )
     for event in iter_jsonl(source.path):
         if not isinstance(event, dict):
             continue
@@ -1255,7 +1432,10 @@ def parse_gemini_chat_file(
             # so this stays correct even if a future schema adds a
             # ``type`` field to the metadata record.
             session_id = as_optional_str(mapping.get("sessionId"))
-            session_origin = _origin_from_mapping(mapping, fallback=session_origin)
+            session_origin = _record_origin(
+                cwd=_gemini_directories_cwd(mapping),
+                fallback=_origin_from_mapping(mapping, fallback=session_origin),
+            )
             continue
         candidate = _gemini_message_record_to_candidate(mapping, session_id, session_origin)
         if candidate is None:
@@ -1274,13 +1454,24 @@ def parse_gemini_chat_legacy_file(
     ``packages/core/src/services/chatRecordingService.ts``. Each entry of
     ``messages`` carries the same per-turn fields the JSONL format uses,
     so record extraction is shared with :func:`parse_gemini_chat_file`.
+
+    The legacy record names only ``projectHash`` and never the path, so the
+    literal ``cwd`` can come only from the sibling ``.project_root``. The
+    file sits at ``tmp/<project_hash>/chats/session-*.json``.
     """
     payload = read_json_file(source.path)
     if not isinstance(payload, dict):
         return
     container = t.cast("dict[str, object]", payload)
     session_id = as_optional_str(container.get("sessionId"))
-    session_origin = _origin_from_mapping(container)
+    project_dir = source.path.parent.parent
+    session_origin = _origin_from_mapping(
+        container,
+        fallback=_record_origin(
+            cwd=_gemini_project_root_cwd(project_dir),
+            cwd_hash=project_dir.name,
+        ),
+    )
     messages = container.get("messages")
     if not isinstance(messages, list):
         return
@@ -1301,9 +1492,17 @@ def parse_gemini_logs_file(
 
     Records are emitted as ``kind="prompt"`` — the file is an audit log of
     user prompts, the same role ``codex.history`` plays for Codex.
+
+    No log entry carries a working directory, so the literal ``cwd`` comes
+    from the sibling ``.project_root``. The file sits at
+    ``tmp/<project_hash>/logs.json``, so the project directory is its parent.
     """
     payload = read_json_file(source.path)
-    origin = _record_origin(cwd_hash=source.path.parent.name)
+    project_dir = source.path.parent
+    origin = _record_origin(
+        cwd=_gemini_project_root_cwd(project_dir),
+        cwd_hash=project_dir.name,
+    )
     entries = payload if isinstance(payload, list) else []
     for entry in entries:
         if not isinstance(entry, dict):
@@ -1329,6 +1528,32 @@ def parse_gemini_logs_file(
         )
 
 
+def _grok_project_dir_origin(directory: pathlib.Path) -> RecordOrigin | None:
+    """Return the ``cwd`` origin for a Grok project directory.
+
+    Grok keys its session tree by the working directory with the separators
+    percent-escaped (``sessions/%2Fwork%2Fproj/``). ``%2F`` is a lossless
+    escape, so the decode is a recovery rather than a guess — and it recovers
+    the same absolute path ``grok.session_search`` records literally in
+    ``session_docs.cwd``, which is what lets the JSONL transcript and the FTS
+    index answer a ``cwd:`` filter with one working directory instead of two.
+
+    A directory whose decoded name is not path-shaped is not a project
+    directory and yields no origin.
+
+    Examples
+    --------
+    >>> origin = _grok_project_dir_origin(pathlib.Path("%2Fwork%2Fproj"))
+    >>> origin.cwd if origin else None
+    '/work/proj'
+    >>> _grok_project_dir_origin(pathlib.Path("session-1234")) is None
+    True
+    """
+    return _record_origin(
+        cwd=decode_project_dir(directory.name, encoding=OriginEncoding.URL),
+    )
+
+
 def parse_grok_prompt_history(
     source: SourceHandle,
     *,
@@ -1340,7 +1565,12 @@ def parse_grok_prompt_history(
     Each line is ``{"timestamp": "…", "session_id": "…", "prompt": "…",
     "is_bash": bool}`` — one record per user prompt, append-only across
     all sessions within one project directory.
+
+    No line carries a working directory, but the file's own parent does:
+    ``sessions/<url-encoded-cwd>/prompt_history.jsonl``. Decoding that name
+    gives every prompt the ``cwd`` its session ran in.
     """
+    session_origin = _grok_project_dir_origin(source.path.parent)
     events = (
         _iter_jsonl(
             source.path,
@@ -1372,6 +1602,7 @@ def parse_grok_prompt_history(
             session_id=session_id,
             conversation_id=session_id,
             metadata={"is_bash": mapping.get("is_bash", False)},
+            origin=session_origin,
         )
 
 
@@ -1388,8 +1619,18 @@ def parse_grok_chat_history(
     array). Records without ``content`` — every ``reasoning`` and
     ``backend_tool_call`` record, plus any ``assistant`` record whose content
     is empty — are skipped.
+
+    An ``assistant`` line names the model that answered in ``model_id``. That
+    key is Grok's alone — ``extract_model`` reads the ``model``/``modelName``
+    spellings the other stores use, and teaching it ``model_id`` would apply a
+    Grok-specific guess to every store's payload — so the parser names it here.
+
+    The transcript sits one level below the project directory
+    (``sessions/<url-encoded-cwd>/<session_uuid>/chat_history.jsonl``), so the
+    ``cwd`` is decoded from the grandparent rather than the parent.
     """
     conversation_id = source.path.parent.name
+    session_origin = _grok_project_dir_origin(source.path.parent.parent)
     events = (
         _iter_jsonl(
             source.path,
@@ -1421,8 +1662,10 @@ def parse_grok_chat_history(
             text=content_text,
             role=record_type,
             timestamp=as_optional_str(mapping.get("timestamp")),
+            model=as_optional_str(mapping.get("model_id")),
             session_id=conversation_id,
             conversation_id=conversation_id,
+            origin=session_origin,
         )
 
 
@@ -1556,7 +1799,11 @@ def parse_pi_session_file(
     if reverse:
         # Reverse iteration reads the leading session header last, so
         # seed its state up front to keep emitted records canonical.
-        header = _read_first_jsonl_header(source.path, _PI_SESSION_HEADER_MARKER)
+        header = _read_first_matching_jsonl_record(
+            source.path,
+            _PI_SESSION_HEADER_MARKER,
+            accept_record=lambda record: record.get("type") == "session",
+        )
         if header is not None and as_optional_str(header.get("type")) == "session":
             session_id = as_optional_str(header.get("id")) or session_id
             conversation_id = as_optional_str(header.get("cwd"))
@@ -1746,32 +1993,91 @@ def parse_claude_store_db(
         connection.close()
 
 
+_CodexThreadRow = tuple[
+    object,  # id
+    object,  # rollout_path
+    object,  # first_user_message
+    object,  # preview
+    object,  # title
+    object,  # updated_at_ms
+    object,  # model
+    object,  # cwd
+    object,  # git_branch
+    object,  # git_origin_url
+]
+"""Shape of the ``threads`` projection in :func:`parse_codex_state_db`."""
+
+
 def parse_codex_state_db(
     source: SourceHandle,
 ) -> cabc.Iterator[SearchRecord]:
-    """Parse opt-in Codex ``state_5.sqlite`` prompt-bearing fields."""
+    """Parse opt-in Codex ``state_5.sqlite`` prompt-bearing fields.
+
+    A ``threads`` row carries its canonical ``rollout_path``, ``model`` slug,
+    and git context next to the text columns, so both records a thread yields
+    are identified without re-reading the rollout file. ``git_origin_url`` is
+    a remote URL and lands on :attr:`~agentgrep.records.RecordOrigin.remote`;
+    ``git_sha`` has no origin field and is left on the row. Every one of those
+    columns arrived in a migration, so each is projected through
+    :func:`~agentgrep.readers.sqlite_column_expr` and an older database keeps
+    working with ``NULL``.
+
+    ``agent_jobs`` rows stay origin-less: the shipped table has no
+    ``thread_id`` column to reach a ``threads`` row through, so there is
+    nothing to join the model and cwd back from.
+    """
     connection = open_readonly_sqlite(source.path)
     try:
         tables = sqlite_table_names(connection)
         if "threads" in tables:
             columns = sqlite_column_names(connection, "threads")
             if {"id", "first_user_message"}.issubset(columns):
-                preview_expr = "preview" if "preview" in columns else "NULL"
-                title_expr = "title" if "title" in columns else "NULL"
-                updated_expr = "updated_at_ms" if "updated_at_ms" in columns else "NULL"
-                rows = t.cast(
-                    "cabc.Iterable[tuple[object, object, object, object, object]]",
+                rollout_path_expr = sqlite_column_expr(columns, "rollout_path")
+                preview_expr = sqlite_column_expr(columns, "preview")
+                title_expr = sqlite_column_expr(columns, "title")
+                updated_expr = sqlite_column_expr(columns, "updated_at_ms")
+                model_expr = sqlite_column_expr(columns, "model")
+                cwd_expr = sqlite_column_expr(columns, "cwd")
+                branch_expr = sqlite_column_expr(columns, "git_branch")
+                remote_expr = sqlite_column_expr(columns, "git_origin_url")
+                thread_rows = t.cast(
+                    "cabc.Iterable[_CodexThreadRow]",
                     connection.execute(
-                        "SELECT id, first_user_message, "
-                        f"{preview_expr}, {title_expr}, {updated_expr} FROM threads",
+                        f"SELECT id, {rollout_path_expr}, first_user_message, "
+                        f"{preview_expr}, {title_expr}, {updated_expr}, "
+                        f"{model_expr}, {cwd_expr}, {branch_expr}, {remote_expr} "
+                        "FROM threads",
                     ),
                 )
-                for thread_id, first_message, preview, title, updated_at in rows:
+                for (
+                    thread_id,
+                    rollout_path_raw,
+                    first_message,
+                    preview,
+                    title,
+                    updated_at,
+                    model_raw,
+                    cwd_raw,
+                    branch_raw,
+                    remote_raw,
+                ) in thread_rows:
                     conversation_id = as_optional_str(thread_id)
+                    rollout_path = decode_sqlite_value(rollout_path_raw) or as_optional_str(
+                        rollout_path_raw,
+                    )
                     thread_title = as_optional_str(title)
                     timestamp = _unix_millis_to_isoformat(updated_at)
+                    model = as_optional_str(model_raw)
+                    origin = _record_origin(
+                        cwd=_path_like_str(cwd_raw),
+                        branch=as_optional_str(branch_raw),
+                        remote=as_optional_str(remote_raw),
+                    )
                     text = decode_sqlite_value(first_message) or as_optional_str(first_message)
                     if text:
+                        metadata: dict[str, object] = {"field": "first_user_message"}
+                        if rollout_path is not None:
+                            metadata["rollout_path"] = rollout_path
                         yield SearchRecord(
                             kind="prompt",
                             agent=source.agent,
@@ -1782,11 +2088,17 @@ def parse_codex_state_db(
                             title=thread_title or "Codex thread first prompt",
                             role="user",
                             timestamp=timestamp,
+                            model=model,
                             session_id=conversation_id,
                             conversation_id=conversation_id,
+                            metadata=metadata,
+                            origin=origin,
                         )
                     preview_text = decode_sqlite_value(preview) or as_optional_str(preview)
                     if preview_text and preview_text != text:
+                        metadata = {"field": "preview"}
+                        if rollout_path is not None:
+                            metadata["rollout_path"] = rollout_path
                         yield SearchRecord(
                             kind="history",
                             agent=source.agent,
@@ -1797,15 +2109,17 @@ def parse_codex_state_db(
                             title=thread_title or "Codex thread preview",
                             role="assistant",
                             timestamp=timestamp,
+                            model=model,
                             session_id=conversation_id,
                             conversation_id=conversation_id,
-                            metadata={"field": "preview"},
+                            metadata=metadata,
+                            origin=origin,
                         )
         if "agent_jobs" in tables:
             columns = sqlite_column_names(connection, "agent_jobs")
             if {"id", "instruction"}.issubset(columns):
-                thread_expr = "thread_id" if "thread_id" in columns else "NULL"
-                updated_expr = "updated_at_ms" if "updated_at_ms" in columns else "NULL"
+                thread_expr = sqlite_column_expr(columns, "thread_id")
+                updated_expr = sqlite_column_expr(columns, "updated_at_ms")
                 rows = t.cast(
                     "cabc.Iterable[tuple[object, object, object, object]]",
                     connection.execute(
@@ -1849,11 +2163,11 @@ def parse_codex_logs_db(
         columns = sqlite_column_names(connection, "logs")
         if "feedback_log_body" not in columns:
             return
-        id_expr = "id" if "id" in columns else "NULL"
-        ts_expr = "ts" if "ts" in columns else "NULL"
-        level_expr = "level" if "level" in columns else "NULL"
-        target_expr = "target" if "target" in columns else "NULL"
-        thread_expr = "thread_id" if "thread_id" in columns else "NULL"
+        id_expr = sqlite_column_expr(columns, "id")
+        ts_expr = sqlite_column_expr(columns, "ts")
+        level_expr = sqlite_column_expr(columns, "level")
+        target_expr = sqlite_column_expr(columns, "target")
+        thread_expr = sqlite_column_expr(columns, "thread_id")
         rows = t.cast(
             "cabc.Iterable[tuple[object, object, object, object, object, object]]",
             connection.execute(
@@ -1908,8 +2222,8 @@ def parse_codex_memories_db(
         columns = sqlite_column_names(connection, "stage1_outputs")
         if not {"thread_id", "raw_memory"}.issubset(columns):
             return
-        summary_expr = "rollout_summary" if "rollout_summary" in columns else "NULL"
-        slug_expr = "rollout_slug" if "rollout_slug" in columns else "NULL"
+        summary_expr = sqlite_column_expr(columns, "rollout_summary")
+        slug_expr = sqlite_column_expr(columns, "rollout_slug")
         rows = t.cast(
             "cabc.Iterable[tuple[object, object, object, object]]",
             connection.execute(
@@ -1999,8 +2313,8 @@ def parse_codex_goals_db(
         columns = sqlite_column_names(connection, "thread_goals")
         if not {"thread_id", "goal_id", "objective"}.issubset(columns):
             return
-        status_expr = "status" if "status" in columns else "NULL"
-        updated_expr = "updated_at_ms" if "updated_at_ms" in columns else "NULL"
+        status_expr = sqlite_column_expr(columns, "status")
+        updated_expr = sqlite_column_expr(columns, "updated_at_ms")
         rows = t.cast(
             "cabc.Iterable[tuple[object, object, object, object, object]]",
             connection.execute(
@@ -2292,19 +2606,89 @@ length check ever applies.
 """
 
 _ANTIGRAVITY_PROTOBUF_MIN_TEXT = 16
-"""Shortest decoded protobuf run treated as Antigravity transcript text."""
+"""Shortest decoded protobuf run treated as Antigravity transcript text.
+
+Applies to the plaintext protobuf blobs inside the Antigravity CLI
+``conversations/<uuid>.db`` ``steps`` rows. The loose ``implicit/*.pb`` and
+``conversations/*.pb`` artifacts are encrypted and are not parsed at all.
+"""
+
+_ANTIGRAVITY_MODEL_TABLES: tuple[str, ...] = ("gen_metadata", "executor_metadata")
+"""Metadata tables whose protobuf ``data`` blob names the conversation's model.
+
+``gen_metadata`` is the one that carries it; ``executor_metadata`` is read as a
+fallback for databases that shape the metadata differently. Neither table is
+guaranteed to exist: a conversation database written before Antigravity added
+them has ``steps`` and nothing else, and must still yield its records.
+"""
+
+_ANTIGRAVITY_MODEL_PREFIX = "gemini-"
+"""Prefix the ``model_enum`` values carry (``gemini-pro-agent``).
+
+The blob is an unschema'd protobuf ``Struct``, so agentgrep matches the value's
+shape rather than reading a key: the run stored *next to* the ``model_enum`` key
+is an internal placeholder token, not a slug, so a key-directed lookup would
+surface a name no user ever typed and no model breakdown could group.
+"""
+
+
+def _antigravity_conversation_model(connection: sqlite3.Connection) -> str | None:
+    """Read the conversation model from an Antigravity CLI metadata table.
+
+    The ``steps`` table this adapter parses carries no model. The model sits one
+    table over, in a protobuf ``Struct`` in ``gen_metadata.data``, as a coarse
+    ``model_enum`` value (``gemini-pro-agent``) rather than a version-pinned
+    slug. It is a session-level property, so one read serves every record the
+    database yields.
+
+    Every lookup is guarded rather than attempted. The caller wraps its scan in
+    ``except sqlite3.DatabaseError``, so naming a table or a column an older
+    database lacks would not fail loudly — it would swallow the error and turn a
+    readable conversation into zero records.
+
+    Parameters
+    ----------
+    connection : sqlite3.Connection
+        Read-only connection to one ``conversations/<uuid>.db``.
+
+    Returns
+    -------
+    str or None
+        The model enum value, or ``None`` when no metadata table names one.
+    """
+    tables = sqlite_table_names(connection)
+    for table in _ANTIGRAVITY_MODEL_TABLES:
+        if table not in tables or "data" not in sqlite_column_names(connection, table):
+            continue
+        rows = t.cast(
+            "cabc.Iterable[tuple[object]]",
+            # The table name is one of two module constants, never user input.
+            connection.execute(f"SELECT data FROM {table}"),
+        )
+        for (blob,) in rows:
+            if not isinstance(blob, (bytes, bytearray)):
+                continue
+            for text in iter_protobuf_text_fields(bytes(blob), min_length=1):
+                value = text.strip()
+                if value.startswith(_ANTIGRAVITY_MODEL_PREFIX):
+                    return value
+    return None
 
 
 def parse_antigravity_cli_conversation_db(
     source: SourceHandle,
 ) -> cabc.Iterator[SearchRecord]:
-    """Best-effort parse of an Antigravity CLI conversation SQLite database."""
+    """Best-effort parse of an Antigravity CLI conversation SQLite database.
+
+    The model is not in ``steps``; see :func:`_antigravity_conversation_model`.
+    """
     session_id = source.path.stem
     timestamp = isoformat_from_mtime_ns(source.mtime_ns)
     connection = open_readonly_sqlite(source.path)
     try:
         if "steps" not in sqlite_table_names(connection):
             return
+        model = _antigravity_conversation_model(connection)
         rows = t.cast(
             "cabc.Iterable[tuple[object, object, object]]",
             connection.execute("SELECT idx, step_payload, step_format FROM steps ORDER BY idx"),
@@ -2331,6 +2715,7 @@ def parse_antigravity_cli_conversation_db(
                     title="Antigravity CLI conversation",
                     role=None,
                     timestamp=timestamp,
+                    model=model,
                     session_id=session_id,
                     conversation_id=session_id,
                     metadata={
@@ -2344,40 +2729,51 @@ def parse_antigravity_cli_conversation_db(
         connection.close()
 
 
-def parse_antigravity_protobuf_file(
-    source: SourceHandle,
-) -> cabc.Iterator[SearchRecord]:
-    """Best-effort parse of an Antigravity protobuf transcript file."""
-    try:
-        payload = source.path.read_bytes()
-    except OSError:
-        return
-    session_id = source.path.stem
-    timestamp = isoformat_from_mtime_ns(source.mtime_ns)
-    title = (
-        "Antigravity CLI transcript"
-        if source.agent == "antigravity-cli"
-        else "Antigravity IDE transcript"
+_CURSOR_CLI_MODEL_SENTINEL = "default"
+"""``lastUsedModel`` placeholder Cursor CLI writes before a model is chosen.
+
+It names no model. Surfacing it would make ``model:default`` a searchable
+identity and would put a fake slug next to the real ones in a model breakdown.
+"""
+
+
+def _cursor_cli_chats_model(connection: sqlite3.Connection) -> str | None:
+    """Read the session model from a Cursor CLI chat store's ``meta`` table.
+
+    ``meta`` holds a single row keyed ``'0'`` whose value is hex-encoded UTF-8
+    JSON; ``lastUsedModel`` inside it is the model the whole ``store.db``
+    ran on, so one read serves every record the store yields.
+
+    The projection is guarded rather than attempted: the caller wraps its scan
+    in ``except sqlite3.DatabaseError``, so naming a column an older store lacks
+    would not fail loudly — it would swallow the error and turn the entire store
+    into zero records.
+    """
+    if "meta" not in sqlite_table_names(connection):
+        return None
+    if not {"key", "value"} <= sqlite_column_names(connection, "meta"):
+        return None
+    row = t.cast(
+        "tuple[object] | None",
+        connection.execute("SELECT value FROM meta WHERE key = '0'").fetchone(),
     )
-    seen: set[str] = set()
-    for text in iter_protobuf_text_fields(payload, min_length=_ANTIGRAVITY_PROTOBUF_MIN_TEXT):
-        normalized = text.strip()
-        if len(normalized) < _ANTIGRAVITY_PROTOBUF_MIN_TEXT or normalized in seen:
-            continue
-        seen.add(normalized)
-        yield SearchRecord(
-            kind="history",
-            agent=source.agent,
-            store=source.store,
-            adapter_id=source.adapter_id,
-            path=source.path,
-            text=normalized,
-            title=title,
-            role=None,
-            timestamp=timestamp,
-            session_id=session_id,
-            conversation_id=session_id,
-        )
+    if row is None:
+        return None
+    encoded = as_optional_str(decode_sqlite_value(row[0]))
+    if encoded is None:
+        return None
+    try:
+        payload: object = json.loads(bytes.fromhex(encoded))
+    except ValueError:
+        # Covers the hex decode, the UTF-8 decode, and the JSON parse: the
+        # value is unofficial, and a shape change must degrade to "no model".
+        return None
+    if not isinstance(payload, dict):
+        return None
+    model = as_optional_str(t.cast("dict[str, object]", payload).get("lastUsedModel"))
+    if model is None or model == _CURSOR_CLI_MODEL_SENTINEL:
+        return None
+    return model
 
 
 def parse_cursor_cli_chats_db(
@@ -2386,21 +2782,29 @@ def parse_cursor_cli_chats_db(
     """Best-effort parse of a Cursor CLI ``chats/*/store.db`` blob store.
 
     The CLI persists each session as content-addressed protobuf blobs in
-    a ``blobs(id, data)`` table; agentgrep reads every blob (the sibling
-    ``meta`` row's hex-encoded JSON metadata is not required).
+    a ``blobs(id, data)`` table; agentgrep reads every blob, and the sibling
+    ``meta`` row names the session's model.
     Cursor publishes no schema, so agentgrep walks the protobuf wire
     format generically (:func:`iter_protobuf_text_fields`) and surfaces
     the readable UTF-8 runs it finds. The adapter is versioned by
     observation date (``cursor_cli.chats_protobuf.v1``) because the layout
     is unofficial and may shift. The session UUID comes from the parent
     directory name.
+
+    The grandparent segment is a workspace digest, so it is a ``cwd_hash`` and
+    never a ``cwd``: the literal path appears in this store only as unstructured
+    bytes inside the blobs, interleaved with unrelated file paths, with no key
+    that reliably yields it. ``origin.cwd`` therefore stays unset here — and a
+    ``cwd_hash`` is never manufactured by hashing a path recovered elsewhere.
     """
     session_uuid = source.path.parent.name
     timestamp = isoformat_from_mtime_ns(source.mtime_ns)
+    origin = _record_origin(cwd_hash=origin_cwd_hash(source.path.parent.parent.name))
     connection = open_readonly_sqlite(source.path)
     try:
         if "blobs" not in sqlite_table_names(connection):
             return
+        model = _cursor_cli_chats_model(connection)
         rows = t.cast(
             "cabc.Iterable[tuple[object]]",
             connection.execute("SELECT data FROM blobs"),
@@ -2424,8 +2828,10 @@ def parse_cursor_cli_chats_db(
                     title="Cursor CLI chat",
                     role=None,
                     timestamp=timestamp,
+                    model=model,
                     session_id=session_uuid,
                     conversation_id=session_uuid,
+                    origin=origin,
                 )
     except sqlite3.DatabaseError:
         return
@@ -2433,15 +2839,168 @@ def parse_cursor_cli_chats_db(
         connection.close()
 
 
+def _cursor_nested_model(mapping: dict[str, object]) -> str | None:
+    """Read Cursor's nested model name from a composer document or a turn.
+
+    ``modelConfig.modelName`` (the ``composerData:`` document) and
+    ``modelInfo.modelName`` (one ``bubbleId:`` turn) both sit one level down,
+    where :func:`extract_model` — which reads a top-level ``model`` /
+    ``modelName`` / ``model_name`` — cannot see them.
+
+    Examples
+    --------
+    >>> _cursor_nested_model({"modelConfig": {"modelName": "claude-4.5-sonnet"}})
+    'claude-4.5-sonnet'
+    >>> _cursor_nested_model({"modelInfo": {"modelName": "gpt-5.4"}})
+    'gpt-5.4'
+    >>> _cursor_nested_model({"modelConfig": "unstructured"}) is None
+    True
+    """
+    for parent_key in ("modelConfig", "modelInfo"):
+        nested = mapping.get(parent_key)
+        if not isinstance(nested, dict):
+            continue
+        name = as_optional_str(t.cast("dict[str, object]", nested).get("modelName"))
+        if name:
+            return name
+    return None
+
+
+def _cursor_worktree_origin(
+    mapping: dict[str, object],
+    *,
+    fallback: RecordOrigin | None,
+) -> RecordOrigin | None:
+    """Read Cursor's ``gitWorktree`` block into an origin.
+
+    ``worktreePath`` is the absolute working directory the composer session ran
+    in and ``branchName`` is a whole-value branch name. Neither key is one of
+    :data:`_ORIGIN_MAPPING_KEYS`, so the generic walk never sees them.
+    """
+    worktree = mapping.get("gitWorktree")
+    if not isinstance(worktree, dict):
+        return fallback
+    worktree_map = t.cast("dict[str, object]", worktree)
+    return _record_origin(
+        cwd=_path_like_str(worktree_map.get("worktreePath")),
+        branch=as_optional_str(worktree_map.get("branchName")),
+        fallback=fallback,
+    )
+
+
+def _cursor_composer_id(key: str) -> str | None:
+    """Return the composer uuid encoded in a ``cursorDiskKV`` key.
+
+    ``composerData:<composer>`` and ``bubbleId:<composer>:<bubble>`` name the
+    same conversation, so every turn of one session shares an id.
+
+    Examples
+    --------
+    >>> _cursor_composer_id("composerData:c-1")
+    'c-1'
+    >>> _cursor_composer_id("bubbleId:c-1:b-9")
+    'c-1'
+    >>> _cursor_composer_id("aiService.prompts") is None
+    True
+    """
+    parts = key.split(":")
+    if len(parts) < 2 or not parts[1]:
+        return None
+    return parts[1]
+
+
+def _cursor_bubble_role(mapping: dict[str, object]) -> str | None:
+    """Return the role of one Cursor turn.
+
+    The turn's role is the numeric ``type`` discriminator; ``bool`` is excluded
+    because it is an ``int`` subclass and ``type: true`` is not a role. The two
+    live values are pinned below because transposing them stays silent: the same
+    turns are still emitted, only every ``role:`` predicate now answers with the
+    other speaker.
+
+    A turn carrying no numeric ``type`` falls back to the generic role walk,
+    which is what a ``composerData:`` document itself takes.
+
+    Examples
+    --------
+    >>> _cursor_bubble_role({"type": 1, "text": "a prompt"})
+    'user'
+    >>> _cursor_bubble_role({"type": 2, "text": "a reply"})
+    'assistant'
+    >>> _cursor_bubble_role({"type": 99}) is None
+    True
+    >>> _cursor_bubble_role({"type": True}) is None
+    True
+    >>> _cursor_bubble_role({"role": "user"})
+    'user'
+    """
+    bubble_type = mapping.get("type")
+    if isinstance(bubble_type, bool) or not isinstance(bubble_type, int):
+        return extract_role(mapping)
+    return _CURSOR_BUBBLE_ROLES.get(bubble_type)
+
+
+def _iter_cursor_composer_candidates(
+    parsed: object,
+    *,
+    key: str,
+    fallback_origin: RecordOrigin | None,
+) -> cabc.Iterator[MessageCandidate]:
+    """Yield the turns of one ``composerData:`` or ``bubbleId:`` record.
+
+    The model, working directory, and branch live on the enclosing document, so
+    they are threaded down onto every turn it holds; a ``bubbleId:`` record is
+    itself the turn, so the document is offered as one too.
+    """
+    if not isinstance(parsed, dict):
+        return
+    document = t.cast("dict[str, object]", parsed)
+    origin = _cursor_worktree_origin(document, fallback=fallback_origin)
+    model = _cursor_nested_model(document)
+    conversation_id = as_optional_str(document.get("composerId")) or _cursor_composer_id(key) or key
+    bubbles: list[object] = [document]
+    conversation = document.get("conversation")
+    if isinstance(conversation, list):
+        bubbles.extend(t.cast("list[object]", conversation))
+    for bubble in bubbles:
+        if not isinstance(bubble, dict):
+            continue
+        bubble_map = t.cast("dict[str, object]", bubble)
+        role = _cursor_bubble_role(bubble_map)
+        if role is None:
+            continue
+        text = extract_message_text(bubble_map)
+        if not text:
+            continue
+        yield MessageCandidate(
+            role=role,
+            text=text,
+            title=None,
+            timestamp=extract_timestamp(bubble_map),
+            model=_cursor_nested_model(bubble_map) or model,
+            session_id=conversation_id,
+            conversation_id=conversation_id,
+            origin=_cursor_worktree_origin(bubble_map, fallback=origin),
+        )
+
+
 def parse_cursor_state_db(
     source: SourceHandle,
 ) -> cabc.Iterator[SearchRecord]:
-    """Parse Cursor ``state.vscdb`` tables with generic JSON extraction."""
+    """Parse Cursor ``state.vscdb`` tables with generic JSON extraction.
+
+    ``cursorDiskKV`` also holds the ``composerData:`` and ``bubbleId:`` records
+    carrying the model, working directory, and branch. Those need a
+    Cursor-shaped reader — a numeric turn ``type``, a nested ``modelConfig`` or
+    ``modelInfo``, a ``gitWorktree`` block — so they run through
+    :func:`_iter_cursor_composer_candidates` first and the generic walk after;
+    the dedupe then keeps the enriched candidate when both produce one turn.
+    """
     connection = open_readonly_sqlite(source.path)
     try:
         tables = sqlite_table_names(connection)
         candidate_tables = [name for name in ("ItemTable", "cursorDiskKV") if name in tables]
-        source_origin = _cursor_workspace_hash_origin(source)
+        source_origin = _cursor_workspace_origin(source)
         seen: set[tuple[str | None, str, str | None, str | None]] = set()
         for table in candidate_tables:
             for key, raw_value in iter_key_value_rows(
@@ -2456,20 +3015,33 @@ def parse_cursor_state_db(
                 parsed = parse_embedded_json(decoded)
                 if parsed is None:
                     continue
-                candidates = itertools.chain(
+                is_composer = key.startswith(_CURSOR_COMPOSER_KEY_PREFIXES)
+                conversation_key = (_cursor_composer_id(key) if is_composer else None) or key
+                candidate_iters: list[cabc.Iterator[MessageCandidate]] = []
+                if is_composer:
+                    candidate_iters.append(
+                        _iter_cursor_composer_candidates(
+                            parsed,
+                            key=key,
+                            fallback_origin=source_origin,
+                        ),
+                    )
+                candidate_iters.append(
                     iter_message_candidates(
                         parsed,
                         fallback_title=key,
-                        fallback_conversation_id=key,
-                        fallback_origin=source_origin,
-                    ),
-                    iter_cursor_prompt_candidates(
-                        parsed,
-                        fallback_conversation_id=key,
+                        fallback_conversation_id=conversation_key,
                         fallback_origin=source_origin,
                     ),
                 )
-                for candidate in candidates:
+                candidate_iters.append(
+                    iter_cursor_prompt_candidates(
+                        parsed,
+                        fallback_conversation_id=conversation_key,
+                        fallback_origin=source_origin,
+                    ),
+                )
+                for candidate in itertools.chain(*candidate_iters):
                     entry_key = (
                         candidate.role,
                         candidate.text,
@@ -2486,14 +3058,37 @@ def parse_cursor_state_db(
         connection.close()
 
 
-def _cursor_workspace_hash_origin(source: SourceHandle) -> RecordOrigin | None:
-    """Return a hash-only origin for per-workspace Cursor state stores."""
-    parent_name = source.path.parent.name
-    if parent_name in {"globalStorage", "User"}:
+def _discovered_origin(source: SourceHandle) -> RecordOrigin | None:
+    """Return the origin discovery already recovered for one source.
+
+    Some stores keep the working directory outside the file the adapter opens —
+    in a sibling ``workspace.json``, or in a directory name that has to be
+    decoded against the filesystem. Discovery resolves those and parks the
+    result on :attr:`~agentgrep.records.SourceHandle.origin_summary`; reading it
+    back here is what puts the value on the records, without a second file read
+    or a second decode.
+    """
+    summary = source.origin_summary
+    if summary is None or not summary.origins:
         return None
+    return summary.origins[0]
+
+
+def _cursor_workspace_origin(source: SourceHandle) -> RecordOrigin | None:
+    """Return the source-level origin for a per-workspace Cursor state store.
+
+    Only ``workspaceStorage/<md5>/state.vscdb`` carries a workspace digest. The
+    global and legacy databases sit under an ordinary directory name, so the
+    parent segment is admitted only when it has a digest's shape — otherwise
+    the legacy ``~/.cursor/state.vscdb`` would report a ``cwd_hash`` of
+    ``.cursor``, a searchable value no Cursor build ever wrote.
+    """
     if source.path.name != "state.vscdb":
         return None
-    return _record_origin(cwd_hash=parent_name)
+    discovered = _discovered_origin(source)
+    if discovered is not None:
+        return discovered
+    return _record_origin(cwd_hash=origin_cwd_hash(source.path.parent.name))
 
 
 def candidate_from_mapping(
@@ -2868,6 +3463,15 @@ def parse_claude_usage_facet(
     )
 
 
+_PI_CWD_DIGEST_LENGTH: int = 16
+"""Hex length of the digest Pi names a context-mode database after.
+
+Pi truncates ``sha256(project_dir)`` to its first 16 characters, so the shape
+guard in :func:`~agentgrep.origin.origin_cwd_hash` needs this width rather than
+the 32-character default.
+"""
+
+
 def parse_pi_context_mode_db(
     source: SourceHandle,
 ) -> cabc.Iterator[SearchRecord]:
@@ -2879,21 +3483,48 @@ def parse_pi_context_mode_db(
     record. Rooted under ``~/.pi/context-mode/sessions/``; the file stem is
     ``sha256(project_dir)[:16]`` — a hashed ``cwd`` grouping holding multiple
     sessions, with each row carrying its own ``session_id``.
+
+    The directory that digest hashes is not lost: each row carries the absolute
+    ``project_dir`` beside its payload, so a record gets a literal ``cwd`` *and*
+    the ``cwd_hash`` the store named its file after. The two are the same fact
+    in two encodings — ``sha256(cwd)[:16]`` reproduces the stem — so ``cwd_hash``
+    keeps answering the hashed identity Pi itself uses while ``cwd`` makes the
+    store reachable from a repo-scoped filter.
+
+    ``project_dir`` is projected through
+    :func:`~agentgrep.readers.sqlite_column_expr`: the column arrived in a
+    migration, and naming it unconditionally would raise
+    :exc:`sqlite3.OperationalError` into the swallowing ``except`` below, turning
+    an older database into zero records rather than into records without a cwd.
+    The stem is admitted as a ``cwd_hash`` only when it has a digest's shape, so
+    a hand-copied ``backup.db`` sitting in the same directory does not publish
+    its own name as a searchable project identity.
     """
     connection = open_readonly_sqlite(source.path)
-    origin = _record_origin(cwd_hash=source.path.stem)
+    hash_origin = _record_origin(
+        cwd_hash=origin_cwd_hash(source.path.stem, length=_PI_CWD_DIGEST_LENGTH),
+    )
+    # One database is one project directory, so the per-row column repeats. Memo
+    # the origins rather than rebuilding one per event.
+    origins: dict[str | None, RecordOrigin | None] = {}
     try:
         if "session_events" not in sqlite_table_names(connection):
             return
+        columns = sqlite_column_names(connection, "session_events")
+        project_dir_expr = sqlite_column_expr(columns, "project_dir")
         cursor = connection.execute(
-            "SELECT session_id, type, data, created_at FROM session_events ORDER BY id",
+            f"SELECT session_id, type, data, created_at, {project_dir_expr} "
+            "FROM session_events ORDER BY id",
         )
-        for session_id_raw, type_raw, data_raw, created_raw in cursor:
+        for session_id_raw, type_raw, data_raw, created_raw, project_dir_raw in cursor:
             data_text = as_optional_str(data_raw)
             if not data_text or not data_text.strip():
                 continue
             event_type = as_optional_str(type_raw) or "event"
             session_id = as_optional_str(session_id_raw)
+            project_dir = _path_like_str(project_dir_raw)
+            if project_dir not in origins:
+                origins[project_dir] = _record_origin(cwd=project_dir, fallback=hash_origin)
             yield SearchRecord(
                 kind="history",
                 agent=source.agent,
@@ -2906,7 +3537,7 @@ def parse_pi_context_mode_db(
                 timestamp=as_optional_str(created_raw),
                 session_id=session_id,
                 conversation_id=session_id,
-                origin=origin,
+                origin=origins[project_dir],
             )
     except sqlite3.DatabaseError:
         return

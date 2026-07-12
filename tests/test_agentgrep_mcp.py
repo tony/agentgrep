@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -75,6 +77,33 @@ class AgentProductNameCase(t.NamedTuple):
     test_id: str
     agent: agentgrep.AgentName
     product_name: str
+
+
+class ToolAnnotationCase(t.NamedTuple):
+    """Parametrized case for one client-visible MCP tool behavior hint."""
+
+    test_id: str
+    hint: str
+    expected: bool
+
+
+TOOL_ANNOTATION_CASES: list[ToolAnnotationCase] = [
+    ToolAnnotationCase(
+        test_id="read-only",
+        hint="readOnlyHint",
+        expected=True,
+    ),
+    ToolAnnotationCase(
+        test_id="idempotent",
+        hint="idempotentHint",
+        expected=True,
+    ),
+    ToolAnnotationCase(
+        test_id="closed-world",
+        hint="openWorldHint",
+        expected=False,
+    ),
+]
 
 
 class McpOriginPhraseCase(t.NamedTuple):
@@ -279,10 +308,19 @@ class ResourceTextLike(t.Protocol):
     text: str | None
 
 
+class ToolAnnotationsLike(t.Protocol):
+    """Minimal MCP tool-annotation surface (client-visible behavior hints)."""
+
+    readOnlyHint: bool | None
+    idempotentHint: bool | None
+    openWorldHint: bool | None
+
+
 class ToolLike(t.Protocol):
     """Minimal MCP tool metadata surface."""
 
     name: str
+    annotations: ToolAnnotationsLike | None
 
 
 class PromptLike(t.Protocol):
@@ -434,6 +472,32 @@ async def test_mcp_lists_tools_resources_prompts_and_templates() -> None:
     assert any(str(resource.uri) == "agentgrep://sources" for resource in resources)
     assert any(prompt.name == "search_prompts" for prompt in prompts)
     assert any(template.uriTemplate == "agentgrep://sources/{agent}" for template in templates)
+
+
+@pytest.mark.parametrize(
+    "case",
+    TOOL_ANNOTATION_CASES,
+    ids=[case.test_id for case in TOOL_ANNOTATION_CASES],
+)
+async def test_mcp_tools_advertise_readonly_annotations(case: ToolAnnotationCase) -> None:
+    """Every registered tool carries the hints that let a client auto-approve it.
+
+    ``READONLY_TAGS`` is a FastMCP-internal selection filter and never crosses
+    the wire; ``annotations`` are the protocol-level metadata a host reads back
+    on ``tools/list``. Asserting over the live tool list rather than a frozen
+    name set means a newly registered tool cannot silently omit these hints.
+    """
+    agentgrep_mcp = load_agentgrep_mcp_module()
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        tools = t.cast("list[ToolLike]", await client.list_tools())
+
+    assert tools
+    advertised = {
+        tool.name: getattr(tool.annotations, case.hint, None) if tool.annotations else None
+        for tool in tools
+    }
+    assert advertised == dict.fromkeys(advertised, case.expected)
 
 
 async def test_mcp_search_tool_returns_full_prompt(
@@ -1354,7 +1418,7 @@ async def test_mcp_capabilities_lists_every_supported_agent_and_adapter() -> Non
         "gemini.tmp_logs_json.v1",
         "antigravity_cli.history_jsonl.v1",
         "antigravity_cli.conversations_sqlite_protobuf.v1",
-        "antigravity_ide.conversations_protobuf.v1",
+        "antigravity_ide.skills_text.v1",
     ):
         assert adapter_id in advertised_adapters, adapter_id
 
@@ -2080,3 +2144,78 @@ async def test_mcp_search_terms_tokenize_as_words(
 
     data = tool_payload(result)
     assert [row["text"] for row in data["results"]] == case.expected_texts
+
+
+class SearchStreamCloseCase(t.NamedTuple):
+    """Parametrized case for an exit path out of the MCP search event loop."""
+
+    test_id: str
+    cancel_mid_scan: bool
+
+
+SEARCH_STREAM_CLOSE_CASES = [
+    SearchStreamCloseCase(test_id="cancelled-mid-scan", cancel_mid_scan=True),
+    SearchStreamCloseCase(test_id="stream-exhausted", cancel_mid_scan=False),
+]
+
+
+@pytest.mark.parametrize(
+    "case",
+    SEARCH_STREAM_CLOSE_CASES,
+    ids=[case.test_id for case in SEARCH_STREAM_CLOSE_CASES],
+)
+async def test_mcp_search_closes_event_stream(
+    case: SearchStreamCloseCase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The search tool finalizes its event stream on every exit path.
+
+    The engine requests cancellation from the stream's ``finally`` block, so a
+    client that cancels mid-scan only stops the scan if the tool closes the
+    generator it opened.
+    """
+    from agentgrep import events as ag_events
+    from agentgrep.mcp import SearchRequestModel
+    from agentgrep.mcp.tools import search_tools
+
+    scanning = asyncio.Event()
+    closed = asyncio.Event()
+
+    async def fake_stream(
+        home: pathlib.Path,
+        query: object,
+        *,
+        runtime: object | None = None,
+    ) -> t.AsyncGenerator[object]:
+        try:
+            yield ag_events.SearchStarted(source_count=1)
+            scanning.set()
+            if not case.cancel_mid_scan:
+                yield ag_events.SearchFinished(match_count=0, elapsed_seconds=0.0)
+                return
+            while True:  # a scan the consumer never drains
+                await asyncio.sleep(0.01)
+        finally:
+            closed.set()
+
+    monkeypatch.setattr(agentgrep, "aiter_search_events", fake_stream)
+    request = SearchRequestModel(
+        terms=["bliss"],
+        agent="all",
+        scope="prompts",
+        case_sensitive=False,
+        limit=5,
+    )
+
+    task = asyncio.create_task(search_tools._search_async(request))
+    async with asyncio.timeout(5.0):
+        if case.cancel_mid_scan:
+            await scanning.wait()
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        else:
+            await task
+        await closed.wait()
+
+    assert closed.is_set()

@@ -60,8 +60,12 @@ class StoreCoverage(enum.StrEnum):
     """How agentgrep treats a known store at runtime.
 
     ``DEFAULT_SEARCH`` stores are opened by normal search and find flows.
-    ``INSPECTABLE`` and ``CATALOG_ONLY`` stores are hidden from default
-    discovery but can be included by inventory tools. ``PRIVATE`` stores are
+    ``INSPECTABLE`` stores are hidden from the default prompt scope but are
+    opt-in searchable: ``--scope conversations`` and ``--scope all`` open them,
+    and inventory tools list them. ``CATALOG_ONLY`` stores are never searched at
+    any scope — inventory tools list them and ``find`` enumerates the ones that
+    carry discovery specs, but their payloads are config, logs, caches, or
+    undecodable bytes rather than recall content. ``PRIVATE`` stores are
     documented in the catalogue but intentionally not enumerated from disk.
     """
 
@@ -267,6 +271,19 @@ class StoreDescriptor(pydantic.BaseModel):
         return StoreCoverage.CATALOG_ONLY
 
 
+SEARCHABLE_COVERAGE: frozenset[StoreCoverage] = frozenset(
+    {StoreCoverage.DEFAULT_SEARCH, StoreCoverage.INSPECTABLE},
+)
+"""Coverage levels a search may open.
+
+``DEFAULT_SEARCH`` is the always-on surface; ``INSPECTABLE`` is the opt-in
+surface a non-default scope unlocks. ``CATALOG_ONLY`` rows stay out even though
+many of them carry discovery specs — the inventory-oriented
+``include_non_default=True`` flag admits those specs so ``find`` can enumerate
+them, so search has to re-narrow rather than inherit the flag's reach.
+"""
+
+
 class StoreCatalog(pydantic.BaseModel):
     """Versioned registry of every store agentgrep knows about."""
 
@@ -309,6 +326,7 @@ class StoreCatalog(pydantic.BaseModel):
 
 
 __all__ = (
+    "SEARCHABLE_COVERAGE",
     "AgentName",
     "DiscoverySpec",
     "PathKind",

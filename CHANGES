@@ -42,6 +42,32 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### What's new
+
+#### Project-aware search reaches more agent histories (#112)
+
+agentgrep now carries the model, working directory, and branch from more of
+the histories written by Codex, Cursor, Gemini, Grok, Pi, and Antigravity.
+Those facts power `model:`, `cwd:`, and `branch:` queries plus `--cwd` and
+`--branch`, so CLI, TUI, MCP, and Python consumers can distinguish otherwise
+similar conversations by where and how they ran.
+
+`--scope conversations` and `--scope all` now reach readable state-backed
+histories that were previously invisible, while configuration and unreadable
+encrypted artifacts remain outside search. When a tool records only an
+ambiguous or hashed project identity, agentgrep preserves that uncertainty
+instead of inventing a working directory.
+
+### Fixes
+
+#### Codex conversations stay canonical (#112)
+
+Codex rollouts now report the model slug the conversation actually used,
+including when that context appears after unusually large early records.
+Search also treats Codex's state database as a fallback index rather than a
+second transcript, avoiding duplicate first prompts without hiding state-only
+metadata, previews, or explicitly selected state records.
+
 ## agentgrep 0.1.0a33 (2026-07-05)
 
 agentgrep 0.1.0a33 threads project and workspace context through search

@@ -57,7 +57,6 @@ import tomllib
 import typing as t
 import urllib.parse
 
-import pydantic
 from rich.console import Group as _RichGroup
 from rich.markdown import Markdown as _RichMarkdown
 from rich.syntax import Syntax as _RichSyntax
@@ -151,7 +150,6 @@ from agentgrep.adapters import (
     parse_antigravity_cli_conversation_db,
     parse_antigravity_cli_history_file,
     parse_antigravity_cli_transcript,
-    parse_antigravity_protobuf_file,
     parse_claude_history_file,
     parse_claude_project_file,
     parse_claude_settings_file,
@@ -286,7 +284,7 @@ from agentgrep.readers import (
     _loads,
     _looks_like_protobuf_message,
     _PeriodicYield,
-    _read_first_jsonl_header,
+    _read_first_matching_jsonl_record,
     _read_varint,
     _record_engine_profile_sample,
     _record_readonly_command_profile,
@@ -311,6 +309,7 @@ from agentgrep.readers import (
 )
 from agentgrep.records import (
     AGENT_CHOICES,
+    CONVERSATION_CONTENT_STORES,
     CONVERSATION_STORE_ROLES,
     CURSOR_STATE_TOKENS,
     ITER_SOURCE_RECORD_ADAPTERS,
@@ -612,6 +611,7 @@ __all__ = (
     "CLAUDE_PASTE_HASH_RE",
     "CLAUDE_PASTE_REF_RE",
     "CLI_DESCRIPTION",
+    "CONVERSATION_CONTENT_STORES",
     "CONVERSATION_STORE_ROLES",
     "CURSOR_STATE_TOKENS",
     "DETAIL_BODY_MAX_LINES",
@@ -818,7 +818,6 @@ __all__ = (
     "parse_antigravity_cli_conversation_db",
     "parse_antigravity_cli_history_file",
     "parse_antigravity_cli_transcript",
-    "parse_antigravity_protobuf_file",
     "parse_args",
     "parse_claude_history_file",
     "parse_claude_project_file",

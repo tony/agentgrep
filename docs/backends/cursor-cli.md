@@ -68,3 +68,45 @@ sessions — inspectable (opt-in), parity with {storage:storeref}`claude.skills`
 {storage:storeref}`cursor-cli.uploads` covers Markdown attachments the user fed the
 agent as conversation input, under `~/.cursor/projects/<id>/uploads/*.md`.
 Inspectable (opt-in) supplementary content, not searched by default.
+
+## Project context
+
+| Store | `model` | `cwd` | `branch` |
+|-------|---------|-------|----------|
+| {storage:storeref}`cursor-cli.transcripts` | — | `projects/<name>/`, dash-decoded | — |
+| {storage:storeref}`cursor-cli.subagent_transcripts` | — | `projects/<name>/`, dash-decoded | — |
+| {storage:storeref}`cursor-cli.chats` | `meta` row's `lastUsedModel` | never — `cwd_hash` only, from `chats/<project_hash>/` | — |
+| {storage:storeref}`cursor-cli.prompt_history` | — | — | — |
+
+Nothing inside a Cursor CLI transcript says where the session ran. The
+only record of it is the `projects/<name>/` directory the file sits
+under, and that name is the working directory with every separator
+replaced by `-` and nothing escaped — the
+{ref}`lossy tier <backend-cwd-tiers>`. agentgrep reconstructs the name
+against the filesystem and reports `origin.cwd` only when exactly one
+reconstruction resolves to a directory that exists. When two do, or when
+the project has since been moved or deleted, the record carries no `cwd`
+at all rather than a plausible one: it drops out of a `--cwd` filter
+instead of answering it with a path you never worked in.
+
+The decode runs once per project name per discovery pass, and its memo
+lives and dies with that pass, so a long-running TUI or MCP server never
+answers from a directory layout that has since changed.
+
+### The chat store's working directory is not recoverable
+
+{storage:storeref}`cursor-cli.chats` sits under
+`chats/<project_hash>/<session_uuid>/`, and that first segment is a
+digest, so the store answers `cwd_hash:` and never `cwd:` — the
+{ref}`digest tier <backend-cwd-tiers>`. The literal path does appear
+inside the store, but only as unstructured bytes inside the protobuf
+blobs, interleaved with unrelated file paths and with no key that
+reliably yields it, so there is nothing to read it out of. The digest
+comes from the path segment; it is never manufactured by hashing a `cwd`
+recovered from the transcripts next door. Treat `origin.cwd` here as
+asked and answered: it stays unset by design.
+
+The same database's `meta` row holds hex-encoded JSON whose
+`lastUsedModel` names the model the session ran on, so `model:` does
+reach this store. Cursor's `default` sentinel is rejected rather than
+reported as a slug.

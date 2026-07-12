@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import hashlib
 import importlib
 import inspect
 import io
@@ -21,7 +22,9 @@ import sys
 import threading
 import time
 import typing as t
+import urllib.parse
 
+import pydantic
 import pytest
 
 import agentgrep as _agentgrep_module
@@ -31,6 +34,7 @@ import agentgrep._engine.scanning as _rm_scanning
 import agentgrep.readers as _rm_readers
 from agentgrep._engine import orchestration
 from agentgrep.records import RecordOrigin, SourceOriginSummary
+from agentgrep.store_catalog import CATALOG
 
 if t.TYPE_CHECKING:
     import collections.abc as cabc
@@ -1773,6 +1777,66 @@ def test_iter_jsonl_prefix_skip_with_full_line_predicate(
     assert any("needle-far" in call for call in full_calls)
 
 
+class FirstJsonlRecordCase(t.NamedTuple):
+    """One top-level discriminator accepted after a nested marker decoy."""
+
+    test_id: str
+    marker: str
+    record_type: str
+
+
+FIRST_JSONL_RECORD_CASES: tuple[FirstJsonlRecordCase, ...] = (
+    FirstJsonlRecordCase(
+        test_id="codex-session-meta",
+        marker='"type":"session_meta"',
+        record_type="session_meta",
+    ),
+    FirstJsonlRecordCase(
+        test_id="codex-turn-context",
+        marker='"type":"turn_context"',
+        record_type="turn_context",
+    ),
+    FirstJsonlRecordCase(
+        test_id="pi-session",
+        marker='"type":"session"',
+        record_type="session",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    FirstJsonlRecordCase._fields,
+    [pytest.param(*case, id=case.test_id) for case in FIRST_JSONL_RECORD_CASES],
+)
+def test_read_first_matching_jsonl_record_requires_an_accepted_top_level_type(
+    test_id: str,
+    marker: str,
+    record_type: str,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Prefix markers nominate candidates; decoded record types decide acceptance."""
+    _ = test_id
+    path = tmp_path / "records.jsonl"
+    write_jsonl(
+        path,
+        [
+            {
+                "type": "noise",
+                "payload": {"type": record_type, "value": "decoy"},
+            },
+            {"type": record_type, "value": "canonical"},
+        ],
+    )
+
+    record = _rm_readers._read_first_matching_jsonl_record(
+        path,
+        marker,
+        accept_record=lambda candidate: candidate.get("type") == record_type,
+    )
+
+    assert record == {"type": record_type, "value": "canonical"}
+
+
 class TwoStageSkipCase(t.NamedTuple):
     """One Codex session layout and its expected raw-prefilter skip path."""
 
@@ -2178,6 +2242,270 @@ def test_parse_codex_session_reverse_preserves_header(
     assert [record.text for record in records] == ["second prompt", "first prompt"]
     assert {record.model for record in records} == {"gpt-test-o5"}
     assert {record.session_id for record in records} == {"canonical-session-id"}
+
+
+class CodexTurnContextCase(t.NamedTuple):
+    """One read path through a Codex rollout."""
+
+    test_id: str
+    reverse: bool
+    prefilter: bool
+    position: t.Literal["before", "straddle", "beyond"]
+
+
+CODEX_TURN_CONTEXT_CASES: tuple[CodexTurnContextCase, ...] = (
+    CodexTurnContextCase(
+        test_id="before-forward",
+        reverse=False,
+        prefilter=False,
+        position="before",
+    ),
+    CodexTurnContextCase(
+        test_id="before-reverse",
+        reverse=True,
+        prefilter=False,
+        position="before",
+    ),
+    CodexTurnContextCase(
+        test_id="before-prefilter",
+        reverse=False,
+        prefilter=True,
+        position="before",
+    ),
+    CodexTurnContextCase(
+        test_id="straddle-forward",
+        reverse=False,
+        prefilter=False,
+        position="straddle",
+    ),
+    CodexTurnContextCase(
+        test_id="beyond-forward",
+        reverse=False,
+        prefilter=False,
+        position="beyond",
+    ),
+    CodexTurnContextCase(
+        test_id="beyond-reverse",
+        reverse=True,
+        prefilter=False,
+        position="beyond",
+    ),
+    CodexTurnContextCase(
+        test_id="beyond-prefilter",
+        reverse=False,
+        prefilter=True,
+        position="beyond",
+    ),
+    CodexTurnContextCase(
+        test_id="beyond-prefilter-reverse",
+        reverse=True,
+        prefilter=True,
+        position="beyond",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    CodexTurnContextCase._fields,
+    [pytest.param(*case, id=case.test_id) for case in CODEX_TURN_CONTEXT_CASES],
+)
+def test_parse_codex_session_reads_model_from_turn_context(
+    test_id: str,
+    reverse: bool,
+    prefilter: bool,
+    position: t.Literal["before", "straddle", "beyond"],
+    tmp_path: pathlib.Path,
+) -> None:
+    """The Codex model slug comes from ``turn_context``, on every read path.
+
+    ``session_meta`` names only ``model_provider`` — the provider id — so
+    reading it as the model labelled every Codex record ``openai``.
+
+    Cases cover forward, reverse, and prefiltered reads while moving the first
+    complete ``turn_context`` record before, across, and beyond the former
+    64-KiB head boundary. The unrelated padding line must be discarded without
+    materializing it as a decoded JSON object.
+    """
+    _ = test_id
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    path = tmp_path / "rollout-abc.jsonl"
+    session_meta = json.dumps(
+        {
+            "type": "session_meta",
+            "payload": {"id": "session-1", "model_provider": "openai"},
+        },
+    )
+    turn_context = json.dumps(
+        {
+            "type": "turn_context",
+            "payload": {"model": "gpt-5.4-codex", "cwd": "/work/demo"},
+        },
+    )
+    prompts = tuple(
+        json.dumps(
+            {
+                "timestamp": f"2026-01-01T00:0{index}:00Z",
+                "type": "response_item",
+                "payload": {"role": "user", "content": text},
+            },
+        )
+        for index, text in enumerate(("bliss prompt", "bliss second"))
+    )
+    prefix = f"{session_meta}\n"
+    if position != "before":
+        target = 65536 - 8 if position == "straddle" else 65536 + 1024
+        empty_noise = json.dumps({"type": "noise", "payload": {"padding": ""}})
+        padding_length = target - len(prefix.encode()) - len(empty_noise.encode()) - 1
+        noise = json.dumps(
+            {"type": "noise", "payload": {"padding": "x" * padding_length}},
+        )
+        prefix = f"{prefix}{noise}\n"
+        assert len(prefix.encode()) == target
+    _ = path.write_text(
+        "\n".join((f"{prefix}{turn_context}", *prompts)),
+        encoding="utf-8",
+    )
+    source = agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=path,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=1,
+    )
+
+    def raw_skip_line(line: str) -> bool:
+        return "bliss" not in line
+
+    records = list(
+        agentgrep.parse_codex_session_file(
+            source,
+            raw_skip_line=raw_skip_line if prefilter else None,
+            reverse=reverse,
+        ),
+    )
+
+    assert len(records) == 2
+    assert {record.model for record in records} == {"gpt-5.4-codex"}
+    assert {record.session_id for record in records} == {"session-1"}
+
+
+class CodexFirstValidContextCase(t.NamedTuple):
+    """One invalid context record preceding a valid model record."""
+
+    test_id: str
+    invalid_line: str
+
+
+CODEX_FIRST_VALID_CONTEXT_CASES: tuple[CodexFirstValidContextCase, ...] = (
+    CodexFirstValidContextCase(
+        test_id="nested-context-marker",
+        invalid_line=json.dumps(
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "turn_context",
+                    "model": "wrong-model",
+                },
+            },
+        ),
+    ),
+    CodexFirstValidContextCase(
+        test_id="malformed-context",
+        invalid_line='{"type":"turn_context","payload":',
+    ),
+    CodexFirstValidContextCase(
+        test_id="context-without-model",
+        invalid_line=json.dumps({"type": "turn_context", "payload": {"cwd": "/work"}}),
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    CodexFirstValidContextCase._fields,
+    [pytest.param(*case, id=case.test_id) for case in CODEX_FIRST_VALID_CONTEXT_CASES],
+)
+def test_parse_codex_session_uses_first_valid_turn_context(
+    test_id: str,
+    invalid_line: str,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Malformed or model-free contexts do not hide the first valid model."""
+    _ = test_id
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    path = tmp_path / "rollout-first-valid.jsonl"
+    rows = (
+        json.dumps(
+            {
+                "type": "session_meta",
+                "payload": {"id": "session-1", "model_provider": "openai"},
+            },
+        ),
+        invalid_line,
+        json.dumps({"type": "noise", "payload": {"padding": "x" * 65536}}),
+        json.dumps(
+            {"type": "turn_context", "payload": {"model": "gpt-first-valid"}},
+        ),
+        json.dumps(
+            {
+                "type": "response_item",
+                "payload": {"role": "user", "content": "bliss prompt"},
+            },
+        ),
+    )
+    _ = path.write_text("\n".join(rows), encoding="utf-8")
+    source = agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=path,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=1,
+    )
+
+    records = list(agentgrep.parse_codex_session_file(source))
+
+    assert {record.model for record in records} == {"gpt-first-valid"}
+
+
+def test_parse_codex_session_model_falls_back_to_session_meta(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A rollout with no ``turn_context`` keeps whatever ``session_meta`` names."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    path = tmp_path / "rollout-abc.jsonl"
+    write_jsonl(
+        path,
+        [
+            {
+                "type": "session_meta",
+                "payload": {"id": "session-1", "model": "gpt-test-o5"},
+            },
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "type": "response_item",
+                "payload": {"role": "user", "content": "first prompt"},
+            },
+        ],
+    )
+    source = agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=path,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=1,
+    )
+
+    records = list(agentgrep.parse_codex_session_file(source))
+
+    assert [record.model for record in records] == ["gpt-test-o5"]
 
 
 def test_parse_pi_session_reverse_preserves_header(
@@ -6747,9 +7075,9 @@ def test_pydantic_payloads_reject_wrong_types(tmp_path: pathlib.Path) -> None:
     assert fcp.text == "abc"
 
     # Wrong types raise ValidationError
-    with pytest.raises(agentgrep.pydantic.ValidationError):
+    with pytest.raises(pydantic.ValidationError):
         agentgrep.SearchFinishedPayload(outcome="not-a-valid-outcome", total=0, elapsed=0.0)
-    with pytest.raises(agentgrep.pydantic.ValidationError):
+    with pytest.raises(pydantic.ValidationError):
         agentgrep.FilterRequestedPayload(text=None)  # type: ignore[arg-type]
 
 
@@ -7370,6 +7698,49 @@ def test_search_codex_history_json_returns_history_record(
     assert records[0].text == "serenity command example"
 
 
+def test_search_codex_history_json_keeps_millisecond_timestamp(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The legacy ``history.json`` writes ``timestamp`` as a number, not a string.
+
+    A string-only accessor dropped it, and the legacy entry carries no ``ts``
+    key to fall back on, so every record from this store surfaced with no time
+    at all.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+
+    history_path = home / ".codex" / "history.json"
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    _ = history_path.write_text(
+        json.dumps(
+            [{"command": "serenity command example", "timestamp": 1780000000000}],
+        ),
+        encoding="utf-8",
+    )
+
+    query = agentgrep.SearchQuery(
+        terms=("serenity",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+    backends = agentgrep.BackendSelection(None, None, None)
+    sources = agentgrep.discover_sources(home, ("codex",), backends)
+    records = agentgrep.search_sources(query, sources, backends)
+
+    assert len(records) == 1
+    assert records[0].timestamp == "2026-05-28T20:26:40Z"
+    # This store is a flat prompt log: no cwd, branch, or model on disk.
+    assert records[0].origin is None
+    assert records[0].model is None
+
+
 def test_cursor_ai_tracking_summary_is_exposed_as_history(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -7550,26 +7921,40 @@ class CursorWorkspaceOriginCase(t.NamedTuple):
     """Parametrized case for Cursor workspace source-origin summaries."""
 
     test_id: str
+    workspace_dir: str
     workspace_payload: dict[str, object] | None
-    expected_summary: SourceOriginSummary
+    expected_summary: SourceOriginSummary | None
 
+
+_CURSOR_WORKSPACE_DIGEST = "9b2a1f0c4d3e5a6b7c8d9e0f1a2b3c4d"
+"""A Cursor ``workspaceStorage`` directory name: md5 of the workspace path."""
 
 _CURSOR_WORKSPACE_ORIGIN_CASES: tuple[CursorWorkspaceOriginCase, ...] = (
     CursorWorkspaceOriginCase(
         test_id="folder-uri-adds-cwd-and-hash",
+        workspace_dir=_CURSOR_WORKSPACE_DIGEST,
         workspace_payload={"folder": "vscode-remote://wsl+Ubuntu/home/u/work/proj"},
         expected_summary=SourceOriginSummary(
-            origins=(RecordOrigin(cwd="/home/u/work/proj", cwd_hash="wshash"),),
-            complete_fields=frozenset({"cwd", "cwd_hash"}),
+            # `cwd` is a fact, not a pruning claim: a composerData bubble can
+            # carry a cwd of its own, so only `cwd_hash` is complete.
+            origins=(RecordOrigin(cwd="/home/u/work/proj", cwd_hash=_CURSOR_WORKSPACE_DIGEST),),
+            complete_fields=frozenset({"cwd_hash"}),
         ),
     ),
     CursorWorkspaceOriginCase(
         test_id="missing-workspace-json-keeps-cwd-unknown",
+        workspace_dir=_CURSOR_WORKSPACE_DIGEST,
         workspace_payload=None,
         expected_summary=SourceOriginSummary(
-            origins=(RecordOrigin(cwd_hash="wshash"),),
+            origins=(RecordOrigin(cwd_hash=_CURSOR_WORKSPACE_DIGEST),),
             complete_fields=frozenset({"cwd_hash"}),
         ),
+    ),
+    CursorWorkspaceOriginCase(
+        test_id="non-digest-directory-has-no-workspace-hash",
+        workspace_dir="wshash",
+        workspace_payload=None,
+        expected_summary=None,
     ),
 )
 
@@ -7843,6 +8228,211 @@ def test_cursor_cli_chats_db_is_opt_in_and_extracts_protobuf_text(
     assert records[0].session_id == "sess-1234"
 
 
+_CURSOR_CLI_CHAT_TEXT = "Reviewing the engine lazy imports for merge readiness"
+"""One chat blob's text, long enough to clear the protobuf minimum run length."""
+
+_CURSOR_CLI_CHATS_DIGEST = "1a2b3c4d5e6f708192a3b4c5d6e7f809"
+"""A Cursor CLI ``chats`` directory name: md5 of the workspace path."""
+
+_CURSOR_CLI_META_SCHEMA = "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)"
+
+
+def _cursor_cli_meta_value(payload: dict[str, object]) -> str:
+    """Encode session metadata the way Cursor CLI stores it: hex-encoded JSON."""
+    return json.dumps(payload).encode("utf-8").hex()
+
+
+def _write_cursor_cli_chats_db(
+    path: pathlib.Path,
+    *,
+    meta_schema: str,
+    meta_rows: tuple[tuple[str, ...], ...],
+) -> None:
+    """Create one Cursor CLI ``chats/*/store.db`` with a single protobuf blob."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(path)
+    try:
+        _ = connection.execute("CREATE TABLE blobs (id TEXT PRIMARY KEY, data BLOB)")
+        payload = _CURSOR_CLI_CHAT_TEXT.encode("utf-8")
+        _ = connection.execute(
+            "INSERT INTO blobs VALUES (?, ?)",
+            ("h1", b"\x0a" + bytes([len(payload)]) + payload),
+        )
+        if meta_schema:
+            _ = connection.execute(meta_schema)
+        for row in meta_rows:
+            placeholders = ", ".join("?" * len(row))
+            _ = connection.execute(f"INSERT INTO meta VALUES ({placeholders})", row)
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def _cursor_cli_chat_records(
+    agentgrep: t.Any,
+    home: pathlib.Path,
+) -> list[t.Any]:
+    """Discover the opt-in chats store and parse it, as an inventory caller would."""
+    sources = agentgrep.discover_sources(
+        home,
+        ("cursor-cli",),
+        agentgrep.BackendSelection(None, None, None),
+        include_non_default=True,
+    )
+    chat_sources = [source for source in sources if source.store == "cursor-cli.chats"]
+    assert len(chat_sources) == 1
+    return list(agentgrep.iter_source_records(chat_sources[0]))
+
+
+class CursorCliChatsMetaCase(t.NamedTuple):
+    """One ``meta`` table shape and the model its chat records may carry."""
+
+    test_id: str
+    meta_schema: str
+    meta_rows: tuple[tuple[str, ...], ...]
+    expected_model: str | None
+
+
+_CURSOR_CLI_CHATS_META_CASES: tuple[CursorCliChatsMetaCase, ...] = (
+    CursorCliChatsMetaCase(
+        test_id="hex-json-names-the-model",
+        meta_schema=_CURSOR_CLI_META_SCHEMA,
+        meta_rows=(("0", _cursor_cli_meta_value({"lastUsedModel": "claude-4.5-sonnet"})),),
+        expected_model="claude-4.5-sonnet",
+    ),
+    CursorCliChatsMetaCase(
+        test_id="default-sentinel-is-not-a-model",
+        meta_schema=_CURSOR_CLI_META_SCHEMA,
+        meta_rows=(("0", _cursor_cli_meta_value({"lastUsedModel": "default"})),),
+        expected_model=None,
+    ),
+    CursorCliChatsMetaCase(
+        test_id="session-metadata-without-a-model",
+        meta_schema=_CURSOR_CLI_META_SCHEMA,
+        meta_rows=(("0", _cursor_cli_meta_value({"agentId": "agent-1"})),),
+        expected_model=None,
+    ),
+    CursorCliChatsMetaCase(
+        test_id="value-is-not-hex",
+        meta_schema=_CURSOR_CLI_META_SCHEMA,
+        meta_rows=(("0", "not hex at all"),),
+        expected_model=None,
+    ),
+    CursorCliChatsMetaCase(
+        test_id="no-row-keyed-zero",
+        meta_schema=_CURSOR_CLI_META_SCHEMA,
+        meta_rows=(("1", _cursor_cli_meta_value({"lastUsedModel": "claude-4.5-sonnet"})),),
+        expected_model=None,
+    ),
+    # The store is unofficial and migrated in place. A `SELECT value` against a
+    # `meta` that has no such column raises into the scan's own
+    # `except sqlite3.DatabaseError`, which would not fail loudly — it would
+    # turn every chat record in the store into nothing.
+    CursorCliChatsMetaCase(
+        test_id="meta-without-a-value-column-keeps-the-records",
+        meta_schema="CREATE TABLE meta (key TEXT PRIMARY KEY)",
+        meta_rows=(("0",),),
+        expected_model=None,
+    ),
+    CursorCliChatsMetaCase(
+        test_id="no-meta-table-keeps-the-records",
+        meta_schema="",
+        meta_rows=(),
+        expected_model=None,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    CursorCliChatsMetaCase._fields,
+    _CURSOR_CLI_CHATS_META_CASES,
+    ids=[case.test_id for case in _CURSOR_CLI_CHATS_META_CASES],
+)
+def test_cursor_cli_chats_model_comes_from_the_meta_row(
+    test_id: str,
+    meta_schema: str,
+    meta_rows: tuple[tuple[str, ...], ...],
+    expected_model: str | None,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The session model is the ``meta`` row's ``lastUsedModel``, or nothing."""
+    _ = test_id
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    _write_cursor_cli_chats_db(
+        home / ".config" / "cursor" / "chats" / _CURSOR_CLI_CHATS_DIGEST / "sess-1" / "store.db",
+        meta_schema=meta_schema,
+        meta_rows=meta_rows,
+    )
+
+    records = _cursor_cli_chat_records(agentgrep, home)
+
+    assert [record.text for record in records] == [_CURSOR_CLI_CHAT_TEXT]
+    assert {record.model for record in records} == {expected_model}
+
+
+class CursorCliChatsDigestCase(t.NamedTuple):
+    """One ``chats/<project_hash>/`` directory name and the hash it may report."""
+
+    test_id: str
+    project_dir: str
+    expected_cwd_hash: str | None
+
+
+_CURSOR_CLI_CHATS_DIGEST_CASES: tuple[CursorCliChatsDigestCase, ...] = (
+    CursorCliChatsDigestCase(
+        test_id="digest-directory-is-a-cwd-hash",
+        project_dir=_CURSOR_CLI_CHATS_DIGEST,
+        expected_cwd_hash=_CURSOR_CLI_CHATS_DIGEST,
+    ),
+    CursorCliChatsDigestCase(
+        test_id="non-digest-directory-is-not-a-cwd-hash",
+        project_dir="phash",
+        expected_cwd_hash=None,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    CursorCliChatsDigestCase._fields,
+    _CURSOR_CLI_CHATS_DIGEST_CASES,
+    ids=[case.test_id for case in _CURSOR_CLI_CHATS_DIGEST_CASES],
+)
+def test_cursor_cli_chats_cwd_hash_needs_a_digest(
+    test_id: str,
+    project_dir: str,
+    expected_cwd_hash: str | None,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A chats directory becomes a ``cwd_hash`` only when it has a digest's shape.
+
+    The literal workspace path is nowhere in this store, so ``cwd`` stays unset
+    however the directory is named — agentgrep does not hash a path it recovered
+    elsewhere to manufacture an identity Cursor never wrote, and it does not
+    promote a sibling directory's name to one either.
+    """
+    _ = test_id
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    _write_cursor_cli_chats_db(
+        home / ".config" / "cursor" / "chats" / project_dir / "sess-1" / "store.db",
+        meta_schema=_CURSOR_CLI_META_SCHEMA,
+        meta_rows=(),
+    )
+
+    records = _cursor_cli_chat_records(agentgrep, home)
+
+    assert records
+    assert {None if record.origin is None else record.origin.cwd_hash for record in records} == {
+        expected_cwd_hash
+    }
+    assert all(record.origin is None or record.origin.cwd is None for record in records)
+
+
 def test_cursor_ide_workspace_state_extracts_aiservice_prompts(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -7888,8 +8478,9 @@ def test_cursor_ide_workspace_state_extracts_aiservice_prompts(
 )
 def test_cursor_ide_workspace_state_has_origin_summary(
     test_id: str,
+    workspace_dir: str,
     workspace_payload: dict[str, object] | None,
-    expected_summary: SourceOriginSummary,
+    expected_summary: SourceOriginSummary | None,
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -7900,11 +8491,11 @@ def test_cursor_ide_workspace_state_has_origin_summary(
     monkeypatch.setenv("HOME", str(home))
 
     workspace_root = agentgrep._cursor_ide_workspace_root(home)
-    workspace_dir = workspace_root / "wshash"
-    db_path = workspace_dir / "state.vscdb"
+    workspace_path = workspace_root / workspace_dir
+    db_path = workspace_path / "state.vscdb"
     if workspace_payload is not None:
-        workspace_dir.mkdir(parents=True)
-        _ = (workspace_dir / "workspace.json").write_text(
+        workspace_path.mkdir(parents=True)
+        _ = (workspace_path / "workspace.json").write_text(
             json.dumps(workspace_payload),
             encoding="utf-8",
         )
@@ -8150,6 +8741,14 @@ def test_find_record_serialization_uses_private_paths(
 
 
 def test_json_output_falls_back_without_pydantic(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``maybe_build_pydantic`` selects the pure-Python serializers.
+
+    This covers the serializer *selection* branch only. It cannot observe the
+    import boundary: ``agentgrep`` is already imported by the time it runs, so
+    every module-scope ``import pydantic`` is already satisfied and patching
+    ``importlib`` cannot un-satisfy it. See
+    ``test_cli_json_survives_missing_pydantic`` for the boundary test.
+    """
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     record = agentgrep.SearchRecord(
         kind="prompt",
@@ -8179,6 +8778,99 @@ def test_json_output_falls_back_without_pydantic(monkeypatch: pytest.MonkeyPatch
     assert envelope["schema_version"] == "agentgrep.v1"
     results = t.cast("list[dict[str, object]]", envelope["results"])
     assert results[0]["text"] == "serenity and bliss"
+
+
+NO_PYDANTIC_RUNNER = '''\
+"""Run ``python -m agentgrep`` with ``pydantic`` made un-importable."""
+
+from __future__ import annotations
+
+import runpy
+import sys
+
+
+class PydanticBlocker:
+    """Meta-path finder that hides ``pydantic`` from the import system."""
+
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "pydantic" or fullname.startswith("pydantic."):
+            raise ModuleNotFoundError(f"No module named {fullname!r}", name=fullname)
+        return None
+
+
+sys.meta_path.insert(0, PydanticBlocker())
+sys.argv = ["agentgrep", *sys.argv[1:]]
+runpy.run_module("agentgrep", run_name="__main__")
+'''
+
+
+class PydanticFreeCase(t.NamedTuple):
+    """A CLI output mode that must survive a pydantic-free interpreter."""
+
+    test_id: str
+    flag: str
+
+
+PYDANTIC_FREE_CASES = [
+    PydanticFreeCase(test_id="json", flag="--json"),
+    PydanticFreeCase(test_id="ndjson", flag="--ndjson"),
+]
+
+
+@pytest.mark.xfail(
+    reason=(
+        "The pydantic-free JSON fallback is not reachable from the CLI. "
+        "agentgrep.stores, agentgrep.progress, and agentgrep.query.ast each "
+        "subclass pydantic.BaseModel at module scope and are all imported on "
+        "the search path, so `python -m agentgrep search` raises ImportError "
+        "before maybe_use_pydantic() ever picks a serializer. Restoring the "
+        "fallback means giving those three modules a pydantic-free "
+        "definition; this test pins the gap so it cannot be silently lost."
+    ),
+    raises=AssertionError,
+)
+@pytest.mark.parametrize(
+    "case",
+    PYDANTIC_FREE_CASES,
+    ids=[c.test_id for c in PYDANTIC_FREE_CASES],
+)
+def test_cli_json_survives_missing_pydantic(
+    case: PydanticFreeCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """The CLI emits JSON when ``pydantic`` cannot be imported.
+
+    Runs the real ``python -m agentgrep`` entry point in a subprocess whose
+    import system refuses to load ``pydantic``. A subprocess is the only way
+    to observe this boundary: patching ``importlib`` inside an already-imported
+    ``agentgrep`` leaves every module-scope ``import pydantic`` satisfied, so
+    an in-process test passes whether or not the fallback exists.
+    """
+    home = tmp_path / "home"
+    session_path = home / ".codex" / "sessions" / "2026" / "01" / "01" / "rollout.jsonl"
+    write_jsonl(
+        session_path,
+        [{"type": "response_item", "payload": {"role": "user", "content": "bliss"}}],
+    )
+    runner = tmp_path / "run_without_pydantic.py"
+    runner.write_text(NO_PYDANTIC_RUNNER, encoding="utf-8")
+
+    completed = subprocess.run(
+        [sys.executable, str(runner), "search", "bliss", "--agent", "codex", case.flag],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "HOME": str(home), "NO_COLOR": "1"},
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    payloads = (
+        [json.loads(line) for line in completed.stdout.splitlines() if line.strip()]
+        if case.flag == "--ndjson"
+        else [json.loads(completed.stdout)]
+    )
+    assert payloads
+    assert "pydantic" not in completed.stderr
 
 
 def test_json_output_default_does_not_emit_progress(tmp_path: pathlib.Path) -> None:
@@ -12233,8 +12925,15 @@ def _build_antigravity_steps_db(
     db_path: pathlib.Path,
     *,
     text: str,
+    metadata_table: str | None = None,
+    metadata_text: str | None = None,
 ) -> None:
-    """Build a minimal Antigravity CLI conversation database."""
+    """Build a minimal Antigravity CLI conversation database.
+
+    ``metadata_table`` adds one protobuf metadata row beside ``steps``. Leaving
+    it unset reproduces a database written before Antigravity shipped those
+    tables: ``steps`` and nothing else.
+    """
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path))
     try:
@@ -12245,6 +12944,10 @@ def _build_antigravity_steps_db(
             "INSERT INTO steps VALUES (?, ?, ?)",
             (1, _protobuf_field(text), 1),
         )
+        if metadata_table is not None:
+            conn.execute(f"CREATE TABLE {metadata_table} (idx INTEGER PRIMARY KEY, data BLOB)")
+            payload = None if metadata_text is None else _protobuf_field(metadata_text)
+            conn.execute(f"INSERT INTO {metadata_table} VALUES (?, ?)", (1, payload))
         conn.commit()
     finally:
         conn.close()
@@ -12347,79 +13050,82 @@ def test_search_antigravity_cli_history(
     assert record.metadata == {"workspace": expected_workspace, "type": entry.get("type", "")}
 
 
-class AntigravityProtobufCase(t.NamedTuple):
-    """Parametrized case for inspectable Antigravity protobuf transcript stores."""
+def _encrypted_pb_bytes(length: int = 4096) -> bytes:
+    """Return high-entropy bytes with no valid protobuf framing.
+
+    The real loose ``.pb`` artifacts are encrypted: ~8.0 bits/byte of entropy,
+    no printable run long enough for the extractor's 16-byte gate, and no
+    protobuf field varint at the head. The superseded fixture wrote *fabricated
+    plaintext protobuf* into these paths and then asserted it could be read back
+    — which is how three stores shipped advertising readable prompt strings they
+    never contained.
+
+    Parameters
+    ----------
+    length : int
+        Number of bytes to synthesize.
+
+    Returns
+    -------
+    bytes
+        A deterministic byte stream standing in for an encrypted payload.
+    """
+    return bytes((index * 167 + 13) % 256 for index in range(length))
+
+
+class AntigravityEncryptedCase(t.NamedTuple):
+    """Parametrized case for an Antigravity store whose payloads are encrypted."""
 
     test_id: str
     agent: AgentName
     relative_path: pathlib.Path
     store: str
-    adapter_id: str
-    sqlite_steps: bool
 
 
-ANTIGRAVITY_PROTOBUF_CASES: tuple[AntigravityProtobufCase, ...] = (
-    AntigravityProtobufCase(
-        test_id="cli-conversation-db",
-        agent="antigravity-cli",
-        relative_path=pathlib.Path(".gemini/antigravity-cli/conversations/conv-1.db"),
-        store="antigravity-cli.conversations",
-        adapter_id="antigravity_cli.conversations_sqlite_protobuf.v1",
-        sqlite_steps=True,
-    ),
-    AntigravityProtobufCase(
+ANTIGRAVITY_ENCRYPTED_CASES: tuple[AntigravityEncryptedCase, ...] = (
+    AntigravityEncryptedCase(
         test_id="cli-implicit-pb",
         agent="antigravity-cli",
         relative_path=pathlib.Path(".gemini/antigravity-cli/implicit/implicit-1.pb"),
         store="antigravity-cli.implicit",
-        adapter_id="antigravity_cli.implicit_protobuf.v1",
-        sqlite_steps=False,
     ),
-    AntigravityProtobufCase(
+    AntigravityEncryptedCase(
         test_id="ide-conversation-pb",
         agent="antigravity-ide",
         relative_path=pathlib.Path(".gemini/antigravity/conversations/ide-1.pb"),
         store="antigravity-ide.conversations",
-        adapter_id="antigravity_ide.conversations_protobuf.v1",
-        sqlite_steps=False,
     ),
-    AntigravityProtobufCase(
+    AntigravityEncryptedCase(
         test_id="ide-implicit-pb",
         agent="antigravity-ide",
         relative_path=pathlib.Path(".gemini/antigravity/implicit/implicit-1.pb"),
         store="antigravity-ide.implicit",
-        adapter_id="antigravity_ide.implicit_protobuf.v1",
-        sqlite_steps=False,
     ),
 )
 
 
 @pytest.mark.parametrize(
-    AntigravityProtobufCase._fields,
-    ANTIGRAVITY_PROTOBUF_CASES,
-    ids=[case.test_id for case in ANTIGRAVITY_PROTOBUF_CASES],
+    AntigravityEncryptedCase._fields,
+    ANTIGRAVITY_ENCRYPTED_CASES,
+    ids=[case.test_id for case in ANTIGRAVITY_ENCRYPTED_CASES],
 )
-def test_antigravity_protobuf_sources_are_inspectable(
+def test_antigravity_encrypted_pb_stores_are_catalog_only(
     test_id: str,
     agent: AgentName,
     relative_path: pathlib.Path,
     store: str,
-    adapter_id: str,
-    sqlite_steps: bool,
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Opaque Antigravity transcript stores stay opt-in but expose readable text."""
+    """Encrypted Antigravity ``.pb`` stores are catalogued, never enumerated."""
+    del test_id
+
     agentgrep = load_agentgrep_module()
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
     source_path = home / relative_path
-    text = f"inspectable antigravity transcript text from {test_id}"
-    if sqlite_steps:
-        _build_antigravity_steps_db(source_path, text=text)
-    else:
-        source_path.parent.mkdir(parents=True, exist_ok=True)
-        _ = source_path.write_bytes(_protobuf_field(text))
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    _ = source_path.write_bytes(_encrypted_pb_bytes())
 
     backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
     agents: tuple[AgentName, ...] = (agent,)
@@ -12431,23 +13137,180 @@ def test_antigravity_protobuf_sources_are_inspectable(
         include_non_default=True,
     )
 
+    descriptor = CATALOG.by_id(store)
+
+    assert descriptor.coverage_level.value == "catalog_only"
+    assert descriptor.discovery == ()
+    assert descriptor.sample_record is None
+    assert source_path not in {source.path for source in default_sources}
+    assert source_path not in {source.path for source in inventory_sources}
+
+
+def test_antigravity_cli_conversation_db_decodes_sqlite_protobuf(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Antigravity CLI conversation SQLite blobs *are* plaintext protobuf.
+
+    This is the store the generic extractor genuinely reads: the encryption
+    boundary is the loose ``.pb`` file, not the protobuf format.
+    """
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    source_path = home / ".gemini/antigravity-cli/conversations/conv-1.db"
+    text = "inspectable antigravity conversation text"
+    _build_antigravity_steps_db(source_path, text=text)
+
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    agents: tuple[AgentName, ...] = ("antigravity-cli",)
+    default_sources = t.cast("t.Any", agentgrep).discover_sources(home, agents, backends)
+    inventory_sources = t.cast("t.Any", agentgrep).discover_sources(
+        home,
+        agents,
+        backends,
+        include_non_default=True,
+    )
+
     assert source_path not in {source.path for source in default_sources}
     source = next(source for source in inventory_sources if source.path == source_path)
-    assert source.store == store
-    assert source.adapter_id == adapter_id
+
+    assert source.store == "antigravity-cli.conversations"
+    assert source.adapter_id == "antigravity_cli.conversations_sqlite_protobuf.v1"
     assert source.coverage.value == "inspectable"
 
     records = list(t.cast("t.Any", agentgrep).iter_source_records(source))
 
     assert len(records) == 1
-    record = records[0]
-    assert record.agent == agent
-    assert record.store == store
-    assert record.adapter_id == adapter_id
-    assert record.kind == "history"
-    assert record.text == text
-    assert record.session_id == source_path.stem
-    assert record.conversation_id == source_path.stem
+    assert records[0].kind == "history"
+    assert records[0].text == text
+    assert records[0].session_id == source_path.stem
+
+
+def test_antigravity_cli_conversation_db_rejects_encrypted_blobs(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Encrypted-shaped step blobs yield zero records instead of decoding to noise."""
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    source_path = home / ".gemini/antigravity-cli/conversations/conv-enc.db"
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(source_path))
+    try:
+        _ = conn.execute(
+            "CREATE TABLE steps (idx INTEGER PRIMARY KEY, step_payload BLOB, step_format INTEGER)",
+        )
+        _ = conn.execute(
+            "INSERT INTO steps VALUES (?, ?, ?)",
+            (1, _encrypted_pb_bytes(), 1),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    agents: tuple[AgentName, ...] = ("antigravity-cli",)
+    inventory_sources = t.cast("t.Any", agentgrep).discover_sources(
+        home,
+        agents,
+        backends,
+        include_non_default=True,
+    )
+    source = next(source for source in inventory_sources if source.path == source_path)
+
+    assert list(t.cast("t.Any", agentgrep).iter_source_records(source)) == []
+
+
+class AntigravityModelCase(t.NamedTuple):
+    """Parametrized case for the model on an Antigravity CLI conversation."""
+
+    test_id: str
+    metadata_table: str | None
+    metadata_text: str | None
+    expected_model: str | None
+
+
+ANTIGRAVITY_MODEL_CASES: tuple[AntigravityModelCase, ...] = (
+    AntigravityModelCase(
+        test_id="gen-metadata",
+        metadata_table="gen_metadata",
+        metadata_text="gemini-pro-agent",
+        expected_model="gemini-pro-agent",
+    ),
+    AntigravityModelCase(
+        test_id="executor-metadata-fallback",
+        metadata_table="executor_metadata",
+        metadata_text="gemini-pro-agent",
+        expected_model="gemini-pro-agent",
+    ),
+    AntigravityModelCase(
+        test_id="no-metadata-table",
+        metadata_table=None,
+        metadata_text=None,
+        expected_model=None,
+    ),
+    AntigravityModelCase(
+        test_id="null-metadata-blob",
+        metadata_table="gen_metadata",
+        metadata_text=None,
+        expected_model=None,
+    ),
+    AntigravityModelCase(
+        test_id="metadata-names-no-model",
+        metadata_table="gen_metadata",
+        metadata_text="running_tasks_reminder",
+        expected_model=None,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    AntigravityModelCase._fields,
+    ANTIGRAVITY_MODEL_CASES,
+    ids=[case.test_id for case in ANTIGRAVITY_MODEL_CASES],
+)
+def test_antigravity_cli_conversation_db_model(
+    test_id: str,
+    metadata_table: str | None,
+    metadata_text: str | None,
+    expected_model: str | None,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The conversation model comes from the metadata tables, never from ``steps``.
+
+    A database that predates those tables — and one whose metadata names no
+    model — still yields its step records, with no model rather than no records.
+    """
+    del test_id
+
+    agentgrep = load_agentgrep_module()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    source_path = home / ".gemini/antigravity-cli/conversations/conv-model.db"
+    text = "antigravity conversation step text"
+    _build_antigravity_steps_db(
+        source_path,
+        text=text,
+        metadata_table=metadata_table,
+        metadata_text=metadata_text,
+    )
+
+    backends = t.cast("t.Any", agentgrep).BackendSelection(None, None, None)
+    agents: tuple[AgentName, ...] = ("antigravity-cli",)
+    inventory_sources = t.cast("t.Any", agentgrep).discover_sources(
+        home,
+        agents,
+        backends,
+        include_non_default=True,
+    )
+    source = next(source for source in inventory_sources if source.path == source_path)
+    records = list(t.cast("t.Any", agentgrep).iter_source_records(source))
+
+    assert [record.text for record in records] == [text]
+    assert records[0].model == expected_model
 
 
 def _parse_opencode_records(
@@ -12952,3 +13815,364 @@ def test_parse_pi_context_mode_db_emits_events(tmp_path: pathlib.Path) -> None:
     assert "login" in records[0].text
     assert records[0].role == "tool_call"
     assert records[0].kind == "history"
+
+
+class PiContextModeOriginCase(t.NamedTuple):
+    """One context-mode database shape and the origin its records must carry."""
+
+    test_id: str
+
+    stem_is_digest: bool
+    """Whether the file is named ``sha256(project_dir)[:16]``, as Pi names it."""
+
+    has_project_dir_column: bool
+    """``False`` reproduces a database from before the ``project_dir`` migration."""
+
+    writes_project_dir: bool
+    """``False`` leaves the column at the empty string the shipped schema defaults to."""
+
+    expect_cwd: bool
+    expect_cwd_hash: bool
+
+
+PI_CONTEXT_MODE_ORIGIN_CASES: tuple[PiContextModeOriginCase, ...] = (
+    PiContextModeOriginCase(
+        test_id="digest-stem-with-project-dir",
+        stem_is_digest=True,
+        has_project_dir_column=True,
+        writes_project_dir=True,
+        expect_cwd=True,
+        expect_cwd_hash=True,
+    ),
+    PiContextModeOriginCase(
+        test_id="empty-project-dir-keeps-the-digest",
+        stem_is_digest=True,
+        has_project_dir_column=True,
+        writes_project_dir=False,
+        expect_cwd=False,
+        expect_cwd_hash=True,
+    ),
+    PiContextModeOriginCase(
+        test_id="pre-migration-schema-keeps-the-digest",
+        stem_is_digest=True,
+        has_project_dir_column=False,
+        writes_project_dir=False,
+        expect_cwd=False,
+        expect_cwd_hash=True,
+    ),
+    PiContextModeOriginCase(
+        test_id="non-digest-stem-is-no-digest",
+        stem_is_digest=False,
+        has_project_dir_column=True,
+        writes_project_dir=True,
+        expect_cwd=True,
+        expect_cwd_hash=False,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    PI_CONTEXT_MODE_ORIGIN_CASES,
+    ids=[c.test_id for c in PI_CONTEXT_MODE_ORIGIN_CASES],
+)
+def test_parse_pi_context_mode_db_origin(
+    case: PiContextModeOriginCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """A context-mode record carries the cwd its row names and the digest its file does.
+
+    Both are the same fact in two encodings: Pi names the database
+    ``sha256(project_dir)[:16]`` and repeats the absolute ``project_dir`` on
+    every row, so the round trip is free to check and this test checks it —
+    hashing the recovered ``cwd`` has to reproduce the stem the store chose.
+    That is a check, never a construction: the ``cwd_hash`` agentgrep reports is
+    read off the file name, so a file whose stem is not a digest reports no
+    ``cwd_hash`` rather than one agentgrep computed for it.
+
+    A database that predates the ``project_dir`` migration still yields its
+    records; the missing column reads back as ``NULL``, not as an
+    ``OperationalError`` that would zero the store.
+    """
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    project_dir = str(tmp_path / "work" / "agentgrep")
+    digest = hashlib.sha256(project_dir.encode("utf-8")).hexdigest()[:16]
+    stem = digest if case.stem_is_digest else "context-mode-backup"
+    db = tmp_path / f"{stem}.db"
+
+    columns = "id INTEGER PRIMARY KEY, session_id TEXT, type TEXT, data TEXT, created_at TEXT"
+    if case.has_project_dir_column:
+        columns = f"{columns}, project_dir TEXT NOT NULL DEFAULT ''"
+    connection = sqlite3.connect(db)
+    try:
+        _ = connection.execute(f"CREATE TABLE session_events ({columns})")
+        values: tuple[object, ...] = ("s1", "decision", '{"note":"login"}', "2026-06-21")
+        if case.has_project_dir_column:
+            _ = connection.execute(
+                "INSERT INTO session_events "
+                "(session_id, type, data, created_at, project_dir) VALUES (?, ?, ?, ?, ?)",
+                (*values, project_dir if case.writes_project_dir else ""),
+            )
+        else:
+            _ = connection.execute(
+                "INSERT INTO session_events "
+                "(session_id, type, data, created_at) VALUES (?, ?, ?, ?)",
+                values,
+            )
+        connection.commit()
+    finally:
+        connection.close()
+
+    source = agentgrep.SourceHandle(
+        agent="pi",
+        store="pi.context_mode_db",
+        adapter_id="pi.context_mode_sqlite.v1",
+        path=db,
+        path_kind="sqlite_db",
+        source_kind="sqlite",
+        search_root=None,
+        mtime_ns=1,
+    )
+
+    records = list(agentgrep.iter_source_records(source))
+
+    assert len(records) == 1
+    origin = t.cast("RecordOrigin | None", records[0].origin)
+    expected_cwd = project_dir if case.expect_cwd else None
+    expected_cwd_hash = digest if case.expect_cwd_hash else None
+    assert origin is not None
+    assert origin.cwd == expected_cwd
+    assert origin.cwd_hash == expected_cwd_hash
+    if origin.cwd is not None and origin.cwd_hash is not None:
+        # The free round trip: the directory the row names hashes to the digest
+        # the file is named after, so the two encodings agree.
+        assert hashlib.sha256(origin.cwd.encode("utf-8")).hexdigest()[:16] == origin.cwd_hash
+
+
+GROK_PAIRED_TERM = "authflow"
+"""The one term every record of the paired Grok fixture contains."""
+
+GROK_PAIRED_SESSION = "019729a0-0000-7000-8000-0000000000aa"
+
+
+def _seed_grok_project(
+    home: pathlib.Path,
+    *,
+    project_dir_name: str,
+    session_id: str = GROK_PAIRED_SESSION,
+) -> None:
+    """Seed one Grok project directory with a transcript and a prompt log.
+
+    Both stores hang off the same directory name at different depths —
+    ``sessions/<name>/prompt_history.jsonl`` and
+    ``sessions/<name>/<session>/chat_history.jsonl`` — so seeding them together
+    is what makes the parent/grandparent decode disagree loudly if it ever does.
+    """
+    project = home / ".grok" / "sessions" / project_dir_name
+    write_jsonl(
+        project / session_id / "chat_history.jsonl",
+        [
+            {
+                "type": "user",
+                "content": f"trace the {GROK_PAIRED_TERM} redirect",
+                "timestamp": "2026-05-25T10:00:00.000000000Z",
+            },
+            {
+                "type": "assistant",
+                "content": f"the {GROK_PAIRED_TERM} redirect is signed server-side",
+                "model_id": "grok-4-fast",
+                "timestamp": "2026-05-25T10:00:05.000000000Z",
+            },
+        ],
+    )
+    write_jsonl(
+        project / "prompt_history.jsonl",
+        [
+            {
+                "timestamp": "2026-05-25T10:00:00.000000000Z",
+                "session_id": session_id,
+                "prompt": f"trace the {GROK_PAIRED_TERM} redirect",
+                "is_bash": False,
+            },
+        ],
+    )
+
+
+def _seed_grok_session_search(
+    home: pathlib.Path,
+    *,
+    cwd: str,
+    session_id: str = GROK_PAIRED_SESSION,
+) -> None:
+    """Seed the Grok FTS index with one row for ``session_id``."""
+    db_path = home / ".grok" / "sessions" / "session_search.sqlite"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        _ = conn.execute(
+            "CREATE TABLE session_docs ("
+            "  session_id TEXT PRIMARY KEY,"
+            "  cwd TEXT NOT NULL,"
+            "  updated_at INTEGER NOT NULL,"
+            "  title TEXT NOT NULL,"
+            "  content TEXT NOT NULL,"
+            "  content_hash TEXT NOT NULL"
+            ")",
+        )
+        _ = conn.execute(
+            "INSERT INTO session_docs VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                session_id,
+                cwd,
+                1779750000,
+                "Auth redirect",
+                f"the {GROK_PAIRED_TERM} redirect is signed server-side",
+                "abc123",
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _grok_record_cwd(record: t.Any) -> str | None:
+    """Return the working directory one Grok record reports, if any."""
+    origin = t.cast("RecordOrigin | None", record.origin)
+    return origin.cwd if origin is not None else None
+
+
+def _search_grok(
+    home: pathlib.Path,
+    term: str,
+) -> list[t.Any]:
+    """Search Grok through the public discovery and execution surface."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    backends = agentgrep.BackendSelection(None, None, None)
+    query = agentgrep.SearchQuery(
+        terms=(term,),
+        scope="all",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("grok",),
+        limit=None,
+        dedupe=False,
+    )
+    sources = agentgrep.discover_sources(home, ("grok",), backends)
+    return t.cast("list[t.Any]", agentgrep.search_sources(query, sources, backends))
+
+
+class GrokProjectOriginCase(t.NamedTuple):
+    """One Grok project-directory name and the ``cwd`` it may yield."""
+
+    test_id: str
+
+    project_dir_name: str
+    """The directory name Grok wrote under ``sessions/``."""
+
+    expect_cwd: str | None
+    """The decoded working directory, or ``None`` when the name is not one."""
+
+
+GROK_PROJECT_ORIGIN_CASES: tuple[GrokProjectOriginCase, ...] = (
+    GrokProjectOriginCase(
+        test_id="url-encoded-project-path",
+        project_dir_name=urllib.parse.quote("/work/python/agentgrep", safe=""),
+        expect_cwd="/work/python/agentgrep",
+    ),
+    GrokProjectOriginCase(
+        test_id="url-encoded-path-with-a-space",
+        project_dir_name=urllib.parse.quote("/work/my proj", safe=""),
+        expect_cwd="/work/my proj",
+    ),
+    GrokProjectOriginCase(
+        test_id="name-that-is-not-a-path",
+        project_dir_name="session-1234",
+        expect_cwd=None,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    GROK_PROJECT_ORIGIN_CASES,
+    ids=[c.test_id for c in GROK_PROJECT_ORIGIN_CASES],
+)
+def test_grok_jsonl_stores_decode_the_project_directory(
+    case: GrokProjectOriginCase,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both Grok JSONL stores recover the working directory from the same name.
+
+    ``%2F`` is a lossless escape, so decoding it is a recovery. A directory
+    whose name does not decode to a path is not a project directory, and gets no
+    ``cwd`` rather than a plausible-looking one: a fabricated working directory
+    does not merely omit a result, it makes a repo-scoped filter silently skip
+    the user's own project.
+    """
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("GROK_HOME", raising=False)
+    _seed_grok_project(home, project_dir_name=case.project_dir_name)
+
+    records = _search_grok(home, GROK_PAIRED_TERM)
+
+    stores = {record.store for record in records}
+    assert stores == {"grok.sessions", "grok.prompt_history"}
+    for record in records:
+        cwd = _grok_record_cwd(record)
+        assert cwd == case.expect_cwd, f"{record.store} decoded {cwd!r}"
+
+
+def test_grok_chat_history_reads_the_assistant_model_id(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``model_id`` names the model that answered; a user turn names none.
+
+    Grok spells the slug ``model_id`` where the other stores spell it ``model``,
+    and only an assistant line carries it. Reading the key in the Grok parser
+    keeps the shared ``extract_model`` helper from applying a Grok-specific
+    spelling to every other store's payload.
+    """
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("GROK_HOME", raising=False)
+    _seed_grok_project(home, project_dir_name=urllib.parse.quote("/work/proj", safe=""))
+
+    records = [
+        record for record in _search_grok(home, GROK_PAIRED_TERM) if record.store == "grok.sessions"
+    ]
+
+    assert records
+    models = {record.role: record.model for record in records}
+    assert models == {"user": None, "assistant": "grok-4-fast"}
+
+
+def test_grok_stores_agree_on_the_session_cwd(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One Grok session reports one working directory across all three stores.
+
+    ``grok.session_search`` reads the ``cwd`` Grok recorded in
+    ``session_docs``; the two JSONL stores decode it from the directory name
+    Grok filed the session under. They are two encodings of the same fact, and a
+    search that returned both a literal and a decoded path for one session would
+    answer a single ``cwd:`` filter with two working directories — matching the
+    session through the index and missing it through the transcript.
+    """
+    project_dir = "/work/python/agentgrep"
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("GROK_HOME", raising=False)
+    _seed_grok_project(home, project_dir_name=urllib.parse.quote(project_dir, safe=""))
+    _seed_grok_session_search(home, cwd=project_dir)
+
+    records = _search_grok(home, GROK_PAIRED_TERM)
+
+    session_records = [record for record in records if record.session_id == GROK_PAIRED_SESSION]
+    stores = {record.store for record in session_records}
+    assert stores == {"grok.sessions", "grok.prompt_history", "grok.session_search"}
+    assert {_grok_record_cwd(record) for record in session_records} == {project_dir}

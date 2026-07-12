@@ -10,9 +10,15 @@ import typing as t
 import pytest
 
 import agentgrep
+from agentgrep import origin
 from agentgrep.origin import (
+    CWD_DIGEST_LENGTH,
+    OriginEncoding,
     OriginMatcher,
+    decode_project_dir,
+    is_cwd_digest,
     normalize_origin_path_text,
+    origin_cwd_hash,
     origin_filter_nodes,
     record_matches_origin,
 )
@@ -1321,3 +1327,280 @@ def test_metadata_and_origin_agree_on_path_likeness() -> None:
 
     assert payload["origin"] is not None
     assert payload["origin"]["cwd"] == payload["metadata"]["directory"]
+
+
+class ProjectDirDecodeCase(t.NamedTuple):
+    """One store-written directory name and the path it must decode to."""
+
+    test_id: str
+    encoding: OriginEncoding
+    #: Directories created under ``tmp_path`` before decoding.
+    existing: tuple[str, ...]
+    #: ``{root}`` expands to the ``tmp_path`` prefix the fixture ran under.
+    name: str
+    expected: str | None
+
+
+PROJECT_DIR_DECODE_CASES: tuple[ProjectDirDecodeCase, ...] = (
+    ProjectDirDecodeCase(
+        test_id="url-decode-is-lossless",
+        encoding=OriginEncoding.URL,
+        existing=(),
+        name="%2Fwork%2Fmy-proj",
+        expected="/work/my-proj",
+    ),
+    ProjectDirDecodeCase(
+        test_id="url-decode-refuses-a-non-path",
+        encoding=OriginEncoding.URL,
+        existing=(),
+        name="session-1234",
+        expected=None,
+    ),
+    ProjectDirDecodeCase(
+        test_id="dash-resolves-a-unique-reconstruction",
+        encoding=OriginEncoding.DASH,
+        existing=("work/proj",),
+        name="-{root}-work-proj",
+        expected="{root}/work/proj",
+    ),
+    ProjectDirDecodeCase(
+        test_id="dash-resolves-a-literal-dash-in-the-name",
+        encoding=OriginEncoding.DASH,
+        existing=("work/my-proj",),
+        name="-{root}-work-my-proj",
+        expected="{root}/work/my-proj",
+    ),
+    ProjectDirDecodeCase(
+        test_id="dash-resolves-a-literal-double-dash",
+        encoding=OriginEncoding.DASH,
+        existing=("work/my--proj",),
+        name="-{root}-work-my--proj",
+        expected="{root}/work/my--proj",
+    ),
+    ProjectDirDecodeCase(
+        test_id="dash-needs-no-leading-separator",
+        encoding=OriginEncoding.DASH,
+        existing=("work/proj",),
+        name="{root}-work-proj",
+        expected="{root}/work/proj",
+    ),
+    ProjectDirDecodeCase(
+        test_id="dash-refuses-to-fabricate-a-missing-directory",
+        encoding=OriginEncoding.DASH,
+        existing=(),
+        name="-{root}-work-proj",
+        expected=None,
+    ),
+    ProjectDirDecodeCase(
+        test_id="dash-refuses-an-ambiguous-reconstruction",
+        encoding=OriginEncoding.DASH,
+        existing=("work/my-proj", "work/my/proj"),
+        name="-{root}-work-my-proj",
+        expected=None,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ProjectDirDecodeCase._fields,
+    PROJECT_DIR_DECODE_CASES,
+    ids=[case.test_id for case in PROJECT_DIR_DECODE_CASES],
+)
+def test_decode_project_dir(
+    test_id: str,
+    encoding: OriginEncoding,
+    existing: tuple[str, ...],
+    name: str,
+    expected: str | None,
+    tmp_path: pathlib.Path,
+) -> None:
+    """The decode seam recovers a path exactly, or refuses to name one.
+
+    The dash cases carry the load: the encoding is lossy, so a reconstruction
+    is trusted only when exactly one split lands on a directory that exists. A
+    fabricated ``cwd`` would make repo-scoped filtering silently skip the
+    user's own project, so ambiguity and non-existence must both stay ``None``.
+    """
+    _ = test_id
+    for relative in existing:
+        (tmp_path / relative).mkdir(parents=True)
+    root = str(tmp_path).lstrip("/").replace("/", "-")
+
+    decoded = decode_project_dir(name.format(root=root), encoding=encoding)
+
+    assert decoded == (None if expected is None else expected.format(root=tmp_path))
+
+
+class DashDecodeLimitCase(t.NamedTuple):
+    """One bound on dash reconstruction, tightened until it must refuse."""
+
+    test_id: str
+    limit: str
+    value: int
+
+
+DASH_DECODE_LIMIT_CASES: tuple[DashDecodeLimitCase, ...] = (
+    DashDecodeLimitCase(
+        test_id="probe-budget-exhausted",
+        limit="DASH_DECODE_PROBE_BUDGET",
+        value=1,
+    ),
+    DashDecodeLimitCase(
+        test_id="token-cap-exceeded",
+        limit="DASH_DECODE_MAX_TOKENS",
+        value=1,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    DashDecodeLimitCase._fields,
+    DASH_DECODE_LIMIT_CASES,
+    ids=[case.test_id for case in DASH_DECODE_LIMIT_CASES],
+)
+def test_decode_project_dir_refuses_past_its_limits(
+    test_id: str,
+    limit: str,
+    value: int,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reconstruction is bounded, and hitting a bound is a refusal.
+
+    The walk is filesystem-directed, so a pathological name could otherwise fan
+    out combinatorially. Both bounds resolve the same way a missing directory
+    does — ``None`` — because a bounded search that gives up knows less, not
+    more.
+    """
+    _ = test_id
+    (tmp_path / "work" / "proj").mkdir(parents=True)
+    root = str(tmp_path).lstrip("/").replace("/", "-")
+    name = f"-{root}-work-proj"
+    assert decode_project_dir(name, encoding=OriginEncoding.DASH) == str(tmp_path / "work" / "proj")
+    assert getattr(origin, limit) > value
+
+    monkeypatch.setattr(origin, limit, value)
+
+    assert decode_project_dir(name, encoding=OriginEncoding.DASH) is None
+
+
+def test_decode_project_dir_cache_is_owned_by_the_caller(tmp_path: pathlib.Path) -> None:
+    """The decode memo is scoped to the caller, not to the process.
+
+    A module-level ``functools.cache`` would outlive the filesystem it probed:
+    the TUI and the MCP server run for hours, and a project created after the
+    first miss would stay unresolvable for the life of the process. A caller
+    that keeps no cache therefore always sees current directory state.
+    """
+    root = str(tmp_path).lstrip("/").replace("/", "-")
+    name = f"-{root}-work-proj"
+    cache: dict[str, str | None] = {}
+
+    assert decode_project_dir(name, encoding=OriginEncoding.DASH, cache=cache) is None
+    (tmp_path / "work" / "proj").mkdir(parents=True)
+
+    # The caller's own cache still answers from the state it probed...
+    assert decode_project_dir(name, encoding=OriginEncoding.DASH, cache=cache) is None
+    # ...while an uncached decode sees the directory that now exists.
+    assert decode_project_dir(name, encoding=OriginEncoding.DASH) == str(tmp_path / "work" / "proj")
+
+
+class CwdDigestCase(t.NamedTuple):
+    """One path segment and whether it may be labelled a ``cwd_hash``."""
+
+    test_id: str
+    segment: str
+    length: int
+    expected: str | None
+
+
+CWD_DIGEST_CASES: tuple[CwdDigestCase, ...] = (
+    CwdDigestCase(
+        test_id="md5-workspace-digest-is-a-hash",
+        segment="9b2a1f0c4d3e5a6b7c8d9e0f1a2b3c4d",
+        length=CWD_DIGEST_LENGTH,
+        expected="9b2a1f0c4d3e5a6b7c8d9e0f1a2b3c4d",
+    ),
+    CwdDigestCase(
+        test_id="sibling-storage-directory-is-not-a-hash",
+        segment="globalStorage",
+        length=CWD_DIGEST_LENGTH,
+        expected=None,
+    ),
+    CwdDigestCase(
+        test_id="dotted-parent-directory-is-not-a-hash",
+        segment=".cursor",
+        length=CWD_DIGEST_LENGTH,
+        expected=None,
+    ),
+    CwdDigestCase(
+        test_id="uppercase-hex-is-not-the-written-shape",
+        segment="9B2A1F0C4D3E5A6B7C8D9E0F1A2B3C4D",
+        length=CWD_DIGEST_LENGTH,
+        expected=None,
+    ),
+    CwdDigestCase(
+        test_id="truncated-digest-is-not-a-hash",
+        segment="9b2a1f0c4d3e5a6b",
+        length=CWD_DIGEST_LENGTH,
+        expected=None,
+    ),
+    CwdDigestCase(
+        test_id="store-with-a-narrower-digest-names-its-own-length",
+        segment="9b2a1f0c4d3e5a6b",
+        length=16,
+        expected="9b2a1f0c4d3e5a6b",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    CwdDigestCase._fields,
+    CWD_DIGEST_CASES,
+    ids=[case.test_id for case in CWD_DIGEST_CASES],
+)
+def test_origin_cwd_hash_guards_the_digest_shape(
+    test_id: str,
+    segment: str,
+    length: int,
+    expected: str | None,
+) -> None:
+    """A path segment becomes a ``cwd_hash`` only when it has a digest's shape."""
+    _ = test_id
+
+    assert origin_cwd_hash(segment, length=length) == expected
+    assert is_cwd_digest(segment, length=length) is (expected is not None)
+
+
+def test_cursor_legacy_state_db_reports_no_workspace_digest(tmp_path: pathlib.Path) -> None:
+    """The legacy global database sits under ``.cursor``, which is not a digest.
+
+    Without the shape guard the parent segment becomes the ``cwd_hash``, so
+    ``cwd_hash:.cursor`` answers with records — a searchable identity no Cursor
+    build ever wrote.
+    """
+    db_path = tmp_path / ".cursor" / "state.vscdb"
+    db_path.parent.mkdir(parents=True)
+    connection = sqlite3.connect(db_path)
+    _ = connection.execute("CREATE TABLE ItemTable (key TEXT, value TEXT)")
+    _ = connection.execute(
+        "INSERT INTO ItemTable VALUES (?, ?)",
+        ("aiService.prompts", json.dumps({"prompts": [{"text": "legacy prompt"}]})),
+    )
+    connection.commit()
+    connection.close()
+
+    records = list(
+        agentgrep.parse_cursor_state_db(
+            _source(
+                db_path,
+                agent="cursor-ide",
+                store="cursor-ide.state_vscdb",
+                adapter_id="cursor_ide.state_vscdb_legacy.v1",
+                source_kind="sqlite",
+            ),
+        ),
+    )
+
+    assert [record.text for record in records] == ["legacy prompt"]
+    assert records[0].origin is None

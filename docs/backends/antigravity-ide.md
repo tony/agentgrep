@@ -2,10 +2,12 @@
 
 # Antigravity IDE
 
-Antigravity IDE is an inventory-first backend. Its persisted conversations are
-protobuf artifacts with no published schema, so agentgrep catalogues the
-locations and exposes best-effort text inspection without adding them to
-default search.
+Antigravity IDE is an inventory-only backend for chat. Its persisted
+conversation artifacts are encrypted, so agentgrep catalogues where they live
+but cannot read them — `--agent antigravity-ide` never returns chat recall, at
+any scope. What you *can* reach is its Markdown: brain notes, resolved task
+plans, and skills. For searchable Antigravity history, reach for
+{ref}`backend-antigravity-cli` instead.
 
 Base path: `~/.gemini/antigravity` (no observed env override).
 
@@ -21,19 +23,25 @@ into Gemini CLI.
 
 ## Record schemas
 
-### Conversation protobufs
+### Conversation artifacts (encrypted, unsupported)
 
-{storage:storeref}`antigravity-ide.conversations` stores one protobuf conversation
-artifact at `conversations/<conversation_uuid>.pb`. agentgrep extracts readable
-UTF-8 strings best-effort and emits them as conversation-history records only
-when the source is inspected.
+{storage:storeref}`antigravity-ide.conversations` stores one conversation
+artifact at `conversations/<conversation_uuid>.pb`. The payloads are
+high-entropy bytes with no extractable UTF-8 runs, no protobuf field framing,
+and no gzip/zlib magic: they are encrypted or custom-encoded, and agentgrep
+cannot read them. The store is catalogued for storage inventory only and is
+never searched.
 
-### Implicit protobufs
+The encryption is on the loose `.pb` file, not on protobuf. The sibling
+`user_settings.pb` is plaintext protobuf, and the protobuf blobs inside
+{storage:storeref}`antigravity-cli.conversations`' SQLite rows still decode —
+which is why that store stays readable while this one does not.
+
+### Implicit artifacts (encrypted, unsupported)
 
 {storage:storeref}`antigravity-ide.implicit` files at
-`implicit/<conversation_uuid>.pb` are additional protobuf conversation
-artifacts. They use the same inspectable, best-effort protobuf text path as the
-primary conversation files.
+`implicit/<conversation_uuid>.pb` have the same encrypted payload shape and the
+same catalogue-only treatment.
 
 ### Brain and skills Markdown
 

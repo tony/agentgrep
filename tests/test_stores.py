@@ -6,12 +6,14 @@ should be able to rely on. They run on the static catalogue data; no I/O.
 
 from __future__ import annotations
 
+import datetime
 import pathlib
 import re
 import typing as t
 
 import pytest
 
+from agentgrep.records import CONVERSATION_CONTENT_STORES
 from agentgrep.store_catalog import CATALOG, OBSERVED_AT, gemini_project_hash
 from agentgrep.stores import (
     AgentName,
@@ -62,6 +64,12 @@ def test_catalog_has_known_metadata() -> None:
     assert CATALOG.catalog_version >= 1
     assert CATALOG.captured_at.year >= 2026
     assert len(CATALOG.stores) > 0
+
+
+def test_catalog_capture_is_not_older_than_store_observations() -> None:
+    """A catalogue snapshot cannot predate any descriptor it contains."""
+    assert CATALOG.captured_at == datetime.date(2026, 7, 11)
+    assert CATALOG.captured_at >= max(store.observed_at for store in CATALOG.stores)
 
 
 def test_every_store_has_known_agent() -> None:
@@ -311,6 +319,73 @@ def test_search_by_default_only_true_for_searchable_roles() -> None:
             assert store.role in searchable, (store.store_id, store.role)
 
 
+def test_conversation_content_stores_are_app_state_rows() -> None:
+    """The scope allowlist only exists for app-state rows that hold recall text.
+
+    ``--scope conversations`` admits
+    :data:`~agentgrep.records.CONVERSATION_CONTENT_STORES` on top of the
+    conversation roles. If one of those rows ever gains a conversation role the
+    entry is dead weight; if a row that is *not* an inspectable app-state store
+    is added, the allowlist is being used to smuggle config and log stores into
+    search, which is exactly what it exists to prevent.
+    """
+    for store_id in CONVERSATION_CONTENT_STORES:
+        descriptor = CATALOG.by_id(store_id)
+        assert descriptor.role is StoreRole.APP_STATE, store_id
+        assert descriptor.coverage_level is StoreCoverage.INSPECTABLE, store_id
+        assert descriptor.discovery, store_id
+
+
+def test_conversation_content_stores_match_catalog_and_runtime_names() -> None:
+    """The allowlist must survive the ``store_id`` vs ``spec.store`` trap.
+
+    :attr:`~agentgrep.records.SourceHandle.store` carries
+    :attr:`~agentgrep.stores.DiscoverySpec.store`, while catalogue-side lookups
+    key on :attr:`~agentgrep.stores.StoreDescriptor.store_id`. Six catalogue
+    rows give those two different strings, so an allowlist keyed on one and
+    consulted with the other would silently admit nothing — no error, no record.
+    Every allowlisted store must therefore agree on both names.
+    """
+    drifting = {
+        descriptor.store_id
+        for descriptor in CATALOG.stores
+        for spec in descriptor.discovery
+        if spec.store != descriptor.store_id
+    }
+    assert drifting, "no drifting rows left; this test's premise needs revisiting"
+
+    for store_id in CONVERSATION_CONTENT_STORES:
+        descriptor = CATALOG.by_id(store_id)
+        for spec in descriptor.discovery:
+            assert spec.store == descriptor.store_id, (
+                f"{store_id} names its runtime store {spec.store!r}; the allowlist "
+                "is consulted with the runtime name and would never match"
+            )
+
+
+def test_encrypted_stores_ship_no_discovery_spec() -> None:
+    """A store agentgrep cannot decode must not advertise a sample or a spec.
+
+    Windsurf is the precedent: ``CATALOG_ONLY``, no ``DiscoverySpec``, no
+    ``sample_record``. The three Antigravity ``.pb`` stores follow it — they
+    previously claimed to be "inspectable via the generic protobuf text
+    extractor" while decoding to zero records, and one of them shipped a
+    fabricated ``sample_record`` to match.
+    """
+    encrypted = (
+        "windsurf.cascade",
+        "windsurf.implicit",
+        "antigravity-cli.implicit",
+        "antigravity-ide.conversations",
+        "antigravity-ide.implicit",
+    )
+    for store_id in encrypted:
+        descriptor = CATALOG.by_id(store_id)
+        assert descriptor.coverage_level is StoreCoverage.CATALOG_ONLY, store_id
+        assert descriptor.discovery == (), store_id
+        assert descriptor.sample_record is None, store_id
+
+
 def test_runtime_adapter_ids_match_catalogue_discovery() -> None:
     """Every runtime adapter id is declared by a catalogue DiscoverySpec.
 
@@ -334,9 +409,6 @@ def test_runtime_adapter_ids_match_catalogue_discovery() -> None:
     assert "gemini.tmp_logs_json.v1" in runtime_adapter_ids
     assert "antigravity_cli.history_jsonl.v1" in runtime_adapter_ids
     assert "antigravity_cli.conversations_sqlite_protobuf.v1" in runtime_adapter_ids
-    assert "antigravity_cli.implicit_protobuf.v1" in runtime_adapter_ids
-    assert "antigravity_ide.conversations_protobuf.v1" in runtime_adapter_ids
-    assert "antigravity_ide.implicit_protobuf.v1" in runtime_adapter_ids
     assert "grok.prompt_history_jsonl.v1" in runtime_adapter_ids
     assert "grok.sessions_jsonl.v1" in runtime_adapter_ids
     assert "grok.session_search_sqlite.v1" in runtime_adapter_ids

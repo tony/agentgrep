@@ -27,6 +27,7 @@ from agentgrep.readers import (
     select_backends,
 )
 from agentgrep.records import (
+    CONVERSATION_CONTENT_STORES,
     CONVERSATION_STORE_ROLES,
     JSON_FILE_SUFFIXES,
     AgentName,
@@ -40,7 +41,7 @@ from agentgrep.records import (
     SearchScope,
     SourceHandle,
 )
-from agentgrep.stores import StoreRole
+from agentgrep.stores import SEARCHABLE_COVERAGE, StoreRole
 
 if t.TYPE_CHECKING:
     from agentgrep._engine.planning import PhysicalSearchPlan
@@ -373,6 +374,7 @@ def collect_search_records(
         PhysicalSearchPlan,
         SourceTask,
         build_logical_search_plan,
+        build_source_authority_plan,
     )
 
     plan = PhysicalSearchPlan(
@@ -389,6 +391,7 @@ def collect_search_records(
             for source in sources
         ),
         decisions=(),
+        source_authority=build_source_authority_plan(sources),
     )
     return collect_search_records_from_plan(
         query,
@@ -571,14 +574,40 @@ def grep_file_matches(
     return any(matchers) if query.any_term else all(matchers)
 
 
+def store_serves_conversation_scope(store: str, adapter_id: str) -> bool:
+    """Return whether a store's records are admitted at conversation scope.
+
+    Conversation scope normally means a chat role. A few app-state stores hold
+    genuine conversation content and are admitted by explicit store key — see
+    :data:`agentgrep.records.CONVERSATION_CONTENT_STORES`. Discovery, source
+    planning, and record filtering all route their conversation-scope decision
+    through here, so a store cannot be discovered at a scope that then drops
+    every record it emits.
+
+    Parameters
+    ----------
+    store : str
+        The runtime store name, i.e. :attr:`agentgrep.records.SourceHandle.store`.
+    adapter_id : str
+        The adapter that parsed (or would parse) the source.
+
+    Returns
+    -------
+    bool
+        Whether ``--scope conversations`` admits this store.
+    """
+    if store in CONVERSATION_CONTENT_STORES:
+        return True
+    return store_role_for_record(store, adapter_id) in CONVERSATION_STORE_ROLES
+
+
 def record_matches_scope(record: SearchRecord, scope: SearchScope) -> bool:
     """Return whether ``record`` belongs to the requested search scope."""
     if scope == "all":
         return True
     if scope == "prompts":
         return record.kind == "prompt"
-    role = store_role_for_record(record.store, record.adapter_id)
-    return role in CONVERSATION_STORE_ROLES
+    return store_serves_conversation_scope(record.store, record.adapter_id)
 
 
 def prompt_history_agents_for_sources(sources: cabc.Iterable[SourceHandle]) -> frozenset[str]:
@@ -590,6 +619,29 @@ def prompt_history_agents_for_sources(sources: cabc.Iterable[SourceHandle]) -> f
     )
 
 
+def searchable_sources(sources: cabc.Iterable[SourceHandle]) -> list[SourceHandle]:
+    """Drop sources whose coverage level search must never open.
+
+    ``include_non_default=True`` is an *inventory* flag: it admits every
+    ``INSPECTABLE`` **and** ``CATALOG_ONLY`` row that carries a discovery spec,
+    and the catalogue has many of the latter (config files, shell snapshots,
+    debug logs). A non-default search scope wants only the opt-in searchable
+    tier, so re-narrow to :data:`agentgrep.stores.SEARCHABLE_COVERAGE` after
+    discovery.
+
+    Parameters
+    ----------
+    sources : collections.abc.Iterable[SourceHandle]
+        Sources as discovery returned them.
+
+    Returns
+    -------
+    list[SourceHandle]
+        Only the sources a search may open.
+    """
+    return [source for source in sources if source.coverage in SEARCHABLE_COVERAGE]
+
+
 def discover_sources_for_search(
     home: pathlib.Path,
     query: SearchQuery,
@@ -597,24 +649,38 @@ def discover_sources_for_search(
     *,
     version_detail: DiscoveryVersionDetail = "none",
 ) -> list[SourceHandle]:
-    """Discover only the source roles needed for a search query scope."""
+    """Discover only the source roles needed for a search query scope.
+
+    ``scope="prompts"`` (the default) stays on the ``DEFAULT_SEARCH`` coverage
+    tier. ``scope="conversations"`` and ``scope="all"`` are the documented
+    opt-ins, so they lift the coverage gate to ``INSPECTABLE`` as well — that is
+    what makes stores such as ``codex.state_db`` reachable from a search at all
+    — and then re-narrow through :func:`searchable_sources` so the inventory
+    flag's ``CATALOG_ONLY`` rows stay out.
+    """
     from agentgrep._engine.planning import build_logical_search_plan
 
     logical_plan = build_logical_search_plan(query)
     if query.scope == "all":
-        return discover_sources(
-            home,
-            query.agents,
-            backends,
-            version_detail=version_detail,
+        return searchable_sources(
+            discover_sources(
+                home,
+                query.agents,
+                backends,
+                include_non_default=True,
+                version_detail=version_detail,
+            ),
         )
     if query.scope == "conversations":
-        return discover_sources(
-            home,
-            query.agents,
-            backends,
-            version_detail=version_detail,
-            store_roles=logical_plan.initial_store_roles,
+        return searchable_sources(
+            discover_sources(
+                home,
+                query.agents,
+                backends,
+                include_non_default=True,
+                version_detail=version_detail,
+                store_roles=logical_plan.initial_store_roles,
+            ),
         )
 
     prompt_sources = discover_sources(
@@ -665,9 +731,9 @@ def source_matches_scope(
     """Return whether ``source`` can yield records for the requested scope."""
     if scope == "all":
         return True
-    role = store_role_for_record(source.store, source.adapter_id)
     if scope == "conversations":
-        return role in CONVERSATION_STORE_ROLES
+        return store_serves_conversation_scope(source.store, source.adapter_id)
+    role = store_role_for_record(source.store, source.adapter_id)
     if role == StoreRole.PROMPT_HISTORY:
         return True
     if role in CONVERSATION_STORE_ROLES:

@@ -108,6 +108,8 @@ includes dedicated prompt-history logs plus user turns projected from
 transcript-only backends. Full conversation, assistant, tool, and event
 records require `--scope conversations` or `--scope all`.
 
+(backend-project-context)=
+
 ## Project context availability
 
 Project context is best-effort and store-dependent. When a backend
@@ -123,6 +125,60 @@ as {doc}`cursor-ide` and {doc}`vscode`, expose enough source-level
 origin facts for agentgrep to skip mismatched workspace databases before
 parsing. Global stores that do not know their project stay
 conservative.
+
+Each backend page carries a `Project context` section naming, per store,
+which of `model`, `cwd`, and `branch` a record can carry and where the
+value comes from — a SQLite column, a path segment, a sibling file, or a
+nested key.
+
+(backend-cwd-tiers)=
+
+### How agentgrep learns a working directory
+
+Agents do not agree on how to write down where a session ran, so a `cwd`
+reaches a record through one of three tiers. The tier decides what you
+can filter on, and it is a property of the store, not of your query.
+
+**Lossless.** The store wrote the path, or an encoding that inverts
+exactly: a `cwd` column ({storage:storeref}`codex.state_db`,
+{storage:storeref}`pi.context_mode_db`), a nested key
+({storage:storeref}`cursor-ide.state_vscdb`), a sibling file
+({storage:storeref}`gemini.tmp.chats`), or a `%2F`-escaped directory name
+({storage:storeref}`grok.sessions`). Records carry `origin.cwd` and answer
+`--cwd` and `cwd:` with the real path.
+
+**Lossy.** The store folded the path into a name that cannot be inverted
+on its own. Cursor CLI's `projects/<name>/` segment replaced every
+separator with `-` and escaped nothing, so `foo-bar` is equally
+consistent with `/foo/bar` and `/foo-bar`. agentgrep reconstructs the
+name against the filesystem and keeps the answer only when exactly one
+reconstruction resolves to a directory that exists. Ambiguity, a
+directory that has since moved, and a pathological name that exhausts the
+probe budget all leave `origin.cwd` **unset**: a fabricated path does not
+merely omit a result, it makes a repo-scoped filter silently skip your
+own project, so a known-unknown is the safer answer.
+
+**Digest.** The store only ever knew a hash of the path
+({storage:storeref}`cursor-cli.chats`). Records carry `origin.cwd_hash`
+and nothing else, so they answer `cwd_hash:` and not `cwd:`. A digest
+does not invert, so agentgrep never reverses one into a `cwd` — and it
+never runs the hash the other way either: a `cwd_hash` is always read
+from the name the store chose, never computed from a `cwd` recovered
+somewhere else. A path segment is admitted as a `cwd_hash` only when it
+has a digest's shape, so a `backup.db` sitting beside a real database
+does not publish its own file name as a searchable project identity.
+
+The tiers stack. A store that hashes its directory name *and* repeats the
+literal path inside — {storage:storeref}`pi.context_mode_db`,
+{storage:storeref}`gemini.tmp.chats` — gives a record both `cwd` and
+`cwd_hash`.
+
+Only `cwd_hash` is a fact about where a source *lives*, so it is the only
+origin field agentgrep trusts to skip a store before opening it. A `cwd`
+learned from a sibling `workspace.json` or a project directory name
+describes the source, not a promise about every record inside it — a
+Cursor composer bubble can name its own worktree — so those stores are
+still opened and filtered record by record.
 
 ## Version detection
 

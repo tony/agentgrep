@@ -28,6 +28,7 @@ if t.TYPE_CHECKING:
 
 __all__ = [
     "AGENT_CHOICES",
+    "CONVERSATION_CONTENT_STORES",
     "CONVERSATION_STORE_ROLES",
     "CURSOR_STATE_TOKENS",
     "ITER_SOURCE_RECORD_ADAPTERS",
@@ -135,12 +136,9 @@ ITER_SOURCE_RECORD_ADAPTERS: frozenset[str] = frozenset(
         "antigravity_cli.brain_text.v1",
         "antigravity_cli.conversations_sqlite_protobuf.v1",
         "antigravity_cli.history_jsonl.v1",
-        "antigravity_cli.implicit_protobuf.v1",
         "antigravity_cli.transcript_jsonl.v1",
         "antigravity_ide.brain_text.v1",
         "antigravity_ide.brain_resolved_text.v1",
-        "antigravity_ide.conversations_protobuf.v1",
-        "antigravity_ide.implicit_protobuf.v1",
         "antigravity_ide.skills_text.v1",
         "claude.app_state_json_summary.v1",
         "claude.commands_text.v1",
@@ -464,3 +462,28 @@ PROMPT_HISTORY_STORE_ROLES: frozenset[StoreRole] = frozenset({StoreRole.PROMPT_H
 CONVERSATION_STORE_ROLES: frozenset[StoreRole] = frozenset(
     {StoreRole.PRIMARY_CHAT, StoreRole.SUPPLEMENTARY_CHAT},
 )
+
+CONVERSATION_CONTENT_STORES: frozenset[str] = frozenset(
+    {
+        "codex.state_db",
+        "pi.context_mode_db",
+    },
+)
+"""Stores admitted at conversation scope despite carrying an app-state role.
+
+Role describes what a store *is*: both of these are agent-owned SQLite state,
+and reclassifying them would misdescribe them and drag every other app-state row
+along with them. But both hold conversation content — Codex's ``threads`` table
+indexes every Codex thread, Pi's context-mode events are session turns — so
+``--scope conversations`` has to be able to reach them. An explicit allowlist
+keeps each admission reviewable per store instead of implied by a role, and
+keeps config files, shell snapshots, and debug logs out.
+
+Membership is keyed on the *runtime* store name, which is
+:attr:`agentgrep.stores.DiscoverySpec.store` (what
+:attr:`agentgrep.records.SourceHandle.store` carries) rather than
+:attr:`agentgrep.stores.StoreDescriptor.store_id`. Six catalogue rows give those
+two different strings, so an allowlist keyed on one and consulted with the other
+would silently admit nothing; ``tests/test_stores.py`` pins that the members
+agree on both names.
+"""

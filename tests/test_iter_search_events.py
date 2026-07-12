@@ -296,6 +296,40 @@ async def test_aiter_search_events_streams_through_bounded_async_queue(
     assert ticks == 3
 
 
+async def test_aiter_search_events_closing_the_stream_requests_cancellation(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Closing a partially consumed stream stops the worker scan.
+
+    This is the contract every consumer relies on to cancel a scan: the
+    cancellation request lives in the stream's ``finally`` block, so nothing
+    stops until the generator is finalized.
+    """
+    _ = _write_codex_session(
+        tmp_path,
+        name="close.jsonl",
+        messages=[
+            ("user", "bliss one"),
+            ("user", "bliss two"),
+        ],
+    )
+    control = agentgrep.SearchControl()
+    stream = agentgrep.aiter_search_events(
+        tmp_path,
+        _make_query(dedupe=False),
+        control=control,
+        max_queue_size=1,
+    )
+
+    async with asyncio.timeout(5.0):
+        first = await anext(stream)
+        assert not control.answer_now_requested()
+        await stream.aclose()
+
+    assert first.type == "search_started"
+    assert control.answer_now_requested()
+
+
 async def test_aiter_search_events_finishes_when_control_is_already_requested(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -314,4 +348,4 @@ async def test_aiter_search_events_finishes_when_control_is_already_requested(
             )
         ]
 
-    assert out == []
+    assert [event.type for event in out] == ["search_started", "search_finished"]

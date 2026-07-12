@@ -126,23 +126,18 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
         observed_version="agy v1.0.10 (observed 2026-06-21)",
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes=(
-            "Protobuf conversation artifacts without a published schema. "
-            "Inspectable via the generic protobuf text extractor."
+            "Implicit/background conversation captures as loose `.pb` files. "
+            "The observed payloads are high-entropy with no extractable UTF-8 "
+            "runs, no protobuf field framing, and are not gzip/zlib — they "
+            "appear encrypted or custom-encoded, so agentgrep cannot read "
+            "them. The encryption is on the loose `.pb` file, not on protobuf: "
+            "the protobuf blobs stored inside `antigravity-cli.conversations` "
+            "SQLite rows still decode. Documented location only; unsupported "
+            "for search."
         ),
         distinguishes_from=("antigravity-cli.conversations",),
+        coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
-        search_notes="Inspectable only; not searched by default.",
-        discovery=(
-            DiscoverySpec(
-                store="antigravity-cli.implicit",
-                adapter_id="antigravity_cli.implicit_protobuf.v1",
-                data_version="antigravity_cli.implicit_protobuf.v1",
-                path_kind="session_file",
-                source_kind="opaque",
-                home_subpath=("implicit",),
-                glob="*.pb",
-            ),
-        ),
     ),
     StoreDescriptor(
         agent="antigravity-cli",

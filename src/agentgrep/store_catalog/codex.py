@@ -25,7 +25,12 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         upstream_ref=("github.com/openai/codex@3fb81667/codex-rs/message-history/src/lib.rs#L56"),
         schema_notes=(
             "`HistoryEntry { session_id: String, ts: u64 (unix seconds), text: "
-            "String }` — one record per user prompt, append-only across all threads."
+            "String }` — one record per user prompt, append-only across all threads. "
+            "The legacy `history.json` array uses `{command, timestamp}`, where "
+            "`timestamp` is a number in milliseconds rather than a string. Neither "
+            "shape records a cwd, branch, or model: this is a flat prompt log, so "
+            "records carry no origin and no model by design — `codex.sessions` is "
+            "the store that has them."
         ),
         sample_record='{"session_id":"...","ts":1747509826,"text":"<redacted>"}',
         distinguishes_from=("codex.sessions",),
@@ -71,7 +76,9 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
             "JSONL `RolloutItem` tagged enum (`type` + `payload`): "
             "`session_meta` | `response_item` | `compacted` | `turn_context` | "
             "`event_msg`. First line is a `SessionMetaLine` with `id`, `timestamp`, "
-            "`cwd`, `cli_version`, optional `git` info. Older root-level "
+            "`cwd`, `cli_version`, optional `git` info — but no model slug: it "
+            "carries `model_provider` (`openai`), while the slug lives on the "
+            "per-turn `turn_context` payload (`model`). Older root-level "
             "`sessions/rollout-*.json` files are JSON objects with `session` "
             "metadata and an `items` array of message-like records."
         ),

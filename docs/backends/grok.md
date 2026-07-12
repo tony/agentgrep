@@ -50,6 +50,10 @@ a content-blocks array.
  "timestamp": "2026-05-25T10:00:01.000000000Z"}
 ```
 
+An `assistant` record names the model that answered in `model_id` — Grok's
+spelling of the key other agents call `model` — and agentgrep surfaces it as
+the record's model, so `model:grok-*` reaches Grok transcripts.
+
 ### Subagent delegations
 
 {storage:storeref}`grok.subagents` is one JSON dispatch object per delegated subagent
@@ -92,3 +96,23 @@ A sibling `meta` table holds `session_search_schema_version` (3) and
 `sessions/<project>/<session>/plan.md` — the agent's working plan. Inspectable
 (opt-in), parity with {storage:storeref}`claude.plans` and
 {storage:storeref}`cursor-cli.plans`; not searched by default.
+
+## Project context
+
+| Store | `model` | `cwd` | `branch` |
+|-------|---------|-------|----------|
+| {storage:storeref}`grok.sessions` | assistant record's `model_id` | `sessions/<project>/`, URL-decoded | — |
+| {storage:storeref}`grok.prompt_history` | — | `sessions/<project>/`, URL-decoded | — |
+| {storage:storeref}`grok.session_search` | — | `session_docs.cwd` | — |
+
+`%2F` is a lossless escape, so the project directory key inverts exactly
+— the {ref}`lossless tier <backend-cwd-tiers>`. agentgrep decodes it back
+into the working directory and reports it on every prompt-history and
+transcript record, which is the same absolute path
+{storage:storeref}`grok.session_search` already stored literally in
+`session_docs.cwd`. All three stores therefore answer `--cwd` and `cwd:`
+with one working directory per session, and a directory name that does
+not decode to something path-shaped yields no `cwd` rather than a
+plausible one.
+
+Grok records no git branch, so `branch:` does not reach this backend.

@@ -19,6 +19,13 @@ import tomllib
 import typing as t
 import urllib.parse
 
+from agentgrep.origin import (
+    PRUNABLE_ORIGIN_FIELDS,
+    OriginEncoding,
+    ProjectDirCache,
+    decode_project_dir,
+    origin_cwd_hash,
+)
 from agentgrep.readers import (
     as_optional_str,
     file_mtime_ns,
@@ -27,6 +34,8 @@ from agentgrep.readers import (
     read_json_file,
 )
 from agentgrep.records import (
+    CONVERSATION_CONTENT_STORES,
+    CONVERSATION_STORE_ROLES,
     AgentName,
     BackendSelection,
     DiscoveryRoot,
@@ -750,6 +759,8 @@ def handles_from_discovery(
     root: pathlib.Path,
     backends: BackendSelection,
     coverage: StoreCoverage,
+    *,
+    project_dirs: ProjectDirCache | None = None,
 ) -> list[SourceHandle]:
     """Produce ``SourceHandle``s from a :class:`DiscoverySpec`.
 
@@ -757,6 +768,12 @@ def handles_from_discovery(
     root, then enumerates source files via ``files`` (single-file lookups),
     ``glob`` (recursive walk with optional path-part filters), and
     ``platform_paths`` (absolute paths).
+
+    ``project_dirs`` is the caller's memo for the filesystem-probing decode of
+    a dash-encoded project directory name (see :func:`_source_origin_summary`).
+    One project directory backs every transcript of every session it ran, so
+    the decode is worth remembering — but only for as long as the discovery
+    pass that owns it, since the directory layout it probed can change.
     """
     sources: list[SourceHandle] = []
     search_root = root.joinpath(*spec.home_subpath) if spec.home_subpath else root
@@ -775,7 +792,11 @@ def handles_from_discovery(
                     search_root=None,
                     mtime_ns=file_mtime_ns(candidate),
                     coverage=coverage,
-                    origin_summary=_source_origin_summary(spec, candidate),
+                    origin_summary=_source_origin_summary(
+                        spec,
+                        candidate,
+                        project_dirs=project_dirs,
+                    ),
                 ),
             )
 
@@ -798,7 +819,7 @@ def handles_from_discovery(
                     search_root=search_root,
                     mtime_ns=file_mtime_ns(path),
                     coverage=coverage,
-                    origin_summary=_source_origin_summary(spec, path),
+                    origin_summary=_source_origin_summary(spec, path, project_dirs=project_dirs),
                 ),
             )
 
@@ -816,28 +837,86 @@ def handles_from_discovery(
                     search_root=None,
                     mtime_ns=file_mtime_ns(candidate),
                     coverage=coverage,
-                    origin_summary=_source_origin_summary(spec, candidate),
+                    origin_summary=_source_origin_summary(
+                        spec,
+                        candidate,
+                        project_dirs=project_dirs,
+                    ),
                 ),
             )
 
     return sources
 
 
-def _source_origin_summary(spec: DiscoverySpec, path: pathlib.Path) -> SourceOriginSummary | None:
-    """Return source-level origin facts known from discovery metadata."""
+_CURSOR_CLI_TRANSCRIPT_STORES: frozenset[str] = frozenset(
+    {"cursor-cli.transcripts", "cursor-cli.subagent_transcripts"},
+)
+"""Cursor CLI stores whose working directory exists only in the path."""
+
+_CURSOR_CLI_PROJECT_PARENT = "agent-transcripts"
+"""Path segment the dash-encoded Cursor CLI project directory sits above."""
+
+
+def _source_origin_summary(
+    spec: DiscoverySpec,
+    path: pathlib.Path,
+    *,
+    project_dirs: ProjectDirCache | None = None,
+) -> SourceOriginSummary | None:
+    """Return source-level origin facts known from discovery metadata.
+
+    ``complete_fields`` is the pruning claim, so it is filtered through
+    :data:`~agentgrep.origin.PRUNABLE_ORIGIN_FIELDS`. The workspace ``cwd``
+    read from ``workspace.json`` stays on the summary as a *fact* — it is what
+    the workspace points at — but it is never claimed complete: a
+    ``composerData`` bubble carries its own ``cwd``, and claiming completeness
+    for a value the parser can contradict prunes the very record the user
+    asked for. The Cursor CLI project directory is the same kind of fact and
+    gets the same treatment.
+    """
+    if spec.store in _CURSOR_CLI_TRANSCRIPT_STORES:
+        cwd = _cursor_cli_project_cwd(path, cache=project_dirs)
+        return None if cwd is None else SourceOriginSummary(origins=(RecordOrigin(cwd=cwd),))
     if spec.store != "cursor-ide.workspace_state" or path.name != "state.vscdb":
         return None
-    cwd_hash = path.parent.name
-    if not cwd_hash or cwd_hash in {"globalStorage", "User"}:
+    cwd_hash = origin_cwd_hash(path.parent.name)
+    if cwd_hash is None:
         return None
-    cwd = _cursor_workspace_state_cwd(path)
-    complete_fields = {"cwd_hash"}
-    if cwd:
-        complete_fields.add("cwd")
     return SourceOriginSummary(
-        origins=(RecordOrigin(cwd=cwd, cwd_hash=cwd_hash),),
-        complete_fields=frozenset(complete_fields),
+        origins=(RecordOrigin(cwd=_cursor_workspace_state_cwd(path), cwd_hash=cwd_hash),),
+        complete_fields=PRUNABLE_ORIGIN_FIELDS,
     )
+
+
+def _cursor_cli_project_cwd(
+    path: pathlib.Path,
+    *,
+    cache: ProjectDirCache | None,
+) -> str | None:
+    """Recover the working directory Cursor CLI dash-encoded into ``path``.
+
+    A transcript lives at
+    ``~/.cursor/projects/<name>/agent-transcripts/<session>/…``, and ``<name>``
+    is the absolute working directory with every separator replaced by ``-``.
+    Nothing inside the JSONL says where the session ran, so this is the only
+    place to learn it — and the encoding is lossy, so
+    :func:`~agentgrep.origin.decode_project_dir` answers only when exactly one
+    reconstruction exists on disk.
+
+    Resolving it here rather than in the adapter means the filesystem-probing
+    decode runs once per project *name* per discovery pass instead of once per
+    transcript file, and the memo dies with the pass that owns it.
+    """
+    parts = path.parts
+    for index in range(len(parts) - 1, 0, -1):
+        if parts[index] != _CURSOR_CLI_PROJECT_PARENT:
+            continue
+        return decode_project_dir(
+            parts[index - 1],
+            encoding=OriginEncoding.DASH,
+            cache=cache,
+        )
+    return None
 
 
 def _cursor_workspace_state_cwd(path: pathlib.Path) -> str | None:
@@ -894,6 +973,40 @@ def format_timestamp_tig(value: str | None) -> str:
     return moment.astimezone().strftime("%Y-%m-%d %H:%M %z")
 
 
+def descriptor_admits_store_roles(
+    descriptor: StoreDescriptor,
+    store_roles: DiscoveryStoreRoles,
+) -> bool:
+    """Return whether a catalogue row can serve a role-narrowed discovery pass.
+
+    A row normally qualifies on its own ``role``. The exception is the
+    conversation surface: the app-state rows in
+    :data:`agentgrep.records.CONVERSATION_CONTENT_STORES` hold conversation
+    content, and a role check alone would leave them unreachable at every scope.
+    Admitting them here — coarsely, per descriptor, before any filesystem walk —
+    keeps the walk narrow; ``source_matches_scope`` narrows precisely afterwards.
+
+    Parameters
+    ----------
+    descriptor : StoreDescriptor
+        The catalogue row being considered.
+    store_roles : DiscoveryStoreRoles
+        Roles the caller's scope can consume, or ``None`` for every role.
+
+    Returns
+    -------
+    bool
+        Whether the row survives role narrowing.
+    """
+    if store_roles is None:
+        return True
+    if descriptor.role in store_roles:
+        return True
+    if not store_roles & CONVERSATION_STORE_ROLES:
+        return False
+    return any(spec.store in CONVERSATION_CONTENT_STORES for spec in descriptor.discovery)
+
+
 def discover_from_catalog(
     home: pathlib.Path,
     agent: AgentName,
@@ -916,7 +1029,9 @@ def discover_from_catalog(
     never enumerated from disk. ``version_detail`` lets latency-sensitive
     callers skip source-version enrichment until a metadata-rich surface asks
     for it. ``store_roles`` restricts enumeration before any filesystem walk,
-    which lets search avoid stores its scope cannot consume.
+    which lets search avoid stores its scope cannot consume — see
+    :func:`descriptor_admits_store_roles` for how the conversation surface still
+    reaches its allowlisted app-state rows.
     """
     from agentgrep.store_catalog import CATALOG
 
@@ -928,12 +1043,16 @@ def discover_from_catalog(
         elif value:
             primary_roots[key] = value[0]
     version_context = build_discovery_version_context(agent, primary_roots, version_detail)
+    # Owned by this pass and discarded with it: the dash decode probes the
+    # filesystem, and a memo that outlived the walk would answer from a
+    # directory layout that has since changed.
+    project_dirs: ProjectDirCache = {}
     sources: list[SourceHandle] = []
     for descriptor in CATALOG.for_agent(agent):
         coverage = descriptor.coverage_level
         if coverage is StoreCoverage.PRIVATE:
             continue
-        if store_roles is not None and descriptor.role not in store_roles:
+        if not descriptor_admits_store_roles(descriptor, store_roles):
             continue
         if coverage is not StoreCoverage.DEFAULT_SEARCH and not include_non_default:
             continue
@@ -948,7 +1067,14 @@ def discover_from_catalog(
                 continue
             root_paths = root_value if isinstance(root_value, tuple) else (root_value,)
             for root in root_paths:
-                for handle in handles_from_discovery(spec, agent, root, backends, coverage):
+                for handle in handles_from_discovery(
+                    spec,
+                    agent,
+                    root,
+                    backends,
+                    coverage,
+                    project_dirs=project_dirs,
+                ):
                     if handle.path in seen_paths:
                         continue
                     seen_paths.add(handle.path)

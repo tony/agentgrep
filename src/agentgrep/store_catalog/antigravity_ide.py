@@ -5,6 +5,7 @@ from __future__ import annotations
 from agentgrep.store_catalog._common import _ANTIGRAVITY_OBSERVED_AT
 from agentgrep.stores import (
     DiscoverySpec,
+    StoreCoverage,
     StoreDescriptor,
     StoreFormat,
     StoreRole,
@@ -20,23 +21,17 @@ _ANTIGRAVITY_IDE_STORES: tuple[StoreDescriptor, ...] = (
         observed_version="Google Antigravity IDE (observed 2026-06-21)",
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes=(
-            "Per-conversation protobuf artifacts without a published schema. "
-            "Inspectable via the generic protobuf text extractor."
+            "Per-conversation transcripts as loose `.pb` files. The observed "
+            "payloads are high-entropy with no extractable UTF-8 runs, no "
+            "protobuf field framing, and are not gzip/zlib — they appear "
+            "encrypted or custom-encoded, so agentgrep cannot read them. The "
+            "encryption is on the loose `.pb` file, not on protobuf: the "
+            "sibling `user_settings.pb` is plaintext protobuf, and the "
+            "protobuf blobs inside `antigravity-cli.conversations` SQLite rows "
+            "still decode. Documented location only; unsupported for search."
         ),
-        sample_record="<protobuf with readable prompt/history strings>",
+        coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
-        search_notes="Inspectable only; not searched by default.",
-        discovery=(
-            DiscoverySpec(
-                store="antigravity-ide.conversations",
-                adapter_id="antigravity_ide.conversations_protobuf.v1",
-                data_version="antigravity_ide.conversations_protobuf.v1",
-                path_kind="session_file",
-                source_kind="opaque",
-                home_subpath=("conversations",),
-                glob="*.pb",
-            ),
-        ),
     ),
     StoreDescriptor(
         agent="antigravity-ide",
@@ -47,23 +42,14 @@ _ANTIGRAVITY_IDE_STORES: tuple[StoreDescriptor, ...] = (
         observed_version="Google Antigravity IDE (observed 2026-06-21)",
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes=(
-            "Implicit protobuf conversation artifacts without a published "
-            "schema. Inspectable via the generic protobuf text extractor."
+            "Implicit/background conversation captures as loose `.pb` files, "
+            "with the same high-entropy, apparently-encrypted payload shape as "
+            "`antigravity-ide.conversations`. Documented location only; "
+            "unsupported for search."
         ),
         distinguishes_from=("antigravity-ide.conversations",),
+        coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
-        search_notes="Inspectable only; not searched by default.",
-        discovery=(
-            DiscoverySpec(
-                store="antigravity-ide.implicit",
-                adapter_id="antigravity_ide.implicit_protobuf.v1",
-                data_version="antigravity_ide.implicit_protobuf.v1",
-                path_kind="session_file",
-                source_kind="opaque",
-                home_subpath=("implicit",),
-                glob="*.pb",
-            ),
-        ),
     ),
     StoreDescriptor(
         agent="antigravity-ide",

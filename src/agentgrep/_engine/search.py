@@ -178,8 +178,14 @@ async def aiter_search_events(
     control: SearchControl | None = None,
     runtime: SearchRuntime | None = None,
     max_queue_size: int = 32,
-) -> cabc.AsyncIterator[_events.SearchEvent]:
+) -> cabc.AsyncGenerator[_events.SearchEvent]:
     """Yield search events from a worker thread through an async queue.
+
+    Closing the returned generator — via :func:`contextlib.aclosing`, or by
+    any exception that unwinds through it — requests cancellation and stops
+    the worker. Consumers that may leave the stream partially consumed must
+    close it explicitly rather than relying on the event loop's async-generator
+    finalization hook.
 
     Parameters
     ----------
@@ -212,12 +218,11 @@ async def aiter_search_events(
 
     def put_from_worker(
         item: _events.SearchEvent | _AsyncSearchDone | _AsyncSearchError,
-        *,
-        force: bool = False,
     ) -> None:
+        # ``active_control`` stops producer work; only ``delivery_closed``
+        # stops transport. The producer still owns partial-result resolution
+        # and the terminal event after an answer-now request.
         while not delivery_closed.is_set():
-            if not force and active_control.answer_now_requested():
-                return
             future = asyncio.run_coroutine_threadsafe(event_queue.put(item), loop)
             try:
                 future.result(timeout=0.05)
@@ -236,12 +241,10 @@ async def aiter_search_events(
                 runtime=runtime,
             ):
                 put_from_worker(event)
-                if active_control.answer_now_requested():
-                    break
         except BaseException as error:
-            put_from_worker(_AsyncSearchError(error=error), force=True)
+            put_from_worker(_AsyncSearchError(error=error))
         finally:
-            put_from_worker(_AsyncSearchDone(), force=True)
+            put_from_worker(_AsyncSearchDone())
 
     worker_task = asyncio.create_task(asyncio.to_thread(run_worker))
     try:

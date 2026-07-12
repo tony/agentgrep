@@ -15,6 +15,7 @@ the architectural payoff of the source/record split.
 
 from __future__ import annotations
 
+import dataclasses
 import pathlib
 import typing as t
 
@@ -900,48 +901,70 @@ def test_fast_entrypoints_request_metadata_free_discovery(
     assert all(call.get("version_detail") == "none" for call in calls)
 
 
+class DiscoveryCall(t.NamedTuple):
+    """One recorded ``discover_sources`` call: agents, roles, coverage gate."""
+
+    agents: tuple[agentgrep.AgentName, ...]
+    store_roles: frozenset[agentgrep.StoreRole] | None
+    include_non_default: bool
+
+
 class SearchDiscoveryRoleCase(t.NamedTuple):
     """One search scope and the store-role discovery calls it should issue."""
 
     test_id: str
     scope: agentgrep.SearchScope
     prompt_history_agents: frozenset[agentgrep.AgentName]
-    expected_calls: tuple[
-        tuple[
-            tuple[agentgrep.AgentName, ...],
-            frozenset[agentgrep.StoreRole] | None,
-        ],
-        ...,
-    ]
+    expected_calls: tuple[DiscoveryCall, ...]
 
 
 SEARCH_DISCOVERY_ROLE_CASES: tuple[SearchDiscoveryRoleCase, ...] = (
     SearchDiscoveryRoleCase(
-        test_id="all-keeps-default-discovery",
+        test_id="all-lifts-the-coverage-gate",
         scope="all",
         prompt_history_agents=frozenset(),
-        expected_calls=((("codex", "claude"), None),),
+        expected_calls=(DiscoveryCall(("codex", "claude"), None, include_non_default=True),),
     ),
     SearchDiscoveryRoleCase(
         test_id="conversations-discovers-conversation-roles",
         scope="conversations",
         prompt_history_agents=frozenset(),
-        expected_calls=((("codex", "claude"), agentgrep.CONVERSATION_STORE_ROLES),),
+        expected_calls=(
+            DiscoveryCall(
+                ("codex", "claude"),
+                agentgrep.CONVERSATION_STORE_ROLES,
+                include_non_default=True,
+            ),
+        ),
     ),
     SearchDiscoveryRoleCase(
         test_id="prompts-falls-back-per-agent",
         scope="prompts",
         prompt_history_agents=frozenset({"codex"}),
         expected_calls=(
-            (("codex", "claude"), frozenset({agentgrep.StoreRole.PROMPT_HISTORY})),
-            (("claude",), agentgrep.CONVERSATION_STORE_ROLES),
+            DiscoveryCall(
+                ("codex", "claude"),
+                frozenset({agentgrep.StoreRole.PROMPT_HISTORY}),
+                include_non_default=False,
+            ),
+            DiscoveryCall(
+                ("claude",),
+                agentgrep.CONVERSATION_STORE_ROLES,
+                include_non_default=False,
+            ),
         ),
     ),
     SearchDiscoveryRoleCase(
         test_id="prompts-skips-fallback-when-history-exists",
         scope="prompts",
         prompt_history_agents=frozenset({"codex", "claude"}),
-        expected_calls=((("codex", "claude"), frozenset({agentgrep.StoreRole.PROMPT_HISTORY})),),
+        expected_calls=(
+            DiscoveryCall(
+                ("codex", "claude"),
+                frozenset({agentgrep.StoreRole.PROMPT_HISTORY}),
+                include_non_default=False,
+            ),
+        ),
     ),
 )
 
@@ -955,13 +978,15 @@ def test_search_discovery_pushes_scope_into_store_roles(
     case: SearchDiscoveryRoleCase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Search discovery avoids enumerating store roles the query scope cannot use."""
-    calls: list[
-        tuple[
-            tuple[agentgrep.AgentName, ...],
-            frozenset[agentgrep.StoreRole] | None,
-        ],
-    ] = []
+    """Search discovery pushes scope into both discovery gates.
+
+    Scope narrows the store roles enumerated before any filesystem walk *and*
+    decides the coverage gate: the conversation and all scopes are the
+    documented opt-in into the non-default surface, so they must ask discovery
+    for it. Without ``include_non_default``, every ``INSPECTABLE`` store is
+    unsearchable at every scope a user can type.
+    """
+    calls: list[DiscoveryCall] = []
 
     def fake_discover_sources(
         home: pathlib.Path,
@@ -971,7 +996,13 @@ def test_search_discovery_pushes_scope_into_store_roles(
     ) -> list[agentgrep.SourceHandle]:
         del home, backends
         store_roles = t.cast("frozenset[agentgrep.StoreRole] | None", kwargs.get("store_roles"))
-        calls.append((agents, store_roles))
+        calls.append(
+            DiscoveryCall(
+                agents,
+                store_roles,
+                include_non_default=bool(kwargs.get("include_non_default", False)),
+            ),
+        )
         if store_roles == frozenset({agentgrep.StoreRole.PROMPT_HISTORY}):
             prompt_sources = {
                 "codex": ("codex.history", "codex.history_jsonl.v1"),
@@ -1015,6 +1046,77 @@ def test_search_discovery_pushes_scope_into_store_roles(
     )
 
     assert calls == list(case.expected_calls)
+
+
+class ConversationAdmissionCase(t.NamedTuple):
+    """One store/adapter pair and whether conversation scope admits it."""
+
+    test_id: str
+    store: str
+    adapter_id: str
+    admitted: bool
+
+
+CONVERSATION_ADMISSION_CASES: tuple[ConversationAdmissionCase, ...] = (
+    ConversationAdmissionCase(
+        test_id="primary-chat-admitted",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        admitted=True,
+    ),
+    ConversationAdmissionCase(
+        test_id="allowlisted-app-state-admitted",
+        store="codex.state_db",
+        adapter_id="codex.state_sqlite.v1",
+        admitted=True,
+    ),
+    ConversationAdmissionCase(
+        test_id="other-app-state-rejected",
+        store="codex.logs_db",
+        adapter_id="codex.logs_sqlite.v1",
+        admitted=False,
+    ),
+    ConversationAdmissionCase(
+        test_id="prompt-history-rejected",
+        store="codex.history",
+        adapter_id="codex.history_jsonl.v1",
+        admitted=False,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ConversationAdmissionCase._fields,
+    CONVERSATION_ADMISSION_CASES,
+    ids=[case.test_id for case in CONVERSATION_ADMISSION_CASES],
+)
+def test_conversation_scope_admits_allowlisted_app_state_stores(
+    test_id: str,
+    store: str,
+    adapter_id: str,
+    admitted: bool,
+) -> None:
+    """Sources and records agree on which stores conversation scope admits.
+
+    Discovery, source planning, and record filtering all route through the same
+    predicate. If they disagreed, a store could be discovered at a scope that
+    then drops every record it emits — work done, nothing shown.
+    """
+    source = _make_source(
+        agent="codex",
+        path="/tmp/codex/state.sqlite",
+        store=store,
+        adapter_id=adapter_id,
+    )
+    record = dataclasses.replace(
+        _make_record(agent="codex", text="bliss"),
+        kind="history",
+        store=store,
+        adapter_id=adapter_id,
+    )
+
+    assert orchestration.source_matches_scope(source, "conversations") is admitted, test_id
+    assert orchestration.record_matches_scope(record, "conversations") is admitted, test_id
 
 
 class QueryPassesThroughCase(t.NamedTuple):

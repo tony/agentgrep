@@ -48,6 +48,7 @@ __all__ = [
     "parse_embedded_json",
     "read_json_file",
     "read_text_file",
+    "sqlite_column_expr",
     "sqlite_column_names",
     "sqlite_table_names",
 ]
@@ -236,6 +237,46 @@ def sqlite_column_names(connection: sqlite3.Connection, table: str) -> set[str]:
         if len(row) > 1 and isinstance(row[1], str):
             columns.add(row[1])
     return columns
+
+
+def sqlite_column_expr(columns: cabc.Container[str], name: str) -> str:
+    """Return a quoted column reference, or the ``NULL`` literal when absent.
+
+    Agent SQLite stores are migrated in place, so a column present on one
+    machine is missing on another. A ``SELECT`` that names a missing column
+    raises :exc:`sqlite3.OperationalError`, and the adapters wrap their whole
+    query in a ``try``/``except`` — so an unguarded projection does not fail
+    loudly, it silently turns an entire store into zero records. Substituting
+    ``NULL`` keeps the projection's shape (and therefore the row unpacking)
+    stable while the existing per-value ``None`` handling absorbs the miss.
+
+    Only the mechanism is shared: each adapter still names its own columns, so
+    a column that exists for one store never becomes vocabulary in another.
+
+    Parameters
+    ----------
+    columns : collections.abc.Container[str]
+        Column names the table actually has, from
+        :func:`sqlite_column_names`.
+    name : str
+        The column the caller wants to project.
+
+    Returns
+    -------
+    str
+        A quoted identifier, or ``"NULL"``.
+
+    Examples
+    --------
+    >>> sqlite_column_expr({"id", "model"}, "model")
+    '"model"'
+    >>> sqlite_column_expr({"id"}, "model")
+    'NULL'
+    """
+    if name not in columns:
+        return "NULL"
+    escaped = name.replace('"', '""')
+    return f'"{escaped}"'
 
 
 def iter_key_value_rows(
@@ -621,17 +662,35 @@ _PI_SESSION_HEADER_MARKER = '"type":"session"'
 """Space-stripped prefix marker for the pi session header line."""
 
 
-def _read_first_jsonl_header(
+def _read_first_matching_jsonl_record(
     path: pathlib.Path,
     marker: str,
+    *,
+    accept_record: cabc.Callable[[dict[str, object]], bool],
 ) -> dict[str, object] | None:
-    """Decode the first JSONL line bearing a header marker.
+    """Decode the first prefix-marked JSONL mapping accepted by a predicate.
 
-    Scans forward with the bounded prefix check used by the raw skip
-    predicates, decoding only the matching line, so reverse scans can
-    seed header state without paying a full forward parse. Assumes the
-    canonical single leading header; later header updates are not
-    positionally attributed.
+    Scans forward using the raw-skip reader's bounded prefix and checks
+    ``marker`` within the first 512 decoded characters after removing ASCII
+    spaces. Unrelated oversized lines are discarded incrementally; a marked
+    candidate is materialized completely so JSON decoding and
+    ``accept_record`` can establish its semantic identity.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        JSONL file to scan.
+    marker : str
+        Space-stripped record marker expected in the bounded prefix.
+    accept_record : collections.abc.Callable
+        Semantic validator for decoded mappings. Malformed and rejected
+        matching records are skipped so callers can locate the first valid
+        record.
+
+    Returns
+    -------
+    dict[str, object] or None
+        First matching accepted record, or ``None`` when none exists.
     """
     try:
         with path.open("rb") as handle:
@@ -643,7 +702,8 @@ def _read_first_jsonl_header(
                     continue
                 prefix_text = prefix.decode("utf-8", errors="replace")
                 if marker not in prefix_text[:512].replace(" ", ""):
-                    _discard_rest_of_line(handle, prefix)
+                    if not prefix.endswith(b"\n"):
+                        _discard_rest_of_line(handle, prefix)
                     continue
                 raw_line = bytearray(prefix)
                 while raw_line and not raw_line.endswith(b"\n"):
@@ -654,10 +714,11 @@ def _read_first_jsonl_header(
                 try:
                     parsed = _loads(raw_line.decode("utf-8", errors="replace"))
                 except json.JSONDecodeError:
-                    return None
+                    continue
                 if isinstance(parsed, dict):
-                    return t.cast("dict[str, object]", parsed)
-                return None
+                    record = t.cast("dict[str, object]", parsed)
+                    if accept_record(record):
+                        return record
     except OSError:
         return None
 

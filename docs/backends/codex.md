@@ -135,3 +135,46 @@ summaries.
 Auth, installation id, secrets, `.env`, and policy state are private;
 caches, SQLite sidecars, and temp directories are catalogued for audits
 but stay outside default search.
+
+## Project context
+
+| Store | `model` | `cwd` | `branch` |
+|-------|---------|-------|----------|
+| {storage:storeref}`codex.sessions` | first `turn_context` payload's `model` | `session_meta` `cwd` | `session_meta` `git.branch` |
+| {storage:storeref}`codex.state_db` | `threads.model` | `threads.cwd` | `threads.git_branch` |
+| {storage:storeref}`codex.history` | — | — | — |
+
+The two stores that know where a session ran write the path literally, so
+they land in the {ref}`lossless tier <backend-cwd-tiers>` and answer
+`--cwd`, `cwd:`, and `branch:` with the real values.
+
+A rollout's `session_meta` header names `model_provider` — the provider
+id, not a model slug — so the session model is read from the first valid
+per-turn `turn_context` record instead, which is where Codex writes the
+slug the session actually ran as. The reader scans complete JSONL records,
+discarding unrelated large records in bounded chunks rather than imposing a
+fixed byte cutoff. `session_meta` is the fallback only when the rollout has
+no valid model-bearing `turn_context` record.
+
+A {storage:storeref}`codex.state_db` `threads` row keeps the model, the
+working directory, the git branch, and the remote URL beside the prompt
+text, so those records carry an origin without re-reading the rollout
+file. `git_origin_url` lands on `origin.remote`. The `agent_jobs` rows in
+the same database stay origin-less: the shipped table has no `thread_id`
+column to reach a `threads` row through. The database is reachable at
+`--scope conversations`, not at the default prompt scope.
+
+The state database is an index and fallback, not a second canonical
+transcript. When a matching `first_user_message` row and a matching rollout
+prompt have the same text and identify the same conversation by exact rollout
+path or thread id, agentgrep keeps the rollout result. Resolution happens
+across matching candidates before ranking and limits, so index-only matches
+such as a state-database title, model, or working directory remain searchable.
+Explicit store, path, and adapter filters still select the physical state row;
+`--no-dedupe` and genuinely different state previews remain unchanged.
+
+{storage:storeref}`codex.history` carries no project context in any shape
+Codex has shipped: the JSONL rows are `session_id`, `ts`, and `text`, and
+the legacy JSON rows are `command` and `timestamp`. That store is
+searchable by text, agent, and time, and it does not satisfy an origin
+filter.
