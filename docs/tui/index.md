@@ -50,6 +50,13 @@ Open the explorer over prompts and conversations at once:
 $ agentgrep grep tmux --scope all --ui
 ```
 
+```{image} ../_static/demos/posters/agentgrep-ui.png
+:alt: agentgrep Textual explorer filtering local agent prompts
+:width: 100%
+:loading: lazy
+:target: https://agentgrep.org/_static/demos/vhs/agentgrep-ui.mp4
+```
+
 ## Slash commands
 
 Type `/` in the primary input to open the same compact, pi-like command menu in
@@ -103,6 +110,13 @@ backend search, so refining a large result set is instant. Plain
 an empty filter releases focus to the detail pane, so the full
 arrow-key perimeter walks the three columns without reaching for
 `Ctrl-L`. A non-empty `right` keeps cursor-in-input semantics.
+
+```{image} ../_static/demos/posters/agentgrep-ui-filter.png
+:alt: agentgrep Textual explorer narrowing loaded results with its sticky filter
+:width: 100%
+:loading: lazy
+:target: https://agentgrep.org/_static/demos/vhs/agentgrep-ui-filter.mp4
+```
 
 Each pane carries a footer **status line**. The results footer shows
 match count, cursor position, and a tig-style scroll percent that
