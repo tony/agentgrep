@@ -2483,8 +2483,9 @@ class HudLayout(LayoutScreen):
         if self._detail_find_active:
             # A same-record re-render (e.g. a theme switch re-renders the
             # current record) with find open just painted the plain body;
-            # re-overlay the find highlights so they survive the re-render.
-            self._present_detail_find()
+            # recompute from live state before re-overlaying so a query opened
+            # while worker preparation was pending sees the final body.
+            self._run_detail_find(self._detail_find_query, reset_cursor=False)
 
     def _detail_cache_key(
         self,

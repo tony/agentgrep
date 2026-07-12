@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import collections.abc as cabc
+import logging
 import pathlib
 import threading
 import time
@@ -187,9 +188,9 @@ async def test_modal_option_selection_returns_choice() -> None:
 
 async def test_modal_filters_and_navigates_full_200_entry_capacity() -> None:
     """The mounted modal keeps its full bounded-capacity list navigable."""
-    BookmarkChoice, _BookmarkRecall = _bookmark_widgets()
+    bookmark_choice, _bookmark_recall = _bookmark_widgets()
     choices = [
-        BookmarkChoice(
+        bookmark_choice(
             BookmarkEntry(f"agc1:{index:026x}", "content", None, _CREATED_AT),
             _record(
                 suffix=f"capacity-{index}",
@@ -548,8 +549,8 @@ async def test_recall_during_pending_write_does_not_snapshot_stale_entries(
         screen.open_bookmarks()
         await _settle_workers(app, pilot)
 
-        _BookmarkChoice, BookmarkRecall = _bookmark_widgets()
-        assert isinstance(app.screen, BookmarkRecall)
+        _bookmark_choice, bookmark_recall = _bookmark_widgets()
+        assert isinstance(app.screen, bookmark_recall)
         assert [choice.entry.target_id for choice in app.screen._matches] == [
             prepared.record_id,
         ]
@@ -798,8 +799,8 @@ async def test_watchdog_resolver_scans_every_candidate_off_pump(
             app.screen.open_bookmarks()
             await _settle_workers(app, pilot)
 
-            _BookmarkChoice, BookmarkRecall = _bookmark_widgets()
-            assert isinstance(app.screen, BookmarkRecall)
+            _bookmark_choice, bookmark_recall = _bookmark_widgets()
+            assert isinstance(app.screen, bookmark_recall)
             assert calls == list(records)
             assert invoker.controls[0].answer_now_requested() is case.target_last
             assert (app.screen._matches[0].record is records[-1]) is case.target_last
@@ -855,8 +856,8 @@ async def test_toggle_during_resolution_invalidates_stale_modal_and_later_recall
 
         screen.open_bookmarks()
         await pilot.pause()
-        _BookmarkChoice, BookmarkRecall = _bookmark_widgets()
-        assert isinstance(app.screen, BookmarkRecall)
+        _bookmark_choice, bookmark_recall = _bookmark_widgets()
+        assert isinstance(app.screen, bookmark_recall)
         assert app.screen._matches == []
 
 
