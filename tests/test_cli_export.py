@@ -252,6 +252,69 @@ def test_export_protects_every_selected_record_source_path(
     assert "Traceback" not in completed.stderr
 
 
+@pytest.mark.parametrize(
+    ("relative_path", "original"),
+    (
+        (
+            pathlib.Path(
+                ".codex/sessions/rollout-2025-04-21-unmatched-source.json",
+            ),
+            json.dumps(
+                {
+                    "session": {
+                        "id": "unmatched-source-session",
+                        "timestamp": "2025-04-21T00:00:00Z",
+                    },
+                    "items": [
+                        {
+                            "id": "unmatched-source-item",
+                            "role": "user",
+                            "type": "message",
+                            "content": "unrelated source prompt",
+                        },
+                    ],
+                },
+            ),
+        ),
+        (
+            pathlib.Path(".claude/settings.json"),
+            '{"theme":"dark"}\n',
+        ),
+    ),
+    ids=("selected-agent", "outside-agent-non-default"),
+)
+def test_export_force_protects_unmatched_discovered_source(
+    export_home: pathlib.Path,
+    relative_path: pathlib.Path,
+    original: str,
+) -> None:
+    """Force cannot replace unmatched inventory inside or outside selection."""
+    matched_source = export_home / ".codex" / "history.jsonl"
+    matched_original = matched_source.read_bytes()
+    unmatched_source = export_home / relative_path
+    unmatched_source.parent.mkdir(parents=True, exist_ok=True)
+    _ = unmatched_source.write_text(original, encoding="utf-8")
+
+    completed = _run_export_cli(
+        export_home,
+        "bliss",
+        "--agent",
+        "codex",
+        "-o",
+        str(unmatched_source),
+        "--force",
+    )
+
+    assert completed.returncode == 2
+    assert matched_source.read_bytes() == matched_original
+    assert unmatched_source.read_text(encoding="utf-8") == original
+    assert completed.stdout == ""
+    assert "protected source" in completed.stderr
+    assert str(unmatched_source) not in completed.stderr
+    assert str(export_home) not in completed.stderr
+    assert "Traceback" not in completed.stderr
+
+
 def test_export_zero_matches_uses_search_exit_status(export_home: pathlib.Path) -> None:
     """An empty NDJSON selection emits no rows and exits with no-match status."""
     completed = _run_export_cli(
@@ -330,6 +393,70 @@ def test_export_search_io_failure_is_path_free(
     assert str(private_path) not in error
     assert str(export_home) not in error
     assert "Traceback" not in error
+
+
+def test_export_protection_discovery_io_failure_is_path_free(
+    export_home: pathlib.Path,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Inventory discovery errors cannot disclose source or destination paths."""
+    monkeypatch.setenv("HOME", str(export_home))
+    monkeypatch.setenv("CODEX_HOME", str(export_home / ".codex"))
+    private_path = export_home / ".claude" / "private-store.json"
+    destination = tmp_path / "records.ndjson"
+
+    def fail_discovery(*_args: object, **_kwargs: object) -> t.NoReturn:
+        message = f"could not inspect {private_path}"
+        raise OSError(message)
+
+    monkeypatch.setattr(cli_render, "discover_sources", fail_discovery, raising=False)
+    parsed = agentgrep.parse_args(
+        [
+            "export",
+            "bliss",
+            "--agent",
+            "codex",
+            "-o",
+            str(destination),
+        ],
+    )
+    assert isinstance(parsed, agentgrep.ExportArgs)
+
+    result = agentgrep.run_export_command(parsed)
+
+    assert result == 2
+    assert not destination.exists()
+    error = capsys.readouterr().err
+    assert "export source could not be read" in error
+    assert str(private_path) not in error
+    assert str(destination) not in error
+    assert str(export_home) not in error
+    assert "Traceback" not in error
+
+
+def test_export_stdout_skips_protection_discovery(
+    export_home: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stdout keeps the search-only discovery cost of the existing path."""
+    monkeypatch.setenv("HOME", str(export_home))
+    monkeypatch.setenv("CODEX_HOME", str(export_home / ".codex"))
+
+    def unexpected_discovery(*_args: object, **_kwargs: object) -> t.NoReturn:
+        pytest.fail("stdout export performed protection discovery")
+
+    monkeypatch.setattr(
+        cli_render,
+        "discover_sources",
+        unexpected_discovery,
+        raising=False,
+    )
+
+    result = agentgrep.run_export_command(_parsed_export_args())
+
+    assert result == 0
 
 
 class _ShortWriteBuffer:
