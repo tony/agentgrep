@@ -181,6 +181,7 @@ class HudLayout(LayoutScreen):
         # The slash commands currently shown in the search dropdown, parallel
         # to its option rows; empty when the dropdown isn't in command mode.
         self._command_matches: tuple[commands.SlashCommand, ...] = ()
+        self._theme_generation: int = 0
         self._results: SearchResultsList | None = None
         self._detail: StaticLike | None = None
         self._detail_row: SlowSourceDiagnosticsRow | None = None
@@ -274,7 +275,8 @@ class HudLayout(LayoutScreen):
     def _get_start_time(self) -> float | None:
         return self._started_at
 
-    def _on_theme_changed(self, _theme: object) -> None:
+    @_runtime.pump_only
+    async def _on_theme_changed(self, _theme: object) -> None:
         """Rebuild Rich-baked surfaces when the palette switches.
 
         The chrome recolors automatically through TCSS, but the results
@@ -282,8 +284,25 @@ class HudLayout(LayoutScreen):
         build time, so they are rebuilt against the new theme's tokens. The
         detail caches are dropped so the rebuild reads fresh colors.
         """
-        if self._results is not None:
-            self._results.rerender_records()
+        if not self.is_mounted:
+            return
+        self._theme_generation += 1
+        generation = self._theme_generation
+        results = self._results
+        if results is not None:
+            records = results.prepare_theme_rerender()
+
+            def apply_chunk(chunk: cabc.Sequence[SearchRecord]) -> None:
+                if self._theme_repaint_is_live(generation, results):
+                    results.apply_theme_rerender(chunk)
+
+            await _runtime.stream_apply(
+                records,
+                apply_chunk,
+                chunk_size=self._APPLY_CHUNK_SIZE,
+            )
+        if not self._theme_repaint_is_live(generation, results):
+            return
         if self._filter_header is not None:
             self._filter_header.refresh_theme()
         if self._searching_panel is not None:
@@ -291,6 +310,14 @@ class HudLayout(LayoutScreen):
         self._detail_body_cache.clear()
         if self._current_detail_record is not None:
             self.show_detail(self._current_detail_record)
+
+    def _theme_repaint_is_live(
+        self,
+        generation: int,
+        results: SearchResultsList | None,
+    ) -> bool:
+        """Return whether one yielded theme repaint still owns the live HUD."""
+        return self.is_mounted and generation == self._theme_generation and results is self._results
 
     def compose(self) -> cabc.Iterator[object]:
         """Build the widget tree (search → body[results-col, detail-col] → footer).
@@ -688,10 +715,9 @@ class HudLayout(LayoutScreen):
         from textual.widgets.option_list import Option
 
         token, args = commands.parse_command(value)
-        # A command takes no args; "/help find prompts" is literal search
-        # text, so leave the menu empty and let Enter fall through to
-        # on_search_requested rather than running the matched command.
-        matches = () if args else commands.command_matches(token)
+        # Argument text closes the menu; the exact dispatcher decides whether
+        # an argument-aware command consumes it or it remains literal search.
+        matches = () if args else commands.command_matches(token, self.slash_commands)
         self._command_matches = matches
         dropdown = self._enum_dropdown
         if dropdown is None:
@@ -702,10 +728,11 @@ class HudLayout(LayoutScreen):
         t.cast("t.Any", dropdown).add_class("-commands")
         dropdown.clear_options()
         # Pad the name column so the dim descriptions line up (pi's padEnd).
-        name_width = max(len(command.name) for command in matches) + 2
+        name_width = max(len(commands.command_menu_label(command)) for command in matches) + 2
         for command in matches:
+            label = commands.command_menu_label(command)
             prompt = Content.assemble(
-                (command.name.ljust(name_width), ""),
+                (label.ljust(name_width), ""),
                 (command.description, "dim"),
             )
             dropdown.add_option(Option(prompt))
@@ -813,6 +840,7 @@ class HudLayout(LayoutScreen):
                 str(exc),
             )
 
+    @_runtime.pump_only
     def on_search_requested(self, message: SearchRequested) -> None:
         """Primary input submitted: run a slash command, else route to the workflow.
 
@@ -821,14 +849,8 @@ class HudLayout(LayoutScreen):
         active workflow, which decides whether to search, filter, or reset.
         """
         text = message.payload.text.strip()
-        if text.startswith("/"):
-            token, args = commands.parse_command(text)
-            command = commands.resolve_command(token)
-            if not args and command is not None:
-                # Exact slash commands run handlers; other leading-slash
-                # text remains searchable prompt/path text.
-                self._dispatch_slash_command(command, args)
-                return
+        if self._dispatch_slash_text(text) is not None:
+            return
         self._workflow.on_query(self, text)
 
     # --- WorkflowHost surface: the active workflow drives the layout here -----
@@ -855,22 +877,18 @@ class HudLayout(LayoutScreen):
         """Cooperatively signal the in-flight search to wrap up (host surface)."""
         self.control.request_answer_now()
 
-    def _dispatch_slash_command(self, command: commands.SlashCommand, args: str) -> None:
-        """Run an already-resolved ``/command`` from the search box."""
+    def _hide_command_completion(self) -> None:
+        """Hide the HUD's slash-command dropdown after successful execution."""
         if self._enum_dropdown is not None:
             self._enum_dropdown.display = False
         self._command_matches = ()
-        command.run(self, args)
 
     def _run_command_at(self, index: int) -> None:
         """Dispatch the slash command at ``index`` in the open command menu."""
         if not (0 <= index < len(self._command_matches)):
             return
         command = self._command_matches[index]
-        if self._enum_dropdown is not None:
-            self._enum_dropdown.display = False
-        self._command_matches = ()
-        command.run(self, "")
+        self._dispatch_slash_text(f"/{command.name}")
 
     def _record_history(self, text: str) -> None:
         """Append a submitted, non-empty query to the persisted history.

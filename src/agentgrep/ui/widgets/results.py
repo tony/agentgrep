@@ -13,7 +13,7 @@ from collections import abc as cabc
 
 import rich.text as rich_text
 from textual.widgets import OptionList
-from textual.widgets.option_list import Option
+from textual.widgets.option_list import Option, OptionDoesNotExist
 
 from agentgrep._engine.orchestration import cached_haystack
 from agentgrep._text import format_compact_path
@@ -156,15 +156,19 @@ class SearchResultsList(OptionList, can_focus=True):
                 [Option(self._render_record(r), id=str(id(r))) for r in self._records],
             )
 
-    def rerender_records(self) -> None:
-        """Re-render the existing rows against the current theme tokens.
+    def prepare_theme_rerender(self) -> cabc.Sequence[SearchRecord]:
+        """Return the current record sequence for a bounded theme repaint."""
+        return self._records
 
-        The rows bake concrete hex into Rich renderables at build time, so
-        a palette switch needs a full rebuild — drop the row cache first so the
-        new palette is rendered.
-        """
-        self._render_cache.clear()
-        self._rebuild_options(self._records)
+    def apply_theme_rerender(self, records: cabc.Sequence[SearchRecord]) -> None:
+        """Replace one bounded record slice with current-theme row prompts."""
+        for record in records:
+            self._render_cache.pop(id(record), None)
+            try:
+                index = self.get_option_index(str(id(record)))
+            except OptionDoesNotExist:
+                continue
+            self.replace_option_prompt_at_index(index, self._render_record(record))
 
     def clear(self) -> None:
         """Empty the list."""

@@ -11,13 +11,36 @@ from __future__ import annotations
 from agentgrep.ui import commands
 
 
-def test_registry_has_clear_exit_and_help() -> None:
-    """The registry ships ``/clear``, ``/exit``, and ``/help`` with their aliases."""
+def test_registry_has_common_layout_commands() -> None:
+    """The common registry exposes the compact cross-layout slash surface."""
     by_name = {cmd.name: cmd for cmd in commands.SLASH_COMMANDS}
-    assert {"clear", "exit", "help"} <= set(by_name)
+    assert {"clear", "exit", "help", "keys", "theme"} <= set(by_name)
     assert by_name["clear"].aliases == ("new", "reset")
     assert by_name["exit"].aliases == ("quit",)
     assert by_name["help"].aliases == ()
+    assert by_name["theme"].argument_hint == "[dark|light]"
+    assert by_name["theme"].accepts_args is True
+
+
+def test_argument_hint_and_acceptance_are_independent_metadata() -> None:
+    """Menu copy never silently changes whether a command consumes arguments."""
+    hinted = commands.SlashCommand(
+        name="hinted",
+        aliases=(),
+        description="Hint only",
+        run=lambda _host, _args: True,
+        argument_hint="[VALUE]",
+    )
+    accepting = commands.SlashCommand(
+        name="accepting",
+        aliases=(),
+        description="Accept only",
+        run=lambda _host, _args: True,
+        accepts_args=True,
+    )
+
+    assert hinted.accepts_args is False
+    assert accepting.argument_hint == ""
 
 
 def test_resolve_command_by_name_and_aliases() -> None:
@@ -61,3 +84,24 @@ def test_command_matches_each_command_once() -> None:
     """A command is listed once even when several of its tokens share a prefix."""
     matched = commands.command_matches("")
     assert len(matched) == len(set(matched))
+
+
+def test_resolution_and_matching_accept_layout_extensions() -> None:
+    """A layout can extend the common registry without mutating it globally."""
+    bookmark = commands.SlashCommand(
+        name="bookmark",
+        aliases=(),
+        description="Toggle bookmark",
+        run=lambda _host, _args: True,
+    )
+    registry = (*commands.SLASH_COMMANDS, bookmark)
+
+    assert commands.resolve_command("bookmark", registry) is bookmark
+    assert commands.command_matches("book", registry) == (bookmark,)
+
+
+def test_command_menu_label_includes_argument_hint() -> None:
+    """The menu displays argument guidance without using it as dispatch policy."""
+    theme = commands.resolve_command("theme")
+    assert theme is not None
+    assert commands.command_menu_label(theme) == "theme [dark|light]"

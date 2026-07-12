@@ -13,6 +13,8 @@ import typing as t
 
 from textual.screen import Screen
 
+from agentgrep.ui import _runtime, commands, theme as ui_theme
+
 if t.TYPE_CHECKING:
     from agentgrep.ui._context import UiContext
     from agentgrep.ui.workflows import Workflow
@@ -41,6 +43,9 @@ class LayoutScreen(_SCREEN_BASE):
         on mount and re-attached when swapped via :meth:`set_workflow`.
     """
 
+    EXTRA_SLASH_COMMANDS: t.ClassVar[tuple[commands.SlashCommand, ...]] = ()
+    """Layout-specific commands appended to the common slash surface."""
+
     def __init__(self, ctx: UiContext, workflow: Workflow) -> None:
         super().__init__()
         self._ctx = ctx
@@ -51,6 +56,11 @@ class LayoutScreen(_SCREEN_BASE):
     def context(self) -> UiContext:
         """The session-fixed dependencies injected by the App shell."""
         return self._ctx
+
+    @property
+    def slash_commands(self) -> tuple[commands.SlashCommand, ...]:
+        """Return common commands plus this layout's extension commands."""
+        return (*commands.SLASH_COMMANDS, *self.EXTRA_SLASH_COMMANDS)
 
     @property
     def workflow(self) -> Workflow:
@@ -84,6 +94,84 @@ class LayoutScreen(_SCREEN_BASE):
         self._workflow_attach_pending = False
         t.cast("t.Any", self).request_cancel()
         self._workflow.on_attach(t.cast("t.Any", self))
+
+    @_runtime.pump_only
+    def _dispatch_slash_text(self, text: str) -> bool | None:
+        """Run one recognized exact slash command.
+
+        ``None`` means ``text`` is not dispatchable and should retain literal
+        search behavior. A handler's ``False`` result means the command was
+        recognized but invalid, so callers must not route it to search.
+        """
+        if not text.startswith("/"):
+            return None
+        token, args = commands.parse_command(text)
+        command = commands.resolve_command(token, self.slash_commands)
+        if command is None or (args and not command.accepts_args):
+            return None
+        succeeded = command.run(self, args)
+        if succeeded:
+            self._clear_command_input()
+            self._hide_command_completion()
+        return succeeded
+
+    def _clear_command_input(self) -> None:
+        """Clear and refocus the shared search input after command success."""
+        search_input = getattr(self, "_search_input", None)
+        if search_input is None:
+            return
+        search_input.value = ""
+        search_input.cursor_position = 0
+        search_input.focus()
+
+    def _hide_command_completion(self) -> None:
+        """Hide command-completion chrome when a layout provides it."""
+
+    @_runtime.pump_only
+    def notify_key_bindings(self) -> None:
+        """Notify enabled, visible App/Screen bindings for the active layout."""
+        lines: list[str] = []
+        seen: set[tuple[int, str, str]] = set()
+        for active in self.app.active_bindings.values():
+            binding = active.binding
+            if (
+                (active.node is not self and active.node is not self.app)
+                or not active.enabled
+                or not binding.show
+                or not binding.description
+            ):
+                continue
+            marker = (id(active.node), binding.action, binding.description)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            key = binding.key_display or binding.key
+            lines.append(f"{key} — {binding.description}")
+        self.notify("\n".join(lines), title="Keys", timeout=10)
+
+    @_runtime.pump_only
+    def select_theme(self, argument: str) -> bool:
+        """Toggle or directly select agentgrep's dark/light theme."""
+        choice = argument.strip().lower()
+        if not choice:
+            target = (
+                ui_theme.LIGHT_THEME_NAME
+                if self.app.theme == ui_theme.DARK_THEME_NAME
+                else ui_theme.DARK_THEME_NAME
+            )
+        elif choice == "dark":
+            target = ui_theme.DARK_THEME_NAME
+        elif choice == "light":
+            target = ui_theme.LIGHT_THEME_NAME
+        else:
+            self.notify(
+                "Theme must be dark or light.",
+                title="Theme",
+                severity="warning",
+            )
+            return False
+        self.app.theme = target
+        return True
 
     # --- input control defaults (the shared SearchInput reaches these) --------
     # SearchInput.on_key routes ctrl-c and the non-ctrl-c "disarm" through

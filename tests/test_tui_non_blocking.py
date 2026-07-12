@@ -471,6 +471,30 @@ def test_apply_records_batch_uses_bounded_stream_apply() -> None:
     assert "stream_apply" in calls
 
 
+def test_theme_changed_uses_bounded_async_pump_apply() -> None:
+    """Theme-baked rows rebuild asynchronously through the NB-4 chunk cap."""
+    method = next(
+        item
+        for item in _all_methods()
+        if item.cls == "HudLayout" and item.name == "_on_theme_changed"
+    )
+    assert isinstance(method.node, ast.AsyncFunctionDef)
+    assert "pump_only" in method.decorators
+    stream_calls = [
+        node
+        for node in ast.walk(method.node)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "stream_apply"
+    ]
+    assert len(stream_calls) == 1
+    chunk_size = next(
+        keyword.value for keyword in stream_calls[0].keywords if keyword.arg == "chunk_size"
+    )
+    assert isinstance(chunk_size, ast.Attribute)
+    assert chunk_size.attr == "_APPLY_CHUNK_SIZE"
+
+
 # --- runtime guards --------------------------------------------------------
 
 

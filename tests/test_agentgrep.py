@@ -3169,6 +3169,8 @@ ENTER_COMMAND_CASES = (
     EnterCommandCase(test_id="clear-prefix", typed="/c", expected="clear"),
     EnterCommandCase(test_id="exit-prefix", typed="/e", expected="exit"),
     EnterCommandCase(test_id="help-prefix", typed="/h", expected="help"),
+    EnterCommandCase(test_id="keys-prefix", typed="/k", expected="keys"),
+    EnterCommandCase(test_id="theme-prefix", typed="/t", expected="theme"),
     EnterCommandCase(test_id="alias-prefix", typed="/re", expected="clear"),
 )
 
@@ -3265,12 +3267,39 @@ async def test_slash_opens_and_filters_command_menu(
         await pilot.pause()
         dropdown = app.screen._enum_dropdown
         assert dropdown.display is True
-        assert {cmd.name for cmd in app.screen._command_matches} == {"clear", "exit", "help"}
+        assert {cmd.name for cmd in app.screen._command_matches} == {
+            "clear",
+            "exit",
+            "help",
+            "keys",
+            "theme",
+        }
         assert dropdown.option_count == len(app.screen._command_matches)
         await pilot.press("c")  # value is now "/c"
         await pilot.pause()
         assert [cmd.name for cmd in app.screen._command_matches] == ["clear"]
         assert dropdown.option_count == 1
+
+
+async def test_slash_menu_selection_uses_canonical_text_dispatch(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A menu choice re-enters the shared exact-command dispatcher by text."""
+    from agentgrep.ui import commands
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        clear = commands.resolve_command("clear")
+        assert clear is not None
+        dispatched: list[str] = []
+        monkeypatch.setattr(app.screen, "_dispatch_slash_text", dispatched.append)
+        app.screen._command_matches = (clear,)
+
+        app.screen._run_command_at(0)
+
+        assert dispatched == ["/clear"]
 
 
 async def test_slash_clear_resets_and_is_not_recorded(

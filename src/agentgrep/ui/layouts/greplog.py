@@ -100,9 +100,13 @@ class GrepLogLayout(LayoutScreen):
         super().on_mount()
         self._search_input.focus()
 
+    @_runtime.pump_only
     def on_search_requested(self, message: SearchRequested) -> None:
-        """Primary input submitted — route to the active workflow."""
-        self._workflow.on_query(self, message.payload.text.strip())
+        """Primary input submitted — run a command or route to the workflow."""
+        text = message.payload.text.strip()
+        if self._dispatch_slash_text(text) is not None:
+            return
+        self._workflow.on_query(self, text)
 
     def action_stop_search(self) -> None:
         """``Esc``: cooperatively stop the in-flight grep."""
