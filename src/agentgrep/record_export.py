@@ -294,8 +294,14 @@ def render_export(
     )
 
 
-def _artifact_bytes(artifact: ExportArtifact) -> bytes:
-    """Return validated bytes for a rendered artifact."""
+def _validated_artifact_bytes(artifact: ExportArtifact) -> bytes:
+    """Validate the public artifact contract and return its exact bytes."""
+    if artifact.format not in ("ndjson", "markdown"):
+        message = "unsupported export format"
+        raise ExportFormatError(message)
+    if artifact.selection not in ("records", "thread"):
+        message = "unsupported export selection"
+        raise ExportSelectionError(message)
     try:
         payload = artifact.text.encode("utf-8")
     except UnicodeEncodeError:
@@ -567,7 +573,7 @@ def write_export(
     pathlib.Path
         The caller-supplied destination value.
     """
-    payload = _artifact_bytes(artifact)
+    payload = _validated_artifact_bytes(artifact)
     result = pathlib.Path(destination)
     absolute = _absolute(result)
     if not absolute.name:
@@ -646,7 +652,7 @@ def write_private_export(
     private_directory = (
         _default_private_directory() if directory is None else pathlib.Path(directory)
     )
-    payload = _artifact_bytes(artifact)
+    payload = _validated_artifact_bytes(artifact)
     extension = "ndjson" if artifact.format == "ndjson" else "md"
     basename = f"agentgrep-{_artifact_slug(artifact)}"
     directory_fd = _open_directory(private_directory, create_private=True)
