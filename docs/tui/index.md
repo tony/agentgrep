@@ -76,6 +76,33 @@ $ agentgrep ui --layout greplog --workflow browse
 Switch at runtime with `F2` (cycle the layout) and `F3` (cycle the workflow);
 the active `layout · workflow` pair shows in the title bar.
 
+## Slash commands
+
+Type `/` in the primary input to open the same compact, pi-like command menu in
+the HUD and greplog layouts. Keep typing to filter it, or use `/help` to see the
+whole active command set. `Ctrl-P` is intentionally inert; the slash menu
+replaces the larger Textual command palette without covering your results.
+
+The shared commands are:
+
+- `/clear` clears the current search and results.
+- `/exit` or `/quit` closes agentgrep.
+- `/help` lists the active slash commands, and `/keys` toggles the active key
+  bindings panel.
+- `/theme` toggles the theme; `/theme dark` and `/theme light` select one
+  directly.
+- `/maximize` gives a content pane the available body space while keeping the
+  primary input and footer reachable. In the HUD, it follows the last-used
+  results or detail pane; use `/maximize results` or `/maximize detail` to be
+  explicit. In greplog, use `/maximize` or `/maximize log`.
+- `/minimize` restores the normal split or greplog status area.
+- `/screenshot` captures the current screen as an automatically named SVG.
+
+`/screenshot` first clears the command text and menu, then captures the active
+layout without cancelling the search or changing its results, theme, or zoom.
+It accepts no path argument. In a terminal, Textual saves the SVG to your
+downloads directory; in a browser session, it initiates a download.
+
 ## Command
 
 ```{eval-rst}
