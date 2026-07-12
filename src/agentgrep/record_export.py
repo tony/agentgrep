@@ -13,7 +13,7 @@ import secrets
 import stat
 import typing as t
 
-from agentgrep.conversations import ConversationFidelity, group_prepared_conversation_units
+from agentgrep.conversations import ConversationFidelity, _group_prepared_conversation_units
 from agentgrep.identity import RecordIdentity, record_identity
 from agentgrep.records import SCHEMA_VERSION, SearchRecord
 
@@ -265,7 +265,9 @@ def render_export(
     thread_id: str | None = None
     fidelity: ConversationFidelity | None = None
     if selection == "thread":
-        units = group_prepared_conversation_units((item.record, item.identity) for item in prepared)
+        units = _group_prepared_conversation_units(
+            (item.record, item.identity) for item in prepared
+        )
         if len(units) != 1 or len(units[0].records) != len(selected):
             message = "thread export requires exactly one observed thread"
             raise ExportSelectionError(message)
