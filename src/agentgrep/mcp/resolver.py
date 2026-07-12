@@ -4,11 +4,20 @@ from __future__ import annotations
 
 import collections.abc as cabc
 import dataclasses
+import hashlib
 import pathlib
 import typing as t
 
 from agentgrep.mcp import refs
 from agentgrep.mcp._library import SearchRecordLike, SourceHandleLike, agentgrep
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class PhysicalRecordSelection:
+    """Privacy-safe physical source key and scan ordinal for one record."""
+
+    source_key: str
+    record_ordinal: int
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -18,6 +27,7 @@ class ResolvedRecordRef:
     ref: str
     kind: t.Literal["search", "find"] | None
     records: tuple[SearchRecordLike, ...] = ()
+    physical_selection: PhysicalRecordSelection | None = None
     error_message: str | None = None
 
 
@@ -67,11 +77,18 @@ def _source_index(
     return indexed
 
 
+def _physical_source_key(adapter_id: str, path: pathlib.Path) -> str:
+    """Return a path-hiding key for one adapter and resolved source path."""
+    raw = f"{adapter_id}\0{path}".encode("utf-8", "surrogatepass")
+    return hashlib.sha256(raw).hexdigest()
+
+
 def _resolve_source_group(
     source: SourceHandleLike,
     requests: cabc.Sequence[_ParsedRequest],
     results: list[ResolvedRecordRef | None],
     *,
+    source_key: str,
     sample_size: int,
 ) -> None:
     """Resolve every request for one source in a single record scan."""
@@ -81,7 +98,7 @@ def _resolve_source_group(
     find_records: list[SearchRecordLike] = []
     read_failed = False
     try:
-        for record in agentgrep.iter_source_records(source):
+        for record_ordinal, record in enumerate(agentgrep.iter_source_records(source)):
             if len(find_records) < sample_size:
                 find_records.append(record)
             for index, item in tuple(unresolved_search.items()):
@@ -93,6 +110,10 @@ def _resolve_source_group(
                         ref=item.ref,
                         kind="search",
                         records=(record,),
+                        physical_selection=PhysicalRecordSelection(
+                            source_key=source_key,
+                            record_ordinal=record_ordinal,
+                        ),
                     )
                     del unresolved_search[index]
             if not unresolved_search and (not find_requests or len(find_records) >= sample_size):
@@ -204,6 +225,7 @@ def resolve_record_refs(
                     indexed_sources[key],
                     group,
                     results,
+                    source_key=_physical_source_key(*key),
                     sample_size=sample_size,
                 )
 
