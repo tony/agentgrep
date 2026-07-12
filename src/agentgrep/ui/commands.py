@@ -23,6 +23,7 @@ if t.TYPE_CHECKING:
 __all__ = [
     "SLASH_COMMANDS",
     "SlashCommand",
+    "bookmark_commands",
     "command_matches",
     "command_menu_label",
     "parse_command",
@@ -101,6 +102,26 @@ def _run_minimize(app: t.Any, args: str) -> bool:
     return bool(app.handle_minimize_command())
 
 
+def _run_bookmark(app: t.Any, args: str) -> bool:
+    """Toggle the selected record at the requested canonical scope."""
+    scope = args.strip().lower() or "record"
+    if scope not in {"record", "thread", "content"}:
+        app.notify(
+            "Bookmark scope must be record, thread, or content.",
+            title="Bookmark",
+        )
+        return False
+    app.toggle_bookmark(scope)
+    return True
+
+
+def _run_bookmarks(app: t.Any, args: str) -> bool:
+    """Open the saved-bookmark recall workflow."""
+    del args
+    app.open_bookmarks()
+    return True
+
+
 def _command_label(cmd: SlashCommand) -> str:
     """Render ``/name (/alias1, /alias2)`` for menus and help (argparse-style)."""
     label = f"/{command_menu_label(cmd)}"
@@ -138,6 +159,21 @@ _COMMAND_BY_TOKEN: dict[str, SlashCommand] = {
     token: cmd for cmd in SLASH_COMMANDS for token in (cmd.name, *cmd.aliases)
 }
 """Flat token -> command lookup; one entry per name and per alias."""
+
+
+def bookmark_commands() -> tuple[SlashCommand, SlashCommand]:
+    """Return the HUD-only bookmark toggle and recall commands."""
+    return (
+        SlashCommand(
+            "bookmark",
+            (),
+            "Toggle the selected record",
+            _run_bookmark,
+            "[record|thread|content]",
+            accepts_args=True,
+        ),
+        SlashCommand("bookmarks", (), "Open saved bookmarks", _run_bookmarks),
+    )
 
 
 def zoom_commands(argument_hint: str) -> tuple[SlashCommand, SlashCommand]:

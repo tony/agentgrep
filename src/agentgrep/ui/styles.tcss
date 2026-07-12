@@ -640,3 +640,46 @@ HistoryRecall, HistoryRecall:ansi {
 #history-footer {
     color: $ag-dim;
 }
+
+/* Saved-bookmark recall: one compact list with a path-free one-line status. */
+BookmarkRecall {
+    background: transparent;
+}
+#bookmark-dialog {
+    border: round $ag-faint;
+    background: ansi_default;
+    padding: 0 1;
+}
+#bookmark-title {
+    color: $accent;
+    text-style: bold;
+}
+#bookmark-list {
+    background: transparent;
+    scrollbar-size: 0 0;
+}
+#bookmark-list:focus {
+    background-tint: $foreground 0%;
+}
+#bookmark-list > .option-list--option-highlighted,
+#bookmark-list:focus > .option-list--option-highlighted {
+    color: $accent;
+    text-style: bold;
+    background: transparent;
+}
+#bookmark-preview {
+    color: $ag-muted;
+    text-overflow: ellipsis;
+}
+#bookmark-filter {
+    border: none;
+    border-top: solid $ag-faint;
+    background: ansi_default;
+}
+#bookmark-filter:focus {
+    border: none;
+    border-top: solid $accent;
+}
+#bookmark-footer {
+    color: $ag-dim;
+}

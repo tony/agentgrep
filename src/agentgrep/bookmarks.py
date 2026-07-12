@@ -127,7 +127,7 @@ def _validate_created_at(created_at: object) -> str:
         msg = "bookmark creation time must be a timezone-qualified RFC 3339 timestamp"
         raise BookmarkValidationError(msg)
     try:
-        parsed = datetime.datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        parsed = datetime.datetime.fromisoformat(created_at)
     except ValueError as exc:
         msg = "bookmark creation time must be a valid RFC 3339 timestamp"
         raise BookmarkValidationError(msg) from exc

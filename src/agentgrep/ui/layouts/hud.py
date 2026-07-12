@@ -30,6 +30,7 @@ from textual.timer import Timer
 from textual.widgets import Footer, Static
 from textual.worker import Worker, WorkerCancelled
 
+import agentgrep.bookmarks as bookmarks
 from agentgrep._engine.orchestration import clear_haystack_cache
 from agentgrep._text import (
     DETAIL_BODY_MAX_CHARS,
@@ -52,8 +53,8 @@ from agentgrep.progress import (
     format_match_count,
 )
 from agentgrep.query import default_registry
-from agentgrep.records import SearchQuery, SearchRecord
-from agentgrep.ui import _history, _runtime, _streaming, theme as ui_theme
+from agentgrep.records import AGENT_CHOICES, SearchQuery, SearchRecord
+from agentgrep.ui import _history, _runtime, _streaming, commands, theme as ui_theme
 from agentgrep.ui._context import UiContext
 from agentgrep.ui._source_diagnostics import (
     SourceScanFinished,
@@ -70,6 +71,8 @@ from agentgrep.ui.format import scroll_percent
 from agentgrep.ui.highlighter import QueryHighlighter
 from agentgrep.ui.layouts._base import LayoutScreen
 from agentgrep.ui.widgets import (
+    BookmarkChoice,
+    BookmarkRecall,
     CompletionDropdown,
     DetailFindInput,
     DetailFindRequested,
@@ -104,6 +107,7 @@ from agentgrep.ui.widgets.welcome import (
 if t.TYPE_CHECKING:
     from agentgrep._engine.matching import CompiledRecordMatcher
     from agentgrep.identity import RecordIdentity
+    from agentgrep.ui._seams import SearchInvoker
     from agentgrep.ui.workflows import Workflow
 
 
@@ -151,10 +155,39 @@ class _DetailSnapshot:
     build_body: bool
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class _LoadedBookmarks:
+    """Worker-loaded bookmark snapshot or a path-free failure."""
+
+    entries: tuple[bookmarks.BookmarkEntry, ...]
+    error: str | None
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _BookmarkToggleResult:
+    """One accepted toggle result returned from the write worker."""
+
+    record: SearchRecord
+    mutation: bookmarks.BookmarkMutation | None
+    error: str | None
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _BookmarkResolution:
+    """Resolved choices returned as one bounded pump-side update."""
+
+    choices: tuple[BookmarkChoice, ...]
+    error: str | None
+    cancelled: bool = False
+
+
 class HudLayout(LayoutScreen):
     """Search box, streaming results list, detail pane, and status chrome."""
 
     ZOOM_ARGUMENT_HINT: t.ClassVar[str] = "[results|detail]"
+    EXTRA_SLASH_COMMANDS: t.ClassVar[tuple[commands.SlashCommand, ...]] = (
+        commands.bookmark_commands()
+    )
 
     # ``priority=True`` on the directional ``ctrl+hjkl`` bindings pushes
     # them into Textual's priority dispatch lane so they win over any
@@ -170,6 +203,7 @@ class HudLayout(LayoutScreen):
         ("ctrl+c", "smart_quit", "Stop / Quit"),
         # Priority so the focused search Input cannot intercept recall.
         Binding("ctrl+r", "recall_history", "History", priority=True),
+        Binding("b", "toggle_bookmark", "Bookmark"),
         Binding("ctrl+h", "focus_pane_left", "← Pane", priority=True),
         Binding("ctrl+j", "focus_pane_down", "↓ Pane", priority=True),
         Binding("ctrl+k", "focus_pane_up", "↑ Pane", priority=True),
@@ -236,6 +270,19 @@ class HudLayout(LayoutScreen):
         self._history_path = _history.history_path(self.home)
         self._history = list(ctx.history)
         self._last_recorded_text = self._history[0].text if self._history else ""
+        self._theme_generation: int = 0
+        # Bookmarks are agentgrep-owned state, loaded once on a worker. The
+        # write gate accepts at most one toggle at a time, so an accepted
+        # transaction is never superseded by a later keypress.
+        self._bookmark_store = bookmarks.BookmarkStore()
+        self._bookmark_entries: list[bookmarks.BookmarkEntry] = []
+        self._bookmarked_ids: set[str] = set()
+        self._bookmarks_loaded = False
+        self._bookmark_load_generation = 0
+        self._bookmark_write_generation = 0
+        self._bookmark_write_pending = False
+        self._bookmark_resolution_generation = 0
+        self._bookmark_resolution_control: SearchControl | None = None
         self._results: SearchResultsList | None = None
         self._detail: StaticLike | None = None
         self._detail_row: SlowSourceDiagnosticsRow | None = None
@@ -541,6 +588,7 @@ class HudLayout(LayoutScreen):
             typed_input.cursor_blink = False
             typed_input.select_on_focus = False
         self._search_emit = self._make_gated_emit()
+        self._start_bookmark_load()
         # Rebuild Rich-baked rows/detail when the active color palette changes.
         # The pump-thread bind and watchdog are owned by the App shell (it owns
         # the pump).
@@ -561,6 +609,14 @@ class HudLayout(LayoutScreen):
         # mount focus there even when an initial search hides the filter.
         self._search_input.focus()
         self._update_pane_focus()
+
+    @_runtime.pump_only
+    def on_unmount(self) -> None:
+        """Cooperatively stop bookmark resolution when this layout tears down."""
+        self._bookmark_resolution_generation += 1
+        if self._bookmark_resolution_control is not None:
+            self._bookmark_resolution_control.request_answer_now()
+            self._bookmark_resolution_control = None
 
     def _set_empty_state(self, *, empty: bool) -> None:
         """Toggle the pre-search bare-canvas state on ``#body``.
@@ -1059,6 +1115,337 @@ class HudLayout(LayoutScreen):
         target = t.cast("t.Any", self._search_input)
         target.load_query(query)
         target.focus()
+
+    # --- durable bookmarks -----------------------------------------------
+    @_runtime.pump_only
+    def _start_bookmark_load(self) -> None:
+        """Start the one session bookmark load without touching storage here."""
+        self._bookmark_load_generation += 1
+        generation = self._bookmark_load_generation
+        emit = _runtime.make_gated_emitter(
+            self.app.call_from_thread,
+            self._apply_loaded_bookmarks,
+            generation,
+        )
+        self.run_worker(
+            functools.partial(
+                self._load_bookmarks_in_thread,
+                self._bookmark_store,
+                emit,
+            ),
+            name="bookmark-load",
+            group="bookmark-load",
+            thread=True,
+            exclusive=True,
+        )
+
+    @_runtime.offload
+    def _load_bookmarks_in_thread(
+        self,
+        store: bookmarks.BookmarkStore,
+        emit: cabc.Callable[[object], None],
+    ) -> None:
+        """Read and validate the bookmark snapshot away from the pump."""
+        try:
+            entries = tuple(store.list())
+        except bookmarks.BookmarkError as exc:
+            payload = _LoadedBookmarks((), str(exc))
+        except Exception:
+            payload = _LoadedBookmarks((), "Bookmark storage operation failed")
+        else:
+            payload = _LoadedBookmarks(entries, None)
+        emit(payload)
+
+    @_runtime.pump_only
+    def _apply_loaded_bookmarks(self, generation: int, event: object) -> None:
+        """Install the loaded canonical snapshot if this layout is still live."""
+        if (
+            generation != self._bookmark_load_generation
+            or not isinstance(event, _LoadedBookmarks)
+            or not self._has_live_screen_stack()
+        ):
+            return
+        self._bookmark_entries = list(event.entries)
+        self._bookmarked_ids = {entry.target_id for entry in event.entries}
+        self._bookmarks_loaded = True
+        if event.error is not None:
+            self.notify(event.error, title="Bookmarks", severity="error")
+        self._refresh_current_bookmark_marker()
+
+    def _has_live_screen_stack(self) -> bool:
+        """Return whether this layout remains in any Textual mode stack."""
+        stacks = getattr(self.app, "_screen_stacks", {})
+        return any(self in stack for stack in stacks.values())
+
+    def _selected_bookmark_record(self) -> SearchRecord | None:
+        """Return the highlighted result, falling back to the visible detail."""
+        focused_id = getattr(self.focused, "id", None)
+        if focused_id == "detail-scroll" and self._current_detail_record is not None:
+            return self._current_detail_record
+        highlighted = None
+        if self._results is not None:
+            highlighted = t.cast("int | None", getattr(self._results, "highlighted", None))
+        if (
+            focused_id == "results"
+            and highlighted is not None
+            and 0
+            <= highlighted
+            < len(
+                self.filtered_records,
+            )
+        ):
+            return self.filtered_records[highlighted]
+        if self._current_detail_record is not None:
+            return self._current_detail_record
+        if highlighted is not None and 0 <= highlighted < len(self.filtered_records):
+            return self.filtered_records[highlighted]
+        return None
+
+    @_runtime.pump_only
+    def action_toggle_bookmark(self) -> None:
+        """Toggle the selected exact record from a result/detail-owned ``b``."""
+        self.toggle_bookmark("record")
+
+    @_runtime.pump_only
+    def toggle_bookmark(self, scope: str) -> None:
+        """Accept one selected-record toggle and offload identity plus storage."""
+        if scope not in {"record", "thread", "content"}:
+            self.notify(
+                "Bookmark scope must be record, thread, or content.",
+                title="Bookmark",
+            )
+            return
+        if not self._bookmarks_loaded:
+            self.notify("Bookmarks are still loading.", title="Bookmark")
+            return
+        if self._bookmark_write_pending:
+            self.notify("A bookmark change is already in progress.", title="Bookmark")
+            return
+        record = self._selected_bookmark_record()
+        if record is None:
+            self.notify("Select a record to bookmark.", title="Bookmark")
+            return
+        self._bookmark_write_pending = True
+        self._bookmark_write_generation += 1
+        generation = self._bookmark_write_generation
+        emit = _runtime.make_gated_emitter(
+            self.app.call_from_thread,
+            self._apply_bookmark_mutation,
+            generation,
+        )
+        self.run_worker(
+            functools.partial(
+                self._toggle_bookmark_in_thread,
+                self._bookmark_store,
+                record,
+                t.cast("bookmarks.BookmarkScope", scope),
+                emit,
+            ),
+            name="bookmark-write",
+            group="bookmark-write",
+            thread=True,
+            exclusive=True,
+        )
+
+    @_runtime.offload
+    def _toggle_bookmark_in_thread(
+        self,
+        store: bookmarks.BookmarkStore,
+        record: SearchRecord,
+        scope: bookmarks.BookmarkScope,
+        emit: cabc.Callable[[object], None],
+    ) -> None:
+        """Prepare one canonical target and complete its transaction off-pump."""
+        try:
+            entry = bookmarks.bookmark_entry_for_record(record, scope=scope)
+            mutation = store.toggle(entry)
+        except bookmarks.BookmarkError as exc:
+            payload = _BookmarkToggleResult(record, None, str(exc))
+        except Exception:
+            payload = _BookmarkToggleResult(record, None, "Bookmark change failed")
+        else:
+            payload = _BookmarkToggleResult(record, mutation, None)
+        emit(payload)
+
+    @_runtime.pump_only
+    def _apply_bookmark_mutation(self, generation: int, event: object) -> None:
+        """Apply exactly one accepted transaction result on the pump."""
+        if generation != self._bookmark_write_generation or not isinstance(
+            event,
+            _BookmarkToggleResult,
+        ):
+            return
+        self._bookmark_write_pending = False
+        if not self._has_live_screen_stack():
+            return
+        if event.error is not None or event.mutation is None:
+            self.notify(
+                event.error or "Bookmark change failed",
+                title="Bookmark",
+                severity="error",
+            )
+            return
+        mutation = event.mutation
+        entry = mutation.entry
+        if mutation.action == "added" and entry is not None:
+            if entry.target_id not in self._bookmarked_ids:
+                self._bookmark_entries.append(entry)
+            self._bookmarked_ids.add(entry.target_id)
+        elif mutation.action == "removed" and entry is not None:
+            self._bookmark_entries = [
+                item for item in self._bookmark_entries if item.target_id != entry.target_id
+            ]
+            self._bookmarked_ids.discard(entry.target_id)
+        self._refresh_current_bookmark_marker(event.record)
+        if mutation.action == "added":
+            self.notify(f"Bookmarked {entry.scope if entry is not None else 'record'}.")
+        elif mutation.action == "removed":
+            self.notify(f"Removed {entry.scope if entry is not None else 'record'} bookmark.")
+
+    def _refresh_current_bookmark_marker(
+        self,
+        record: SearchRecord | None = None,
+    ) -> None:
+        """Rebuild only the current header from an already-prepared identity."""
+        current = self._current_detail_record
+        if current is None or (record is not None and current is not record):
+            return
+        identity = self._cached_detail_identity(current)
+        if identity is None or self._detail is None:
+            return
+        width = max(20, self._detail.size.width or 80)
+        self._replace_detail_header(self._build_detail_header(current, identity, width=width))
+
+    @_runtime.pump_only
+    def open_bookmarks(self) -> None:
+        """Resolve the loaded snapshot through a fresh scope-all search worker."""
+        if not self._bookmarks_loaded:
+            self.notify("Bookmarks are still loading.", title="Bookmarks")
+            return
+        if isinstance(getattr(self.app, "screen", None), BookmarkRecall):
+            return
+        if self._bookmark_resolution_control is not None:
+            self._bookmark_resolution_control.request_answer_now()
+        self._bookmark_resolution_generation += 1
+        generation = self._bookmark_resolution_generation
+        entries = tuple(self._bookmark_entries)
+        if not entries:
+            self._bookmark_resolution_control = None
+            self._apply_bookmark_resolution(
+                generation,
+                _BookmarkResolution(choices=(), error=None),
+            )
+            return
+        control = SearchControl()
+        self._bookmark_resolution_control = control
+        query = SearchQuery(
+            terms=(),
+            scope="all",
+            any_term=False,
+            regex=False,
+            case_sensitive=False,
+            agents=AGENT_CHOICES,
+            limit=None,
+            dedupe=False,
+        )
+        emit = _runtime.make_gated_emitter(
+            self.app.call_from_thread,
+            self._apply_bookmark_resolution,
+            generation,
+        )
+        self.run_worker(
+            functools.partial(
+                self._resolve_bookmarks_in_thread,
+                self._invoker,
+                entries,
+                query,
+                control,
+                emit,
+            ),
+            name="bookmark-resolve",
+            group="bookmark-resolve",
+            thread=True,
+            exclusive=True,
+        )
+
+    @_runtime.offload
+    def _resolve_bookmarks_in_thread(
+        self,
+        invoker: SearchInvoker,
+        entries: tuple[bookmarks.BookmarkEntry, ...],
+        query: SearchQuery,
+        control: SearchControl,
+        emit: cabc.Callable[[object], None],
+    ) -> None:
+        """Search and hash candidates off-pump until every target resolves."""
+        from agentgrep.identity import record_identity
+
+        unresolved = {entry.target_id: entry for entry in entries}
+        resolved: dict[str, SearchRecord] = {}
+
+        def consume(event: object) -> None:
+            if not isinstance(event, StreamingRecordsBatch) or not unresolved:
+                return
+            for record in event.records:
+                if control.answer_now_requested():
+                    return
+                identity = record_identity(record)
+                candidates = (
+                    identity.record_id,
+                    identity.thread_id,
+                    identity.content_id,
+                )
+                for target_id in candidates:
+                    if target_id is None or target_id not in unresolved:
+                        continue
+                    entry = unresolved[target_id]
+                    if entry.scope == "record" and entry.content_id != identity.content_id:
+                        continue
+                    resolved[target_id] = record
+                    unresolved.pop(target_id)
+                if not unresolved:
+                    control.request_answer_now()
+                    return
+
+        error: str | None = None
+        try:
+            invoker.run(query, control=control, emit=consume)
+        except BaseException:
+            error = "Bookmark resolution failed"
+        cancelled = bool(unresolved) and control.answer_now_requested() and error is None
+        choices = tuple(BookmarkChoice(entry, resolved.get(entry.target_id)) for entry in entries)
+        emit(_BookmarkResolution(choices=choices, error=error, cancelled=cancelled))
+
+    @_runtime.pump_only
+    def _apply_bookmark_resolution(self, generation: int, event: object) -> None:
+        """Open recall for the live resolver generation when the stack exists."""
+        if (
+            generation != self._bookmark_resolution_generation
+            or not isinstance(event, _BookmarkResolution)
+            or not self._has_live_screen_stack()
+        ):
+            return
+        self._bookmark_resolution_control = None
+        if event.cancelled:
+            return
+        if event.error is not None:
+            self.notify(event.error, title="Bookmarks", severity="error")
+        self.app.push_screen(BookmarkRecall(event.choices), self._apply_bookmark_choice)
+
+    @_runtime.pump_only
+    def _apply_bookmark_choice(self, choice: BookmarkChoice | None) -> None:
+        """Present a resolved record or report one path-free unavailable target."""
+        if choice is None or not self._has_live_screen_stack():
+            return
+        if choice.record is None:
+            self.notify(
+                f"{choice.entry.target_id} is unavailable in the current stores.",
+                title="Bookmarks",
+            )
+            return
+        self._detail_opened = True
+        self._apply_responsive_layout()
+        self.show_detail(choice.record)
 
     def _build_search_query(self, text: str) -> SearchQuery:
         """Build a fresh :class:`SearchQuery` from the search-bar text.
@@ -1884,8 +2271,14 @@ class HudLayout(LayoutScreen):
         for label, value, value_style in leading_rows:
             header.append(f"{label} ", style="bold")
             header.append(f"{value}\n", style=value_style)
+        record_id = None if identity is None else identity.record_id
+        record_value = (
+            f"★ {record_id}"
+            if record_id is not None and record_id in self._bookmarked_ids
+            else record_id
+        )
         identity_rows = (
-            ("Record:", None if identity is None else identity.record_id),
+            ("Record:", record_value),
             ("Content:", None if identity is None else identity.content_id),
             ("Thread:", None if identity is None else identity.thread_id),
         )
@@ -2804,7 +3197,11 @@ class HudLayout(LayoutScreen):
         Extension point: when a second cancellable action lands (async
         detail-fetch, debounced refilter, etc.), add its state here.
         """
-        return not self._search_done
+        resolving = (
+            self._bookmark_resolution_control is not None
+            and not self._bookmark_resolution_control.answer_now_requested()
+        )
+        return resolving or not self._search_done
 
     def _cancel_active_action(self) -> None:
         """Cancel the topmost in-flight cancellable action.
@@ -2813,5 +3210,9 @@ class HudLayout(LayoutScreen):
         most-recently-started order so ``Ctrl-C`` peels them off one at a
         time before exiting.
         """
-        if not self._search_done:
+        if self._bookmark_resolution_control is not None:
+            self._bookmark_resolution_control.request_answer_now()
+            self._bookmark_resolution_control = None
+            self._bookmark_resolution_generation += 1
+        elif not self._search_done:
             self.control.request_answer_now()
