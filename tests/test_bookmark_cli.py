@@ -20,6 +20,14 @@ THREAD_ID = "agt1:33333333333333333333333333"
 CREATED_AT = "2026-07-12T12:00:00Z"
 
 
+def test_bookmark_cli_contracts_are_public() -> None:
+    from agentgrep.cli.parser import BookmarkArgs
+    from agentgrep.cli.render import run_bookmark_command
+
+    assert agentgrep.BookmarkArgs is BookmarkArgs
+    assert agentgrep.run_bookmark_command is run_bookmark_command
+
+
 @pytest.mark.parametrize(
     ("argv", "expected"),
     [
