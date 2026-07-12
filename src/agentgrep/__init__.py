@@ -284,7 +284,7 @@ from agentgrep.readers import (
     _loads,
     _looks_like_protobuf_message,
     _PeriodicYield,
-    _read_first_jsonl_header,
+    _read_first_matching_jsonl_record,
     _read_varint,
     _record_engine_profile_sample,
     _record_readonly_command_profile,

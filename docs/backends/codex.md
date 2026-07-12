@@ -149,10 +149,12 @@ they land in the {ref}`lossless tier <backend-cwd-tiers>` and answer
 `--cwd`, `cwd:`, and `branch:` with the real values.
 
 A rollout's `session_meta` header names `model_provider` — the provider
-id, not a model slug — so the session model is read from the first
+id, not a model slug — so the session model is read from the first valid
 per-turn `turn_context` record instead, which is where Codex writes the
-slug the session actually ran as. `session_meta` is the fallback for a
-rollout that has no `turn_context` at all.
+slug the session actually ran as. The reader scans complete JSONL records,
+discarding unrelated large records in bounded chunks rather than imposing a
+fixed byte cutoff. `session_meta` is the fallback only when the rollout has
+no valid model-bearing `turn_context` record.
 
 A {storage:storeref}`codex.state_db` `threads` row keeps the model, the
 working directory, the git branch, and the remote URL beside the prompt

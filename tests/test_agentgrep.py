@@ -1777,6 +1777,66 @@ def test_iter_jsonl_prefix_skip_with_full_line_predicate(
     assert any("needle-far" in call for call in full_calls)
 
 
+class FirstJsonlRecordCase(t.NamedTuple):
+    """One top-level discriminator accepted after a nested marker decoy."""
+
+    test_id: str
+    marker: str
+    record_type: str
+
+
+FIRST_JSONL_RECORD_CASES: tuple[FirstJsonlRecordCase, ...] = (
+    FirstJsonlRecordCase(
+        test_id="codex-session-meta",
+        marker='"type":"session_meta"',
+        record_type="session_meta",
+    ),
+    FirstJsonlRecordCase(
+        test_id="codex-turn-context",
+        marker='"type":"turn_context"',
+        record_type="turn_context",
+    ),
+    FirstJsonlRecordCase(
+        test_id="pi-session",
+        marker='"type":"session"',
+        record_type="session",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    FirstJsonlRecordCase._fields,
+    [pytest.param(*case, id=case.test_id) for case in FIRST_JSONL_RECORD_CASES],
+)
+def test_read_first_matching_jsonl_record_requires_an_accepted_top_level_type(
+    test_id: str,
+    marker: str,
+    record_type: str,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Prefix markers nominate candidates; decoded record types decide acceptance."""
+    _ = test_id
+    path = tmp_path / "records.jsonl"
+    write_jsonl(
+        path,
+        [
+            {
+                "type": "noise",
+                "payload": {"type": record_type, "value": "decoy"},
+            },
+            {"type": record_type, "value": "canonical"},
+        ],
+    )
+
+    record = _rm_readers._read_first_matching_jsonl_record(
+        path,
+        marker,
+        accept_record=lambda candidate: candidate.get("type") == record_type,
+    )
+
+    assert record == {"type": record_type, "value": "canonical"}
+
+
 class TwoStageSkipCase(t.NamedTuple):
     """One Codex session layout and its expected raw-prefilter skip path."""
 
@@ -2190,23 +2250,70 @@ class CodexTurnContextCase(t.NamedTuple):
     test_id: str
     reverse: bool
     prefilter: bool
+    position: t.Literal["before", "straddle", "beyond"]
 
 
 CODEX_TURN_CONTEXT_CASES: tuple[CodexTurnContextCase, ...] = (
-    CodexTurnContextCase(test_id="forward", reverse=False, prefilter=False),
-    CodexTurnContextCase(test_id="reverse", reverse=True, prefilter=False),
-    CodexTurnContextCase(test_id="raw-prefilter", reverse=False, prefilter=True),
-    CodexTurnContextCase(test_id="raw-prefilter-reverse", reverse=True, prefilter=True),
+    CodexTurnContextCase(
+        test_id="before-forward",
+        reverse=False,
+        prefilter=False,
+        position="before",
+    ),
+    CodexTurnContextCase(
+        test_id="before-reverse",
+        reverse=True,
+        prefilter=False,
+        position="before",
+    ),
+    CodexTurnContextCase(
+        test_id="before-prefilter",
+        reverse=False,
+        prefilter=True,
+        position="before",
+    ),
+    CodexTurnContextCase(
+        test_id="straddle-forward",
+        reverse=False,
+        prefilter=False,
+        position="straddle",
+    ),
+    CodexTurnContextCase(
+        test_id="beyond-forward",
+        reverse=False,
+        prefilter=False,
+        position="beyond",
+    ),
+    CodexTurnContextCase(
+        test_id="beyond-reverse",
+        reverse=True,
+        prefilter=False,
+        position="beyond",
+    ),
+    CodexTurnContextCase(
+        test_id="beyond-prefilter",
+        reverse=False,
+        prefilter=True,
+        position="beyond",
+    ),
+    CodexTurnContextCase(
+        test_id="beyond-prefilter-reverse",
+        reverse=True,
+        prefilter=True,
+        position="beyond",
+    ),
 )
 
 
 @pytest.mark.parametrize(
-    "case",
-    CODEX_TURN_CONTEXT_CASES,
-    ids=[c.test_id for c in CODEX_TURN_CONTEXT_CASES],
+    CodexTurnContextCase._fields,
+    [pytest.param(*case, id=case.test_id) for case in CODEX_TURN_CONTEXT_CASES],
 )
 def test_parse_codex_session_reads_model_from_turn_context(
-    case: CodexTurnContextCase,
+    test_id: str,
+    reverse: bool,
+    prefilter: bool,
+    position: t.Literal["before", "straddle", "beyond"],
     tmp_path: pathlib.Path,
 ) -> None:
     """The Codex model slug comes from ``turn_context``, on every read path.
@@ -2214,36 +2321,49 @@ def test_parse_codex_session_reads_model_from_turn_context(
     ``session_meta`` names only ``model_provider`` — the provider id — so
     reading it as the model labelled every Codex record ``openai``.
 
-    The four cases are the four ways the engine reads a rollout: forward,
-    bounded reverse, and either of those behind the raw text prefilter that
-    ``grep`` installs. The prefilter drops the ``turn_context`` line before it
-    is decoded, so a parser that learned the slug in-loop would answer ``grep``
-    with a different model than ``search`` for one and the same record.
+    Cases cover forward, reverse, and prefiltered reads while moving the first
+    complete ``turn_context`` record before, across, and beyond the former
+    64-KiB head boundary. The unrelated padding line must be discarded without
+    materializing it as a decoded JSON object.
     """
+    _ = test_id
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     path = tmp_path / "rollout-abc.jsonl"
-    write_jsonl(
-        path,
-        [
+    session_meta = json.dumps(
+        {
+            "type": "session_meta",
+            "payload": {"id": "session-1", "model_provider": "openai"},
+        },
+    )
+    turn_context = json.dumps(
+        {
+            "type": "turn_context",
+            "payload": {"model": "gpt-5.4-codex", "cwd": "/work/demo"},
+        },
+    )
+    prompts = tuple(
+        json.dumps(
             {
-                "type": "session_meta",
-                "payload": {"id": "session-1", "model_provider": "openai"},
-            },
-            {
-                "type": "turn_context",
-                "payload": {"model": "gpt-5.4-codex", "cwd": "/work/demo"},
-            },
-            {
-                "timestamp": "2026-01-01T00:00:00Z",
+                "timestamp": f"2026-01-01T00:0{index}:00Z",
                 "type": "response_item",
-                "payload": {"role": "user", "content": "bliss prompt"},
+                "payload": {"role": "user", "content": text},
             },
-            {
-                "timestamp": "2026-01-01T00:01:00Z",
-                "type": "response_item",
-                "payload": {"role": "user", "content": "bliss second"},
-            },
-        ],
+        )
+        for index, text in enumerate(("bliss prompt", "bliss second"))
+    )
+    prefix = f"{session_meta}\n"
+    if position != "before":
+        target = 65536 - 8 if position == "straddle" else 65536 + 1024
+        empty_noise = json.dumps({"type": "noise", "payload": {"padding": ""}})
+        padding_length = target - len(prefix.encode()) - len(empty_noise.encode()) - 1
+        noise = json.dumps(
+            {"type": "noise", "payload": {"padding": "x" * padding_length}},
+        )
+        prefix = f"{prefix}{noise}\n"
+        assert len(prefix.encode()) == target
+    _ = path.write_text(
+        "\n".join((f"{prefix}{turn_context}", *prompts)),
+        encoding="utf-8",
     )
     source = agentgrep.SourceHandle(
         agent="codex",
@@ -2262,14 +2382,94 @@ def test_parse_codex_session_reads_model_from_turn_context(
     records = list(
         agentgrep.parse_codex_session_file(
             source,
-            raw_skip_line=raw_skip_line if case.prefilter else None,
-            reverse=case.reverse,
+            raw_skip_line=raw_skip_line if prefilter else None,
+            reverse=reverse,
         ),
     )
 
     assert len(records) == 2
     assert {record.model for record in records} == {"gpt-5.4-codex"}
     assert {record.session_id for record in records} == {"session-1"}
+
+
+class CodexFirstValidContextCase(t.NamedTuple):
+    """One invalid context record preceding a valid model record."""
+
+    test_id: str
+    invalid_line: str
+
+
+CODEX_FIRST_VALID_CONTEXT_CASES: tuple[CodexFirstValidContextCase, ...] = (
+    CodexFirstValidContextCase(
+        test_id="nested-context-marker",
+        invalid_line=json.dumps(
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "turn_context",
+                    "model": "wrong-model",
+                },
+            },
+        ),
+    ),
+    CodexFirstValidContextCase(
+        test_id="malformed-context",
+        invalid_line='{"type":"turn_context","payload":',
+    ),
+    CodexFirstValidContextCase(
+        test_id="context-without-model",
+        invalid_line=json.dumps({"type": "turn_context", "payload": {"cwd": "/work"}}),
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    CodexFirstValidContextCase._fields,
+    [pytest.param(*case, id=case.test_id) for case in CODEX_FIRST_VALID_CONTEXT_CASES],
+)
+def test_parse_codex_session_uses_first_valid_turn_context(
+    test_id: str,
+    invalid_line: str,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Malformed or model-free contexts do not hide the first valid model."""
+    _ = test_id
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    path = tmp_path / "rollout-first-valid.jsonl"
+    rows = (
+        json.dumps(
+            {
+                "type": "session_meta",
+                "payload": {"id": "session-1", "model_provider": "openai"},
+            },
+        ),
+        invalid_line,
+        json.dumps({"type": "noise", "payload": {"padding": "x" * 65536}}),
+        json.dumps(
+            {"type": "turn_context", "payload": {"model": "gpt-first-valid"}},
+        ),
+        json.dumps(
+            {
+                "type": "response_item",
+                "payload": {"role": "user", "content": "bliss prompt"},
+            },
+        ),
+    )
+    _ = path.write_text("\n".join(rows), encoding="utf-8")
+    source = agentgrep.SourceHandle(
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=path,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=1,
+    )
+
+    records = list(agentgrep.parse_codex_session_file(source))
+
+    assert {record.model for record in records} == {"gpt-first-valid"}
 
 
 def test_parse_codex_session_model_falls_back_to_session_meta(

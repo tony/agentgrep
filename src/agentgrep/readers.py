@@ -662,17 +662,35 @@ _PI_SESSION_HEADER_MARKER = '"type":"session"'
 """Space-stripped prefix marker for the pi session header line."""
 
 
-def _read_first_jsonl_header(
+def _read_first_matching_jsonl_record(
     path: pathlib.Path,
     marker: str,
+    *,
+    accept_record: cabc.Callable[[dict[str, object]], bool],
 ) -> dict[str, object] | None:
-    """Decode the first JSONL line bearing a header marker.
+    """Decode the first prefix-marked JSONL mapping accepted by a predicate.
 
-    Scans forward with the bounded prefix check used by the raw skip
-    predicates, decoding only the matching line, so reverse scans can
-    seed header state without paying a full forward parse. Assumes the
-    canonical single leading header; later header updates are not
-    positionally attributed.
+    Scans forward using the raw-skip reader's bounded prefix and checks
+    ``marker`` within the first 512 decoded characters after removing ASCII
+    spaces. Unrelated oversized lines are discarded incrementally; a marked
+    candidate is materialized completely so JSON decoding and
+    ``accept_record`` can establish its semantic identity.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        JSONL file to scan.
+    marker : str
+        Space-stripped record marker expected in the bounded prefix.
+    accept_record : collections.abc.Callable
+        Semantic validator for decoded mappings. Malformed and rejected
+        matching records are skipped so callers can locate the first valid
+        record.
+
+    Returns
+    -------
+    dict[str, object] or None
+        First matching accepted record, or ``None`` when none exists.
     """
     try:
         with path.open("rb") as handle:
@@ -684,7 +702,8 @@ def _read_first_jsonl_header(
                     continue
                 prefix_text = prefix.decode("utf-8", errors="replace")
                 if marker not in prefix_text[:512].replace(" ", ""):
-                    _discard_rest_of_line(handle, prefix)
+                    if not prefix.endswith(b"\n"):
+                        _discard_rest_of_line(handle, prefix)
                     continue
                 raw_line = bytearray(prefix)
                 while raw_line and not raw_line.endswith(b"\n"):
@@ -695,10 +714,11 @@ def _read_first_jsonl_header(
                 try:
                     parsed = _loads(raw_line.decode("utf-8", errors="replace"))
                 except json.JSONDecodeError:
-                    return None
+                    continue
                 if isinstance(parsed, dict):
-                    return t.cast("dict[str, object]", parsed)
-                return None
+                    record = t.cast("dict[str, object]", parsed)
+                    if accept_record(record):
+                        return record
     except OSError:
         return None
 

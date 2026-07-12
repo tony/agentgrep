@@ -37,7 +37,7 @@ from agentgrep.readers import (
     _is_codex_function_call_output_line,
     _iter_jsonl,
     _keep_jsonl_header_lines,
-    _read_first_jsonl_header,
+    _read_first_matching_jsonl_record,
     as_optional_str,
     decode_sqlite_value,
     isoformat_from_mtime_ns,
@@ -428,17 +428,6 @@ _ORIGIN_MAPPING_KEYS: frozenset[str] = frozenset(
 _CODEX_TURN_CONTEXT_MARKER = '"type":"turn_context"'
 """Space-stripped prefix marker for a Codex per-turn context line."""
 
-_CODEX_HEAD_BYTES = 65536
-"""Bytes of a rollout's head scanned for the first ``turn_context`` line.
-
-Codex writes ``turn_context`` at the first turn, right after the
-``session_meta`` header, so the slug is always within the first few lines.
-Bounding the read keeps the lookup to one small chunk on a multi-megabyte
-rollout, and — because it happens before iteration rather than inside it —
-keeps the answer identical under forward, reverse, and raw-text-prefiltered
-scans, which each see a different subset of the file's lines.
-"""
-
 
 def _codex_session_meta_model(payload: dict[str, object]) -> str | None:
     """Read whatever model identity ``session_meta`` carries.
@@ -474,9 +463,9 @@ def _codex_session_meta_model(payload: dict[str, object]) -> str | None:
 def _codex_turn_context_model(path: pathlib.Path) -> str | None:
     """Read the model slug from a rollout's first ``turn_context`` record.
 
-    Scans only :data:`_CODEX_HEAD_BYTES` of the file head. A rollout with no
-    ``turn_context`` in that window keeps the ``session_meta`` fallback rather
-    than paying a whole extra pass to look for one.
+    The complete-record scanner checks bounded prefixes and discards unrelated
+    oversized lines in chunks, so model discovery is independent of an
+    arbitrary byte offset without materializing those lines.
 
     Parameters
     ----------
@@ -486,32 +475,25 @@ def _codex_turn_context_model(path: pathlib.Path) -> str | None:
     Returns
     -------
     str or None
-        The model slug, or ``None`` when the head carries no ``turn_context``.
+        The model slug, or ``None`` when the rollout carries no valid
+        ``turn_context``.
     """
-    try:
-        with path.open("rb") as handle:
-            head = handle.read(_CODEX_HEAD_BYTES)
-    except OSError:
+
+    def has_model(event: dict[str, object]) -> bool:
+        if event.get("type") != "turn_context":
+            return False
+        payload = event.get("payload")
+        return isinstance(payload, dict) and as_optional_str(payload.get("model")) is not None
+
+    event = _read_first_matching_jsonl_record(
+        path,
+        _CODEX_TURN_CONTEXT_MARKER,
+        accept_record=has_model,
+    )
+    payload = event.get("payload") if event is not None else None
+    if not isinstance(payload, dict):
         return None
-    lines = head.split(b"\n")
-    if len(head) >= _CODEX_HEAD_BYTES:
-        # The final line is probably truncated mid-record.
-        lines = lines[:-1]
-    for raw_line in lines:
-        text = raw_line.decode("utf-8", errors="replace")
-        if _CODEX_TURN_CONTEXT_MARKER not in text[:512].replace(" ", ""):
-            continue
-        try:
-            event = json.loads(text)
-        except json.JSONDecodeError:
-            return None
-        if not isinstance(event, dict):
-            return None
-        payload = t.cast("dict[str, object]", event).get("payload")
-        if not isinstance(payload, dict):
-            return None
-        return as_optional_str(t.cast("dict[str, object]", payload).get("model"))
-    return None
+    return as_optional_str(t.cast("dict[str, object]", payload).get("model"))
 
 
 def parse_codex_session_file(
@@ -532,9 +514,9 @@ def parse_codex_session_file(
     would mean decoding every ``turn_context`` line — thousands per session —
     through the raw text prefilter that exists to avoid exactly that, and the
     prefilter is installed on some read paths and not others, so the model
-    would then depend on which one ran. The first turn's model is one bounded
-    read, is what the session ran as, and is identical under forward, reverse,
-    and prefiltered iteration.
+    would then depend on which one ran. A prefix-gated forward scan finds the
+    first valid turn model and keeps it identical under forward, reverse, and
+    prefiltered iteration.
     """
     session_id = source.path.stem
     session_model: str | None = _codex_turn_context_model(source.path)
@@ -542,7 +524,11 @@ def parse_codex_session_file(
     if reverse:
         # Reverse iteration reads the leading session_meta header last,
         # so seed its state up front to keep emitted records canonical.
-        header = _read_first_jsonl_header(source.path, _CODEX_SESSION_META_MARKER)
+        header = _read_first_matching_jsonl_record(
+            source.path,
+            _CODEX_SESSION_META_MARKER,
+            accept_record=lambda record: record.get("type") == "session_meta",
+        )
         header_payload = header.get("payload") if header is not None else None
         if (
             header is not None
@@ -1813,7 +1799,11 @@ def parse_pi_session_file(
     if reverse:
         # Reverse iteration reads the leading session header last, so
         # seed its state up front to keep emitted records canonical.
-        header = _read_first_jsonl_header(source.path, _PI_SESSION_HEADER_MARKER)
+        header = _read_first_matching_jsonl_record(
+            source.path,
+            _PI_SESSION_HEADER_MARKER,
+            accept_record=lambda record: record.get("type") == "session",
+        )
         if header is not None and as_optional_str(header.get("type")) == "session":
             session_id = as_optional_str(header.get("id")) or session_id
             conversation_id = as_optional_str(header.get("cwd"))
