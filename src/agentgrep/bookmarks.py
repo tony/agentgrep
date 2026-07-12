@@ -277,8 +277,12 @@ def _fsync_directory(path: pathlib.Path) -> None:
 @contextlib.contextmanager
 def _exclusive_lock(path: pathlib.Path) -> t.Iterator[None]:
     """Hold one private sidecar lock for a complete store operation."""
-    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    flags = os.O_RDWR | os.O_CREAT | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags, 0o600)
     try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            msg = "bookmark lock is not a regular file"
+            raise OSError(msg)
         os.fchmod(fd, 0o600)
         fcntl.flock(fd, fcntl.LOCK_EX)
         try:
