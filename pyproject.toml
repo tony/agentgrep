@@ -266,8 +266,10 @@ convention = "numpy"
 
 [tool.ruff.lint.per-file-ignores]
 "*/__init__.py" = ["F401"]
-# These modules own intentional terminal output.
-"src/agentgrep/cli/render.py" = ["T201"]
+# This module owns intentional terminal output. Its export phase boundaries
+# also redact arbitrary adapter, renderer, and output failures before they can
+# expose store paths or record bodies on stderr.
+"src/agentgrep/cli/render.py" = ["T201", "BLE001"]
 # typer.Option / typer.Argument calls are metadata, not real callables —
 # B008 does not apply. E501 is suppressed because a few error messages
 # (e.g. the mutually-exclusive-selector message in _select_targets) read

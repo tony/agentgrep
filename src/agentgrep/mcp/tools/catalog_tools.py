@@ -7,7 +7,7 @@ import pathlib
 import typing as t
 
 from fastmcp.exceptions import ToolError
-from pydantic import Field
+from pydantic import Field, ValidationError
 
 from agentgrep.mcp import resolver
 from agentgrep.mcp._library import (
@@ -27,6 +27,7 @@ from agentgrep.mcp.models import (
     SearchRecordModel,
     StoreDescriptorModel,
 )
+from agentgrep.mcp.refs import MAX_RECORD_REF_CHARS
 from agentgrep.store_catalog import CATALOG
 
 if t.TYPE_CHECKING:
@@ -266,8 +267,15 @@ def register(mcp: FastMCP) -> None:
     )
     async def inspect_result_tool(
         ref: t.Annotated[
-            str,
-            Field(min_length=1, description="Opaque ref from a search or find result."),
+            t.Any,
+            Field(
+                description="Opaque ref from a search or find result.",
+                json_schema_extra={
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": MAX_RECORD_REF_CHARS,
+                },
+            ),
         ],
         sample_size: t.Annotated[
             int,
@@ -279,7 +287,11 @@ def register(mcp: FastMCP) -> None:
             ),
         ] = 1,
     ) -> InspectResultResponse:
-        request = InspectResultRequest(ref=ref, sample_size=sample_size)
+        try:
+            request = InspectResultRequest(ref=ref, sample_size=sample_size)
+        except ValidationError:
+            message = "invalid inspect request"
+            raise ToolError(message) from None
         return await asyncio.to_thread(_inspect_result_sync, request)
 
     _ = inspect_result_tool
