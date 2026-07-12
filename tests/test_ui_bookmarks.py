@@ -166,9 +166,9 @@ async def test_modal_navigation_updates_one_line_preview() -> None:
 
 async def test_modal_preview_renders_record_text_literally() -> None:
     """Record markup-like text stays literal in the mounted preview."""
-    BookmarkChoice, _BookmarkRecall = _bookmark_widgets()
+    bookmark_choice_type, _bookmark_recall_type = _bookmark_widgets()
     record = _record(title="literal [/bold] preview")
-    choice = BookmarkChoice(
+    choice = bookmark_choice_type(
         BookmarkEntry(_RECORD_ID, "record", _CONTENT_ID, _CREATED_AT),
         record,
     )
@@ -699,6 +699,53 @@ async def test_record_switch_during_mutation_does_not_repaint_old_record(
         assert first_identity.record_id in app.screen._bookmarked_ids
         header = app.screen._build_detail_header(second, second_identity, width=120).plain
         assert "★" not in header
+
+
+async def test_mutation_marks_distinct_live_record_with_same_identity(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A mutation refreshes an equivalent live record by cached canonical ID."""
+    from agentgrep import identity
+    from agentgrep.ui.layouts import hud
+
+    toggled = _record(suffix="canonical-match")
+    equivalent = _record(suffix="canonical-match")
+    unrelated = _record(suffix="canonical-other")
+    prepared = record_identity(toggled)
+    assert toggled is not equivalent
+    assert prepared.record_id is not None
+    entry = BookmarkEntry(prepared.record_id, "record", prepared.content_id, _CREATED_AT)
+    app = _bookmark_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await _settle_workers(app, pilot)
+        screen = app.screen
+        screen.show_detail(unrelated)
+        await _settle_workers(app, pilot)
+        screen.show_detail(equivalent)
+        await _settle_workers(app, pilot)
+        monkeypatch.setattr(
+            identity,
+            "record_identity",
+            lambda _record: pytest.fail("mutation refresh must reuse cached identities"),
+        )
+        screen._bookmark_write_pending = True
+        screen._bookmark_write_generation += 1
+
+        screen._apply_bookmark_mutation(
+            screen._bookmark_write_generation,
+            hud._BookmarkToggleResult(
+                toggled,
+                BookmarkMutation("added", entry),
+                None,
+            ),
+        )
+
+        assert f"Record: ★ {prepared.record_id}" in screen._detail_header_text.plain
+        screen.show_detail(unrelated)
+        await pilot.pause()
+        assert "★" not in screen._detail_header_text.plain
 
 
 async def test_resolution_uses_scope_all_and_stops_when_targets_resolve(
