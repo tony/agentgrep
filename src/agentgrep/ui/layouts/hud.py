@@ -1135,6 +1135,7 @@ class HudLayout(LayoutScreen):
             ),
             name="bookmark-load",
             group="bookmark-load",
+            description="load bookmark snapshot",
             thread=True,
             exclusive=True,
         )
@@ -1247,6 +1248,7 @@ class HudLayout(LayoutScreen):
             ),
             name="bookmark-write",
             group="bookmark-write",
+            description="persist bookmark change",
             thread=True,
             exclusive=True,
         )
@@ -1375,6 +1377,7 @@ class HudLayout(LayoutScreen):
             ),
             name="bookmark-resolve",
             group="bookmark-resolve",
+            description="resolve bookmark targets",
             thread=True,
             exclusive=True,
         )

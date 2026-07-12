@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import collections.abc as cabc
-import logging
 import pathlib
 import threading
 import time
@@ -166,9 +165,9 @@ async def test_modal_navigation_updates_one_line_preview() -> None:
 
 async def test_modal_preview_renders_record_text_literally() -> None:
     """Record markup-like text stays literal in the mounted preview."""
-    BookmarkChoice, _BookmarkRecall = _bookmark_widgets()
+    bookmark_choice, _bookmark_recall = _bookmark_widgets()
     record = _record(title="literal [/bold] preview")
-    choice = BookmarkChoice(
+    choice = bookmark_choice(
         BookmarkEntry(_RECORD_ID, "record", _CONTENT_ID, _CREATED_AT),
         record,
     )
@@ -516,6 +515,7 @@ async def test_rapid_double_b_accepts_one_mutation(
         assert spawned[0][1] == {
             "name": "bookmark-write",
             "group": "bookmark-write",
+            "description": "persist bookmark change",
             "thread": True,
             "exclusive": True,
         }
@@ -811,13 +811,12 @@ BOOKMARK_RESOLVER_SCAN_CASES = (
     BOOKMARK_RESOLVER_SCAN_CASES,
     ids=[case.test_id for case in BOOKMARK_RESOLVER_SCAN_CASES],
 )
-async def test_watchdog_resolver_scans_every_candidate_off_pump(
+async def test_resolver_scan_keeps_pump_live_through_every_candidate(
     case: BookmarkResolverScanCase,
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Target-last and target-absent recall exercise all 200 candidates."""
+    """The pump advances while target-last and target-absent scan all candidates."""
     import agentgrep.identity as identity
     from agentgrep.ui import _runtime
 
@@ -833,45 +832,50 @@ async def test_watchdog_resolver_scans_every_candidate_off_pump(
         else BookmarkEntry(_MISSING_ID, "content", None, _CREATED_AT)
     )
     calls: list[SearchRecord] = []
+    started = threading.Event()
+    release = threading.Event()
+    pump_live = asyncio.Event()
     real_identity = identity.record_identity
 
     def guarded_identity(record: SearchRecord) -> identity.RecordIdentity:
         _runtime.assert_off_pump("full bookmark candidate scan")
         calls.append(record)
+        if len(calls) == 1:
+            started.set()
+            assert release.wait(timeout=10)
         time.sleep(0.002)
         return real_identity(record)
 
-    real_start_watchdog = _runtime.start_pump_watchdog
     monkeypatch.setattr(identity, "record_identity", guarded_identity)
-    monkeypatch.setattr(_runtime, "HEARTBEAT_INTERVAL", 0.01)
-    monkeypatch.setattr(
-        _runtime,
-        "start_pump_watchdog",
-        lambda: real_start_watchdog(stall_threshold_ms=250, poll_seconds=0.01),
-    )
+    monkeypatch.setattr(_runtime, "start_pump_watchdog", lambda: None)
     monkeypatch.setenv("AGENTGREP_TUI_WATCHDOG", "1")
     invoker = _ResolutionInvoker(records)
     app = _bookmark_app(tmp_path, monkeypatch, invoker=invoker)
 
-    with caplog.at_level(logging.WARNING, logger="agentgrep.ui._runtime"):
-        async with app.run_test(size=(120, 30)) as pilot:
-            await _settle_workers(app, pilot)
-            app.screen._bookmark_entries = [entry]
-            app.screen._bookmarked_ids = {entry.target_id}
-            app.screen.open_bookmarks()
-            await _settle_workers(app, pilot)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await _settle_workers(app, pilot)
+        app.screen._bookmark_entries = [entry]
+        app.screen._bookmarked_ids = {entry.target_id}
 
-            _bookmark_choice, bookmark_recall = _bookmark_widgets()
-            assert isinstance(app.screen, bookmark_recall)
-            assert calls == list(records)
-            assert invoker.controls[0].answer_now_requested() is case.target_last
-            assert (app.screen._matches[0].record is records[-1]) is case.target_last
-            assert not [
-                record
-                for record in caplog.records
-                if hasattr(record, "agentgrep_pump_stall_ms")
-                or hasattr(record, "agentgrep_pump_blocking_event")
-            ]
+        def mark_pump_live() -> None:
+            _runtime.assert_on_pump("bookmark resolver probe")
+            pump_live.set()
+
+        try:
+            app.screen.open_bookmarks()
+            assert await asyncio.to_thread(started.wait, 5)
+            app.call_later(mark_pump_live)
+            await asyncio.wait_for(pump_live.wait(), timeout=5)
+            assert calls == [records[0]]
+        finally:
+            release.set()
+        await _settle_workers(app, pilot)
+
+        _bookmark_choice, bookmark_recall = _bookmark_widgets()
+        assert isinstance(app.screen, bookmark_recall)
+        assert calls == list(records)
+        assert invoker.controls[0].answer_now_requested() is case.target_last
+        assert (app.screen._matches[0].record is records[-1]) is case.target_last
 
 
 async def test_toggle_during_resolution_invalidates_stale_modal_and_later_recall(
