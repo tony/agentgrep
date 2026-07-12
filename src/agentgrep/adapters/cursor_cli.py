@@ -65,7 +65,6 @@ def parse_cursor_cli_transcript(
     native_session_id = _catalog_uuid_path_token(source)
     fallback_timestamp = isoformat_from_mtime_ns(source.mtime_ns)
     session_origin = _discovered_origin(source)
-    seen: set[tuple[str | None, str, str | None, str | None]] = set()
     for raw_index, event in enumerate(iter_jsonl(source.path)):
         for candidate in iter_message_candidates(
             event,
@@ -79,15 +78,6 @@ def parse_cursor_cli_transcript(
                 identity_namespace=("cursor.session" if native_session_id is not None else None),
                 position=_record_position(ordinal=raw_index),
             )
-            key = (
-                candidate.role,
-                candidate.text,
-                candidate.timestamp,
-                candidate.conversation_id,
-            )
-            if key in seen:
-                continue
-            seen.add(key)
             yield build_search_record(source, candidate)
 
 
