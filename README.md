@@ -36,6 +36,8 @@ newest first:
 $ agentgrep search "deploy"
 ```
 
+<a href="https://agentgrep.org/_static/demos/vhs/agentgrep-search.mp4"><img src="https://raw.githubusercontent.com/tony/agentgrep/master/docs/_static/demos/posters/agentgrep-search.png" alt="agentgrep search ranking matching prompts by relevance" width="100%" /></a>
+
 Search prompts and conversations together in one sweep:
 
 ```console
@@ -61,6 +63,8 @@ Open the read-only Textual explorer, seeded with a query:
 ```console
 $ agentgrep ui "deploy"
 ```
+
+<a href="https://agentgrep.org/_static/demos/vhs/agentgrep-ui.mp4"><img src="https://raw.githubusercontent.com/tony/agentgrep/master/docs/_static/demos/posters/agentgrep-ui.png" alt="agentgrep Textual explorer filtering local agent prompts" width="100%" /></a>
 
 `--json` and `--ndjson` make every command pipe-friendly, and any
 search-shaped subcommand takes `--ui` to hand the same query to the
