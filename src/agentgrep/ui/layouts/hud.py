@@ -115,6 +115,10 @@ class HudLayout(_HudSearchBase):
     syntax-highlight — is heavy enough to stall the event loop.
     """
 
+    # Detail width below which compact labels keep fixed-width identity
+    # handles on one visual row after the Static's horizontal padding.
+    _DETAIL_COMPACT_IDENTITY_WIDTH: t.ClassVar[int] = 42
+
     # Body width (cells) below which the detail pane moves from the
     # right (side-by-side) to the bottom (stacked) — each side wants
     # ~50 cells to stay readable. Distinct from the statusline
@@ -788,6 +792,7 @@ class HudLayout(_HudSearchBase):
             timer.stop()
         self._resize_debounce_timer = self.set_timer(0.05, self._after_resize)
 
+    @_runtime.pump_only
     def _after_resize(self) -> None:
         """Refresh chrome and re-flow the width-baked detail body on a resize."""
         # Recompute (not just repaint) because the result viewport's new height
@@ -806,6 +811,15 @@ class HudLayout(_HudSearchBase):
         # quantizes), mirroring the filter path. Raw source and the visual
         # overlay are plain Text that Textual re-wraps for free -- skip them.
         record = self._current_detail_record
+        if record is not None:
+            identity = self._cached_detail_identity(record)
+            self._replace_detail_header(
+                self._build_detail_header(
+                    record,
+                    identity,
+                    width=self._detail_render_width(),
+                ),
+            )
         if record is not None and not self._detail_visual_active and not self._detail_raw_mode:
             detail_key = self._detail_cache_key(self.search_query.terms, record)
             if detail_key != self._presented_detail_cache_key:
