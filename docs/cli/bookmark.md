@@ -10,13 +10,14 @@ is a complete canonical ID from {ref}`ADR 0015
 | Scope | Target | Meaning |
 | --- | --- | --- |
 | `content` | `agc1:` | Equal normalized role, kind, and text |
-| `record` | `agr1:` plus `--content-id` | One logical stored occurrence, checked against its `agc1:` content |
+| `record` | `agr1:`; `bookmark add` also needs `--content-id` | One logical stored occurrence, checked against its `agc1:` content |
 | `thread` | `agt1:` | One backend thread with a defensible native anchor |
 
 There are no short IDs or prefix lookups. Copy the complete canonical ID from a
-search result. A record target also requires its complete content ID; that
-second value prevents a stale or mismatched record bookmark from opening
-different content.
+search result. `--content-id` is required for `bookmark add` when its target is
+an `agr1:` record ID; the complete content ID prevents a stale or mismatched
+record bookmark from opening different content. `bookmark remove` does not
+accept that option; removal needs only the complete target ID.
 
 ## Add, list, and remove
 
@@ -60,11 +61,15 @@ Add and remove are idempotent. Human output reports `added`, `removed`, or
 `unchanged`; `--json` exposes the same action for scripts. Re-adding an existing
 target and removing an absent target both succeed as `unchanged`.
 
-The default capacity is 200 bookmarks. At capacity, an already-saved target
-still returns `unchanged`, removal still works, and a new target is refused
-without changing the saved list. Successful operations exit `0`; storage,
-validation, capacity, and corruption failures exit `1`. Argument errors are
-reported by the parser before the command runs.
+For a record target, re-add returns `unchanged` only when `--content-id` matches
+the same saved content validator. A different valid `agc1:` validator is a
+validation failure and exits `1`; it is not treated as unchanged.
+
+The default capacity is 200 bookmarks. At capacity, a matching re-add still
+returns `unchanged`, removal still works, and a new target is refused without
+changing the saved list. Successful operations exit `0`; storage, validation,
+capacity, and corruption failures exit `1`. Argument errors are reported by the
+parser before the command runs.
 
 (cli-bookmark-storage)=
 
