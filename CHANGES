@@ -36,11 +36,22 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a34 (Yet to be released)
+## agentgrep 0.1.0a35 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a34 (2026-07-12)
+
+agentgrep 0.1.0a34 widens project-aware search across the agent histories it
+already reads. Model, working directory, and branch now travel with records
+from more Codex, Cursor, Gemini, Grok, Pi, and Antigravity stores, so `model:`,
+`cwd:`, and `branch:` queries reach sessions that previously carried no project
+identity, and `--scope conversations` picks up readable state-backed histories
+that were invisible before. MCP hosts also learn that agentgrep never writes,
+which lets them stop asking for permission on every search. See
+{ref}`backend-project-context` for what each store can carry.
 
 ### What's new
 
@@ -57,6 +68,15 @@ histories that were previously invisible, while configuration and unreadable
 encrypted artifacts remain outside search. When a tool records only an
 ambiguous or hashed project identity, agentgrep preserves that uncertainty
 instead of inventing a working directory.
+
+#### MCP hosts can auto-approve agentgrep calls (#112)
+
+Every agentgrep MCP tool and resource now carries protocol-level behavior
+annotations: agentgrep is read-only, repeats the same call without extra
+effect, and reads only local on-disk agent stores rather than unbounded
+external entities. Hosts such as Claude Code, VS Code, and Cursor read those
+hints back when they list the server's tools, so a search can run without a
+permission prompt on every call.
 
 ### Fixes
 
