@@ -1225,6 +1225,10 @@ class HudLayout(LayoutScreen):
         if record is None:
             self.notify("Select a record to bookmark.", title="Bookmark")
             return
+        if self._bookmark_resolution_control is not None:
+            self._bookmark_resolution_control.request_answer_now()
+            self._bookmark_resolution_control = None
+            self._bookmark_resolution_generation += 1
         self._bookmark_write_pending = True
         self._bookmark_write_generation += 1
         generation = self._bookmark_write_generation
@@ -1321,6 +1325,9 @@ class HudLayout(LayoutScreen):
         """Resolve the loaded snapshot through a fresh scope-all search worker."""
         if not self._bookmarks_loaded:
             self.notify("Bookmarks are still loading.", title="Bookmarks")
+            return
+        if self._bookmark_write_pending:
+            self.notify("A bookmark change is already in progress.", title="Bookmarks")
             return
         if isinstance(getattr(self.app, "screen", None), BookmarkRecall):
             return

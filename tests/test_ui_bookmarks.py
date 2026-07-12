@@ -245,6 +245,36 @@ class _ResolutionInvoker:
         )
 
 
+class _BlockingResolutionInvoker(_ResolutionInvoker):
+    """Resolver seam that holds one in-flight search until the test releases it."""
+
+    def __init__(self, records: cabc.Sequence[SearchRecord]) -> None:
+        super().__init__(records)
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    def run(
+        self,
+        query: SearchQuery,
+        *,
+        control: SearchControl,
+        emit: cabc.Callable[[object], None],
+    ) -> None:
+        self.queries.append(query)
+        self.controls.append(control)
+        self.thread_ids.append(threading.get_ident())
+        self.started.set()
+        assert self.release.wait(timeout=5)
+        emit(StreamingRecordsBatch(records=self.records, total=len(self.records)))
+        emit(
+            StreamingSearchFinished(
+                outcome="interrupted" if control.answer_now_requested() else "complete",
+                total=len(self.records),
+                elapsed=0.01,
+            ),
+        )
+
+
 def _bookmark_app(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -444,6 +474,55 @@ async def test_rapid_double_b_accepts_one_mutation(
         assert app.screen._bookmark_write_pending is True
 
 
+async def test_recall_during_pending_write_does_not_snapshot_stale_entries(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Recall waits for the accepted durable mutation before taking a snapshot."""
+    record = _record(suffix="pending-recall")
+    prepared = record_identity(record)
+    assert prepared.record_id is not None
+    invoker = _ResolutionInvoker((record,))
+    app = _bookmark_app(tmp_path, monkeypatch, invoker=invoker)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await _settle_workers(app, pilot)
+        screen = app.screen
+        _seed_record(screen, record)
+        writes: list[t.Callable[[], None]] = []
+        notes: list[str] = []
+        real_run_worker = screen.run_worker
+
+        def capture_write(target: t.Callable[[], None], **kwargs: object) -> object:
+            if kwargs.get("group") == "bookmark-write":
+                writes.append(target)
+                return None
+            return real_run_worker(target, **kwargs)
+
+        monkeypatch.setattr(screen, "run_worker", capture_write)
+        monkeypatch.setattr(screen, "notify", lambda message, **_kwargs: notes.append(message))
+        screen.toggle_bookmark("record")
+        assert screen._bookmark_write_pending is True
+
+        screen.open_bookmarks()
+        await pilot.pause()
+
+        assert app.screen is screen
+        assert invoker.queries == []
+        assert notes[-1] == "A bookmark change is already in progress."
+
+        await asyncio.to_thread(writes[0])
+        await pilot.pause()
+        assert screen._bookmark_write_pending is False
+        screen.open_bookmarks()
+        await _settle_workers(app, pilot)
+
+        _BookmarkChoice, BookmarkRecall = _bookmark_widgets()
+        assert isinstance(app.screen, BookmarkRecall)
+        assert [choice.entry.target_id for choice in app.screen._matches] == [
+            prepared.record_id,
+        ]
+
+
 async def test_b_binding_is_focus_safe_for_search_input(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -617,6 +696,55 @@ async def test_resolution_uses_scope_all_and_stops_when_targets_resolve(
         assert all(thread_id != threading.get_ident() for _record, thread_id in calls)
         _bookmark_choice, bookmark_recall = _bookmark_widgets()
         assert isinstance(app.screen, bookmark_recall)
+
+
+async def test_toggle_during_resolution_invalidates_stale_modal_and_later_recall(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An accepted toggle cancels recall before its durable write is launched."""
+    record = _record(suffix="toggle-during-resolution")
+    prepared = record_identity(record)
+    assert prepared.record_id is not None
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    BookmarkStore().add(
+        prepared.record_id,
+        content_id=prepared.content_id,
+        created_at=_CREATED_AT,
+    )
+    invoker = _BlockingResolutionInvoker((record,))
+    app = _bookmark_app(tmp_path, monkeypatch, invoker=invoker)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await _settle_workers(app, pilot)
+        screen = app.screen
+        _seed_record(screen, record)
+        screen.open_bookmarks()
+        assert await asyncio.to_thread(invoker.started.wait, 1)
+        control = screen._bookmark_resolution_control
+        assert control is not None
+        generation = screen._bookmark_resolution_generation
+
+        screen.toggle_bookmark("record")
+        cancelled_before_write_completed = control.answer_now_requested()
+        generation_after_accept = screen._bookmark_resolution_generation
+        for _attempt in range(100):
+            if not screen._bookmark_write_pending:
+                break
+            await pilot.pause(0.01)
+        durable_entries = await asyncio.to_thread(screen._bookmark_store.list)
+        invoker.release.set()
+        await _settle_workers(app, pilot)
+
+        assert cancelled_before_write_completed is True
+        assert generation_after_accept == generation + 1
+        assert durable_entries == []
+        assert app.screen is screen
+
+        screen.open_bookmarks()
+        await pilot.pause()
+        _BookmarkChoice, BookmarkRecall = _bookmark_widgets()
+        assert isinstance(app.screen, BookmarkRecall)
+        assert app.screen._matches == []
 
 
 async def test_record_resolution_requires_matching_content_validation(
