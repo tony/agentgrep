@@ -53,7 +53,11 @@ from agentgrep.query import default_registry
 from agentgrep.records import SearchQuery, SearchRecord
 from agentgrep.ui import _history, _runtime, commands, theme as ui_theme
 from agentgrep.ui._context import UiContext
-from agentgrep.ui._source_diagnostics import UiProgressSnapshot
+from agentgrep.ui._source_diagnostics import (
+    SourceScanFinished,
+    SourceScanStarted,
+    UiProgressSnapshot,
+)
 from agentgrep.ui.completion import (
     QuerySuggester,
     apply_enum_choice,
@@ -164,6 +168,7 @@ class HudLayout(LayoutScreen):
         self._search_done = False
         self._started_at: float | None = None
         self._last_snapshot: ProgressSnapshot | None = None
+        self._active_source_snapshots: dict[int, ProgressSnapshot] = {}
         self._searching_panel: SearchingPanel | None = None
         # Persisted search-input history (agentgrep's only self-written
         # state — under XDG_STATE_HOME, never a searched store). Loaded once
@@ -559,6 +564,7 @@ class HudLayout(LayoutScreen):
         self._search_done = False
         self._started_at = None
         self._last_snapshot = None
+        self._active_source_snapshots.clear()
         self._current_detail_record = None
         # A fresh search re-collapses the stacked detail pane until
         # the user selects a row again.
@@ -629,9 +635,9 @@ class HudLayout(LayoutScreen):
         if isinstance(event, StreamingRecordsBatch):
             await self._apply_records_batch(event.records, event.total)
         elif isinstance(event, UiProgressSnapshot):
-            self._apply_progress(event.snapshot)
             if self._detail_row is not None:
                 self._detail_row.set_lifecycle(event.lifecycle)
+            self._apply_source_progress(event)
         elif isinstance(event, ProgressSnapshot):
             self._apply_progress(event)
         elif isinstance(event, StreamingSearchFinished):
@@ -1018,6 +1024,30 @@ class HudLayout(LayoutScreen):
         self._refresh_results_status_right()
 
     @_runtime.pump_only
+    def _apply_source_progress(self, event: UiProgressSnapshot) -> None:
+        """Project one lifecycle snapshot onto a currently active source."""
+        lifecycle = event.lifecycle
+        if isinstance(lifecycle, SourceScanStarted):
+            self._active_source_snapshots[lifecycle.source_id] = event.snapshot
+            self._apply_progress(event.snapshot)
+            return
+        if isinstance(lifecycle, SourceScanFinished):
+            self._active_source_snapshots.pop(lifecycle.source_id, None)
+        if self._active_source_snapshots:
+            source_id = next(reversed(self._active_source_snapshots))
+            self._apply_progress(self._active_source_snapshots[source_id])
+            return
+        self._apply_progress(
+            dataclasses.replace(
+                event.snapshot,
+                current=None,
+                total=None,
+                detail=None,
+                source_records_seen=None,
+            ),
+        )
+
+    @_runtime.pump_only
     def _apply_progress(self, snapshot: ProgressSnapshot) -> None:
         """Feed active-search chrome via ``call_from_thread``.
 
@@ -1031,6 +1061,10 @@ class HudLayout(LayoutScreen):
         # panel up (the batch handler switches to the list on first result).
         if not self.all_records:
             self._set_results_view("searching")
+        source_id = snapshot.current
+        if snapshot.phase == "scanning" and source_id in self._active_source_snapshots:
+            self._active_source_snapshots.pop(source_id)
+            self._active_source_snapshots[source_id] = snapshot
         self._last_snapshot = snapshot
         if self._started_at is None:
             self._started_at = time.monotonic()

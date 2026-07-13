@@ -6354,6 +6354,68 @@ async def test_detail_row_surfaces_only_a_thresholded_concurrent_source(
         assert all("fast.store" not in content for content, _layout in updates)
 
 
+async def test_finished_source_selects_remaining_active_search_chrome(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A completed source yields the chrome to a remaining active source."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(160, 24)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        screen._search_done = False
+        generation = screen._chrome_generation
+
+        for source_id in (1, 2):
+            await screen._apply_streaming_event(
+                generation,
+                UiProgressSnapshot(
+                    snapshot=_make_progress_snapshot(
+                        agentgrep,
+                        current=source_id,
+                        total=2,
+                        source_records_seen=0,
+                    ),
+                    lifecycle=SourceScanStarted(
+                        source_id=source_id,
+                        store=f"store.{source_id}",
+                    ),
+                ),
+            )
+
+        await screen._apply_streaming_event(
+            generation,
+            _make_progress_snapshot(
+                agentgrep,
+                current=1,
+                total=2,
+                source_records_seen=128,
+            ),
+        )
+        await screen._apply_streaming_event(
+            generation,
+            UiProgressSnapshot(
+                snapshot=_make_progress_snapshot(
+                    agentgrep,
+                    current=1,
+                    total=2,
+                    source_records_seen=128,
+                ),
+                lifecycle=SourceScanFinished(
+                    source_id=1,
+                    finished_at=time.monotonic(),
+                ),
+            ),
+        )
+
+        assert screen._last_snapshot.current == 2
+        assert screen._filter_header._current == 2
+        screen._apply_finished("interrupted", 0, 0.5, None)
+        assert "source 1 of 2" not in screen._last_detail_text
+        assert "while scanning source 2 of 2" in screen._last_detail_text
+
+
 async def test_detail_row_visibility_sticky_across_search_reset(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
