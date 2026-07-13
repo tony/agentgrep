@@ -25,7 +25,7 @@ from agentgrep.origin import (
     decode_project_dir,
 )
 from agentgrep.readers import (
-    _iter_jsonl,
+    _iter_jsonl_positioned,
     as_optional_str,
     isoformat_from_mtime_ns,
     open_readonly_sqlite,
@@ -112,17 +112,17 @@ def parse_grok_prompt_history(
     """
     session_origin = _grok_project_dir_origin(source.path.parent)
     events = (
-        _iter_jsonl(
+        _iter_jsonl_positioned(
             source.path,
             skip_line=raw_skip_line,
             skip_line_mode="line",
             reverse=reverse,
         )
         if raw_skip_line is not None
-        else _iter_jsonl(source.path, reverse=reverse)
+        else _iter_jsonl_positioned(source.path, reverse=reverse)
     )
-    ordinal_is_available = not reverse and raw_skip_line is None
-    for raw_index, event in enumerate(events):
+    for positioned_event in events:
+        event = positioned_event.value
         if not isinstance(event, dict):
             continue
         mapping = t.cast("dict[str, object]", event)
@@ -146,7 +146,7 @@ def parse_grok_prompt_history(
             origin=session_origin,
             identity_namespace=("grok.session" if session_id is not None else None),
             position=_record_position(
-                ordinal=raw_index if ordinal_is_available else None,
+                ordinal=positioned_event.source_ordinal(),
             ),
         )
 
@@ -182,16 +182,17 @@ def parse_grok_chat_history(
     # filters, matching what the Cursor CLI transcript store already does.
     fallback_timestamp = isoformat_from_mtime_ns(source.mtime_ns)
     events = (
-        _iter_jsonl(
+        _iter_jsonl_positioned(
             source.path,
             skip_line=raw_skip_line,
             skip_line_mode="line",
             reverse=reverse,
         )
         if raw_skip_line is not None
-        else _iter_jsonl(source.path, reverse=reverse)
+        else _iter_jsonl_positioned(source.path, reverse=reverse)
     )
-    for event in events:
+    for positioned_event in events:
+        event = positioned_event.value
         if not isinstance(event, dict):
             continue
         mapping = t.cast("dict[str, object]", event)
@@ -216,6 +217,7 @@ def parse_grok_chat_history(
             session_id=conversation_id,
             conversation_id=conversation_id,
             origin=session_origin,
+            position=_record_position(ordinal=positioned_event.source_ordinal()),
         )
 
 

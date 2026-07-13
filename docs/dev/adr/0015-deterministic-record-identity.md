@@ -100,6 +100,13 @@ source coordinate domain. It may change if an upstream store rewrites earlier
 entries. Missing or malformed coordinates, or a missing thread, produce null
 `record_id` and `record_id_stability` values.
 
+An ordinal is an opaque, ordered source coordinate; it need not be dense.
+JSONL adapters use the physical line-start byte offset plus a bounded
+within-line candidate index. That coordinate remains identical when a scan
+filters raw lines or reads them in reverse, without a preliminary full-file
+pass. Legacy JSON arrays and other naturally indexed collections retain their
+dense element indices.
+
 For native coordinate `msg-1`, the exact payload is:
 
 ```json

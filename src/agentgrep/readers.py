@@ -10,6 +10,7 @@ accelerator, and record type aliases.
 
 from __future__ import annotations
 
+import dataclasses
 import datetime
 import json
 import os
@@ -79,6 +80,22 @@ _JSONL_REVERSE_CHUNK_BYTES = 1024 * 1024
 
 _CODEX_RAW_SKIP_MIN_BYTES = 1024 * 1024
 """Minimum Codex session size before enabling raw-line output skipping."""
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _PositionedJsonlValue:
+    """One decoded JSONL value with its physical source-line coordinate."""
+
+    value: JSONValue
+    byte_offset: int
+    byte_span: int
+
+    def source_ordinal(self, within_line: int = 0) -> int:
+        """Return a stable source-order integer for one value from this line."""
+        if within_line < 0 or within_line >= self.byte_span:
+            msg = "within-line index must fit inside the source line"
+            raise ValueError(msg)
+        return self.byte_offset + within_line
 
 
 def _read_varint(data: bytes, start: int) -> tuple[int | None, int]:
@@ -462,8 +479,27 @@ def _iter_jsonl(
     decoded lines, because reverse reads already materialize each line from
     tail chunks.
     """
+    for positioned in _iter_jsonl_positioned(
+        path,
+        skip_line=skip_line,
+        skip_line_mode=skip_line_mode,
+        full_line_skip=full_line_skip,
+        reverse=reverse,
+    ):
+        yield positioned.value
+
+
+def _iter_jsonl_positioned(
+    path: pathlib.Path,
+    *,
+    skip_line: RawJsonlSkipLine | None = None,
+    skip_line_mode: t.Literal["prefix", "line"] = "prefix",
+    full_line_skip: RawJsonlSkipLine | None = None,
+    reverse: bool = False,
+) -> cabc.Iterator[_PositionedJsonlValue]:
+    """Yield decoded JSONL values with scan-independent source coordinates."""
     if reverse:
-        yield from _iter_jsonl_reverse(
+        yield from _iter_jsonl_reverse_positioned(
             path,
             skip_line=_combine_raw_skip_lines(skip_line, full_line_skip),
         )
@@ -472,33 +508,22 @@ def _iter_jsonl(
         if skip_line_mode == "line":
             combined = _combine_raw_skip_lines(skip_line, full_line_skip)
             assert combined is not None
-            yield from _iter_jsonl_with_raw_line_skip(path, combined)
+            yield from _iter_jsonl_with_raw_line_skip_positioned(path, combined)
         else:
-            yield from _iter_jsonl_with_raw_prefix_skip(
+            yield from _iter_jsonl_with_raw_prefix_skip_positioned(
                 path,
                 skip_line,
                 full_line_skip=full_line_skip,
             )
         return
     if full_line_skip is not None:
-        yield from _iter_jsonl_with_raw_line_skip(path, full_line_skip)
+        yield from _iter_jsonl_with_raw_line_skip_positioned(path, full_line_skip)
         return
-    try:
-        with path.open(encoding="utf-8") as handle:
-            yield_now = _PeriodicYield()
-            for line in handle:
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                yield_now()
-                try:
-                    parsed = _loads(stripped)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(parsed, (dict, list, str, int, float, bool)) or parsed is None:
-                    yield t.cast("JSONValue", parsed)
-    except OSError:
-        return
+    yield from _iter_jsonl_with_raw_line_skip_positioned(
+        path,
+        None,
+        decode_errors="strict",
+    )
 
 
 def _iter_jsonl_reverse(
@@ -507,10 +532,21 @@ def _iter_jsonl_reverse(
     skip_line: RawJsonlSkipLine | None = None,
 ) -> cabc.Iterator[JSONValue]:
     """Yield decoded JSONL values from the end of ``path`` toward the start."""
+    for positioned in _iter_jsonl_reverse_positioned(path, skip_line=skip_line):
+        yield positioned.value
+
+
+def _iter_jsonl_reverse_positioned(
+    path: pathlib.Path,
+    *,
+    skip_line: RawJsonlSkipLine | None = None,
+) -> cabc.Iterator[_PositionedJsonlValue]:
+    """Yield reverse-decoded JSONL values with physical line coordinates."""
     try:
         with path.open("rb") as handle:
             handle.seek(0, os.SEEK_END)
-            position = handle.tell()
+            file_size = handle.tell()
+            position = file_size
             pending = b""
             yield_now = _PeriodicYield()
             while position > 0:
@@ -520,17 +556,32 @@ def _iter_jsonl_reverse(
                 pending = handle.read(read_size) + pending
                 lines = pending.split(b"\n")
                 pending = lines[0]
-                for raw_line in reversed(lines[1:]):
+                line_offsets: list[int] = []
+                line_offset = position
+                for raw_line in lines:
+                    line_offsets.append(line_offset)
+                    line_offset += len(raw_line) + 1
+                for raw_line, raw_offset in reversed(
+                    list(zip(lines[1:], line_offsets[1:], strict=True)),
+                ):
                     decoded = _decode_jsonl_raw_line(raw_line, skip_line=skip_line)
                     if decoded is _SKIPPED_JSONL_LINE:
                         continue
                     yield_now()
-                    yield t.cast("JSONValue", decoded)
+                    yield _PositionedJsonlValue(
+                        value=t.cast("JSONValue", decoded),
+                        byte_offset=raw_offset,
+                        byte_span=min(len(raw_line) + 1, file_size - raw_offset),
+                    )
             if pending.strip():
                 decoded = _decode_jsonl_raw_line(pending, skip_line=skip_line)
                 if decoded is not _SKIPPED_JSONL_LINE:
                     yield_now()
-                    yield t.cast("JSONValue", decoded)
+                    yield _PositionedJsonlValue(
+                        value=t.cast("JSONValue", decoded),
+                        byte_offset=0,
+                        byte_span=min(len(pending) + 1, file_size),
+                    )
     except OSError:
         return
 
@@ -573,14 +624,30 @@ def _iter_jsonl_with_raw_prefix_skip(
     path; ``full_line_skip`` sees the fully accumulated line before JSON
     decode.
     """
+    for positioned in _iter_jsonl_with_raw_prefix_skip_positioned(
+        path,
+        skip_line,
+        full_line_skip=full_line_skip,
+    ):
+        yield positioned.value
+
+
+def _iter_jsonl_with_raw_prefix_skip_positioned(
+    path: pathlib.Path,
+    skip_line: RawJsonlSkipLine,
+    *,
+    full_line_skip: RawJsonlSkipLine | None = None,
+) -> cabc.Iterator[_PositionedJsonlValue]:
+    """Yield prefix-filtered JSONL values with physical line coordinates."""
     try:
         with path.open("rb") as handle:
             yield_now = _PeriodicYield()
             while True:
+                byte_offset = handle.tell()
                 prefix = handle.readline(_JSONL_PREFIX_BYTES)
                 if not prefix:
                     break
-                if not prefix.strip():
+                if not prefix.strip() and prefix.endswith(b"\n"):
                     continue
                 yield_now()
                 prefix_text = prefix.decode("utf-8", errors="replace")
@@ -605,7 +672,11 @@ def _iter_jsonl_with_raw_prefix_skip(
                 except json.JSONDecodeError:
                     continue
                 if isinstance(parsed, (dict, list, str, int, float, bool)) or parsed is None:
-                    yield t.cast("JSONValue", parsed)
+                    yield _PositionedJsonlValue(
+                        value=t.cast("JSONValue", parsed),
+                        byte_offset=byte_offset,
+                        byte_span=len(raw_line),
+                    )
     except OSError:
         return
 
@@ -615,15 +686,30 @@ def _iter_jsonl_with_raw_line_skip(
     skip_line: RawJsonlSkipLine,
 ) -> cabc.Iterator[JSONValue]:
     """Yield decoded JSON objects while skipping matched full raw lines."""
+    for positioned in _iter_jsonl_with_raw_line_skip_positioned(path, skip_line):
+        yield positioned.value
+
+
+def _iter_jsonl_with_raw_line_skip_positioned(
+    path: pathlib.Path,
+    skip_line: RawJsonlSkipLine | None,
+    *,
+    decode_errors: t.Literal["strict", "replace"] = "replace",
+) -> cabc.Iterator[_PositionedJsonlValue]:
+    """Yield line-filtered JSONL values with physical line coordinates."""
     try:
         with path.open("rb") as handle:
             yield_now = _PeriodicYield()
-            for raw_line in handle:
+            while True:
+                byte_offset = handle.tell()
+                raw_line = handle.readline()
+                if not raw_line:
+                    break
                 if not raw_line.strip():
                     continue
                 yield_now()
-                line = raw_line.decode("utf-8", errors="replace")
-                if skip_line(line):
+                line = raw_line.decode("utf-8", errors=decode_errors)
+                if skip_line is not None and skip_line(line):
                     continue
                 stripped = line.strip()
                 if not stripped:
@@ -633,7 +719,11 @@ def _iter_jsonl_with_raw_line_skip(
                 except json.JSONDecodeError:
                     continue
                 if isinstance(parsed, (dict, list, str, int, float, bool)) or parsed is None:
-                    yield t.cast("JSONValue", parsed)
+                    yield _PositionedJsonlValue(
+                        value=t.cast("JSONValue", parsed),
+                        byte_offset=byte_offset,
+                        byte_span=len(raw_line),
+                    )
     except OSError:
         return
 

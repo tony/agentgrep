@@ -30,7 +30,7 @@ from agentgrep.adapters._generic import (
 )
 from agentgrep.adapters._registry import AnyParserSpec, ParserSpec, StreamParserSpec
 from agentgrep.readers import (
-    _iter_jsonl,
+    _iter_jsonl_positioned,
     as_optional_str,
     decode_sqlite_value,
     isoformat_from_mtime_ns,
@@ -56,36 +56,35 @@ def parse_claude_project_file(
     """Parse Claude Code project JSONL files using lightweight heuristics."""
     conversation_id = source.path.stem
     events = (
-        _iter_jsonl(
+        _iter_jsonl_positioned(
             source.path,
             skip_line=raw_skip_line,
             skip_line_mode="line",
             reverse=reverse,
         )
         if raw_skip_line is not None
-        else _iter_jsonl(source.path, reverse=reverse)
+        else _iter_jsonl_positioned(source.path, reverse=reverse)
     )
-    ordinal_is_available = not reverse and raw_skip_line is None
-    for raw_index, event in enumerate(events):
+    for positioned_event in events:
+        event = positioned_event.value
         if isinstance(event, dict) and event.get("isCompactSummary") is True:
             # `/compact` machine summaries are derived recaps, not user turns.
             continue
         mapping = t.cast("dict[str, object]", event) if isinstance(event, dict) else None
         session_id = extract_session_id(mapping) if mapping is not None else None
-        for candidate in iter_message_candidates(
+        candidates = iter_message_candidates(
             event,
             fallback_conversation_id=conversation_id,
-        ):
+        )
+        for within_line, candidate in enumerate(candidates):
             candidate.session_id = session_id or candidate.session_id
             candidate.identity_namespace = "claude.session" if session_id is not None else None
-            candidate.position = (
-                _record_position(
-                    native_id=extract_message_id(mapping),
-                    parent_native_id=extract_parent_message_id(mapping),
-                    ordinal=raw_index if ordinal_is_available else None,
-                )
-                if mapping is not None
-                else None
+            candidate.position = _record_position(
+                native_id=extract_message_id(mapping) if mapping is not None else None,
+                parent_native_id=(
+                    extract_parent_message_id(mapping) if mapping is not None else None
+                ),
+                ordinal=positioned_event.source_ordinal(within_line),
             )
             yield build_search_record(source, candidate)
 
