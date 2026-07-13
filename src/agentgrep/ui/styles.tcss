@@ -434,12 +434,10 @@ Screen {
     overflow-x: hidden;
     scrollbar-size: 0 0;
 }
-/* The results statusline is folded into #results-header (ResultsHeader): the
-   spinner, bar, percent, and match count render as colored spans inside the
-   header rule, so there is no separate statusline row or per-cell CSS. */
+/* Active source/heartbeat status is folded into #results-header
+   (ResultsHeader), so there is no separate statusline row or per-cell CSS. */
 #status-detail {
-    /* Two lines: the phase + N/M sources heading, then the in-source detail
-       moved off the compact header. Aligned under the header's payload. */
+    /* Optional expanded engine detail, aligned under the folded header. */
     height: 2;
     padding: 0 1 0 3;
     color: $ag-muted;

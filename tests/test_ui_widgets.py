@@ -11,6 +11,7 @@ from __future__ import annotations
 import pathlib
 import typing as t
 
+from rich.cells import cell_len
 from textual.widgets import Input, OptionList, Static
 
 from agentgrep.progress import FilterRequestedPayload, ProgressSnapshot
@@ -64,6 +65,7 @@ def _snapshot(
     *,
     current: int | None = None,
     total: int | None = None,
+    source_records_seen: int | None = None,
     matches: int = 0,
     detail: str | None = None,
     elapsed: float = 0.0,
@@ -77,6 +79,7 @@ def _snapshot(
         detail=detail,
         matches=matches,
         elapsed=elapsed,
+        source_records_seen=source_records_seen,
     )
 
 
@@ -185,32 +188,100 @@ def test_phase_label_curates_engine_jargon() -> None:
     assert phase_label("") == ""
 
 
-def test_results_header_scanning_shows_verb_and_bar_only() -> None:
-    r"""An active scanning header shows the verb + bar, but not the N/M count.
+def test_results_header_scanning_shows_truthful_indeterminate_status() -> None:
+    """An active header shows source facts and heartbeat, never a percentage.
 
     ``begin()`` is skipped on purpose: it arms a Textual ``auto_refresh``
-    timer that needs a running event loop. These tests exercise the pure
-    ``_payload`` render seam; the timer lifecycle is covered by the app-level
-    integration test. The verbose ``N/M`` source count moved to the Ctrl-\ row.
+    timer that needs a running event loop. This exercises the pure ``_payload``
+    seam; the timer lifecycle is covered by the app-level integration test.
     """
     header = ResultsHeader("results", id="results-header")
-    header.set_progress(0.61, "scanning")
+    header.set_snapshot(
+        _snapshot("scanning", current=42, total=68, source_records_seen=128),
+    )
     header.set_matches("180 matches")
     payload = header._payload(60).plain
     assert "Scanning" in payload
-    assert "▰" in payload  # the bar (the "scrollbar") is kept
-    assert "61%" in payload
-    assert "42/68" not in payload  # N/M source count -> Ctrl-\
+    assert "source 42 of 68" in payload
+    assert "128 records" in payload
+    assert "▰" not in payload
+    assert "%" not in payload
     assert "180 matches" not in payload  # match count hidden while scanning
+
+
+def test_results_header_heartbeat_advances_with_fixed_source() -> None:
+    """The heartbeat advances while one expensive source remains active."""
+    header = ResultsHeader("results", id="results-header")
+    header.set_snapshot(
+        _snapshot("scanning", current=3, total=82, source_records_seen=128),
+    )
+    first = header._payload(60).plain
+    header.set_snapshot(
+        _snapshot("scanning", current=3, total=82, source_records_seen=256),
+    )
+    second = header._payload(60).plain
+
+    assert "source 3 of 82" in first
+    assert "source 3 of 82" in second
+    assert "128 records" in first
+    assert "256 records" in second
+    assert first != second
+
+
+def test_results_header_narrow_keeps_source_without_fake_progress() -> None:
+    """Narrow chrome keeps the source ordinal and sheds the heartbeat first."""
+    header = ResultsHeader("results", id="results-header")
+    header.set_snapshot(
+        _snapshot("scanning", current=3, total=82, source_records_seen=128),
+    )
+
+    payload = header._payload(18).plain
+
+    assert cell_len(payload) <= 18
+    assert "3/82" in payload
+    assert "128" not in payload
+    assert "▰" not in payload
+    assert "%" not in payload
+
+
+def test_results_header_source_does_not_disappear_as_width_grows() -> None:
+    """Growing narrow chrome never lets the phase crowd out source identity."""
+    header = ResultsHeader("results", id="results-header")
+    header.set_snapshot(
+        _snapshot("scanning", current=3, total=82, source_records_seen=128),
+    )
+
+    payloads = {avail: header._payload(avail).plain for avail in (10, 12, 18)}
+
+    assert all(cell_len(payload) <= avail for avail, payload in payloads.items())
+    assert all("3/82" in payload for payload in payloads.values())
+    assert "Scanning" in payloads[18]
 
 
 def test_results_header_curates_prefiltering_phase() -> None:
     """The header uses the curated 'Filtering' word, never raw 'prefiltering'."""
     header = ResultsHeader("results", id="results-header")
-    header.set_progress(None, "prefiltering")
+    header.set_snapshot(_snapshot("prefiltering"))
     payload = header._payload(60).plain
     assert "Filtering" in payload
     assert "Prefiltering" not in payload
+
+
+def test_planning_counts_are_not_labeled_as_sources() -> None:
+    """Candidate-plan counts never masquerade as an active source ordinal."""
+    snapshot = _snapshot("planning", current=7, total=10)
+    header = ResultsHeader("results", id="results-header")
+    header.set_snapshot(snapshot)
+    panel = SearchingPanel(id="searching-panel")
+    panel.set_snapshot(snapshot)
+
+    header_text = header._payload(60).plain
+    panel_text = panel.render().plain
+
+    assert "Planning" in header_text
+    assert "Planning" in panel_text
+    assert "source" not in header_text
+    assert "source" not in panel_text
 
 
 def test_results_header_idle_stays_a_plain_rule() -> None:
@@ -224,7 +295,7 @@ def test_results_header_idle_stays_a_plain_rule() -> None:
 def test_results_header_complete_drops_glyph_and_word() -> None:
     """A completed scan reads as a full 100%% bar — no ✓ glyph and no 'Done' word."""
     header = ResultsHeader("results", id="results-header")
-    header.set_progress(0.6, "scanning")
+    header.set_snapshot(_snapshot("scanning", current=3, total=5, source_records_seen=10))
     header.freeze("complete")
     payload = header._payload(60).plain
     assert "100%" in payload
@@ -237,9 +308,12 @@ def test_results_header_complete_drops_glyph_and_word() -> None:
 def test_results_header_interrupted_and_error_keep_a_marker() -> None:
     """Stopped/error aren't self-evident from the bar, so they keep a marker."""
     stopped = ResultsHeader("results", id="results-header")
-    stopped.set_progress(0.84, "scanning")
+    stopped.set_snapshot(_snapshot("scanning", current=3, total=5, source_records_seen=10))
     stopped.freeze("interrupted")
-    assert "■" in stopped._payload(60).plain
+    stopped_payload = stopped._payload(60).plain
+    assert "■" in stopped_payload
+    assert "Stopped" in stopped_payload
+    assert "%" not in stopped_payload
 
     errored = ResultsHeader("results", id="results-header")
     errored.freeze("error", message="bad query")
@@ -248,10 +322,22 @@ def test_results_header_interrupted_and_error_keep_a_marker() -> None:
     assert "bad query" in payload
 
 
+def test_results_header_early_interruption_is_explicit() -> None:
+    """Stopping before the first snapshot still renders a textual outcome."""
+    header = ResultsHeader("results", id="results-header")
+    header.freeze("interrupted")
+
+    payload = header._payload(18).plain
+
+    assert "Stopped" in payload
+    assert "▰" not in payload
+    assert "%" not in payload
+
+
 def test_results_header_shows_match_count_only_once_finished() -> None:
     """The match/cursor count appears after the scan, never during it."""
     header = ResultsHeader("results", id="results-header")
-    header.set_progress(0.6, "scanning")
+    header.set_snapshot(_snapshot("scanning", current=3, total=5, source_records_seen=10))
     header.set_matches("3/180")
     assert "3/180" not in header._payload(60).plain  # hidden while scanning
     header.freeze("complete")
@@ -264,14 +350,23 @@ def test_searching_panel_is_static_subclass() -> None:
 
 
 def test_searching_panel_renders_phase_verb_and_counts() -> None:
-    """An active scanning panel shows the verb, the source N/M, and the match count."""
+    """The empty-canvas panel shows source, heartbeat, and match facts."""
     panel = SearchingPanel(id="searching-panel")
-    panel.set_snapshot(_snapshot("scanning", current=42, total=68, matches=2343))
+    panel.set_snapshot(
+        _snapshot(
+            "scanning",
+            current=42,
+            total=68,
+            source_records_seen=128,
+            matches=2343,
+        ),
+    )
     text = panel.render().plain
     assert "Scanning" in text
-    assert "42" in text
-    assert "68" in text
-    assert "2343" in text
+    assert "source 42 of 68" in text
+    assert "128 records" in text
+    assert "2343 matches" in text
+    assert "\n" in text
 
 
 def test_searching_panel_discovering_phase_has_a_verb() -> None:

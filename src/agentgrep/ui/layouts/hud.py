@@ -60,7 +60,6 @@ from agentgrep.ui.completion import (
     keyword_completion_candidates,
 )
 from agentgrep.ui.format import (
-    format_progress_percent,
     format_scanning_detail,
     scroll_percent,
 )
@@ -141,9 +140,8 @@ class HudLayout(LayoutScreen):
     syntax-highlight — is heavy enough to stall the event loop.
     """
 
-    # Statusline width (cells) below which the meter bar and the
-    # elapsed "(32s)" suffix are dropped — percent and match count
-    # keep their cells on small terminals.
+    # Results-column width below which the folded header uses compact source
+    # variants and the right slot sheds cursor detail before the match count.
     _NARROW_BREAKPOINT: t.ClassVar[int] = 50
 
     # Body width (cells) below which the detail pane moves from the
@@ -332,9 +330,9 @@ class HudLayout(LayoutScreen):
                 # pi-style section header: a bold label + width-filling rule,
                 # in place of a box border. Recolors to accent when the
                 # results pane (filter or list) holds focus.
-                # The results header folds the live search status (spinner +
-                # bar + percent + match count) into its rule, so the column
-                # spends one row instead of a separate statusline.
+                # The results header folds indeterminate source/heartbeat
+                # status into its rule, so the column spends one row instead
+                # of a separate statusline.
                 yield ResultsHeader("results", id="results-header")
                 yield Static("", id="status-detail")
                 yield FilterInput(
@@ -604,8 +602,8 @@ class HudLayout(LayoutScreen):
         creation. A cancelled worker keeps emitting through its old
         reporter while it drains; :meth:`_apply_streaming_event`
         re-checks the generation on the main thread, so those events
-        can never repaint the new search's chrome (stale "Stopped"
-        states, old bar fills) no matter when they were queued.
+        can never repaint the new search's chrome (stale "Stopped",
+        source, or heartbeat state) no matter when they were queued.
         """
         self._chrome_generation += 1
         generation = self._chrome_generation
@@ -1017,14 +1015,12 @@ class HudLayout(LayoutScreen):
 
     @_runtime.pump_only
     def _apply_progress(self, snapshot: ProgressSnapshot) -> None:
-        """Feed the header bar and detail row — invoked via ``call_from_thread``.
+        """Feed active-search chrome and detail via ``call_from_thread``.
 
         Per-source progress events arrive thousands of times per search; the
-        header stores the new fraction without repainting (its 2 Hz spinner
-        timer picks it up on the next frame) and the detail row gates on
-        content change, so neither repaints per event. Stale-generation
-        events never reach this handler — :meth:`_apply_streaming_event`
-        drops them.
+        header stores source-local facts without repainting (its 2 Hz spinner
+        timer picks them up on the next frame) and the detail row gates on
+        content change. Stale-generation events never reach this handler.
         """
         # A search is in progress with no results yet — keep the centered
         # panel up (the batch handler switches to the list on first result).
@@ -1033,23 +1029,11 @@ class HudLayout(LayoutScreen):
         self._last_snapshot = snapshot
         if self._started_at is None:
             self._started_at = time.monotonic()
-        if (
-            snapshot.phase == "scanning"
-            and snapshot.current is not None
-            and snapshot.total is not None
-            and snapshot.total > 0
-        ):
-            # Only the scanning phase counts sources; planning emits
-            # plan-group counts whose fraction would make the bar
-            # jump to a small value and snap back to zero.
-            fraction: float | None = snapshot.current / snapshot.total
-        else:
-            fraction = None
         if self._searching_panel is not None:
             self._searching_panel.set_snapshot(snapshot)
         if self._results_header is not None:
             self._results_header.set_narrow(self._statusline_narrow())
-            self._results_header.set_progress(fraction, snapshot.phase)
+            self._results_header.set_snapshot(snapshot)
         if self._detail_visible and self._detail_row is not None:
             detail = format_scanning_detail(
                 snapshot.phase,
@@ -1060,11 +1044,6 @@ class HudLayout(LayoutScreen):
             if detail != self._last_detail_text:
                 self._last_detail_text = detail
                 self._detail_row.update(detail)
-        if self._statusline_narrow():
-            # Narrow right slots carry the search percent; record
-            # batches alone would let it go stale on sparse matches.
-            # The refresh is change-gated, so this stays cheap.
-            self._refresh_results_status_right()
 
     def _statusline_narrow(self) -> bool:
         """Report whether the header rule is too narrow to also carry the count."""
@@ -1142,9 +1121,9 @@ class HudLayout(LayoutScreen):
     ) -> None:
         r"""Freeze the header chrome — invoked via ``call_from_thread``.
 
-        The header's spinner timer stops and the outcome glyph + bar color
-        hold; the elapsed total is folded into the summary string the ctrl+\
-        detail row shows, not a live-ticking widget.
+        The header's spinner timer stops and the terminal outcome holds; the
+        elapsed total is folded into the summary string the ctrl+\ detail row
+        shows, not a live-ticking widget.
         """
         # A search ran — show its outcome. With results, collapse to the
         # list; with none, keep the centered panel and freeze it into its
@@ -1165,10 +1144,9 @@ class HudLayout(LayoutScreen):
         if outcome == "error":
             summary = f"Search failed: {error_message}"
         elif outcome == "interrupted":
-            summary = (
-                f"Stopped at {format_match_count(total)} "
-                f"across {self._sources_label()} sources in {elapsed:.1f}s"
-            )
+            source_label = self._scanning_sources_label()
+            source_summary = f" across {source_label} sources" if source_label else ""
+            summary = f"Stopped at {format_match_count(total)}{source_summary} in {elapsed:.1f}s"
         else:
             summary = f"Search complete: {format_match_count(total)} in {elapsed:.1f}s"
         # Freeze the header: a complete scan reads as a full 100% bar; the
@@ -1181,8 +1159,7 @@ class HudLayout(LayoutScreen):
         self._last_detail_text = summary
         if self._detail_visible and self._detail_row is not None:
             self._detail_row.update(summary)
-        # Recompute the right slot: narrow mode swaps the in-flight
-        # search percent for the plain match count once the search ends.
+        # Recompute the right slot so the terminal match count is current.
         self._refresh_results_status_right()
 
     def _set_search_rule_state(self, state: str) -> None:
@@ -1208,10 +1185,11 @@ class HudLayout(LayoutScreen):
         if rule_class is not None:
             target.add_class(rule_class)
 
-    def _sources_label(self) -> str:
+    def _scanning_sources_label(self) -> str | None:
+        """Return a source ordinal only when the last event was a scan."""
         snap = self._last_snapshot
-        if snap is None or snap.current is None or snap.total is None:
-            return "?"
+        if snap is None or snap.phase != "scanning" or snap.current is None or snap.total is None:
+            return None
         return f"{snap.current}/{snap.total}"
 
     def on_filter_requested(self, message: FilterRequested) -> None:
@@ -1416,9 +1394,8 @@ class HudLayout(LayoutScreen):
 
         Wide statuslines show ``{cursor+1}/{visible}`` once a cursor
         exists — the denominator already carries the count — and the
-        bare match count before that. Narrow statuslines show the
-        match count plus the search-completion percent while a search
-        runs (the meter bar doesn't fit there), then just the count.
+        bare match count before that. Narrow statuslines show only the
+        match count; active source state stays in the folded header.
         """
         total_matches = len(self.all_records)
         parts: list[str] = []
@@ -1430,28 +1407,7 @@ class HudLayout(LayoutScreen):
         else:
             if total_matches > 0:
                 parts.append(format_match_count(total_matches))
-            if not self._search_done:
-                search_percent = self._search_progress_percent()
-                if search_percent is not None:
-                    parts.append(search_percent)
         return "  ".join(parts)
-
-    def _search_progress_percent(self) -> str | None:
-        """Return the search-completion percent from the latest snapshot.
-
-        Scanning-phase only — planning emits plan-group counts whose
-        fraction doesn't describe source progress.
-        """
-        snap = self._last_snapshot
-        if (
-            snap is None
-            or snap.phase != "scanning"
-            or snap.current is None
-            or snap.total is None
-            or snap.total <= 0
-        ):
-            return None
-        return format_progress_percent(snap.current / snap.total)
 
     def _refresh_detail_statusline(self, percent: int | None = None) -> None:
         """Update the detail status line with the current record path and scroll %."""
@@ -2132,8 +2088,8 @@ class HudLayout(LayoutScreen):
         # narrow breakpoint adds/removes the cursor/visible segment.
         self._refresh_results_status_right()
         if self._results_header is not None:
-            # A width change with constant fraction must still repaint the
-            # folded bar (its gap/cap math depends on the new width).
+            # Width selects a whole active-status variant and sizes the
+            # completed bar, so repaint even when the stored facts are stable.
             self._results_header.set_narrow(self._statusline_narrow())
             self._results_header.invalidate()
         # Crossing the split breakpoint moves the detail pane between

@@ -232,10 +232,10 @@ def format_scanning_detail(
 ) -> str:
     r"""Compose the verbose scanning detail for the toggleable ``Ctrl-\`` row.
 
-    The row carries the per-source counts the compact header omits — phase,
-    scanned/total sources, and in-source record/match counts — on up to two
-    lines: the phase + ``N/M sources`` heading, then the in-source detail when
-    present. The phase word is capitalized to open the row as a sentence.
+    During scanning, the row carries per-source counts the compact header may
+    omit: phase, source ordinal, and in-source record/match counts. Other phases
+    keep their counters in ``detail`` so planner-group counts cannot masquerade
+    as source ordinals. The phase word is capitalized to open the row.
 
     Parameters
     ----------
@@ -264,9 +264,11 @@ def format_scanning_detail(
     'Prefiltering\n~/.codex/sessions/'
     >>> format_scanning_detail("discovering", None, None, None)
     'Discovering'
+    >>> format_scanning_detail("planning", 7, 10, "candidate sources")
+    'Planning\ncandidate sources'
     """
     heading = phase[:1].upper() + phase[1:]
-    if current is not None and total is not None:
+    if phase == "scanning" and current is not None and total is not None:
         heading = f"{heading} {current}/{total} sources"
     if detail:
         return f"{heading}\n{detail}"
@@ -277,9 +279,8 @@ def searching_left_text(elapsed: float, *, narrow: bool) -> str:
     """Compose the left status text shown next to the spinner.
 
     The query itself is not repeated — the search input directly above
-    the statusline already shows it. Narrow mode also drops the elapsed
-    ticker (and its ellipsis) so the percent and match count keep their
-    cells on small terminals.
+    the statusline already shows it. Narrow mode also drops the elapsed ticker
+    and its ellipsis so the remaining status facts keep their cells.
 
     Parameters
     ----------
