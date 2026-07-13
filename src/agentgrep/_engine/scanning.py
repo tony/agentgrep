@@ -459,7 +459,11 @@ def iter_source_task_batches(
     yielded_final = False
     yielded_batch = False
     matching_records: list[SearchRecord] = []
-    source_deduped: set[RecordDedupeKey] = set()
+    source_deduped: set[RecordDedupeKey] | None = (
+        set()
+        if (task.limit_behavior == "bounded_source" and query.limit is not None and query.dedupe)
+        else None
+    )
     matcher = compile_record_matcher(query)
 
     def source_limit_satisfied() -> bool:
@@ -467,12 +471,10 @@ def iter_source_task_batches(
         # cross-source dedup may drop some of these later, so bounded scans
         # can return fewer than the limit when stores share dedupe keys.
         # Accepted approximation per ADR-0004.
-        accepted_count = len(source_deduped) if query.dedupe else source_match_count
-        return (
-            task.limit_behavior == "bounded_source"
-            and query.limit is not None
-            and accepted_count >= query.limit
-        )
+        if task.limit_behavior != "bounded_source" or query.limit is None:
+            return False
+        accepted_count = len(source_deduped) if source_deduped is not None else source_match_count
+        return accepted_count >= query.limit
 
     def emit_batch(*, is_final: bool) -> SourceScanBatch:
         nonlocal yielded_batch, yielded_final
@@ -501,7 +503,7 @@ def iter_source_task_batches(
             matches_seen += 1
             source_match_count += 1
             matching_records.append(record)
-            if query.dedupe:
+            if source_deduped is not None:
                 source_deduped.add(record_dedupe_key(record))
             if source_limit_satisfied():
                 if matching_records:
