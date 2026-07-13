@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import collections.abc as cabc
-import dataclasses
 import datetime
 import functools
 import pathlib
@@ -233,13 +232,10 @@ def parse_codex_session_file(
         )
         if candidate is None:
             continue
-        candidate = dataclasses.replace(
-            candidate,
-            identity_namespace=("codex.session" if native_session_id is not None else None),
-            position=_record_position(
-                native_id=payload_map.get("id"),
-                ordinal=raw_index if ordinal_is_available else None,
-            ),
+        candidate.identity_namespace = "codex.session" if native_session_id is not None else None
+        candidate.position = _record_position(
+            native_id=payload_map.get("id"),
+            ordinal=raw_index if ordinal_is_available else None,
         )
         yield build_search_record(source, candidate)
 
@@ -278,13 +274,10 @@ def parse_codex_legacy_session_file(
         )
         if candidate is None:
             continue
-        candidate = dataclasses.replace(
-            candidate,
-            identity_namespace=("codex.session" if native_session_id is not None else None),
-            position=_record_position(
-                native_id=extract_message_id(t.cast("dict[str, object]", item)),
-                ordinal=raw_index,
-            ),
+        candidate.identity_namespace = "codex.session" if native_session_id is not None else None
+        candidate.position = _record_position(
+            native_id=extract_message_id(t.cast("dict[str, object]", item)),
+            ordinal=raw_index,
         )
         yield build_search_record(source, candidate)
 

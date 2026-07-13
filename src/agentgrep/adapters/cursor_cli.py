@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import collections.abc as cabc
-import dataclasses
 import json
 import sqlite3
 import typing as t
@@ -71,13 +70,12 @@ def parse_cursor_cli_transcript(
             fallback_conversation_id=conversation_id,
             fallback_origin=session_origin,
         ):
-            candidate = dataclasses.replace(
-                candidate,
-                timestamp=candidate.timestamp or fallback_timestamp,
-                session_id=native_session_id or candidate.session_id,
-                identity_namespace=("cursor.session" if native_session_id is not None else None),
-                position=_record_position(ordinal=raw_index),
+            candidate.timestamp = candidate.timestamp or fallback_timestamp
+            candidate.session_id = native_session_id or candidate.session_id
+            candidate.identity_namespace = (
+                "cursor.session" if native_session_id is not None else None
             )
+            candidate.position = _record_position(ordinal=raw_index)
             yield build_search_record(source, candidate)
 
 

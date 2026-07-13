@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import collections.abc as cabc
-import dataclasses
 import functools
 import pathlib
 import re
@@ -77,19 +76,16 @@ def parse_claude_project_file(
             event,
             fallback_conversation_id=conversation_id,
         ):
-            candidate = dataclasses.replace(
-                candidate,
-                session_id=session_id or candidate.session_id,
-                identity_namespace=("claude.session" if session_id is not None else None),
-                position=(
-                    _record_position(
-                        native_id=extract_message_id(mapping),
-                        parent_native_id=extract_parent_message_id(mapping),
-                        ordinal=raw_index if ordinal_is_available else None,
-                    )
-                    if mapping is not None
-                    else None
-                ),
+            candidate.session_id = session_id or candidate.session_id
+            candidate.identity_namespace = "claude.session" if session_id is not None else None
+            candidate.position = (
+                _record_position(
+                    native_id=extract_message_id(mapping),
+                    parent_native_id=extract_parent_message_id(mapping),
+                    ordinal=raw_index if ordinal_is_available else None,
+                )
+                if mapping is not None
+                else None
             )
             yield build_search_record(source, candidate)
 

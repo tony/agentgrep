@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import collections.abc as cabc
-import dataclasses
 import pathlib
 import typing as t
 
@@ -283,10 +282,10 @@ def parse_gemini_chat_file(
         candidate = _gemini_message_record_to_candidate(mapping, session_id, session_origin)
         if candidate is None:
             continue
-        candidate = dataclasses.replace(
-            candidate,
-            identity_namespace=identity_namespace,
-            position=_record_position(native_id=mapping.get("id"), ordinal=ordinal),
+        candidate.identity_namespace = identity_namespace
+        candidate.position = _record_position(
+            native_id=mapping.get("id"),
+            ordinal=ordinal,
         )
         yield build_search_record(source, candidate)
 
@@ -331,10 +330,10 @@ def parse_gemini_chat_legacy_file(
         candidate = _gemini_message_record_to_candidate(mapping, session_id, session_origin)
         if candidate is None:
             continue
-        candidate = dataclasses.replace(
-            candidate,
-            identity_namespace=identity_namespace,
-            position=_record_position(native_id=mapping.get("id"), ordinal=raw_index),
+        candidate.identity_namespace = identity_namespace
+        candidate.position = _record_position(
+            native_id=mapping.get("id"),
+            ordinal=raw_index,
         )
         yield build_search_record(source, candidate)
 
