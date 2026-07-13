@@ -67,7 +67,7 @@ jobs:
         if: env.BUILD_DOCS == 'true'
         uses: pnpm/action-setup@v6
         with:
-          version: 11
+          version: 11.11.0
           run_install: false
 
       - name: Install dependencies
