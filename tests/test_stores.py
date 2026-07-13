@@ -153,7 +153,7 @@ def test_env_overrides_are_uppercase_identifiers() -> None:
 def test_catalog_is_frozen() -> None:
     sample = CATALOG.stores[0]
     with pytest.raises(pydantic_validation_error()):
-        sample.store_id = "mutated"  # type: ignore[misc]
+        sample.store_id = "mutated"  # ty: ignore[invalid-assignment]
 
 
 def pydantic_validation_error() -> type[BaseException]:

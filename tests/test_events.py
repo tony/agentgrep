@@ -255,7 +255,7 @@ def test_events_are_frozen() -> None:
     """Events can't be mutated after construction (safe for fan-out)."""
     event = events.SearchStarted(source_count=3)
     with pytest.raises(pydantic.ValidationError):
-        event.source_count = 4  # type: ignore[misc]
+        event.source_count = 4  # ty: ignore[invalid-assignment]
 
 
 def test_events_reject_extra_fields() -> None:
