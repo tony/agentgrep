@@ -23,7 +23,7 @@ from agentgrep.origin import (
 )
 from agentgrep.readers import (
     _PI_SESSION_HEADER_MARKER,
-    _iter_jsonl,
+    _iter_jsonl_positioned,
     _keep_jsonl_header_lines,
     _read_first_matching_jsonl_record,
     as_optional_str,
@@ -140,17 +140,17 @@ def parse_pi_session_file(
     # The session header feeds session_id/cwd into later records, so the
     # text prefilter must never drop it.
     events = (
-        _iter_jsonl(
+        _iter_jsonl_positioned(
             source.path,
             skip_line=_keep_jsonl_header_lines(raw_skip_line, _PI_SESSION_HEADER_MARKER),
             skip_line_mode="line",
             reverse=reverse,
         )
         if raw_skip_line is not None
-        else _iter_jsonl(source.path, reverse=reverse)
+        else _iter_jsonl_positioned(source.path, reverse=reverse)
     )
-    ordinal_is_available = not reverse and raw_skip_line is None
-    for raw_index, event in enumerate(events):
+    for positioned_event in events:
+        event = positioned_event.value
         if not isinstance(event, dict):
             continue
         mapping = t.cast("dict[str, object]", event)
@@ -181,7 +181,7 @@ def parse_pi_session_file(
                 candidate.position = _record_position(
                     native_id=mapping.get("id"),
                     parent_native_id=extract_parent_message_id(mapping),
-                    ordinal=raw_index if ordinal_is_available else None,
+                    ordinal=positioned_event.source_ordinal(),
                 )
                 yield build_search_record(source, candidate)
             continue
@@ -204,7 +204,7 @@ def parse_pi_session_file(
             position=_record_position(
                 native_id=mapping.get("id"),
                 parent_native_id=extract_parent_message_id(mapping),
-                ordinal=raw_index if ordinal_is_available else None,
+                ordinal=positioned_event.source_ordinal(),
             ),
         )
 

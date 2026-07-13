@@ -19,6 +19,7 @@ from agentgrep.adapters._generic import (
 from agentgrep.adapters._registry import AnyParserSpec, ParserSpec, StreamParserSpec
 from agentgrep.readers import (
     _iter_jsonl,
+    _iter_jsonl_positioned,
     as_optional_str,
     isoformat_from_mtime_ns,
     iter_protobuf_text_fields,
@@ -41,17 +42,17 @@ def parse_antigravity_cli_history_file(
 ) -> cabc.Iterator[SearchRecord]:
     """Parse Antigravity CLI's ``history.jsonl`` prompt recall log."""
     events = (
-        _iter_jsonl(
+        _iter_jsonl_positioned(
             source.path,
             skip_line=raw_skip_line,
             skip_line_mode="line",
             reverse=reverse,
         )
         if raw_skip_line is not None
-        else _iter_jsonl(source.path, reverse=reverse)
+        else _iter_jsonl_positioned(source.path, reverse=reverse)
     )
-    has_forward_source_order = not reverse and raw_skip_line is None
-    for raw_index, event in enumerate(events):
+    for positioned_event in events:
+        event = positioned_event.value
         if not isinstance(event, dict):
             continue
         mapping = t.cast("dict[str, object]", event)
@@ -79,7 +80,7 @@ def parse_antigravity_cli_history_file(
             },
             identity_namespace=("antigravity.conversation" if session_id is not None else None),
             position=_record_position(
-                ordinal=raw_index if has_forward_source_order else None,
+                ordinal=positioned_event.source_ordinal(),
             ),
         )
 

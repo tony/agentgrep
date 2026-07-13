@@ -34,7 +34,7 @@ from agentgrep.readers import (
     _CODEX_SESSION_META_MARKER,
     _file_size,
     _is_codex_function_call_output_line,
-    _iter_jsonl,
+    _iter_jsonl_positioned,
     _keep_jsonl_header_lines,
     _read_first_matching_jsonl_record,
     as_optional_str,
@@ -187,7 +187,7 @@ def parse_codex_session_file(
         # prefilter is active: the prefix predicate discards oversized
         # function_call_output lines in chunks while the text prefilter
         # still sees every surviving line in full before JSON decode.
-        events = _iter_jsonl(
+        events = _iter_jsonl_positioned(
             source.path,
             skip_line=codex_skip_line,
             skip_line_mode="prefix",
@@ -195,16 +195,16 @@ def parse_codex_session_file(
             reverse=reverse,
         )
     elif kept_raw_skip is not None:
-        events = _iter_jsonl(
+        events = _iter_jsonl_positioned(
             source.path,
             skip_line=kept_raw_skip,
             skip_line_mode="line",
             reverse=reverse,
         )
     else:
-        events = _iter_jsonl(source.path, reverse=reverse)
-    ordinal_is_available = not reverse and raw_skip_line is None and codex_skip_line is None
-    for raw_index, event in enumerate(events):
+        events = _iter_jsonl_positioned(source.path, reverse=reverse)
+    for positioned_event in events:
+        event = positioned_event.value
         if not isinstance(event, dict):
             continue
         event_type = str(event.get("type", ""))
@@ -235,7 +235,7 @@ def parse_codex_session_file(
         candidate.identity_namespace = "codex.session" if native_session_id is not None else None
         candidate.position = _record_position(
             native_id=payload_map.get("id"),
-            ordinal=raw_index if ordinal_is_available else None,
+            ordinal=positioned_event.source_ordinal(),
         )
         yield build_search_record(source, candidate)
 
@@ -299,24 +299,26 @@ def parse_codex_history_file(
     Neither shape records a cwd, a branch, or a model: this is a flat prompt
     log, so ``origin`` and ``model`` stay ``None`` by design.
     """
-    entries: cabc.Iterable[JSONValue]
+    entries: cabc.Iterable[tuple[int, JSONValue]]
     if source.source_kind == "json":
         payload = read_json_file(source.path)
-        entries = payload if isinstance(payload, list) else []
+        entries = enumerate(payload if isinstance(payload, list) else [])
     else:
-        entries = (
-            _iter_jsonl(
+        positioned_entries = (
+            _iter_jsonl_positioned(
                 source.path,
                 skip_line=raw_skip_line,
                 skip_line_mode="line",
                 reverse=reverse,
             )
             if raw_skip_line is not None
-            else _iter_jsonl(source.path, reverse=reverse)
+            else _iter_jsonl_positioned(source.path, reverse=reverse)
+        )
+        entries = (
+            (positioned.source_ordinal(), positioned.value) for positioned in positioned_entries
         )
 
-    ordinal_is_available = not reverse and raw_skip_line is None
-    for raw_index, entry in enumerate(entries):
+    for source_ordinal, entry in entries:
         if not isinstance(entry, dict):
             continue
         text = as_optional_str(entry.get("text")) or as_optional_str(entry.get("command"))
@@ -349,7 +351,7 @@ def parse_codex_history_file(
             conversation_id=session_id,
             identity_namespace=("codex.session" if session_id is not None else None),
             position=_record_position(
-                ordinal=raw_index if ordinal_is_available else None,
+                ordinal=source_ordinal,
             ),
         )
 
