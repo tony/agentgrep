@@ -12,10 +12,17 @@ import typing as t
 
 from rich.cells import cell_len
 from rich.text import Text
+from textual.timer import Timer
 from textual.widgets import Static
 
 from agentgrep.progress import ProgressSnapshot, format_match_count
-from agentgrep.ui import theme as ui_theme
+from agentgrep.ui import _runtime, theme as ui_theme
+from agentgrep.ui._source_diagnostics import (
+    SlowSourceDiagnostics,
+    SourceScanFinished,
+    SourceScanLifecycle,
+    SourceScanStarted,
+)
 from agentgrep.ui.format import (
     format_elapsed_compact,
     format_progress_percent,
@@ -29,6 +36,7 @@ __all__ = [
     "PaneHeader",
     "ResultsHeader",
     "SearchingPanel",
+    "SlowSourceDiagnosticsRow",
     "SpinnerWidget",
 ]
 
@@ -311,6 +319,101 @@ class FilterHeader(PaneHeader):
                 payload.append(" ")
                 payload.append(variant, style=self._c_muted or None)
                 return
+
+
+class SlowSourceDiagnosticsRow(Static):
+    """Optional two-line row showing only a threshold-crossing source.
+
+    Lifecycle setters mutate bounded in-memory state without painting. While
+    expanded, one 2 Hz timer samples that state; unchanged text costs no
+    refresh, and fixed-height updates explicitly avoid layout invalidation.
+    """
+
+    _SAMPLE_INTERVAL_SECONDS: t.ClassVar[float] = 0.5
+
+    def __init__(self, *, id: str | None = None) -> None:  # noqa: A002 -- Textual ``id`` kwarg
+        super().__init__("", id=id)
+        self._diagnostics = SlowSourceDiagnostics()
+        self._expanded = False
+        self._last_text = ""
+        self._sample_timer: Timer | None = None
+
+    def begin(self) -> None:
+        """Reset for a running search and sample only when expanded."""
+        self._diagnostics.begin()
+        self._paint("")
+        if self._expanded:
+            self._resume_sampling()
+            self._sample()
+
+    def set_lifecycle(self, event: SourceScanLifecycle) -> None:
+        """Store one lifecycle marker without forcing a repaint."""
+        if isinstance(event, SourceScanStarted):
+            # The source worker starts only after Textual's synchronous
+            # cross-thread delivery returns. Timestamping on pump receipt
+            # excludes time spent waiting to enter the UI.
+            self._diagnostics.source_started(event, now=time.monotonic())
+        elif isinstance(event, SourceScanFinished):
+            self._diagnostics.source_finished(event)
+
+    def set_expanded(self, expanded: bool) -> None:
+        """Honor the sticky user toggle without allocating blank rows."""
+        self._expanded = expanded
+        if not expanded:
+            self._pause_sampling()
+            self.set_class(False, "visible")
+            return
+        if self._diagnostics.running:
+            self._resume_sampling()
+        self._sample()
+
+    def freeze(self, summary: str, *, now: float) -> str:
+        """Replace live detail with terminal text immediately and stop sampling."""
+        text = self._diagnostics.finish(summary, now=now)
+        self._stop_sampling()
+        self._paint(text)
+        return text
+
+    def go_idle(self) -> None:
+        """Stop sampling and clear all text while preserving the user toggle."""
+        self._diagnostics.go_idle()
+        self._stop_sampling()
+        self._paint("")
+
+    @_runtime.pump_only
+    def _sample(self) -> None:
+        """Paint the latest thresholded projection on the Textual pump."""
+        if not self._expanded:
+            return
+        self._paint(self._diagnostics.sample(time.monotonic()))
+
+    def _resume_sampling(self) -> None:
+        """Create or resume the single skipped-tick Textual timer."""
+        if self._sample_timer is None:
+            self._sample_timer = self.set_interval(
+                self._SAMPLE_INTERVAL_SECONDS,
+                self._sample,
+                pause=True,
+            )
+        self._sample_timer.resume()
+
+    def _pause_sampling(self) -> None:
+        """Pause sampling while the row is collapsed."""
+        if self._sample_timer is not None:
+            self._sample_timer.pause()
+
+    def _stop_sampling(self) -> None:
+        """Destroy the timer at idle or terminal state."""
+        if self._sample_timer is not None:
+            self._sample_timer.stop()
+            self._sample_timer = None
+
+    def _paint(self, text: str) -> None:
+        """Apply changed fixed-height content, then expose only non-empty text."""
+        if text != self._last_text:
+            self._last_text = text
+            self.update(text, layout=False)
+        self.set_class(self._expanded and bool(text), "visible")
 
 
 class SpinnerWidget(Static):

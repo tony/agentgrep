@@ -9,13 +9,75 @@ adapter lives here and is the only place the UI runs a search through the engine
 from __future__ import annotations
 
 import collections.abc as cabc
+import threading
+import time
 import typing as t
+
+from agentgrep.progress import ProgressSnapshot, StreamingSearchProgress
+from agentgrep.ui._source_diagnostics import (
+    SourceScanFinished,
+    SourceScanLifecycle,
+    SourceScanStarted,
+    UiProgressSnapshot,
+)
 
 if t.TYPE_CHECKING:
     import pathlib
 
     from agentgrep.progress import SearchControl
-    from agentgrep.records import SearchQuery
+    from agentgrep.records import SearchQuery, SourceHandle
+
+
+class _LifecycleContext(threading.local):
+    """Per-callback lifecycle state safe from concurrent progress emitters."""
+
+    marker: SourceScanLifecycle | None = None
+
+
+class _UiStreamingSearchProgress(StreamingSearchProgress):
+    """Coalesce TUI-only source lifecycle with existing progress emissions."""
+
+    def __init__(self, emit: cabc.Callable[[object], None]) -> None:
+        self._downstream_emit = emit
+        self._lifecycle_context = _LifecycleContext()
+        super().__init__(emit=self._emit_ui_event)
+
+    def source_started(self, index: int, total: int, source: SourceHandle) -> None:
+        """Attach a stable store identity to the canonical start snapshot."""
+        self._lifecycle_context.marker = SourceScanStarted(
+            source_id=index,
+            store=source.store,
+        )
+        try:
+            super().source_started(index, total, source)
+        finally:
+            self._lifecycle_context.marker = None
+
+    def source_finished(
+        self,
+        index: int,
+        total: int,
+        source: SourceHandle,
+        records: int,
+        matches: int,
+    ) -> None:
+        """Attach a finish time to the canonical completion snapshot."""
+        self._lifecycle_context.marker = SourceScanFinished(
+            source_id=index,
+            finished_at=time.monotonic(),
+        )
+        try:
+            super().source_finished(index, total, source, records, matches)
+        finally:
+            self._lifecycle_context.marker = None
+
+    def _emit_ui_event(self, event: object) -> None:
+        """Wrap only the lifecycle-bearing snapshot; forward every other event."""
+        lifecycle = self._lifecycle_context.marker
+        if lifecycle is not None and isinstance(event, ProgressSnapshot):
+            self._downstream_emit(UiProgressSnapshot(snapshot=event, lifecycle=lifecycle))
+            return
+        self._downstream_emit(event)
 
 
 class SearchInvoker(t.Protocol):
@@ -57,12 +119,11 @@ class EngineSearchInvoker:
     ) -> None:
         """Run ``query`` against the engine, forwarding events to ``emit``."""
         from agentgrep._engine.orchestration import run_search_query
-        from agentgrep.progress import StreamingSearchProgress
 
         run_search_query(
             self._home,
             query,
-            progress=StreamingSearchProgress(emit=emit),
+            progress=_UiStreamingSearchProgress(emit=emit),
             control=control,
             runtime=self._runtime,
         )

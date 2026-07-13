@@ -35,6 +35,11 @@ import agentgrep.readers as _rm_readers
 from agentgrep._engine import orchestration
 from agentgrep.records import RecordOrigin, SourceOriginSummary
 from agentgrep.store_catalog import CATALOG
+from agentgrep.ui._source_diagnostics import (
+    SourceScanFinished,
+    SourceScanStarted,
+    UiProgressSnapshot,
+)
 
 if t.TYPE_CHECKING:
     import collections.abc as cabc
@@ -6214,7 +6219,7 @@ async def test_ctrl_backslash_toggles_scanning_detail_row(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    r"""``Ctrl-\`` shows the verbose scanning row, a second press hides it."""
+    r"""``Ctrl-\`` does not duplicate the already-visible scan status."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(160, 24)) as pilot:
@@ -6227,12 +6232,8 @@ async def test_ctrl_backslash_toggles_scanning_detail_row(
         await pilot.press("ctrl+backslash")
         await pilot.pause()
         assert app.screen._detail_visible is True
-        assert detail_row.has_class("visible")
-        # Two lines: the phase + N/M sources heading, then the in-source detail.
-        assert (
-            app.screen._last_detail_text
-            == "Scanning 5662/6748 sources\n2176 records, 354 source matches"
-        )
+        assert not detail_row.has_class("visible")
+        assert app.screen._last_detail_text == ""
         await pilot.press("ctrl+backslash")
         await pilot.pause()
         assert app.screen._detail_visible is False
@@ -6262,7 +6263,95 @@ async def test_detail_row_does_not_label_planning_counts_as_sources(
         await pilot.press("ctrl+backslash")
         await pilot.pause()
 
-        assert app.screen._last_detail_text == "Planning\ncandidate sources"
+        assert app.screen._last_detail_text == ""
+        assert not app.screen._detail_row.has_class("visible")
+
+
+async def test_detail_row_surfaces_only_a_thresholded_concurrent_source(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The expanded row ignores a fast tail and paints the true slow store."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(160, 24)) as pilot:
+        await pilot.pause()
+        app.screen._search_done = False
+        detail_row = app.screen._detail_row
+        detail_row.begin()
+        assert not detail_row.has_class("visible")
+
+        updates: list[tuple[str, bool]] = []
+        real_update = detail_row.update
+
+        def spy(content: t.Any = "", *, layout: bool = True) -> None:
+            updates.append((str(content), layout))
+            real_update(content, layout=layout)
+
+        monkeypatch.setattr(detail_row, "update", spy)
+        now = time.monotonic()
+        snapshot = _make_progress_snapshot(agentgrep, current=3, total=82)
+        generation = app.screen._chrome_generation
+        await app.screen._apply_streaming_event(
+            generation,
+            UiProgressSnapshot(
+                snapshot=snapshot,
+                lifecycle=SourceScanStarted(
+                    source_id=3,
+                    store="cursor-ide.state_vscdb",
+                ),
+            ),
+        )
+        for source_id in range(4, 83):
+            fast_store = f"fast.store.{source_id}"
+            await app.screen._apply_streaming_event(
+                generation,
+                UiProgressSnapshot(
+                    snapshot=snapshot,
+                    lifecycle=SourceScanStarted(
+                        source_id=source_id,
+                        store=fast_store,
+                    ),
+                ),
+            )
+            await app.screen._apply_streaming_event(
+                generation,
+                UiProgressSnapshot(
+                    snapshot=snapshot,
+                    lifecycle=SourceScanFinished(
+                        source_id=source_id,
+                        finished_at=now,
+                    ),
+                ),
+            )
+
+        await pilot.press("ctrl+backslash")
+        await pilot.pause(0.55)
+        assert detail_row.has_class("visible")
+        assert app.screen._body.has_class("-searching")
+        assert detail_row.display is True
+        assert updates == [
+            ("Slow source\ncursor-ide.state_vscdb · 500ms+", False),
+        ]
+
+        await app.screen._apply_streaming_event(
+            generation,
+            UiProgressSnapshot(
+                snapshot=snapshot,
+                lifecycle=SourceScanFinished(
+                    source_id=3,
+                    finished_at=time.monotonic(),
+                ),
+            ),
+        )
+        app.screen._apply_finished("complete", 40, 69.4, None)
+        terminal, layout = updates[-1]
+        assert terminal.startswith(
+            "Search complete: 40 matches in 69.4s\nSlow source: cursor-ide.state_vscdb · ",
+        )
+        assert layout is False
+        assert detail_row._sample_timer is None
+        assert all("fast.store" not in content for content, _layout in updates)
 
 
 async def test_detail_row_visibility_sticky_across_search_reset(
@@ -6280,18 +6369,11 @@ async def test_detail_row_visibility_sticky_across_search_reset(
         await pilot.press("ctrl+backslash")
         await pilot.pause()
         assert app.screen._detail_visible is True
-        updates: list[str] = []
-        real_update = app.screen._detail_row.update
-
-        def spy(content: t.Any = "", *args: t.Any, **kwargs: t.Any) -> None:
-            updates.append(str(content))
-            real_update(content, *args, **kwargs)
-
-        monkeypatch.setattr(app.screen._detail_row, "update", spy)
         app.screen._reset_search_chrome()
         await pilot.pause()
         assert app.screen._detail_visible is True
-        assert updates[-1] == ""
+        assert app.screen._last_detail_text == ""
+        assert not app.screen._detail_row.has_class("visible")
 
 
 async def test_finish_complete_freezes_header_to_done_text(

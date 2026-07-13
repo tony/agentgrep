@@ -428,8 +428,8 @@ Screen {
     overflow-x: hidden;
     scrollbar-size: 0 0;
 }
-/* Active source/heartbeat status is folded into #filter-header, while the
-   #results-header rule below the input carries list position and scroll. */
+/* The active heartbeat stays in #filter-header. The optional detail row only
+   appears for a threshold-crossing source or a terminal summary. */
 #status-detail {
     /* Optional expanded engine detail, aligned under the folded header. */
     height: 2;
@@ -534,7 +534,6 @@ Screen {
 }
 #body.-searching #filter-header,
 #body.-searching #results-header,
-#body.-searching #status-detail,
 #body.-searching #filter,
 #body.-searching #filter-dropdown,
 #body.-searching #results,

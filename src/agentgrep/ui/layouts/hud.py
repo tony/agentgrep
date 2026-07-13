@@ -53,16 +53,14 @@ from agentgrep.query import default_registry
 from agentgrep.records import SearchQuery, SearchRecord
 from agentgrep.ui import _history, _runtime, commands, theme as ui_theme
 from agentgrep.ui._context import UiContext
+from agentgrep.ui._source_diagnostics import UiProgressSnapshot
 from agentgrep.ui.completion import (
     QuerySuggester,
     apply_enum_choice,
     apply_word_choice,
     keyword_completion_candidates,
 )
-from agentgrep.ui.format import (
-    format_scanning_detail,
-    scroll_percent,
-)
+from agentgrep.ui.format import scroll_percent
 from agentgrep.ui.highlighter import QueryHighlighter
 from agentgrep.ui.layouts._base import LayoutScreen
 from agentgrep.ui.widgets import (
@@ -83,6 +81,7 @@ from agentgrep.ui.widgets import (
     SearchInput,
     SearchRequested,
     SearchResultsList,
+    SlowSourceDiagnosticsRow,
 )
 
 if t.TYPE_CHECKING:
@@ -180,11 +179,10 @@ class HudLayout(LayoutScreen):
         self._command_matches: tuple[commands.SlashCommand, ...] = ()
         self._results: SearchResultsList | None = None
         self._detail: StaticLike | None = None
-        self._detail_row: StaticLike | None = None
+        self._detail_row: SlowSourceDiagnosticsRow | None = None
         self._chrome_generation: int = 0
         self._last_detail_text: str = ""
         self._last_right_text: str = ""
-        self._finished_status: tuple[str, str] | None = None
         self._detail_visible: bool = False
         self._detail_statusline: StaticLike | None = None
         self._filter_input: FilterInput | None = None
@@ -329,7 +327,7 @@ class HudLayout(LayoutScreen):
                 # lifecycle state stays on the filter rule; result navigation
                 # stays on the results rule so the two never compete for space.
                 yield FilterHeader("filter", id="filter-header")
-                yield Static("", id="status-detail")
+                yield SlowSourceDiagnosticsRow(id="status-detail")
                 yield FilterInput(
                     placeholder="Filter loaded results",
                     id="filter",
@@ -399,8 +397,8 @@ class HudLayout(LayoutScreen):
         )
         self._detail_header = streaming.query_one("#detail-header")
         self._detail_row = t.cast(
-            "StaticLike",
-            streaming.query_one("#status-detail", Static),
+            "SlowSourceDiagnosticsRow",
+            streaming.query_one("#status-detail", SlowSourceDiagnosticsRow),
         )
         self._detail_statusline = t.cast(
             "StaticLike",
@@ -531,6 +529,8 @@ class HudLayout(LayoutScreen):
             self._filter_header.begin()
         if self._searching_panel is not None:
             self._searching_panel.begin()
+        if self._detail_row is not None:
+            self._detail_row.begin()
         streaming = t.cast("StreamingAppLike", t.cast("object", self))
         streaming.run_worker(
             self._run_search,
@@ -573,7 +573,6 @@ class HudLayout(LayoutScreen):
             self._detail_statusline.update("")
         self._last_detail_text = ""
         self._last_right_text = ""
-        self._finished_status = None
         if self._results_header is not None:
             self._results_header.set_right("")
         # The filter header carries the search status; clear it back
@@ -587,7 +586,7 @@ class HudLayout(LayoutScreen):
         # toggle is sticky for the session; only the row's stale
         # content is wiped.
         if self._detail_row is not None:
-            self._detail_row.update("")
+            self._detail_row.go_idle()
         self._search_emit = self._make_gated_emit()
 
     def _make_gated_emit(self) -> cabc.Callable[[object], None]:
@@ -629,6 +628,10 @@ class HudLayout(LayoutScreen):
             return
         if isinstance(event, StreamingRecordsBatch):
             await self._apply_records_batch(event.records, event.total)
+        elif isinstance(event, UiProgressSnapshot):
+            self._apply_progress(event.snapshot)
+            if self._detail_row is not None:
+                self._detail_row.set_lifecycle(event.lifecycle)
         elif isinstance(event, ProgressSnapshot):
             self._apply_progress(event)
         elif isinstance(event, StreamingSearchFinished):
@@ -1016,12 +1019,13 @@ class HudLayout(LayoutScreen):
 
     @_runtime.pump_only
     def _apply_progress(self, snapshot: ProgressSnapshot) -> None:
-        """Feed active-search chrome and detail via ``call_from_thread``.
+        """Feed active-search chrome via ``call_from_thread``.
 
         Per-source progress events arrive thousands of times per search; the
         header stores source-local facts without repainting (its 2 Hz spinner
-        timer picks them up on the next frame) and the detail row gates on
-        content change. Stale-generation events never reach this handler.
+        timer picks them up on the next frame). TUI-private lifecycle markers
+        drive the separately sampled detail row. Stale-generation events never
+        reach this handler.
         """
         # A search is in progress with no results yet — keep the centered
         # panel up (the batch handler switches to the list on first result).
@@ -1034,16 +1038,6 @@ class HudLayout(LayoutScreen):
             self._searching_panel.set_snapshot(snapshot)
         if self._filter_header is not None:
             self._filter_header.set_snapshot(snapshot)
-        if self._detail_visible and self._detail_row is not None:
-            detail = format_scanning_detail(
-                snapshot.phase,
-                snapshot.current,
-                snapshot.total,
-                snapshot.detail,
-            )
-            if detail != self._last_detail_text:
-                self._last_detail_text = detail
-                self._detail_row.update(detail)
 
     def _apply_responsive_layout(self) -> None:
         """Flip the detail pane between right (wide) and bottom (narrow).
@@ -1076,32 +1070,13 @@ class HudLayout(LayoutScreen):
         collapsed = stacked and not self._detail_opened
         t.cast("t.Any", self._detail_column).set_class(collapsed, "-collapsed")
 
+    @_runtime.pump_only
     def action_toggle_detail_progress(self) -> None:
-        r"""``Ctrl-\``: show/hide the verbose scanning detail row (sticky)."""
+        r"""``Ctrl-\``: show/hide actionable search detail (sticky)."""
         self._detail_visible = not self._detail_visible
         if self._detail_row is None:
             return
-        row = t.cast("t.Any", self._detail_row)
-        if self._detail_visible:
-            row.add_class("visible")
-            # Populate immediately: a finished search shows its data
-            # summary, a running one the latest scanning snapshot.
-            detail: str | None = None
-            if self._finished_status is not None:
-                detail = self._finished_status[1]
-            elif self._last_snapshot is not None:
-                snap = self._last_snapshot
-                detail = format_scanning_detail(
-                    snap.phase,
-                    snap.current,
-                    snap.total,
-                    snap.detail,
-                )
-            if detail is not None:
-                self._last_detail_text = detail
-                self._detail_row.update(detail)
-        else:
-            row.remove_class("visible")
+        self._detail_row.set_expanded(self._detail_visible)
 
     @_runtime.pump_only
     def _apply_finished(
@@ -1146,10 +1121,10 @@ class HudLayout(LayoutScreen):
         if self._filter_header is not None:
             self._filter_header.freeze(outcome, message=error_message or "")
         self._set_search_rule_state(outcome)
-        self._finished_status = (outcome, summary)
-        self._last_detail_text = summary
-        if self._detail_visible and self._detail_row is not None:
-            self._detail_row.update(summary)
+        detail = summary
+        if self._detail_row is not None:
+            detail = self._detail_row.freeze(summary, now=time.monotonic())
+        self._last_detail_text = detail
         # Recompute the right slot so the terminal match count is current.
         self._refresh_results_status_right()
 

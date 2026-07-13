@@ -30,6 +30,7 @@ from agentgrep.ui.widgets.status import (
     PaneHeader,
     ResultsHeader,
     SearchingPanel,
+    SlowSourceDiagnosticsRow,
     SpinnerWidget,
 )
 
@@ -54,5 +55,6 @@ __all__ = [
     "SearchRequested",
     "SearchResultsList",
     "SearchingPanel",
+    "SlowSourceDiagnosticsRow",
     "SpinnerWidget",
 ]
