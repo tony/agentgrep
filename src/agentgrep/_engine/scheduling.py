@@ -692,20 +692,25 @@ def _iter_search_plan_whole_sources(
             matches_seen=matches_seen,
         )
 
+    def begin_stopping() -> cabc.Iterator[ExecutionSourceFinished]:
+        """Cancel queued sources and retain running sources until they exit."""
+        nonlocal cancelled_count, stopping
+        stopping = True
+        for future, (index, task) in sorted(
+            futures.items(),
+            key=lambda item: item[1][0],
+        ):
+            if future.cancel():
+                cancelled_count += 1
+                futures.pop(future)
+                yield finish_stopped_source(index, task)
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         yield from submit_next(executor)
         while futures:
             if control.answer_now_requested() and not stopping:
-                stopping = True
                 _drain_source_progress(progress_updates, progress, latest_progress)
-                for future, (index, task) in sorted(
-                    futures.items(),
-                    key=lambda item: item[1][0],
-                ):
-                    if future.cancel():
-                        cancelled_count += 1
-                        futures.pop(future)
-                        yield finish_stopped_source(index, task)
+                yield from begin_stopping()
                 if not futures:
                     break
             done, _pending = concurrent.futures.wait(
@@ -714,6 +719,8 @@ def _iter_search_plan_whole_sources(
                 return_when=concurrent.futures.FIRST_COMPLETED,
             )
             _drain_source_progress(progress_updates, progress, latest_progress)
+            if control.answer_now_requested() and not stopping:
+                yield from begin_stopping()
             for future in sorted(
                 done,
                 key=lambda completed: futures[completed][0],

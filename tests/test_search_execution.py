@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import collections.abc as cabc
+import concurrent.futures
 import dataclasses
 import json
 import os
@@ -1899,6 +1900,78 @@ def test_whole_sources_finish_running_worker_only_after_scan_returns(
     assert not finished_before_release
     assert scan_returned.is_set()
     assert finish_seen.is_set()
+
+
+def test_whole_sources_recheck_cancellation_after_wait(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Answer-now at the wait boundary neither emits nor starts more work."""
+    query = _query(limit=5)
+    newest = _source(tmp_path / "newest.jsonl")
+    older = _source(tmp_path / "older.jsonl")
+    newest.mtime_ns = 2
+    older.mtime_ns = 1
+    control = agentgrep.SearchControl()
+    wait_entered = threading.Event()
+    scanned_indexes: list[int] = []
+    real_wait = concurrent.futures.wait
+
+    def wait_after_worker_cancels(
+        futures: cabc.Iterable[concurrent.futures.Future[t.Any]],
+        *,
+        timeout: float | None = None,
+        return_when: str = concurrent.futures.ALL_COMPLETED,
+    ) -> tuple[
+        set[concurrent.futures.Future[t.Any]],
+        set[concurrent.futures.Future[t.Any]],
+    ]:
+        wait_entered.set()
+        return real_wait(futures, timeout=timeout, return_when=return_when)
+
+    def scan_after_wait_starts(
+        query: agentgrep.SearchQuery,
+        task: SourceTask,
+        *,
+        index: int,
+        total: int,
+        control: agentgrep.SearchControl,
+        progress: agentgrep.SearchProgress | None = None,
+        runtime: agentgrep.SearchRuntime | None = None,
+    ) -> scanning.SourceScanResult:
+        del query, progress, runtime
+        scanned_indexes.append(index)
+        if index == 1:
+            assert wait_entered.wait(timeout=5.0), "owner never entered the wait"
+            control.request_answer_now()
+        return scanning.SourceScanResult(
+            index=index,
+            total=total,
+            source=task.source,
+            task=task,
+            records=(_record(task.source, "newest bliss", "2026-01-02T00:00:00Z"),),
+            records_seen=1,
+            matches_seen=1,
+            duration_seconds=0.0,
+            batch_count=0,
+        )
+
+    monkeypatch.setattr(scheduling.concurrent.futures, "wait", wait_after_worker_cancels)
+    monkeypatch.setattr(scanning, "scan_source_task", scan_after_wait_starts)
+    driver = scheduling.FrontierExecutionDriver(ExecutionDriverConfig(max_workers=1))
+
+    events = list(
+        driver.iter_search_plan(
+            query,
+            _multi_plan(query, (newest, older)),
+            control=control,
+        ),
+    )
+
+    assert scanned_indexes == [1]
+    assert [event.index for event in events if isinstance(event, ExecutionSourceStarted)] == [1]
+    assert [event.index for event in events if isinstance(event, ExecutionSourceFinished)] == [1]
+    assert not any(isinstance(event, ExecutionRecordEmitted) for event in events)
 
 
 class BatchCacheCase(t.NamedTuple):
