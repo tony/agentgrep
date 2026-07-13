@@ -290,11 +290,11 @@ Link:hover {
    ==================================================================== */
 Screen {
     layout: vertical;
-    /* The `flash` layer hosts the transient ctrl-c confirm gutter so it overlays
+    /* The `flash` layer hosts the transient quit-confirm gutter so it overlays
        the footer only while shown, without taking layout space. */
     layers: base flash;
 }
-/* "press ctrl-c again to exit" confirm gutter: hidden until armed, then it
+/* Quit-confirm gutter: hidden until armed, then it
    overlays the footer's bottom row. Calm pi-lite styling — terminal-transparent
    background and a plain accent foreground (no fill, no bold), matching the
    footer's accent keys rather than a loud warning bar. */

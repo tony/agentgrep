@@ -164,7 +164,7 @@ class HudLayout(LayoutScreen):
     # untouched and remain readline-compatible.
     BINDINGS: t.ClassVar[list[BindingType]] = [
         ("tab", "app.focus_next", "Switch focus"),
-        ("q", "app.quit", "Quit"),
+        ("q", "confirm_quit", "Quit"),
         ("escape", "stop_search", "Stop search"),
         ("ctrl+backslash", "toggle_detail_progress", "Detail"),
         ("ctrl+c", "smart_quit", "Stop / Quit"),
@@ -329,13 +329,6 @@ class HudLayout(LayoutScreen):
             int,
             tuple[str, int, int],
         ] = collections.OrderedDict()
-        # Staged ctrl-c in inputs: clear the text first, then (on an empty
-        # box) a first ctrl-c arms "press ctrl-c again to exit" in the gutter
-        # and a second within the window quits. The gutter is a flash-layer
-        # Static docked at the bottom.
-        self._confirm_exit_pending: bool = False
-        self._confirm_exit_timer: object | None = None
-        self._ctrlc_gutter: t.Any = None
 
     def _get_start_time(self) -> float | None:
         return self._started_at
@@ -532,7 +525,6 @@ class HudLayout(LayoutScreen):
         )
         t.cast("t.Any", self._detail_find_input).display = False
         t.cast("t.Any", self._detail_find_input).cursor_blink = False
-        self._ctrlc_gutter = t.cast("t.Any", streaming.query_one("#ctrlc-gutter"))
         self._enum_dropdown = t.cast("t.Any", streaming.query_one("#enum-dropdown"))
         self._enum_dropdown.display = False
         self._filter_dropdown = t.cast("t.Any", streaming.query_one("#filter-dropdown"))
@@ -2654,6 +2646,7 @@ class HudLayout(LayoutScreen):
         """``Esc``: cooperative early-exit of the worker (no-op when finished)."""
         self._cancel_active_action()
 
+    @_runtime.pump_only
     def action_smart_quit(self) -> None:
         """``Ctrl-C`` outside an input: cancel an in-flight action; else stage exit.
 
@@ -2664,11 +2657,13 @@ class HudLayout(LayoutScreen):
         gutter as the inputs, so the warning shows whichever pane holds focus.
         """
         if self._has_active_actions():
+            self._disarm_confirm_exit()
             self._cancel_active_action()
             return
-        self._arm_or_confirm_exit()
+        self._arm_or_confirm_exit("ctrl-c")
 
     # --- staged ctrl-c in the inputs --------------------------------
+    @_runtime.pump_only
     def _handle_input_ctrl_c(self, widget: object) -> None:
         """Staged ctrl-c from a focused input.
 
@@ -2687,43 +2682,7 @@ class HudLayout(LayoutScreen):
         if self._has_active_actions():
             self._cancel_active_action()
             return
-        self._arm_or_confirm_exit()
-
-    def _arm_or_confirm_exit(self) -> None:
-        """Arm the confirm-exit gutter, or quit if it is already armed.
-
-        Shared by the focused-input path (:meth:`_handle_input_ctrl_c`) and the
-        non-input binding (:meth:`action_smart_quit`) so the "press ctrl-c again
-        to exit" gutter behaves identically in every pane. The first call shows
-        the gutter and starts a 2 s disarm timer; a second call within that
-        window exits.
-        """
-        if self._confirm_exit_pending:
-            self.app.exit()
-            return
-        self._confirm_exit_pending = True
-        self._set_ctrlc_gutter("press ctrl-c again to exit")
-        if self._confirm_exit_timer is not None:
-            t.cast("t.Any", self._confirm_exit_timer).stop()
-        self._confirm_exit_timer = self.set_timer(2.0, self._disarm_confirm_exit)
-
-    def _disarm_confirm_exit(self) -> None:
-        """Cancel a pending confirm-exit and hide the gutter (idempotent)."""
-        if not self._confirm_exit_pending:
-            return
-        self._confirm_exit_pending = False
-        if self._confirm_exit_timer is not None:
-            t.cast("t.Any", self._confirm_exit_timer).stop()
-            self._confirm_exit_timer = None
-        self._set_ctrlc_gutter("")
-
-    def _set_ctrlc_gutter(self, message: str) -> None:
-        """Show ``message`` in the bottom gutter, or hide it when empty."""
-        if self._ctrlc_gutter is None:
-            return
-        gutter = t.cast("t.Any", self._ctrlc_gutter)
-        gutter.update(message)
-        gutter.set_class(bool(message), "-shown")
+        self._arm_or_confirm_exit("ctrl-c")
 
     # Directional pane focus (tmux-style ``ctrl+hjkl``). Routing is
     # layout-aware: side-by-side the detail pane sits to the right of

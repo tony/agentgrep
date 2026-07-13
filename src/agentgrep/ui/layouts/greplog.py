@@ -64,9 +64,9 @@ class GrepLogLayout(LayoutScreen):
 
     BINDINGS: t.ClassVar[list[BindingType]] = [
         ("tab", "app.focus_next", "Switch focus"),
-        ("q", "app.quit", "Quit"),
+        ("q", "confirm_quit", "Quit"),
         ("escape", "stop_search", "Stop search"),
-        ("ctrl+c", "app.quit", "Quit"),
+        ("ctrl+c", "smart_quit", "Stop / Quit"),
     ]
 
     def __init__(self, ctx: UiContext, workflow: Workflow) -> None:
@@ -106,6 +106,7 @@ class GrepLogLayout(LayoutScreen):
         yield RichLog(id="greplog", highlight=False, markup=False, wrap=False, max_lines=5000)
         yield Static("", id="greplog-status", markup=False)
         yield Footer()
+        yield Static("", id="ctrlc-gutter")
 
     @_runtime.pump_only
     def on_mount(self) -> None:
@@ -188,6 +189,15 @@ class GrepLogLayout(LayoutScreen):
     def action_stop_search(self) -> None:
         """``Esc``: cooperatively stop the in-flight grep."""
         self.request_cancel()
+
+    @_runtime.pump_only
+    def action_smart_quit(self) -> None:
+        """Cancel an in-flight grep, otherwise stage Ctrl-C exit."""
+        if not self._search_done:
+            self._disarm_confirm_exit()
+            self.request_cancel()
+            return
+        self._arm_or_confirm_exit("ctrl-c")
 
     @_runtime.pump_only
     def handle_maximize_command(self, argument: str) -> bool:
