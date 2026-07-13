@@ -72,6 +72,7 @@ from agentgrep.ui.widgets import (
     DetailScroll,
     DetailScrollChanged,
     FilterCompleted,
+    FilterHeader,
     FilterInput,
     FilterRequested,
     HistoryRecall,
@@ -140,10 +141,6 @@ class HudLayout(LayoutScreen):
     syntax-highlight — is heavy enough to stall the event loop.
     """
 
-    # Results-column width below which the folded header uses compact source
-    # variants and the right slot sheds cursor detail before the match count.
-    _NARROW_BREAKPOINT: t.ClassVar[int] = 50
-
     # Body width (cells) below which the detail pane moves from the
     # right (side-by-side) to the bottom (stacked) — each side wants
     # ~50 cells to stay readable. Distinct from the statusline
@@ -209,6 +206,7 @@ class HudLayout(LayoutScreen):
         self._detail_scroll: t.Any = None
         self._body: t.Any = None
         self._detail_column: t.Any = None
+        self._filter_header: t.Any = None
         self._results_header: t.Any = None
         self._detail_header: t.Any = None
         # Responsive split: True when the detail pane is stacked
@@ -284,8 +282,8 @@ class HudLayout(LayoutScreen):
         """
         if self._results is not None:
             self._results.rerender_records()
-        if self._results_header is not None:
-            self._results_header.refresh_theme()
+        if self._filter_header is not None:
+            self._filter_header.refresh_theme()
         if self._searching_panel is not None:
             self._searching_panel.refresh_theme()
         self._detail_body_cache.clear()
@@ -327,21 +325,18 @@ class HudLayout(LayoutScreen):
         detail_classes = "-collapsed" if stacked else ""
         with Horizontal(id="body", classes=body_classes):
             with Vertical(id="results-column"):
-                # pi-style section header: a bold label + width-filling rule,
-                # in place of a box border. Recolors to accent when the
-                # results pane (filter or list) holds focus.
-                # The results header folds indeterminate source/heartbeat
-                # status into its rule, so the column spends one row instead
-                # of a separate statusline.
-                yield ResultsHeader("results", id="results-header")
+                # The two rules name the content directly beneath them. Search
+                # lifecycle state stays on the filter rule; result navigation
+                # stays on the results rule so the two never compete for space.
+                yield FilterHeader("filter", id="filter-header")
                 yield Static("", id="status-detail")
                 yield FilterInput(
                     placeholder="Filter loaded results",
                     id="filter",
                     suggester=self._completion_suggester,
                     highlighter=self._query_highlighter,
-                    label="filter",
                 )
+                yield ResultsHeader("results", id="results-header")
                 # Keyword/term picker for the query-aware filter; floats
                 # over the results just below the filter input.
                 yield CompletionDropdown(
@@ -390,6 +385,10 @@ class HudLayout(LayoutScreen):
         self._detail_scroll = streaming.query_one("#detail-scroll")
         self._body = streaming.query_one("#body")
         self._detail_column = streaming.query_one("#detail-column")
+        self._filter_header = t.cast(
+            "FilterHeader",
+            streaming.query_one("#filter-header"),
+        )
         self._results_header = t.cast(
             "ResultsHeader",
             streaming.query_one("#results-header"),
@@ -495,19 +494,19 @@ class HudLayout(LayoutScreen):
     def _update_pane_focus(self) -> None:
         """Mark the focused pane's header ``-active`` (paint-only recolor).
 
-        Bound to the focused *widget*, not the column: the results header
-        lights for the filter or the list, the detail header for the detail
-        scroll, and the top search bar lights neither. This avoids the
-        results header glowing while the user types in the filter only if
-        the cue tracked the column — here it intentionally treats the filter
-        as part of the results pane, but never the search bar.
+        Bound to the focused *widget*, not the column: the filter and results
+        rules light independently, the detail header tracks detail scroll/find,
+        and the top search bar lights none of them.
         """
         if not self.is_mounted:
             # Teardown / between screens: nothing to recolor.
             return
         focused_id = getattr(self.focused, "id", None)
-        results_active = focused_id in {"results", "filter"}
+        filter_active = focused_id == "filter"
+        results_active = focused_id == "results"
         detail_active = focused_id in {"detail-scroll", "detail-find"}
+        if self._filter_header is not None:
+            t.cast("t.Any", self._filter_header).set_class(filter_active, "-active")
         if self._results_header is not None:
             t.cast("t.Any", self._results_header).set_class(results_active, "-active")
         if self._detail_header is not None:
@@ -528,8 +527,8 @@ class HudLayout(LayoutScreen):
         # results list and the folded header rule carries the phase there.
         self._set_results_view("searching")
         self._set_search_rule_state("searching")
-        if self._results_header is not None:
-            self._results_header.begin()
+        if self._filter_header is not None:
+            self._filter_header.begin()
         if self._searching_panel is not None:
             self._searching_panel.begin()
         streaming = t.cast("StreamingAppLike", t.cast("object", self))
@@ -575,10 +574,12 @@ class HudLayout(LayoutScreen):
         self._last_detail_text = ""
         self._last_right_text = ""
         self._finished_status = None
-        # The merged results header carries the search status; clear it back
-        # to the plain rule (``_start_search_worker`` re-activates it).
         if self._results_header is not None:
-            self._results_header.go_idle()
+            self._results_header.set_right("")
+        # The filter header carries the search status; clear it back
+        # to the plain rule (``_start_search_worker`` re-activates it).
+        if self._filter_header is not None:
+            self._filter_header.go_idle()
         if self._searching_panel is not None:
             self._searching_panel.go_idle()
         self._set_search_rule_state("")
@@ -1031,9 +1032,8 @@ class HudLayout(LayoutScreen):
             self._started_at = time.monotonic()
         if self._searching_panel is not None:
             self._searching_panel.set_snapshot(snapshot)
-        if self._results_header is not None:
-            self._results_header.set_narrow(self._statusline_narrow())
-            self._results_header.set_snapshot(snapshot)
+        if self._filter_header is not None:
+            self._filter_header.set_snapshot(snapshot)
         if self._detail_visible and self._detail_row is not None:
             detail = format_scanning_detail(
                 snapshot.phase,
@@ -1044,14 +1044,6 @@ class HudLayout(LayoutScreen):
             if detail != self._last_detail_text:
                 self._last_detail_text = detail
                 self._detail_row.update(detail)
-
-    def _statusline_narrow(self) -> bool:
-        """Report whether the header rule is too narrow to also carry the count."""
-        header = self._results_header
-        if header is None:
-            return False
-        width = int(getattr(header.size, "width", 0) or 0)
-        return 0 < width < self._NARROW_BREAKPOINT
 
     def _apply_responsive_layout(self) -> None:
         """Flip the detail pane between right (wide) and bottom (narrow).
@@ -1149,11 +1141,10 @@ class HudLayout(LayoutScreen):
             summary = f"Stopped at {format_match_count(total)}{source_summary} in {elapsed:.1f}s"
         else:
             summary = f"Search complete: {format_match_count(total)} in {elapsed:.1f}s"
-        # Freeze the header: a complete scan reads as a full 100% bar; the
-        # stopped/error marker carries the other outcomes, the error message
-        # shows in the rule, and the full summary lives in the ctrl+\ row.
-        if self._results_header is not None:
-            self._results_header.freeze(outcome, message=error_message or "")
+        # Freeze the filter header to bounded text; the full summary lives in
+        # the ctrl+\ row while result navigation remains on the results rule.
+        if self._filter_header is not None:
+            self._filter_header.freeze(outcome, message=error_message or "")
         self._set_search_rule_state(outcome)
         self._finished_status = (outcome, summary)
         self._last_detail_text = summary
@@ -1297,6 +1288,7 @@ class HudLayout(LayoutScreen):
             # queued while patching the list. Non-empty filter results do
             # not guarantee a highlight message will be emitted.
             self._pending_autohighlights = self._results.set_records(payload.matching)
+            self._refresh_results_status_right()
         if self._detail is not None:
             if self.filtered_records:
                 top = self.filtered_records[0]
@@ -1349,14 +1341,10 @@ class HudLayout(LayoutScreen):
     def on_results_scroll_changed(self, message: ResultsScrollChanged) -> None:
         """Re-render the right side of the results status line.
 
-        ``message.percent`` is deliberately unused — the results
-        list's scrollbar already shows the scroll position, so the
-        right slot doesn't restate it.
+        Treat the message as an invalidation rather than trusting its snapshot:
+        a queued pre-reset event must not repaint stale navigation state.
         """
-        self._refresh_results_status_right(
-            cursor=message.cursor,
-            visible=message.total,
-        )
+        self._refresh_results_status_right()
 
     def on_detail_scroll_changed(self, message: DetailScrollChanged) -> None:
         """Re-render the detail status line and remember the scroll position."""
@@ -1368,6 +1356,7 @@ class HudLayout(LayoutScreen):
         *,
         cursor: int | None = None,
         visible: int | None = None,
+        percent: int | None = None,
     ) -> None:
         """Compose the results-status right slot from the most recent state.
 
@@ -1377,37 +1366,46 @@ class HudLayout(LayoutScreen):
         """
         if self._results_header is None:
             return
-        if cursor is None and visible is None and self._results is not None:
-            cursor = t.cast("int | None", getattr(self._results, "highlighted", None))
-            visible = len(self._results._records)
-        text = self._format_results_right(cursor, visible)
+        if self._results is not None:
+            if cursor is None and visible is None:
+                cursor = t.cast("int | None", getattr(self._results, "highlighted", None))
+                visible = len(self._results._records)
+            if percent is None:
+                percent = self._results._scroll_percent()
+        text = (
+            ""
+            if not self.all_records and not self._search_done
+            else self._format_results_right(cursor, visible, percent=percent)
+        )
         if text != self._last_right_text:
             self._last_right_text = text
-            self._results_header.set_matches(text)
+            self._results_header.set_right(text)
 
     def _format_results_right(
         self,
         cursor: int | None,
         visible: int | None,
+        *,
+        percent: int | None = None,
     ) -> str:
-        """Render the right slot, one count at a time (tig style, thrifty).
+        """Render fixed-width item position/count plus list scroll percent.
 
-        Wide statuslines show ``{cursor+1}/{visible}`` once a cursor
-        exists — the denominator already carries the count — and the
-        bare match count before that. Narrow statuslines show only the
-        match count; active source state stays in the folded header.
+        Once a cursor exists, its numerator is padded to the denominator width.
+        The percentage is padded to three digits. Right-anchoring that stable
+        footprint prevents the rule label from moving as either value advances.
         """
         total_matches = len(self.all_records)
-        parts: list[str] = []
-        if not self._statusline_narrow():
-            if visible and visible > 0 and cursor is not None:
-                parts.append(f"{cursor + 1}/{visible}")
-            elif total_matches > 0:
-                parts.append(format_match_count(total_matches))
+        if visible and visible > 0 and cursor is not None:
+            digits = len(str(visible))
+            position = f"{cursor + 1:>{digits}}/{visible}"
+        elif visible is not None:
+            position = format_match_count(max(0, visible))
+        elif total_matches > 0:
+            position = format_match_count(total_matches)
         else:
-            if total_matches > 0:
-                parts.append(format_match_count(total_matches))
-        return "  ".join(parts)
+            return ""
+        bounded_percent = max(0, min(100, percent if percent is not None else 100))
+        return f"{position}  {bounded_percent:>3}%"
 
     def _refresh_detail_statusline(self, percent: int | None = None) -> None:
         """Update the detail status line with the current record path and scroll %."""
@@ -2084,14 +2082,13 @@ class HudLayout(LayoutScreen):
 
     def _after_resize(self) -> None:
         """Refresh chrome; the detail pane scroll wrapper handles its own reflow."""
-        # Recompute (not just repaint) the right slot — crossing the
-        # narrow breakpoint adds/removes the cursor/visible segment.
+        # Recompute (not just repaint) because the result viewport's new height
+        # can change max_scroll_y and therefore the displayed percentage.
         self._refresh_results_status_right()
-        if self._results_header is not None:
-            # Width selects a whole active-status variant and sizes the
-            # completed bar, so repaint even when the stored facts are stable.
-            self._results_header.set_narrow(self._statusline_narrow())
-            self._results_header.invalidate()
+        if self._filter_header is not None:
+            # Width selects a whole active-status variant, so repaint even when
+            # the stored facts are stable.
+            self._filter_header.invalidate()
         # Crossing the split breakpoint moves the detail pane between
         # the right side and the bottom.
         self._apply_responsive_layout()

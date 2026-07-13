@@ -20,6 +20,7 @@ from agentgrep.ui.format import phase_label
 from agentgrep.ui.widgets import (
     CompletionDropdown,
     DetailScroll,
+    FilterHeader,
     FilterInput,
     FilterRequested,
     MeterWidget,
@@ -188,30 +189,28 @@ def test_phase_label_curates_engine_jargon() -> None:
     assert phase_label("") == ""
 
 
-def test_results_header_scanning_shows_truthful_indeterminate_status() -> None:
+def test_filter_header_scanning_shows_truthful_indeterminate_status() -> None:
     """An active header shows source facts and heartbeat, never a percentage.
 
     ``begin()`` is skipped on purpose: it arms a Textual ``auto_refresh``
     timer that needs a running event loop. This exercises the pure ``_payload``
     seam; the timer lifecycle is covered by the app-level integration test.
     """
-    header = ResultsHeader("results", id="results-header")
+    header = FilterHeader("filter", id="filter-header")
     header.set_snapshot(
         _snapshot("scanning", current=42, total=68, source_records_seen=128),
     )
-    header.set_matches("180 matches")
     payload = header._payload(60).plain
     assert "Scanning" in payload
     assert "source 42 of 68" in payload
     assert "128 records" in payload
     assert "▰" not in payload
     assert "%" not in payload
-    assert "180 matches" not in payload  # match count hidden while scanning
 
 
-def test_results_header_heartbeat_advances_with_fixed_source() -> None:
+def test_filter_header_heartbeat_advances_with_fixed_source() -> None:
     """The heartbeat advances while one expensive source remains active."""
-    header = ResultsHeader("results", id="results-header")
+    header = FilterHeader("filter", id="filter-header")
     header.set_snapshot(
         _snapshot("scanning", current=3, total=82, source_records_seen=128),
     )
@@ -228,9 +227,9 @@ def test_results_header_heartbeat_advances_with_fixed_source() -> None:
     assert first != second
 
 
-def test_results_header_narrow_keeps_source_without_fake_progress() -> None:
+def test_filter_header_narrow_keeps_source_without_fake_progress() -> None:
     """Narrow chrome keeps the source ordinal and sheds the heartbeat first."""
-    header = ResultsHeader("results", id="results-header")
+    header = FilterHeader("filter", id="filter-header")
     header.set_snapshot(
         _snapshot("scanning", current=3, total=82, source_records_seen=128),
     )
@@ -244,9 +243,9 @@ def test_results_header_narrow_keeps_source_without_fake_progress() -> None:
     assert "%" not in payload
 
 
-def test_results_header_source_does_not_disappear_as_width_grows() -> None:
+def test_filter_header_source_does_not_disappear_as_width_grows() -> None:
     """Growing narrow chrome never lets the phase crowd out source identity."""
-    header = ResultsHeader("results", id="results-header")
+    header = FilterHeader("filter", id="filter-header")
     header.set_snapshot(
         _snapshot("scanning", current=3, total=82, source_records_seen=128),
     )
@@ -258,9 +257,9 @@ def test_results_header_source_does_not_disappear_as_width_grows() -> None:
     assert "Scanning" in payloads[18]
 
 
-def test_results_header_curates_prefiltering_phase() -> None:
+def test_filter_header_curates_prefiltering_phase() -> None:
     """The header uses the curated 'Filtering' word, never raw 'prefiltering'."""
-    header = ResultsHeader("results", id="results-header")
+    header = FilterHeader("filter", id="filter-header")
     header.set_snapshot(_snapshot("prefiltering"))
     payload = header._payload(60).plain
     assert "Filtering" in payload
@@ -270,7 +269,7 @@ def test_results_header_curates_prefiltering_phase() -> None:
 def test_planning_counts_are_not_labeled_as_sources() -> None:
     """Candidate-plan counts never masquerade as an active source ordinal."""
     snapshot = _snapshot("planning", current=7, total=10)
-    header = ResultsHeader("results", id="results-header")
+    header = FilterHeader("filter", id="filter-header")
     header.set_snapshot(snapshot)
     panel = SearchingPanel(id="searching-panel")
     panel.set_snapshot(snapshot)
@@ -284,30 +283,31 @@ def test_planning_counts_are_not_labeled_as_sources() -> None:
     assert "source" not in panel_text
 
 
-def test_results_header_idle_stays_a_plain_rule() -> None:
-    """With no search active the header is still the bare ``─results`` rule."""
-    header = ResultsHeader("results", id="results-header")
+def test_filter_header_idle_stays_a_plain_rule() -> None:
+    """With no search active the header is still the bare ``─filter`` rule."""
+    header = FilterHeader("filter", id="filter-header")
     text = header.render()
-    assert text.plain.startswith("─results")
+    assert text.plain.startswith("─filter")
     assert "Scanning" not in text.plain
 
 
-def test_results_header_complete_drops_glyph_and_word() -> None:
-    """A completed scan reads as a full 100%% bar — no ✓ glyph and no 'Done' word."""
-    header = ResultsHeader("results", id="results-header")
+def test_filter_header_complete_uses_text_without_meter() -> None:
+    """A completed scan says ``Done`` without reviving determinate progress."""
+    header = FilterHeader("filter", id="filter-header")
     header.set_snapshot(_snapshot("scanning", current=3, total=5, source_records_seen=10))
     header.freeze("complete")
     payload = header._payload(60).plain
-    assert "100%" in payload
-    assert "▰" in payload
+    assert "Done" in payload
+    assert "%" not in payload
+    assert "▰" not in payload
+    assert "▱" not in payload
     assert "✓" not in payload
-    assert "Done" not in payload
     assert "Scanning" not in payload  # the verb drops once frozen
 
 
-def test_results_header_interrupted_and_error_keep_a_marker() -> None:
-    """Stopped/error aren't self-evident from the bar, so they keep a marker."""
-    stopped = ResultsHeader("results", id="results-header")
+def test_filter_header_interrupted_and_error_keep_a_marker() -> None:
+    """Stopped/error remain explicit with both a glyph and text."""
+    stopped = FilterHeader("filter", id="filter-header")
     stopped.set_snapshot(_snapshot("scanning", current=3, total=5, source_records_seen=10))
     stopped.freeze("interrupted")
     stopped_payload = stopped._payload(60).plain
@@ -315,16 +315,16 @@ def test_results_header_interrupted_and_error_keep_a_marker() -> None:
     assert "Stopped" in stopped_payload
     assert "%" not in stopped_payload
 
-    errored = ResultsHeader("results", id="results-header")
+    errored = FilterHeader("filter", id="filter-header")
     errored.freeze("error", message="bad query")
     payload = errored._payload(60).plain
     assert "✗" in payload
     assert "bad query" in payload
 
 
-def test_results_header_early_interruption_is_explicit() -> None:
+def test_filter_header_early_interruption_is_explicit() -> None:
     """Stopping before the first snapshot still renders a textual outcome."""
-    header = ResultsHeader("results", id="results-header")
+    header = FilterHeader("filter", id="filter-header")
     header.freeze("interrupted")
 
     payload = header._payload(18).plain
@@ -334,14 +334,14 @@ def test_results_header_early_interruption_is_explicit() -> None:
     assert "%" not in payload
 
 
-def test_results_header_shows_match_count_only_once_finished() -> None:
-    """The match/cursor count appears after the scan, never during it."""
+def test_results_header_fits_whole_navigation_variants() -> None:
+    """The results rule sheds scroll percent before item position."""
     header = ResultsHeader("results", id="results-header")
-    header.set_snapshot(_snapshot("scanning", current=3, total=5, source_records_seen=10))
-    header.set_matches("3/180")
-    assert "3/180" not in header._payload(60).plain  # hidden while scanning
-    header.freeze("complete")
-    assert "3/180" in header._payload(60).plain  # shown once finished
+    header.set_right(" 1/40    9%")
+
+    assert header._fit_right(11) == " 1/40    9%"
+    assert header._fit_right(5) == "1/40"
+    assert header._fit_right(3) == ""
 
 
 def test_searching_panel_is_static_subclass() -> None:

@@ -80,7 +80,6 @@ class FilterInput(Input):
         id: str | None = None,  # noqa: A002 -- forwarded to Textual's ``id`` kwarg
         suggester: Suggester | None = None,
         highlighter: Highlighter | None = None,
-        label: str | None = None,
     ) -> None:
         super().__init__(
             placeholder=placeholder,
@@ -89,18 +88,6 @@ class FilterInput(Input):
             highlighter=highlighter,
         )
         self._debounce_timer: Timer | None = None
-        self._label = label
-
-    def on_mount(self) -> None:
-        """Paint ``label`` into the BOTTOM rule (``border_subtitle``).
-
-        The filter has no top rule — the results-header rule directly above it is
-        its separator, so a top rule here would stack two horizontal lines under
-        the header (the double-chrome pi/ink avoid). The label therefore lives on
-        the filter's only rule, the bottom one.
-        """
-        if self._label is not None:
-            self.border_subtitle = self._label
 
     def _watch_value(self, value: str) -> None:
         """Post normal ``Input.Changed`` and arm a debounced ``FilterRequested``."""
