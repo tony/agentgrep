@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import collections.abc as cabc
-import dataclasses
 import sqlite3
 import typing as t
 
@@ -176,14 +175,13 @@ def parse_pi_session_file(
                 session_origin,
             )
             if candidate is not None:
-                candidate = dataclasses.replace(
-                    candidate,
-                    identity_namespace=("pi.session" if native_session_id is not None else None),
-                    position=_record_position(
-                        native_id=mapping.get("id"),
-                        parent_native_id=extract_parent_message_id(mapping),
-                        ordinal=raw_index if ordinal_is_available else None,
-                    ),
+                candidate.identity_namespace = (
+                    "pi.session" if native_session_id is not None else None
+                )
+                candidate.position = _record_position(
+                    native_id=mapping.get("id"),
+                    parent_native_id=extract_parent_message_id(mapping),
+                    ordinal=raw_index if ordinal_is_available else None,
                 )
                 yield build_search_record(source, candidate)
             continue
