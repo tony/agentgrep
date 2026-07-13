@@ -326,8 +326,14 @@ class GrepLogLayout(LayoutScreen):
     def _scanning_text(snapshot: ProgressSnapshot) -> str:
         """Render the in-flight scanning status from ``snapshot``."""
         if snapshot.current is not None and snapshot.total:
-            return f"{snapshot.phase} {snapshot.current}/{snapshot.total}…"
-        return f"{snapshot.phase}…"
+            text = f"{snapshot.phase} {snapshot.current}/{snapshot.total}"
+        else:
+            text = snapshot.phase
+        records = snapshot.source_records_seen
+        if records is not None and records > 0:
+            suffix = "record" if records == 1 else "records"
+            text = f"{text} · {records} {suffix}"
+        return f"{text}…"
 
 
 def _format_log_line(record: SearchRecord) -> str:

@@ -98,11 +98,11 @@ async def test_greplog_finished_sets_status_line(
         assert "5" in str(layout.query_one("#greplog-status").render())
 
 
-async def test_greplog_renders_lifecycle_wrapped_progress(
+async def test_greplog_renders_lifecycle_and_heartbeat_progress(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A real UI reporter's source-start snapshot updates the status line."""
+    """A real UI reporter shows source lifecycle and heartbeat progress."""
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     events: list[object] = []
     reporter = _UiStreamingSearchProgress(emit=events.append)
@@ -117,6 +117,7 @@ async def test_greplog_renders_lifecycle_wrapped_progress(
         mtime_ns=1,
     )
     reporter.source_started(3, 82, source)
+    reporter.source_progress(3, 82, source, records=128, matches=1)
 
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
@@ -125,6 +126,9 @@ async def test_greplog_renders_lifecycle_wrapped_progress(
         await layout._apply_event(layout._generation, events[0])
         await pilot.pause()
         assert str(layout.query_one("#greplog-status").render()) == "scanning 3/82…"
+        await layout._apply_event(layout._generation, events[1])
+        await pilot.pause()
+        assert str(layout.query_one("#greplog-status").render()) == ("scanning 3/82 · 128 records…")
 
 
 async def test_greplog_filter_renders_only_matches(
