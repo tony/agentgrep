@@ -632,6 +632,7 @@ def _iter_search_plan_whole_sources(
     futures: dict[concurrent.futures.Future[scanning.SourceScanResult], tuple[int, SourceTask]] = {}
     progress_updates: queue.Queue[_SourceProgressUpdate] = queue.Queue()
     latest_progress: dict[int, _SourceProgressUpdate] = {}
+    stopping = False
     worker_progress = (
         _QueueingSourceProgress(progress_updates.put)
         if callable(getattr(progress, "source_progress", None))
@@ -670,10 +671,32 @@ def _iter_search_plan_whole_sources(
             )
             futures[future] = (index, task)
 
+    def finish_stopped_source(index: int, task: SourceTask) -> ExecutionSourceFinished:
+        """Pair one stopped source after it is no longer running."""
+        latest = latest_progress.pop(index, None)
+        records_seen = latest.records if latest is not None else 0
+        matches_seen = latest.matches if latest is not None else 0
+        progress.source_finished(
+            index,
+            total,
+            task.source,
+            records_seen,
+            matches_seen,
+        )
+        return ExecutionSourceFinished(
+            index=index,
+            total=total,
+            source=task.source,
+            task=task,
+            records_seen=records_seen,
+            matches_seen=matches_seen,
+        )
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         yield from submit_next(executor)
         while futures:
-            if control.answer_now_requested():
+            if control.answer_now_requested() and not stopping:
+                stopping = True
                 _drain_source_progress(progress_updates, progress, latest_progress)
                 for future, (index, task) in sorted(
                     futures.items(),
@@ -681,29 +704,10 @@ def _iter_search_plan_whole_sources(
                 ):
                     if future.cancel():
                         cancelled_count += 1
-                    latest = latest_progress.pop(index, None)
-                    records_seen = latest.records if latest is not None else 0
-                    matches_seen = latest.matches if latest is not None else 0
-                    # Results from still-running workers are discarded at
-                    # executor shutdown; emit each remaining source's
-                    # finished event so the started/finished pairing holds
-                    # on early exit.
-                    progress.source_finished(
-                        index,
-                        total,
-                        task.source,
-                        records_seen,
-                        matches_seen,
-                    )
-                    yield ExecutionSourceFinished(
-                        index=index,
-                        total=total,
-                        source=task.source,
-                        task=task,
-                        records_seen=records_seen,
-                        matches_seen=matches_seen,
-                    )
-                break
+                        futures.pop(future)
+                        yield finish_stopped_source(index, task)
+                if not futures:
+                    break
             done, _pending = concurrent.futures.wait(
                 futures,
                 timeout=0.05 if worker_progress is not None else None,
@@ -715,6 +719,9 @@ def _iter_search_plan_whole_sources(
                 key=lambda completed: futures[completed][0],
             ):
                 _index, task = futures.pop(future)
+                if stopping:
+                    yield finish_stopped_source(_index, task)
+                    continue
                 result = future.result()
                 latest_progress.pop(result.index, None)
                 completed_count += 1
@@ -736,7 +743,8 @@ def _iter_search_plan_whole_sources(
                     records_seen=result.records_seen,
                     matches_seen=result.matches_seen,
                 )
-            yield from submit_next(executor)
+            if not stopping:
+                yield from submit_next(executor)
 
     emitted_count = 0
     for record in frontier.records():

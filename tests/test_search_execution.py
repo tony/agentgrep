@@ -1806,6 +1806,101 @@ def test_whole_sources_cancellation_preserves_latest_source_progress(
     ] == [expected_counters]
 
 
+def test_whole_sources_finish_running_worker_only_after_scan_returns(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Answer-now keeps a running source active until its scan returns."""
+    query = _query(limit=1)
+    source = _source(tmp_path / "blocked.jsonl")
+    control = agentgrep.SearchControl()
+    scan_started = threading.Event()
+    release_scan = threading.Event()
+    scan_returned = threading.Event()
+    finish_seen = threading.Event()
+
+    def blocked_scan(
+        query: agentgrep.SearchQuery,
+        task: SourceTask,
+        *,
+        index: int,
+        total: int,
+        control: agentgrep.SearchControl,
+        progress: agentgrep.SearchProgress | None = None,
+        runtime: agentgrep.SearchRuntime | None = None,
+    ) -> scanning.SourceScanResult:
+        del query, control, progress, runtime
+        scan_started.set()
+        assert release_scan.wait(timeout=5.0), "test never released the source scan"
+        scan_returned.set()
+        return scanning.SourceScanResult(
+            index=index,
+            total=total,
+            source=task.source,
+            task=task,
+            records=(),
+            records_seen=0,
+            matches_seen=0,
+            duration_seconds=0.0,
+            batch_count=0,
+        )
+
+    class CapturingProgress(agentgrep.NoopSearchProgress):
+        def source_progress(
+            self,
+            index: int,
+            total: int,
+            source: agentgrep.SourceHandle,
+            records: int,
+            matches: int,
+        ) -> None:
+            del index, total, source, records, matches
+
+        def source_finished(
+            self,
+            index: int,
+            total: int,
+            source: agentgrep.SourceHandle,
+            records: int,
+            matches: int,
+        ) -> None:
+            del index, total, source, records, matches
+            finish_seen.set()
+
+    monkeypatch.setattr(scanning, "scan_source_task", blocked_scan)
+    errors: list[BaseException] = []
+
+    def consume() -> None:
+        try:
+            driver = scheduling.FrontierExecutionDriver(
+                ExecutionDriverConfig(max_workers=1),
+            )
+            list(
+                driver.iter_search_plan(
+                    query,
+                    _multi_plan(query, (source,)),
+                    progress=CapturingProgress(),
+                    control=control,
+                ),
+            )
+        except BaseException as exc:
+            errors.append(exc)
+
+    consumer = threading.Thread(target=consume)
+    consumer.start()
+    assert scan_started.wait(timeout=2.0)
+    control.request_answer_now()
+    finished_before_release = finish_seen.wait(timeout=0.2)
+    release_scan.set()
+    consumer.join(timeout=5.0)
+
+    assert not consumer.is_alive()
+    assert errors == []
+    assert not finished_before_release
+    assert scan_returned.is_set()
+    assert finish_seen.is_set()
+
+
 class BatchCacheCase(t.NamedTuple):
     """One batch-scheduling worker shape exercising the source scan cache."""
 
