@@ -6514,9 +6514,8 @@ async def test_detail_row_shows_summary_after_finish(
         await pilot.press("ctrl+backslash")
         await pilot.pause()
         assert app.screen._detail_visible is True
-        assert (
-            app.screen._last_detail_text
-            == "Stopped at 2976 matches across 5662/6748 sources in 2.1s"
+        assert app.screen._last_detail_text == (
+            "Stopped at 2976 matches while scanning source 5662 of 6748 in 2.1s"
         )
 
 

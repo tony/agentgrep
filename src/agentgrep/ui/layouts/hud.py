@@ -1111,8 +1111,8 @@ class HudLayout(LayoutScreen):
         if outcome == "error":
             summary = f"Search failed: {error_message}"
         elif outcome == "interrupted":
-            source_label = self._scanning_sources_label()
-            source_summary = f" across {source_label} sources" if source_label else ""
+            source_label = self._scanning_source_label()
+            source_summary = f" while scanning source {source_label}" if source_label else ""
             summary = f"Stopped at {format_match_count(total)}{source_summary} in {elapsed:.1f}s"
         else:
             summary = f"Search complete: {format_match_count(total)} in {elapsed:.1f}s"
@@ -1151,12 +1151,12 @@ class HudLayout(LayoutScreen):
         if rule_class is not None:
             target.add_class(rule_class)
 
-    def _scanning_sources_label(self) -> str | None:
+    def _scanning_source_label(self) -> str | None:
         """Return a source ordinal only when the last event was a scan."""
         snap = self._last_snapshot
         if snap is None or snap.phase != "scanning" or snap.current is None or snap.total is None:
             return None
-        return f"{snap.current}/{snap.total}"
+        return f"{snap.current} of {snap.total}"
 
     def on_filter_requested(self, message: FilterRequested) -> None:
         """Narrow the loaded records when the #filter box changes."""

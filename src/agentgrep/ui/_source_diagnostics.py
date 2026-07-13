@@ -94,7 +94,7 @@ class SlowSourceDiagnostics:
             )
 
     def source_finished(self, event: SourceScanFinished) -> None:
-        """Close one active source without changing the sampled text."""
+        """Close one active source and retain its duration for terminal evidence."""
         if not self._running:
             return
         started = self._active.pop(event.source_id, None)
@@ -110,7 +110,7 @@ class SlowSourceDiagnostics:
         """Return a stable live diagnostic after a source crosses the threshold."""
         if not self._running:
             return self._terminal
-        slowest = self._slowest_completed
+        slowest = None
         for started in self._active.values():
             slowest = self._longer(slowest, started.store, now - started.started_at)
         if slowest is None:

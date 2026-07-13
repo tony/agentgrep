@@ -34,6 +34,7 @@ from agentgrep.progress import (
 from agentgrep.records import SearchQuery, SearchRecord
 from agentgrep.ui import _runtime
 from agentgrep.ui._context import UiContext
+from agentgrep.ui._source_diagnostics import UiProgressSnapshot
 from agentgrep.ui.layouts._base import LayoutScreen
 from agentgrep.ui.widgets import SearchInput, SearchRequested
 
@@ -225,6 +226,9 @@ class GrepLogLayout(LayoutScreen):
                 self._filter_generation,
                 event.records,
             )
+        elif isinstance(event, UiProgressSnapshot):
+            if not self._search_done and self._status is not None:
+                self._status.update(self._scanning_text(event.snapshot))
         elif isinstance(event, ProgressSnapshot):
             if not self._search_done and self._status is not None:
                 self._status.update(self._scanning_text(event))

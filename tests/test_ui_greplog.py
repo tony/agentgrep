@@ -15,7 +15,8 @@ import typing as t
 import pytest
 
 from agentgrep.progress import StreamingRecordsBatch, StreamingSearchFinished
-from agentgrep.records import SearchRecord
+from agentgrep.records import SearchRecord, SourceHandle
+from agentgrep.ui._seams import _UiStreamingSearchProgress
 from tests.test_agentgrep import _build_empty_ui_app
 
 
@@ -95,6 +96,35 @@ async def test_greplog_finished_sets_status_line(
         layout._apply_finished("complete", 5, 1.2, None)
         await pilot.pause()
         assert "5" in str(layout.query_one("#greplog-status").render())
+
+
+async def test_greplog_renders_lifecycle_wrapped_progress(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real UI reporter's source-start snapshot updates the status line."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    events: list[object] = []
+    reporter = _UiStreamingSearchProgress(emit=events.append)
+    source = SourceHandle(
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "session.jsonl",
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=1,
+    )
+    reporter.source_started(3, 82, source)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        layout = await _mount_greplog(app, pilot)
+        layout._search_done = False
+        await layout._apply_event(layout._generation, events[0])
+        await pilot.pause()
+        assert str(layout.query_one("#greplog-status").render()) == "scanning 3/82…"
 
 
 async def test_greplog_filter_renders_only_matches(

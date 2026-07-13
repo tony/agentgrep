@@ -81,6 +81,23 @@ def test_fast_sources_never_allocate_detail_chrome() -> None:
     )
 
 
+def test_live_sample_only_blames_active_sources() -> None:
+    """Completed evidence is reserved for the terminal summary."""
+    tracker = SlowSourceDiagnostics(threshold_seconds=0.5)
+    tracker.begin()
+    tracker.source_started(
+        SourceScanStarted(source_id=1, store="completed.slow.store"),
+        now=0.0,
+    )
+    tracker.source_finished(SourceScanFinished(source_id=1, finished_at=1.0))
+    tracker.source_started(
+        SourceScanStarted(source_id=2, store="active.fast.store"),
+        now=1.0,
+    )
+
+    assert tracker.sample(1.1) == ""
+
+
 def test_pump_delivery_delay_is_not_counted_as_source_latency() -> None:
     """Timing begins when the start marker reaches the pump, not before it."""
     tracker = SlowSourceDiagnostics(threshold_seconds=0.5)

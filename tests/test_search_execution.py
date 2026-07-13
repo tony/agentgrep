@@ -1610,6 +1610,7 @@ def test_frontier_batch_path_releases_cancelled_tasks(
         total: int,
         control: agentgrep.SearchControl,
         batch_queue: queue.Queue[t.Any],
+        progress: agentgrep.SearchProgress | None = None,
     ) -> None:
         original_scan_to_queue(
             query,
@@ -1618,6 +1619,7 @@ def test_frontier_batch_path_releases_cancelled_tasks(
             total=total,
             control=control,
             batch_queue=batch_queue,
+            progress=progress,
         )
         if index in (1, 2):
             hold_workers.wait(timeout=10.0)
@@ -1726,6 +1728,82 @@ def test_whole_sources_cancellation_pairs_source_events(
     finished = {e.index for e in events if isinstance(e, ExecutionSourceFinished)}
     assert started
     assert started == finished
+
+
+def test_whole_sources_cancellation_preserves_latest_source_progress(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancellation never reports fewer records than the latest heartbeat."""
+    query = _query(limit=1)
+    source = _source(tmp_path / "session.jsonl")
+    control = agentgrep.SearchControl()
+    release_worker = threading.Event()
+
+    def iter_records(
+        task: SourceTask,
+        _query: agentgrep.SearchQuery,
+    ) -> cabc.Iterator[agentgrep.SearchRecord]:
+        for index in range(agentgrep._SOURCE_PROGRESS_RECORD_INTERVAL):
+            yield _record(
+                task.source,
+                f"other {index}",
+                "2026-01-01T00:00:00Z",
+            )
+        assert release_worker.wait(timeout=5.0), "owner never forwarded the heartbeat"
+        yield _record(task.source, "other final", "2026-01-01T00:00:00Z")
+
+    class CancellingProgress(agentgrep.NoopSearchProgress):
+        def __init__(self) -> None:
+            self.events: list[tuple[str, int, int]] = []
+
+        def source_progress(
+            self,
+            index: int,
+            total: int,
+            source: agentgrep.SourceHandle,
+            records: int,
+            matches: int,
+        ) -> None:
+            _ = index, total, source
+            self.events.append(("progress", records, matches))
+            control.request_answer_now()
+            release_worker.set()
+
+        def source_finished(
+            self,
+            index: int,
+            total: int,
+            source: agentgrep.SourceHandle,
+            records: int,
+            matches: int,
+        ) -> None:
+            _ = index, total, source
+            self.events.append(("finished", records, matches))
+
+    monkeypatch.setattr(scanning, "iter_source_task_records", iter_records)
+    progress = CancellingProgress()
+    driver = scheduling.FrontierExecutionDriver(ExecutionDriverConfig(max_workers=1))
+
+    events = list(
+        driver.iter_search_plan(
+            query,
+            _multi_plan(query, (source,)),
+            progress=progress,
+            control=control,
+        ),
+    )
+
+    expected_counters = (agentgrep._SOURCE_PROGRESS_RECORD_INTERVAL, 0)
+    assert progress.events == [
+        ("progress", *expected_counters),
+        ("finished", *expected_counters),
+    ]
+    assert [
+        (event.records_seen, event.matches_seen)
+        for event in events
+        if isinstance(event, ExecutionSourceFinished)
+    ] == [expected_counters]
 
 
 class BatchCacheCase(t.NamedTuple):
@@ -1881,6 +1959,82 @@ def test_select_execution_driver_uses_frontier_for_bounded_haystack_search(
     driver = execution.select_execution_driver(query, plan)
 
     assert isinstance(driver, FrontierExecutionDriver)
+
+
+@pytest.mark.parametrize(
+    "config",
+    (
+        pytest.param(None, id="whole-source-worker"),
+        pytest.param(
+            ExecutionDriverConfig(max_workers=2),
+            id="concurrent-whole-source-workers",
+        ),
+        pytest.param(
+            ExecutionDriverConfig(max_workers=1, use_source_batches=True),
+            id="single-owner-thread-batches",
+        ),
+        pytest.param(
+            ExecutionDriverConfig(max_workers=2, use_source_batches=True),
+            id="concurrent-worker-batches",
+        ),
+    ),
+)
+def test_selected_frontier_driver_forwards_source_progress_on_owner_thread(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    config: ExecutionDriverConfig | None,
+) -> None:
+    """Limited frontier scans serialize parsed-record heartbeats on their owner."""
+    query = _query(limit=1)
+    sources = (
+        _source(tmp_path / "newest.jsonl"),
+        _source(tmp_path / "older.jsonl"),
+    )
+    sources[0].mtime_ns = 2
+    sources[1].mtime_ns = 1
+    plan = _multi_plan(query, sources)
+    owner_thread_id = threading.get_ident()
+
+    def iter_records(
+        task: SourceTask,
+        _query: agentgrep.SearchQuery,
+    ) -> cabc.Iterator[agentgrep.SearchRecord]:
+        for index in range(agentgrep._SOURCE_PROGRESS_RECORD_INTERVAL + 1):
+            yield _record(
+                task.source,
+                f"other {index}",
+                "2026-01-01T00:00:00Z",
+            )
+
+    class CapturingProgress(agentgrep.NoopSearchProgress):
+        def __init__(self) -> None:
+            self.events: list[tuple[int, int, int, int, int]] = []
+
+        def source_progress(
+            self,
+            index: int,
+            total: int,
+            source: agentgrep.SourceHandle,
+            records: int,
+            matches: int,
+        ) -> None:
+            _ = source
+            self.events.append(
+                (index, total, records, matches, threading.get_ident()),
+            )
+
+    monkeypatch.setattr(scanning, "iter_source_task_records", iter_records)
+    progress = CapturingProgress()
+    driver = execution.select_execution_driver(query, plan, config=config)
+
+    assert isinstance(driver, FrontierExecutionDriver)
+
+    _ = list(driver.iter_search_plan(query, plan, progress=progress))
+
+    assert sorted(progress.events) == [
+        (1, 2, agentgrep._SOURCE_PROGRESS_RECORD_INTERVAL, 0, owner_thread_id),
+        (2, 2, agentgrep._SOURCE_PROGRESS_RECORD_INTERVAL, 0, owner_thread_id),
+    ]
 
 
 def test_select_execution_driver_keeps_bounded_text_search_inline_by_default(

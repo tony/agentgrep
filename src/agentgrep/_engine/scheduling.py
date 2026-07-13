@@ -18,7 +18,13 @@ from agentgrep._engine.orchestration import (
 )
 from agentgrep._engine.planning import PhysicalSearchPlan, SourceAuthorityPlan, SourceTask
 from agentgrep._engine.source_filters import source_may_match_query
-from agentgrep.progress import SearchControl, SearchProgress, noop_search_progress
+from agentgrep.progress import (
+    NoopSearchProgress,
+    SearchControl,
+    SearchProgress,
+    _report_source_progress,
+    noop_search_progress,
+)
 from agentgrep.readers import _record_engine_profile_sample
 from agentgrep.records import SearchQuery, SearchRecord, SourceHandle
 
@@ -67,6 +73,46 @@ class ExecutionDriverConfig:
     def worker_count(self) -> int:
         """Return a normalized positive worker count."""
         return max(1, self.max_workers)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _SourceProgressUpdate:
+    """Worker-to-owner message carrying one parsed-record heartbeat."""
+
+    index: int
+    total: int
+    source: SourceHandle
+    records: int
+    matches: int
+
+
+class _QueueingSourceProgress(NoopSearchProgress):
+    """Queue worker heartbeats for serialized owner-thread delivery."""
+
+    def __init__(
+        self,
+        emit: cabc.Callable[[_SourceProgressUpdate], None],
+    ) -> None:
+        self._emit = emit
+
+    def source_progress(
+        self,
+        index: int,
+        total: int,
+        source: SourceHandle,
+        records: int,
+        matches: int,
+    ) -> None:
+        """Queue one in-source progress update."""
+        self._emit(
+            _SourceProgressUpdate(
+                index=index,
+                total=total,
+                source=source,
+                records=records,
+                matches=matches,
+            ),
+        )
 
 
 type SearchExecutionEvent = (
@@ -300,6 +346,11 @@ class FrontierExecutionDriver:
         cache = runtime.source_scan_cache if runtime is not None else None
         next_task_index = 0
         batch_queue: queue.Queue[_QueueItem] = queue.Queue()
+        worker_progress = (
+            _QueueingSourceProgress(batch_queue.put)
+            if callable(getattr(active_progress, "source_progress", None))
+            else None
+        )
         running: dict[int, _RunningSourceTask] = {}
         futures: dict[concurrent.futures.Future[None], int] = {}
         deferred_error: BaseException | None = None
@@ -381,6 +432,7 @@ class FrontierExecutionDriver:
                     total=total,
                     control=task_control,
                     batch_queue=batch_queue,
+                    progress=worker_progress,
                 )
                 futures[future] = index
 
@@ -437,6 +489,10 @@ class FrontierExecutionDriver:
                     queue_wait_seconds += time.perf_counter() - queue_wait_started_at
                     continue
                 queue_wait_seconds += time.perf_counter() - queue_wait_started_at
+
+                if isinstance(item, _SourceProgressUpdate):
+                    _forward_source_progress(active_progress, item)
+                    continue
 
                 if isinstance(item, scanning.SourceScanBatch):
                     queued_batch_count += 1
@@ -574,6 +630,13 @@ def _iter_search_plan_whole_sources(
     batch_count = 0
     next_task_index = 0
     futures: dict[concurrent.futures.Future[scanning.SourceScanResult], tuple[int, SourceTask]] = {}
+    progress_updates: queue.Queue[_SourceProgressUpdate] = queue.Queue()
+    latest_progress: dict[int, _SourceProgressUpdate] = {}
+    worker_progress = (
+        _QueueingSourceProgress(progress_updates.put)
+        if callable(getattr(progress, "source_progress", None))
+        else None
+    )
 
     def submit_next(
         executor: concurrent.futures.ThreadPoolExecutor,
@@ -602,7 +665,7 @@ def _iter_search_plan_whole_sources(
                 index=index,
                 total=total,
                 control=control,
-                progress=None,
+                progress=worker_progress,
                 runtime=runtime,
             )
             futures[future] = (index, task)
@@ -611,36 +674,49 @@ def _iter_search_plan_whole_sources(
         yield from submit_next(executor)
         while futures:
             if control.answer_now_requested():
+                _drain_source_progress(progress_updates, progress, latest_progress)
                 for future, (index, task) in sorted(
                     futures.items(),
                     key=lambda item: item[1][0],
                 ):
                     if future.cancel():
                         cancelled_count += 1
+                    latest = latest_progress.pop(index, None)
+                    records_seen = latest.records if latest is not None else 0
+                    matches_seen = latest.matches if latest is not None else 0
                     # Results from still-running workers are discarded at
                     # executor shutdown; emit each remaining source's
                     # finished event so the started/finished pairing holds
                     # on early exit.
-                    progress.source_finished(index, total, task.source, 0, 0)
+                    progress.source_finished(
+                        index,
+                        total,
+                        task.source,
+                        records_seen,
+                        matches_seen,
+                    )
                     yield ExecutionSourceFinished(
                         index=index,
                         total=total,
                         source=task.source,
                         task=task,
-                        records_seen=0,
-                        matches_seen=0,
+                        records_seen=records_seen,
+                        matches_seen=matches_seen,
                     )
                 break
             done, _pending = concurrent.futures.wait(
                 futures,
+                timeout=0.05 if worker_progress is not None else None,
                 return_when=concurrent.futures.FIRST_COMPLETED,
             )
+            _drain_source_progress(progress_updates, progress, latest_progress)
             for future in sorted(
                 done,
                 key=lambda completed: futures[completed][0],
             ):
                 _index, task = futures.pop(future)
                 result = future.result()
+                latest_progress.pop(result.index, None)
                 completed_count += 1
                 batch_count += result.batch_count
                 progress.source_finished(
@@ -707,6 +783,7 @@ def _iter_search_plan_single_worker_batches(
     skipped_count = 0
     batch_count = 0
     processed_batch_count = 0
+    source_progress = progress if callable(getattr(progress, "source_progress", None)) else None
 
     for index, task in enumerate(tasks, start=1):
         if control.answer_now_requested():
@@ -771,7 +848,7 @@ def _iter_search_plan_single_worker_batches(
             index=index,
             total=total,
             control=control,
-            progress=None,
+            progress=source_progress,
         ):
             batch_count += 1
             processed_batch_count += 1
@@ -858,7 +935,9 @@ class _SourceTaskFailed:
     error: BaseException
 
 
-type _QueueItem = scanning.SourceScanBatch | _SourceTaskCompleted | _SourceTaskFailed
+type _QueueItem = (
+    scanning.SourceScanBatch | _SourceProgressUpdate | _SourceTaskCompleted | _SourceTaskFailed
+)
 
 
 class _TaskSearchControl(SearchControl):
@@ -881,6 +960,7 @@ def _scan_source_task_to_queue(
     total: int,
     control: SearchControl,
     batch_queue: queue.Queue[_QueueItem],
+    progress: SearchProgress | None = None,
 ) -> None:
     """Run one source scan and push batches/completion to the scheduler."""
     source_started_at = time.perf_counter()
@@ -893,7 +973,7 @@ def _scan_source_task_to_queue(
             index=index,
             total=total,
             control=control,
-            progress=None,
+            progress=progress,
         ):
             records_seen = batch.records_seen
             matches_seen = batch.matches_seen
@@ -910,6 +990,36 @@ def _scan_source_task_to_queue(
                 duration_seconds=time.perf_counter() - source_started_at,
             ),
         )
+
+
+def _forward_source_progress(
+    progress: SearchProgress,
+    update: _SourceProgressUpdate,
+) -> None:
+    """Forward one queued heartbeat through the optional progress hook."""
+    _report_source_progress(
+        progress,
+        update.index,
+        update.total,
+        update.source,
+        update.records,
+        update.matches,
+    )
+
+
+def _drain_source_progress(
+    updates: queue.Queue[_SourceProgressUpdate],
+    progress: SearchProgress,
+    latest: dict[int, _SourceProgressUpdate],
+) -> None:
+    """Deliver queued worker heartbeats serially on the owner thread."""
+    while True:
+        try:
+            update = updates.get_nowait()
+        except queue.Empty:
+            return
+        latest[update.index] = update
+        _forward_source_progress(progress, update)
 
 
 class _FrontierState:
