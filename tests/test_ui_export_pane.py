@@ -85,6 +85,32 @@ async def test_e_mounts_export_pane_without_replacing_reader_or_screen(
 
 
 @pytest.mark.slow
+async def test_export_pane_ignores_actions_during_deferred_mount(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same-turn priority keys cannot query children before compose completes."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = _record(tmp_path, "body", ordinal=1)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        hud = app.screen
+        await _load_records(hud, (record,))
+        hud._results.focus()
+
+        assert hud.open_export_pane("", selected_record=record)
+        pane = hud._export_pane
+        assert pane is not None
+        assert not pane.is_mounted
+        hud.action_focus_pane_down()
+        hud.action_smart_quit()
+
+        await pilot.pause()
+        assert pane.is_mounted
+        assert hud._export_pane is pane
+
+
+@pytest.mark.slow
 async def test_typed_export_path_restores_query_selection_and_search_focus(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
