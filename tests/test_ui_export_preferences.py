@@ -183,10 +183,10 @@ def test_export_filename_rejects_ambiguous_or_non_scalar_output(template: str) -
 
 @pytest.mark.parametrize(
     "template",
-    (
+    [
         "safe\u200b-{title}.md",
         "safe\u202e-{title}.md",
-    ),
+    ],
 )
 def test_export_filename_rejects_invisible_format_controls(template: str) -> None:
     """Zero-width and bidi controls cannot survive in a reviewed basename."""
