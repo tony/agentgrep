@@ -200,8 +200,8 @@ def test_identity_adr_keeps_refs_and_privacy_boundaries_positive() -> None:
     assert all(term in adr for term in required)
 
 
-def test_identity_changelog_has_one_unreleased_deliverable() -> None:
-    """The unreleased section describes one product-level issue 80 outcome."""
+def test_unreleased_changelog_discloses_identity_and_tui_deliverables() -> None:
+    """The unreleased section describes both product-level outcomes."""
     changes = _read_text("CHANGES")
     release_match = re.search(
         r"^## agentgrep (?P<version>\d+\.\d+\.\d+\w*) \(Yet to be released\)\n"
@@ -212,10 +212,13 @@ def test_identity_changelog_has_one_unreleased_deliverable() -> None:
     assert release_match is not None
     version = release_match.group("version")
     release = release_match.group("body")
-    heading = "#### Consistent record handles across search (#80)"
+    identity_heading = "#### Consistent record handles across search (#80)"
+    tui_heading = "#### Predictable TUI commands and focus (#111)"
 
-    assert release.count(heading) == 1
-    assert changes.count(heading) == 1
+    assert release.count(identity_heading) == 1
+    assert changes.count(identity_heading) == 1
+    assert release.count(tui_heading) == 1
+    assert changes.count(tui_heading) == 1
     assert not re.search(rf"agentgrep {re.escape(version)} (?:is|ships|focuses)", release)
     assert "### What's new" in release
     assert "adr-deterministic-record-identity" in release
@@ -227,3 +230,4 @@ def test_identity_changelog_has_one_unreleased_deliverable() -> None:
     assert "position-aware" in release
     assert "missing" in release and "invent" in release
     assert all(term in release for term in ("bookmarks", "export", "similarity"))
+    assert all(term in release for term in ("pi-like", "slash-command", "/screenshot"))
