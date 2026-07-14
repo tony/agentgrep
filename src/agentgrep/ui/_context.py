@@ -1,7 +1,8 @@
 """Shared dependency context injected into pluggable TUI layouts (ADR 0013).
 
 The App shell owns the session-fixed collaborators — the engine seam, the launch
-query, and the cooperative-cancel control — and passes them to whichever
+query, the cooperative-cancel control, and the export-preference snapshot — and
+passes them to whichever
 :class:`~agentgrep.ui.layouts._base.LayoutScreen` it mounts as one frozen
 ``UiContext``. A layout reaches the engine only through ``invoker`` (ADR 0012
 RW-1), so it stays engine-agnostic and is constructable in a test with a fake
@@ -23,7 +24,7 @@ if t.TYPE_CHECKING:
         SearchScope,
         SearchScopeProvenance,
     )
-    from agentgrep.ui._export_preferences import ExportPreferences
+    from agentgrep.ui._export_preferences import ExportPreferencesLoad
     from agentgrep.ui._history import HistoryEntry
     from agentgrep.ui._seams import SearchInvoker
 
@@ -67,10 +68,9 @@ class UiContext:
         Preloaded query-history snapshot for layouts that expose recall.
     history_disabled : bool, optional
         Whether persistent query history is disabled for this session.
-    export_preferences : ExportPreferences | None, optional
-        Export settings preloaded before Textual starts.
-    export_preferences_warning : str | None, optional
-        Path-free warning produced while preloading export settings.
+    export_preferences : ExportPreferencesLoad | None, optional
+        Preference snapshot loaded once by the app factory before Textual owns
+        the session. ``None`` lets direct layout tests use pure defaults.
     """
 
     home: pathlib.Path
@@ -84,5 +84,4 @@ class UiContext:
     initial_search_text: str | None = None
     history: tuple[HistoryEntry, ...] = ()
     history_disabled: bool = False
-    export_preferences: ExportPreferences | None = None
-    export_preferences_warning: str | None = None
+    export_preferences: ExportPreferencesLoad | None = None
