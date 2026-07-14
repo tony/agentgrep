@@ -118,8 +118,8 @@ class ExportDialog(ModalScreen[None]):
     BINDINGS: t.ClassVar[list[Binding]] = [
         Binding("escape", "escape", "Back / Cancel", priority=True, show=False),
         Binding("ctrl+c", "cancel", "Cancel", priority=True, show=False),
-        Binding("n", "review_no", "No", priority=True, show=False),
-        Binding("y", "review_save", "Save", priority=True, show=False),
+        Binding("n", "review_no", "No", show=False),
+        Binding("y", "review_save", "Save", show=False),
     ]
 
     DEFAULT_CSS = """
@@ -266,9 +266,11 @@ class ExportDialog(ModalScreen[None]):
 
     @_runtime.pump_only
     def action_escape(self) -> None:
-        """Return from review without changing the retained draft."""
+        """Return from review, or cancel from any other phase."""
         if self._phase == "review":
             self._show_edit()
+            return
+        self.dismiss(None)
 
     @_runtime.pump_only
     def action_cancel(self) -> None:
