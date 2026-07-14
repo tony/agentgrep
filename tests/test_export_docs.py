@@ -51,6 +51,13 @@ def test_export_docs_are_indexed() -> None:
     assert "(adr-portable-record-export)=" in adr
 
 
+def test_export_changelog_clarifies_focused_input_key() -> None:
+    """The shortcut copy scopes ordinary ``e`` text to focused inputs."""
+    changes = _read_text("CHANGES")
+
+    assert "`e` remains ordinary text when an input is focused." in changes
+
+
 def test_export_cli_docs_define_defaults_and_safe_sinks() -> None:
     """The headless guide names exact formats, bounds, bodies, and sinks."""
     guide = _read_text("docs/cli/export.md")
