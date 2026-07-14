@@ -402,19 +402,13 @@ Screen {
     display: none;
 }
 #filter {
-    height: 2;
-    /* No top rule: the results-header rule directly above is the filter's top
-       separator, so a top rule here would stack two horizontal lines under the
-       header. Keep only the bottom rule, and move the `filter` label onto it
-       (border_subtitle) so the label survives without the double chrome. */
-    border-top: none;
-    border-subtitle-align: right;
-    border-subtitle-color: $ag-muted;
+    height: 1;
+    /* Dedicated filter/results rules own both separators, leaving this input
+       as one content row with no duplicate border chrome. */
+    border: none;
 }
 #filter:focus {
-    /* Keep the top off even when focused; the bottom rule (accent on focus,
-       from the global Input:focus rule) carries the focus cue. */
-    border-top: none;
+    border: none;
 }
 #detail-scroll {
     height: 1fr;
@@ -434,12 +428,10 @@ Screen {
     overflow-x: hidden;
     scrollbar-size: 0 0;
 }
-/* The results statusline is folded into #results-header (ResultsHeader): the
-   spinner, bar, percent, and match count render as colored spans inside the
-   header rule, so there is no separate statusline row or per-cell CSS. */
+/* The active heartbeat stays in #filter-header. The optional detail row only
+   appears for a threshold-crossing source or a terminal summary. */
 #status-detail {
-    /* Two lines: the phase + N/M sources heading, then the in-source detail
-       moved off the compact header. Aligned under the header's payload. */
+    /* Optional expanded engine detail, aligned under the folded header. */
     height: 2;
     padding: 0 1 0 3;
     color: $ag-muted;
@@ -464,8 +456,8 @@ Screen {
     padding: 0;
     color: $text-muted;
 }
-/* No box — the results pane is delineated by its #results-header (label +
-   rule). We still cancel the two parts of OptionList's focus rule that fight
+/* No box — the results pane is delineated by its #results-header rule. We
+   still cancel the two parts of OptionList's focus rule that fight
    our per-span semantic colors: the ``$foreground 5%`` background-tint and the
    bright ``$block-cursor-*`` cursor-row recolor. */
 #results {
@@ -490,10 +482,9 @@ Screen {
 }
 
 /* pi-style section headers (a left label embedded in a full-width rule) stand in
-   for the pane boxes, mirroring the filter input's rule. The line color is muted
-   at rest and accent on the focused pane; the `-active` class is toggled in
-   Python from the focused widget. */
-#results-header, #detail-header {
+   for pane boxes and input separators. The line color is muted at rest and
+   accent on the focused pane; Python toggles `-active` from the focused widget. */
+#filter-header, #results-header, #detail-header {
     height: 1;
     width: 1fr;
     /* No padding: the rule spans the section's full width like the filter input's
@@ -501,7 +492,7 @@ Screen {
        label still lines up with the 1-cell-inset rows below it. */
     color: $ag-faint;
 }
-#results-header.-active, #detail-header.-active {
+#filter-header.-active, #results-header.-active, #detail-header.-active {
     color: $accent;
 }
 
@@ -517,6 +508,7 @@ Screen {
     text-align: center;
     color: $ag-dim;
 }
+#body.-empty #filter-header,
 #body.-empty #results-header,
 #body.-empty #filter,
 #body.-empty #filter-dropdown,
@@ -531,7 +523,7 @@ Screen {
 /* Searching state (hybrid centered moment): while a search runs before its
    first result, the results region hosts the centered #searching-panel in
    place of the chrome; the first record batch clears `-searching` and the
-   folded #results-header rule carries the phase from there. */
+   folded #filter-header rule carries the phase from there. */
 #searching-panel {
     display: none;
     height: 1fr;
@@ -540,8 +532,8 @@ Screen {
     text-align: center;
     color: $ag-dim;
 }
+#body.-searching #filter-header,
 #body.-searching #results-header,
-#body.-searching #status-detail,
 #body.-searching #filter,
 #body.-searching #filter-dropdown,
 #body.-searching #results,

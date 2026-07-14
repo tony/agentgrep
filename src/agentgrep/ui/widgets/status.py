@@ -12,10 +12,17 @@ import typing as t
 
 from rich.cells import cell_len
 from rich.text import Text
+from textual.timer import Timer
 from textual.widgets import Static
 
-from agentgrep.progress import format_match_count
-from agentgrep.ui import theme as ui_theme
+from agentgrep.progress import ProgressSnapshot, format_match_count
+from agentgrep.ui import _runtime, theme as ui_theme
+from agentgrep.ui._source_diagnostics import (
+    SlowSourceDiagnostics,
+    SourceScanFinished,
+    SourceScanLifecycle,
+    SourceScanStarted,
+)
 from agentgrep.ui.format import (
     format_elapsed_compact,
     format_progress_percent,
@@ -24,10 +31,12 @@ from agentgrep.ui.format import (
 )
 
 __all__ = [
+    "FilterHeader",
     "MeterWidget",
     "PaneHeader",
     "ResultsHeader",
     "SearchingPanel",
+    "SlowSourceDiagnosticsRow",
     "SpinnerWidget",
 ]
 
@@ -35,18 +44,25 @@ __all__ = [
 class PaneHeader(Static):
     """A pi-style section header: a left-positioned label embedded in a full rule.
 
-    Mirrors the filter input's rule — a label set into a rule that runs the
-    section's full width — but left-positioned (the filter is right-aligned).
     One leading ``─`` cell sits before the bold label, then the rule fills to
-    the right edge: ``─results────────``. No trailing margin. The line color is
-    driven entirely by CSS (``$ag-faint`` at rest, ``$accent`` via the
-    ``-active`` class), so recoloring the focused pane's header is paint-only —
-    no inline color is baked in. The rule length is recomputed on resize.
+    the right edge: ``─results────────``. An optional status is right-anchored
+    without moving the label. The line color is driven entirely by CSS
+    (``$ag-faint`` at rest, ``$accent`` via the ``-active`` class), so
+    recoloring the focused pane's header is paint-only. The rule length is
+    recomputed on resize.
     """
 
     def __init__(self, label: str, *, id: str | None = None) -> None:  # noqa: A002 -- Textual ``id`` kwarg
         super().__init__(id=id)
         self._label = label
+        self._right = ""
+
+    def set_right(self, text: str) -> None:
+        """Right-anchor ``text`` in the rule, repainting only on change."""
+        if text == self._right:
+            return
+        self._right = text
+        self.refresh()
 
     def on_resize(self) -> None:
         """Recompute the rule length when the column width changes."""
@@ -55,55 +71,65 @@ class PaneHeader(Static):
     def render(self) -> Text:
         """Return ``─<label><rule>`` filling the widget width.
 
-        The single leading rule cell is the left mirror of the filter input's
-        one trailing cap dash; the remaining rule runs to the full width with
-        no margin.
+        The single leading rule cell anchors the label. When a right status is
+        present, a trailing rule cell anchors that status against the edge.
         """
         width = int(getattr(self.size, "width", 0) or 0)
-        fill = max(0, width - 1 - cell_len(self._label))
+        label_cost = 1 + cell_len(self._label)
+        right = self._fit_right(max(0, width - label_cost - 4))
         text = Text(no_wrap=True, overflow="crop")
         text.append("─")
         text.append(self._label, style="bold")
-        text.append("─" * fill)
+        if not right:
+            text.append("─" * max(0, width - label_cost))
+            return text
+        gap = max(2, width - label_cost - cell_len(right) - 2)
+        text.append("─" * gap)
+        text.append(" ")
+        text.append(right)
+        text.append("─")
         return text
+
+    def _fit_right(self, avail: int) -> str:
+        """Return the widest whole right-slot variant that fits ``avail``."""
+        if cell_len(self._right) <= avail:
+            return self._right
+        compact = self._right.rsplit("  ", 1)[0].strip()
+        return compact if cell_len(compact) <= avail else ""
 
 
 class ResultsHeader(PaneHeader):
-    """Results section header with the live search status folded into the rule.
+    """Rule separating the filter input from its navigable result list."""
 
-    Extends :class:`PaneHeader`: idle, it renders the plain ``─results────``
-    rule; while a search runs it folds a compact status — a spinner, the phase
-    verb, a ``▰▱`` bar, and the percent — into the right of the same rule (pi's
-    ``fitBorder`` shape), so the results column spends one row instead of two.
-    The verbose source count and per-source detail live in the toggleable detail
-    row, not here; segments shed right-to-left as the width tightens.
+
+class FilterHeader(PaneHeader):
+    """Filter section header with live search status folded into the rule.
+
+    Extends :class:`PaneHeader`: idle, it renders the plain ``─filter─────``
+    rule; while a search runs it folds a compact indeterminate status into the
+    right of the same rule (pi's ``fitBorder`` shape): spinner, phase, source,
+    and record heartbeat. Segments shed right-to-left as the width tightens.
 
     The spinner self-drives off ``time.monotonic`` via ``auto_refresh`` while a
-    search is active, so it ticks regardless of event-loop load; progress
-    updates only store while it runs, and the next timer frame repaints. On
-    finish the timer stops: a complete scan reads as a full bar (no glyph), and
-    ``■``/``✗`` mark a stopped/failed scan. ``begin``/``freeze``/``go_idle``
-    mirror the lifecycle.
+    search is active; progress updates only store while it runs, and the next
+    timer frame repaints. On finish the timer stops and every outcome remains
+    explicit text.
     """
 
     _FRAMES: t.ClassVar[str] = "·✢✽✻"
     _SEQUENCE: t.ClassVar[str] = _FRAMES + _FRAMES[::-1]
     _FPS: t.ClassVar[float] = 2.0
-    _MIN_BAR: t.ClassVar[int] = 4
-    # Cap the bar so the label keeps a visible run of rule before the status,
-    # rather than the bar swallowing the whole width on a wide terminal.
-    _MAX_BAR: t.ClassVar[int] = 16
 
     def __init__(self, label: str, *, id: str | None = None) -> None:  # noqa: A002 -- Textual ``id`` kwarg
         super().__init__(label, id=id)
         self._active = False
-        self._fraction: float | None = None
         self._phase = ""
-        self._matches_text = ""
+        self._current: int | None = None
+        self._total: int | None = None
+        self._source_records_seen: int | None = None
         self._final_glyph: str | None = None
         self._outcome = ""
         self._error = ""
-        self._narrow = False
         self._started_at = time.monotonic()
         self._c_accent = ""
         self._c_success = ""
@@ -128,42 +154,32 @@ class ResultsHeader(PaneHeader):
         self._final_glyph = None
         self._outcome = ""
         self._error = ""
-        self._fraction = None
         self._phase = ""
-        self._matches_text = ""
+        self._current = None
+        self._total = None
+        self._source_records_seen = None
         self._started_at = time.monotonic()
         self.auto_refresh = 1.0 / self._FPS
         self.refresh()
 
-    def set_progress(self, fraction: float | None, phase: str = "") -> None:
-        r"""Store the bar fraction and the phase verb.
+    def set_snapshot(self, snapshot: ProgressSnapshot) -> None:
+        """Store typed live-search facts without forcing an event repaint.
 
-        While scanning the rule shows the spinner, the phase verb, and the
-        bar+percent only; the spinner timer repaints the stored state on its
-        next frame. The N/M source count and per-source detail live in the
-        ``Ctrl-\`` row, not here.
+        Source ordinals are not comparable work units, so active scans remain
+        indeterminate. The timer repaints the stored source-local heartbeat on
+        its next frame.
         """
-        self._fraction = fraction
-        self._phase = phase
-
-    def set_matches(self, text: str) -> None:
-        """Store the right-slot match/cursor text."""
-        self._matches_text = text
-        if self.auto_refresh is None:
-            self.refresh()
-
-    def set_narrow(self, narrow: bool) -> None:
-        """Record whether the row is too narrow to also carry the match count."""
-        self._narrow = narrow
-        if self.auto_refresh is None:
-            self.refresh()
+        self._phase = snapshot.phase
+        scanning = snapshot.phase == "scanning"
+        self._current = snapshot.current if scanning else None
+        self._total = snapshot.total if scanning else None
+        self._source_records_seen = snapshot.source_records_seen if scanning else None
 
     def freeze(self, outcome: str, message: str = "") -> None:
         """Search finished: stop the timer and lock the final state.
 
-        A complete scan drops its glyph and word entirely — the full bar at
-        100%% is enough. Interrupted/error keep a marker (``■`` / ``✗`` + the
-        error message), since those outcomes aren't self-evident from the bar.
+        Every terminal state is textual. Completed scans say ``Done`` rather
+        than fabricating determinate progress from heterogeneous sources.
         """
         self._outcome = outcome
         # ``_final_glyph`` is only a "frozen" flag; its glyph value is unused —
@@ -174,8 +190,6 @@ class ResultsHeader(PaneHeader):
             "·",
         )
         self._error = message if outcome == "error" else ""
-        if outcome == "complete":
-            self._fraction = 1.0
         self.auto_refresh = None
         self.refresh()
 
@@ -185,9 +199,10 @@ class ResultsHeader(PaneHeader):
         self._final_glyph = None
         self._outcome = ""
         self._error = ""
-        self._fraction = None
         self._phase = ""
-        self._matches_text = ""
+        self._current = None
+        self._total = None
+        self._source_records_seen = None
         self.auto_refresh = None
         self.refresh()
 
@@ -202,7 +217,7 @@ class ResultsHeader(PaneHeader):
         return self._SEQUENCE[int(elapsed * self._FPS) % len(self._SEQUENCE)]
 
     def render(self) -> Text:
-        """Idle → plain ``─results────``; active → fold the payload into the rule."""
+        """Idle → plain rule; active → fold the search status into it."""
         if not self._active:
             return super().render()
         width = int(getattr(self.size, "width", 0) or 0)
@@ -227,17 +242,14 @@ class ResultsHeader(PaneHeader):
     def _payload(self, avail: int) -> Text:
         r"""Build the right-of-gap status fragment, fit to ``avail`` cells.
 
-        Scanning shows ``✽ Scanning ▰▰▱ 5%`` — spinner, phase verb, bar, and
-        percent. A completed scan drops the spinner and verb entirely (a full
-        ``▰▰▰▰▰ 100%`` says it); interrupted/error keep a ``■``/``✗`` marker.
-        The match/cursor count appears only once the scan has finished. The N/M
-        source count, per-source detail, and elapsed time live in the
-        ``Ctrl-\`` row, never here.
+        Active scans are indeterminate and show bounded source-local facts.
+        Finished scans use explicit textual outcomes. Result navigation lives
+        on the separate results rule below the filter input.
         """
         payload = Text(no_wrap=True, overflow="crop")
         frozen = self._final_glyph is not None
         # Leading marker: the animated spinner while scanning; on finish, only
-        # the stopped/error markers — a completed scan needs none.
+        # stopped/error need a glyph because completion has the word ``Done``.
         if not frozen:
             glyph, glyph_style = self._spinner(), self._c_accent
         elif self._outcome == "interrupted":
@@ -250,13 +262,10 @@ class ResultsHeader(PaneHeader):
             payload.append(" ")
             payload.append(glyph, style=glyph_style or None)
         used = payload.cell_len
-        # Phase verb — only while scanning; the finished states drop the word.
         if not frozen:
             verb = phase_label(self._phase)
-            if verb and used + 1 + cell_len(verb) <= avail:
-                payload.append(" ")
-                payload.append(verb, style=self._c_muted or None)
-                used = payload.cell_len
+            self._append_active_progress(payload, avail, verb)
+            return payload
         if frozen and self._outcome == "error":
             room = max(0, avail - used - 1)
             message = self._error
@@ -266,35 +275,145 @@ class ResultsHeader(PaneHeader):
                 payload.append(" ")
                 payload.append(message, style=self._c_muted or None)
             return payload
-        # The progress bar + percent (the "scrollbar"), plus — only after the
-        # scan finishes — the match/cursor count.
-        percent = format_progress_percent(self._fraction) if self._fraction is not None else ""
-        matches = self._matches_text or ""
-        show_matches = frozen and bool(matches) and not self._narrow
-        percent_cost = 1 + cell_len(percent) if percent else 0
-        matches_cost = 2 + cell_len(matches) if show_matches else 0
-        bar_room = avail - used - percent_cost - matches_cost - 1
-        if bar_room < self._MIN_BAR and show_matches:
-            show_matches = False
-            bar_room = avail - used - percent_cost - 1
-        if bar_room >= self._MIN_BAR and self._fraction is not None:
-            bar_cells = min(bar_room, self._MAX_BAR)
-        else:
-            bar_cells = 0
-        if bar_cells > 0 and self._fraction is not None:
-            bar = render_progress_meter(self._fraction, bar_cells)
-            filled = bar.count("▰")
-            fill_hex = self._c_muted if self._outcome == "interrupted" else self._c_success
-            payload.append(" ")
-            payload.append("▰" * filled, style=fill_hex or None)
-            payload.append("▱" * (len(bar) - filled), style=self._c_muted or None)
-        if percent:
-            payload.append(" ")
-            payload.append(percent, style=self._c_accent or None)
-        if show_matches:
-            payload.append("  ")
-            payload.append(matches, style=f"{self._c_accent} bold".strip())
+        if frozen and self._outcome == "interrupted":
+            if used + len(" Stopped") <= avail:
+                payload.append(" Stopped", style=self._c_muted or None)
+            return payload
+        if frozen and self._outcome == "complete":
+            if used + len(" Done") <= avail:
+                payload.append(" Done", style=self._c_success or None)
+            return payload
         return payload
+
+    def _append_active_progress(self, payload: Text, avail: int, verb: str) -> None:
+        """Append one whole status variant so wider rows never lose facts."""
+        current = self._current
+        total = self._total
+        records = self._source_records_seen
+        if current is None or total is None:
+            if verb and payload.cell_len + 1 + cell_len(verb) <= avail:
+                payload.append(" ")
+                payload.append(verb, style=self._c_muted or None)
+            return
+        wide_source = f"source {current} of {total}"
+        compact_source = f"{current}/{total}"
+        record_text = ""
+        if records is not None and records > 0:
+            suffix = "record" if records == 1 else "records"
+            record_text = f" · {records} {suffix}"
+        variants = tuple(
+            variant
+            for variant in (
+                f"{verb} {wide_source}{record_text}" if verb else "",
+                f"{verb} {wide_source}" if verb else "",
+                f"{verb} {compact_source}{record_text}" if verb else "",
+                f"{verb} {compact_source}" if verb else "",
+                f"{compact_source}{record_text}",
+                compact_source,
+                verb,
+            )
+            if variant
+        )
+        for variant in variants:
+            if payload.cell_len + 1 + cell_len(variant) <= avail:
+                payload.append(" ")
+                payload.append(variant, style=self._c_muted or None)
+                return
+
+
+class SlowSourceDiagnosticsRow(Static):
+    """Optional two-line row showing only a threshold-crossing source.
+
+    Lifecycle setters mutate bounded in-memory state without painting. While
+    expanded, one 2 Hz timer samples that state; unchanged text costs no
+    refresh, and fixed-height updates explicitly avoid layout invalidation.
+    """
+
+    _SAMPLE_INTERVAL_SECONDS: t.ClassVar[float] = 0.5
+
+    def __init__(self, *, id: str | None = None) -> None:  # noqa: A002 -- Textual ``id`` kwarg
+        super().__init__("", id=id)
+        self._diagnostics = SlowSourceDiagnostics()
+        self._expanded = False
+        self._last_text = ""
+        self._sample_timer: Timer | None = None
+
+    def begin(self) -> None:
+        """Reset for a running search and sample only when expanded."""
+        self._diagnostics.begin()
+        self._paint("")
+        if self._expanded:
+            self._resume_sampling()
+            self._sample()
+
+    def set_lifecycle(self, event: SourceScanLifecycle) -> None:
+        """Store one lifecycle marker without forcing a repaint."""
+        if isinstance(event, SourceScanStarted):
+            # The source worker starts only after Textual's synchronous
+            # cross-thread delivery returns. Timestamping on pump receipt
+            # excludes time spent waiting to enter the UI.
+            self._diagnostics.source_started(event, now=time.monotonic())
+        elif isinstance(event, SourceScanFinished):
+            self._diagnostics.source_finished(event)
+
+    def set_expanded(self, expanded: bool) -> None:
+        """Honor the sticky user toggle without allocating blank rows."""
+        self._expanded = expanded
+        if not expanded:
+            self._pause_sampling()
+            self.set_class(False, "visible")
+            return
+        if self._diagnostics.running:
+            self._resume_sampling()
+        self._sample()
+
+    def freeze(self, summary: str, *, now: float) -> str:
+        """Replace live detail with terminal text immediately and stop sampling."""
+        text = self._diagnostics.finish(summary, now=now)
+        self._stop_sampling()
+        self._paint(text)
+        return text
+
+    def go_idle(self) -> None:
+        """Stop sampling and clear all text while preserving the user toggle."""
+        self._diagnostics.go_idle()
+        self._stop_sampling()
+        self._paint("")
+
+    @_runtime.pump_only
+    def _sample(self) -> None:
+        """Paint the latest thresholded projection on the Textual pump."""
+        if not self._expanded:
+            return
+        self._paint(self._diagnostics.sample(time.monotonic()))
+
+    def _resume_sampling(self) -> None:
+        """Create or resume the single skipped-tick Textual timer."""
+        if self._sample_timer is None:
+            self._sample_timer = self.set_interval(
+                self._SAMPLE_INTERVAL_SECONDS,
+                self._sample,
+                pause=True,
+            )
+        self._sample_timer.resume()
+
+    def _pause_sampling(self) -> None:
+        """Pause sampling while the row is collapsed."""
+        if self._sample_timer is not None:
+            self._sample_timer.pause()
+
+    def _stop_sampling(self) -> None:
+        """Destroy the timer at idle or terminal state."""
+        if self._sample_timer is not None:
+            self._sample_timer.stop()
+            self._sample_timer = None
+
+    def _paint(self, text: str) -> None:
+        """Apply changed fixed-height content, then expose only non-empty text."""
+        if text != self._last_text:
+            self._last_text = text
+            self.update(text, layout=False)
+        self.set_class(self._expanded and bool(text), "visible")
 
 
 class SpinnerWidget(Static):
@@ -362,8 +481,8 @@ class MeterWidget(Static):
 
     Width adaptation happens at render time: with enough room the
     meter shows ``▰▰▰▱▱ 52%``; below ``_MIN_BAR_CELLS`` of bar room
-    it renders nothing — on narrow statuslines the search percent
-    moves to the right slot instead, next to the match count.
+    it renders nothing rather than squeezing an unreadable bar into narrow
+    chrome.
     While the source total is unknown (discovery / planning phases)
     it shows the phase word instead of a bar — the spinner next
     door already supplies motion, so no second animation timer.
@@ -384,9 +503,8 @@ class MeterWidget(Static):
     def set_narrow(self, narrow: bool) -> None:
         """Suppress the meter on narrow statuslines.
 
-        The right slot carries the search percent there; squeezing a
-        bar in as well made it pop in and out whenever the growing
-        match count nudged the meter across its fits-a-bar threshold.
+        Squeezing a bar in made it pop in and out whenever adjacent content
+        nudged the meter across its fits-a-bar threshold.
         """
         self._narrow = narrow
         self._maybe_refresh()
@@ -487,15 +605,14 @@ class SearchingPanel(Static):
     this panel in the centered ``#searching-panel`` slot — a spinner, the
     phase verb, the source progress, the match count, and elapsed time. The
     instant the first record batch lands the app swaps it for the results
-    list and the folded :class:`ResultsHeader` rule carries the phase from
+    list and the folded :class:`FilterHeader` rule carries the phase from
     there; a search that finds nothing freezes the panel into its terminal
     ``No matches`` state instead.
 
-    Like :class:`ResultsHeader` the spinner self-drives off ``time.monotonic``
-    via ``auto_refresh`` while active, so it ticks regardless of event-loop
-    load; the worker thread only calls store-only setters (ADR 0011). The
-    centering is paint-free CSS (``content-align: center middle``); this
-    widget only composes the multi-line Rich ``Text``.
+    Like :class:`FilterHeader`, the spinner uses ``time.monotonic`` with
+    ``auto_refresh`` while active. The worker thread only calls store-only
+    setters (ADR 0011); the pump performs bounded string rendering. Centering
+    is paint-free CSS (``content-align: center middle``).
     """
 
     _FRAMES: t.ClassVar[str] = "·✢✽✻"
@@ -508,6 +625,7 @@ class SearchingPanel(Static):
         self._phase = ""
         self._current: int | None = None
         self._total: int | None = None
+        self._source_records_seen: int | None = None
         self._matches = 0
         self._final_glyph: str | None = None
         self._outcome = ""
@@ -543,6 +661,7 @@ class SearchingPanel(Static):
         self._phase = ""
         self._current = None
         self._total = None
+        self._source_records_seen = None
         self._matches = 0
         self._frozen_total = 0
         self._frozen_elapsed = None
@@ -550,11 +669,13 @@ class SearchingPanel(Static):
         self.auto_refresh = 1.0 / self._FPS
         self.refresh()
 
-    def set_snapshot(self, snapshot: t.Any) -> None:
+    def set_snapshot(self, snapshot: ProgressSnapshot) -> None:
         """Store the latest progress snapshot; the timer repaints it next frame."""
         self._phase = snapshot.phase
-        self._current = snapshot.current
-        self._total = snapshot.total
+        scanning = snapshot.phase == "scanning"
+        self._current = snapshot.current if scanning else None
+        self._total = snapshot.total if scanning else None
+        self._source_records_seen = snapshot.source_records_seen if scanning else None
         self._matches = snapshot.matches
 
     def freeze(
@@ -601,7 +722,10 @@ class SearchingPanel(Static):
         text.append(" ")
         text.append(phase_label(self._phase) or "Searching")
         if self._current is not None and self._total is not None:
-            text.append(f" {self._current}/{self._total} sources", style=self._c_muted or None)
+            text.append(
+                f" source {self._current} of {self._total}",
+                style=self._c_muted or None,
+            )
         byline = self._byline()
         if byline:
             text.append("\n")
@@ -609,8 +733,11 @@ class SearchingPanel(Static):
         return text
 
     def _byline(self) -> str:
-        """Build the dim second line: match count + elapsed, or a discovery hint."""
+        """Build the dim second line from source-local facts and elapsed time."""
         parts: list[str] = []
+        if self._source_records_seen is not None and self._source_records_seen > 0:
+            suffix = "record" if self._source_records_seen == 1 else "records"
+            parts.append(f"{self._source_records_seen} {suffix}")
         if self._matches > 0:
             parts.append(format_match_count(self._matches))
         seconds = int(time.monotonic() - self._started_at)

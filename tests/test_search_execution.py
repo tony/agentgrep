@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import collections.abc as cabc
+import concurrent.futures
 import dataclasses
 import json
 import os
@@ -1610,6 +1611,7 @@ def test_frontier_batch_path_releases_cancelled_tasks(
         total: int,
         control: agentgrep.SearchControl,
         batch_queue: queue.Queue[t.Any],
+        progress: agentgrep.SearchProgress | None = None,
     ) -> None:
         original_scan_to_queue(
             query,
@@ -1618,6 +1620,7 @@ def test_frontier_batch_path_releases_cancelled_tasks(
             total=total,
             control=control,
             batch_queue=batch_queue,
+            progress=progress,
         )
         if index in (1, 2):
             hold_workers.wait(timeout=10.0)
@@ -1726,6 +1729,249 @@ def test_whole_sources_cancellation_pairs_source_events(
     finished = {e.index for e in events if isinstance(e, ExecutionSourceFinished)}
     assert started
     assert started == finished
+
+
+def test_whole_sources_cancellation_preserves_latest_source_progress(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancellation never reports fewer records than the latest heartbeat."""
+    query = _query(limit=1)
+    source = _source(tmp_path / "session.jsonl")
+    control = agentgrep.SearchControl()
+    release_worker = threading.Event()
+
+    def iter_records(
+        task: SourceTask,
+        _query: agentgrep.SearchQuery,
+    ) -> cabc.Iterator[agentgrep.SearchRecord]:
+        for index in range(agentgrep._SOURCE_PROGRESS_RECORD_INTERVAL):
+            yield _record(
+                task.source,
+                f"other {index}",
+                "2026-01-01T00:00:00Z",
+            )
+        assert release_worker.wait(timeout=5.0), "owner never forwarded the heartbeat"
+        yield _record(task.source, "other final", "2026-01-01T00:00:00Z")
+
+    class CancellingProgress(agentgrep.NoopSearchProgress):
+        def __init__(self) -> None:
+            self.events: list[tuple[str, int, int]] = []
+
+        def source_progress(
+            self,
+            index: int,
+            total: int,
+            source: agentgrep.SourceHandle,
+            records: int,
+            matches: int,
+        ) -> None:
+            _ = index, total, source
+            self.events.append(("progress", records, matches))
+            control.request_answer_now()
+            release_worker.set()
+
+        def source_finished(
+            self,
+            index: int,
+            total: int,
+            source: agentgrep.SourceHandle,
+            records: int,
+            matches: int,
+        ) -> None:
+            _ = index, total, source
+            self.events.append(("finished", records, matches))
+
+    monkeypatch.setattr(scanning, "iter_source_task_records", iter_records)
+    progress = CancellingProgress()
+    driver = scheduling.FrontierExecutionDriver(ExecutionDriverConfig(max_workers=1))
+
+    events = list(
+        driver.iter_search_plan(
+            query,
+            _multi_plan(query, (source,)),
+            progress=progress,
+            control=control,
+        ),
+    )
+
+    expected_counters = (agentgrep._SOURCE_PROGRESS_RECORD_INTERVAL, 0)
+    assert progress.events == [
+        ("progress", *expected_counters),
+        ("finished", *expected_counters),
+    ]
+    assert [
+        (event.records_seen, event.matches_seen)
+        for event in events
+        if isinstance(event, ExecutionSourceFinished)
+    ] == [expected_counters]
+
+
+def test_whole_sources_finish_running_worker_only_after_scan_returns(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Answer-now keeps a running source active until its scan returns."""
+    query = _query(limit=1)
+    source = _source(tmp_path / "blocked.jsonl")
+    control = agentgrep.SearchControl()
+    scan_started = threading.Event()
+    release_scan = threading.Event()
+    scan_returned = threading.Event()
+    finish_seen = threading.Event()
+
+    def blocked_scan(
+        query: agentgrep.SearchQuery,
+        task: SourceTask,
+        *,
+        index: int,
+        total: int,
+        control: agentgrep.SearchControl,
+        progress: agentgrep.SearchProgress | None = None,
+        runtime: agentgrep.SearchRuntime | None = None,
+    ) -> scanning.SourceScanResult:
+        del query, control, progress, runtime
+        scan_started.set()
+        assert release_scan.wait(timeout=5.0), "test never released the source scan"
+        scan_returned.set()
+        return scanning.SourceScanResult(
+            index=index,
+            total=total,
+            source=task.source,
+            task=task,
+            records=(),
+            records_seen=0,
+            matches_seen=0,
+            duration_seconds=0.0,
+            batch_count=0,
+        )
+
+    class CapturingProgress(agentgrep.NoopSearchProgress):
+        def source_progress(
+            self,
+            index: int,
+            total: int,
+            source: agentgrep.SourceHandle,
+            records: int,
+            matches: int,
+        ) -> None:
+            del index, total, source, records, matches
+
+        def source_finished(
+            self,
+            index: int,
+            total: int,
+            source: agentgrep.SourceHandle,
+            records: int,
+            matches: int,
+        ) -> None:
+            del index, total, source, records, matches
+            finish_seen.set()
+
+    monkeypatch.setattr(scanning, "scan_source_task", blocked_scan)
+    errors: list[BaseException] = []
+
+    def consume() -> None:
+        try:
+            driver = scheduling.FrontierExecutionDriver(
+                ExecutionDriverConfig(max_workers=1),
+            )
+            list(
+                driver.iter_search_plan(
+                    query,
+                    _multi_plan(query, (source,)),
+                    progress=CapturingProgress(),
+                    control=control,
+                ),
+            )
+        except BaseException as exc:
+            errors.append(exc)
+
+    consumer = threading.Thread(target=consume)
+    consumer.start()
+    assert scan_started.wait(timeout=2.0)
+    control.request_answer_now()
+    finished_before_release = finish_seen.wait(timeout=0.2)
+    release_scan.set()
+    consumer.join(timeout=5.0)
+
+    assert not consumer.is_alive()
+    assert errors == []
+    assert not finished_before_release
+    assert scan_returned.is_set()
+    assert finish_seen.is_set()
+
+
+def test_whole_sources_recheck_cancellation_after_wait(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Answer-now at the wait boundary neither emits nor starts more work."""
+    query = _query(limit=5)
+    newest = _source(tmp_path / "newest.jsonl")
+    older = _source(tmp_path / "older.jsonl")
+    newest.mtime_ns = 2
+    older.mtime_ns = 1
+    control = agentgrep.SearchControl()
+    wait_entered = threading.Event()
+    scanned_indexes: list[int] = []
+    real_wait = concurrent.futures.wait
+
+    def wait_after_worker_cancels(
+        futures: cabc.Iterable[concurrent.futures.Future[t.Any]],
+        *,
+        timeout: float | None = None,
+        return_when: str = concurrent.futures.ALL_COMPLETED,
+    ) -> tuple[
+        set[concurrent.futures.Future[t.Any]],
+        set[concurrent.futures.Future[t.Any]],
+    ]:
+        wait_entered.set()
+        return real_wait(futures, timeout=timeout, return_when=return_when)
+
+    def scan_after_wait_starts(
+        query: agentgrep.SearchQuery,
+        task: SourceTask,
+        *,
+        index: int,
+        total: int,
+        control: agentgrep.SearchControl,
+        progress: agentgrep.SearchProgress | None = None,
+        runtime: agentgrep.SearchRuntime | None = None,
+    ) -> scanning.SourceScanResult:
+        del query, progress, runtime
+        scanned_indexes.append(index)
+        if index == 1:
+            assert wait_entered.wait(timeout=5.0), "owner never entered the wait"
+            control.request_answer_now()
+        return scanning.SourceScanResult(
+            index=index,
+            total=total,
+            source=task.source,
+            task=task,
+            records=(_record(task.source, "newest bliss", "2026-01-02T00:00:00Z"),),
+            records_seen=1,
+            matches_seen=1,
+            duration_seconds=0.0,
+            batch_count=0,
+        )
+
+    monkeypatch.setattr(scheduling.concurrent.futures, "wait", wait_after_worker_cancels)
+    monkeypatch.setattr(scanning, "scan_source_task", scan_after_wait_starts)
+    driver = scheduling.FrontierExecutionDriver(ExecutionDriverConfig(max_workers=1))
+
+    events = list(
+        driver.iter_search_plan(
+            query,
+            _multi_plan(query, (newest, older)),
+            control=control,
+        ),
+    )
+
+    assert scanned_indexes == [1]
+    assert [event.index for event in events if isinstance(event, ExecutionSourceStarted)] == [1]
+    assert [event.index for event in events if isinstance(event, ExecutionSourceFinished)] == [1]
+    assert not any(isinstance(event, ExecutionRecordEmitted) for event in events)
 
 
 class BatchCacheCase(t.NamedTuple):
@@ -1881,6 +2127,82 @@ def test_select_execution_driver_uses_frontier_for_bounded_haystack_search(
     driver = execution.select_execution_driver(query, plan)
 
     assert isinstance(driver, FrontierExecutionDriver)
+
+
+@pytest.mark.parametrize(
+    "config",
+    (
+        pytest.param(None, id="whole-source-worker"),
+        pytest.param(
+            ExecutionDriverConfig(max_workers=2),
+            id="concurrent-whole-source-workers",
+        ),
+        pytest.param(
+            ExecutionDriverConfig(max_workers=1, use_source_batches=True),
+            id="single-owner-thread-batches",
+        ),
+        pytest.param(
+            ExecutionDriverConfig(max_workers=2, use_source_batches=True),
+            id="concurrent-worker-batches",
+        ),
+    ),
+)
+def test_selected_frontier_driver_forwards_source_progress_on_owner_thread(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    config: ExecutionDriverConfig | None,
+) -> None:
+    """Limited frontier scans serialize parsed-record heartbeats on their owner."""
+    query = _query(limit=1)
+    sources = (
+        _source(tmp_path / "newest.jsonl"),
+        _source(tmp_path / "older.jsonl"),
+    )
+    sources[0].mtime_ns = 2
+    sources[1].mtime_ns = 1
+    plan = _multi_plan(query, sources)
+    owner_thread_id = threading.get_ident()
+
+    def iter_records(
+        task: SourceTask,
+        _query: agentgrep.SearchQuery,
+    ) -> cabc.Iterator[agentgrep.SearchRecord]:
+        for index in range(agentgrep._SOURCE_PROGRESS_RECORD_INTERVAL + 1):
+            yield _record(
+                task.source,
+                f"other {index}",
+                "2026-01-01T00:00:00Z",
+            )
+
+    class CapturingProgress(agentgrep.NoopSearchProgress):
+        def __init__(self) -> None:
+            self.events: list[tuple[int, int, int, int, int]] = []
+
+        def source_progress(
+            self,
+            index: int,
+            total: int,
+            source: agentgrep.SourceHandle,
+            records: int,
+            matches: int,
+        ) -> None:
+            _ = source
+            self.events.append(
+                (index, total, records, matches, threading.get_ident()),
+            )
+
+    monkeypatch.setattr(scanning, "iter_source_task_records", iter_records)
+    progress = CapturingProgress()
+    driver = execution.select_execution_driver(query, plan, config=config)
+
+    assert isinstance(driver, FrontierExecutionDriver)
+
+    _ = list(driver.iter_search_plan(query, plan, progress=progress))
+
+    assert sorted(progress.events) == [
+        (1, 2, agentgrep._SOURCE_PROGRESS_RECORD_INTERVAL, 0, owner_thread_id),
+        (2, 2, agentgrep._SOURCE_PROGRESS_RECORD_INTERVAL, 0, owner_thread_id),
+    ]
 
 
 def test_select_execution_driver_keeps_bounded_text_search_inline_by_default(

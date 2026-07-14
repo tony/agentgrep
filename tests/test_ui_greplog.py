@@ -14,8 +14,9 @@ import typing as t
 
 import pytest
 
-from agentgrep.progress import StreamingRecordsBatch, StreamingSearchFinished
-from agentgrep.records import SearchRecord
+from agentgrep.progress import ProgressSnapshot, StreamingRecordsBatch, StreamingSearchFinished
+from agentgrep.records import SearchRecord, SourceHandle
+from agentgrep.ui._seams import _UiStreamingSearchProgress
 from tests.test_agentgrep import _build_empty_ui_app
 
 
@@ -95,6 +96,69 @@ async def test_greplog_finished_sets_status_line(
         layout._apply_finished("complete", 5, 1.2, None)
         await pilot.pause()
         assert "5" in str(layout.query_one("#greplog-status").render())
+
+
+async def test_greplog_renders_lifecycle_and_heartbeat_progress(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real UI reporter shows source lifecycle and heartbeat progress."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    events: list[object] = []
+    reporter = _UiStreamingSearchProgress(emit=events.append)
+    source = SourceHandle(
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "session.jsonl",
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=1,
+    )
+    reporter.source_started(3, 82, source)
+    reporter.source_progress(3, 82, source, records=128, matches=1)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        layout = await _mount_greplog(app, pilot)
+        layout._search_done = False
+        await layout._apply_event(layout._generation, events[0])
+        await pilot.pause()
+        assert str(layout.query_one("#greplog-status").render()) == "scanning 3/82…"
+        await layout._apply_event(layout._generation, events[1])
+        await pilot.pause()
+        assert str(layout.query_one("#greplog-status").render()) == ("scanning 3/82 · 128 records…")
+
+
+@pytest.mark.parametrize(
+    ("record_count", "expected"),
+    (
+        (0, "scanning 3/82…"),
+        (1, "scanning 3/82 · 1 record…"),
+        (128, "scanning 3/82 · 128 records…"),
+    ),
+    ids=("zero", "singular", "plural"),
+)
+def test_greplog_scanning_text_uses_record_grammar(
+    record_count: int,
+    expected: str,
+) -> None:
+    """Heartbeat text omits zero and distinguishes one from many records."""
+    from agentgrep.ui.layouts.greplog import GrepLogLayout
+
+    snapshot = ProgressSnapshot(
+        query_label="bliss",
+        phase="scanning",
+        current=3,
+        total=82,
+        detail=None,
+        matches=0,
+        elapsed=0.0,
+        source_records_seen=record_count,
+    )
+
+    assert GrepLogLayout._scanning_text(snapshot) == expected
 
 
 async def test_greplog_filter_renders_only_matches(

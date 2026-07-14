@@ -631,6 +631,7 @@ class ProgressSnapshot:
     detail: str | None
     matches: int
     elapsed: float
+    source_records_seen: int | None = None
 
 
 def format_search_progress_line(
@@ -825,6 +826,7 @@ class StreamingSearchProgress:
         self._detail: str | None = None
         self._current: int | None = None
         self._total: int | None = None
+        self._source_records_seen: int | None = None
         self._matches = 0
         self._started_at: float | None = None
         self._last_flush_at: float = time.monotonic()
@@ -836,6 +838,7 @@ class StreamingSearchProgress:
         with self._lock:
             self._query_label = label
             self._phase = "discovering"
+            self._source_records_seen = None
             self._started_at = now
         self._emit_progress()
 
@@ -844,6 +847,7 @@ class StreamingSearchProgress:
         with self._lock:
             self._phase = "discovered"
             self._detail = f"{count} sources"
+            self._source_records_seen = None
         self._emit_progress()
 
     def prefilter_started(self, root: pathlib.Path) -> None:
@@ -851,6 +855,7 @@ class StreamingSearchProgress:
         with self._lock:
             self._phase = "prefiltering"
             self._detail = format_display_path(root, directory=True)
+            self._source_records_seen = None
         self._emit_progress()
 
     def sources_planned(self, planned: int, total: int) -> None:
@@ -860,6 +865,7 @@ class StreamingSearchProgress:
             self._current = planned
             self._total = total
             self._detail = "candidate sources"
+            self._source_records_seen = None
         self._emit_progress()
 
     def source_started(self, index: int, total: int, source: SourceHandle) -> None:
@@ -869,6 +875,7 @@ class StreamingSearchProgress:
             self._current = index
             self._total = total
             self._detail = source.path.name
+            self._source_records_seen = 0
         self._emit_progress()
 
     def source_finished(
@@ -885,6 +892,7 @@ class StreamingSearchProgress:
             self._current = index
             self._total = total
             self._detail = f"{records} records, {format_match_count(matches)} in {source.path.name}"
+            self._source_records_seen = records
         self._emit_progress()
 
     def source_progress(
@@ -901,6 +909,7 @@ class StreamingSearchProgress:
             self._current = index
             self._total = total
             self._detail = format_source_progress_detail(records, matches)
+            self._source_records_seen = records
         self._emit_progress()
 
     def result_added(self, count: int) -> None:
@@ -982,6 +991,7 @@ class StreamingSearchProgress:
             phase = self._phase
             label = self._query_label
             matches = self._matches
+            source_records_seen = self._source_records_seen
             started = self._started_at
         elapsed = (time.monotonic() - started) if started is not None else 0.0
         return ProgressSnapshot(
@@ -992,6 +1002,7 @@ class StreamingSearchProgress:
             detail=detail,
             matches=matches,
             elapsed=elapsed,
+            source_records_seen=source_records_seen,
         )
 
     def _elapsed(self) -> float:

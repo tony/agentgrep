@@ -25,10 +25,12 @@ from agentgrep.ui.widgets.messages import (
 )
 from agentgrep.ui.widgets.results import SearchResultsList
 from agentgrep.ui.widgets.status import (
+    FilterHeader,
     MeterWidget,
     PaneHeader,
     ResultsHeader,
     SearchingPanel,
+    SlowSourceDiagnosticsRow,
     SpinnerWidget,
 )
 
@@ -41,6 +43,7 @@ __all__ = [
     "DetailScroll",
     "DetailScrollChanged",
     "FilterCompleted",
+    "FilterHeader",
     "FilterInput",
     "FilterRequested",
     "HistoryRecall",
@@ -52,5 +55,6 @@ __all__ = [
     "SearchRequested",
     "SearchResultsList",
     "SearchingPanel",
+    "SlowSourceDiagnosticsRow",
     "SpinnerWidget",
 ]

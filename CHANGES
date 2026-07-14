@@ -42,6 +42,20 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### Fixes
+
+#### Explorer scan progress stays truthful (#124)
+
+The HUD and grep-log layouts now report the source being scanned and its
+parsed-record heartbeat while the results rule remains dedicated to filtered
+position and scroll state. Interrupted summaries identify the active source
+instead of treating its ordinal as completed work, and queued stale navigation
+updates cannot repaint a reset view.
+
+The optional `Ctrl-\` detail row names only an active store that has crossed
+the slow-source threshold. When a search finishes, it freezes the slowest
+completed store and exact duration without exposing local source paths.
+
 ## agentgrep 0.1.0a34 (2026-07-12)
 
 agentgrep 0.1.0a34 widens project-aware search across the agent histories it
