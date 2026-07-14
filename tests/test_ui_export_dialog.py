@@ -405,6 +405,9 @@ async def test_y_invokes_once_and_enters_saving(tmp_path: pathlib.Path) -> None:
         await pilot.press("y", "y", "enter")
 
         assert _dialog(app).phase == "saving"
+        confirm = app.screen.query_one("#export-confirm", OptionList)
+        assert confirm.highlighted == 1
+        assert confirm.disabled is True
         assert len(seen) == 1
         assert seen[0] == ExportIntent(
             destination=(tmp_path / "2026-07-14 09-08-07 - machine-readable-title.md"),

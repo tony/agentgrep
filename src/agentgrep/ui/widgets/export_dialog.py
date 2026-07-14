@@ -462,5 +462,6 @@ class ExportDialog(ModalScreen[None]):
             return
         self._phase = "saving"
         confirm = self.query_one("#export-confirm", OptionList)
+        confirm.highlighted = 1
         confirm.disabled = True
         self.query_one("#export-review-status", Static).update(Content("Saving…"))
