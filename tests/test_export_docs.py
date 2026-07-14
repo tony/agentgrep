@@ -29,6 +29,15 @@ def _missing_terms(text: str, required: tuple[str, ...]) -> tuple[str, ...]:
     )
 
 
+def _markdown_section(text: str, heading: str) -> str:
+    """Return the body below one named Markdown heading of the same level."""
+    marker = f"{heading}\n"
+    _, found, remainder = text.partition(marker)
+    assert found, f"missing Markdown section: {heading}"
+    level = heading.split(maxsplit=1)[0]
+    return remainder.partition(f"\n{level} ")[0]
+
+
 def test_export_docs_are_indexed() -> None:
     """The CLI guide and ADR are reachable through their public indexes."""
     cli_index = _read_text("docs/cli/index.md")
@@ -97,23 +106,31 @@ def test_export_tui_docs_define_private_off_pump_workflow() -> None:
 def test_export_guide_defines_reviewed_tui_destination() -> None:
     """The export guide explains the remembered, exact TUI save flow."""
     guide = _read_text("docs/cli/export.md")
-    required = (
-        "Press `e`",
-        "exact selected record",
-        "remembers the export directory and filename template",
-        "user configuration",
-        "`{date} {time} - {title}.md`",
-        "local time",
-        "filesystem-safe",
-        "`YYYY-MM-DD HH-MM-SS`",
-        "exact filename",
-        "No returns to editing",
-        "no-clobber",
-        "CLI and MCP do not consume",
-    )
+    section = _markdown_section(guide, "## TUI reviewed save")
+    normalized = re.sub(r"\s+", " ", section).casefold()
 
-    missing = _missing_terms(guide, required)
-    assert not missing, f"docs/cli/export.md is missing {missing!r}"
+    for literal in (
+        "`e`",
+        "`{date} {time} - {title}.md`",
+        "`YYYY-MM-DD HH-MM-SS`",
+        "no-clobber",
+    ):
+        assert literal in section
+    assert re.search(
+        r"exact selected record.*remembers the export directory and filename template",
+        normalized,
+    )
+    assert re.search(
+        r"first use.*after a successful save.*remembered directory and template",
+        normalized,
+    )
+    assert re.search(r"local time.*filesystem-safe", normalized)
+    assert re.search(r"\bno returns to editing\b", normalized)
+    assert re.search(r"cli and mcp do not consume the tui preference", normalized)
+    assert re.search(
+        r"mcp.*accepts no local destination.*no filesystem write authority",
+        normalized,
+    )
 
 
 def test_export_mcp_docs_define_bounded_inline_contract() -> None:
@@ -301,19 +318,30 @@ def test_export_adr_pins_writer_and_deferred_tiers() -> None:
 def test_export_adr_pins_interactive_filename_exception() -> None:
     """The ADR keeps reviewed TUI names separate from automatic private names."""
     adr = _read_text("docs/dev/adr/0017-portable-record-export.md")
-    required = (
-        "narrow exception",
-        "bounded normalized `SearchRecord.title`",
-        "filesystem-safe local timestamp",
-        "exact basename",
-        "explicit no-clobber destination",
-        "automatic private filenames",
-        "derive only from canonical IDs",
-        "CLI and MCP do not consume",
-    )
+    surface = re.sub(
+        r"\s+",
+        " ",
+        _markdown_section(adr, "### Surface defaults"),
+    ).casefold()
+    durable_section = _markdown_section(adr, "### Durable file output")
+    durable = re.sub(r"\s+", " ", durable_section).casefold()
 
-    missing = _missing_terms(adr, required)
-    assert not missing, f"export ADR is missing {missing!r}"
+    assert "`e`" in surface
+    assert re.search(r"exact selected record.*remembers.*directory and filename template", surface)
+    assert re.search(r"exact basename.*\bno returns.*explicit no-clobber destination", surface)
+    assert re.search(r"cli and mcp do not consume this preference", surface)
+
+    assert "`SearchRecord.title`" in durable_section
+    assert re.search(
+        r"automatic private filenames derive only from canonical ids",
+        durable,
+    )
+    assert re.search(
+        r"narrow exception.*filesystem-safe local timestamp.*bounded normalized",
+        durable,
+    )
+    assert re.search(r"exact basename.*explicit no-clobber destination", durable)
+    assert re.search(r"never reads the record body or source path", durable)
 
 
 def test_export_console_examples_are_individually_copyable() -> None:
