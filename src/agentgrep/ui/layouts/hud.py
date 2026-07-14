@@ -85,7 +85,6 @@ from agentgrep.ui.widgets import (
     DetailScroll,
     DetailScrollChanged,
     ExportDialog,
-    ExportIntent,
     FilterCompleted,
     FilterHeader,
     FilterInput,
@@ -103,6 +102,7 @@ from agentgrep.ui.widgets import (
     WelcomeExamples,
     WelcomeQuerySelected,
 )
+from agentgrep.ui.widgets.export_dialog import ExportIntent
 from agentgrep.ui.widgets.welcome import (
     _WELCOME_BRAND_SHINE,
     _WELCOME_QUERIES,

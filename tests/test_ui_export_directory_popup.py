@@ -81,10 +81,13 @@ def _prompts(popup: DirectoryCompletionPopup) -> tuple[str, ...]:
     return tuple(str(option.prompt) for option in popup.options)
 
 
-def test_export_directory_picker_interface_is_available_and_immutable() -> None:
-    """The widgets package exports the owning picker and immutable row type."""
+def test_export_directory_picker_interface_hides_internal_rows() -> None:
+    """The widgets package exports the picker but not completion internals."""
     assert widgets.ExportDirectoryPicker is ExportDirectoryPicker
-    assert widgets.DirectoryCandidate is DirectoryCandidate
+    assert "DirectoryCandidate" not in widgets.__all__
+    assert "DirectoryCompletionPopup" not in widgets.__all__
+    assert not hasattr(widgets, "DirectoryCandidate")
+    assert not hasattr(widgets, "DirectoryCompletionPopup")
     assert issubclass(DirectoryCompletionPopup, OptionList)
     candidate = DirectoryCandidate(value="./alpha/", label="alpha")
     mutable_candidate = t.cast("t.Any", candidate)
@@ -357,7 +360,7 @@ def test_candidate_labels_are_basenames_and_values_preserve_prefix(
     assert result.values == (DirectoryCandidate(value=expected, label="alpha"),)
 
 
-@pytest.mark.parametrize("unsafe", ("\u200b", "\u202e"))
+@pytest.mark.parametrize("unsafe", ["\u200b", "\u202e"])
 def test_completion_omits_unreviewable_directory_names(
     unsafe: str,
     tmp_path: pathlib.Path,

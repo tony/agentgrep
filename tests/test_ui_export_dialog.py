@@ -20,8 +20,9 @@ from textual.widgets import Input, OptionList, Static
 import agentgrep.ui.widgets as widgets
 from agentgrep.ui import _runtime
 from agentgrep.ui._export_preferences import ExportPreferences, default_export_directory
-from agentgrep.ui.widgets import ExportDialog, ExportDraft, ExportIntent
+from agentgrep.ui.widgets import ExportDialog
 from agentgrep.ui.widgets.directory_popup import ExportDirectoryPicker
+from agentgrep.ui.widgets.export_dialog import ExportDraft, ExportIntent
 
 _TIMESTAMP = datetime.datetime(2026, 7, 14, 9, 8, 7)
 
@@ -129,13 +130,15 @@ async def _open_review(app: _ExportDialogHost, pilot: Pilot[None]) -> None:
     await _wait_for(pilot, lambda: _dialog(app).phase == "review")
 
 
-def test_export_dialog_interfaces_are_available_and_immutable(
+def test_export_dialog_interface_is_available_and_internal_values_are_immutable(
     tmp_path: pathlib.Path,
 ) -> None:
-    """The package exports the modal and its immutable boundary values."""
+    """The package exports the modal but not its immutable internal values."""
     assert widgets.ExportDialog is ExportDialog
-    assert widgets.ExportDraft is ExportDraft
-    assert widgets.ExportIntent is ExportIntent
+    assert "ExportDraft" not in widgets.__all__
+    assert "ExportIntent" not in widgets.__all__
+    assert not hasattr(widgets, "ExportDraft")
+    assert not hasattr(widgets, "ExportIntent")
 
     draft = ExportDraft(str(tmp_path), "{title}.md", _TIMESTAMP)
     intent = ExportIntent(tmp_path / "record.md", ExportPreferences(str(tmp_path)))
@@ -266,7 +269,7 @@ async def test_validation_runs_off_pump(
         assert all(thread_id != pump_thread for thread_id in access_threads)
 
 
-@pytest.mark.parametrize("cancel_key", ("n", "ctrl+c"), ids=("no", "cancel"))
+@pytest.mark.parametrize("cancel_key", ["n", "ctrl+c"], ids=("no", "cancel"))
 async def test_first_use_default_review_does_not_create_directory(
     cancel_key: str,
     tmp_path: pathlib.Path,

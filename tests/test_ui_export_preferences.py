@@ -124,7 +124,7 @@ def test_resolve_export_directory_rejects_other_users(
         resolve_export_directory("~other/Exports", tmp_path / "home")
 
 
-@pytest.mark.parametrize("unsafe", ("\n", "\u202e", "\ud800"))
+@pytest.mark.parametrize("unsafe", ["\n", "\u202e", "\ud800"])
 def test_resolve_export_directory_rejects_unreviewable_unicode(
     unsafe: str,
     tmp_path: pathlib.Path,
@@ -358,7 +358,7 @@ def test_invalid_export_preferences_return_defaults_with_warning(
     assert loaded.warning == "Export preferences could not be read"
 
 
-@pytest.mark.parametrize("unsafe", ("\n", "\u202e", "\ud800"))
+@pytest.mark.parametrize("unsafe", ["\n", "\u202e", "\ud800"])
 def test_unreviewable_directory_preferences_are_not_loaded(
     unsafe: str,
     tmp_path: pathlib.Path,
@@ -390,7 +390,7 @@ def test_unreviewable_directory_preferences_are_not_loaded(
     )
 
 
-@pytest.mark.parametrize("unsafe", ("\n", "\u202e", "\ud800"))
+@pytest.mark.parametrize("unsafe", ["\n", "\u202e", "\ud800"])
 def test_unreviewable_directory_preferences_are_not_saved(
     unsafe: str,
     tmp_path: pathlib.Path,
