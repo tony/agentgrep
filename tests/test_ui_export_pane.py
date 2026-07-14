@@ -68,9 +68,15 @@ async def test_e_mounts_export_pane_without_replacing_reader_or_screen(
         await pilot.pause()
 
         pane = hud.query_one(ExportPane)
+        body = hud.query_one("#body")
+        results_column = hud.query_one("#results-column")
+        detail_column = hud.query_one("#detail-column")
         assert app.screen is hud
         assert not isinstance(pane, ModalScreen)
         assert pane.parent is hud.query_one("#detail-column")
+        assert results_column.region.width > 0
+        assert pane.region.width == detail_column.region.width
+        assert pane.region.width < body.region.width
         assert reader.is_mounted
         assert pane.selected_record is record
         assert search.value == "agent:codex selected"
@@ -218,13 +224,19 @@ async def test_export_pane_survives_resize_without_mutating_reader_intent(
 
         await pilot.press("e")
         pane = hud.query_one(ExportPane)
+        results_column = hud.query_one("#results-column")
+        assert results_column.region.width > 0
         await pilot.resize_terminal(80, 24)
+        await _wait_for(lambda: hud.query_one("#body").has_class("-stacked"))
         await pilot.pause()
         assert pane.region.width == hud.query_one("#body").region.width
         assert pane.region.height > 0
+        assert results_column.region.width == 0
         await pilot.resize_terminal(120, 30)
+        await _wait_for(lambda: not hud.query_one("#body").has_class("-stacked"))
         await pilot.pause()
         assert pane.region.height > 0
+        assert results_column.region.width > 0
 
         await pilot.press("escape")
         await _wait_for(lambda: not hud.query(ExportPane))
