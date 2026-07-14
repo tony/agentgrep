@@ -278,6 +278,26 @@ def test_group_conversation_units_does_not_order_cross_domain_ordinals(
     assert unit.fidelity == "unordered"
 
 
+def test_group_conversation_units_does_not_order_cross_file_ordinals() -> None:
+    """File-local ordinals from separate physical sources are not one timeline."""
+    first = _record(
+        "first file",
+        path="parts/first.jsonl",
+        position=RecordPosition(ordinal=2, quality="source_order"),
+    )
+    second = _record(
+        "second file",
+        path="parts/second.jsonl",
+        position=RecordPosition(ordinal=1, quality="source_order"),
+    )
+
+    unit = _only_unit((first, second))
+
+    assert {record.path for record in unit.records} == {first.path, second.path}
+    assert unit.linear_records is None
+    assert unit.fidelity == "unordered"
+
+
 def test_group_conversation_units_retains_duplicate_views_but_withholds_linearity() -> None:
     """Duplicate native views and revisions stay lossless but not linear."""
     first = _record(

@@ -190,9 +190,11 @@ Conversation grouping describes only observed topology. It groups records with
 a non-null `thread_id`, retains every physical view in a deterministic member
 inventory, and supplies `linear_records` only when every member has a proven,
 unique ordinal and logical occurrence coordinate in one comparable
-`(store, adapter_id)` source domain. A validated native parent fact may
-establish `native_tree` fidelity without establishing sibling order; otherwise
-proven order is `source_order` and ambiguous order is `unordered`.
+`(store, adapter_id, path)` physical source domain. A validated native parent
+fact may establish `native_tree` fidelity without establishing sibling order;
+otherwise proven order is `source_order` and ambiguous order is `unordered`.
+The physical comparison scope does not enter canonical record identity;
+ordinal record IDs remain path-free and relocation-invariant.
 
 The member inventory is non-chronological. Its total tie-breaker covers every
 normalized public scalar with presence preserved, exact text and role, position
