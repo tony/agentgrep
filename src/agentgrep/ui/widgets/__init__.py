@@ -12,6 +12,11 @@ from __future__ import annotations
 import logging
 
 from agentgrep.ui.widgets.detail import DetailScroll
+from agentgrep.ui.widgets.directory_popup import (
+    DirectoryCandidate,
+    DirectoryCompletionPopup,
+    ExportDirectoryPicker,
+)
 from agentgrep.ui.widgets.dropdown import CompletionDropdown
 from agentgrep.ui.widgets.history import HistoryRecall
 from agentgrep.ui.widgets.inputs import DetailFindInput, FilterInput, SearchInput
@@ -48,6 +53,9 @@ __all__ = [
     "DetailFocusRequested",
     "DetailScroll",
     "DetailScrollChanged",
+    "DirectoryCandidate",
+    "DirectoryCompletionPopup",
+    "ExportDirectoryPicker",
     "FilterCompleted",
     "FilterHeader",
     "FilterInput",
