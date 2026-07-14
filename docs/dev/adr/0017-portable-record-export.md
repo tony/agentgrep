@@ -103,12 +103,15 @@ observed-thread export instead of writing a mixed view.
 
 Pressing `e` in a content pane captures the exact selected record and opens one
 staged TUI dialog. The dialog remembers its reviewed directory and filename
-template in a small TUI-private file under the platform user configuration
-directory. It previews a filename, validates an existing directory, then shows
-the directory and exact basename separately with **No** selected. No returns to
-the retained draft; Save writes the explicit no-clobber destination. CLI and
-MCP do not consume this preference or gain any additional filesystem
-authority.
+template in a TUI-private preference file under the platform user
+configuration directory. It previews a filename, validates an existing
+directory or the uncreated exact app default, then shows the directory and
+exact basename separately with **No** selected. No returns to the retained
+draft. Save is the mutation boundary: No and cancel perform no filesystem
+mutation. An accepted Save securely creates the app default when needed,
+writes the explicit no-clobber destination, then attempts to persist the
+reviewed preference. CLI and MCP do not consume this preference or gain any
+additional filesystem authority.
 
 The MCP {tooliconl}`export_records` tool accepts one to 20 unique `agref1:`
 search refs and no query, cursor, or local destination. It resolves refs with
