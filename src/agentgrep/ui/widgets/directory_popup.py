@@ -237,6 +237,8 @@ class ExportDirectoryPicker(Vertical):
         self._candidate_values: tuple[DirectoryCandidate, ...] = ()
         self._debounce_timer: Timer | None = None
         self._pending_value = value
+        self._enumeration_running = False
+        self._queued_enumeration: tuple[int, str] | None = None
 
     @property
     def value(self) -> str:
@@ -267,7 +269,7 @@ class ExportDirectoryPicker(Vertical):
     @_runtime.pump_only
     def on_unmount(self) -> None:
         """Cancel all completion work before the picker leaves the DOM."""
-        self._invalidate_completion()
+        self._invalidate_completion(cancel_worker=True)
 
     @_runtime.pump_only
     def _schedule_enumeration(self) -> None:
@@ -289,6 +291,15 @@ class ExportDirectoryPicker(Vertical):
         generation = self._candidate_generation
         if not value or not self.is_mounted or not self._input.has_focus:
             return
+        if self._enumeration_running:
+            self._queued_enumeration = (generation, value)
+            return
+        self._launch_enumeration(generation, value)
+
+    @_runtime.pump_only
+    def _launch_enumeration(self, generation: int, value: str) -> None:
+        """Start one enumeration after every earlier scan has returned."""
+        self._enumeration_running = True
         emit = _runtime.make_gated_emitter(
             self.app.call_from_thread,
             self._apply_candidates,
@@ -323,29 +334,43 @@ class ExportDirectoryPicker(Vertical):
     @_runtime.pump_only
     def _apply_candidates(self, generation: int, event: object) -> None:
         """Apply only a current focused picker's bounded worker result."""
-        if (
+        self._enumeration_running = False
+        stale = (
             generation != self._candidate_generation
             or not self.is_mounted
             or not self._input.has_focus
             or not isinstance(event, _DirectoryCandidates)
+        )
+        if not stale:
+            self._candidate_values = event.values
+            options: list[Option] = [Option(candidate.label) for candidate in event.values]
+            if event.truncated:
+                options.append(Option(_TRUNCATION_LABEL, disabled=True))
+            self._popup.set_options(options)
+            self._popup.highlighted = 0 if event.values else None
+            self._popup.display = bool(options)
+
+        queued = self._queued_enumeration
+        self._queued_enumeration = None
+        if (
+            queued is not None
+            and queued[0] == self._candidate_generation
+            and self.is_mounted
+            and self._input.has_focus
         ):
-            return
-        self._candidate_values = event.values
-        options: list[Option] = [Option(candidate.label) for candidate in event.values]
-        if event.truncated:
-            options.append(Option(_TRUNCATION_LABEL, disabled=True))
-        self._popup.set_options(options)
-        self._popup.highlighted = 0 if event.values else None
-        self._popup.display = bool(options)
+            self._launch_enumeration(*queued)
 
     @_runtime.pump_only
-    def _invalidate_completion(self) -> None:
+    def _invalidate_completion(self, *, cancel_worker: bool = False) -> None:
         """Stop pending work, advance generation, and clear completion chrome."""
         if self._debounce_timer is not None:
             self._debounce_timer.stop()
             self._debounce_timer = None
         self._candidate_generation += 1
-        self.workers.cancel_group(self, _DIRECTORY_WORKER_GROUP)
+        self._queued_enumeration = None
+        if cancel_worker:
+            self.workers.cancel_group(self, _DIRECTORY_WORKER_GROUP)
+            self._enumeration_running = False
         self._candidate_values = ()
         self._popup.clear_options()
         self._popup.display = False
