@@ -272,6 +272,11 @@ class ExportDirectoryPicker(Vertical):
         self._input.focus()
 
     @_runtime.pump_only
+    def accept_completion(self) -> bool:
+        """Accept the highlighted directory when completion is open."""
+        return self._accept_highlighted()
+
+    @_runtime.pump_only
     def on_input_changed(self, event: Input.Changed) -> None:
         """Debounce completion for the latest literal input value."""
         if event.input is self._input:

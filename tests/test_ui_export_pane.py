@@ -156,6 +156,14 @@ async def test_export_pane_priority_navigation_stays_inside_action(
         await pilot.press("ctrl+k")
         assert directory.has_focus
 
+        await pilot.press("tab")
+        assert template.has_focus
+        await pilot.press("tab")
+        assert directory.has_focus
+        await pilot.press("shift+tab")
+        assert template.has_focus
+        assert app.focused is not hud._search_input
+
         await pilot.press("ctrl+r", "q")
         assert app.screen is hud
         assert not hud.query("HistoryRecall")
@@ -266,3 +274,5 @@ async def test_export_review_remains_usable_at_minimum_terminal_height(
         assert confirm.region.overlaps(pane.region)
         assert confirm.highlighted == 0
         assert confirm.region.height > 0
+        await pilot.press("tab", "shift+tab")
+        assert confirm.has_focus

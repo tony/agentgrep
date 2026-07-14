@@ -168,6 +168,8 @@ class ExportPane(Vertical):
         Binding("ctrl+l", "editor_next", "Next field", priority=True, show=False),
         Binding("up", "editor_previous", "Previous field", show=False),
         Binding("down", "editor_next", "Next field", show=False),
+        Binding("tab", "editor_tab", "Next field", show=False),
+        Binding("shift+tab", "editor_backtab", "Previous field", show=False),
         Binding("n", "review_no", "No", show=False),
         Binding("y", "review_save", "Save", show=False),
     ]
@@ -389,6 +391,38 @@ class ExportPane(Vertical):
         ).query_one(Input)
         if directory.has_focus:
             self.query_one("#export-template", Input).focus()
+
+    @_runtime.pump_only
+    def action_editor_tab(self) -> None:
+        """Keep forward traversal inside the active export state."""
+        if self._phase == "review":
+            self.query_one("#export-confirm", OptionList).focus()
+            return
+        if self._phase != "edit":
+            return
+        picker = self.query_one("#export-directory", ExportDirectoryPicker)
+        directory = picker.query_one(Input)
+        template = self.query_one("#export-template", Input)
+        if directory.has_focus:
+            if not picker.accept_completion():
+                template.focus()
+            return
+        picker.focus_input()
+
+    @_runtime.pump_only
+    def action_editor_backtab(self) -> None:
+        """Keep reverse traversal inside the active export state."""
+        if self._phase == "review":
+            self.query_one("#export-confirm", OptionList).focus()
+            return
+        if self._phase != "edit":
+            return
+        picker = self.query_one("#export-directory", ExportDirectoryPicker)
+        directory = picker.query_one(Input)
+        if directory.has_focus:
+            self.query_one("#export-template", Input).focus()
+            return
+        picker.focus_input()
 
     @_runtime.pump_only
     def action_review_no(self) -> None:
