@@ -18,9 +18,9 @@ from textual.pilot import Pilot
 from textual.widgets import Input, OptionList, Static
 
 import agentgrep.ui.widgets as widgets
-from agentgrep.ui import _runtime
+from agentgrep.ui import _export_preferences as export_preferences, _runtime
 from agentgrep.ui._export_preferences import ExportPreferences, default_export_directory
-from agentgrep.ui.widgets import ExportDialog
+from agentgrep.ui.widgets import ExportDialog, export_dialog
 from agentgrep.ui.widgets.directory_popup import ExportDirectoryPicker
 from agentgrep.ui.widgets.export_dialog import ExportDraft, ExportIntent
 
@@ -372,6 +372,31 @@ async def test_empty_directory_cannot_reach_review(tmp_path: pathlib.Path) -> No
 
         await pilot.press("enter", "enter")
         await _wait_for(pilot, lambda: _dialog(app).phase != "validating")
+
+        assert _dialog(app).phase == "edit"
+        assert _text(app, "#export-error") == "Export directory is invalid"
+        assert seen == []
+
+
+async def test_over_bound_directory_stops_before_compaction(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Enter rejects oversized text on the pump before compaction is reached."""
+    seen: list[ExportIntent] = []
+    app = _ExportDialogHost(tmp_path, lambda intent: seen.append(intent) or True)
+    async with app.run_test(size=(60, 16)) as pilot:
+        picker = app.screen.query_one("#export-directory", ExportDirectoryPicker)
+        picker.value = "x" * (export_preferences.MAX_DIRECTORY_CHARS + 1)
+        unexpected = "oversized Enter reached directory compaction"
+
+        def fail_compaction(_value: str, _home: pathlib.Path) -> t.NoReturn:
+            raise AssertionError(unexpected)
+
+        monkeypatch.setattr(export_dialog, "compact_export_directory", fail_compaction)
+
+        await pilot.press("enter", "enter")
+        await pilot.pause()
 
         assert _dialog(app).phase == "edit"
         assert _text(app, "#export-error") == "Export directory is invalid"

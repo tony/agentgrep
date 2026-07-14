@@ -95,6 +95,10 @@ def test_export_directory_picker_interface_hides_internal_rows() -> None:
     with pytest.raises(dataclasses.FrozenInstanceError):
         mutable_candidate.label = "changed"
 
+    picker = ExportDirectoryPicker(value="", home=pathlib.Path("home"))
+    path_input = t.cast("t.Any", picker)._input
+    assert path_input.max_length == directory_popup.MAX_DIRECTORY_CHARS
+
 
 def test_empty_directory_value_has_no_completion_candidates(
     tmp_path: pathlib.Path,
