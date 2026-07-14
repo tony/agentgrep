@@ -350,6 +350,7 @@ class SearchInput(_BoundedInput):
         if focus:
             self.focus()
 
+    @_runtime.pump_only
     def _watch_value(self, value: str) -> None:
         """Remember ordinary query edits while slash invocations stay transient."""
         super()._watch_value(value)
@@ -357,6 +358,7 @@ class SearchInput(_BoundedInput):
             self._query_draft_value = value
             self._query_draft_selection = self.selection
 
+    @_runtime.pump_only
     def _watch_selection(self, selection: Selection) -> None:
         """Retain the exact query cursor or selection independently of edits."""
         super()._watch_selection(selection)
