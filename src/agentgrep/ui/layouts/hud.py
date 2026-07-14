@@ -146,6 +146,7 @@ class HudLayout(_HudSearchBase):
     BINDINGS: t.ClassVar[list[BindingType]] = [
         ("tab", "app.focus_next", "Switch focus"),
         ("q", "confirm_quit", "Quit"),
+        Binding("e", "export_selected", "Export selected", show=False),
         ("escape", "stop_search", "Stop search"),
         ("ctrl+backslash", "toggle_detail_progress", "Detail"),
         COPY_SELECTION_BINDING,
@@ -1034,6 +1035,20 @@ class HudLayout(_HudSearchBase):
             self._focus_widget_by_id("results")
         elif focused_id == "results" and self._stacked:
             self._focus_detail()
+
+    @_runtime.pump_only
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Expose record export only in a content pane with a live selection."""
+        if action == "export_selected":
+            return self.focused in (self._results, self._detail_scroll) and (
+                self._selected_export_record() is not None
+            )
+        return super().check_action(action, parameters)
+
+    @_runtime.pump_only
+    def action_export_selected(self) -> None:
+        """Export the selected record to the private default destination."""
+        self.request_export("", selection="records")
 
     @_runtime.pump_only
     def request_export(self, destination: str, *, selection: _ExportSelection) -> bool:
