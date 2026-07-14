@@ -350,6 +350,52 @@ async def test_confirmed_export_writes_exact_filename_then_preferences(
 
 
 @pytest.mark.slow
+async def test_absolute_home_preference_persists_as_tilde(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A legacy absolute home draft is reviewed and re-saved without its prefix."""
+    home = tmp_path / "home"
+    export_dir = home / "Exports"
+    export_dir.mkdir(parents=True)
+    config_home = tmp_path / "config"
+    config_home.mkdir()
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    save_export_preferences(
+        home,
+        ExportPreferences(
+            directory=str(export_dir),
+            filename_template="{title}.md",
+        ),
+    )
+    record = _record(tmp_path, "body", ordinal=1, title="Private Draft")
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        hud = app.screen
+        await _load_records(hud, (record,))
+        hud._results.focus()
+
+        await pilot.press("e")
+        await pilot.pause()
+        dialog = t.cast("ExportDialog", app.screen)
+        picker = dialog.query_one("#export-directory", ExportDirectoryPicker)
+        assert picker.value == "~/Exports"
+        await pilot.press("enter", "enter")
+        await _wait_for(lambda: dialog.phase == "review")
+        assert _static_text(dialog, "#export-review-directory") == "~/Exports"
+
+        await pilot.press("y")
+        await _wait_for(lambda: app.screen is hud)
+
+    assert (export_dir / "private-draft.md").is_file()
+    assert load_export_preferences(home).preferences == ExportPreferences(
+        directory="~/Exports",
+        filename_template="{title}.md",
+    )
+
+
+@pytest.mark.slow
 async def test_export_failure_restores_draft_without_saving_preferences(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

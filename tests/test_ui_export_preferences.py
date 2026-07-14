@@ -124,6 +124,37 @@ def test_resolve_export_directory_rejects_other_users(
         resolve_export_directory("~other/Exports", tmp_path / "home")
 
 
+def test_compact_export_directory_uses_only_explicit_home(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Absolute home drafts compact lexically without global home or resolution."""
+    home = tmp_path / "session-home"
+    process_home = tmp_path / "process-home"
+    outside = tmp_path / "outside" / "Exports"
+    monkeypatch.setenv("HOME", str(process_home))
+    unexpected_resolve = "directory compaction must not resolve symlinks"
+
+    def reject_resolve(_path: pathlib.Path, *_args: object, **_kwargs: object) -> t.NoReturn:
+        raise AssertionError(unexpected_resolve)
+
+    monkeypatch.setattr(pathlib.Path, "resolve", reject_resolve)
+
+    assert export_preferences.compact_export_directory(str(home), home) == "~"
+    assert (
+        export_preferences.compact_export_directory(
+            str(home / "draft" / ".." / "Exports"),
+            home,
+        )
+        == "~/Exports"
+    )
+    assert export_preferences.compact_export_directory(str(outside), home) == str(outside)
+    assert export_preferences.compact_export_directory("~/Exports", home) == "~/Exports"
+    assert export_preferences.compact_export_directory("relative/Exports", home) == (
+        "relative/Exports"
+    )
+
+
 def test_default_export_filename_is_frozen_local_ascii() -> None:
     """The default template compiles to the reviewed local-time basename."""
     when = datetime.datetime(2026, 7, 14, 9, 8, 7).astimezone()
@@ -183,10 +214,10 @@ def test_export_filename_rejects_ambiguous_or_non_scalar_output(template: str) -
 
 @pytest.mark.parametrize(
     "template",
-    (
+    [
         "safe\u200b-{title}.md",
         "safe\u202e-{title}.md",
-    ),
+    ],
 )
 def test_export_filename_rejects_invisible_format_controls(template: str) -> None:
     """Zero-width and bidi controls cannot survive in a reviewed basename."""

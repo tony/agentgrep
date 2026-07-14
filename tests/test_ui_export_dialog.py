@@ -269,6 +269,68 @@ async def test_first_use_default_directory_is_created_privately(
         assert stat.S_IMODE(directory.stat().st_mode) == 0o700
 
 
+async def test_home_default_is_reviewed_as_tilde(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The clean fallback default never exposes the absolute session home."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    directory = default_export_directory(home)
+    app = _ExportDialogHost(
+        home,
+        lambda _intent: True,
+        directory=str(directory),
+    )
+    async with app.run_test(size=(60, 16)) as pilot:
+        picker = app.screen.query_one("#export-directory", ExportDirectoryPicker)
+        assert picker.value == "~/.local/share/agentgrep/exports"
+
+        await _open_review(app, pilot)
+
+        assert _text(app, "#export-review-directory") == "~/.local/share/agentgrep/exports"
+        assert str(home) not in _text(app, "#export-review-directory")
+
+
+async def test_directory_outside_home_remains_literal(tmp_path: pathlib.Path) -> None:
+    """A selected directory outside the session home keeps its exact draft text."""
+    home = tmp_path / "home"
+    directory = tmp_path / "outside"
+    home.mkdir()
+    directory.mkdir()
+    app = _ExportDialogHost(
+        home,
+        lambda _intent: True,
+        directory=str(directory),
+    )
+    async with app.run_test(size=(60, 16)) as pilot:
+        picker = app.screen.query_one("#export-directory", ExportDirectoryPicker)
+        assert picker.value == str(directory)
+
+        await _open_review(app, pilot)
+
+        assert _text(app, "#export-review-directory") == str(directory)
+
+
+async def test_submitted_absolute_home_directory_is_compacted(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A newly entered absolute home draft compacts before review."""
+    home = tmp_path / "home"
+    directory = home / "Exports"
+    directory.mkdir(parents=True)
+    app = _ExportDialogHost(home, lambda _intent: True)
+    async with app.run_test(size=(60, 16)) as pilot:
+        picker = app.screen.query_one("#export-directory", ExportDirectoryPicker)
+        picker.value = str(directory)
+        await pilot.press("enter", "enter")
+        await _wait_for(pilot, lambda: _dialog(app).phase == "review")
+
+        assert picker.value == "~/Exports"
+        assert _text(app, "#export-review-directory") == "~/Exports"
+
+
 async def test_missing_arbitrary_directory_is_not_created(tmp_path: pathlib.Path) -> None:
     """Validation never creates a missing user-entered directory tree."""
     directory = tmp_path / "missing" / "arbitrary"
@@ -343,7 +405,7 @@ async def test_review_shows_directory_and_filename_literally(tmp_path: pathlib.P
     async with app.run_test(size=(60, 16)) as pilot:
         await _open_review(app, pilot)
 
-        assert _text(app, "#export-review-directory") == str(directory)
+        assert _text(app, "#export-review-directory") == "~/exports-[literal]"
         assert _text(app, "#export-review-filename") == ("2026-07-14 09-08-07 - title-literal.md")
         confirm = app.screen.query_one("#export-confirm", OptionList)
         assert confirm._markup is False
@@ -413,7 +475,7 @@ async def test_y_invokes_once_and_enters_saving(tmp_path: pathlib.Path) -> None:
         assert seen[0] == ExportIntent(
             destination=(tmp_path / "2026-07-14 09-08-07 - machine-readable-title.md"),
             preferences=ExportPreferences(
-                directory=str(tmp_path),
+                directory="~",
                 filename_template="{date} {time} - {title}.md",
             ),
         )
@@ -512,7 +574,7 @@ async def test_dialog_fits_compact_terminal_without_horizontal_scroll(
         assert review.show_vertical_scrollbar is False
 
 
-@pytest.mark.parametrize("size", ((40, 12), (30, 10)))
+@pytest.mark.parametrize("size", [(40, 12), (30, 10)])
 async def test_invalid_template_error_is_visible_in_small_terminal(
     size: tuple[int, int],
     tmp_path: pathlib.Path,
@@ -533,7 +595,7 @@ async def test_invalid_template_error_is_visible_in_small_terminal(
         assert template.has_focus
 
 
-@pytest.mark.parametrize("size", ((40, 12), (30, 10)))
+@pytest.mark.parametrize("size", [(40, 12), (30, 10)])
 async def test_review_and_edit_are_reachable_in_small_terminal(
     size: tuple[int, int],
     tmp_path: pathlib.Path,
