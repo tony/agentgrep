@@ -172,17 +172,23 @@ the result's opaque `ref` to {tooliconl}`inspect_result` as
 
 ## Export
 
-The HUD offers two pi-like slash commands:
+The HUD offers two pi-like, one-shot slash commands:
 
 - `/export [PATH]` exports exactly the selected record.
 - `/export-thread [PATH]` exports the selected record's observed thread from
   the current result set after the in-list filter. A record without a canonical
   thread handle cannot be exported as a thread.
 
-Press `e` with the results list or detail pane focused to export the selected
-record to the private Markdown destination. Use `/export PATH` when an explicit
-destination is needed. The contextual `/keys` panel lists the shortcut without
-adding it to the compact footer.
+Press `e` with the results list or detail pane focused to review the exact
+selected record before saving it. The dialog starts from the remembered
+explicit directory and filename template, previews the exact filename, and
+keeps both values when No returns to editing. Save writes that reviewed new
+destination and remembers the values only after its preferences persist. The
+contextual `/keys` panel lists the shortcut without adding it to the compact
+footer.
+
+The slash commands do not read or change those remembered values. Supplying
+`PATH` gives that invocation an explicit one-shot destination.
 
 Without `PATH`, both commands write a collision-free Markdown artifact to
 agentgrep's private export directory. Its root follows `XDG_DATA_HOME`; when

@@ -80,6 +80,8 @@ def test_export_cli_docs_define_defaults_and_safe_sinks() -> None:
 def test_export_tui_docs_define_private_off_pump_workflow() -> None:
     """The TUI guide covers both pi-like commands and safe notifications."""
     tui = _read_text("docs/tui/index.md")
+    section = _markdown_section(tui, "## Export")
+    normalized = re.sub(r"\s+", " ", section).casefold()
     required = (
         "`/export [PATH]`",
         "`/export-thread [PATH]`",
@@ -99,8 +101,15 @@ def test_export_tui_docs_define_private_off_pump_workflow() -> None:
         "read-only",
     )
 
-    missing = _missing_terms(tui, required)
+    missing = _missing_terms(section, required)
     assert not missing, f"docs/tui/index.md is missing {missing!r}"
+    assert re.search(
+        r"press `e`.*review.*remembered.*directory and filename template.*exact filename",
+        normalized,
+    )
+    assert re.search(r"slash commands.*one-shot", normalized)
+    assert re.search(r"without `path`, both commands.*private export directory", normalized)
+    assert re.search(r"`/export-thread \[path\]`.*observed thread", normalized)
 
 
 def test_export_guide_defines_reviewed_tui_destination() -> None:
@@ -121,7 +130,8 @@ def test_export_guide_defines_reviewed_tui_destination() -> None:
         normalized,
     )
     assert re.search(
-        r"first use.*after the preferences are saved successfully.*remembered directory and template",
+        r"first use.*after the preferences are saved successfully"
+        r".*remembered directory and template",
         normalized,
     )
     assert re.search(r"local time.*filesystem-safe", normalized)
