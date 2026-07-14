@@ -101,6 +101,15 @@ Identity, rendering, and disk work run off the Textual message pump. Only one
 accepted write may be pending, and a changed result snapshot cancels an
 observed-thread export instead of writing a mixed view.
 
+Pressing `e` in a content pane captures the exact selected record and opens one
+staged TUI dialog. The dialog remembers its reviewed directory and filename
+template in a small TUI-private file under the platform user configuration
+directory. It previews a filename, validates an existing directory, then shows
+the directory and exact basename separately with **No** selected. No returns to
+the retained draft; Save writes the explicit no-clobber destination. CLI and
+MCP do not consume this preference or gain any additional filesystem
+authority.
+
 The MCP {tooliconl}`export_records` tool accepts one to 20 unique `agref1:`
 search refs and no query, cursor, or local destination. It resolves refs with
 the same position-aware and historical compatibility semantics as
@@ -132,10 +141,18 @@ only matching records; a TUI explicit path protects the selected snapshot's
 sources.
 
 The TUI-owned default export directory is mode `0700`, and artifact and
-temporary files are mode `0600`. Private filenames derive only from canonical
-IDs and structural metadata, never prompt text, a title, or a source path, and
-collisions allocate a new name rather than replacing an older export. Errors
-remain path-free.
+temporary files are mode `0600`. Automatic private filenames derive only from
+canonical IDs and structural metadata, never prompt text, a title, or a source
+path, and collisions allocate a new name rather than replacing an older
+export. Errors remain path-free.
+
+The reviewed `e` dialog is a narrow exception to that automatic filename
+policy. Its default template combines a filesystem-safe local timestamp with
+a bounded normalized `SearchRecord.title`; slugging never reads the record
+body or source path. The user sees the exact basename before accepting an
+explicit no-clobber destination, so the writer neither replaces the file nor
+changes the reviewed name to resolve a collision. A missing title uses a
+stable, non-sensitive record label.
 
 ### Deferred tiers
 
