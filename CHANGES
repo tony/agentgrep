@@ -80,8 +80,8 @@ human-readable Markdown without changing the underlying histories. The CLI
 exports matching records to standard output or a chosen file, the HUD exports
 one selected record or its observed thread, and MCP returns a bounded inline
 artifact for existing search refs. In the HUD, `e` captures the selected record
-from the results list or detail pane, then opens a compact destination review;
-it remains ordinary text in inputs.
+from the results list or detail pane, then opens a compact destination review.
+`e` remains ordinary text when an input is focused.
 
 The review remembers its directory and filename template, previews a
 filesystem-safe local timestamp with a bounded title, and keeps the draft when
