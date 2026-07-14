@@ -121,6 +121,15 @@ def test_export_dialog_interfaces_are_available_and_immutable(
         t.cast("t.Any", intent).destination = tmp_path / "changed.md"
 
 
+def test_review_letters_are_non_priority_bindings() -> None:
+    """Focused editors receive ``n`` and ``y`` before review shortcuts."""
+    bindings = {binding.key: binding for binding in ExportDialog.BINDINGS}
+
+    assert bindings["n"].priority is False
+    assert bindings["y"].priority is False
+    assert bindings["ctrl+c"].priority is True
+
+
 async def test_preview_is_frozen_literal_and_uses_no_filesystem(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -161,6 +170,34 @@ async def test_enter_moves_directory_to_template(tmp_path: pathlib.Path) -> None
         await pilot.press("enter")
 
         assert app.screen.query_one("#export-template", Input).has_focus
+        assert _dialog(app).phase == "edit"
+
+
+async def test_directory_input_receives_n_and_y(tmp_path: pathlib.Path) -> None:
+    """Review shortcut letters remain ordinary text in the directory editor."""
+    app = _ExportDialogHost(tmp_path, lambda _intent: True)
+    async with app.run_test(size=(60, 16)) as pilot:
+        await pilot.pause()
+        picker = app.screen.query_one("#export-directory", ExportDirectoryPicker)
+        picker.value = ""
+
+        await pilot.press("n", "y")
+
+        assert picker.value == "ny"
+        assert _dialog(app).phase == "edit"
+
+
+async def test_template_input_receives_n_and_y(tmp_path: pathlib.Path) -> None:
+    """Review shortcut letters remain ordinary text in the template editor."""
+    app = _ExportDialogHost(tmp_path, lambda _intent: True)
+    async with app.run_test(size=(60, 16)) as pilot:
+        await pilot.press("tab")
+        template = app.screen.query_one("#export-template", Input)
+        template.value = ""
+
+        await pilot.press("n", "y")
+
+        assert template.value == "ny"
         assert _dialog(app).phase == "edit"
 
 
@@ -314,6 +351,16 @@ async def test_ctrl_c_dismisses_even_while_saving(tmp_path: pathlib.Path) -> Non
         assert _dialog(app).phase == "saving"
 
         await pilot.press("ctrl+c")
+        await _wait_for(pilot, lambda: app.dismissed is None)
+
+        assert not app.query(ExportDialog)
+
+
+async def test_escape_dismisses_from_edit(tmp_path: pathlib.Path) -> None:
+    """Escape cancels the dialog outside the review back-step."""
+    app = _ExportDialogHost(tmp_path, lambda _intent: True)
+    async with app.run_test(size=(60, 16)) as pilot:
+        await pilot.press("escape")
         await _wait_for(pilot, lambda: app.dismissed is None)
 
         assert not app.query(ExportDialog)
