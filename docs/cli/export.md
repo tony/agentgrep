@@ -15,20 +15,24 @@ through `1000`.
 
 ## TUI reviewed save
 
-Press `e` while an exact selected record has focus in the HUD results or
-detail pane. One compact dialog remembers the export directory and filename
-template in TUI-private user configuration. On first use, the filename
-template is `{date} {time} - {title}.md`; after the preferences are saved
-successfully, the remembered directory and template replace the first-use
-defaults. Directory completion lists existing child directories and accepts a
-choice with the arrow keys and Tab.
+Press `e` while an exact selected record has focus in the HUD results or detail
+pane, or type `/export [PATH]`. Both routes open the same reviewed flow in the
+right detail pane. The command text is transient: the pane restores the current
+search term and its exact selection, then returns to the originating focus on
+back or save. An optional path seeds the directory and filename fields.
 
-The preview freezes local time when the dialog opens. The date and time render
-as the filesystem-safe `YYYY-MM-DD HH-MM-SS`, and the title token uses a
-bounded normalized form of the record title without reading its body or source
-path. Submitting the draft shows the directory and exact filename separately.
-The confirmation starts on **No**; No returns to editing with both values
-intact.
+The pane remembers the export directory and filename template in TUI-private
+user configuration. On first use, the filename template is
+`{date} {time} - {title}.md`; after the preferences are saved successfully, the
+remembered directory and template replace the first-use defaults. Directory
+completion lists existing child directories and accepts a choice with the
+arrow keys and Tab.
+
+The preview freezes local time when the pane opens. The date and time render as
+the filesystem-safe `YYYY-MM-DD HH-MM-SS`, and the title token uses a bounded
+normalized form of the record title without reading its body or source path.
+Submitting the draft shows the directory and exact filename separately. The
+confirmation starts on **No**; No returns to editing with both values intact.
 
 Save is the mutation boundary: No and cancel perform no filesystem mutation.
 An accepted Save creates the exact app-owned default directory privately when

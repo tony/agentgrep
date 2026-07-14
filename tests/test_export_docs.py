@@ -85,7 +85,7 @@ def test_export_cli_docs_define_defaults_and_safe_sinks() -> None:
 
 
 def test_export_tui_docs_define_private_off_pump_workflow() -> None:
-    """The TUI guide covers both pi-like commands and safe notifications."""
+    """The TUI guide separates reviewed record export from direct thread export."""
     tui = _read_text("docs/tui/index.md")
     section = _markdown_section(tui, "## Export")
     normalized = re.sub(r"\s+", " ", section).casefold()
@@ -93,6 +93,8 @@ def test_export_tui_docs_define_private_off_pump_workflow() -> None:
         "`/export [PATH]`",
         "`/export-thread [PATH]`",
         "Press `e`",
+        "right detail pane",
+        "restores the current search term",
         "selected record",
         "observed thread",
         "current result set",
@@ -111,11 +113,15 @@ def test_export_tui_docs_define_private_off_pump_workflow() -> None:
     missing = _missing_terms(section, required)
     assert not missing, f"docs/tui/index.md is missing {missing!r}"
     assert re.search(
-        r"press `e`.*review.*remembered.*directory and filename template.*exact filename",
+        r"press `e`.*`/export \[path\]`.*right detail pane.*remembered"
+        r".*directory and filename template.*exact filename",
         normalized,
     )
-    assert re.search(r"slash commands.*one-shot", normalized)
-    assert re.search(r"without `path`, both commands.*private export directory", normalized)
+    assert re.search(r"`/export-thread \[path\]`.*one-shot", normalized)
+    assert re.search(
+        r"without `path`, `/export-thread`.*private export directory",
+        normalized,
+    )
     assert re.search(r"`/export-thread \[path\]`.*observed thread", normalized)
 
 
@@ -127,15 +133,18 @@ def test_export_guide_defines_reviewed_tui_destination() -> None:
 
     for literal in (
         "`e`",
+        "`/export [PATH]`",
         "`{date} {time} - {title}.md`",
         "`YYYY-MM-DD HH-MM-SS`",
         "no-clobber",
     ):
         assert literal in section
     assert re.search(
-        r"exact selected record.*remembers the export directory and filename template",
+        r"exact selected record.*right detail pane"
+        r".*remembers the export directory and filename template",
         normalized,
     )
+    assert re.search(r"restores the current search term.*exact selection", normalized)
     assert re.search(
         r"first use.*after the preferences are saved successfully"
         r".*remembered directory and template",
@@ -363,6 +372,8 @@ def test_export_adr_pins_interactive_filename_exception() -> None:
     durable = re.sub(r"\s+", " ", durable_section).casefold()
 
     assert "`e`" in surface
+    assert "`/export [path]`" in surface
+    assert re.search(r"right detail pane.*restores.*search", surface)
     assert re.search(r"exact selected record.*remembers.*directory and filename template", surface)
     assert re.search(r"exact basename.*\bno returns.*explicit no-clobber destination", surface)
     assert re.search(r"cli and mcp do not consume this preference", surface)
