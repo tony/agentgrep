@@ -209,6 +209,7 @@ async def test_export_shortcut_confirms_selected_record_and_appears_in_keys(
         await pilot.press("enter", "enter")
         await _wait_for(lambda: dialog.phase == "review")
         assert _static_text(dialog, "#export-review-directory") == str(export_dir)
+        assert not export_dir.exists()
         await pilot.press("y")
         await _wait_for(
             lambda: bool(list(export_dir.glob("*.md"))) or dialog.phase == "edit",

@@ -7,7 +7,6 @@ import dataclasses
 import datetime
 import os
 import pathlib
-import stat
 import threading
 import time
 import typing as t
@@ -267,11 +266,13 @@ async def test_validation_runs_off_pump(
         assert all(thread_id != pump_thread for thread_id in access_threads)
 
 
-async def test_first_use_default_directory_is_created_privately(
+@pytest.mark.parametrize("cancel_key", ("n", "ctrl+c"), ids=("no", "cancel"))
+async def test_first_use_default_review_does_not_create_directory(
+    cancel_key: str,
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A clean session can review the app-owned default without pre-creating it."""
+    """Review, No, and cancel leave the clean app-owned default absent."""
     home = tmp_path / "home"
     data_home = tmp_path / "data"
     data_home.mkdir()
@@ -288,8 +289,12 @@ async def test_first_use_default_directory_is_created_privately(
         await _wait_for(pilot, lambda: _dialog(app).phase != "validating")
 
         assert _dialog(app).phase == "review"
-        assert directory.is_dir()
-        assert stat.S_IMODE(directory.stat().st_mode) == 0o700
+        assert not directory.exists()
+
+        await pilot.press(cancel_key)
+        await pilot.pause()
+
+        assert not directory.exists()
 
 
 async def test_home_default_is_reviewed_as_tilde(

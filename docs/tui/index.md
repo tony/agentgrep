@@ -182,10 +182,12 @@ The HUD offers two pi-like, one-shot slash commands:
 Press `e` with the results list or detail pane focused to review the exact
 selected record before saving it. The dialog starts from the remembered
 explicit directory and filename template, previews the exact filename, and
-keeps both values when No returns to editing. Save writes that reviewed new
-destination and remembers the values only after its preferences persist. The
-contextual `/keys` panel lists the shortcut without adding it to the compact
-footer.
+keeps both values when No returns to editing. Save is the mutation boundary:
+No and cancel perform no filesystem mutation. Save securely creates the exact
+app default when needed, writes that reviewed new destination, then attempts to
+write the TUI-private preference file. The remembered values change only when
+that preference write succeeds. The contextual `/keys` panel lists the
+shortcut without adding it to the compact footer.
 
 The slash commands do not read or change those remembered values. Supplying
 `PATH` gives that invocation an explicit one-shot destination.
@@ -207,9 +209,10 @@ is already in progress, and an observed-thread export cancels if its result
 view changes while the HUD is taking the snapshot.
 
 Export does not replace the loaded results or change the detail selection.
-Only the new artifact is written; source stores remain read-only. See
-{ref}`ADR 0017 <adr-portable-record-export>` for the payload, fidelity, and
-file-safety contract.
+Source stores remain read-only. A successful reviewed Save may write both the
+new artifact and its TUI-private preference file; one-shot slash commands write
+only their artifact. See {ref}`ADR 0017 <adr-portable-record-export>` for the
+payload, fidelity, and file-safety contract.
 
 ## Completion
 

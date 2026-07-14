@@ -1368,6 +1368,7 @@ class HudLayout(LayoutScreen):
         """Resolve, render, and durably write one pump-owned export snapshot."""
         from agentgrep.record_export import (
             ExportError,
+            _ensure_private_directory,
             render_export,
             write_export,
             write_private_export,
@@ -1389,6 +1390,11 @@ class HudLayout(LayoutScreen):
                 written = write_private_export(artifact)
             else:
                 destination = pathlib.Path(snapshot.destination).expanduser()
+                if (
+                    snapshot.preferences is not None
+                    and destination.parent == default_export_directory(snapshot.home)
+                ):
+                    _ensure_private_directory(destination.parent)
                 written = write_export(
                     artifact,
                     destination,

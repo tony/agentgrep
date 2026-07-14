@@ -30,13 +30,17 @@ path. Submitting the draft shows the directory and exact filename separately.
 The confirmation starts on **No**; No returns to editing with both values
 intact.
 
-Save writes only the reviewed explicit no-clobber destination. If that name
-already exists, agentgrep returns to the same draft instead of replacing the
-file or silently choosing another name. Automatic private exports requested by
-the HUD slash commands keep their canonical-ID names. CLI and MCP do not
-consume the TUI preference: the CLI still uses standard output or an explicit
-`--output` path, and MCP still returns a bounded inline artifact, accepts no
-local destination, and gains no filesystem write authority.
+Save is the mutation boundary: No and cancel perform no filesystem mutation.
+An accepted Save creates the exact app-owned default directory privately when
+needed, writes only the reviewed explicit no-clobber artifact, then attempts to
+write the TUI-private preference file. If the artifact name already exists,
+agentgrep returns to the same draft instead of replacing the file or silently
+choosing another name; a later preference failure does not erase a completed
+artifact. Automatic private exports requested by the HUD slash commands keep
+their canonical-ID names. CLI and MCP do not consume the TUI preference: the
+CLI still uses standard output or an explicit `--output` path, and MCP still
+returns a bounded inline artifact, accepts no local destination, and gains no
+filesystem write authority.
 
 ## Examples
 
@@ -113,7 +117,9 @@ export cannot replace history by choosing it as the destination.
 The completed artifact is installed atomically with private file permissions.
 Errors do not include the destination or source path. These rules preserve
 agentgrep's read-only treatment of Codex, Claude Code, Cursor, and every other
-source store; only the chosen export artifact is written.
+source store. CLI export writes only the chosen artifact; a successful reviewed
+TUI Save may additionally update its TUI-private preference file as described
+above.
 
 ## Exit status
 

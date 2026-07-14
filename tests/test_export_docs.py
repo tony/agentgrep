@@ -143,6 +143,25 @@ def test_export_guide_defines_reviewed_tui_destination() -> None:
     )
 
 
+def test_reviewed_tui_docs_define_save_mutation_boundary() -> None:
+    """Every reviewed-save contract distinguishes review from durable writes."""
+    for relative_path in (
+        "docs/dev/adr/0017-portable-record-export.md",
+        "docs/cli/export.md",
+        "docs/tui/index.md",
+    ):
+        text = _read_text(relative_path)
+        missing = _missing_terms(
+            text,
+            (
+                "Save is the mutation boundary",
+                "No and cancel perform no filesystem mutation",
+                "TUI-private preference file",
+            ),
+        )
+        assert not missing, f"{relative_path} is missing {missing!r}"
+
+
 def test_export_mcp_docs_define_bounded_inline_contract() -> None:
     """The MCP guide distinguishes selection from discovery and local writes."""
     tools = _read_text("docs/mcp/tools.md")
