@@ -342,13 +342,33 @@ async def test_y_invokes_once_and_enters_saving(tmp_path: pathlib.Path) -> None:
         )
 
 
-async def test_ctrl_c_dismisses_even_while_saving(tmp_path: pathlib.Path) -> None:
-    """Ctrl-C closes the modal after write delegation as it does while editing."""
+@pytest.mark.parametrize("key", ["escape", "ctrl+c"])
+async def test_saving_ignores_cancel_keys(tmp_path: pathlib.Path, key: str) -> None:
+    """A delegated durable write keeps its modal until worker completion."""
     app = _ExportDialogHost(tmp_path, lambda _intent: True)
     async with app.run_test(size=(60, 16)) as pilot:
         await _open_review(app, pilot)
         await pilot.press("y")
-        assert _dialog(app).phase == "saving"
+        dialog = _dialog(app)
+        assert dialog.phase == "saving"
+
+        await pilot.press(key)
+        await pilot.pause()
+
+        assert app.screen is dialog
+        assert dialog.phase == "saving"
+
+
+@pytest.mark.parametrize("phase", ["edit", "review"])
+async def test_ctrl_c_dismisses_before_saving(
+    tmp_path: pathlib.Path,
+    phase: str,
+) -> None:
+    """Ctrl-C still cancels while the dialog has no durable worker."""
+    app = _ExportDialogHost(tmp_path, lambda _intent: True)
+    async with app.run_test(size=(60, 16)) as pilot:
+        if phase == "review":
+            await _open_review(app, pilot)
 
         await pilot.press("ctrl+c")
         await _wait_for(pilot, lambda: app.dismissed is None)

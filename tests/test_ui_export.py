@@ -398,6 +398,63 @@ async def test_export_failure_restores_draft_without_saving_preferences(
         assert notes[0][1]["severity"] == "error"
 
 
+@pytest.mark.parametrize("key", ["escape", "ctrl+c"])
+@pytest.mark.slow
+async def test_saving_cancel_key_retains_draft_until_write_failure(
+    key: str,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Durable-save keys cannot discard the draft needed by a failed write."""
+    export_dir = tmp_path / "Selected"
+    export_dir.mkdir()
+    record = _record(tmp_path, "body", ordinal=1, title="Retained Draft")
+    started = threading.Event()
+    release = threading.Event()
+
+    def fail_write(*_args: object, **_kwargs: object) -> t.NoReturn:
+        started.set()
+        assert release.wait(3)
+        message = "export could not be written"
+        raise record_export.ExportWriteError(message)
+
+    monkeypatch.setattr(record_export, "write_export", fail_write)
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        hud = app.screen
+        await _load_records(hud, (record,))
+        hud._results.focus()
+        notes = _capture_notifications(hud, monkeypatch)
+        dialog, _filename = await _open_export_review(
+            app,
+            pilot,
+            directory=export_dir,
+            template="retry-{title}.md",
+        )
+        directory = dialog.query_one("#export-directory", ExportDirectoryPicker).value
+        template = dialog.query_one("#export-template", Input).value
+
+        await pilot.press("y")
+        assert await asyncio.to_thread(started.wait, 2)
+        await pilot.press(key)
+        await pilot.pause()
+        active_during_save = app.screen is dialog
+        retained_during_save = hud._export_dialog is dialog
+        phase_during_save = dialog.phase
+        release.set()
+        await _wait_for(lambda: bool(notes))
+
+        assert active_during_save
+        assert retained_during_save
+        assert phase_during_save == "saving"
+        assert app.screen is dialog
+        assert hud._export_dialog is dialog
+        assert dialog.phase == "edit"
+        assert dialog.query_one("#export-directory", ExportDirectoryPicker).value == directory
+        assert dialog.query_one("#export-template", Input).value == template
+
+
 @pytest.mark.slow
 async def test_preference_save_failure_keeps_artifact_success_and_warns(
     tmp_path: pathlib.Path,
