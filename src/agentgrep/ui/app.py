@@ -14,7 +14,7 @@ from __future__ import annotations
 import pathlib
 import typing as t
 
-from agentgrep.ui import _history, preferences, registry
+from agentgrep.ui import _export_preferences, _history, preferences, registry
 from agentgrep.ui._context import UiContext
 
 if t.TYPE_CHECKING:
@@ -199,6 +199,7 @@ def build_streaming_ui_app(
     resolved_base_conversation_limit = (
         query.conversation_limit if resolved_base_effort == "targeted" else None
     )
+    export_preferences_load = _export_preferences.load_export_preferences(home)
     ctx = UiContext(
         home=home,
         invoker=EngineSearchInvoker(home),
@@ -211,6 +212,8 @@ def build_streaming_ui_app(
         initial_search_text=initial_search_text,
         history=history,
         history_disabled=history_disabled,
+        export_preferences=export_preferences_load.preferences,
+        export_preferences_warning=export_preferences_load.warning,
     )
     config_path = preferences.theme_config_path(home=home)
     selected_theme = preferences.load_theme_name(config_path)

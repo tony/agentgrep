@@ -15,8 +15,7 @@ from textual.app import App, ComposeResult
 from textual.pilot import Pilot
 from textual.widgets import Input, OptionList
 
-import agentgrep.ui.widgets as widgets
-from agentgrep.ui import _runtime
+from agentgrep.ui import _runtime, widgets
 from agentgrep.ui.widgets import directory_popup
 from agentgrep.ui.widgets.directory_popup import (
     DIRECTORY_CANDIDATE_LIMIT,
@@ -140,7 +139,7 @@ class _InstrumentedScandir:
         self._entries = iter(entries)
         self.pulls = 0
 
-    def __enter__(self) -> _InstrumentedScandir:
+    def __enter__(self) -> t.Self:
         return self
 
     def __exit__(self, *_args: object) -> None:
@@ -197,11 +196,11 @@ def test_symlink_directories_are_not_candidates(tmp_path: pathlib.Path) -> None:
 
 @pytest.mark.parametrize(
     ("typed", "expected"),
-    (
+    [
         ("./choices/a", "./choices/alpha/"),
         ("~/choices/a", "~/choices/alpha/"),
         ("{absolute}/a", "{absolute}/alpha/"),
-    ),
+    ],
 )
 def test_candidate_labels_are_basenames_and_values_preserve_prefix(
     typed: str,

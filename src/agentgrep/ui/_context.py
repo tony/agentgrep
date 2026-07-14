@@ -23,6 +23,7 @@ if t.TYPE_CHECKING:
         SearchScope,
         SearchScopeProvenance,
     )
+    from agentgrep.ui._export_preferences import ExportPreferences
     from agentgrep.ui._history import HistoryEntry
     from agentgrep.ui._seams import SearchInvoker
 
@@ -66,6 +67,10 @@ class UiContext:
         Preloaded query-history snapshot for layouts that expose recall.
     history_disabled : bool, optional
         Whether persistent query history is disabled for this session.
+    export_preferences : ExportPreferences | None, optional
+        Export settings preloaded before Textual starts.
+    export_preferences_warning : str | None, optional
+        Path-free warning produced while preloading export settings.
     """
 
     home: pathlib.Path
@@ -79,3 +84,5 @@ class UiContext:
     initial_search_text: str | None = None
     history: tuple[HistoryEntry, ...] = ()
     history_disabled: bool = False
+    export_preferences: ExportPreferences | None = None
+    export_preferences_warning: str | None = None
