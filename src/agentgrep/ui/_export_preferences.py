@@ -253,7 +253,7 @@ def _parse_preferences(payload: bytes) -> ExportPreferences:
         filename_template,
         title="Title",
         fallback_title="record",
-        timestamp=datetime.datetime(2000, 1, 1),
+        timestamp=datetime.datetime(2000, 1, 1, tzinfo=datetime.UTC),
     )
     return ExportPreferences(directory=directory, filename_template=filename_template)
 
@@ -376,7 +376,7 @@ def _serialize_preferences(preferences: ExportPreferences) -> bytes:
         preferences.filename_template,
         title="Title",
         fallback_title="record",
-        timestamp=datetime.datetime(2000, 1, 1),
+        timestamp=datetime.datetime(2000, 1, 1, tzinfo=datetime.UTC),
     )
     payload = json.dumps(
         {

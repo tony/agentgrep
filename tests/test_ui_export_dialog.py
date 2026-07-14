@@ -16,13 +16,12 @@ from textual.app import App
 from textual.pilot import Pilot
 from textual.widgets import Input, OptionList, Static
 
-import agentgrep.ui.widgets as widgets
-from agentgrep.ui import _runtime
+from agentgrep.ui import _runtime, widgets
 from agentgrep.ui._export_preferences import ExportPreferences
 from agentgrep.ui.widgets import ExportDialog, ExportDraft, ExportIntent
 from agentgrep.ui.widgets.directory_popup import ExportDirectoryPicker
 
-_TIMESTAMP = datetime.datetime(2026, 7, 14, 9, 8, 7)
+_TIMESTAMP = datetime.datetime(2026, 7, 14, 9, 8, 7, tzinfo=datetime.UTC)
 
 
 class _ExportDialogHost(App[None]):
@@ -309,7 +308,7 @@ async def test_repeated_enter_on_default_no_cannot_save(tmp_path: pathlib.Path) 
         assert seen == []
 
 
-@pytest.mark.parametrize("key", ("n", "escape"))
+@pytest.mark.parametrize("key", ["n", "escape"])
 async def test_no_shortcuts_return_to_edit(tmp_path: pathlib.Path, key: str) -> None:
     """The explicit No gestures preserve the draft and prior focus."""
     seen: list[ExportIntent] = []
