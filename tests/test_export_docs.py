@@ -152,6 +152,10 @@ def test_export_guide_defines_reviewed_tui_destination() -> None:
     )
     assert re.search(r"local time.*filesystem-safe", normalized)
     assert re.search(r"\bno returns to editing\b", normalized)
+    assert re.search(
+        r"one-shot `/export-thread` command.*automatic private canonical-id name",
+        normalized,
+    )
     assert re.search(r"cli and mcp do not consume the tui preference", normalized)
     assert re.search(
         r"mcp.*accepts no local destination.*no filesystem write authority",
