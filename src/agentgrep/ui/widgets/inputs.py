@@ -337,6 +337,11 @@ class SearchInput(_BoundedInput):
         self._query_draft_value = ""
         self._query_draft_selection = Selection.cursor(0)
 
+    def remember_query_draft(self) -> None:
+        """Remember the current value after dispatch classifies it as a query."""
+        self._query_draft_value = self.value
+        self._query_draft_selection = self.selection
+
     def restore_query_draft(self, *, focus: bool = True) -> None:
         """Restore the last non-command value without synthesizing keystrokes."""
         value, selection = self.query_draft

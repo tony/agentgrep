@@ -1077,6 +1077,7 @@ class HudLayout(LayoutScreen):
         text = message.payload.text.strip()
         if self._dispatch_slash_text(text) is not None:
             return
+        self._search_input.remember_query_draft()
         self._workflow.on_query(self, text)
 
     # --- WorkflowHost surface: the active workflow drives the layout here -----
