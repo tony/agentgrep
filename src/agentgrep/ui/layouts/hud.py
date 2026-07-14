@@ -1064,9 +1064,7 @@ class HudLayout(LayoutScreen):
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Expose record export only in a content pane with a live selection."""
         if action == "export_selected":
-            return self.focused in (self._results, self._detail_scroll) and (
-                self._selected_export_record() is not None
-            )
+            return self._selected_export_shortcut_record() is not None
         return super().check_action(action, parameters)
 
     @_runtime.pump_only
@@ -1129,6 +1127,22 @@ class HudLayout(LayoutScreen):
         if self._current_detail_record is not None:
             return self._current_detail_record
         return self.filtered_records[0] if self.filtered_records else None
+
+    def _selected_export_shortcut_record(self) -> SearchRecord | None:
+        """Return the live selection owned by the focused content pane."""
+        if self.focused is self._results and self._results is not None:
+            highlighted = t.cast("int | None", getattr(self._results, "highlighted", None))
+            if highlighted is not None and 0 <= highlighted < len(self.filtered_records):
+                return self.filtered_records[highlighted]
+        elif self.focused is self._detail_scroll:
+            current = self._current_detail_record
+            if (
+                current is not None
+                and self._results is not None
+                and self._results.contains_record(current)
+            ):
+                return current
+        return None
 
     def _export_request_is_live(
         self,

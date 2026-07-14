@@ -197,6 +197,7 @@ async def test_export_shortcut_is_inert_in_completion_dropdown(
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
         await _load_records(app.screen, (record,))
+        await pilot.pause()
         requests: list[tuple[str, str]] = []
         monkeypatch.setattr(
             app.screen,
@@ -215,6 +216,41 @@ async def test_export_shortcut_is_inert_in_completion_dropdown(
         await pilot.pause()
 
         assert "e" not in app.screen.active_bindings
+        assert requests == []
+
+
+@pytest.mark.parametrize("pane", ["_results", "_detail_scroll"], ids=("results", "detail"))
+@pytest.mark.slow
+async def test_export_shortcut_requires_live_pane_selection(
+    pane: str,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The shortcut is absent when its focused pane has no live selection."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = _record(tmp_path, "live body", ordinal=1)
+    stale = _record(tmp_path, "stale body", ordinal=2)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await _load_records(app.screen, (record,))
+        await pilot.pause()
+        requests: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            app.screen,
+            "request_export",
+            lambda destination, *, selection: requests.append((destination, selection)),
+        )
+        if pane == "_results":
+            app.screen._results.highlighted = None
+        else:
+            app.screen._current_detail_record = stale
+        getattr(app.screen, pane).focus()
+        await pilot.pause()
+
+        assert "e" not in app.screen.active_bindings
+        await pilot.press("e")
+        await pilot.pause()
+
         assert requests == []
 
 
