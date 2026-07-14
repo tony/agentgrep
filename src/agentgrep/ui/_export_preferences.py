@@ -41,6 +41,7 @@ __all__ = [
     "ExportPreferences",
     "ExportPreferencesError",
     "ExportPreferencesLoad",
+    "compact_export_directory",
     "default_export_directory",
     "export_preferences_path",
     "load_export_preferences",
@@ -68,6 +69,36 @@ class ExportPreferencesLoad:
 
 class ExportPreferencesError(Exception):
     """A path-free preference or filename failure."""
+
+
+def compact_export_directory(value: str, home: pathlib.Path) -> str:
+    """Compact an absolute directory lexically contained by ``home``.
+
+    Parameters
+    ----------
+    value : str
+        Literal directory draft.
+    home : pathlib.Path
+        Explicit TUI session home.
+
+    Returns
+    -------
+    str
+        ``~`` or a current-user tilde path for values under ``home``;
+        otherwise the original literal value.
+    """
+    candidate = pathlib.Path(value)
+    normalized_home = pathlib.Path(os.path.normpath(os.fspath(home)))
+    if not candidate.is_absolute() or not normalized_home.is_absolute():
+        return value
+    normalized_candidate = pathlib.Path(os.path.normpath(value))
+    try:
+        relative = normalized_candidate.relative_to(normalized_home)
+    except ValueError:
+        return value
+    if relative == pathlib.Path():
+        return "~"
+    return f"~{os.sep}{relative}"
 
 
 def _xdg_path(variable: str, fallback: pathlib.Path) -> pathlib.Path:

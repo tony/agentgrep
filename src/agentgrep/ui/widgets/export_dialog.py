@@ -22,6 +22,7 @@ from agentgrep.ui import _runtime
 from agentgrep.ui._export_preferences import (
     ExportPreferences,
     ExportPreferencesError,
+    compact_export_directory,
     default_export_directory,
     render_export_filename,
     resolve_export_directory,
@@ -188,7 +189,10 @@ class ExportDialog(ModalScreen[None]):
         self._home = home
         self._on_confirm = on_confirm
         self._timestamp = timestamp or datetime.datetime.now().astimezone()
-        self._initial_preferences = preferences
+        self._initial_preferences = dataclasses.replace(
+            preferences,
+            directory=compact_export_directory(preferences.directory, home),
+        )
         self._phase: ExportPhase = "edit"
         self._validation_generation = 0
         self._intent: ExportIntent | None = None
@@ -349,8 +353,11 @@ class ExportDialog(ModalScreen[None]):
         template = self.query_one("#export-template", Input)
         picker = self.query_one("#export-directory", ExportDirectoryPicker)
         self._edit_focus = "template" if template.has_focus else "directory"
+        directory = compact_export_directory(picker.value, self._home)
+        if directory != picker.value:
+            picker.value = directory
         draft = ExportDraft(
-            directory=picker.value,
+            directory=directory,
             filename_template=template.value,
             timestamp=self._timestamp,
         )
