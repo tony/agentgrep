@@ -181,6 +181,27 @@ def test_export_filename_rejects_ambiguous_or_non_scalar_output(template: str) -
         )
 
 
+@pytest.mark.parametrize(
+    "template",
+    (
+        "safe\u200b-{title}.md",
+        "safe\u202e-{title}.md",
+    ),
+)
+def test_export_filename_rejects_invisible_format_controls(template: str) -> None:
+    """Zero-width and bidi controls cannot survive in a reviewed basename."""
+    with pytest.raises(
+        ExportPreferencesError,
+        match=r"^Export filename is invalid$",
+    ):
+        render_export_filename(
+            template,
+            title="Title",
+            fallback_title="codex-prompt",
+            timestamp=datetime.datetime(2026, 7, 14).astimezone(),
+        )
+
+
 def test_export_filename_normalizes_unicode_and_uses_sanitized_fallback() -> None:
     """Unicode letters survive while separators collapse and empty titles fall back."""
     when = datetime.datetime(2026, 7, 14).astimezone()
