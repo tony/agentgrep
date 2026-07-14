@@ -26,11 +26,11 @@ from agentgrep.origin import (
     origin_cwd_hash,
 )
 from agentgrep.readers import (
+    _iter_jsonl_positioned,
     as_optional_str,
     decode_sqlite_value,
     isoformat_from_mtime_ns,
     iter_conversation_summaries,
-    iter_jsonl,
     iter_protobuf_text_fields,
     open_readonly_sqlite,
     read_json_file,
@@ -64,18 +64,21 @@ def parse_cursor_cli_transcript(
     native_session_id = _catalog_uuid_path_token(source)
     fallback_timestamp = isoformat_from_mtime_ns(source.mtime_ns)
     session_origin = _discovered_origin(source)
-    for raw_index, event in enumerate(iter_jsonl(source.path)):
-        for candidate in iter_message_candidates(
-            event,
+    for positioned_event in _iter_jsonl_positioned(source.path):
+        candidates = iter_message_candidates(
+            positioned_event.value,
             fallback_conversation_id=conversation_id,
             fallback_origin=session_origin,
-        ):
+        )
+        for within_line, candidate in enumerate(candidates):
             candidate.timestamp = candidate.timestamp or fallback_timestamp
             candidate.session_id = native_session_id or candidate.session_id
             candidate.identity_namespace = (
                 "cursor.session" if native_session_id is not None else None
             )
-            candidate.position = _record_position(ordinal=raw_index)
+            candidate.position = _record_position(
+                ordinal=positioned_event.source_ordinal(within_line),
+            )
             yield build_search_record(source, candidate)
 
 
