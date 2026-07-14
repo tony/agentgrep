@@ -29,6 +29,7 @@ _DIRECTORY_ERROR = "Export directory is invalid"
 _FILENAME_ERROR = "Export filename is invalid"
 _SCHEMA_KEYS = frozenset({"version", "directory", "filename_template"})
 _TEMPLATE_TOKENS = frozenset({"date", "time", "title"})
+_UNSAFE_FILENAME_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
 _CONFIG_DIRECTORY_NAME = "agentgrep"
 _PREFERENCES_FILENAME = "tui-export.json"
 
@@ -160,7 +161,9 @@ def _validate_filename(filename: str) -> None:
     """Reject an unsafe or unreviewable compiled filename."""
     if "{" in filename or "}" in filename:
         raise ExportPreferencesError(_FILENAME_ERROR)
-    if any(unicodedata.category(character) in {"Cc", "Cs"} for character in filename):
+    if any(
+        unicodedata.category(character) in _UNSAFE_FILENAME_CATEGORIES for character in filename
+    ):
         raise ExportPreferencesError(_FILENAME_ERROR)
     if "/" in filename or "\\" in filename:
         raise ExportPreferencesError(_FILENAME_ERROR)
@@ -182,7 +185,9 @@ def _validate_filename_template(template: str) -> None:
     """Validate the template grammar without compiling a selected title."""
     if not isinstance(template, str) or len(template) > MAX_TEMPLATE_CHARS:
         raise ExportPreferencesError(_FILENAME_ERROR)
-    if any(unicodedata.category(character) in {"Cc", "Cs"} for character in template):
+    if any(
+        unicodedata.category(character) in _UNSAFE_FILENAME_CATEGORIES for character in template
+    ):
         raise ExportPreferencesError(_FILENAME_ERROR)
     if "/" in template or "\\" in template:
         raise ExportPreferencesError(_FILENAME_ERROR)
