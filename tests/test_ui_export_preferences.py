@@ -7,6 +7,8 @@ import json
 import os
 import pathlib
 import stat
+import threading
+import time
 import typing as t
 
 import pytest
@@ -19,6 +21,7 @@ from agentgrep.ui._export_preferences import (
     MAX_TEMPLATE_CHARS,
     ExportPreferences,
     ExportPreferencesError,
+    ExportPreferencesLoad,
     default_export_directory,
     export_preferences_path,
     load_export_preferences,
@@ -288,6 +291,72 @@ def test_invalid_export_preferences_return_defaults_with_warning(
         directory=str(data_home / "agentgrep" / "exports")
     )
     assert loaded.warning == "Export preferences could not be read"
+
+
+def test_export_preferences_fifo_returns_promptly_with_path_free_warning(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Startup preference loading never blocks while opening a FIFO."""
+    config_home = tmp_path / "config"
+    data_home = tmp_path / "data"
+    config_path = config_home / "agentgrep" / "tui-export.json"
+    config_path.parent.mkdir(parents=True)
+    os.mkfifo(config_path)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+    loaded: list[object] = []
+
+    def load() -> None:
+        loaded.append(load_export_preferences(tmp_path / "home"))
+
+    thread = threading.Thread(target=load, daemon=True)
+    started_at = time.monotonic()
+    thread.start()
+    thread.join(0.25)
+    blocked = thread.is_alive()
+    if blocked:
+        writer = os.open(config_path, os.O_WRONLY | os.O_NONBLOCK)
+        os.close(writer)
+        thread.join(1)
+
+    assert not blocked
+    assert time.monotonic() - started_at < 0.25
+    assert len(loaded) == 1
+    result = t.cast("ExportPreferencesLoad", loaded[0])
+    assert result.preferences == ExportPreferences(
+        directory=str(data_home / "agentgrep" / "exports"),
+    )
+    assert result.warning == "Export preferences could not be read"
+    assert str(tmp_path) not in result.warning
+
+
+def test_export_preferences_accept_exact_byte_limit(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A regular preference payload may occupy exactly the documented bound."""
+    config_home = tmp_path / "config"
+    config_path = config_home / "agentgrep" / "tui-export.json"
+    config_path.parent.mkdir(parents=True)
+    preferences = ExportPreferences(
+        directory="~/Exports",
+        filename_template="{title}.md",
+    )
+    payload = json.dumps(
+        {
+            "version": 1,
+            "directory": preferences.directory,
+            "filename_template": preferences.filename_template,
+        },
+        separators=(",", ":"),
+    ).encode()
+    config_path.write_bytes(payload.ljust(MAX_PREFERENCES_BYTES, b" "))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+
+    loaded = load_export_preferences(tmp_path / "home")
+
+    assert loaded == ExportPreferencesLoad(preferences)
 
 
 def test_export_preferences_round_trip_unicode_with_private_modes(

@@ -14,6 +14,7 @@ import ntpath
 import os
 import pathlib
 import secrets
+import stat
 import typing as t
 import unicodedata
 
@@ -285,11 +286,31 @@ def _parse_preferences(payload: bytes) -> ExportPreferences:
 
 
 def _read_preferences(path: pathlib.Path) -> bytes:
-    """Read one payload without crossing the preference byte limit."""
-    with path.open("rb") as handle:
-        if os.fstat(handle.fileno()).st_size > MAX_PREFERENCES_BYTES:
+    """Read one regular payload without blocking or crossing the byte limit."""
+    nonblocking = getattr(os, "O_NONBLOCK", 0)
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    if not nonblocking or not no_follow:
+        raise OSError
+    flags = os.O_RDONLY | nonblocking | no_follow | getattr(os, "O_CLOEXEC", 0)
+    file_descriptor = os.open(path, flags)
+    try:
+        status = os.fstat(file_descriptor)
+        if not stat.S_ISREG(status.st_mode) or status.st_size > MAX_PREFERENCES_BYTES:
             raise ValueError
-        return handle.read(MAX_PREFERENCES_BYTES)
+        chunks: list[bytes] = []
+        remaining = MAX_PREFERENCES_BYTES + 1
+        while remaining:
+            chunk = os.read(file_descriptor, remaining)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        payload = b"".join(chunks)
+        if len(payload) > MAX_PREFERENCES_BYTES:
+            raise ValueError
+        return payload
+    finally:
+        _close_quietly(file_descriptor)
 
 
 def load_export_preferences(home: pathlib.Path) -> ExportPreferencesLoad:
