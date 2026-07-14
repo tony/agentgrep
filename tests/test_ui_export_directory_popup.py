@@ -96,6 +96,29 @@ def test_export_directory_picker_interface_hides_internal_rows() -> None:
         mutable_candidate.label = "changed"
 
 
+def test_empty_directory_value_has_no_completion_candidates(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Clearing the directory closes completion without scanning the cwd."""
+    unexpected_scan = "empty completion must not scan a directory"
+
+    def fail_scandir(_path: os.PathLike[str]) -> t.NoReturn:
+        raise AssertionError(unexpected_scan)
+
+    monkeypatch.setattr(directory_popup.os, "scandir", fail_scandir)
+
+    result = directory_popup._enumerate_directory_candidates(
+        "",
+        home=tmp_path / "home",
+        candidate_limit=DIRECTORY_CANDIDATE_LIMIT,
+        scan_limit=DIRECTORY_SCAN_LIMIT,
+    )
+
+    assert result.values == ()
+    assert result.truncated is False
+
+
 async def test_directory_enumeration_waits_for_inactivity(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

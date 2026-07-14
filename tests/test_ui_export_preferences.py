@@ -124,6 +124,17 @@ def test_resolve_export_directory_rejects_other_users(
         resolve_export_directory("~other/Exports", tmp_path / "home")
 
 
+def test_resolve_export_directory_rejects_empty_value(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A cleared directory cannot silently resolve to the process directory."""
+    with pytest.raises(
+        ExportPreferencesError,
+        match=r"^Export directory is invalid$",
+    ):
+        resolve_export_directory("", tmp_path / "home")
+
+
 @pytest.mark.parametrize("unsafe", ["\n", "\u202e", "\ud800"])
 def test_resolve_export_directory_rejects_unreviewable_unicode(
     unsafe: str,
@@ -331,6 +342,7 @@ def test_missing_export_preferences_return_defaults_without_warning(
         b'{"version":2,"directory":"~/Exports","filename_template":"{title}.md"}',
         b'{"version":true,"directory":"~/Exports","filename_template":"{title}.md"}',
         b'{"version":1,"directory":[],"filename_template":"{title}.md"}',
+        b'{"version":1,"directory":"","filename_template":"{title}.md"}',
         b'{"version":1,"directory":"~/Exports","filename_template":2}',
         b'{"version":1,"directory":"~/Exports","filename_template":"{title}.md","extra":1}',
         b'{"version":1,"version":1,"directory":"~/Exports","filename_template":"{title}.md"}',
@@ -408,6 +420,27 @@ def test_unreviewable_directory_preferences_are_not_saved(
         save_export_preferences(
             tmp_path / "home",
             ExportPreferences(directory=f"~/Ex{unsafe}ports"),
+        )
+
+    assert not export_preferences_path(tmp_path / "home").exists()
+
+
+def test_empty_directory_preferences_are_not_saved(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cleared directory is rejected before the preference file is created."""
+    config_home = tmp_path / "config"
+    config_home.mkdir()
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+
+    with pytest.raises(
+        ExportPreferencesError,
+        match=r"^Export preferences could not be saved$",
+    ):
+        save_export_preferences(
+            tmp_path / "home",
+            ExportPreferences(directory=""),
         )
 
     assert not export_preferences_path(tmp_path / "home").exists()

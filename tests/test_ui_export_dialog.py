@@ -362,6 +362,22 @@ async def test_submitted_absolute_home_directory_is_compacted(
         assert _text(app, "#export-review-directory") == "~/Exports"
 
 
+async def test_empty_directory_cannot_reach_review(tmp_path: pathlib.Path) -> None:
+    """A cleared directory stays in edit with a path-free validation error."""
+    seen: list[ExportIntent] = []
+    app = _ExportDialogHost(tmp_path, lambda intent: seen.append(intent) or True)
+    async with app.run_test(size=(60, 16)) as pilot:
+        picker = app.screen.query_one("#export-directory", ExportDirectoryPicker)
+        picker.value = ""
+
+        await pilot.press("enter", "enter")
+        await _wait_for(pilot, lambda: _dialog(app).phase != "validating")
+
+        assert _dialog(app).phase == "edit"
+        assert _text(app, "#export-error") == "Export directory is invalid"
+        assert seen == []
+
+
 async def test_missing_arbitrary_directory_is_not_created(tmp_path: pathlib.Path) -> None:
     """Validation never creates a missing user-entered directory tree."""
     directory = tmp_path / "missing" / "arbitrary"

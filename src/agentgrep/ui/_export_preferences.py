@@ -73,8 +73,13 @@ class ExportPreferencesError(Exception):
 
 def _validate_directory_value(value: str) -> None:
     """Reject directory text that cannot be reviewed reliably."""
-    if not isinstance(value, str) or any(
-        unicodedata.category(character) in _UNREVIEWABLE_UNICODE_CATEGORIES for character in value
+    if (
+        not isinstance(value, str)
+        or not value
+        or any(
+            unicodedata.category(character) in _UNREVIEWABLE_UNICODE_CATEGORIES
+            for character in value
+        )
     ):
         raise ExportPreferencesError(_DIRECTORY_ERROR)
 
