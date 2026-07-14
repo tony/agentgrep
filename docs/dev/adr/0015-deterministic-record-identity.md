@@ -124,20 +124,26 @@ duplicate physical views of one native occurrence share the same `record_id`.
 
 ### Physical refs and cursors
 
-Persisted `agref1:` and `agcur1:` values remain inspectable. Find refs and
-positionless search refs retain their exact version 1 bytes. When a search
-record has a valid native or ordinal position, its physical fingerprint is
-position-aware: the validated coordinate kind and value join the existing
-fingerprint input. The raw coordinate remains inside the digest input; the
-opaque token keeps the same five-field payload, prefix, and length.
+`agref1:` and `agcur1:` retain their version 1 token shapes. They are opaque,
+physical, snapshot-relative handles rather than canonical IDs or durable
+storage keys. A ref may stop resolving after its store or adapter normalization
+changes, and this prerelease does not promise resolution of refs minted by
+earlier normalization contracts. Find-ref and positionless search-ref encoding
+remain unchanged. When a search record has a valid native or ordinal position,
+its physical fingerprint is position-aware: the validated coordinate kind and
+value join the existing fingerprint input. The raw coordinate remains inside
+the digest input; the opaque token keeps the same five-field payload, prefix,
+and length.
 
 `inspect_result` compares the position-aware fingerprint first, then the
-historical position-blind fingerprint as a compatibility fallback. Historical
-ambiguous refs therefore retain their first-match behavior, while newly
-emitted refs select repeated stored turns exactly. Lookup remains bounded to
-the adapter and path carried by the ref. Canonical IDs remain sibling result
-fields: `agc1:`, `agr1:`, and `agt1:` values are not accepted refs, so physical
-locator inspection never launches a global ID scan.
+position-blind fingerprint derived from the same currently normalized record.
+That fallback retains first-match behavior only while every other fingerprint
+input still matches; it is not a projection of earlier adapter fields. Newly
+emitted refs select repeated stored turns exactly. Lookup remains bounded to the
+adapter and path carried by the ref. Canonical IDs remain sibling result fields:
+`agc1:`, `agr1:`, and `agt1:` values are not accepted refs, so physical locator
+inspection never launches a global ID scan. Callers should run a fresh search
+to obtain a current ref after a physical handle stops resolving.
 
 UTF-8 `surrogatepass` extends physical ref fingerprinting only to text that
 previously could not be encoded. It does not change positionless ref bytes.

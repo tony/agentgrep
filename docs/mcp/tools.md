@@ -57,7 +57,10 @@ they do not locate stored results. For inspection, only `ref` is accepted by
 `inspect_result`. Positionless refs retain their existing bytes. Positioned
 search refs keep the same opaque version 1 shape and length but use a
 position-aware fingerprint so repeated equal turns resolve exactly. Historical
-position-blind refs remain inspectable with their first-match behavior.
+position-blind refs keep first-match behavior only while every other normalized
+fingerprint input still matches. Refs and cursors are snapshot-relative
+physical handles and may stop resolving after store or adapter normalization
+changes; run a fresh search to obtain a current ref.
 
 Search responses are cursorless. `status.reason="result_limit"` means more
 matches may exist; refine the query or rerun it with a higher limit.
