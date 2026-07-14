@@ -81,6 +81,8 @@ def test_default_export_directory_falls_back_under_home(
     (
         ("~", ()),
         ("~/", ()),
+        ("~//Exports", ("Exports",)),
+        ("~///", ()),
         ("~/Exports", ("Exports",)),
         ("~/Exports/agentgrep", ("Exports", "agentgrep")),
     ),
@@ -112,7 +114,10 @@ def test_resolve_export_directory_rejects_other_users(
     tmp_path: pathlib.Path,
 ) -> None:
     """Other-user tilde syntax is never delegated to account lookup."""
-    with pytest.raises(ExportPreferencesError):
+    with pytest.raises(
+        ExportPreferencesError,
+        match=r"^Export directory is invalid$",
+    ):
         resolve_export_directory("~other/Exports", tmp_path / "home")
 
 
