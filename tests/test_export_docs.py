@@ -121,7 +121,8 @@ def test_export_guide_defines_reviewed_tui_destination() -> None:
         normalized,
     )
     assert re.search(
-        r"first use.*after the preferences are saved successfully.*remembered directory and template",
+        r"first use.*after the preferences are saved successfully.*"
+        r"remembered directory and template",
         normalized,
     )
     assert re.search(r"local time.*filesystem-safe", normalized)
