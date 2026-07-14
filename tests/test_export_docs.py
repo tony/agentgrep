@@ -94,6 +94,28 @@ def test_export_tui_docs_define_private_off_pump_workflow() -> None:
     assert not missing, f"docs/tui/index.md is missing {missing!r}"
 
 
+def test_export_guide_defines_reviewed_tui_destination() -> None:
+    """The export guide explains the remembered, exact TUI save flow."""
+    guide = _read_text("docs/cli/export.md")
+    required = (
+        "Press `e`",
+        "exact selected record",
+        "remembers the export directory and filename template",
+        "user configuration",
+        "`{date} {time} - {title}.md`",
+        "local time",
+        "filesystem-safe",
+        "`YYYY-MM-DD HH-MM-SS`",
+        "exact filename",
+        "No returns to editing",
+        "no-clobber",
+        "CLI and MCP do not consume",
+    )
+
+    missing = _missing_terms(guide, required)
+    assert not missing, f"docs/cli/export.md is missing {missing!r}"
+
+
 def test_export_mcp_docs_define_bounded_inline_contract() -> None:
     """The MCP guide distinguishes selection from discovery and local writes."""
     tools = _read_text("docs/mcp/tools.md")
@@ -273,6 +295,24 @@ def test_export_adr_pins_writer_and_deferred_tiers() -> None:
     )
 
     missing = _missing_terms(adr, writer + deferred)
+    assert not missing, f"export ADR is missing {missing!r}"
+
+
+def test_export_adr_pins_interactive_filename_exception() -> None:
+    """The ADR keeps reviewed TUI names separate from automatic private names."""
+    adr = _read_text("docs/dev/adr/0017-portable-record-export.md")
+    required = (
+        "narrow exception",
+        "bounded normalized `SearchRecord.title`",
+        "filesystem-safe local timestamp",
+        "exact basename",
+        "explicit no-clobber destination",
+        "automatic private filenames",
+        "derive only from canonical IDs",
+        "CLI and MCP do not consume",
+    )
+
+    missing = _missing_terms(adr, required)
     assert not missing, f"export ADR is missing {missing!r}"
 
 

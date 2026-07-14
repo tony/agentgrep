@@ -79,12 +79,17 @@ agentgrep can now turn selected search records into deterministic NDJSON or
 human-readable Markdown without changing the underlying histories. The CLI
 exports matching records to standard output or a chosen file, the HUD exports
 one selected record or its observed thread, and MCP returns a bounded inline
-artifact for existing search refs. In the HUD, `e` exports the selected record
-from the results list or detail pane and remains ordinary text in inputs.
+artifact for existing search refs. In the HUD, `e` captures the selected record
+from the results list or detail pane, then opens a compact destination review;
+it remains ordinary text in inputs.
 
-Machine clients must opt in before an MCP export includes prompt or history
-bodies, and file output refuses accidental replacement. See {ref}`the export
-guide <cli-export>` for formats, selection, and privacy details.
+The review remembers its directory and filename template, previews a
+filesystem-safe local timestamp with a bounded title, and keeps the draft when
+No is selected. Saving refuses accidental replacement. Automatic private
+exports keep canonical-ID filenames, while CLI and MCP remain isolated from
+the TUI preference. Machine clients must opt in before an MCP export includes
+prompt or history bodies. See {ref}`the export guide <cli-export>` for formats,
+selection, and privacy details.
 
 ## agentgrep 0.1.0a41 (2026-07-19)
 

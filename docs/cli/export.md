@@ -13,6 +13,29 @@ search. Terms are combined with AND semantics, and the default scope is
 `prompts`. The default limit is `100`; set `--limit` to any value from `1`
 through `1000`.
 
+## TUI reviewed save
+
+Press `e` while an exact selected record has focus in the HUD results or
+detail pane. One compact dialog remembers the export directory and filename
+template in TUI-private user configuration. It starts with
+`{date} {time} - {title}.md`; directory completion lists existing child
+directories and accepts a choice with the arrow keys and Tab.
+
+The preview freezes local time when the dialog opens. The date and time render
+as the filesystem-safe `YYYY-MM-DD HH-MM-SS`, and the title token uses a
+bounded normalized form of the record title without reading its body or source
+path. Submitting the draft shows the directory and exact filename separately.
+The confirmation starts on **No**; No returns to editing with both values
+intact.
+
+Save writes only the reviewed explicit no-clobber destination. If that name
+already exists, agentgrep returns to the same draft instead of replacing the
+file or silently choosing another name. Automatic private exports requested by
+the HUD slash commands keep their canonical-ID names. CLI and MCP do not
+consume the TUI preference: the CLI still uses standard output or an explicit
+`--output` path, and MCP still returns a bounded inline artifact without local
+filesystem authority.
+
 ## Examples
 
 Export matching prompt records as NDJSON to standard output:
