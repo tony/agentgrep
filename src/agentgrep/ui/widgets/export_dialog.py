@@ -195,6 +195,8 @@ class ExportDialog(ModalScreen[None]):
         )
         self._phase: ExportPhase = "edit"
         self._validation_generation = 0
+        self._error_reveal_generation = 0
+        self._pending_error_reveal: tuple[int, str] | None = None
         self._intent: ExportIntent | None = None
         self._edit_focus = "template"
 
@@ -245,6 +247,7 @@ class ExportDialog(ModalScreen[None]):
     @_runtime.pump_only
     def on_unmount(self) -> None:
         """Invalidate and cancel validator work before teardown."""
+        self._invalidate_error_reveal()
         self._validation_generation += 1
         self.workers.cancel_group(self, _VALIDATION_WORKER_GROUP)
 
@@ -286,7 +289,7 @@ class ExportDialog(ModalScreen[None]):
         if self._phase == "review":
             self._show_edit()
             return
-        self.dismiss(None)
+        self._dismiss_dialog()
 
     @_runtime.pump_only
     def action_cancel(self) -> None:
@@ -304,7 +307,7 @@ class ExportDialog(ModalScreen[None]):
                 editor.value = ""
                 editor.focus()
                 return
-        self.dismiss(None)
+        self._dismiss_dialog()
 
     @_runtime.pump_only
     def action_review_no(self) -> None:
@@ -328,7 +331,13 @@ class ExportDialog(ModalScreen[None]):
     def export_succeeded(self) -> None:
         """Dismiss after the asynchronous writer reports success."""
         if self.is_mounted and self._phase == "saving":
-            self.dismiss(None)
+            self._dismiss_dialog()
+
+    @_runtime.pump_only
+    def _dismiss_dialog(self) -> None:
+        """Invalidate deferred feedback before dismissing the modal."""
+        self._invalidate_error_reveal()
+        self.dismiss(None)
 
     @_runtime.pump_only
     def _refresh_preview(self) -> bool:
@@ -352,10 +361,17 @@ class ExportDialog(ModalScreen[None]):
     @_runtime.pump_only
     def _update_error(self, message: str) -> None:
         """Update inline feedback and expose it in a compact scrolling edit stage."""
+        self._invalidate_error_reveal()
         error = self.query_one("#export-error", Static)
         error.update(Content(message))
         if message:
             error.scroll_visible(animate=False, immediate=True)
+
+    @_runtime.pump_only
+    def _invalidate_error_reveal(self) -> None:
+        """Make every previously scheduled error reveal stale."""
+        self._error_reveal_generation += 1
+        self._pending_error_reveal = None
 
     @_runtime.pump_only
     def _start_validation(self) -> None:
@@ -459,11 +475,23 @@ class ExportDialog(ModalScreen[None]):
             template.focus()
         if error is not None:
             self._update_error(error)
-            self.call_after_refresh(self._reveal_error)
+            request = (self._error_reveal_generation, error)
+            self._pending_error_reveal = request
+            self.call_after_refresh(self._reveal_error, *request)
 
     @_runtime.pump_only
-    def _reveal_error(self) -> None:
-        """Reveal retained feedback after focus and stage layout settle."""
+    def _reveal_error(self, generation: int, message: str) -> None:
+        """Reveal only the current feedback on the active edit screen."""
+        request = (generation, message)
+        if (
+            not message
+            or self._pending_error_reveal != request
+            or not self.is_mounted
+            or self.app.screen is not self
+            or self._phase != "edit"
+        ):
+            return
+        self._pending_error_reveal = None
         self.query_one("#export-error", Static).scroll_visible(
             animate=False,
             immediate=True,
@@ -472,6 +500,7 @@ class ExportDialog(ModalScreen[None]):
     @_runtime.pump_only
     def _show_review(self, intent: ExportIntent) -> None:
         """Show the literal directory and exact basename with No selected."""
+        self._invalidate_error_reveal()
         self._phase = "review"
         self.query_one("#export-edit", VerticalScroll).display = False
         self.query_one("#export-review", VerticalScroll).display = True
