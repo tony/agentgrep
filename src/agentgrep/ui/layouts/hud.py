@@ -24,6 +24,7 @@ from textual.containers import Center, Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.timer import Timer
 from textual.widgets import Footer, Static
+from textual.widgets.input import Selection
 
 from agentgrep._types import (
     StaticLike,
@@ -55,10 +56,11 @@ from agentgrep.ui.widgets import (
     DetailFindInput,
     DetailFocusRequested,
     DetailScroll,
-    ExportDialog,
+    ExportPane,
     FilterHeader,
     FilterInput,
     PaneHeader,
+    ResultHighlighted,
     ResultsHeader,
     SearchingPanel,
     SearchInput,
@@ -67,7 +69,6 @@ from agentgrep.ui.widgets import (
     WelcomeExamples,
     WelcomeQuerySelected,
 )
-from agentgrep.ui.widgets.export_dialog import ExportIntent
 from agentgrep.ui.widgets.welcome import (
     _WELCOME_BRAND_SHINE,
     _WELCOME_QUERIES,
@@ -109,6 +110,17 @@ class _ExportCompleted:
     preferences: ExportPreferences | None
     preference_warning: str | None
     error: str | None
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _ExportPaneReturn:
+    """Exact input and focus state restored after a transient export pane."""
+
+    focused: object | None
+    search_value: str
+    search_selection: Selection
+    zoomed_pane: t.Literal["results", "detail"] | None
+    detail_opened: bool
 
 
 class _ExportSnapshotChangedError(Exception):
@@ -251,7 +263,8 @@ class HudLayout(_HudSearchBase):
         self._export_pending: bool = False
         self._export_generation: int = 0
         self._export_cancel_event: threading.Event | None = None
-        self._export_dialog: ExportDialog | None = None
+        self._export_pane: ExportPane | None = None
+        self._export_pane_return: _ExportPaneReturn | None = None
         self._results: SearchResultsList | None = None
         # The detail pane is un-Grouped into two stacked, individually
         # selectable ``Static``s: the metadata header and the body. A single
@@ -632,7 +645,8 @@ class HudLayout(_HudSearchBase):
         """Invalidate export callbacks and cancel work during screen teardown."""
         self._export_generation += 1
         self._export_pending = False
-        self._export_dialog = None
+        self._export_pane = None
+        self._export_pane_return = None
         if self._export_cancel_event is not None:
             self._export_cancel_event.set()
             self._export_cancel_event = None
@@ -912,6 +926,9 @@ class HudLayout(_HudSearchBase):
 
     def action_stop_search(self) -> None:
         """``Esc``: cooperative early-exit of the worker (no-op when finished)."""
+        if self._export_pane is not None:
+            self._export_pane.action_escape()
+            return
         self._cancel_active_action()
 
     @_runtime.pump_only
@@ -924,6 +941,9 @@ class HudLayout(_HudSearchBase):
         press cancels it; otherwise it arms the same "press ctrl-c again to exit"
         gutter as the inputs, so the warning shows whichever pane holds focus.
         """
+        if self._export_pane is not None:
+            self._export_pane.action_cancel()
+            return
         if self._has_active_actions():
             self._disarm_confirm_exit()
             self._cancel_active_action()
@@ -1024,11 +1044,17 @@ class HudLayout(_HudSearchBase):
 
     def action_focus_pane_left(self) -> None:
         """``Ctrl-H``: leave the detail pane back to the results."""
+        if self._export_pane is not None:
+            self._export_pane.action_editor_previous()
+            return
         if self.focused is not None and self.focused.id == "detail-scroll":
             self._focus_widget_by_id("results")
 
     def action_focus_pane_right(self) -> None:
         """``Ctrl-L``: focus the detail pane (to the right / opened below)."""
+        if self._export_pane is not None:
+            self._export_pane.action_editor_next()
+            return
         if self.focused is not None and self.focused.id in (
             "results",
             "filter",
@@ -1044,6 +1070,9 @@ class HudLayout(_HudSearchBase):
         top-level search bar. When stacked, the detail sits below the
         results, so ``up`` from the detail lands on the results.
         """
+        if self._export_pane is not None:
+            self._export_pane.action_editor_previous()
+            return
         focused_id = self.focused.id if self.focused is not None else None
         if focused_id == "detail-scroll":
             self._focus_widget_by_id("results" if self._stacked else "filter")
@@ -1058,6 +1087,9 @@ class HudLayout(_HudSearchBase):
         When stacked, ``down`` from the results reaches the detail pane
         below them (opening it if needed).
         """
+        if self._export_pane is not None:
+            self._export_pane.action_editor_next()
+            return
         focused_id = self.focused.id if self.focused is not None else None
         if focused_id == "search":
             self._focus_widget_by_id("filter")
@@ -1068,54 +1100,168 @@ class HudLayout(_HudSearchBase):
 
     @_runtime.pump_only
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        """Expose record export only in a content pane with a live selection."""
+        """Keep global bindings from escaping an active export action."""
+        if self._export_pane is not None and action in {
+            "confirm_quit",
+            "recall_history",
+        }:
+            return False
         if action == "export_selected":
-            return self._selected_export_shortcut_record() is not None
+            return self._export_pane is None and self._selected_export_shortcut_record() is not None
         return super().check_action(action, parameters)
 
     @_runtime.pump_only
-    def action_export_selected(self) -> None:
-        """Review one exact content-pane selection before exporting it."""
-        if self._export_dialog is not None:
+    def action_recall_history(self) -> None:
+        """Open history only when no transient export pane owns input."""
+        if self._export_pane is not None:
             return
+        super().action_recall_history()
+
+    @_runtime.pump_only
+    def on_result_highlighted(self, message: ResultHighlighted) -> None:
+        """Freeze the retained reader while an export pane owns it."""
+        if self._export_pane is not None:
+            return
+        super().on_result_highlighted(message)
+
+    @_runtime.pump_only
+    def action_export_selected(self) -> None:
+        """Open the detail-pane export flow for one exact selection."""
         selected = self._selected_export_shortcut_record()
         if selected is None:
             return
-        dialog = ExportDialog(
-            title=selected.title or "",
-            fallback_title=f"{selected.agent}-{selected.kind}",
-            home=self.home,
-            preferences=self._export_preferences,
-            on_confirm=functools.partial(self._confirm_export_dialog, selected),
-        )
-        self._export_dialog = dialog
-        self.app.push_screen(
-            dialog,
-            functools.partial(self._clear_export_dialog, dialog),
-        )
+        self.open_export_pane("", selected_record=selected)
 
     @_runtime.pump_only
-    def _confirm_export_dialog(
+    def open_export_pane(
         self,
-        selected: SearchRecord,
-        intent: ExportIntent,
+        destination: str,
+        *,
+        selected_record: SearchRecord | None = None,
     ) -> bool:
-        """Start the durable worker for one retained reviewed intent."""
-        dialog = self._export_dialog
-        if dialog is None or not dialog.is_mounted:
+        """Mount one fresh export owner beside the retained detail reader."""
+        if self._export_pane is not None:
             return False
-        return self.request_export(
-            str(intent.destination),
-            selection="records",
+        selected = selected_record or self._selected_export_record()
+        if (
+            selected is None
+            or self._detail_column is None
+            or self._body is None
+            or self._search_input is None
+        ):
+            self.notify(
+                "Select a record before exporting",
+                title="Export failed",
+                severity="error",
+            )
+            return False
+
+        search = self._search_input
+        search_value = str(search.value)
+        search_selection = search.selection
+        if search_value.lstrip().startswith("/"):
+            search_value, search_selection = search.query_draft
+
+        preferences = self._export_preferences
+        if destination:
+            explicit = pathlib.Path(destination)
+            preferences = ExportPreferences(
+                directory=str(explicit.parent),
+                filename_template=explicit.name,
+            )
+
+        pane = ExportPane(
             selected_record=selected,
-            preferences=intent.preferences,
+            home=self.home,
+            preferences=preferences,
         )
+        self._export_pane = pane
+        self._export_pane_return = _ExportPaneReturn(
+            focused=self.focused,
+            search_value=search_value,
+            search_selection=search_selection,
+            zoomed_pane=self._zoomed_pane,
+            detail_opened=self._detail_opened,
+        )
+        t.cast("t.Any", self._body).add_class("-export-pane")
+        t.cast("t.Any", self._detail_column).add_class("-exporting")
+        t.cast("t.Any", self._detail_column).mount(pane)
+        return True
 
     @_runtime.pump_only
-    def _clear_export_dialog(self, dialog: ExportDialog, _result: None) -> None:
-        """Forget only the retained dialog whose dismissal just completed."""
-        if self._export_dialog is dialog:
-            self._export_dialog = None
+    def on_export_pane_confirmed(self, message: ExportPane.Confirmed) -> None:
+        """Start the durable writer for this pane's frozen reviewed record."""
+        pane = self._export_pane
+        if pane is not message.pane or not pane.is_mounted:
+            return
+        accepted = self.request_export(
+            str(message.intent.destination),
+            selection="records",
+            selected_record=pane.selected_record,
+            preferences=message.intent.preferences,
+        )
+        if not accepted:
+            pane.export_failed("Export could not be started")
+
+    @_runtime.pump_only
+    async def on_export_pane_close_requested(
+        self,
+        message: ExportPane.CloseRequested,
+    ) -> None:
+        """Remove one exact pane, then restore its query and originating focus."""
+        pane = self._export_pane
+        state = self._export_pane_return
+        if pane is not message.pane or state is None:
+            return
+        pane.display = False
+        await pane.remove()
+        if self._export_pane is not pane:
+            return
+        self._export_pane = None
+        self._export_pane_return = None
+        if self._body is not None:
+            t.cast("t.Any", self._body).remove_class("-export-pane")
+        if self._detail_column is not None:
+            t.cast("t.Any", self._detail_column).remove_class("-exporting")
+        self._restore_export_search(state, focus=False)
+        target = state.focused
+        if (
+            target is not None
+            and getattr(target, "is_mounted", False)
+            and getattr(target, "display", False)
+            and not getattr(target, "disabled", False)
+            and getattr(target, "can_focus", False)
+        ):
+            t.cast("t.Any", target).focus()
+        elif self._search_input is not None:
+            self._search_input.focus()
+        self._detail_opened = state.detail_opened
+        if state.zoomed_pane is None:
+            self.handle_minimize_command()
+        else:
+            self._set_zoomed_pane(state.zoomed_pane)
+            self._apply_responsive_layout()
+        self._update_pane_focus()
+
+    @_runtime.pump_only
+    def _restore_export_search(self, state: _ExportPaneReturn, *, focus: bool) -> None:
+        """Restore the exact query draft without synthesizing key presses."""
+        if self._search_input is None:
+            return
+        self._search_input.value = state.search_value
+        self._search_input.selection = state.search_selection
+        if focus:
+            self._search_input.focus()
+
+    @_runtime.pump_only
+    def _clear_command_input(self) -> None:
+        """Restore a query without stealing focus from a new export pane."""
+        state = self._export_pane_return
+        if self._export_pane is not None and state is not None:
+            self._restore_export_search(state, focus=False)
+            self._hide_command_completion()
+            return
+        super()._clear_command_input()
 
     @_runtime.pump_only
     def request_export(
@@ -1460,9 +1606,9 @@ class HudLayout(_HudSearchBase):
         if not self.is_mounted:
             return
         if event.error is not None:
-            dialog = self._export_dialog
-            if dialog is not None and dialog.is_mounted and dialog.phase == "saving":
-                dialog.export_failed(event.error)
+            pane = self._export_pane
+            if pane is not None and pane.is_mounted and pane.phase == "saving":
+                pane.export_failed(event.error)
                 return
             self.notify(
                 event.error,
@@ -1472,11 +1618,9 @@ class HudLayout(_HudSearchBase):
             return
         if event.preferences is not None:
             self._export_preferences = event.preferences
-        dialog = self._export_dialog
-        if dialog is not None and dialog.phase == "saving":
-            dialog.export_succeeded()
-            if self._export_dialog is dialog:
-                self._export_dialog = None
+        pane = self._export_pane
+        if pane is not None and pane.phase == "saving":
+            pane.export_succeeded()
         noun = "record" if event.record_count == 1 else "records"
         self.notify(
             f"{event.filename} · {event.format} · {event.selection} · {event.record_count} {noun}",

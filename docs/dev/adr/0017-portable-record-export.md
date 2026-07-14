@@ -94,24 +94,28 @@ Defaults express the authority of each caller:
 The CLI accepts limits from 1 through 1000 and an explicit `-o -` standard
 output sink. A file refuses overwrite unless the user supplies `--force`.
 
-The HUD commands `/export [PATH]` and `/export-thread [PATH]` default to private
-Markdown files with bodies. The latter selects only records in the current
-filtered result set whose canonical thread ID matches the selected record.
-Identity, rendering, and disk work run off the Textual message pump. Only one
-accepted write may be pending, and a changed result snapshot cancels an
-observed-thread export instead of writing a mixed view.
+Pressing `e` in a content pane or submitting `/export [PATH]` captures the exact
+selected record and opens one staged flow in the right detail pane. Slash
+command text is transient: entering the pane restores the prior search value
+and exact selection, and leaving it restores the originating focus. An optional
+path seeds the directory and filename fields.
 
-Pressing `e` in a content pane captures the exact selected record and opens one
-staged TUI dialog. The dialog remembers its reviewed directory and filename
-template in a TUI-private preference file under the platform user
-configuration directory. It previews a filename, validates an existing
-directory or the uncreated exact app default, then shows the directory and
-exact basename separately with **No** selected. No returns to the retained
-draft. Save is the mutation boundary: No and cancel perform no filesystem
-mutation. An accepted Save securely creates the app default when needed,
-writes the explicit no-clobber destination, then attempts to persist the
-reviewed preference. CLI and MCP do not consume this preference or gain any
-additional filesystem authority.
+The pane remembers its reviewed directory and filename template in a
+TUI-private preference file under the platform user configuration directory.
+It previews a filename, validates an existing directory or the uncreated exact
+app default, then shows the directory and exact basename separately with
+**No** selected. No returns to the retained draft. Save is the mutation
+boundary: No and cancel perform no filesystem mutation. An accepted Save
+securely creates the app default when needed, writes the explicit no-clobber
+destination, then attempts to persist the reviewed preference.
+
+The `/export-thread [PATH]` command remains a direct one-shot private Markdown
+export with bodies. It selects only records in the current filtered result set
+whose canonical thread ID matches the selected record. Identity, rendering,
+and disk work run off the Textual message pump. Only one accepted write may be
+pending, and a changed result snapshot cancels an observed-thread export
+instead of writing a mixed view. CLI and MCP do not consume this preference or
+gain any additional filesystem authority.
 
 The MCP {tooliconl}`export_records` tool accepts one to 20 unique `agref1:`
 search refs and no query, cursor, or local destination. It resolves refs with
@@ -149,7 +153,8 @@ canonical IDs and structural metadata, never prompt text, a title, or a source
 path, and collisions allocate a new name rather than replacing an older
 export. Errors remain path-free.
 
-The reviewed `e` dialog is a narrow exception to that automatic filename
+The reviewed selected-record pane is a narrow exception to that automatic
+filename
 policy. Its default template combines a filesystem-safe local timestamp with
 a bounded normalized `SearchRecord.title`; slugging never reads the record
 body or source path. The user sees the exact basename before accepting an
