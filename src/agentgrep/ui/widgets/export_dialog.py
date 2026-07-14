@@ -290,9 +290,21 @@ class ExportDialog(ModalScreen[None]):
 
     @_runtime.pump_only
     def action_cancel(self) -> None:
-        """Dismiss unless a durable save is already active."""
-        if self._phase != "saving":
-            self.dismiss(None)
+        """Clear the focused edit once, or dismiss before durable saving."""
+        if self._phase == "saving":
+            return
+        if self._phase == "edit":
+            directory = self.query_one(
+                "#export-directory",
+                ExportDirectoryPicker,
+            ).query_one(Input)
+            template = self.query_one("#export-template", Input)
+            editor = directory if directory.has_focus else template if template.has_focus else None
+            if editor is not None and editor.value:
+                editor.value = ""
+                editor.focus()
+                return
+        self.dismiss(None)
 
     @_runtime.pump_only
     def action_review_no(self) -> None:
