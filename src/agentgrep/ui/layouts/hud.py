@@ -307,10 +307,15 @@ class HudLayout(LayoutScreen):
         self._history_path = _history.history_path(self.home)
         self._history = list(ctx.history)
         self._last_recorded_text = self._history[0].text if self._history else ""
-        self._export_preferences = ctx.export_preferences or ExportPreferences(
-            directory=str(default_export_directory(self.home)),
-        )
-        self._export_preferences_warning = ctx.export_preferences_warning
+        loaded_export_preferences = ctx.export_preferences
+        if loaded_export_preferences is None:
+            self._export_preferences = ExportPreferences(
+                directory=str(default_export_directory(self.home)),
+            )
+            self._export_preferences_warning = None
+        else:
+            self._export_preferences = loaded_export_preferences.preferences
+            self._export_preferences_warning = loaded_export_preferences.warning
         # Export is a non-supersedable durable action. The pump prepares one
         # point-in-time result snapshot in bounded chunks, then transfers sole
         # ownership to a thread worker. A second request remains blocked until

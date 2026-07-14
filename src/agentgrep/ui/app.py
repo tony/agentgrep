@@ -14,19 +14,38 @@ from __future__ import annotations
 import pathlib
 import typing as t
 
-from agentgrep.ui import _export_preferences, _history, preferences, registry
+from agentgrep.ui import _history, preferences, registry
 from agentgrep.ui._context import UiContext
 
 if t.TYPE_CHECKING:
     from agentgrep._types import RunnableAppLike
     from agentgrep.progress import SearchControl
     from agentgrep.records import SearchQuery, SearchScope
+    from agentgrep.ui._export_preferences import ExportPreferencesLoad
 
 __all__ = ["build_streaming_ui_app", "run_ui"]
 
 
 class UiQueryTooLongError(ValueError):
     """Raised when a launch expression cannot fit in the TUI input."""
+
+
+def _load_export_preferences(home: pathlib.Path) -> ExportPreferencesLoad:
+    """Load preferences without warming the root CLI import path.
+
+    Parameters
+    ----------
+    home : pathlib.Path
+        User home directory used by preference path defaults.
+
+    Returns
+    -------
+    ExportPreferencesLoad
+        One session-fixed preference snapshot.
+    """
+    from agentgrep.ui._export_preferences import load_export_preferences
+
+    return load_export_preferences(home)
 
 
 def run_ui(
@@ -163,7 +182,6 @@ def build_streaming_ui_app(
         history_disabled = _history.history_disabled()
         if not history_disabled:
             history = tuple(_history.load_history(_history.history_path(home)))
-    export_preferences_load = _export_preferences.load_export_preferences(home)
     ctx = UiContext(
         home=home,
         invoker=EngineSearchInvoker(home),
@@ -173,8 +191,7 @@ def build_streaming_ui_app(
         initial_search_text=initial_search_text,
         history=history,
         history_disabled=history_disabled,
-        export_preferences=export_preferences_load.preferences,
-        export_preferences_warning=export_preferences_load.warning,
+        export_preferences=_load_export_preferences(home),
     )
     config_path = preferences.theme_config_path(home=home)
     selected_theme = preferences.load_theme_name(config_path)

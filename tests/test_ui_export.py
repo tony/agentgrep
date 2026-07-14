@@ -16,7 +16,7 @@ from textual.widgets import HelpPanel, Input, Static
 import agentgrep.identity as identity
 import agentgrep.record_export as record_export
 from agentgrep.records import RecordPosition, SearchRecord
-from agentgrep.ui import _export_preferences, _runtime
+from agentgrep.ui import _export_preferences, _runtime, app as ui_app
 from agentgrep.ui._export_preferences import (
     ExportPreferences,
     ExportPreferencesError,
@@ -228,7 +228,7 @@ async def test_export_preferences_load_before_mount_and_warn_once_path_free(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """HUD construction loads once and mount reports a bounded warning."""
+    """The factory loads once before mount and F2 reuses the session snapshot."""
     config_home = tmp_path / "config"
     config_path = config_home / "agentgrep" / "tui-export.json"
     config_path.parent.mkdir(parents=True)
@@ -242,7 +242,7 @@ async def test_export_preferences_load_before_mount_and_warn_once_path_free(
         return real_load(home)
 
     notes: list[tuple[tuple[object, ...], dict[str, object]]] = []
-    monkeypatch.setattr(_export_preferences, "load_export_preferences", tracked_load)
+    monkeypatch.setattr(ui_app, "_load_export_preferences", tracked_load)
     monkeypatch.setattr(
         hud_module.HudLayout,
         "notify",
@@ -250,8 +250,11 @@ async def test_export_preferences_load_before_mount_and_warn_once_path_free(
     )
 
     app = _build_empty_ui_app(tmp_path, monkeypatch)
+    assert calls == [tmp_path / "home"]
 
     async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("f2", "f2")
         await pilot.pause()
 
         assert calls == [tmp_path / "home"]
