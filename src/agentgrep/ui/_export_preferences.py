@@ -20,6 +20,8 @@ import unicodedata
 
 DEFAULT_FILENAME_TEMPLATE = "{date} {time} - {title}.md"
 MAX_PREFERENCES_BYTES = 16 * 1024
+# Practical UI ceiling that accommodates common PATH_MAX-sized ASCII paths.
+MAX_DIRECTORY_CHARS = 4096
 MAX_TEMPLATE_CHARS = 256
 MAX_FILENAME_BYTES = 180
 
@@ -35,6 +37,7 @@ _PREFERENCES_FILENAME = "tui-export.json"
 
 __all__ = [
     "DEFAULT_FILENAME_TEMPLATE",
+    "MAX_DIRECTORY_CHARS",
     "MAX_FILENAME_BYTES",
     "MAX_PREFERENCES_BYTES",
     "MAX_TEMPLATE_CHARS",
@@ -76,6 +79,7 @@ def _validate_directory_value(value: str) -> None:
     if (
         not isinstance(value, str)
         or not value
+        or len(value) > MAX_DIRECTORY_CHARS
         or any(
             unicodedata.category(character) in _UNREVIEWABLE_UNICODE_CATEGORIES
             for character in value
@@ -100,6 +104,8 @@ def compact_export_directory(value: str, home: pathlib.Path) -> str:
         ``~`` or a current-user tilde path for values under ``home``;
         otherwise the original literal value.
     """
+    if len(value) > MAX_DIRECTORY_CHARS:
+        raise ExportPreferencesError(_DIRECTORY_ERROR)
     candidate = pathlib.Path(value)
     normalized_home = pathlib.Path(os.path.normpath(os.fspath(home)))
     if not candidate.is_absolute() or not normalized_home.is_absolute():
