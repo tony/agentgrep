@@ -10,6 +10,7 @@ import time
 import typing as t
 
 import pytest
+from textual.widgets import HelpPanel
 
 import agentgrep.identity as identity
 import agentgrep.record_export as record_export
@@ -114,6 +115,107 @@ def _change_results(screen: t.Any, change: str, replacement: SearchRecord) -> No
         )
     else:
         screen._start_search_worker(screen._build_search_query("replacement"))
+
+
+@pytest.mark.parametrize("pane", ["_results", "_detail_scroll"], ids=("results", "detail"))
+@pytest.mark.slow
+async def test_export_shortcut_writes_selected_record_and_appears_in_keys(
+    pane: str,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Plain ``e`` exports from either content pane and appears in key help."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = (
+        _record(tmp_path, "first body", ordinal=1),
+        _record(tmp_path, "selected body", ordinal=2),
+    )
+    export_dir = tmp_path / "data" / "agentgrep" / "exports"
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await _load_records(app.screen, records, selected=1)
+
+        app.screen._search_input.value = "/keys"
+        app.screen._search_input.focus()
+        await pilot.press("enter")
+        getattr(app.screen, pane).focus()
+        await pilot.pause()
+
+        binding = app.screen.active_bindings["e"].binding
+        assert len(app.screen.query(HelpPanel)) == 1
+        assert binding.description == "Export selected"
+        assert binding.show is False
+
+        await pilot.press("e")
+        await _wait_for(lambda: bool(list(export_dir.glob("*.md"))))
+
+        exported = next(export_dir.glob("*.md")).read_text(encoding="utf-8")
+        assert "selected body" in exported
+        assert "first body" not in exported
+
+
+@pytest.mark.parametrize(
+    "input_attr",
+    ["_search_input", "_filter_input"],
+    ids=("search", "filter"),
+)
+@pytest.mark.slow
+async def test_export_shortcut_remains_literal_in_inputs(
+    input_attr: str,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Editable inputs consume ``e`` without starting an export."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        requests: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            app.screen,
+            "request_export",
+            lambda destination, *, selection: requests.append((destination, selection)),
+        )
+        input_widget = getattr(app.screen, input_attr)
+        input_widget.focus()
+
+        await pilot.press("e")
+        await pilot.pause()
+
+        assert input_widget.value == "e"
+        assert requests == []
+
+
+@pytest.mark.slow
+async def test_export_shortcut_is_inert_in_completion_dropdown(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Completion focus never turns a printable choice key into export."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = _record(tmp_path, "selected body", ordinal=1)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await _load_records(app.screen, (record,))
+        requests: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            app.screen,
+            "request_export",
+            lambda destination, *, selection: requests.append((destination, selection)),
+        )
+
+        app.screen._search_input.value = "scope:"
+        app.screen._search_input.focus()
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.pause()
+        assert app.focused is app.screen._enum_dropdown
+
+        await pilot.press("e")
+        await pilot.pause()
+
+        assert "e" not in app.screen.active_bindings
+        assert requests == []
 
 
 @pytest.mark.slow

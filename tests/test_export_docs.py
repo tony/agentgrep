@@ -74,6 +74,7 @@ def test_export_tui_docs_define_private_off_pump_workflow() -> None:
     required = (
         "`/export [PATH]`",
         "`/export-thread [PATH]`",
+        "Press `e`",
         "selected record",
         "observed thread",
         "current result set",

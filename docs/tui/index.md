@@ -179,6 +179,11 @@ The HUD offers two pi-like slash commands:
   the current result set after the in-list filter. A record without a canonical
   thread handle cannot be exported as a thread.
 
+Press `e` with the results list or detail pane focused to export the selected
+record to the private Markdown destination. Use `/export PATH` when an explicit
+destination is needed. The contextual `/keys` panel lists the shortcut without
+adding it to the compact footer.
+
 Without `PATH`, both commands write a collision-free Markdown artifact to
 agentgrep's private export directory. Its root follows `XDG_DATA_HOME`; when
 set, artifacts go under `$XDG_DATA_HOME/agentgrep/exports`, and otherwise the

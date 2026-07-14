@@ -106,9 +106,9 @@ def test_render_export_covers_cardinality_format_and_body_permutations(
         assert artifact.text.startswith("# agentgrep record export\n")
 
 
-@pytest.mark.parametrize("selection", ("records", "thread"))
-@pytest.mark.parametrize("include_bodies", (False, True), ids=("metadata", "bodies"))
-@pytest.mark.parametrize("record_count", (0, 1, 3), ids=("zero", "one", "many"))
+@pytest.mark.parametrize("selection", ["records", "thread"])
+@pytest.mark.parametrize("include_bodies", [False, True], ids=("metadata", "bodies"))
+@pytest.mark.parametrize("record_count", [0, 1, 3], ids=("zero", "one", "many"))
 def test_markdown_schema_version_is_once_per_artifact_permutation(
     selection: record_export.ExportSelection,
     include_bodies: bool,
