@@ -24,6 +24,7 @@ MAX_FILENAME_BYTES = 180
 
 _PREFERENCES_WARNING = "Export preferences could not be read"
 _PREFERENCES_SAVE_ERROR = "Export preferences could not be saved"
+_DIRECTORY_ERROR = "Export directory is invalid"
 _FILENAME_ERROR = "Export filename is invalid"
 _SCHEMA_KEYS = frozenset({"version", "directory", "filename_template"})
 
@@ -124,13 +125,14 @@ def resolve_export_directory(value: str, home: pathlib.Path) -> pathlib.Path:
     ExportPreferencesError
         If an other-user tilde spelling is supplied.
     """
-    if value == "~" or value == f"~{os.sep}":
+    if value == "~":
         return home
     current_home_prefix = f"~{os.sep}"
     if value.startswith(current_home_prefix):
-        return home / value[len(current_home_prefix) :]
+        suffix = value[len(current_home_prefix) :].lstrip(os.sep)
+        return home / suffix if suffix else home
     if value.startswith("~"):
-        raise ExportPreferencesError(_FILENAME_ERROR)
+        raise ExportPreferencesError(_DIRECTORY_ERROR)
     return pathlib.Path(value)
 
 
