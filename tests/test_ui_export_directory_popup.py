@@ -37,9 +37,13 @@ class _DirectoryPopupHost(App[None]):
     #filename { height: 3; }
     """
 
+    def __init__(self, home: pathlib.Path) -> None:
+        super().__init__()
+        self._home = home
+
     def compose(self) -> ComposeResult:
         """Compose the owning picker and the next focus target."""
-        yield ExportDirectoryPicker(value="", id="directory")
+        yield ExportDirectoryPicker(value="", home=self._home, id="directory")
         yield Input(placeholder="Filename", id="filename")
 
     def on_mount(self) -> None:
@@ -100,12 +104,23 @@ async def test_directory_enumeration_waits_for_inactivity(
     calls: list[tuple[str, float]] = []
     original = directory_popup._enumerate_directory_candidates
 
-    def observed(value: str, *, candidate_limit: int, scan_limit: int) -> object:
+    def observed(
+        value: str,
+        *,
+        home: pathlib.Path,
+        candidate_limit: int,
+        scan_limit: int,
+    ) -> object:
         calls.append((value, time.monotonic()))
-        return original(value, candidate_limit=candidate_limit, scan_limit=scan_limit)
+        return original(
+            value,
+            home=home,
+            candidate_limit=candidate_limit,
+            scan_limit=scan_limit,
+        )
 
     monkeypatch.setattr(directory_popup, "_enumerate_directory_candidates", observed)
-    app = _DirectoryPopupHost()
+    app = _DirectoryPopupHost(tmp_path / "home")
     async with app.run_test(size=(60, 16)) as pilot:
         picker = app.query_one(ExportDirectoryPicker)
         picker.value = f"{root}{os.sep}a"
@@ -169,6 +184,7 @@ def test_directory_scan_has_raw_bound_and_truncation_sentinel(
 
     result = directory_popup._enumerate_directory_candidates(
         "./",
+        home=pathlib.Path("/session-home"),
         candidate_limit=DIRECTORY_CANDIDATE_LIMIT,
         scan_limit=DIRECTORY_SCAN_LIMIT,
     )
@@ -188,6 +204,48 @@ def test_symlink_directories_are_not_candidates(tmp_path: pathlib.Path) -> None:
 
     result = directory_popup._enumerate_directory_candidates(
         f"{tmp_path}{os.sep}a",
+        home=tmp_path / "home",
+        candidate_limit=DIRECTORY_CANDIDATE_LIMIT,
+        scan_limit=DIRECTORY_SCAN_LIMIT,
+    )
+
+    assert result.values == ()
+
+
+def test_tilde_completion_uses_session_home_without_expanduser(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Completion resolves current-user tilde syntax against the TUI session home."""
+    session_home = tmp_path / "session-home"
+    choices = session_home / "choices"
+    choices.mkdir(parents=True)
+    (choices / "alpha").mkdir()
+    process_home = tmp_path / "process-home"
+    process_home.mkdir()
+    monkeypatch.setenv("HOME", str(process_home))
+    unexpected_expanduser = "process-global expanduser must not run"
+
+    def reject_expanduser(_path: pathlib.Path) -> t.NoReturn:
+        raise AssertionError(unexpected_expanduser)
+
+    monkeypatch.setattr(pathlib.Path, "expanduser", reject_expanduser)
+
+    result = directory_popup._enumerate_directory_candidates(
+        "~/choices/a",
+        home=session_home,
+        candidate_limit=DIRECTORY_CANDIDATE_LIMIT,
+        scan_limit=DIRECTORY_SCAN_LIMIT,
+    )
+
+    assert result.values == (DirectoryCandidate(value="~/choices/alpha/", label="alpha"),)
+
+
+def test_other_user_tilde_completion_is_rejected(tmp_path: pathlib.Path) -> None:
+    """Completion never delegates other-user tilde syntax to account lookup."""
+    result = directory_popup._enumerate_directory_candidates(
+        "~other/choices/a",
+        home=tmp_path / "session-home",
         candidate_limit=DIRECTORY_CANDIDATE_LIMIT,
         scan_limit=DIRECTORY_SCAN_LIMIT,
     )
@@ -220,6 +278,7 @@ def test_candidate_labels_are_basenames_and_values_preserve_prefix(
 
     result = directory_popup._enumerate_directory_candidates(
         typed,
+        home=tmp_path,
         candidate_limit=DIRECTORY_CANDIDATE_LIMIT,
         scan_limit=DIRECTORY_SCAN_LIMIT,
     )
@@ -246,7 +305,7 @@ async def test_popup_is_literal_bounded_off_pump_and_reports_truncation(
 
     monkeypatch.setattr(directory_popup.os, "scandir", observed_scandir)
     pump_thread = threading.get_ident()
-    app = _DirectoryPopupHost()
+    app = _DirectoryPopupHost(tmp_path / "home")
     async with app.run_test(size=(60, 16)) as pilot:
         picker = app.query_one(ExportDirectoryPicker)
         popup = _popup(app)
@@ -267,7 +326,7 @@ async def test_up_down_wrap_and_right_accepts_only_at_end(tmp_path: pathlib.Path
     root.mkdir()
     for name in ("alpha", "beta"):
         (root / name).mkdir()
-    app = _DirectoryPopupHost()
+    app = _DirectoryPopupHost(tmp_path / "home")
     async with app.run_test(size=(60, 16)) as pilot:
         picker = app.query_one(ExportDirectoryPicker)
         field = picker.query_one(Input)
@@ -296,7 +355,7 @@ async def test_tab_accepts_only_when_open_then_traverses(tmp_path: pathlib.Path)
     root = tmp_path / "choices"
     root.mkdir()
     (root / "child").mkdir()
-    app = _DirectoryPopupHost()
+    app = _DirectoryPopupHost(tmp_path / "home")
     async with app.run_test(size=(60, 16)) as pilot:
         picker = app.query_one(ExportDirectoryPicker)
         filename = app.query_one("#filename", Input)
@@ -322,13 +381,24 @@ async def test_late_directory_result_cannot_reopen_after_tab(
     release = threading.Event()
     original = directory_popup._enumerate_directory_candidates
 
-    def delayed(value: str, *, candidate_limit: int, scan_limit: int) -> object:
+    def delayed(
+        value: str,
+        *,
+        home: pathlib.Path,
+        candidate_limit: int,
+        scan_limit: int,
+    ) -> object:
         started.set()
         release.wait(1)
-        return original(value, candidate_limit=candidate_limit, scan_limit=scan_limit)
+        return original(
+            value,
+            home=home,
+            candidate_limit=candidate_limit,
+            scan_limit=scan_limit,
+        )
 
     monkeypatch.setattr(directory_popup, "_enumerate_directory_candidates", delayed)
-    app = _DirectoryPopupHost()
+    app = _DirectoryPopupHost(tmp_path / "home")
     async with app.run_test(size=(60, 16)) as pilot:
         picker = app.query_one(ExportDirectoryPicker)
         picker.value = f"{tmp_path}{os.sep}a"
@@ -351,13 +421,24 @@ async def test_unmount_cancels_worker_and_invalidates_generation(
     release = threading.Event()
     original = directory_popup._enumerate_directory_candidates
 
-    def delayed(value: str, *, candidate_limit: int, scan_limit: int) -> object:
+    def delayed(
+        value: str,
+        *,
+        home: pathlib.Path,
+        candidate_limit: int,
+        scan_limit: int,
+    ) -> object:
         started.set()
         release.wait(1)
-        return original(value, candidate_limit=candidate_limit, scan_limit=scan_limit)
+        return original(
+            value,
+            home=home,
+            candidate_limit=candidate_limit,
+            scan_limit=scan_limit,
+        )
 
     monkeypatch.setattr(directory_popup, "_enumerate_directory_candidates", delayed)
-    app = _DirectoryPopupHost()
+    app = _DirectoryPopupHost(tmp_path / "home")
     async with app.run_test(size=(60, 16)) as pilot:
         picker = app.query_one(ExportDirectoryPicker)
         popup = _popup(app)
@@ -381,7 +462,7 @@ async def test_unmount_cancels_worker_and_invalidates_generation(
 async def test_popup_stays_within_picker_at_compact_geometry(tmp_path: pathlib.Path) -> None:
     """The borderless overlay never exceeds its owning picker at 60 by 16."""
     (tmp_path / "alpha").mkdir()
-    app = _DirectoryPopupHost()
+    app = _DirectoryPopupHost(tmp_path / "home")
     async with app.run_test(size=(60, 16)) as pilot:
         picker = app.query_one(ExportDirectoryPicker)
         popup = _popup(app)
