@@ -135,6 +135,77 @@ async def test_directory_enumeration_waits_for_inactivity(
         assert calls[0][1] - changed_at >= DIRECTORY_COMPLETION_DEBOUNCE - 0.02
 
 
+async def test_directory_enumeration_coalesces_while_worker_is_blocked(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rapid edits queue only the latest scan behind one blocked enumeration."""
+    root = tmp_path / "choices"
+    root.mkdir()
+    (root / "alpha").mkdir()
+    first_started = threading.Event()
+    release_first = threading.Event()
+    values: list[str] = []
+    active = 0
+    maximum_active = 0
+    lock = threading.Lock()
+    original_enumerate = directory_popup._enumerate_directory_candidates
+    original_scandir = os.scandir
+
+    def observed_enumerate(
+        value: str,
+        *,
+        home: pathlib.Path,
+        candidate_limit: int,
+        scan_limit: int,
+    ) -> object:
+        values.append(value)
+        return original_enumerate(
+            value,
+            home=home,
+            candidate_limit=candidate_limit,
+            scan_limit=scan_limit,
+        )
+
+    def blocked_scandir(path: str | os.PathLike[str]) -> t.Any:
+        nonlocal active, maximum_active
+        with lock:
+            active += 1
+            maximum_active = max(maximum_active, active)
+            first = not first_started.is_set()
+            if first:
+                first_started.set()
+        try:
+            if first:
+                release_first.wait(2)
+            return original_scandir(path)
+        finally:
+            with lock:
+                active -= 1
+
+    monkeypatch.setattr(
+        directory_popup,
+        "_enumerate_directory_candidates",
+        observed_enumerate,
+    )
+    monkeypatch.setattr(directory_popup.os, "scandir", blocked_scandir)
+    app = _DirectoryPopupHost(tmp_path / "home")
+    async with app.run_test(size=(60, 16)) as pilot:
+        picker = app.query_one(ExportDirectoryPicker)
+        picker.value = f"{root}{os.sep}a"
+        await _wait_for(pilot, first_started.is_set)
+        picker.value = f"{root}{os.sep}al"
+        await pilot.pause(DIRECTORY_COMPLETION_DEBOUNCE / 2)
+        latest = f"{root}{os.sep}alp"
+        picker.value = latest
+        await pilot.pause(DIRECTORY_COMPLETION_DEBOUNCE + 0.1)
+        release_first.set()
+        await _wait_for(pilot, lambda: len(values) >= 2)
+
+        assert values == [f"{root}{os.sep}a", latest]
+        assert maximum_active == 1
+
+
 class _InstrumentedEntry:
     """A scandir row that records directory probes."""
 
