@@ -27,6 +27,7 @@ _PREFERENCES_SAVE_ERROR = "Export preferences could not be saved"
 _DIRECTORY_ERROR = "Export directory is invalid"
 _FILENAME_ERROR = "Export filename is invalid"
 _SCHEMA_KEYS = frozenset({"version", "directory", "filename_template"})
+_TEMPLATE_TOKENS = frozenset({"date", "time", "title"})
 _CONFIG_DIRECTORY_NAME = "agentgrep"
 _PREFERENCES_FILENAME = "tui-export.json"
 
@@ -176,6 +177,37 @@ def _validate_filename(filename: str) -> None:
         raise ExportPreferencesError(_FILENAME_ERROR)
 
 
+def _validate_filename_template(template: str) -> None:
+    """Validate the template grammar without compiling a selected title."""
+    if not isinstance(template, str) or len(template) > MAX_TEMPLATE_CHARS:
+        raise ExportPreferencesError(_FILENAME_ERROR)
+    if any(unicodedata.category(character) in {"Cc", "Cs"} for character in template):
+        raise ExportPreferencesError(_FILENAME_ERROR)
+    if "/" in template or "\\" in template:
+        raise ExportPreferencesError(_FILENAME_ERROR)
+    if not template.endswith(".md") or not template.removesuffix(".md"):
+        raise ExportPreferencesError(_FILENAME_ERROR)
+    if template.endswith((" ", ".")) or ntpath.isreserved(template):
+        raise ExportPreferencesError(_FILENAME_ERROR)
+    try:
+        template.encode("utf-8")
+    except UnicodeEncodeError:
+        raise ExportPreferencesError(_FILENAME_ERROR) from None
+
+    cursor = 0
+    while cursor < len(template):
+        opening = template.find("{", cursor)
+        closing = template.find("}", cursor)
+        if closing != -1 and (opening == -1 or closing < opening):
+            raise ExportPreferencesError(_FILENAME_ERROR)
+        if opening == -1:
+            return
+        closing = template.find("}", opening + 1)
+        if closing == -1 or template[opening + 1 : closing] not in _TEMPLATE_TOKENS:
+            raise ExportPreferencesError(_FILENAME_ERROR)
+        cursor = closing + 1
+
+
 def render_export_filename(
     template: str,
     title: str,
@@ -205,8 +237,7 @@ def render_export_filename(
     ExportPreferencesError
         If the template or compiled basename is unsafe or outside its bounds.
     """
-    if not isinstance(template, str) or len(template) > MAX_TEMPLATE_CHARS:
-        raise ExportPreferencesError(_FILENAME_ERROR)
+    _validate_filename_template(template)
     slug = _slug(title) or _slug(fallback_title)
     if not slug:
         raise ExportPreferencesError(_FILENAME_ERROR)
@@ -249,12 +280,7 @@ def _parse_preferences(payload: bytes) -> ExportPreferences:
         raise ValueError
     if not isinstance(directory, str) or not isinstance(filename_template, str):
         raise TypeError
-    render_export_filename(
-        filename_template,
-        title="Title",
-        fallback_title="record",
-        timestamp=datetime.datetime(2000, 1, 1),
-    )
+    _validate_filename_template(filename_template)
     return ExportPreferences(directory=directory, filename_template=filename_template)
 
 
@@ -372,12 +398,7 @@ def _serialize_preferences(preferences: ExportPreferences) -> bytes:
         str,
     ):
         raise ExportPreferencesError(_PREFERENCES_SAVE_ERROR)
-    render_export_filename(
-        preferences.filename_template,
-        title="Title",
-        fallback_title="record",
-        timestamp=datetime.datetime(2000, 1, 1),
-    )
+    _validate_filename_template(preferences.filename_template)
     payload = json.dumps(
         {
             "version": 1,
