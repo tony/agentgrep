@@ -1,4 +1,4 @@
-"""Staged, no-clobber export confirmation for one selected record."""
+"""Staged, no-clobber export flow for the active detail pane."""
 
 from __future__ import annotations
 
@@ -15,10 +15,11 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
 from textual.content import Content
-from textual.screen import ModalScreen
+from textual.message import Message
 from textual.widgets import Input, OptionList, Static
 from textual.worker import NoActiveWorker, get_current_worker
 
+from agentgrep.records import SearchRecord
 from agentgrep.ui import _runtime
 from agentgrep.ui._export_preferences import (
     MAX_DIRECTORY_CHARS,
@@ -30,10 +31,11 @@ from agentgrep.ui._export_preferences import (
     resolve_export_directory,
 )
 from agentgrep.ui.widgets.directory_popup import ExportDirectoryPicker
+from agentgrep.ui.widgets.status import PaneHeader
 
-__all__ = ["ExportDialog", "ExportDraft", "ExportIntent"]
+__all__ = ["ExportDraft", "ExportIntent", "ExportPane"]
 
-_VALIDATION_WORKER_GROUP = "export-dialog-validation"
+_VALIDATION_WORKER_GROUP = "export-pane-validation"
 _DIRECTORY_ERROR = "Export directory is invalid"
 _DIRECTORY_UNAVAILABLE_ERROR = "Export directory is unavailable"
 _DIRECTORY_ACCESS_ERROR = "Export directory is not writable"
@@ -139,8 +141,23 @@ def _validate_export_draft(
     )
 
 
-class ExportDialog(ModalScreen[None]):
-    """Edit, validate, review, and retain one selected-record export."""
+class ExportPane(Vertical):
+    """Edit, validate, and review one frozen selected-record export."""
+
+    class CloseRequested(Message):
+        """Ask the HUD owner to remove this exact pane."""
+
+        def __init__(self, pane: ExportPane) -> None:
+            super().__init__()
+            self.pane = pane
+
+    class Confirmed(Message):
+        """Carry one reviewed intent to the HUD's durable writer boundary."""
+
+        def __init__(self, pane: ExportPane, intent: ExportIntent) -> None:
+            super().__init__()
+            self.pane = pane
+            self.intent = intent
 
     BINDINGS: t.ClassVar[list[Binding]] = [
         Binding("escape", "escape", "Back / Cancel", priority=True, show=False),
@@ -156,15 +173,14 @@ class ExportDialog(ModalScreen[None]):
     ]
 
     DEFAULT_CSS = """
-    ExportDialog {
-        align: center middle;
-    }
-    #export-dialog {
+    ExportPane {
         width: 100%;
-        max-width: 72;
-        height: 100%;
-        max-height: 18;
-        padding: 0 2;
+        height: 1fr;
+    }
+    #export-flow {
+        width: 100%;
+        height: 1fr;
+        padding: 0 1;
     }
     #export-edit, #export-review {
         width: 100%;
@@ -201,11 +217,6 @@ class ExportDialog(ModalScreen[None]):
     #export-review {
         display: none;
     }
-    #export-dialog.-reviewing,
-    #export-dialog.-reviewing #export-review {
-        height: auto;
-        max-height: 12;
-    }
     #export-confirm {
         width: 12;
         height: 2;
@@ -214,18 +225,16 @@ class ExportDialog(ModalScreen[None]):
 
     def __init__(
         self,
-        title: str,
-        fallback_title: str,
+        selected_record: SearchRecord,
         home: pathlib.Path,
         preferences: ExportPreferences,
-        on_confirm: cabc.Callable[[ExportIntent], bool],
         timestamp: datetime.datetime | None = None,
     ) -> None:
-        super().__init__()
-        self._title = title
-        self._fallback_title = fallback_title
+        super().__init__(id="export-pane")
+        self._selected_record = selected_record
+        self._title = selected_record.title or ""
+        self._fallback_title = f"{selected_record.agent}-{selected_record.kind}"
         self._home = home
-        self._on_confirm = on_confirm
         self._timestamp = timestamp or datetime.datetime.now().astimezone()
         self._initial_preferences = dataclasses.replace(
             preferences,
@@ -240,13 +249,19 @@ class ExportDialog(ModalScreen[None]):
 
     @property
     def phase(self) -> ExportPhase:
-        """Return the dialog's current interaction phase."""
+        """Return the pane's current interaction phase."""
         return self._phase
+
+    @property
+    def selected_record(self) -> SearchRecord:
+        """Return the exact record frozen when this pane was created."""
+        return self._selected_record
 
     @_runtime.pump_only
     def compose(self) -> ComposeResult:
         """Compose one quiet edit/review flow with literal output surfaces."""
-        with Vertical(id="export-dialog"):
+        yield PaneHeader("export", id="export-pane-header")
+        with Vertical(id="export-flow"):
             with VerticalScroll(id="export-edit"):
                 yield Static("Directory", classes="export-label")
                 yield ExportDirectoryPicker(
@@ -334,7 +349,7 @@ class ExportDialog(ModalScreen[None]):
         if self._phase == "review":
             self._show_edit()
             return
-        self._dismiss_dialog()
+        self._request_close()
 
     @_runtime.pump_only
     def action_cancel(self) -> None:
@@ -352,7 +367,7 @@ class ExportDialog(ModalScreen[None]):
                 editor.value = ""
                 editor.focus()
                 return
-        self._dismiss_dialog()
+        self._request_close()
 
     @_runtime.pump_only
     def action_editor_previous(self) -> None:
@@ -397,13 +412,13 @@ class ExportDialog(ModalScreen[None]):
     def export_succeeded(self) -> None:
         """Dismiss after the asynchronous writer reports success."""
         if self.is_mounted and self._phase == "saving":
-            self._dismiss_dialog()
+            self._request_close()
 
     @_runtime.pump_only
-    def _dismiss_dialog(self) -> None:
-        """Invalidate deferred feedback before dismissing the modal."""
+    def _request_close(self) -> None:
+        """Invalidate deferred feedback and ask the HUD to restore its reader."""
         self._invalidate_error_reveal()
-        self.dismiss(None)
+        self.post_message(self.CloseRequested(self))
 
     @_runtime.pump_only
     def _refresh_preview(self) -> bool:
@@ -527,7 +542,6 @@ class ExportDialog(ModalScreen[None]):
         """Restore the retained edit stage and its prior focus."""
         self._phase = "edit"
         self._intent = None
-        self.query_one("#export-dialog", Vertical).remove_class("-reviewing")
         edit = self.query_one("#export-edit", VerticalScroll)
         review = self.query_one("#export-review", VerticalScroll)
         edit.display = True
@@ -558,7 +572,6 @@ class ExportDialog(ModalScreen[None]):
             not message
             or self._pending_error_reveal != request
             or not self.is_mounted
-            or self.app.screen is not self
             or self._phase != "edit"
         ):
             return
@@ -573,7 +586,6 @@ class ExportDialog(ModalScreen[None]):
         """Show the literal directory and exact basename with No selected."""
         self._invalidate_error_reveal()
         self._phase = "review"
-        self.query_one("#export-dialog", Vertical).add_class("-reviewing")
         self.query_one("#export-edit", VerticalScroll).display = False
         self.query_one("#export-review", VerticalScroll).display = True
         self.query_one("#export-review-directory", Static).update(
@@ -589,6 +601,17 @@ class ExportDialog(ModalScreen[None]):
         confirm.highlighted = 0
         self._update_review_choices(0)
         confirm.focus()
+        self.call_after_refresh(self._reveal_review_choices)
+
+    @_runtime.pump_only
+    def _reveal_review_choices(self) -> None:
+        """Keep the No-first choice visible after compact review reflow."""
+        if not self.is_mounted or self._phase != "review":
+            return
+        self.query_one("#export-confirm", OptionList).scroll_visible(
+            animate=False,
+            immediate=True,
+        )
 
     @_runtime.pump_only
     def _update_review_choices(self, highlighted: int) -> None:
@@ -601,14 +624,13 @@ class ExportDialog(ModalScreen[None]):
 
     @_runtime.pump_only
     def _confirm(self) -> None:
-        """Delegate once and retain the modal while the writer is active."""
+        """Post once and retain the pane while the writer is active."""
         intent = self._intent
         if self._phase != "review" or intent is None:
-            return
-        if not self._on_confirm(intent):
             return
         self._phase = "saving"
         confirm = self.query_one("#export-confirm", OptionList)
         confirm.highlighted = 1
         confirm.disabled = True
         self.query_one("#export-review-status", Static).update(Content("Saving…"))
+        self.post_message(self.Confirmed(self, intent))

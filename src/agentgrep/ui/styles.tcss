@@ -417,6 +417,23 @@ Screen {
 #body.-zoom-detail > #results-column {
     display: none;
 }
+/* A transient detail action owns the body without rewriting the user's
+   responsive, collapsed, or logical zoom state. Removing this one class
+   reveals the exact reader layout that was already underneath it. */
+#body.-export-pane > #results-column {
+    display: none;
+}
+#body.-export-pane > #detail-column {
+    display: block;
+    width: 1fr;
+    height: 1fr;
+}
+#detail-column.-exporting > #detail-header,
+#detail-column.-exporting > #detail-scroll,
+#detail-column.-exporting > #detail-find,
+#detail-column.-exporting > #detail-statusline {
+    display: none;
+}
 #filter {
     height: 1;
     /* Dedicated filter/results rules own both separators, leaving this input
@@ -641,12 +658,17 @@ HistoryRecall, HistoryRecall:ansi {
     color: $ag-dim;
 }
 
-/* Selected-record export: one quiet edit/review flow. The exact basename is
+/* Selected-record export: one quiet detail-pane flow. The exact basename is
    the only signature treatment; labels and state copy stay subordinate. */
-ExportDialog {
+ExportPane {
     background: transparent;
 }
-#export-dialog {
+#export-pane-header {
+    height: 1;
+    width: 1fr;
+    color: $accent;
+}
+#export-flow {
     background: ansi_default;
 }
 .export-label {

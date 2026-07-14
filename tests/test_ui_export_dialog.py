@@ -1,4 +1,4 @@
-"""Pilot contracts for the staged TUI export dialog."""
+"""Pilot contracts for the staged TUI export pane."""
 
 from __future__ import annotations
 
@@ -12,23 +12,24 @@ import time
 import typing as t
 
 import pytest
-from textual.app import App
+from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
 from textual.pilot import Pilot
 from textual.widgets import Input, OptionList, Static
 
 import agentgrep.ui.widgets as widgets
+from agentgrep.records import SearchRecord
 from agentgrep.ui import _export_preferences as export_preferences, _runtime
 from agentgrep.ui._export_preferences import ExportPreferences, default_export_directory
-from agentgrep.ui.widgets import ExportDialog, export_dialog
+from agentgrep.ui.widgets import ExportPane, export_pane
 from agentgrep.ui.widgets.directory_popup import ExportDirectoryPicker
-from agentgrep.ui.widgets.export_dialog import ExportDraft, ExportIntent
+from agentgrep.ui.widgets.export_pane import ExportDraft, ExportIntent
 
 _TIMESTAMP = datetime.datetime(2026, 7, 14, 9, 8, 7)
 
 
 class _ExportDialogHost(App[None]):
-    """Minimal host that pushes one export dialog and captures dismissal."""
+    """Minimal host that mounts one export pane and captures removal."""
 
     def __init__(
         self,
@@ -41,24 +42,50 @@ class _ExportDialogHost(App[None]):
         timestamp: datetime.datetime = _TIMESTAMP,
     ) -> None:
         super().__init__()
-        self._dialog = ExportDialog(
-            title=title,
-            fallback_title="record",
+        self._dialog = ExportPane(
+            selected_record=SearchRecord(
+                kind="prompt",
+                agent="codex",
+                store="codex.sessions",
+                adapter_id="codex.sessions_jsonl.v1",
+                path=home / "history.jsonl",
+                text="",
+                title=title,
+            ),
             home=home,
             preferences=ExportPreferences(
                 directory=directory or str(home),
                 filename_template=template,
             ),
-            on_confirm=on_confirm,
             timestamp=timestamp,
         )
+        self._on_confirm = on_confirm
         self.dismissed: object = _UNSET
+
+    def compose(self) -> ComposeResult:
+        """Mount the pane in the app's ordinary content region."""
+        yield self._dialog
 
     @_runtime.pump_only
     def on_mount(self) -> None:
-        """Bind the pump guard and open the dialog."""
+        """Bind the pump guard after the pane is mounted."""
         _runtime.bind_pump_thread()
-        self.push_screen(self._dialog, self._capture)
+
+    @_runtime.pump_only
+    def on_export_pane_confirmed(self, message: ExportPane.Confirmed) -> None:
+        """Forward the reviewed intent through the isolated test seam."""
+        self._on_confirm(message.intent)
+
+    @_runtime.pump_only
+    async def on_export_pane_close_requested(
+        self,
+        message: ExportPane.CloseRequested,
+    ) -> None:
+        """Remove the exact pane and record its terminal result."""
+        if message.pane is not self._dialog:
+            return
+        await message.pane.remove()
+        self._capture(None)
 
     @_runtime.pump_only
     def on_unmount(self) -> None:
@@ -89,9 +116,9 @@ async def _wait_for(
     pytest.fail("timed out waiting for export-dialog state")
 
 
-def _dialog(app: _ExportDialogHost) -> ExportDialog:
-    """Return the mounted export dialog."""
-    return t.cast("ExportDialog", app.screen)
+def _dialog(app: _ExportDialogHost) -> ExportPane:
+    """Return the mounted export pane."""
+    return app.query_one(ExportPane)
 
 
 def _text(app: _ExportDialogHost, selector: str) -> str:
@@ -104,7 +131,7 @@ def _text(app: _ExportDialogHost, selector: str) -> str:
 def _observe_error_scrolls(
     monkeypatch: pytest.MonkeyPatch,
     app: _ExportDialogHost,
-    dialog: ExportDialog,
+    dialog: ExportPane,
 ) -> list[bool]:
     """Record whether each error scroll ran on the active dialog."""
     observations: list[bool] = []
@@ -117,7 +144,7 @@ def _observe_error_scrolls(
     ) -> None:
         """Record matching calls before forwarding to Textual."""
         if widget.id == "export-error":
-            observations.append(app.screen is dialog)
+            observations.append(dialog.is_mounted)
         original_scroll_visible(widget, *args, **kwargs)
 
     monkeypatch.setattr(Static, "scroll_visible", observed_scroll_visible)
@@ -130,11 +157,11 @@ async def _open_review(app: _ExportDialogHost, pilot: Pilot[None]) -> None:
     await _wait_for(pilot, lambda: _dialog(app).phase == "review")
 
 
-def test_export_dialog_interface_is_available_and_internal_values_are_immutable(
+def test_export_pane_interface_is_available_and_internal_values_are_immutable(
     tmp_path: pathlib.Path,
 ) -> None:
-    """The package exports the modal but not its immutable internal values."""
-    assert widgets.ExportDialog is ExportDialog
+    """The package exports the pane but not its immutable internal values."""
+    assert widgets.ExportPane is ExportPane
     assert "ExportDraft" not in widgets.__all__
     assert "ExportIntent" not in widgets.__all__
     assert not hasattr(widgets, "ExportDraft")
@@ -148,9 +175,9 @@ def test_export_dialog_interface_is_available_and_internal_values_are_immutable(
         t.cast("t.Any", intent).destination = tmp_path / "changed.md"
 
 
-def test_dialog_binding_priorities_preserve_focused_controls() -> None:
-    """Only modal gestures that must preempt an editor receive priority."""
-    bindings = {binding.key: binding for binding in ExportDialog.BINDINGS}
+def test_pane_binding_priorities_preserve_focused_controls() -> None:
+    """Only pane gestures that must preempt an editor receive priority."""
+    bindings = {binding.key: binding for binding in ExportPane.BINDINGS}
 
     assert bindings["n"].priority is False
     assert bindings["y"].priority is False
@@ -455,7 +482,7 @@ async def test_over_bound_directory_stops_before_compaction(
         def fail_compaction(_value: str, _home: pathlib.Path) -> t.NoReturn:
             raise AssertionError(unexpected)
 
-        monkeypatch.setattr(export_dialog, "compact_export_directory", fail_compaction)
+        monkeypatch.setattr(export_pane, "compact_export_directory", fail_compaction)
 
         await pilot.press("enter", "enter")
         await pilot.pause()
@@ -566,7 +593,7 @@ async def test_review_uses_compact_pi_confirmation_layout(tmp_path: pathlib.Path
     async with app.run_test(size=(60, 16)) as pilot:
         await _open_review(app, pilot)
         review = app.screen.query_one("#export-review", VerticalScroll)
-        dialog_body = app.screen.query_one("#export-dialog")
+        dialog_body = app.screen.query_one("#export-flow")
         confirm = app.screen.query_one("#export-confirm", OptionList)
         status = app.screen.query_one("#export-review-status", Static)
 
@@ -576,8 +603,8 @@ async def test_review_uses_compact_pi_confirmation_layout(tmp_path: pathlib.Path
             "  Save",
         )
         assert confirm.region.width <= 12
-        assert "-reviewing" in dialog_body.classes
-        assert dialog_body.region.height <= 12
+        assert "-reviewing" not in dialog_body.classes
+        assert dialog_body.region.height > 12
         assert status.styles.dock == "bottom"
         assert status.region.bottom == review.region.bottom
         assert _text(app, "#export-review-status") == ("↑↓ move · Enter · Esc edit")
@@ -692,7 +719,7 @@ async def test_saving_ignores_cancel_keys(tmp_path: pathlib.Path, key: str) -> N
         await pilot.press(key)
         await pilot.pause()
 
-        assert app.screen is dialog
+        assert dialog.is_mounted
         assert dialog.phase == "saving"
 
 
@@ -706,7 +733,7 @@ async def test_ctrl_c_dismisses_from_review(tmp_path: pathlib.Path) -> None:
         await pilot.press("ctrl+c")
         await _wait_for(pilot, lambda: app.dismissed is None)
 
-        assert not app.query(ExportDialog)
+        assert not app.query(ExportPane)
 
 
 @pytest.mark.parametrize("focused", ["directory", "template"])
@@ -729,7 +756,7 @@ async def test_ctrl_c_clears_focused_edit_before_dismissal(
         await pilot.press("ctrl+c")
         await pilot.pause()
 
-        assert app.screen is dialog
+        assert dialog.is_mounted
         assert dialog.phase == "edit"
         assert field.value == ""
         assert field.has_focus
@@ -738,7 +765,7 @@ async def test_ctrl_c_clears_focused_edit_before_dismissal(
         await pilot.press("ctrl+c")
         await _wait_for(pilot, lambda: app.dismissed is None)
 
-        assert not app.query(ExportDialog)
+        assert not app.query(ExportPane)
 
 
 async def test_escape_dismisses_from_edit(tmp_path: pathlib.Path) -> None:
@@ -748,7 +775,7 @@ async def test_escape_dismisses_from_edit(tmp_path: pathlib.Path) -> None:
         await pilot.press("escape")
         await _wait_for(pilot, lambda: app.dismissed is None)
 
-        assert not app.query(ExportDialog)
+        assert not app.query(ExportPane)
 
 
 async def test_export_failed_restores_edit_with_values(tmp_path: pathlib.Path) -> None:
@@ -843,17 +870,17 @@ async def test_export_succeeded_dismisses(tmp_path: pathlib.Path) -> None:
         _dialog(app).export_succeeded()
         await _wait_for(pilot, lambda: app.dismissed is None)
 
-        assert not app.query(ExportDialog)
+        assert not app.query(ExportPane)
 
 
-async def test_dialog_fits_compact_terminal_without_horizontal_scroll(
+async def test_pane_fits_compact_terminal_without_horizontal_scroll(
     tmp_path: pathlib.Path,
 ) -> None:
-    """The single modal stays inside a 60 by 16 terminal in both stages."""
+    """The pane stays inside a 60 by 16 terminal in both stages."""
     app = _ExportDialogHost(tmp_path, lambda _intent: True)
     async with app.run_test(size=(60, 16)) as pilot:
         await pilot.pause()
-        dialog_body = app.screen.query_one("#export-dialog")
+        dialog_body = app.screen.query_one("#export-flow")
         edit = app.screen.query_one("#export-edit", VerticalScroll)
         assert dialog_body.region.width <= 60
         assert dialog_body.region.height <= 16

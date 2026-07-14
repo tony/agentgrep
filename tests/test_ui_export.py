@@ -25,7 +25,7 @@ from agentgrep.ui._export_preferences import (
     save_export_preferences,
 )
 from agentgrep.ui.layouts import hud as hud_module
-from agentgrep.ui.widgets import ExportDialog, FilterCompleted
+from agentgrep.ui.widgets import ExportPane, FilterCompleted
 from agentgrep.ui.widgets.directory_popup import ExportDirectoryPicker
 from tests._agentgrep_tui_support import _build_empty_ui_app
 from tests.test_agentgrep_tui import _search_requested
@@ -83,9 +83,9 @@ async def _wait_for(predicate: t.Callable[[], bool], *, timeout: float = 3.0) ->
     pytest.fail("timed out waiting for export worker")
 
 
-def _static_text(dialog: ExportDialog, selector: str) -> str:
-    """Return the literal plain text last assigned to a dialog ``Static``."""
-    static = dialog.query_one(selector, Static)
+def _static_text(pane: ExportPane, selector: str) -> str:
+    """Return the literal plain text last assigned to a pane ``Static``."""
+    static = pane.query_one(selector, Static)
     content = getattr(static, "_Static__content", "")
     return getattr(content, "plain", str(content))
 
@@ -96,19 +96,18 @@ async def _open_export_review(
     *,
     directory: pathlib.Path,
     template: str,
-) -> tuple[ExportDialog, str]:
-    """Open the selected-record dialog and advance one draft to review."""
+) -> tuple[ExportPane, str]:
+    """Open the selected-record pane and advance one draft to review."""
     await pilot.press("e")
     await pilot.pause()
-    assert isinstance(app.screen, ExportDialog)
-    dialog = app.screen
-    dialog.query_one("#export-directory", ExportDirectoryPicker).value = str(directory)
-    template_input = dialog.query_one("#export-template", Input)
+    pane = app.screen.query_one(ExportPane)
+    pane.query_one("#export-directory", ExportDirectoryPicker).value = str(directory)
+    template_input = pane.query_one("#export-template", Input)
     template_input.value = template
     template_input.focus()
     await pilot.press("enter")
-    await _wait_for(lambda: dialog.phase == "review")
-    return dialog, _static_text(dialog, "#export-review-filename")
+    await _wait_for(lambda: pane.phase == "review")
+    return pane, _static_text(pane, "#export-review-filename")
 
 
 def _capture_notifications(
@@ -199,9 +198,8 @@ async def test_export_shortcut_confirms_selected_record_and_appears_in_keys(
         await pilot.press("e")
         await pilot.pause()
 
-        assert isinstance(app.screen, ExportDialog)
-        dialog = app.screen
-        assert hud._export_dialog is dialog
+        dialog = hud.query_one(ExportPane)
+        assert hud._export_pane is dialog
         assert list(export_dir.glob("*.md")) == []
         hud._results.highlighted = 1
         hud._current_detail_record = records[0]
@@ -331,7 +329,7 @@ async def test_confirmed_export_writes_exact_filename_then_preferences(
 
         await pilot.press("y")
         await _wait_for(destination.exists)
-        await _wait_for(lambda: app.screen is hud)
+        await _wait_for(lambda: not hud.query(ExportPane))
 
         assert order == ["artifact", "preferences"]
         assert write_calls == [
@@ -345,7 +343,7 @@ async def test_confirmed_export_writes_exact_filename_then_preferences(
             directory=str(export_dir),
             filename_template="reviewed-{title}.md",
         )
-        assert hud._export_dialog is None
+        assert hud._export_pane is None
         assert len(notes) == 1
         assert filename in str(notes[0][0][0])
 
@@ -379,7 +377,7 @@ async def test_absolute_home_preference_persists_as_tilde(
 
         await pilot.press("e")
         await pilot.pause()
-        dialog = t.cast("ExportDialog", app.screen)
+        dialog = hud.query_one(ExportPane)
         picker = dialog.query_one("#export-directory", ExportDirectoryPicker)
         assert picker.value == "~/Exports"
         await pilot.press("enter", "enter")
@@ -387,7 +385,7 @@ async def test_absolute_home_preference_persists_as_tilde(
         assert _static_text(dialog, "#export-review-directory") == "~/Exports"
 
         await pilot.press("y")
-        await _wait_for(lambda: app.screen is hud)
+        await _wait_for(lambda: not hud.query(ExportPane))
 
     assert (export_dir / "private-draft.md").is_file()
     assert load_export_preferences(home).preferences == ExportPreferences(
@@ -443,7 +441,7 @@ async def test_export_failure_restores_draft_without_saving_preferences(
             selected_dir,
         )
         assert dialog.query_one("#export-template", Input).value == "retry-{title}.md"
-        assert hud._export_dialog is dialog
+        assert hud._export_pane is dialog
         assert not (selected_dir / filename).exists()
         assert load_export_preferences(tmp_path / "home").preferences == original
         assert _static_text(dialog, "#export-error") == "export could not be written"
@@ -491,8 +489,8 @@ async def test_saving_cancel_key_retains_draft_until_write_failure(
         assert await asyncio.to_thread(started.wait, 2)
         await pilot.press(key)
         await pilot.pause()
-        active_during_save = app.screen is dialog
-        retained_during_save = hud._export_dialog is dialog
+        active_during_save = dialog.is_mounted
+        retained_during_save = hud._export_pane is dialog
         phase_during_save = dialog.phase
         release.set()
         await _wait_for(lambda: dialog.phase == "edit")
@@ -500,8 +498,8 @@ async def test_saving_cancel_key_retains_draft_until_write_failure(
         assert active_during_save
         assert retained_during_save
         assert phase_during_save == "saving"
-        assert app.screen is dialog
-        assert hud._export_dialog is dialog
+        assert dialog.is_mounted
+        assert hud._export_pane is dialog
         assert dialog.phase == "edit"
         assert dialog.query_one("#export-directory", ExportDirectoryPicker).value == directory
         assert dialog.query_one("#export-template", Input).value == template
@@ -544,13 +542,13 @@ async def test_preference_save_failure_keeps_artifact_success_and_warns(
 
         await pilot.press("y")
         await _wait_for(destination.exists)
-        await _wait_for(lambda: app.screen is hud)
+        await _wait_for(lambda: not hud.query(ExportPane))
 
         assert destination.read_text(encoding="utf-8").startswith(
             "# agentgrep record export",
         )
         assert not export_preferences_path(tmp_path / "home").exists()
-        assert hud._export_dialog is None
+        assert hud._export_pane is None
         assert len(notes) == 2
         assert any(note[1].get("title") == "Export complete" for note in notes)
         warning = next(note for note in notes if note[1].get("severity") == "warning")
@@ -612,11 +610,11 @@ async def test_dialog_confirmation_cannot_launch_duplicate_write(
 
 
 @pytest.mark.slow
-async def test_unmount_invalidates_and_clears_retained_export_dialog(
+async def test_unmount_invalidates_and_clears_retained_export_pane(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """HUD teardown drops the modal reference and invalidates completions."""
+    """HUD teardown drops the pane reference and invalidates completions."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     record = _record(tmp_path, "body", ordinal=1)
@@ -627,13 +625,13 @@ async def test_unmount_invalidates_and_clears_retained_export_dialog(
         hud._results.focus()
         await pilot.press("e")
         await pilot.pause()
-        assert isinstance(app.screen, ExportDialog)
-        assert hud._export_dialog is app.screen
+        pane = hud.query_one(ExportPane)
+        assert hud._export_pane is pane
         generation = hud._export_generation
 
         hud.on_unmount()
 
-        assert hud._export_dialog is None
+        assert hud._export_pane is None
         assert hud._export_generation == generation + 1
         assert hud._export_pending is False
 
@@ -746,12 +744,18 @@ async def test_export_commands_accept_paths_but_legacy_args_stay_searches(
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
-        requests: list[tuple[str, str]] = []
+        pane_requests: list[str] = []
+        worker_requests: list[tuple[str, str]] = []
         searches: list[object] = []
         monkeypatch.setattr(
             app.screen,
+            "open_export_pane",
+            lambda path: pane_requests.append(path) or True,
+        )
+        monkeypatch.setattr(
+            app.screen,
             "request_export",
-            lambda path, *, selection: requests.append((selection, path)),
+            lambda path, *, selection: worker_requests.append((selection, path)),
         )
         monkeypatch.setattr(app.screen, "_start_search_worker", searches.append)
 
@@ -764,10 +768,8 @@ async def test_export_commands_accept_paths_but_legacy_args_stay_searches(
         app.screen.on_search_requested(_search_requested("/help still a query"))
         await pilot.pause()
 
-        assert requests == [
-            ("records", "nested/result.md"),
-            ("thread", "thread.md"),
-        ]
+        assert pane_requests == ["nested/result.md"]
+        assert worker_requests == [("thread", "thread.md")]
         assert len(searches) == 1
 
 
@@ -805,7 +807,7 @@ async def test_record_export_writes_markdown_and_preserves_results(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Default and explicit sinks export exactly the selected record."""
+    """Bare and path-seeded panes export exactly the selected record."""
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     saved_preferences: list[ExportPreferences] = []
@@ -832,6 +834,11 @@ async def test_record_export_writes_markdown_and_preserves_results(
 
         command = f"/export {destination}" if explicit else "/export"
         app.screen.on_search_requested(_search_requested(command))
+        await pilot.pause()
+        pane = app.screen.query_one(ExportPane)
+        await pilot.press("enter", "enter")
+        await _wait_for(lambda: pane.phase == "review")
+        await pilot.press("y")
         if explicit:
             await _wait_for(destination.exists)
             exported = destination
@@ -854,7 +861,7 @@ async def test_record_export_writes_markdown_and_preserves_results(
         assert str(exported.parent) not in message
         assert "markdown" in message
         assert "1 record" in message
-        assert saved_preferences == []
+        assert len(saved_preferences) == 1
         assert not export_preferences_path(tmp_path / "home").exists()
 
 
@@ -989,7 +996,7 @@ async def test_record_export_survives_result_change_before_deferred_start(
         notes = _capture_notifications(app.screen, monkeypatch)
         scheduled = _defer_export_start(app.screen, monkeypatch)
 
-        app.screen.on_search_requested(_search_requested(f"/export {destination}"))
+        app.screen.request_export(str(destination), selection="records")
         assert len(scheduled) == 1
         _change_results(app.screen, change, replacement)
         callback, args = scheduled.pop()
@@ -1081,7 +1088,7 @@ async def test_explicit_export_refuses_unsafe_destinations(
         await _load_records(app.screen, (record,))
         notes = _capture_notifications(app.screen, monkeypatch)
 
-        app.screen.on_search_requested(_search_requested(f"/export {destination}"))
+        app.screen.request_export(str(destination), selection="records")
         await _wait_for(lambda: bool(notes))
 
         assert notes[0][1]["severity"] == "error"
@@ -1115,7 +1122,7 @@ async def test_unexpected_writer_error_is_path_free(
         await _load_records(app.screen, (record,))
         notes = _capture_notifications(app.screen, monkeypatch)
 
-        app.screen.on_search_requested(_search_requested(f"/export {secret_path}"))
+        app.screen.request_export(str(secret_path), selection="records")
         await _wait_for(lambda: bool(notes))
 
         assert notes[0][1]["severity"] == "error"
@@ -1161,9 +1168,9 @@ async def test_rapid_duplicate_export_is_blocked_not_superseded(
         await _load_records(app.screen, (record,))
         notes = _capture_notifications(app.screen, monkeypatch)
 
-        app.screen.on_search_requested(_search_requested(f"/export {destination}"))
+        app.screen.request_export(str(destination), selection="records")
         assert await asyncio.to_thread(started.wait, 2)
-        app.screen.on_search_requested(_search_requested(f"/export {destination}"))
+        app.screen.request_export(str(destination), selection="records")
         await pilot.pause()
         assert calls == 1
         assert any("progress" in str(note[0][0]).lower() for note in notes)
@@ -1211,7 +1218,7 @@ async def test_record_switch_does_not_change_accepted_export(
         await pilot.pause()
         await _load_records(app.screen, records, selected=0)
 
-        app.screen.on_search_requested(_search_requested(f"/export {destination}"))
+        app.screen.request_export(str(destination), selection="records")
         assert await asyncio.to_thread(started.wait, 2)
         app.screen._results.highlighted = 1
         app.screen._current_detail_record = records[1]
@@ -1340,7 +1347,7 @@ async def test_teardown_cancels_export_before_write_and_drops_callback(
         await _load_records(app.screen, (record,))
         notes = _capture_notifications(app.screen, monkeypatch)
 
-        app.screen.on_search_requested(_search_requested(f"/export {destination}"))
+        app.screen.request_export(str(destination), selection="records")
         assert await asyncio.to_thread(started.wait, 2)
         app.screen.on_unmount()
         release.set()
@@ -1469,7 +1476,7 @@ async def test_large_export_worker_keeps_pump_responsive(
         await _load_records(app.screen, (record,))
         app.screen._search_input.focus()
 
-        app.screen.on_search_requested(_search_requested(f"/export {destination}"))
+        app.screen.request_export(str(destination), selection="records")
         assert await asyncio.to_thread(started.wait, 2)
         await pilot.press("x")
         await pilot.pause()

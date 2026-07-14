@@ -194,13 +194,17 @@ class LayoutScreen(_SCREEN_BASE):
         return succeeded
 
     def _clear_command_input(self) -> None:
-        """Clear and refocus the shared search input after command success."""
+        """Restore and refocus the query draft after a transient command."""
         search_input = getattr(self, "_search_input", None)
         if search_input is None:
             return
-        search_input.value = ""
-        search_input.cursor_position = 0
-        search_input.focus()
+        search_input.restore_query_draft()
+
+    def clear_search_draft(self) -> None:
+        """Make an intentionally cleared query survive command cleanup."""
+        search_input = getattr(self, "_search_input", None)
+        if search_input is not None:
+            search_input.clear_query_draft()
 
     def _hide_command_completion(self) -> None:
         """Hide the shared slash-command dropdown after execution."""

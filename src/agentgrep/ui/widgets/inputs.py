@@ -20,6 +20,7 @@ from textual.geometry import Region
 from textual.suggester import Suggester
 from textual.timer import Timer
 from textual.widgets import Input
+from textual.widgets.input import Selection
 
 from agentgrep.progress import FilterRequestedPayload, SearchRequestedPayload
 from agentgrep.ui import _runtime
@@ -304,6 +305,8 @@ class SearchInput(_BoundedInput):
         highlighter: Highlighter | None = None,
         label: str | None = None,
     ) -> None:
+        self._query_draft_value = value
+        self._query_draft_selection = Selection.cursor(len(value))
         super().__init__(
             value=value[:INPUT_MAX_LENGTH],
             placeholder=placeholder,
@@ -323,6 +326,38 @@ class SearchInput(_BoundedInput):
             force=True,
             animate=False,
         )
+
+    @property
+    def query_draft(self) -> tuple[str, Selection]:
+        """Return the last non-command value and its exact selection."""
+        return self._query_draft_value, self._query_draft_selection
+
+    def clear_query_draft(self) -> None:
+        """Make the empty query the value restored after a transient command."""
+        self._query_draft_value = ""
+        self._query_draft_selection = Selection.cursor(0)
+
+    def restore_query_draft(self, *, focus: bool = True) -> None:
+        """Restore the last non-command value without synthesizing keystrokes."""
+        value, selection = self.query_draft
+        self.value = value
+        self.selection = selection
+        if focus:
+            self.focus()
+
+    def _watch_value(self, value: str) -> None:
+        """Remember ordinary query edits while slash invocations stay transient."""
+        super()._watch_value(value)
+        if not value.lstrip().startswith("/"):
+            self._query_draft_value = value
+            self._query_draft_selection = self.selection
+
+    def _watch_selection(self, selection: Selection) -> None:
+        """Retain the exact query cursor or selection independently of edits."""
+        super()._watch_selection(selection)
+        if not self.value.lstrip().startswith("/"):
+            self._query_draft_value = self.value
+            self._query_draft_selection = selection
 
     def _sync_submit_hint(self, value: str) -> None:
         """Show the submit affordance only while a nonblank query is ready."""

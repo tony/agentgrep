@@ -55,6 +55,7 @@ def _run_clear(app: t.Any, args: str) -> bool:
     del args
     app.control.request_answer_now()
     app.reset_view()
+    app.clear_search_draft()
     return True
 
 
@@ -103,8 +104,8 @@ def _run_minimize(app: t.Any, args: str) -> bool:
 
 
 def _run_export(app: t.Any, args: str) -> bool:
-    """Export the selected record to a private or explicit destination."""
-    return bool(app.request_export(args, selection="records"))
+    """Review the selected record in the detail-pane export flow."""
+    return bool(app.open_export_pane(args))
 
 
 def _run_export_thread(app: t.Any, args: str) -> bool:
