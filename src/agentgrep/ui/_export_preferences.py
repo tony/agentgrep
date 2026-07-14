@@ -13,7 +13,7 @@ import json
 import ntpath
 import os
 import pathlib
-import tempfile
+import secrets
 import typing as t
 import unicodedata
 
@@ -27,6 +27,8 @@ _PREFERENCES_SAVE_ERROR = "Export preferences could not be saved"
 _DIRECTORY_ERROR = "Export directory is invalid"
 _FILENAME_ERROR = "Export filename is invalid"
 _SCHEMA_KEYS = frozenset({"version", "directory", "filename_template"})
+_CONFIG_DIRECTORY_NAME = "agentgrep"
+_PREFERENCES_FILENAME = "tui-export.json"
 
 __all__ = [
     "DEFAULT_FILENAME_TEMPLATE",
@@ -300,6 +302,69 @@ def _write_all(file_descriptor: int, payload: bytes) -> None:
         offset += written
 
 
+def _close_quietly(file_descriptor: int) -> None:
+    """Close a cleanup descriptor without replacing the primary failure."""
+    with contextlib.suppress(OSError):
+        os.close(file_descriptor)
+
+
+def _unlink_quietly(directory_fd: int, name: str) -> None:
+    """Remove a descriptor-relative temporary file when it still exists."""
+    with contextlib.suppress(OSError):
+        os.unlink(name, dir_fd=directory_fd)
+
+
+def _directory_flags(*, no_follow: bool) -> int:
+    """Return supported directory-open flags for the requested boundary."""
+    directory = getattr(os, "O_DIRECTORY", 0)
+    reject_symlink = getattr(os, "O_NOFOLLOW", 0)
+    if not directory or (no_follow and not reject_symlink):
+        raise OSError
+    flags = os.O_RDONLY | directory | getattr(os, "O_CLOEXEC", 0)
+    return flags | reject_symlink if no_follow else flags
+
+
+def _open_config_directory(root: pathlib.Path) -> int:
+    """Open the app-owned config child without following its final name."""
+    root_fd = os.open(root, _directory_flags(no_follow=False))
+    try:
+        with contextlib.suppress(FileExistsError):
+            os.mkdir(_CONFIG_DIRECTORY_NAME, 0o700, dir_fd=root_fd)
+        config_fd = os.open(
+            _CONFIG_DIRECTORY_NAME,
+            _directory_flags(no_follow=True),
+            dir_fd=root_fd,
+        )
+    finally:
+        _close_quietly(root_fd)
+    try:
+        os.fchmod(config_fd, 0o700)
+    except OSError:
+        _close_quietly(config_fd)
+        raise
+    return config_fd
+
+
+def _new_temporary(directory_fd: int) -> tuple[str, int]:
+    """Create one private randomized file relative to a secured directory."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    for _attempt in range(128):
+        name = f".tui-export-{secrets.token_hex(12)}.tmp"
+        try:
+            file_descriptor = os.open(name, flags, 0o600, dir_fd=directory_fd)
+        except FileExistsError:
+            continue
+        try:
+            os.fchmod(file_descriptor, 0o600)
+        except OSError:
+            _close_quietly(file_descriptor)
+            _unlink_quietly(directory_fd, name)
+            raise
+        return name, file_descriptor
+    raise OSError
+
+
 def _serialize_preferences(preferences: ExportPreferences) -> bytes:
     """Validate and serialize one exact-schema preference payload."""
     if not isinstance(preferences.directory, str) or not isinstance(
@@ -345,40 +410,29 @@ def save_export_preferences(home: pathlib.Path, preferences: ExportPreferences) 
     try:
         payload = _serialize_preferences(preferences)
         destination = export_preferences_path(home)
-        config_directory = destination.parent
-        config_directory.mkdir(mode=0o700, exist_ok=True)
-        config_directory.chmod(0o700)
-        file_descriptor, temporary_name = tempfile.mkstemp(
-            dir=config_directory,
-            prefix=".tui-export-",
-            suffix=".tmp",
-        )
+        directory_fd = _open_config_directory(destination.parent.parent)
     except ExportPreferencesError, OSError, UnicodeError, ValueError, TypeError:
         raise ExportPreferencesError(_PREFERENCES_SAVE_ERROR) from None
 
-    temporary = pathlib.Path(temporary_name)
-    installed = False
+    temporary: str | None = None
     try:
+        temporary, file_descriptor = _new_temporary(directory_fd)
         try:
-            os.fchmod(file_descriptor, 0o600)
             _write_all(file_descriptor, payload)
             os.fsync(file_descriptor)
         finally:
-            with contextlib.suppress(OSError):
-                os.close(file_descriptor)
-        os.replace(temporary, destination)  # noqa: PTH105 -- required atomic primitive
-        installed = True
-        directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-        directory_flags |= getattr(os, "O_CLOEXEC", 0)
-        directory_fd = os.open(config_directory, directory_flags)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            with contextlib.suppress(OSError):
-                os.close(directory_fd)
+            _close_quietly(file_descriptor)
+        os.replace(
+            temporary,
+            _PREFERENCES_FILENAME,
+            src_dir_fd=directory_fd,
+            dst_dir_fd=directory_fd,
+        )
+        temporary = None
+        os.fsync(directory_fd)
     except OSError:
         raise ExportPreferencesError(_PREFERENCES_SAVE_ERROR) from None
     finally:
-        if not installed:
-            with contextlib.suppress(OSError):
-                temporary.unlink()
+        if temporary is not None:
+            _unlink_quietly(directory_fd, temporary)
+        _close_quietly(directory_fd)
