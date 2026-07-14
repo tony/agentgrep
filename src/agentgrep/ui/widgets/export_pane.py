@@ -243,6 +243,7 @@ class ExportPane(Vertical):
             directory=compact_export_directory(preferences.directory, home),
         )
         self._phase: ExportPhase = "edit"
+        self._ready = False
         self._validation_generation = 0
         self._error_reveal_generation = 0
         self._pending_error_reveal: tuple[int, str] | None = None
@@ -258,6 +259,11 @@ class ExportPane(Vertical):
     def selected_record(self) -> SearchRecord:
         """Return the exact record frozen when this pane was created."""
         return self._selected_record
+
+    @property
+    def ready(self) -> bool:
+        """Return whether composed children are ready for routed actions."""
+        return self._ready
 
     @_runtime.pump_only
     def compose(self) -> ComposeResult:
@@ -299,10 +305,12 @@ class ExportPane(Vertical):
         """Render the frozen preview and focus the directory editor."""
         self._refresh_preview()
         self.query_one("#export-directory", ExportDirectoryPicker).focus_input()
+        self._ready = True
 
     @_runtime.pump_only
     def on_unmount(self) -> None:
         """Invalidate and cancel validator work before teardown."""
+        self._ready = False
         self._invalidate_error_reveal()
         self._validation_generation += 1
         self.workers.cancel_group(self, _VALIDATION_WORKER_GROUP)
@@ -346,6 +354,8 @@ class ExportPane(Vertical):
     @_runtime.pump_only
     def action_escape(self) -> None:
         """Return from review or cancel before a durable save begins."""
+        if not self._ready:
+            return
         if self._phase == "saving":
             return
         if self._phase == "review":
@@ -356,6 +366,8 @@ class ExportPane(Vertical):
     @_runtime.pump_only
     def action_cancel(self) -> None:
         """Clear the focused edit once, or dismiss before durable saving."""
+        if not self._ready:
+            return
         if self._phase == "saving":
             return
         if self._phase == "edit":
@@ -374,7 +386,7 @@ class ExportPane(Vertical):
     @_runtime.pump_only
     def action_editor_previous(self) -> None:
         """Move to the previous editor without wrapping at the first field."""
-        if self._phase != "edit":
+        if not self._ready or self._phase != "edit":
             return
         template = self.query_one("#export-template", Input)
         if template.has_focus:
@@ -383,7 +395,7 @@ class ExportPane(Vertical):
     @_runtime.pump_only
     def action_editor_next(self) -> None:
         """Move to the next editor without wrapping at the final field."""
-        if self._phase != "edit":
+        if not self._ready or self._phase != "edit":
             return
         directory = self.query_one(
             "#export-directory",
@@ -395,6 +407,8 @@ class ExportPane(Vertical):
     @_runtime.pump_only
     def action_editor_tab(self) -> None:
         """Keep forward traversal inside the active export state."""
+        if not self._ready:
+            return
         if self._phase == "review":
             self.query_one("#export-confirm", OptionList).focus()
             return
@@ -412,6 +426,8 @@ class ExportPane(Vertical):
     @_runtime.pump_only
     def action_editor_backtab(self) -> None:
         """Keep reverse traversal inside the active export state."""
+        if not self._ready:
+            return
         if self._phase == "review":
             self.query_one("#export-confirm", OptionList).focus()
             return
@@ -427,13 +443,13 @@ class ExportPane(Vertical):
     @_runtime.pump_only
     def action_review_no(self) -> None:
         """Return to the retained draft only while reviewing."""
-        if self._phase == "review":
+        if self._ready and self._phase == "review":
             self._show_edit()
 
     @_runtime.pump_only
     def action_review_save(self) -> None:
         """Delegate the reviewed intent only while reviewing."""
-        if self._phase == "review":
+        if self._ready and self._phase == "review":
             self._confirm()
 
     @_runtime.pump_only
