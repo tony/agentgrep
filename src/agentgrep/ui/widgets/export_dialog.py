@@ -453,12 +453,21 @@ class ExportDialog(ModalScreen[None]):
             Content("Tab to move · Enter to review · Ctrl-C to cancel"),
         )
         self._refresh_preview()
-        if error is not None:
-            self._update_error(error)
         if self._edit_focus == "directory":
             picker.focus_input()
         else:
             template.focus()
+        if error is not None:
+            self._update_error(error)
+            self.call_after_refresh(self._reveal_error)
+
+    @_runtime.pump_only
+    def _reveal_error(self) -> None:
+        """Reveal retained feedback after focus and stage layout settle."""
+        self.query_one("#export-error", Static).scroll_visible(
+            animate=False,
+            immediate=True,
+        )
 
     @_runtime.pump_only
     def _show_review(self, intent: ExportIntent) -> None:

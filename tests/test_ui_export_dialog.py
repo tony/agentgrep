@@ -571,6 +571,30 @@ async def test_export_failed_restores_edit_with_values(tmp_path: pathlib.Path) -
         assert app.screen.query_one("#export-template", Input).has_focus
 
 
+async def test_export_failed_keeps_error_visible_in_small_terminal(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A retained asynchronous failure stays visible with template focus."""
+    app = _ExportDialogHost(tmp_path, lambda _intent: True)
+    async with app.run_test(size=(30, 10)) as pilot:
+        await _open_review(app, pilot)
+        await pilot.press("y")
+        dialog = _dialog(app)
+        dialog.export_failed("Export failed inline")
+        template = dialog.query_one("#export-template", Input)
+        error = dialog.query_one("#export-error", Static)
+        await _wait_for(
+            pilot,
+            lambda: template.has_focus and error.region.bottom <= 10,
+        )
+
+        assert dialog.phase == "edit"
+        assert template.has_focus
+        assert _text(app, "#export-error") == "Export failed inline"
+        assert error.region.y >= 0
+        assert error.region.bottom <= 10
+
+
 async def test_export_succeeded_dismisses(tmp_path: pathlib.Path) -> None:
     """An asynchronous write success closes the retained saving modal."""
     app = _ExportDialogHost(tmp_path, lambda _intent: True)
