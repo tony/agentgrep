@@ -8,6 +8,7 @@ import datetime
 import functools
 import os
 import pathlib
+import stat
 import typing as t
 
 from textual.app import ComposeResult
@@ -73,6 +74,21 @@ def _active_worker_cancelled() -> bool:
         return False
 
 
+def _missing_private_directory_is_reviewable(path: pathlib.Path) -> bool:
+    """Check a missing private path's existing prefix without mutation."""
+    absolute = pathlib.Path(os.path.abspath(os.fspath(path)))  # noqa: PTH100
+    current = pathlib.Path(absolute.anchor)
+    for component in absolute.parts[1:]:
+        current /= component
+        try:
+            status = current.lstat()
+        except FileNotFoundError:
+            return os.access(current.parent, os.W_OK | os.X_OK)
+        if stat.S_ISLNK(status.st_mode) or not stat.S_ISDIR(status.st_mode):
+            return False
+    return False
+
+
 def _validate_export_draft(
     draft: ExportDraft,
     *,
@@ -81,8 +97,6 @@ def _validate_export_draft(
     home: pathlib.Path,
 ) -> _ValidationResult:
     """Validate one immutable draft away from the Textual pump."""
-    from agentgrep.record_export import ExportError, _ensure_private_directory
-
     try:
         filename = render_export_filename(
             draft.filename_template,
@@ -94,17 +108,18 @@ def _validate_export_draft(
     except ExportPreferencesError:
         return _ValidationResult(error=_DIRECTORY_ERROR)
 
-    if directory == default_export_directory(home):
-        try:
-            _ensure_private_directory(directory)
-        except ExportError:
-            return _ValidationResult(error=_DIRECTORY_UNAVAILABLE_ERROR)
-
     try:
-        if directory.is_symlink() or not directory.is_dir():
-            return _ValidationResult(error=_DIRECTORY_UNAVAILABLE_ERROR)
-        if not os.access(directory, os.W_OK | os.X_OK):
-            return _ValidationResult(error=_DIRECTORY_ACCESS_ERROR)
+        missing_default = directory == default_export_directory(home) and not os.path.lexists(
+            directory,
+        )
+        if missing_default:
+            if not _missing_private_directory_is_reviewable(directory):
+                return _ValidationResult(error=_DIRECTORY_UNAVAILABLE_ERROR)
+        else:
+            if directory.is_symlink() or not directory.is_dir():
+                return _ValidationResult(error=_DIRECTORY_UNAVAILABLE_ERROR)
+            if not os.access(directory, os.W_OK | os.X_OK):
+                return _ValidationResult(error=_DIRECTORY_ACCESS_ERROR)
         destination = directory / filename
         if os.path.lexists(destination):
             return _ValidationResult(error=_DESTINATION_EXISTS_ERROR)
