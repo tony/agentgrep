@@ -399,7 +399,8 @@ async def test_export_failure_restores_draft_without_saving_preferences(
         assert hud._export_dialog is dialog
         assert not (selected_dir / filename).exists()
         assert load_export_preferences(tmp_path / "home").preferences == original
-        assert notes[0][1]["severity"] == "error"
+        assert _static_text(dialog, "#export-error") == "export could not be written"
+        assert notes == []
 
 
 @pytest.mark.parametrize("key", ["escape", "ctrl+c"])
@@ -447,7 +448,7 @@ async def test_saving_cancel_key_retains_draft_until_write_failure(
         retained_during_save = hud._export_dialog is dialog
         phase_during_save = dialog.phase
         release.set()
-        await _wait_for(lambda: bool(notes))
+        await _wait_for(lambda: dialog.phase == "edit")
 
         assert active_during_save
         assert retained_during_save
@@ -457,6 +458,8 @@ async def test_saving_cancel_key_retains_draft_until_write_failure(
         assert dialog.phase == "edit"
         assert dialog.query_one("#export-directory", ExportDirectoryPicker).value == directory
         assert dialog.query_one("#export-template", Input).value == template
+        assert _static_text(dialog, "#export-error") == "export could not be written"
+        assert notes == []
 
 
 @pytest.mark.slow

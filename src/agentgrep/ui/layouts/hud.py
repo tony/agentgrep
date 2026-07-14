@@ -1478,8 +1478,10 @@ class HudLayout(LayoutScreen):
         if not self.is_mounted:
             return
         if event.error is not None:
-            if self._export_dialog is not None:
-                self._export_dialog.export_failed(event.error)
+            dialog = self._export_dialog
+            if dialog is not None and dialog.is_mounted and dialog.phase == "saving":
+                dialog.export_failed(event.error)
+                return
             self.notify(
                 event.error,
                 title="Export failed",
