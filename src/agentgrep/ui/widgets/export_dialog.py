@@ -38,6 +38,7 @@ _DIRECTORY_ERROR = "Export directory is invalid"
 _DIRECTORY_UNAVAILABLE_ERROR = "Export directory is unavailable"
 _DIRECTORY_ACCESS_ERROR = "Export directory is not writable"
 _DESTINATION_EXISTS_ERROR = "Export destination already exists"
+_REVIEW_HINT = "↑↓ move · Enter · Esc edit"
 
 ExportPhase = t.Literal["edit", "validating", "review", "saving"]
 
@@ -144,6 +145,12 @@ class ExportDialog(ModalScreen[None]):
     BINDINGS: t.ClassVar[list[Binding]] = [
         Binding("escape", "escape", "Back / Cancel", priority=True, show=False),
         Binding("ctrl+c", "cancel", "Cancel", priority=True, show=False),
+        Binding("ctrl+h", "editor_previous", "Previous field", priority=True, show=False),
+        Binding("ctrl+j", "editor_next", "Next field", priority=True, show=False),
+        Binding("ctrl+k", "editor_previous", "Previous field", priority=True, show=False),
+        Binding("ctrl+l", "editor_next", "Next field", priority=True, show=False),
+        Binding("up", "editor_previous", "Previous field", show=False),
+        Binding("down", "editor_next", "Next field", show=False),
         Binding("n", "review_no", "No", show=False),
         Binding("y", "review_save", "Save", show=False),
     ]
@@ -181,11 +188,26 @@ class ExportDialog(ModalScreen[None]):
         width: 100%;
         height: 1;
     }
+    #export-edit-footer {
+        dock: bottom;
+    }
+    #export-review-title {
+        width: 100%;
+        height: 1;
+    }
+    #export-review-status {
+        dock: bottom;
+    }
     #export-review {
         display: none;
     }
+    #export-dialog.-reviewing,
+    #export-dialog.-reviewing #export-review {
+        height: auto;
+        max-height: 12;
+    }
     #export-confirm {
-        width: 100%;
+        width: 12;
         height: 2;
     }
     """
@@ -247,11 +269,12 @@ class ExportDialog(ModalScreen[None]):
                     markup=False,
                 )
             with VerticalScroll(id="export-review"):
+                yield Static("Save this export?", id="export-review-title", markup=False)
                 yield Static("Directory", classes="export-label")
                 yield Static("", id="export-review-directory", markup=False)
                 yield Static("Filename", classes="export-label")
                 yield Static("", id="export-review-filename", markup=False)
-                yield OptionList("No", "Save", id="export-confirm", markup=False, compact=True)
+                yield OptionList("→ No", "  Save", id="export-confirm", markup=False, compact=True)
                 yield Static("", id="export-review-status", markup=False)
 
     @_runtime.pump_only
@@ -298,6 +321,12 @@ class ExportDialog(ModalScreen[None]):
             self._confirm()
 
     @_runtime.pump_only
+    def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
+        """Move the quiet review marker with the active confirmation row."""
+        if event.option_list.id == "export-confirm":
+            self._update_review_choices(event.option_index)
+
+    @_runtime.pump_only
     def action_escape(self) -> None:
         """Return from review or cancel before a durable save begins."""
         if self._phase == "saving":
@@ -324,6 +353,27 @@ class ExportDialog(ModalScreen[None]):
                 editor.focus()
                 return
         self._dismiss_dialog()
+
+    @_runtime.pump_only
+    def action_editor_previous(self) -> None:
+        """Move to the previous editor without wrapping at the first field."""
+        if self._phase != "edit":
+            return
+        template = self.query_one("#export-template", Input)
+        if template.has_focus:
+            self.query_one("#export-directory", ExportDirectoryPicker).focus_input()
+
+    @_runtime.pump_only
+    def action_editor_next(self) -> None:
+        """Move to the next editor without wrapping at the final field."""
+        if self._phase != "edit":
+            return
+        directory = self.query_one(
+            "#export-directory",
+            ExportDirectoryPicker,
+        ).query_one(Input)
+        if directory.has_focus:
+            self.query_one("#export-template", Input).focus()
 
     @_runtime.pump_only
     def action_review_no(self) -> None:
@@ -477,6 +527,7 @@ class ExportDialog(ModalScreen[None]):
         """Restore the retained edit stage and its prior focus."""
         self._phase = "edit"
         self._intent = None
+        self.query_one("#export-dialog", Vertical).remove_class("-reviewing")
         edit = self.query_one("#export-edit", VerticalScroll)
         review = self.query_one("#export-review", VerticalScroll)
         edit.display = True
@@ -522,6 +573,7 @@ class ExportDialog(ModalScreen[None]):
         """Show the literal directory and exact basename with No selected."""
         self._invalidate_error_reveal()
         self._phase = "review"
+        self.query_one("#export-dialog", Vertical).add_class("-reviewing")
         self.query_one("#export-edit", VerticalScroll).display = False
         self.query_one("#export-review", VerticalScroll).display = True
         self.query_one("#export-review-directory", Static).update(
@@ -531,11 +583,21 @@ class ExportDialog(ModalScreen[None]):
             Content(intent.destination.name),
         )
         status = self.query_one("#export-review-status", Static)
-        status.update(Content(""))
+        status.update(Content(_REVIEW_HINT))
         confirm = self.query_one("#export-confirm", OptionList)
         confirm.disabled = False
         confirm.highlighted = 0
+        self._update_review_choices(0)
         confirm.focus()
+
+    @_runtime.pump_only
+    def _update_review_choices(self, highlighted: int) -> None:
+        """Render one Pi-like arrow without changing option identity."""
+        confirm = self.query_one("#export-confirm", OptionList)
+        for index, label in enumerate(("No", "Save")):
+            marker = "→" if index == highlighted else " "
+            confirm.replace_option_prompt_at_index(index, f"{marker} {label}")
+        confirm.refresh()
 
     @_runtime.pump_only
     def _confirm(self) -> None:

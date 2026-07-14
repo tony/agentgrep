@@ -460,8 +460,10 @@ async def test_up_down_wrap_and_right_accepts_only_at_end(tmp_path: pathlib.Path
 
         await pilot.press("up")
         assert popup.highlighted == 1
+        assert field.has_focus
         await pilot.press("down")
         assert popup.highlighted == 0
+        assert field.has_focus
 
         original = picker.value
         field.cursor_position = len(original) - 1

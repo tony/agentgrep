@@ -148,13 +148,15 @@ def test_export_dialog_interface_is_available_and_internal_values_are_immutable(
         t.cast("t.Any", intent).destination = tmp_path / "changed.md"
 
 
-def test_review_letters_are_non_priority_bindings() -> None:
-    """Focused editors receive ``n`` and ``y`` before review shortcuts."""
+def test_dialog_binding_priorities_preserve_focused_controls() -> None:
+    """Only modal gestures that must preempt an editor receive priority."""
     bindings = {binding.key: binding for binding in ExportDialog.BINDINGS}
 
     assert bindings["n"].priority is False
     assert bindings["y"].priority is False
     assert bindings["ctrl+c"].priority is True
+    assert all(bindings[key].priority is True for key in ("ctrl+h", "ctrl+j", "ctrl+k", "ctrl+l"))
+    assert all(bindings[key].priority is False for key in ("up", "down"))
 
 
 async def test_preview_is_frozen_literal_and_uses_no_filesystem(
@@ -198,6 +200,66 @@ async def test_enter_moves_directory_to_template(tmp_path: pathlib.Path) -> None
 
         assert app.screen.query_one("#export-template", Input).has_focus
         assert _dialog(app).phase == "edit"
+
+
+@pytest.mark.parametrize(
+    ("key", "start", "destination"),
+    [
+        ("ctrl+h", "template", "directory"),
+        ("ctrl+k", "template", "directory"),
+        ("ctrl+j", "directory", "template"),
+        ("ctrl+l", "directory", "template"),
+        ("up", "template", "directory"),
+        ("down", "directory", "template"),
+    ],
+)
+async def test_directional_keys_traverse_and_clamp_without_editing(
+    key: str,
+    start: str,
+    destination: str,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Directional gestures move once, preserve values, and stop at the edge."""
+    app = _ExportDialogHost(tmp_path, lambda _intent: True)
+    async with app.run_test(size=(60, 16)) as pilot:
+        directory = app.screen.query_one("#export-directory", ExportDirectoryPicker).query_one(
+            Input,
+        )
+        template = app.screen.query_one("#export-template", Input)
+        fields = {"directory": directory, "template": template}
+        values = {name: field.value for name, field in fields.items()}
+        fields[start].focus()
+        await pilot.pause()
+
+        await pilot.press(key)
+
+        assert fields[destination].has_focus
+        assert {name: field.value for name, field in fields.items()} == values
+        assert _dialog(app).phase == "edit"
+
+        await pilot.press(key)
+
+        assert fields[destination].has_focus
+        assert {name: field.value for name, field in fields.items()} == values
+        assert _dialog(app).phase == "edit"
+
+
+async def test_left_right_remain_native_template_cursor_keys(tmp_path: pathlib.Path) -> None:
+    """Bare horizontal arrows edit the cursor instead of traversing fields."""
+    app = _ExportDialogHost(tmp_path, lambda _intent: True)
+    async with app.run_test(size=(60, 16)) as pilot:
+        template = app.screen.query_one("#export-template", Input)
+        template.value = "abcd"
+        template.focus()
+        await pilot.pause()
+        template.cursor_position = 2
+
+        await pilot.press("left")
+        assert template.has_focus
+        assert template.cursor_position == 1
+        await pilot.press("right")
+        assert template.has_focus
+        assert template.cursor_position == 2
 
 
 async def test_directory_input_receives_n_and_y(tmp_path: pathlib.Path) -> None:
@@ -498,6 +560,51 @@ async def test_review_shows_directory_and_filename_literally(tmp_path: pathlib.P
         assert confirm.highlighted == 0
 
 
+async def test_review_uses_compact_pi_confirmation_layout(tmp_path: pathlib.Path) -> None:
+    """Review presents one quiet question, compact choices, and a fixed hint."""
+    app = _ExportDialogHost(tmp_path, lambda _intent: True)
+    async with app.run_test(size=(60, 16)) as pilot:
+        await _open_review(app, pilot)
+        review = app.screen.query_one("#export-review", VerticalScroll)
+        dialog_body = app.screen.query_one("#export-dialog")
+        confirm = app.screen.query_one("#export-confirm", OptionList)
+        status = app.screen.query_one("#export-review-status", Static)
+
+        assert _text(app, "#export-review-title") == "Save this export?"
+        assert tuple(str(option.prompt) for option in confirm.options) == (
+            "→ No",
+            "  Save",
+        )
+        assert confirm.region.width <= 12
+        assert "-reviewing" in dialog_body.classes
+        assert dialog_body.region.height <= 12
+        assert status.styles.dock == "bottom"
+        assert status.region.bottom == review.region.bottom
+        assert _text(app, "#export-review-status") == ("↑↓ move · Enter · Esc edit")
+
+
+async def test_review_up_down_still_select_confirmation_rows(tmp_path: pathlib.Path) -> None:
+    """Edit-stage traversal leaves review-list arrows unchanged."""
+    app = _ExportDialogHost(tmp_path, lambda _intent: True)
+    async with app.run_test(size=(60, 16)) as pilot:
+        await _open_review(app, pilot)
+        confirm = app.screen.query_one("#export-confirm", OptionList)
+
+        await pilot.press("down")
+        assert confirm.highlighted == 1
+        assert tuple(str(option.prompt) for option in confirm.options) == (
+            "  No",
+            "→ Save",
+        )
+        await pilot.press("up")
+        assert confirm.highlighted == 0
+        assert tuple(str(option.prompt) for option in confirm.options) == (
+            "→ No",
+            "  Save",
+        )
+        assert _dialog(app).phase == "review"
+
+
 async def test_no_returns_to_editor_without_losing_values(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -557,6 +664,11 @@ async def test_y_invokes_once_and_enters_saving(tmp_path: pathlib.Path) -> None:
         confirm = app.screen.query_one("#export-confirm", OptionList)
         assert confirm.highlighted == 1
         assert confirm.disabled is True
+        assert tuple(str(option.prompt) for option in confirm.options) == (
+            "  No",
+            "→ Save",
+        )
+        assert _text(app, "#export-review-status") == "Saving…"
         assert len(seen) == 1
         assert seen[0] == ExportIntent(
             destination=(tmp_path / "2026-07-14 09-08-07 - machine-readable-title.md"),
@@ -753,6 +865,25 @@ async def test_dialog_fits_compact_terminal_without_horizontal_scroll(
         assert review.show_vertical_scrollbar is False
 
 
+@pytest.mark.parametrize("size", [(60, 16), (30, 10)])
+async def test_edit_footer_is_docked_without_copy_change(
+    tmp_path: pathlib.Path,
+    size: tuple[int, int],
+) -> None:
+    """The established edit hint stays pinned to the viewport bottom."""
+    app = _ExportDialogHost(tmp_path, lambda _intent: True)
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        edit = app.screen.query_one("#export-edit", VerticalScroll)
+        footer = app.screen.query_one("#export-edit-footer", Static)
+
+        assert footer.styles.dock == "bottom"
+        assert footer.region.bottom == edit.region.bottom
+        assert _text(app, "#export-edit-footer") == (
+            "Tab to move · Enter to review · Ctrl-C to cancel"
+        )
+
+
 @pytest.mark.parametrize("size", [(40, 12), (30, 10)])
 async def test_invalid_template_error_is_visible_in_small_terminal(
     size: tuple[int, int],
@@ -767,10 +898,13 @@ async def test_invalid_template_error_is_visible_in_small_terminal(
         await pilot.press("enter")
         await pilot.pause()
         error = app.screen.query_one("#export-error", Static)
+        edit = app.screen.query_one("#export-edit", VerticalScroll)
+        footer = app.screen.query_one("#export-edit-footer", Static)
 
         assert _text(app, "#export-error") == "Export filename is invalid"
         assert error.region.y >= 0
-        assert error.region.bottom <= size[1]
+        assert error.region.bottom <= footer.region.y
+        assert footer.region.bottom == edit.region.bottom
         assert template.has_focus
 
 
@@ -784,10 +918,13 @@ async def test_review_and_edit_are_reachable_in_small_terminal(
     async with app.run_test(size=size) as pilot:
         await _open_review(app, pilot)
         confirm = app.screen.query_one("#export-confirm", OptionList)
+        review = app.screen.query_one("#export-review", VerticalScroll)
+        status = app.screen.query_one("#export-review-status", Static)
 
         assert confirm.has_focus
         assert confirm.region.y >= 0
-        assert confirm.region.bottom <= size[1]
+        assert confirm.region.bottom <= status.region.y
+        assert status.region.bottom == review.region.bottom
 
         await pilot.press("n")
         template = app.screen.query_one("#export-template", Input)
