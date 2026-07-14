@@ -392,3 +392,33 @@ def test_save_export_preferences_never_chmods_selected_directory(
     )
 
     assert stat.S_IMODE(selected.stat().st_mode) == 0o750
+
+
+def test_save_export_preferences_rejects_app_directory_symlink(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A config-child symlink cannot redirect writes or permission changes."""
+    config_home = tmp_path / "config"
+    config_home.mkdir()
+    selected = tmp_path / "Selected"
+    selected.mkdir(mode=0o750)
+    selected.chmod(0o750)
+    sentinel = selected / "keep.txt"
+    sentinel.write_text("keep", encoding="utf-8")
+    (config_home / "agentgrep").symlink_to(selected, target_is_directory=True)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+
+    with pytest.raises(
+        ExportPreferencesError,
+        match=r"^Export preferences could not be saved$",
+    ) as raised:
+        save_export_preferences(
+            tmp_path / "home",
+            ExportPreferences(directory=str(selected)),
+        )
+
+    assert stat.S_IMODE(selected.stat().st_mode) == 0o750
+    assert sentinel.read_text(encoding="utf-8") == "keep"
+    assert {entry.name for entry in selected.iterdir()} == {"keep.txt"}
+    assert str(selected) not in str(raised.value)
