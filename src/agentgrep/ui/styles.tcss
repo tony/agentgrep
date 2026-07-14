@@ -417,16 +417,22 @@ Screen {
 #body.-zoom-detail > #results-column {
     display: none;
 }
-/* A transient detail action owns the body without rewriting the user's
-   responsive, collapsed, or logical zoom state. Removing this one class
+/* A transient detail action replaces only the right reader on wide terminals.
+   In the stacked mobile layout it owns the body. Neither presentation rewrites
+   the user's collapsed or logical zoom state, so removing this one class
    reveals the exact reader layout that was already underneath it. */
 #body.-export-pane > #results-column {
-    display: none;
+    display: block;
+    width: 1fr;
+    height: 1fr;
 }
 #body.-export-pane > #detail-column {
     display: block;
     width: 1fr;
     height: 1fr;
+}
+#body.-stacked.-export-pane > #results-column {
+    display: none;
 }
 #detail-column.-exporting > #detail-header,
 #detail-column.-exporting > #detail-scroll,
