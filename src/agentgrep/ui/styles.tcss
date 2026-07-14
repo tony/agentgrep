@@ -693,6 +693,10 @@ ExportDialog {
     color: $accent;
     text-style: bold;
 }
+#export-review-title {
+    color: $text;
+    text-style: bold;
+}
 #export-review-directory {
     color: $text;
 }
@@ -710,9 +714,12 @@ ExportDialog {
     background-tint: $foreground 0%;
     padding: 0;
 }
+#export-confirm > .option-list--option {
+    color: $ag-muted;
+}
 #export-confirm > .option-list--option-highlighted,
 #export-confirm:focus > .option-list--option-highlighted {
-    color: auto;
-    background: $ag-state-selected-bg;
-    text-style: none;
+    color: $accent;
+    background: transparent;
+    text-style: bold;
 }
