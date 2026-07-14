@@ -640,3 +640,43 @@ HistoryRecall, HistoryRecall:ansi {
 #history-footer {
     color: $ag-dim;
 }
+
+/* Selected-record export: one quiet edit/review flow. The exact basename is
+   the only signature treatment; labels and state copy stay subordinate. */
+ExportDialog {
+    background: transparent;
+}
+#export-dialog {
+    background: ansi_default;
+}
+.export-label {
+    color: $ag-muted;
+}
+#export-preview,
+#export-review-filename {
+    color: $accent;
+    text-style: bold;
+}
+#export-review-directory {
+    color: $text;
+}
+#export-error {
+    color: $error;
+}
+#export-edit-footer,
+#export-review-status {
+    color: $ag-dim;
+}
+#export-confirm,
+#export-confirm:focus {
+    border: none;
+    background: transparent;
+    background-tint: $foreground 0%;
+    padding: 0;
+}
+#export-confirm > .option-list--option-highlighted,
+#export-confirm:focus > .option-list--option-highlighted {
+    color: auto;
+    background: $ag-state-selected-bg;
+    text-style: none;
+}

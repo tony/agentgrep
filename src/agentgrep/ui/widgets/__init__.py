@@ -18,6 +18,7 @@ from agentgrep.ui.widgets.directory_popup import (
     ExportDirectoryPicker,
 )
 from agentgrep.ui.widgets.dropdown import CompletionDropdown
+from agentgrep.ui.widgets.export_dialog import ExportDialog, ExportDraft, ExportIntent
 from agentgrep.ui.widgets.history import HistoryRecall
 from agentgrep.ui.widgets.inputs import DetailFindInput, FilterInput, SearchInput
 from agentgrep.ui.widgets.messages import (
@@ -55,7 +56,10 @@ __all__ = [
     "DetailScrollChanged",
     "DirectoryCandidate",
     "DirectoryCompletionPopup",
+    "ExportDialog",
     "ExportDirectoryPicker",
+    "ExportDraft",
+    "ExportIntent",
     "FilterCompleted",
     "FilterHeader",
     "FilterInput",
