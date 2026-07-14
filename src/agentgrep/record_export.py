@@ -412,6 +412,12 @@ def _open_directory(path: pathlib.Path, *, create_private: bool) -> int:
     return current_fd
 
 
+def _ensure_private_directory(path: pathlib.Path) -> None:
+    """Create one private directory tree through the descriptor-safe walker."""
+    directory_fd = _open_directory(path, create_private=True)
+    _close_quietly(directory_fd)
+
+
 def _destination_stat(directory_fd: int, name: str) -> os.stat_result | None:
     """Inspect a final component without following it."""
     try:

@@ -7,6 +7,7 @@ import dataclasses
 import datetime
 import os
 import pathlib
+import stat
 import threading
 import time
 import typing as t
@@ -18,7 +19,7 @@ from textual.widgets import Input, OptionList, Static
 
 import agentgrep.ui.widgets as widgets
 from agentgrep.ui import _runtime
-from agentgrep.ui._export_preferences import ExportPreferences
+from agentgrep.ui._export_preferences import ExportPreferences, default_export_directory
 from agentgrep.ui.widgets import ExportDialog, ExportDraft, ExportIntent
 from agentgrep.ui.widgets.directory_popup import ExportDirectoryPicker
 
@@ -240,6 +241,78 @@ async def test_validation_runs_off_pump(
 
         assert access_threads
         assert all(thread_id != pump_thread for thread_id in access_threads)
+
+
+async def test_first_use_default_directory_is_created_privately(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A clean session can review the app-owned default without pre-creating it."""
+    home = tmp_path / "home"
+    data_home = tmp_path / "data"
+    data_home.mkdir()
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+    directory = default_export_directory(home)
+    app = _ExportDialogHost(
+        home,
+        lambda _intent: True,
+        directory=str(directory),
+    )
+    async with app.run_test(size=(60, 16)) as pilot:
+        assert not directory.exists()
+        await pilot.press("tab", "enter")
+        await _wait_for(pilot, lambda: _dialog(app).phase != "validating")
+
+        assert _dialog(app).phase == "review"
+        assert directory.is_dir()
+        assert stat.S_IMODE(directory.stat().st_mode) == 0o700
+
+
+async def test_missing_arbitrary_directory_is_not_created(tmp_path: pathlib.Path) -> None:
+    """Validation never creates a missing user-entered directory tree."""
+    directory = tmp_path / "missing" / "arbitrary"
+    app = _ExportDialogHost(
+        tmp_path / "home",
+        lambda _intent: True,
+        directory=str(directory),
+    )
+    async with app.run_test(size=(60, 16)) as pilot:
+        await pilot.press("tab", "enter")
+        await _wait_for(pilot, lambda: _dialog(app).phase != "validating")
+
+        assert _dialog(app).phase == "edit"
+        assert _text(app, "#export-error") == "Export directory is unavailable"
+        assert not directory.exists()
+
+
+async def test_default_directory_creation_rejects_symlinked_app_path(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The default-directory exception cannot traverse an app-path symlink."""
+    home = tmp_path / "home"
+    data_home = tmp_path / "data"
+    outside = tmp_path / "outside"
+    data_home.mkdir()
+    outside.mkdir()
+    sentinel = outside / "keep.txt"
+    sentinel.write_text("keep", encoding="utf-8")
+    (data_home / "agentgrep").symlink_to(outside, target_is_directory=True)
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+    directory = default_export_directory(home)
+    app = _ExportDialogHost(
+        home,
+        lambda _intent: True,
+        directory=str(directory),
+    )
+    async with app.run_test(size=(60, 16)) as pilot:
+        await pilot.press("tab", "enter")
+        await _wait_for(pilot, lambda: _dialog(app).phase != "validating")
+
+        assert _dialog(app).phase == "edit"
+        assert _text(app, "#export-error") == "Export directory is unavailable"
+        assert sentinel.read_text(encoding="utf-8") == "keep"
+        assert {entry.name for entry in outside.iterdir()} == {"keep.txt"}
 
 
 async def test_existing_exact_destination_prevents_review(tmp_path: pathlib.Path) -> None:

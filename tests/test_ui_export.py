@@ -175,7 +175,7 @@ async def test_export_shortcut_confirms_selected_record_and_appears_in_keys(
         _record(tmp_path, "selected body", ordinal=2),
     )
     export_dir = tmp_path / "data" / "agentgrep" / "exports"
-    export_dir.mkdir(parents=True)
+    assert not export_dir.exists()
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
         hud = app.screen
@@ -216,6 +216,7 @@ async def test_export_shortcut_confirms_selected_record_and_appears_in_keys(
 
         exports = list(export_dir.glob("*.md"))
         assert exports, notes
+        assert stat.S_IMODE(export_dir.stat().st_mode) == 0o700
         exported = exports[0].read_text(encoding="utf-8")
         expected = "first body" if pane == "_results" else "selected body"
         unexpected = "selected body" if pane == "_results" else "first body"
