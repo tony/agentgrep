@@ -198,6 +198,7 @@ class ExportDialog(ModalScreen[None]):
                 yield Static("Directory", classes="export-label")
                 yield ExportDirectoryPicker(
                     value=self._initial_preferences.directory,
+                    home=self._home,
                     id="export-directory",
                 )
                 yield Static("Template", classes="export-label")

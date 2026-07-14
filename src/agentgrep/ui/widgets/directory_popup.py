@@ -19,6 +19,10 @@ from textual.widgets.option_list import Option
 from textual.worker import NoActiveWorker, get_current_worker
 
 from agentgrep.ui import _runtime
+from agentgrep.ui._export_preferences import (
+    ExportPreferencesError,
+    resolve_export_directory,
+)
 
 __all__ = [
     "DIRECTORY_CANDIDATE_LIMIT",
@@ -60,7 +64,10 @@ def _active_worker_cancelled() -> bool:
         return False
 
 
-def _split_directory_prefix(value: str) -> tuple[pathlib.Path, str, str]:
+def _split_directory_prefix(
+    value: str,
+    home: pathlib.Path,
+) -> tuple[pathlib.Path, str, str]:
     """Return scan parent, typed parent prefix, and partial basename."""
     if value.endswith(os.sep):
         display_parent = value
@@ -68,13 +75,14 @@ def _split_directory_prefix(value: str) -> tuple[pathlib.Path, str, str]:
     else:
         _parent, prefix = os.path.split(value)
         display_parent = value[: -len(prefix)] if prefix else value
-    scan_parent = pathlib.Path(display_parent or ".").expanduser()
+    scan_parent = resolve_export_directory(display_parent or ".", home)
     return scan_parent, display_parent, prefix
 
 
 def _enumerate_directory_candidates(
     value: str,
     *,
+    home: pathlib.Path,
     candidate_limit: int,
     scan_limit: int,
 ) -> _DirectoryCandidates:
@@ -101,10 +109,10 @@ def _enumerate_directory_candidates(
     bounded_scan_limit = max(scan_limit, 0)
     if not value or not bounded_candidate_limit or not bounded_scan_limit:
         return _DirectoryCandidates((), False)
-    scan_parent, display_parent, prefix = _split_directory_prefix(value)
     matches: list[DirectoryCandidate] = []
     truncated = False
     try:
+        scan_parent, display_parent, prefix = _split_directory_prefix(value, home)
         with os.scandir(scan_parent) as entries:
             for index, entry in enumerate(
                 itertools.islice(entries, bounded_scan_limit + 1),
@@ -128,7 +136,7 @@ def _enumerate_directory_candidates(
                         label=entry.name,
                     ),
                 )
-    except OSError, RuntimeError, ValueError:
+    except ExportPreferencesError, OSError, RuntimeError, ValueError:
         return _DirectoryCandidates((), False)
     matches.sort(key=lambda candidate: candidate.label.casefold())
     return _DirectoryCandidates(tuple(matches[:bounded_candidate_limit]), truncated)
@@ -214,9 +222,16 @@ class ExportDirectoryPicker(Vertical):
     }
     """
 
-    def __init__(self, value: str, *, id: str | None = None) -> None:  # noqa: A002
+    def __init__(
+        self,
+        value: str,
+        home: pathlib.Path,
+        *,
+        id: str | None = None,  # noqa: A002
+    ) -> None:
         super().__init__(id=id)
         self._input = _DirectoryPathInput(self, value=value)
+        self._home = home
         self._popup = DirectoryCompletionPopup()
         self._candidate_generation = 0
         self._candidate_values: tuple[DirectoryCandidate, ...] = ()
@@ -298,6 +313,7 @@ class ExportDirectoryPicker(Vertical):
         """Enumerate one immutable snapshot away from the pump."""
         event = _enumerate_directory_candidates(
             value,
+            home=self._home,
             candidate_limit=DIRECTORY_CANDIDATE_LIMIT,
             scan_limit=DIRECTORY_SCAN_LIMIT,
         )
