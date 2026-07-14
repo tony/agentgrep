@@ -14,6 +14,7 @@ import typing as t
 
 import pytest
 from textual.app import App
+from textual.containers import VerticalScroll
 from textual.pilot import Pilot
 from textual.widgets import Input, OptionList, Static
 
@@ -500,8 +501,56 @@ async def test_dialog_fits_compact_terminal_without_horizontal_scroll(
     async with app.run_test(size=(60, 16)) as pilot:
         await pilot.pause()
         dialog_body = app.screen.query_one("#export-dialog")
+        edit = app.screen.query_one("#export-edit", VerticalScroll)
         assert dialog_body.region.width <= 60
         assert dialog_body.region.height <= 16
+        assert edit.show_vertical_scrollbar is False
         await _open_review(app, pilot)
+        review = app.screen.query_one("#export-review", VerticalScroll)
         assert dialog_body.region.width <= 60
         assert dialog_body.region.height <= 16
+        assert review.show_vertical_scrollbar is False
+
+
+@pytest.mark.parametrize("size", ((40, 12), (30, 10)))
+async def test_invalid_template_error_is_visible_in_small_terminal(
+    size: tuple[int, int],
+    tmp_path: pathlib.Path,
+) -> None:
+    """Inline edit feedback remains inside a narrow tmux viewport."""
+    app = _ExportDialogHost(tmp_path, lambda _intent: True)
+    async with app.run_test(size=size) as pilot:
+        await pilot.press("tab")
+        template = app.screen.query_one("#export-template", Input)
+        template.value = "{unknown}.md"
+        await pilot.press("enter")
+        await pilot.pause()
+        error = app.screen.query_one("#export-error", Static)
+
+        assert _text(app, "#export-error") == "Export filename is invalid"
+        assert error.region.y >= 0
+        assert error.region.bottom <= size[1]
+        assert template.has_focus
+
+
+@pytest.mark.parametrize("size", ((40, 12), (30, 10)))
+async def test_review_and_edit_are_reachable_in_small_terminal(
+    size: tuple[int, int],
+    tmp_path: pathlib.Path,
+) -> None:
+    """The confirmation and retained editor remain keyboard-reachable when compact."""
+    app = _ExportDialogHost(tmp_path, lambda _intent: True)
+    async with app.run_test(size=size) as pilot:
+        await _open_review(app, pilot)
+        confirm = app.screen.query_one("#export-confirm", OptionList)
+
+        assert confirm.has_focus
+        assert confirm.region.y >= 0
+        assert confirm.region.bottom <= size[1]
+
+        await pilot.press("n")
+        template = app.screen.query_one("#export-template", Input)
+        assert _dialog(app).phase == "edit"
+        assert template.has_focus
+        assert template.region.y >= 0
+        assert template.region.bottom <= size[1]
