@@ -21,6 +21,7 @@ from textual.worker import NoActiveWorker, get_current_worker
 from agentgrep.ui import _runtime
 from agentgrep.ui._export_preferences import (
     ExportPreferencesError,
+    _validate_directory_value,
     resolve_export_directory,
 )
 
@@ -123,6 +124,10 @@ def _enumerate_directory_candidates(
                     truncated = True
                     break
                 if not entry.name.startswith(prefix):
+                    continue
+                try:
+                    _validate_directory_value(entry.name)
+                except ExportPreferencesError:
                     continue
                 try:
                     is_directory = entry.is_dir(follow_symlinks=False)

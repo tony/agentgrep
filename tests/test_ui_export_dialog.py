@@ -371,6 +371,20 @@ async def test_missing_arbitrary_directory_is_not_created(tmp_path: pathlib.Path
         assert not directory.exists()
 
 
+async def test_existing_bidi_directory_is_rejected(tmp_path: pathlib.Path) -> None:
+    """An existing path with unreviewable format controls cannot reach review."""
+    home = tmp_path / "home"
+    directory = home / "Ex\u202eports"
+    directory.mkdir(parents=True)
+    app = _ExportDialogHost(home, lambda _intent: True, directory=str(directory))
+    async with app.run_test(size=(60, 16)) as pilot:
+        await pilot.press("tab", "enter")
+        await _wait_for(pilot, lambda: _dialog(app).phase != "validating")
+
+        assert _dialog(app).phase == "edit"
+        assert _text(app, "#export-error") == "Export directory is invalid"
+
+
 async def test_default_directory_creation_rejects_symlinked_app_path(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -357,6 +357,29 @@ def test_candidate_labels_are_basenames_and_values_preserve_prefix(
     assert result.values == (DirectoryCandidate(value=expected, label="alpha"),)
 
 
+@pytest.mark.parametrize("unsafe", ("\u200b", "\u202e"))
+def test_completion_omits_unreviewable_directory_names(
+    unsafe: str,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Existing invisible and bidi directory names never enter completion."""
+    choices = tmp_path / "choices"
+    choices.mkdir()
+    (choices / "alpha").mkdir()
+    (choices / f"a{unsafe}hidden").mkdir()
+
+    result = directory_popup._enumerate_directory_candidates(
+        f"{choices}{os.sep}a",
+        home=tmp_path,
+        candidate_limit=DIRECTORY_CANDIDATE_LIMIT,
+        scan_limit=DIRECTORY_SCAN_LIMIT,
+    )
+
+    assert result.values == (
+        DirectoryCandidate(value=f"{choices}{os.sep}alpha{os.sep}", label="alpha"),
+    )
+
+
 async def test_popup_is_literal_bounded_off_pump_and_reports_truncation(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

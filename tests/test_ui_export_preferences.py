@@ -124,6 +124,19 @@ def test_resolve_export_directory_rejects_other_users(
         resolve_export_directory("~other/Exports", tmp_path / "home")
 
 
+@pytest.mark.parametrize("unsafe", ("\n", "\u202e", "\ud800"))
+def test_resolve_export_directory_rejects_unreviewable_unicode(
+    unsafe: str,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Control, format, and surrogate code points cannot enter a path draft."""
+    with pytest.raises(
+        ExportPreferencesError,
+        match=r"^Export directory is invalid$",
+    ):
+        resolve_export_directory(f"~/Ex{unsafe}ports", tmp_path / "home")
+
+
 def test_compact_export_directory_uses_only_explicit_home(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -343,6 +356,61 @@ def test_invalid_export_preferences_return_defaults_with_warning(
         directory=str(data_home / "agentgrep" / "exports")
     )
     assert loaded.warning == "Export preferences could not be read"
+
+
+@pytest.mark.parametrize("unsafe", ("\n", "\u202e", "\ud800"))
+def test_unreviewable_directory_preferences_are_not_loaded(
+    unsafe: str,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stored control, format, and surrogate paths degrade to safe defaults."""
+    config_home = tmp_path / "config"
+    data_home = tmp_path / "data"
+    config_path = config_home / "agentgrep" / "tui-export.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "directory": f"~/Ex{unsafe}ports",
+                "filename_template": "{title}.md",
+            },
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+
+    loaded = load_export_preferences(tmp_path / "home")
+
+    assert loaded == ExportPreferencesLoad(
+        ExportPreferences(directory=str(data_home / "agentgrep" / "exports")),
+        "Export preferences could not be read",
+    )
+
+
+@pytest.mark.parametrize("unsafe", ("\n", "\u202e", "\ud800"))
+def test_unreviewable_directory_preferences_are_not_saved(
+    unsafe: str,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Persistence rejects directory values that cannot be reviewed reliably."""
+    config_home = tmp_path / "config"
+    config_home.mkdir()
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+
+    with pytest.raises(
+        ExportPreferencesError,
+        match=r"^Export preferences could not be saved$",
+    ):
+        save_export_preferences(
+            tmp_path / "home",
+            ExportPreferences(directory=f"~/Ex{unsafe}ports"),
+        )
+
+    assert not export_preferences_path(tmp_path / "home").exists()
 
 
 def test_export_preferences_fifo_returns_promptly_with_path_free_warning(

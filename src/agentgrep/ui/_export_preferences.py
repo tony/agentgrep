@@ -29,7 +29,7 @@ _DIRECTORY_ERROR = "Export directory is invalid"
 _FILENAME_ERROR = "Export filename is invalid"
 _SCHEMA_KEYS = frozenset({"version", "directory", "filename_template"})
 _TEMPLATE_TOKENS = frozenset({"date", "time", "title"})
-_UNSAFE_FILENAME_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
+_UNREVIEWABLE_UNICODE_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
 _CONFIG_DIRECTORY_NAME = "agentgrep"
 _PREFERENCES_FILENAME = "tui-export.json"
 
@@ -69,6 +69,14 @@ class ExportPreferencesLoad:
 
 class ExportPreferencesError(Exception):
     """A path-free preference or filename failure."""
+
+
+def _validate_directory_value(value: str) -> None:
+    """Reject directory text that cannot be reviewed reliably."""
+    if not isinstance(value, str) or any(
+        unicodedata.category(character) in _UNREVIEWABLE_UNICODE_CATEGORIES for character in value
+    ):
+        raise ExportPreferencesError(_DIRECTORY_ERROR)
 
 
 def compact_export_directory(value: str, home: pathlib.Path) -> str:
@@ -161,6 +169,7 @@ def resolve_export_directory(value: str, home: pathlib.Path) -> pathlib.Path:
     ExportPreferencesError
         If an other-user tilde spelling is supplied.
     """
+    _validate_directory_value(value)
     if value == "~":
         return home
     current_home_prefix = f"~{os.sep}"
@@ -193,7 +202,8 @@ def _validate_filename(filename: str) -> None:
     if "{" in filename or "}" in filename:
         raise ExportPreferencesError(_FILENAME_ERROR)
     if any(
-        unicodedata.category(character) in _UNSAFE_FILENAME_CATEGORIES for character in filename
+        unicodedata.category(character) in _UNREVIEWABLE_UNICODE_CATEGORIES
+        for character in filename
     ):
         raise ExportPreferencesError(_FILENAME_ERROR)
     if "/" in filename or "\\" in filename:
@@ -217,7 +227,8 @@ def _validate_filename_template(template: str) -> None:
     if not isinstance(template, str) or len(template) > MAX_TEMPLATE_CHARS:
         raise ExportPreferencesError(_FILENAME_ERROR)
     if any(
-        unicodedata.category(character) in _UNSAFE_FILENAME_CATEGORIES for character in template
+        unicodedata.category(character) in _UNREVIEWABLE_UNICODE_CATEGORIES
+        for character in template
     ):
         raise ExportPreferencesError(_FILENAME_ERROR)
     if "/" in template or "\\" in template:
@@ -317,6 +328,7 @@ def _parse_preferences(payload: bytes) -> ExportPreferences:
         raise ValueError
     if not isinstance(directory, str) or not isinstance(filename_template, str):
         raise TypeError
+    _validate_directory_value(directory)
     _validate_filename_template(filename_template)
     return ExportPreferences(directory=directory, filename_template=filename_template)
 
@@ -455,6 +467,7 @@ def _serialize_preferences(preferences: ExportPreferences) -> bytes:
         str,
     ):
         raise ExportPreferencesError(_PREFERENCES_SAVE_ERROR)
+    _validate_directory_value(preferences.directory)
     _validate_filename_template(preferences.filename_template)
     payload = json.dumps(
         {
