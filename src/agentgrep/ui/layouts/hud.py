@@ -1070,10 +1070,18 @@ class HudLayout(LayoutScreen):
     @_runtime.pump_only
     def action_export_selected(self) -> None:
         """Export the selected record to the private default destination."""
-        self.request_export("", selection="records")
+        selected = self._selected_export_shortcut_record()
+        if selected is not None:
+            self.request_export("", selection="records", selected_record=selected)
 
     @_runtime.pump_only
-    def request_export(self, destination: str, *, selection: _ExportSelection) -> bool:
+    def request_export(
+        self,
+        destination: str,
+        *,
+        selection: _ExportSelection,
+        selected_record: SearchRecord | None = None,
+    ) -> bool:
         """Accept one selected-record or observed-thread export request.
 
         Only bounded state capture happens synchronously. Thread exports copy
@@ -1087,7 +1095,9 @@ class HudLayout(LayoutScreen):
                 severity="warning",
             )
             return False
-        selected = self._selected_export_record()
+        selected = (
+            selected_record if selected_record is not None else self._selected_export_record()
+        )
         if selected is None:
             self.notify(
                 "Select a record before exporting",

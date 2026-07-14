@@ -134,7 +134,10 @@ async def test_export_shortcut_writes_selected_record_and_appears_in_keys(
     export_dir = tmp_path / "data" / "agentgrep" / "exports"
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
-        await _load_records(app.screen, records, selected=1)
+        await _load_records(app.screen, records, selected=0)
+        await pilot.pause()
+        app.screen.show_detail(records[1])
+        await pilot.pause()
 
         app.screen._search_input.value = "/keys"
         app.screen._search_input.focus()
@@ -151,8 +154,10 @@ async def test_export_shortcut_writes_selected_record_and_appears_in_keys(
         await _wait_for(lambda: bool(list(export_dir.glob("*.md"))))
 
         exported = next(export_dir.glob("*.md")).read_text(encoding="utf-8")
-        assert "selected body" in exported
-        assert "first body" not in exported
+        expected = "first body" if pane == "_results" else "selected body"
+        unexpected = "selected body" if pane == "_results" else "first body"
+        assert expected in exported
+        assert unexpected not in exported
 
 
 @pytest.mark.parametrize(
