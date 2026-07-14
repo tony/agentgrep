@@ -22,6 +22,7 @@ from agentgrep.ui import _runtime
 from agentgrep.ui._export_preferences import (
     ExportPreferences,
     ExportPreferencesError,
+    default_export_directory,
     render_export_filename,
     resolve_export_directory,
 )
@@ -79,6 +80,8 @@ def _validate_export_draft(
     home: pathlib.Path,
 ) -> _ValidationResult:
     """Validate one immutable draft away from the Textual pump."""
+    from agentgrep.record_export import ExportError, _ensure_private_directory
+
     try:
         filename = render_export_filename(
             draft.filename_template,
@@ -89,6 +92,12 @@ def _validate_export_draft(
         directory = resolve_export_directory(draft.directory, home)
     except ExportPreferencesError:
         return _ValidationResult(error=_DIRECTORY_ERROR)
+
+    if directory == default_export_directory(home):
+        try:
+            _ensure_private_directory(directory)
+        except ExportError:
+            return _ValidationResult(error=_DIRECTORY_UNAVAILABLE_ERROR)
 
     try:
         if directory.is_symlink() or not directory.is_dir():
