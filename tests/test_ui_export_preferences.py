@@ -33,6 +33,11 @@ from agentgrep.ui._export_preferences import (
 DEFAULT_TEMPLATE = "{date} {time} - {title}.md"
 
 
+def test_directory_draft_character_bound_is_portable() -> None:
+    """Directory drafts use a conservative cross-platform practical bound."""
+    assert export_preferences.MAX_DIRECTORY_CHARS == 4096
+
+
 def test_export_preferences_path_follows_xdg_config_home(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -135,6 +140,20 @@ def test_resolve_export_directory_rejects_empty_value(
         resolve_export_directory("", tmp_path / "home")
 
 
+def test_resolve_export_directory_enforces_character_bound(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The shared directory validator accepts the ceiling and rejects one more."""
+    at_limit = "x" * export_preferences.MAX_DIRECTORY_CHARS
+
+    assert resolve_export_directory(at_limit, tmp_path / "home") == pathlib.Path(at_limit)
+    with pytest.raises(
+        ExportPreferencesError,
+        match=r"^Export directory is invalid$",
+    ):
+        resolve_export_directory(f"{at_limit}x", tmp_path / "home")
+
+
 @pytest.mark.parametrize("unsafe", ["\n", "\u202e", "\ud800"])
 def test_resolve_export_directory_rejects_unreviewable_unicode(
     unsafe: str,
@@ -177,6 +196,30 @@ def test_compact_export_directory_uses_only_explicit_home(
     assert export_preferences.compact_export_directory("relative/Exports", home) == (
         "relative/Exports"
     )
+
+
+def test_compact_export_directory_rejects_over_bound_before_normalizing(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Oversized compaction stops before constructing or normalizing a path."""
+    unexpected = "oversized directory reached path normalization"
+
+    def fail_path(*_args: object, **_kwargs: object) -> t.NoReturn:
+        raise AssertionError(unexpected)
+
+    with monkeypatch.context() as context:
+        context.setattr(export_preferences.pathlib, "Path", fail_path)
+        context.setattr(export_preferences.os.path, "normpath", fail_path)
+
+        with pytest.raises(
+            ExportPreferencesError,
+            match=r"^Export directory is invalid$",
+        ):
+            export_preferences.compact_export_directory(
+                "x" * (export_preferences.MAX_DIRECTORY_CHARS + 1),
+                tmp_path / "home",
+            )
 
 
 def test_default_export_filename_is_frozen_local_ascii() -> None:
@@ -343,6 +386,17 @@ def test_missing_export_preferences_return_defaults_without_warning(
         b'{"version":true,"directory":"~/Exports","filename_template":"{title}.md"}',
         b'{"version":1,"directory":[],"filename_template":"{title}.md"}',
         b'{"version":1,"directory":"","filename_template":"{title}.md"}',
+        pytest.param(
+            json.dumps(
+                {
+                    "version": 1,
+                    "directory": "x" * (export_preferences.MAX_DIRECTORY_CHARS + 1),
+                    "filename_template": "{title}.md",
+                },
+                separators=(",", ":"),
+            ).encode(),
+            id="over-bound-directory",
+        ),
         b'{"version":1,"directory":"~/Exports","filename_template":2}',
         b'{"version":1,"directory":"~/Exports","filename_template":"{title}.md","extra":1}',
         b'{"version":1,"version":1,"directory":"~/Exports","filename_template":"{title}.md"}',
@@ -425,11 +479,17 @@ def test_unreviewable_directory_preferences_are_not_saved(
     assert not export_preferences_path(tmp_path / "home").exists()
 
 
-def test_empty_directory_preferences_are_not_saved(
+@pytest.mark.parametrize(
+    "directory",
+    ["", "x" * (export_preferences.MAX_DIRECTORY_CHARS + 1)],
+    ids=("empty", "over-bound"),
+)
+def test_invalid_directory_preferences_are_not_saved(
+    directory: str,
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A cleared directory is rejected before the preference file is created."""
+    """Invalid directory text is rejected before the preference file is created."""
     config_home = tmp_path / "config"
     config_home.mkdir()
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
@@ -440,7 +500,7 @@ def test_empty_directory_preferences_are_not_saved(
     ):
         save_export_preferences(
             tmp_path / "home",
-            ExportPreferences(directory=""),
+            ExportPreferences(directory=directory),
         )
 
     assert not export_preferences_path(tmp_path / "home").exists()

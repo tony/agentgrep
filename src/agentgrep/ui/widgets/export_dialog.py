@@ -21,6 +21,7 @@ from textual.worker import NoActiveWorker, get_current_worker
 
 from agentgrep.ui import _runtime
 from agentgrep.ui._export_preferences import (
+    MAX_DIRECTORY_CHARS,
     ExportPreferences,
     ExportPreferencesError,
     compact_export_directory,
@@ -391,13 +392,17 @@ class ExportDialog(ModalScreen[None]):
     @_runtime.pump_only
     def _start_validation(self) -> None:
         """Snapshot the draft and launch one exclusive validator worker."""
-        if not self._refresh_preview():
-            return
         template = self.query_one("#export-template", Input)
         picker = self.query_one("#export-directory", ExportDirectoryPicker)
         self._edit_focus = "template" if template.has_focus else "directory"
-        directory = compact_export_directory(picker.value, self._home)
-        if directory != picker.value:
+        directory_value = picker.value
+        if not directory_value or len(directory_value) > MAX_DIRECTORY_CHARS:
+            self._update_error(_DIRECTORY_ERROR)
+            return
+        if not self._refresh_preview():
+            return
+        directory = compact_export_directory(directory_value, self._home)
+        if directory != directory_value:
             picker.value = directory
         draft = ExportDraft(
             directory=directory,

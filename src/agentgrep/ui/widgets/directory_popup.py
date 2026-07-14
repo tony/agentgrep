@@ -20,6 +20,7 @@ from textual.worker import NoActiveWorker, get_current_worker
 
 from agentgrep.ui import _runtime
 from agentgrep.ui._export_preferences import (
+    MAX_DIRECTORY_CHARS,
     ExportPreferencesError,
     _validate_directory_value,
     resolve_export_directory,
@@ -165,7 +166,11 @@ class _DirectoryPathInput(Input):
 
     def __init__(self, owner: ExportDirectoryPicker, *, value: str) -> None:
         self._owner = owner
-        super().__init__(value=value, placeholder="Export directory")
+        super().__init__(
+            value=value,
+            placeholder="Export directory",
+            max_length=MAX_DIRECTORY_CHARS,
+        )
 
     @_runtime.pump_only
     def on_focus(self) -> None:
