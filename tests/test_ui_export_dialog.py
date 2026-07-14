@@ -511,7 +511,7 @@ async def test_dialog_fits_compact_terminal_without_horizontal_scroll(
         assert review.show_vertical_scrollbar is False
 
 
-@pytest.mark.parametrize("size", ((40, 12), (30, 10)))
+@pytest.mark.parametrize("size", [(40, 12), (30, 10)])
 async def test_invalid_template_error_is_visible_in_small_terminal(
     size: tuple[int, int],
     tmp_path: pathlib.Path,
@@ -532,7 +532,7 @@ async def test_invalid_template_error_is_visible_in_small_terminal(
         assert template.has_focus
 
 
-@pytest.mark.parametrize("size", ((40, 12), (30, 10)))
+@pytest.mark.parametrize("size", [(40, 12), (30, 10)])
 async def test_review_and_edit_are_reachable_in_small_terminal(
     size: tuple[int, int],
     tmp_path: pathlib.Path,
