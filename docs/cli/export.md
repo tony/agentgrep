@@ -33,8 +33,8 @@ already exists, agentgrep returns to the same draft instead of replacing the
 file or silently choosing another name. Automatic private exports requested by
 the HUD slash commands keep their canonical-ID names. CLI and MCP do not
 consume the TUI preference: the CLI still uses standard output or an explicit
-`--output` path, and MCP still returns a bounded inline artifact without local
-filesystem authority.
+`--output` path, and MCP still returns a bounded inline artifact, accepts no
+local destination, and gains no filesystem write authority.
 
 ## Examples
 
