@@ -40,8 +40,8 @@ needed, writes only the reviewed explicit no-clobber artifact, then attempts to
 write the TUI-private preference file. If the artifact name already exists,
 agentgrep returns to the same draft instead of replacing the file or silently
 choosing another name; a later preference failure does not erase a completed
-artifact. Automatic private exports requested by the HUD slash commands keep
-their canonical-ID names. CLI and MCP do not consume the TUI preference: the
+artifact. The one-shot `/export-thread` command keeps its automatic private
+canonical-ID name. CLI and MCP do not consume the TUI preference: the
 CLI still uses standard output or an explicit `--output` path, and MCP still
 returns a bounded inline artifact, accepts no local destination, and gains no
 filesystem write authority.
