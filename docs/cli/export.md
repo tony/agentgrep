@@ -17,9 +17,11 @@ through `1000`.
 
 Press `e` while an exact selected record has focus in the HUD results or
 detail pane. One compact dialog remembers the export directory and filename
-template in TUI-private user configuration. It starts with
-`{date} {time} - {title}.md`; directory completion lists existing child
-directories and accepts a choice with the arrow keys and Tab.
+template in TUI-private user configuration. On first use, the filename
+template is `{date} {time} - {title}.md`; after a successful save, the
+remembered directory and template replace the first-use defaults. Directory
+completion lists existing child directories and accepts a choice with the
+arrow keys and Tab.
 
 The preview freezes local time when the dialog opens. The date and time render
 as the filesystem-safe `YYYY-MM-DD HH-MM-SS`, and the title token uses a
