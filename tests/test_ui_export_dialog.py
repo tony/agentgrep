@@ -498,16 +498,44 @@ async def test_saving_ignores_cancel_keys(tmp_path: pathlib.Path, key: str) -> N
         assert dialog.phase == "saving"
 
 
-@pytest.mark.parametrize("phase", ["edit", "review"])
-async def test_ctrl_c_dismisses_before_saving(
-    tmp_path: pathlib.Path,
-    phase: str,
-) -> None:
-    """Ctrl-C still cancels while the dialog has no durable worker."""
+@pytest.mark.slow
+async def test_ctrl_c_dismisses_from_review(tmp_path: pathlib.Path) -> None:
+    """Ctrl-C cancels the reviewed draft while no durable worker is active."""
     app = _ExportDialogHost(tmp_path, lambda _intent: True)
     async with app.run_test(size=(60, 16)) as pilot:
-        if phase == "review":
-            await _open_review(app, pilot)
+        await _open_review(app, pilot)
+
+        await pilot.press("ctrl+c")
+        await _wait_for(pilot, lambda: app.dismissed is None)
+
+        assert not app.query(ExportDialog)
+
+
+@pytest.mark.parametrize("focused", ["directory", "template"])
+@pytest.mark.slow
+async def test_ctrl_c_clears_focused_edit_before_dismissal(
+    tmp_path: pathlib.Path,
+    focused: str,
+) -> None:
+    """Ctrl-C clears a focused edit once, then cancels its empty draft."""
+    app = _ExportDialogHost(tmp_path, lambda _intent: True)
+    async with app.run_test(size=(60, 16)) as pilot:
+        dialog = _dialog(app)
+        directory = dialog.query_one("#export-directory", ExportDirectoryPicker).query_one(Input)
+        template = dialog.query_one("#export-template", Input)
+        field, other = (directory, template) if focused == "directory" else (template, directory)
+        other_value = other.value
+        field.focus()
+        await pilot.pause()
+
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+
+        assert app.screen is dialog
+        assert dialog.phase == "edit"
+        assert field.value == ""
+        assert field.has_focus
+        assert other.value == other_value
 
         await pilot.press("ctrl+c")
         await _wait_for(pilot, lambda: app.dismissed is None)
