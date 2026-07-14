@@ -62,7 +62,7 @@ Stores with missing occurrence or thread topology report null values instead
 of inventing relationships from filenames or timestamps. That conservative
 contract gives bookmarks, export, and similarity features a common foundation
 without making them depend on one another. See the {ref}`deterministic record
-identity contract <adr-deterministic-record-identity>` for details.
+identity contract <adr-deterministic-record-identity>`.
 
 #### Predictable TUI commands and focus (#111)
 

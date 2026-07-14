@@ -201,7 +201,7 @@ def test_identity_adr_keeps_refs_and_privacy_boundaries_positive() -> None:
 
 
 def test_unreleased_changelog_discloses_identity_and_tui_deliverables() -> None:
-    """The unreleased section describes both product-level outcomes."""
+    """The unreleased section lists both outcomes without a release summary."""
     changes = _read_text("CHANGES")
     release_match = re.search(
         r"^## agentgrep (?P<version>\d+\.\d+\.\d+\w*) \(Yet to be released\)\n"
@@ -210,16 +210,17 @@ def test_unreleased_changelog_discloses_identity_and_tui_deliverables() -> None:
         flags=re.MULTILINE | re.DOTALL,
     )
     assert release_match is not None
-    version = release_match.group("version")
     release = release_match.group("body")
     identity_heading = "#### Consistent record handles across search (#80)"
     tui_heading = "#### Predictable TUI commands and focus (#111)"
+    end_marker = "<!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->"
 
     assert release.count(identity_heading) == 1
     assert changes.count(identity_heading) == 1
     assert release.count(tui_heading) == 1
     assert changes.count(tui_heading) == 1
-    assert not re.search(rf"agentgrep {re.escape(version)} (?:is|ships|focuses)", release)
+    assert end_marker in release
+    assert release.split(end_marker, maxsplit=1)[1].lstrip().startswith("### ")
     assert "### What's new" in release
     assert "adr-deterministic-record-identity" in release
     assert re.search(r"repeated\s+content", release)
