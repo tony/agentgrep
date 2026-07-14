@@ -101,6 +101,29 @@ def _text(app: _ExportDialogHost, selector: str) -> str:
     return getattr(content, "plain", str(content))
 
 
+def _observe_error_scrolls(
+    monkeypatch: pytest.MonkeyPatch,
+    app: _ExportDialogHost,
+    dialog: ExportDialog,
+) -> list[bool]:
+    """Record whether each error scroll ran on the active dialog."""
+    observations: list[bool] = []
+    original_scroll_visible = Static.scroll_visible
+
+    def observed_scroll_visible(
+        widget: Static,
+        *args: t.Any,
+        **kwargs: t.Any,
+    ) -> None:
+        """Record matching calls before forwarding to Textual."""
+        if widget.id == "export-error":
+            observations.append(app.screen is dialog)
+        original_scroll_visible(widget, *args, **kwargs)
+
+    monkeypatch.setattr(Static, "scroll_visible", observed_scroll_visible)
+    return observations
+
+
 async def _open_review(app: _ExportDialogHost, pilot: Pilot[None]) -> None:
     """Submit the default draft and wait for its review stage."""
     await pilot.press("tab", "enter")
@@ -593,6 +616,47 @@ async def test_export_failed_keeps_error_visible_in_small_terminal(
         assert _text(app, "#export-error") == "Export failed inline"
         assert error.region.y >= 0
         assert error.region.bottom <= 10
+
+
+async def test_pending_error_reveal_ignores_rapid_dismiss(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A post-refresh reveal never touches a dialog dismissed by Escape."""
+    app = _ExportDialogHost(tmp_path, lambda _intent: True)
+    async with app.run_test(size=(30, 10)) as pilot:
+        await _open_review(app, pilot)
+        await pilot.press("y")
+        dialog = _dialog(app)
+        observations = _observe_error_scrolls(monkeypatch, app, dialog)
+
+        dialog.export_failed("Export failed inline")
+        dialog.action_escape()
+        await _wait_for(pilot, lambda: app.dismissed is None)
+        await pilot.pause()
+
+        assert observations == [True]
+
+
+async def test_pending_error_reveal_ignores_cleared_error(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cleared edit error invalidates its pending post-refresh reveal."""
+    app = _ExportDialogHost(tmp_path, lambda _intent: True)
+    async with app.run_test(size=(30, 10)) as pilot:
+        await _open_review(app, pilot)
+        await pilot.press("y")
+        dialog = _dialog(app)
+        observations = _observe_error_scrolls(monkeypatch, app, dialog)
+
+        dialog.export_failed("Export failed inline")
+        dialog._update_error("")
+        await pilot.pause()
+
+        assert dialog.phase == "edit"
+        assert _text(app, "#export-error") == ""
+        assert observations == [True]
 
 
 async def test_export_succeeded_dismisses(tmp_path: pathlib.Path) -> None:
