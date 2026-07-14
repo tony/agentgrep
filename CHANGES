@@ -64,6 +64,15 @@ contract gives bookmarks, export, and similarity features a common foundation
 without making them depend on one another. See the {ref}`deterministic record
 identity contract <adr-deterministic-record-identity>` for details.
 
+#### Predictable TUI commands and focus (#111)
+
+The HUD and grep-log now share the same pi-like slash-command menu instead of
+Textual's global command palette. Zoom keeps the command input and focused
+content visible, `/minimize` restores the normal layout, and `/screenshot`
+captures a clean SVG without changing the active search. `/keys`, theme
+switching, filtered-row colors, focus repair, and repeated-key quit
+confirmation now behave consistently across the two layouts.
+
 ## agentgrep 0.1.0a41 (2026-07-19)
 
 agentgrep 0.1.0a41 makes Pydantic a required dependency and removes the
