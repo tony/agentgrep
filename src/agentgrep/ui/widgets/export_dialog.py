@@ -266,7 +266,9 @@ class ExportDialog(ModalScreen[None]):
 
     @_runtime.pump_only
     def action_escape(self) -> None:
-        """Return from review, or cancel from any other phase."""
+        """Return from review or cancel before a durable save begins."""
+        if self._phase == "saving":
+            return
         if self._phase == "review":
             self._show_edit()
             return
@@ -274,8 +276,9 @@ class ExportDialog(ModalScreen[None]):
 
     @_runtime.pump_only
     def action_cancel(self) -> None:
-        """Dismiss from every phase without delegating a write."""
-        self.dismiss(None)
+        """Dismiss unless a durable save is already active."""
+        if self._phase != "saving":
+            self.dismiss(None)
 
     @_runtime.pump_only
     def action_review_no(self) -> None:
