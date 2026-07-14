@@ -215,7 +215,7 @@ def search_record_fingerprint(
 
 
 def search_record_fingerprint_matches(record: SearchRecordLike, fingerprint: str) -> bool:
-    """Match a current fingerprint with a positional v1 legacy fallback."""
+    """Match current fields with a position-blind v1 fallback."""
     text_sha256 = hashlib.sha256(
         record.text.encode("utf-8", "surrogatepass"),
     ).hexdigest()

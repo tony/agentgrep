@@ -191,7 +191,9 @@ def test_identity_adr_keeps_refs_and_privacy_boundaries_positive() -> None:
         "not authentication",
         "not anonymization",
         "position-aware",
-        "historical position-blind",
+        "position-blind",
+        "snapshot-relative",
+        "earlier normalization contracts",
         "observed upstream schemas are not stable APIs",
     )
 
@@ -219,7 +221,9 @@ def test_identity_changelog_has_one_unreleased_deliverable() -> None:
     assert "adr-deterministic-record-identity" in release
     assert re.search(r"repeated\s+content", release)
     assert "stored turns" in release
-    assert re.search(r"Persisted MCP\s+refs remain inspectable", release)
+    assert "snapshot-relative" in release
+    assert re.search(r"other\s+normalized fingerprint inputs still match", release)
+    assert re.search(r"Persisted MCP\s+refs remain inspectable", release) is None
     assert "position-aware" in release
     assert "missing" in release and "invent" in release
     assert all(term in release for term in ("bookmarks", "export", "similarity"))
