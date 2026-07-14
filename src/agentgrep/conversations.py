@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import collections.abc as cabc
 import dataclasses
+import pathlib
 import struct
 import typing as t
 
@@ -35,7 +36,7 @@ class _PreparedRecord:
 
     record: SearchRecord
     identity: RecordIdentity
-    ordinal_domain: tuple[str, str]
+    ordinal_domain: tuple[str, str, pathlib.Path]
     ordinal: int | None
     raw_ordinal_key: _RawTopologyKey
     native_id: str | None
@@ -262,7 +263,7 @@ def _prepare_record(record: SearchRecord, identity: RecordIdentity) -> _Prepared
     return _PreparedRecord(
         record=record,
         identity=identity,
-        ordinal_domain=(record.store, record.adapter_id),
+        ordinal_domain=(record.store, record.adapter_id, record.path),
         ordinal=_validated_ordinal(raw_ordinal),
         raw_ordinal_key=_raw_topology_sort_key(raw_ordinal),
         native_id=_validated_native_coordinate(raw_native_id),
@@ -345,7 +346,8 @@ def _can_linearize(records: list[_PreparedRecord]) -> bool:
     Returns
     -------
     bool
-        Whether ordinals and logical/native occurrence coordinates are unique.
+        Whether one physical source supplies unique ordinal and occurrence
+        coordinates.
     """
     ordinals = [prepared.ordinal for prepared in records]
     if any(ordinal is None for ordinal in ordinals):
