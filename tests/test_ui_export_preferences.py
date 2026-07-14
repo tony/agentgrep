@@ -321,6 +321,32 @@ def test_export_preferences_round_trip_unicode_with_private_modes(
     }
 
 
+def test_export_preferences_validate_template_without_sample_title(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Persistence validates grammar without applying a compiled filename bound."""
+    config_home = tmp_path / "config"
+    config_home.mkdir()
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    template = "x" * MAX_FILENAME_BYTES + "-{title}.md"
+    preferences = ExportPreferences(
+        directory="~/Exports",
+        filename_template=template,
+    )
+
+    save_export_preferences(tmp_path / "home", preferences)
+
+    assert load_export_preferences(tmp_path / "home").preferences == preferences
+    with pytest.raises(ExportPreferencesError, match=r"^Export filename is invalid$"):
+        render_export_filename(
+            template,
+            title="x",
+            fallback_title="record",
+            timestamp=datetime.datetime(2026, 7, 14).astimezone(),
+        )
+
+
 def test_save_export_preferences_retries_short_writes(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
