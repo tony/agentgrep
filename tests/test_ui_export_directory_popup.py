@@ -197,11 +197,11 @@ def test_symlink_directories_are_not_candidates(tmp_path: pathlib.Path) -> None:
 
 @pytest.mark.parametrize(
     ("typed", "expected"),
-    (
+    [
         ("./choices/a", "./choices/alpha/"),
         ("~/choices/a", "~/choices/alpha/"),
         ("{absolute}/a", "{absolute}/alpha/"),
-    ),
+    ],
 )
 def test_candidate_labels_are_basenames_and_values_preserve_prefix(
     typed: str,

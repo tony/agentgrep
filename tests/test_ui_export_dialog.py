@@ -309,7 +309,7 @@ async def test_repeated_enter_on_default_no_cannot_save(tmp_path: pathlib.Path) 
         assert seen == []
 
 
-@pytest.mark.parametrize("key", ("n", "escape"))
+@pytest.mark.parametrize("key", ["n", "escape"])
 async def test_no_shortcuts_return_to_edit(tmp_path: pathlib.Path, key: str) -> None:
     """The explicit No gestures preserve the draft and prior focus."""
     seen: list[ExportIntent] = []

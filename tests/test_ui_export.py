@@ -5,18 +5,28 @@ from __future__ import annotations
 import asyncio
 import collections.abc as cabc
 import pathlib
+import stat
 import threading
 import time
 import typing as t
 
 import pytest
-from textual.widgets import HelpPanel
+from textual.widgets import HelpPanel, Input, Static
 
 import agentgrep.identity as identity
 import agentgrep.record_export as record_export
 from agentgrep.records import RecordPosition, SearchRecord
-from agentgrep.ui import _runtime
-from agentgrep.ui.widgets import FilterCompleted
+from agentgrep.ui import _export_preferences, _runtime
+from agentgrep.ui._export_preferences import (
+    ExportPreferences,
+    ExportPreferencesError,
+    export_preferences_path,
+    load_export_preferences,
+    save_export_preferences,
+)
+from agentgrep.ui.layouts import hud as hud_module
+from agentgrep.ui.widgets import ExportDialog, FilterCompleted
+from agentgrep.ui.widgets.directory_popup import ExportDirectoryPicker
 from tests._agentgrep_tui_support import _build_empty_ui_app
 from tests.test_agentgrep_tui import _search_requested
 
@@ -30,6 +40,7 @@ def _record(
     ordinal: int,
     session_id: str | None = "session-a",
     source_name: str | None = None,
+    title: str | None = None,
 ) -> SearchRecord:
     """Build one normalized source record with deterministic identities."""
     return SearchRecord(
@@ -39,6 +50,7 @@ def _record(
         adapter_id="codex.sessions_jsonl.v1",
         path=tmp_path / (source_name or f"source-{ordinal}.jsonl"),
         text=text,
+        title=title,
         role="user",
         timestamp=f"2026-07-12T12:00:{ordinal:02d}Z",
         model="gpt-test",
@@ -69,6 +81,34 @@ async def _wait_for(predicate: t.Callable[[], bool], *, timeout: float = 3.0) ->
             return
         await asyncio.sleep(0.01)
     pytest.fail("timed out waiting for export worker")
+
+
+def _static_text(dialog: ExportDialog, selector: str) -> str:
+    """Return the literal plain text last assigned to a dialog ``Static``."""
+    static = dialog.query_one(selector, Static)
+    content = getattr(static, "_Static__content", "")
+    return getattr(content, "plain", str(content))
+
+
+async def _open_export_review(
+    app: t.Any,
+    pilot: t.Any,
+    *,
+    directory: pathlib.Path,
+    template: str,
+) -> tuple[ExportDialog, str]:
+    """Open the selected-record dialog and advance one draft to review."""
+    await pilot.press("e")
+    await pilot.pause()
+    assert isinstance(app.screen, ExportDialog)
+    dialog = app.screen
+    dialog.query_one("#export-directory", ExportDirectoryPicker).value = str(directory)
+    template_input = dialog.query_one("#export-template", Input)
+    template_input.value = template
+    template_input.focus()
+    await pilot.press("enter")
+    await _wait_for(lambda: dialog.phase == "review")
+    return dialog, _static_text(dialog, "#export-review-filename")
 
 
 def _capture_notifications(
@@ -119,45 +159,372 @@ def _change_results(screen: t.Any, change: str, replacement: SearchRecord) -> No
 
 @pytest.mark.parametrize("pane", ["_results", "_detail_scroll"], ids=("results", "detail"))
 @pytest.mark.slow
-async def test_export_shortcut_writes_selected_record_and_appears_in_keys(
+async def test_export_shortcut_confirms_selected_record_and_appears_in_keys(
     pane: str,
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Plain ``e`` exports from either content pane and appears in key help."""
+    """Plain ``e`` stages either content-pane selection before writing."""
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    config_home = tmp_path / "config"
+    config_home.mkdir()
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     records = (
         _record(tmp_path, "first body", ordinal=1),
         _record(tmp_path, "selected body", ordinal=2),
     )
     export_dir = tmp_path / "data" / "agentgrep" / "exports"
+    export_dir.mkdir(parents=True)
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
-        await _load_records(app.screen, records, selected=0)
+        hud = app.screen
+        await _load_records(hud, records, selected=0)
         await pilot.pause()
-        app.screen.show_detail(records[1])
+        hud.show_detail(records[1])
         await pilot.pause()
 
-        app.screen._search_input.value = "/keys"
-        app.screen._search_input.focus()
+        hud._search_input.value = "/keys"
+        hud._search_input.focus()
         await pilot.press("enter")
-        getattr(app.screen, pane).focus()
+        getattr(hud, pane).focus()
         await pilot.pause()
 
-        binding = app.screen.active_bindings["e"].binding
-        assert len(app.screen.query(HelpPanel)) == 1
+        binding = hud.active_bindings["e"].binding
+        assert len(hud.query(HelpPanel)) == 1
         assert binding.description == "Export selected"
         assert binding.show is False
+        notes = _capture_notifications(hud, monkeypatch)
 
         await pilot.press("e")
-        await _wait_for(lambda: bool(list(export_dir.glob("*.md"))))
+        await pilot.pause()
 
-        exported = next(export_dir.glob("*.md")).read_text(encoding="utf-8")
+        assert isinstance(app.screen, ExportDialog)
+        dialog = app.screen
+        assert hud._export_dialog is dialog
+        assert list(export_dir.glob("*.md")) == []
+        hud._results.highlighted = 1
+        hud._current_detail_record = records[0]
+
+        await pilot.press("enter", "enter")
+        await _wait_for(lambda: dialog.phase == "review")
+        assert _static_text(dialog, "#export-review-directory") == str(export_dir)
+        await pilot.press("y")
+        await _wait_for(
+            lambda: bool(list(export_dir.glob("*.md"))) or dialog.phase == "edit",
+        )
+
+        exports = list(export_dir.glob("*.md"))
+        assert exports, notes
+        exported = exports[0].read_text(encoding="utf-8")
         expected = "first body" if pane == "_results" else "selected body"
         unexpected = "selected body" if pane == "_results" else "first body"
         assert expected in exported
         assert unexpected not in exported
+
+
+@pytest.mark.slow
+async def test_export_preferences_load_before_mount_and_warn_once_path_free(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HUD construction loads once and mount reports a bounded warning."""
+    config_home = tmp_path / "config"
+    config_path = config_home / "agentgrep" / "tui-export.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text("{", encoding="utf-8")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    calls: list[pathlib.Path] = []
+    real_load = _export_preferences.load_export_preferences
+
+    def tracked_load(home: pathlib.Path) -> t.Any:
+        calls.append(home)
+        return real_load(home)
+
+    notes: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    monkeypatch.setattr(_export_preferences, "load_export_preferences", tracked_load)
+    monkeypatch.setattr(
+        hud_module.HudLayout,
+        "notify",
+        lambda _self, *args, **kwargs: notes.append((args, kwargs)),
+    )
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+
+        assert calls == [tmp_path / "home"]
+        assert notes == [
+            (
+                ("Export preferences could not be read",),
+                {"title": "Export preferences", "severity": "warning"},
+            ),
+        ]
+        assert str(config_path) not in str(notes)
+
+
+@pytest.mark.slow
+async def test_confirmed_export_writes_exact_filename_then_preferences(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A reviewed no-clobber artifact precedes preference persistence."""
+    config_home = tmp_path / "config"
+    config_home.mkdir()
+    export_dir = tmp_path / "Selected"
+    export_dir.mkdir(mode=0o750)
+    export_dir.chmod(0o750)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    record = _record(
+        tmp_path,
+        "captured body",
+        ordinal=1,
+        title="Reviewed [Title]",
+    )
+    order: list[str] = []
+    write_calls: list[tuple[pathlib.Path, dict[str, object]]] = []
+    real_write = record_export.write_export
+    real_save = save_export_preferences
+
+    def tracked_write(
+        artifact: record_export.ExportArtifact,
+        destination: str | pathlib.Path,
+        **kwargs: t.Any,
+    ) -> pathlib.Path:
+        protected_paths = tuple(kwargs["protected_paths"])
+        kwargs["protected_paths"] = protected_paths
+        order.append("artifact")
+        write_calls.append((pathlib.Path(destination), dict(kwargs)))
+        return real_write(artifact, destination, **kwargs)
+
+    def tracked_save(home: pathlib.Path, preferences: ExportPreferences) -> None:
+        order.append("preferences")
+        assert write_calls[0][0].exists()
+        real_save(home, preferences)
+
+    monkeypatch.setattr(record_export, "write_export", tracked_write)
+    monkeypatch.setattr(hud_module, "save_export_preferences", tracked_save, raising=False)
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        hud = app.screen
+        await _load_records(hud, (record,))
+        hud._results.focus()
+        notes = _capture_notifications(hud, monkeypatch)
+
+        _dialog, filename = await _open_export_review(
+            app,
+            pilot,
+            directory=export_dir,
+            template="reviewed-{title}.md",
+        )
+        destination = export_dir / filename
+        assert filename == "reviewed-reviewed-title.md"
+        assert not destination.exists()
+        assert not export_preferences_path(tmp_path / "home").exists()
+
+        await pilot.press("y")
+        await _wait_for(destination.exists)
+        await _wait_for(lambda: app.screen is hud)
+
+        assert order == ["artifact", "preferences"]
+        assert write_calls == [
+            (
+                destination,
+                {"force": False, "protected_paths": (record.path,)},
+            ),
+        ]
+        assert stat.S_IMODE(export_dir.stat().st_mode) == 0o750
+        assert load_export_preferences(tmp_path / "home").preferences == ExportPreferences(
+            directory=str(export_dir),
+            filename_template="reviewed-{title}.md",
+        )
+        assert hud._export_dialog is None
+        assert len(notes) == 1
+        assert filename in str(notes[0][0][0])
+
+
+@pytest.mark.slow
+async def test_export_failure_restores_draft_without_saving_preferences(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Artifact failure returns to editing and preserves stored preferences."""
+    config_home = tmp_path / "config"
+    config_home.mkdir()
+    original_dir = tmp_path / "Original"
+    original_dir.mkdir()
+    selected_dir = tmp_path / "Selected"
+    selected_dir.mkdir()
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    original = ExportPreferences(
+        directory=str(original_dir),
+        filename_template="original-{title}.md",
+    )
+    save_export_preferences(tmp_path / "home", original)
+    record = _record(tmp_path, "body", ordinal=1, title="Retained Draft")
+
+    def fail_write(*_args: object, **_kwargs: object) -> t.NoReturn:
+        message = "export could not be written"
+        raise record_export.ExportWriteError(message)
+
+    monkeypatch.setattr(record_export, "write_export", fail_write)
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        hud = app.screen
+        await _load_records(hud, (record,))
+        hud._results.focus()
+        notes = _capture_notifications(hud, monkeypatch)
+        dialog, filename = await _open_export_review(
+            app,
+            pilot,
+            directory=selected_dir,
+            template="retry-{title}.md",
+        )
+
+        await pilot.press("y")
+        await _wait_for(lambda: dialog.phase == "edit")
+
+        assert dialog.is_mounted
+        assert dialog.query_one("#export-directory", ExportDirectoryPicker).value == str(
+            selected_dir,
+        )
+        assert dialog.query_one("#export-template", Input).value == "retry-{title}.md"
+        assert hud._export_dialog is dialog
+        assert not (selected_dir / filename).exists()
+        assert load_export_preferences(tmp_path / "home").preferences == original
+        assert notes[0][1]["severity"] == "error"
+
+
+@pytest.mark.slow
+async def test_preference_save_failure_keeps_artifact_success_and_warns(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Config failure cannot turn a completed artifact into export failure."""
+    config_home = tmp_path / "config"
+    config_home.mkdir()
+    export_dir = tmp_path / "Selected"
+    export_dir.mkdir()
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    record = _record(tmp_path, "body", ordinal=1, title="Saved Artifact")
+
+    def fail_save(_home: pathlib.Path, _preferences: ExportPreferences) -> t.NoReturn:
+        message = "Export preferences could not be saved"
+        raise ExportPreferencesError(message)
+
+    monkeypatch.setattr(hud_module, "save_export_preferences", fail_save, raising=False)
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        hud = app.screen
+        await _load_records(hud, (record,))
+        hud._results.focus()
+        notes = _capture_notifications(hud, monkeypatch)
+        _dialog, filename = await _open_export_review(
+            app,
+            pilot,
+            directory=export_dir,
+            template="{title}.md",
+        )
+        destination = export_dir / filename
+
+        await pilot.press("y")
+        await _wait_for(destination.exists)
+        await _wait_for(lambda: app.screen is hud)
+
+        assert destination.read_text(encoding="utf-8").startswith(
+            "# agentgrep record export",
+        )
+        assert not export_preferences_path(tmp_path / "home").exists()
+        assert hud._export_dialog is None
+        assert len(notes) == 2
+        assert any(note[1].get("title") == "Export complete" for note in notes)
+        warning = next(note for note in notes if note[1].get("severity") == "warning")
+        assert warning[0][0] == "Export preferences could not be saved"
+        assert str(tmp_path) not in str(warning)
+
+
+@pytest.mark.slow
+async def test_dialog_confirmation_cannot_launch_duplicate_write(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Repeated saving gestures retain one non-supersedable worker."""
+    config_home = tmp_path / "config"
+    config_home.mkdir()
+    export_dir = tmp_path / "Selected"
+    export_dir.mkdir()
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    record = _record(tmp_path, "body", ordinal=1, title="Only Once")
+    started = threading.Event()
+    release = threading.Event()
+    calls = 0
+    real_write = record_export.write_export
+
+    def slow_write(
+        artifact: record_export.ExportArtifact,
+        destination: str | pathlib.Path,
+        **kwargs: t.Any,
+    ) -> pathlib.Path:
+        nonlocal calls
+        calls += 1
+        started.set()
+        assert release.wait(3)
+        return real_write(artifact, destination, **kwargs)
+
+    monkeypatch.setattr(record_export, "write_export", slow_write)
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        hud = app.screen
+        await _load_records(hud, (record,))
+        hud._results.focus()
+        dialog, filename = await _open_export_review(
+            app,
+            pilot,
+            directory=export_dir,
+            template="{title}.md",
+        )
+
+        await pilot.press("y")
+        assert await asyncio.to_thread(started.wait, 2)
+        await pilot.press("y", "enter")
+        await pilot.pause()
+
+        assert dialog.phase == "saving"
+        assert calls == 1
+        release.set()
+        await _wait_for(lambda: (export_dir / filename).exists())
+
+
+@pytest.mark.slow
+async def test_unmount_invalidates_and_clears_retained_export_dialog(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HUD teardown drops the modal reference and invalidates completions."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = _record(tmp_path, "body", ordinal=1)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        hud = app.screen
+        await _load_records(hud, (record,))
+        hud._results.focus()
+        await pilot.press("e")
+        await pilot.pause()
+        assert isinstance(app.screen, ExportDialog)
+        assert hud._export_dialog is app.screen
+        generation = hud._export_generation
+
+        hud.on_unmount()
+
+        assert hud._export_dialog is None
+        assert hud._export_generation == generation + 1
+        assert hud._export_pending is False
 
 
 @pytest.mark.parametrize(
@@ -329,6 +696,14 @@ async def test_record_export_writes_markdown_and_preserves_results(
 ) -> None:
     """Default and explicit sinks export exactly the selected record."""
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    saved_preferences: list[ExportPreferences] = []
+    monkeypatch.setattr(
+        hud_module,
+        "save_export_preferences",
+        lambda _home, preferences: saved_preferences.append(preferences),
+        raising=False,
+    )
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     records = (
         _record(tmp_path, "first exact body", ordinal=1),
@@ -368,6 +743,8 @@ async def test_record_export_writes_markdown_and_preserves_results(
         assert str(exported.parent) not in message
         assert "markdown" in message
         assert "1 record" in message
+        assert saved_preferences == []
+        assert not export_preferences_path(tmp_path / "home").exists()
 
 
 @pytest.mark.slow
@@ -376,6 +753,14 @@ async def test_thread_export_uses_only_selected_observed_thread(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Mixed and threadless active results do not contaminate the chosen thread."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    saved_preferences: list[ExportPreferences] = []
+    monkeypatch.setattr(
+        hud_module,
+        "save_export_preferences",
+        lambda _home, preferences: saved_preferences.append(preferences),
+        raising=False,
+    )
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     records = (
         _record(tmp_path, "thread a first", ordinal=1, session_id="session-a"),
@@ -402,6 +787,8 @@ async def test_thread_export_uses_only_selected_observed_thread(
         assert "- Record count: 2" in text
         assert "- Fidelity: unordered" in text
         assert "2 records" in str(notes[0][0][0])
+        assert saved_preferences == []
+        assert not export_preferences_path(tmp_path / "home").exists()
 
 
 @pytest.mark.slow
@@ -411,6 +798,14 @@ async def test_thread_export_without_path_uses_private_markdown_sink(
 ) -> None:
     """The no-path thread command writes a collision-safe canonical artifact."""
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    saved_preferences: list[ExportPreferences] = []
+    monkeypatch.setattr(
+        hud_module,
+        "save_export_preferences",
+        lambda _home, preferences: saved_preferences.append(preferences),
+        raising=False,
+    )
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     records = (
         _record(tmp_path, "first", ordinal=1),
@@ -433,6 +828,8 @@ async def test_thread_export_without_path_uses_private_markdown_sink(
         )
         assert exported.name in str(notes[0][0][0])
         assert str(export_dir) not in str(notes)
+        assert saved_preferences == []
+        assert not export_preferences_path(tmp_path / "home").exists()
 
 
 @pytest.mark.slow
@@ -865,6 +1262,8 @@ async def test_stale_export_callback_cannot_clear_live_pending_state(
                 format="markdown",
                 selection="records",
                 record_count=1,
+                preferences=None,
+                preference_warning=None,
                 error=None,
             ),
         )
@@ -895,6 +1294,8 @@ async def test_export_success_notification_treats_filename_as_literal(
                 format="markdown",
                 selection="records",
                 record_count=1,
+                preferences=None,
+                preference_warning=None,
                 error=None,
             ),
         )

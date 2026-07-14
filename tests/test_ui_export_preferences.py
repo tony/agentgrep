@@ -78,14 +78,14 @@ def test_default_export_directory_falls_back_under_home(
 
 @pytest.mark.parametrize(
     ("value", "suffix"),
-    (
+    [
         ("~", ()),
         ("~/", ()),
         ("~//Exports", ("Exports",)),
         ("~///", ()),
         ("~/Exports", ("Exports",)),
         ("~/Exports/agentgrep", ("Exports", "agentgrep")),
-    ),
+    ],
 )
 def test_resolve_export_directory_expands_only_current_home(
     value: str,
@@ -137,14 +137,14 @@ def test_default_export_filename_is_frozen_local_ascii() -> None:
 
 @pytest.mark.parametrize(
     "template",
-    (
+    [
         "{unknown}.md",
         "../{title}.md",
         "{title}/body.md",
         "{title}",
         ".md",
         "CON.md",
-    ),
+    ],
 )
 def test_export_filename_rejects_unreviewable_names(template: str) -> None:
     """Unsafe, unsupported, or extensionless output names are rejected."""
@@ -159,13 +159,13 @@ def test_export_filename_rejects_unreviewable_names(template: str) -> None:
 
 @pytest.mark.parametrize(
     "template",
-    (
+    [
         "{{title}}.md",
         "{title}.md ",
         "{title}.md.",
         "{title}\n.md",
         "\ud800.md",
-    ),
+    ],
 )
 def test_export_filename_rejects_ambiguous_or_non_scalar_output(template: str) -> None:
     """Braces, trailing ambiguity, controls, and surrogates are rejected."""
@@ -257,7 +257,7 @@ def test_missing_export_preferences_return_defaults_without_warning(
 
 @pytest.mark.parametrize(
     "payload",
-    (
+    [
         b"{",
         b" " * (MAX_PREFERENCES_BYTES + 1),
         b'{"version":2,"directory":"~/Exports","filename_template":"{title}.md"}',
@@ -266,7 +266,7 @@ def test_missing_export_preferences_return_defaults_without_warning(
         b'{"version":1,"directory":"~/Exports","filename_template":2}',
         b'{"version":1,"directory":"~/Exports","filename_template":"{title}.md","extra":1}',
         b'{"version":1,"version":1,"directory":"~/Exports","filename_template":"{title}.md"}',
-    ),
+    ],
 )
 def test_invalid_export_preferences_return_defaults_with_warning(
     payload: bytes,

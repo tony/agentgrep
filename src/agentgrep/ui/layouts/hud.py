@@ -57,6 +57,12 @@ from agentgrep.query import default_registry
 from agentgrep.records import SearchQuery, SearchRecord
 from agentgrep.ui import _history, _runtime, _streaming, commands, theme as ui_theme
 from agentgrep.ui._context import UiContext
+from agentgrep.ui._export_preferences import (
+    ExportPreferences,
+    ExportPreferencesError,
+    default_export_directory,
+    save_export_preferences,
+)
 from agentgrep.ui._source_diagnostics import (
     SourceScanFinished,
     SourceScanStarted,
@@ -78,6 +84,8 @@ from agentgrep.ui.widgets import (
     DetailFocusRequested,
     DetailScroll,
     DetailScrollChanged,
+    ExportDialog,
+    ExportIntent,
     FilterCompleted,
     FilterHeader,
     FilterInput,
@@ -164,6 +172,8 @@ class _ExportSnapshot:
     records: list[SearchRecord]
     destination: str | None
     selection: _ExportSelection
+    preferences: ExportPreferences | None
+    home: pathlib.Path
     canceled: threading.Event
 
 
@@ -175,6 +185,8 @@ class _ExportCompleted:
     format: str
     selection: _ExportSelection
     record_count: int
+    preferences: ExportPreferences | None
+    preference_warning: str | None
     error: str | None
 
 
@@ -295,6 +307,10 @@ class HudLayout(LayoutScreen):
         self._history_path = _history.history_path(self.home)
         self._history = list(ctx.history)
         self._last_recorded_text = self._history[0].text if self._history else ""
+        self._export_preferences = ctx.export_preferences or ExportPreferences(
+            directory=str(default_export_directory(self.home)),
+        )
+        self._export_preferences_warning = ctx.export_preferences_warning
         # Export is a non-supersedable durable action. The pump prepares one
         # point-in-time result snapshot in bounded chunks, then transfers sole
         # ownership to a thread worker. A second request remains blocked until
@@ -302,6 +318,7 @@ class HudLayout(LayoutScreen):
         self._export_pending: bool = False
         self._export_generation: int = 0
         self._export_cancel_event: threading.Event | None = None
+        self._export_dialog: ExportDialog | None = None
         self._results: SearchResultsList | None = None
         self._detail: StaticLike | None = None
         self._detail_row: SlowSourceDiagnosticsRow | None = None
@@ -627,12 +644,20 @@ class HudLayout(LayoutScreen):
         # mount focus there even when an initial search hides the filter.
         self._search_input.focus()
         self._update_pane_focus()
+        if self._export_preferences_warning is not None:
+            self.notify(
+                self._export_preferences_warning,
+                title="Export preferences",
+                severity="warning",
+            )
+            self._export_preferences_warning = None
 
     @_runtime.pump_only
     def on_unmount(self) -> None:
         """Invalidate export callbacks and cancel work during screen teardown."""
         self._export_generation += 1
         self._export_pending = False
+        self._export_dialog = None
         if self._export_cancel_event is not None:
             self._export_cancel_event.set()
             self._export_cancel_event = None
@@ -1069,10 +1094,47 @@ class HudLayout(LayoutScreen):
 
     @_runtime.pump_only
     def action_export_selected(self) -> None:
-        """Export the selected record to the private default destination."""
+        """Review one exact content-pane selection before exporting it."""
+        if self._export_dialog is not None:
+            return
         selected = self._selected_export_shortcut_record()
-        if selected is not None:
-            self.request_export("", selection="records", selected_record=selected)
+        if selected is None:
+            return
+        dialog = ExportDialog(
+            title=selected.title or "",
+            fallback_title=f"{selected.agent}-{selected.kind}",
+            home=self.home,
+            preferences=self._export_preferences,
+            on_confirm=functools.partial(self._confirm_export_dialog, selected),
+        )
+        self._export_dialog = dialog
+        self.app.push_screen(
+            dialog,
+            functools.partial(self._clear_export_dialog, dialog),
+        )
+
+    @_runtime.pump_only
+    def _confirm_export_dialog(
+        self,
+        selected: SearchRecord,
+        intent: ExportIntent,
+    ) -> bool:
+        """Start the durable worker for one retained reviewed intent."""
+        dialog = self._export_dialog
+        if dialog is None or not dialog.is_mounted:
+            return False
+        return self.request_export(
+            str(intent.destination),
+            selection="records",
+            selected_record=selected,
+            preferences=intent.preferences,
+        )
+
+    @_runtime.pump_only
+    def _clear_export_dialog(self, dialog: ExportDialog, _result: None) -> None:
+        """Forget only the retained dialog whose dismissal just completed."""
+        if self._export_dialog is dialog:
+            self._export_dialog = None
 
     @_runtime.pump_only
     def request_export(
@@ -1081,6 +1143,7 @@ class HudLayout(LayoutScreen):
         *,
         selection: _ExportSelection,
         selected_record: SearchRecord | None = None,
+        preferences: ExportPreferences | None = None,
     ) -> bool:
         """Accept one selected-record or observed-thread export request.
 
@@ -1120,6 +1183,7 @@ class HudLayout(LayoutScreen):
             selected,
             selection,
             destination or None,
+            preferences,
             active_records,
             active_count,
             chrome_generation,
@@ -1188,6 +1252,7 @@ class HudLayout(LayoutScreen):
         selected: SearchRecord,
         selection: _ExportSelection,
         destination: str | None,
+        preferences: ExportPreferences | None,
         active_records: list[SearchRecord],
         active_count: int,
         chrome_generation: int,
@@ -1249,6 +1314,8 @@ class HudLayout(LayoutScreen):
             records=records,
             destination=destination,
             selection=selection,
+            preferences=preferences,
+            home=self.home,
             canceled=canceled,
         )
         emit = _runtime.make_gated_emitter(
@@ -1320,8 +1387,20 @@ class HudLayout(LayoutScreen):
                 written = write_export(
                     artifact,
                     destination,
+                    force=False,
                     protected_paths=(record.path for record in snapshot.records),
                 )
+            if snapshot.canceled.is_set():
+                return
+            saved_preferences: ExportPreferences | None = None
+            preference_warning: str | None = None
+            if snapshot.preferences is not None:
+                try:
+                    save_export_preferences(snapshot.home, snapshot.preferences)
+                except ExportPreferencesError as exc:
+                    preference_warning = str(exc)
+                else:
+                    saved_preferences = snapshot.preferences
             if snapshot.canceled.is_set():
                 return
             completed = _ExportCompleted(
@@ -1329,6 +1408,8 @@ class HudLayout(LayoutScreen):
                 format=artifact.format,
                 selection=snapshot.selection,
                 record_count=artifact.record_count,
+                preferences=saved_preferences,
+                preference_warning=preference_warning,
                 error=None,
             )
         except ExportError as exc:
@@ -1337,6 +1418,8 @@ class HudLayout(LayoutScreen):
                 format="markdown",
                 selection=snapshot.selection,
                 record_count=0,
+                preferences=None,
+                preference_warning=None,
                 error=str(exc),
             )
         except Exception:
@@ -1345,6 +1428,8 @@ class HudLayout(LayoutScreen):
                 format="markdown",
                 selection=snapshot.selection,
                 record_count=0,
+                preferences=None,
+                preference_warning=None,
                 error="export could not be completed",
             )
         if not snapshot.canceled.is_set():
@@ -1388,18 +1473,33 @@ class HudLayout(LayoutScreen):
         if not self.is_mounted:
             return
         if event.error is not None:
+            if self._export_dialog is not None:
+                self._export_dialog.export_failed(event.error)
             self.notify(
                 event.error,
                 title="Export failed",
                 severity="error",
             )
             return
+        if event.preferences is not None:
+            self._export_preferences = event.preferences
+        dialog = self._export_dialog
+        if dialog is not None and dialog.phase == "saving":
+            dialog.export_succeeded()
+            if self._export_dialog is dialog:
+                self._export_dialog = None
         noun = "record" if event.record_count == 1 else "records"
         self.notify(
             f"{event.filename} · {event.format} · {event.selection} · {event.record_count} {noun}",
             title="Export complete",
             markup=False,
         )
+        if event.preference_warning is not None:
+            self.notify(
+                event.preference_warning,
+                title="Export preferences",
+                severity="warning",
+            )
 
     def _record_history(self, text: str) -> None:
         """Append a submitted, non-empty query to the persisted history.
