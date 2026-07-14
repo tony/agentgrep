@@ -189,8 +189,9 @@ class _DirectoryPathInput(Input):
 
     @_runtime.pump_only
     def action_directory_down(self) -> None:
-        """Move to the next visible completion."""
-        self._owner._move_highlight(1)
+        """Move through completion or to the next export field."""
+        if not self._owner._move_highlight(1):
+            self.screen.focus_next(Input)
 
     @_runtime.pump_only
     def action_cursor_right(self, select: bool = False) -> None:
@@ -386,14 +387,15 @@ class ExportDirectoryPicker(Vertical):
         self._popup.display = False
 
     @_runtime.pump_only
-    def _move_highlight(self, step: int) -> None:
+    def _move_highlight(self, step: int) -> bool:
         """Move through selectable completion rows with wraparound."""
         if not self._popup.display or not self._candidate_values:
-            return
+            return False
         if step < 0:
             self._popup.action_cursor_up()
         else:
             self._popup.action_cursor_down()
+        return True
 
     @_runtime.pump_only
     def _accept_highlighted(self) -> bool:
