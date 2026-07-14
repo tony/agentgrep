@@ -12,7 +12,7 @@ import typing as t
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import Vertical, VerticalScroll
 from textual.content import Content
 from textual.screen import ModalScreen
 from textual.widgets import Input, OptionList, Static
@@ -203,7 +203,7 @@ class ExportDialog(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         """Compose one quiet edit/review flow with literal output surfaces."""
         with Vertical(id="export-dialog"):
-            with Vertical(id="export-edit"):
+            with VerticalScroll(id="export-edit"):
                 yield Static("Directory", classes="export-label")
                 yield ExportDirectoryPicker(
                     value=self._initial_preferences.directory,
@@ -224,7 +224,7 @@ class ExportDialog(ModalScreen[None]):
                     id="export-edit-footer",
                     markup=False,
                 )
-            with Vertical(id="export-review"):
+            with VerticalScroll(id="export-review"):
                 yield Static("Directory", classes="export-label")
                 yield Static("", id="export-review-directory", markup=False)
                 yield Static("Filename", classes="export-label")
@@ -327,11 +327,19 @@ class ExportDialog(ModalScreen[None]):
             )
         except ExportPreferencesError as error:
             self.query_one("#export-preview", Static).update(Content(""))
-            self.query_one("#export-error", Static).update(Content(str(error)))
+            self._update_error(str(error))
             return False
         self.query_one("#export-preview", Static).update(Content(filename))
-        self.query_one("#export-error", Static).update(Content(""))
+        self._update_error("")
         return True
+
+    @_runtime.pump_only
+    def _update_error(self, message: str) -> None:
+        """Update inline feedback and expose it in a compact scrolling edit stage."""
+        error = self.query_one("#export-error", Static)
+        error.update(Content(message))
+        if message:
+            error.scroll_visible(animate=False, immediate=True)
 
     @_runtime.pump_only
     def _start_validation(self) -> None:
@@ -414,8 +422,8 @@ class ExportDialog(ModalScreen[None]):
         """Restore the retained edit stage and its prior focus."""
         self._phase = "edit"
         self._intent = None
-        edit = self.query_one("#export-edit", Vertical)
-        review = self.query_one("#export-review", Vertical)
+        edit = self.query_one("#export-edit", VerticalScroll)
+        review = self.query_one("#export-review", VerticalScroll)
         edit.display = True
         review.display = False
         picker = self.query_one("#export-directory", ExportDirectoryPicker)
@@ -427,7 +435,7 @@ class ExportDialog(ModalScreen[None]):
         )
         self._refresh_preview()
         if error is not None:
-            self.query_one("#export-error", Static).update(Content(error))
+            self._update_error(error)
         if self._edit_focus == "directory":
             picker.focus_input()
         else:
@@ -437,8 +445,8 @@ class ExportDialog(ModalScreen[None]):
     def _show_review(self, intent: ExportIntent) -> None:
         """Show the literal directory and exact basename with No selected."""
         self._phase = "review"
-        self.query_one("#export-edit", Vertical).display = False
-        self.query_one("#export-review", Vertical).display = True
+        self.query_one("#export-edit", VerticalScroll).display = False
+        self.query_one("#export-review", VerticalScroll).display = True
         self.query_one("#export-review-directory", Static).update(
             Content(intent.preferences.directory),
         )
