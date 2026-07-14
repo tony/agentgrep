@@ -36,11 +36,20 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a35 (Yet to be released)
+## agentgrep 0.1.0a36 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a35 (2026-07-13)
+
+agentgrep 0.1.0a35 makes the interactive explorer's (`agentgrep ui`) scan
+progress honest on large stores: the progress HUD now names the source it is
+scanning and its parsed-record heartbeat, while the results rule stays
+dedicated to filter position and scroll state. An interrupted scan identifies
+the source still in flight instead of counting it as finished, and an optional
+`Ctrl-\` row can surface a slow store on demand without revealing local paths.
 
 ### Fixes
 
