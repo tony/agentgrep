@@ -7,6 +7,7 @@ testable against a plain recording host with no Textual app — the routing poli
 
 from __future__ import annotations
 
+import inspect
 import pathlib
 import typing as t
 
@@ -126,28 +127,16 @@ class _WorkflowSwapLayout(LayoutScreen):
         self._calls.append("cancel")
 
 
-class SetWorkflowCase(t.NamedTuple):
-    """A workflow swap mode and the side effects it should produce."""
-
-    test_id: str
-    attach: bool
-    expected_calls: tuple[str, ...]
-
-
-SET_WORKFLOW_CASES = (
-    SetWorkflowCase("attached-cancels-before-attach", True, ("cancel", "attach")),
-    SetWorkflowCase("suspended-assigns-only", False, ()),
-)
-
-
-@pytest.mark.parametrize("case", SET_WORKFLOW_CASES, ids=lambda c: c.test_id)
-def test_layout_set_workflow_cancel_order(case: SetWorkflowCase) -> None:
+def test_layout_set_workflow_cancel_order() -> None:
     """Workflow replacement cancels active work before attached re-seeding."""
+    parameters = inspect.signature(LayoutScreen.set_workflow).parameters
+    assert "attach" not in parameters
+    assert not hasattr(LayoutScreen, "attach_pending_workflow")
     calls: list[str] = []
     layout = _WorkflowSwapLayout(calls)
     workflow = _RecordingWorkflow(calls)
-    layout.set_workflow(workflow, attach=case.attach)
-    assert tuple(calls) == case.expected_calls
+    layout.set_workflow(workflow)
+    assert tuple(calls) == ("cancel", "attach")
     assert layout.workflow is workflow
 
 

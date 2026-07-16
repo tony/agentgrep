@@ -346,7 +346,7 @@ async def test_slash_screenshot_serializes_svg_off_pump(
         assert delivery["name"] == "screenshot"
 
 
-async def test_slash_screenshot_drops_worker_result_after_layout_switch(
+async def test_slash_screenshot_drops_worker_result_after_origin_is_covered(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -380,8 +380,7 @@ async def test_slash_screenshot_drops_worker_result_after_layout_switch(
             await pilot.pause(0.01)
         assert export_started.is_set()
 
-        await pilot.press("f2")
-        await pilot.pause()
+        await _mount_greplog(app, pilot)
         assert app.screen is not origin
 
         release_export.set()
@@ -477,11 +476,11 @@ async def test_slash_screenshot_rejects_path_argument_as_search_text(
         assert delivered == []
 
 
-async def test_slash_screenshot_drops_delivery_after_layout_switch(
+async def test_slash_screenshot_drops_delivery_after_origin_is_covered(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A callback retained by its origin cannot capture the next F2 layout."""
+    """A callback retained by its origin cannot capture a covering layout."""
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
@@ -492,8 +491,7 @@ async def test_slash_screenshot_drops_delivery_after_layout_switch(
 
         await _submit(pilot, origin, "/screenshot")
         assert len(callbacks) == 1
-        await pilot.press("f2")
-        await pilot.pause()
+        await _mount_greplog(app, pilot)
         assert app.screen is not origin
 
         callbacks[0]()

@@ -1,21 +1,22 @@
-"""Tests for the pluggable-layout registry, CLI selection, and live switching.
+"""Tests for the internal pluggable-layout registry and fixed TUI shell.
 
-Covers the registry resolution, the ``agentgrep ui --layout/--workflow`` CLI
-surface, the factory's validation, and the runtime ``f2`` / ``f3`` switching
-(ADR 0013, commit 5).
+Covers registry resolution, the fixed ``agentgrep ui`` CLI surface, factory
+validation, and programmatic initial composition (ADR 0013).
 """
 
 from __future__ import annotations
 
 import collections.abc as cabc
+import dataclasses
+import inspect
 import pathlib
 import typing as t
 
 import pytest
 
 import agentgrep
-from agentgrep.progress import SearchControl, StreamingRecordsBatch, StreamingSearchFinished
-from agentgrep.records import SearchQuery, SearchRecord
+from agentgrep.progress import SearchControl
+from agentgrep.records import SearchQuery
 from tests.test_agentgrep import _build_empty_ui_app
 
 
@@ -30,37 +31,6 @@ class _NoopInvoker:
         emit: cabc.Callable[[object], None],
     ) -> None:
         """Accept the search request without touching the engine."""
-
-
-class _StreamingInvoker:
-    """Search seam stub that emits one record per request."""
-
-    def __init__(self, tmp_path: pathlib.Path) -> None:
-        self._tmp_path = tmp_path
-        self.queries: list[SearchQuery] = []
-
-    def run(
-        self,
-        query: SearchQuery,
-        *,
-        control: SearchControl,
-        emit: cabc.Callable[[object], None],
-    ) -> None:
-        """Emit one streamed record for ``query`` unless already canceled."""
-        self.queries.append(query)
-        if control.answer_now_requested():
-            return
-        idx = len(self.queries)
-        record = SearchRecord(
-            kind="prompt",
-            agent="codex",
-            store="codex.sessions",
-            adapter_id="codex.sessions_jsonl.v1",
-            path=self._tmp_path / f"r{idx}.jsonl",
-            text=f"record {idx}",
-        )
-        emit(StreamingRecordsBatch(records=(record,), total=idx))
-        emit(StreamingSearchFinished(outcome="complete", total=idx, elapsed=0.01))
 
 
 class ResolveCase(t.NamedTuple):
@@ -106,46 +76,46 @@ def test_registry_lists_names_and_rejects_unknown() -> None:
     assert registry.workflow_spec("nope") is None
 
 
-class CliCase(t.NamedTuple):
-    """A ``ui`` invocation and the layout/workflow it should parse to."""
+def test_shell_accepts_one_typed_immutable_composition() -> None:
+    """The internal shell receives one validated component pair."""
+    from agentgrep.ui import registry
+    from agentgrep.ui._shell import ExplorerApp
 
-    test_id: str
-    argv: tuple[str, ...]
-    layout: str
-    workflow: str
+    assert "UiComposition" not in registry.__all__
+    assert not hasattr(registry, "UiComposition")
+    assert hasattr(registry, "_UiComposition")
+    parameters = inspect.signature(ExplorerApp).parameters
+    assert "composition" in parameters
+    assert "layout" not in parameters
+    assert "workflow" not in parameters
 
-
-CLI_CASES = (
-    CliCase("defaults", ("ui",), "hud", "search"),
-    CliCase("explicit", ("ui", "--layout", "greplog", "--workflow", "browse"), "greplog", "browse"),
-)
-
-
-class ResumedBrowseCase(t.NamedTuple):
-    """A suspended layout resumed after a workflow swap."""
-
-    test_id: str
-    query_terms: tuple[str, ...]
-    expected_searches: int
-    expected_records: int
-
-
-RESUMED_BROWSE_CASES = (ResumedBrowseCase("suspended-greplog-loads-on-resume", (), 2, 1),)
+    layout = registry.layout_spec("hud")
+    workflow = registry.workflow_spec("search")
+    assert layout is not None
+    assert workflow is not None
+    composition = registry._UiComposition(layout=layout, workflow=workflow)
+    assert dataclasses.is_dataclass(composition)
+    field_name = "layout"
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        setattr(composition, field_name, layout)
 
 
-@pytest.mark.parametrize("case", CLI_CASES, ids=lambda c: c.test_id)
-def test_ui_command_parses_layout_workflow(case: CliCase) -> None:
-    """``agentgrep ui`` parses ``--layout`` / ``--workflow`` into UIArgs."""
-    args = agentgrep.parse_args(case.argv)
+def test_ui_command_has_no_layout_workflow_fields() -> None:
+    """The normal ``ui`` command carries no layout/workflow selection."""
+    args = agentgrep.parse_args(["ui"])
     assert isinstance(args, agentgrep.UIArgs)
-    assert args.layout == case.layout
-    assert args.workflow == case.workflow
+    assert not hasattr(args, "layout")
+    assert not hasattr(args, "workflow")
 
 
-def test_ui_command_rejects_unknown_layout() -> None:
-    """Argparse ``choices`` reject an unregistered ``--layout`` value."""
+@pytest.mark.parametrize(
+    ("option", "value"),
+    (("--layout", "greplog"), ("--workflow", "browse")),
+)
+def test_ui_command_rejects_layout_workflow_options(option: str, value: str) -> None:
+    """The normal ``ui`` command does not advertise component selection."""
     with pytest.raises(SystemExit):
-        agentgrep.parse_args(["ui", "--layout", "nope"])
+        agentgrep.parse_args(["ui", option, value])
 
 
 def test_build_streaming_ui_app_validates_selection(tmp_path: pathlib.Path) -> None:
@@ -175,209 +145,39 @@ def test_build_streaming_ui_app_validates_selection(tmp_path: pathlib.Path) -> N
         )
 
 
-async def test_f2_cycles_through_layouts(
+async def test_explorer_app_has_fixed_shell_surface(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``F2`` switches the active layout through the registry and wraps around."""
-    app = _build_empty_ui_app(tmp_path, monkeypatch)
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        assert type(app.screen).__name__ == "HudLayout"
-        await pilot.press("f2")
-        await pilot.pause()
-        assert type(app.screen).__name__ == "GrepLogLayout"
-        await pilot.press("f2")
-        await pilot.pause()
-        assert type(app.screen).__name__ == "HudLayout"
-
-
-async def test_f2_resumes_launch_layout(
-    tmp_path: pathlib.Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Switching back to the launch layout resumes its existing screen."""
-    app = _build_empty_ui_app(tmp_path, monkeypatch)
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        hud = app.screen
-        await pilot.press("f2")
-        await pilot.pause()
-        assert type(app.screen).__name__ == "GrepLogLayout"
-        await pilot.press("f2")
-        await pilot.pause()
-        assert app.screen is hud
-
-
-async def test_f2_ignores_active_history_modal(
-    tmp_path: pathlib.Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """``F2`` must not replace a modal screen stack."""
-    from agentgrep.ui._history import HistoryEntry
-    from agentgrep.ui.widgets.history import HistoryRecall
-
-    app = _build_empty_ui_app(tmp_path, monkeypatch)
-    async with app.run_test(size=(120, 30)) as pilot:
-        await pilot.pause()
-        hud = app.screen
-        hud._history = [HistoryEntry(text="agent:codex refactor", ts=10)]
-        hud._search_input.focus()
-        await pilot.press("ctrl+r")
-        await pilot.pause()
-        assert isinstance(app.screen, HistoryRecall)
-        await pilot.press("f2")
-        await pilot.pause()
-        assert isinstance(app.screen, HistoryRecall)
-        await pilot.press("enter")
-        await pilot.pause()
-        assert app.screen is hud
-        assert hud._search_input.value == "agent:codex refactor"
-
-
-async def test_launch_query_resumes_launch_layout(
-    tmp_path: pathlib.Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """An initial query does not break the named launch layout stack."""
-    from agentgrep.ui._context import UiContext
+    """The mounted shell exposes no normal layout/workflow switcher."""
     from agentgrep.ui._shell import ExplorerApp
 
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
-    query = agentgrep.SearchQuery(
-        terms=("mobx",),
-        scope="prompts",
-        any_term=False,
-        regex=False,
-        case_sensitive=False,
-        agents=("codex",),
-        limit=None,
-    )
-    app = ExplorerApp(
-        UiContext(
-            home=home,
-            invoker=_NoopInvoker(),
-            query=query,
-            control=agentgrep.SearchControl(),
-        ),
-    )
-    assert app._current_mode == app.DEFAULT_MODE
-    assert "hud" not in app._screen_stacks
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        hud = app.screen
-        assert type(hud).__name__ == "HudLayout"
-        await pilot.press("f2")
-        await pilot.pause()
-        assert type(app.screen).__name__ == "GrepLogLayout"
-        await pilot.press("f2")
-        await pilot.pause()
-        assert app.screen is hud
-
-
-async def test_f3_cycles_through_workflows(
-    tmp_path: pathlib.Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """``F3`` swaps the active layout's workflow through the registry."""
     app = _build_empty_ui_app(tmp_path, monkeypatch)
+    assert ExplorerApp.BINDINGS == []
+    assert not hasattr(ExplorerApp, "action_cycle_layout")
+    assert not hasattr(ExplorerApp, "action_cycle_workflow")
+    assert not hasattr(ExplorerApp, "_mode_factory")
+    assert not hasattr(ExplorerApp, "_adopt_launch_mode")
     async with app.run_test() as pilot:
         await pilot.pause()
-        assert app.screen.workflow.name == "search"
-        await pilot.press("f3")
+        screen = app.screen
+        workflow = screen.workflow
+        assert app._modes == {}
+        assert app.sub_title == ""
+        await pilot.press("f2", "f3")
         await pilot.pause()
-        assert app.screen.workflow.name == "browse"
-        await pilot.press("f3")
-        await pilot.pause()
-        assert app.screen.workflow.name == "search"
+        assert app.screen is screen
+        assert app.screen.workflow is workflow
 
 
-async def test_f3_updates_suspended_layout_workflow(
+async def test_factory_mounts_only_programmatically_selected_pair(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``F3`` updates already-created layouts before they are resumed."""
-    app = _build_empty_ui_app(tmp_path, monkeypatch)
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        await pilot.press("f2")
-        await pilot.pause()
-        greplog = app.screen
-        assert type(greplog).__name__ == "GrepLogLayout"
-        assert greplog.workflow.name == "search"
-        await pilot.press("f2")
-        await pilot.pause()
-        assert type(app.screen).__name__ == "HudLayout"
-        await pilot.press("f3")
-        await pilot.pause()
-        assert app.screen.workflow.name == "browse"
-        await pilot.press("f2")
-        await pilot.pause()
-        assert app.screen is greplog
-        assert app.screen.workflow.name == "browse"
-
-
-@pytest.mark.parametrize("case", RESUMED_BROWSE_CASES, ids=lambda c: c.test_id)
-async def test_f3_browse_attaches_resumed_layout(
-    tmp_path: pathlib.Path,
-    monkeypatch: pytest.MonkeyPatch,
-    case: ResumedBrowseCase,
-) -> None:
-    """A suspended layout loads browse records after it is resumed."""
-    from agentgrep.ui._context import UiContext
-    from agentgrep.ui._shell import ExplorerApp
+    """Factory injection selects one pair without registering switchable modes."""
     from agentgrep.ui.layouts._base import LayoutScreen
-    from agentgrep.ui.layouts.greplog import GrepLogLayout
 
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
-    invoker = _StreamingInvoker(tmp_path)
-    query = SearchQuery(
-        terms=case.query_terms,
-        scope="prompts",
-        any_term=False,
-        regex=False,
-        case_sensitive=False,
-        agents=("codex",),
-        limit=None,
-    )
-    app = ExplorerApp(
-        UiContext(
-            home=home,
-            invoker=invoker,
-            query=query,
-            control=SearchControl(),
-        ),
-    )
-    async with app.run_test(size=(120, 30)) as pilot:
-        await pilot.pause()
-        await pilot.press("f2")
-        await pilot.pause()
-        greplog = t.cast(GrepLogLayout, app.screen)
-        assert type(greplog).__name__ == "GrepLogLayout"
-        await pilot.press("f2")
-        await pilot.pause()
-        await pilot.press("f3")
-        await pilot.pause(0.2)
-        assert t.cast(LayoutScreen, app.screen).workflow.name == "browse"
-        await pilot.press("f2")
-        await pilot.pause(0.2)
-        assert app.screen is greplog
-        assert t.cast(LayoutScreen, app.screen).workflow.name == "browse"
-        assert len(invoker.queries) == case.expected_searches
-        assert len(greplog._records) == case.expected_records
-
-
-async def test_launch_into_greplog_layout(
-    tmp_path: pathlib.Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Building the app with ``layout='greplog'`` launches straight into it."""
-    agentgrep_mod = t.cast("t.Any", agentgrep)
-    query = agentgrep_mod.SearchQuery(
+    query = agentgrep.SearchQuery(
         terms=(),
         scope="prompts",
         any_term=False,
@@ -389,12 +189,77 @@ async def test_launch_into_greplog_layout(
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
-    app = agentgrep_mod.build_streaming_ui_app(
-        home,
-        query,
-        control=agentgrep_mod.SearchControl(),
-        layout="greplog",
+    app = t.cast(
+        "t.Any",
+        agentgrep.build_streaming_ui_app(
+            home,
+            query,
+            control=agentgrep.SearchControl(),
+            layout="greplog",
+            workflow="browse",
+        ),
     )
     async with app.run_test() as pilot:
         await pilot.pause()
         assert type(app.screen).__name__ == "GrepLogLayout"
+        assert app.screen.workflow.name == "browse"
+        assert [screen for screen in app.screen_stack if isinstance(screen, LayoutScreen)] == [
+            app.screen,
+        ]
+        assert app._modes == {}
+
+
+@pytest.mark.parametrize(
+    ("layout_name", "workflow_name", "layout_class_name"),
+    (
+        ("hud", "search", "HudLayout"),
+        ("hud", "browse", "HudLayout"),
+        ("greplog", "search", "GrepLogLayout"),
+        ("greplog", "browse", "GrepLogLayout"),
+    ),
+)
+async def test_explorer_app_composition_selects_initial_pair(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    layout_name: str,
+    workflow_name: str,
+    layout_class_name: str,
+) -> None:
+    """Direct embedding can still inject any registered initial pair."""
+    from agentgrep.ui import registry
+    from agentgrep.ui._context import UiContext
+    from agentgrep.ui._shell import ExplorerApp
+    from agentgrep.ui.layouts._base import LayoutScreen
+
+    layout_spec = registry.layout_spec(layout_name)
+    workflow_spec = registry.workflow_spec(workflow_name)
+    assert layout_spec is not None
+    assert workflow_spec is not None
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    query = SearchQuery(
+        terms=(),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=(),
+        limit=None,
+    )
+    app = ExplorerApp(
+        UiContext(
+            home=home,
+            invoker=_NoopInvoker(),
+            query=query,
+            control=SearchControl(),
+        ),
+        composition=registry._UiComposition(
+            layout=layout_spec,
+            workflow=workflow_spec,
+        ),
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert type(app.screen).__name__ == layout_class_name
+        assert t.cast(LayoutScreen, app.screen).workflow.name == workflow_name

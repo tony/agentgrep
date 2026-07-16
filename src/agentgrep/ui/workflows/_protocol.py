@@ -68,9 +68,9 @@ class Workflow(t.Protocol):
     primary input is submitted.
     """
 
-    #: Stable registry id (lowercase, no spaces) used by ``--workflow`` and switching.
+    #: Stable registry id (lowercase, no spaces) used by Python composition.
     name: t.ClassVar[str]
-    #: One-line human description for the switcher and ``--help``.
+    #: One-line description retained with the internal registry.
     summary: t.ClassVar[str]
     #: Extra screen-level key bindings this workflow installs while active.
     BINDINGS: t.ClassVar[cabc.Sequence[object]]

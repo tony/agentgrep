@@ -3,7 +3,8 @@
 A *layout* is the structure axis of the TUI: a :class:`~agentgrep.ui.layouts._base.LayoutScreen`
 (a Textual ``Screen``) that owns its ``compose``, CSS, bindings, and how it
 presents streamed records. The App shell mounts one layout as the default and can
-switch between them; every layout shares the engine seam through the injected
+be constructed with another for tests or embedding; each app mounts one layout
+for its lifetime. Every layout shares the engine seam through the injected
 :class:`~agentgrep.ui._context.UiContext`.
 
 Layouts import Textual at module scope, so they are reached only from inside the

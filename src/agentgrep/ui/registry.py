@@ -1,11 +1,10 @@
-"""Typed registries of the built-in TUI layouts and workflows (ADR 0013).
+"""Typed registries of the internal TUI layouts and workflows (ADR 0013).
 
-A small, frozen, Textual-free catalog the App shell and the CLI consult to
-resolve a ``--layout`` / ``--workflow`` name into a class. Each spec carries a
-*lazy* loader (a function-local import) so listing the names never imports
-Textual — only launching a layout does — keeping ``agentgrep --help`` cold. A
-future third-party source (``importlib.metadata`` entry points) can feed the same
-:class:`LayoutSpec` / :class:`WorkflowSpec` shape without changing consumers.
+A small, frozen, Textual-free catalog the Python app factories consult to
+resolve injected names. They pass one frozen composition value to the shell, so
+Textual code receives an already-validated pair. Each spec carries a *lazy*
+loader (a function-local import), so inspecting the registry never imports
+Textual.
 """
 
 from __future__ import annotations
@@ -35,7 +34,7 @@ __all__ = [
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class LayoutSpec:
-    """A registered layout: its CLI name, one-line summary, and a lazy loader."""
+    """A registered layout: its stable name, one-line summary, and lazy loader."""
 
     name: str
     summary: str
@@ -44,11 +43,19 @@ class LayoutSpec:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class WorkflowSpec:
-    """A registered workflow: its CLI name, one-line summary, and a lazy loader."""
+    """A registered workflow: its stable name, summary, and lazy loader."""
 
     name: str
     summary: str
     loader: cabc.Callable[[], type[Workflow]]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _UiComposition:
+    """One validated layout/workflow pair for the internal App shell."""
+
+    layout: LayoutSpec
+    workflow: WorkflowSpec
 
 
 def _load_hud() -> type[LayoutScreen]:
@@ -87,7 +94,7 @@ WORKFLOWS: tuple[WorkflowSpec, ...] = (
     WorkflowSpec("browse", "Browse a loaded set; the input filters in-memory", _load_browse),
 )
 
-#: The default layout / workflow when ``--layout`` / ``--workflow`` is unset.
+#: The fixed shipped pair and the defaults for omitted Python injection.
 DEFAULT_LAYOUT = LAYOUTS[0].name
 DEFAULT_WORKFLOW = WORKFLOWS[0].name
 
