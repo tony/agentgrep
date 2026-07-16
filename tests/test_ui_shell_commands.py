@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import pathlib
 import threading
 import typing as t
@@ -65,7 +66,12 @@ def _capture_screenshot_callbacks(
         **kwargs: object,
     ) -> bool:
         if getattr(callback, "__name__", "") == "_deliver_screenshot_after_refresh":
-            callbacks.append(t.cast("t.Callable[[], None]", callback))
+            callbacks.append(
+                t.cast(
+                    "t.Callable[[], None]",
+                    functools.partial(callback, *args, **kwargs),
+                ),
+            )
             return True
         return bool(original(callback, *args, **kwargs))
 
@@ -346,6 +352,123 @@ async def test_slash_screenshot_serializes_svg_off_pump(
         assert delivery["name"] == "screenshot"
 
 
+async def test_slash_screenshot_drops_superseded_thread_result(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cancelled thread finishing late cannot deliver an older screenshot."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        layout = app.screen
+        first_export_started = threading.Event()
+        release_first_export = threading.Event()
+        first_delivery_checked = threading.Event()
+        delivered: list[str] = []
+        original_call_from_thread = app.call_from_thread
+
+        def delayed_export(
+            console: Console,
+            *args: object,
+            **kwargs: object,
+        ) -> str:
+            del console, args
+            title = str(kwargs.get("title"))
+            if title == "first":
+                first_export_started.set()
+                assert release_first_export.wait(timeout=5)
+            return f"<svg>{title}</svg>"
+
+        def call_from_thread(
+            callback: t.Callable[..., object],
+            *args: object,
+            **kwargs: object,
+        ) -> object:
+            result = original_call_from_thread(callback, *args, **kwargs)
+            filenames = [arg for arg in args if isinstance(arg, str) and arg.endswith(".svg")]
+            if filenames and filenames[-1].startswith("first_"):
+                first_delivery_checked.set()
+            return result
+
+        def deliver_text(screenshot: t.TextIO, **_kwargs: object) -> str:
+            delivered.append(screenshot.read())
+            screenshot.close()
+            return "screenshot-key"
+
+        monkeypatch.setattr(Console, "export_svg", delayed_export)
+        monkeypatch.setattr(app, "call_from_thread", call_from_thread)
+        monkeypatch.setattr(app, "deliver_text", deliver_text)
+
+        app.title = "first"
+        assert layout.request_screenshot() is True
+        for _ in range(100):
+            if first_export_started.is_set():
+                break
+            await pilot.pause(0.01)
+        assert first_export_started.is_set()
+
+        try:
+            app.title = "second"
+            assert layout.request_screenshot() is True
+            for _ in range(100):
+                if delivered:
+                    break
+                await pilot.pause(0.01)
+            assert delivered == ["<svg>second</svg>"]
+        finally:
+            release_first_export.set()
+
+        for _ in range(100):
+            if first_delivery_checked.is_set():
+                break
+            await pilot.pause(0.01)
+
+        assert first_delivery_checked.is_set()
+        assert delivered == ["<svg>second</svg>"]
+
+
+async def test_slash_screenshot_drops_superseded_deferred_capture(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An older refresh callback cannot capture after a newer request."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        layout = app.screen
+        callbacks = _capture_screenshot_callbacks(layout, monkeypatch)
+        exported: list[str] = []
+        delivered: list[str] = []
+
+        def export_svg(_console: Console, *_args: object, **_kwargs: object) -> str:
+            exported.append("latest")
+            return "<svg>latest</svg>"
+
+        def deliver_text(screenshot: t.TextIO, **_kwargs: object) -> str:
+            delivered.append(screenshot.read())
+            screenshot.close()
+            return "screenshot-key"
+
+        monkeypatch.setattr(Console, "export_svg", export_svg)
+        monkeypatch.setattr(app, "deliver_text", deliver_text)
+
+        await _submit(pilot, layout, "/screenshot")
+        await _submit(pilot, layout, "/screenshot")
+        assert len(callbacks) == 2
+
+        callbacks[0]()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert exported == []
+        assert delivered == []
+
+        callbacks[1]()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert exported == ["latest"]
+        assert delivered == ["<svg>latest</svg>"]
+
+
 async def test_slash_screenshot_drops_worker_result_after_origin_is_covered(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -434,8 +557,15 @@ async def test_slash_screenshot_retains_command_when_scheduling_fails(
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
         layout = app.screen
+        export_started = threading.Event()
+        release_export = threading.Event()
         original = layout.call_after_refresh
-        delivered: list[object] = []
+        delivered: list[str] = []
+
+        def delayed_export(_console: Console, *_args: object, **_kwargs: object) -> str:
+            export_started.set()
+            assert release_export.wait(timeout=5)
+            return "<svg>accepted</svg>"
 
         def reject_screenshot(
             callback: t.Callable[..., object],
@@ -446,14 +576,36 @@ async def test_slash_screenshot_retains_command_when_scheduling_fails(
                 return False
             return bool(original(callback, *args, **kwargs))
 
-        monkeypatch.setattr(layout, "call_after_refresh", reject_screenshot)
-        monkeypatch.setattr(app, "deliver_text", lambda *_a, **_k: delivered.append(object()))
+        def deliver_text(screenshot: t.TextIO, **_kwargs: object) -> str:
+            delivered.append(screenshot.read())
+            screenshot.close()
+            return "screenshot-key"
 
-        await _submit(pilot, layout, "/screenshot")
+        monkeypatch.setattr(Console, "export_svg", delayed_export)
+        monkeypatch.setattr(app, "deliver_text", deliver_text)
 
-        assert layout._search_input.value == "/screenshot"
-        assert layout._enum_dropdown.display is True
-        assert delivered == []
+        try:
+            await _submit(pilot, layout, "/screenshot")
+            for _ in range(100):
+                if export_started.is_set():
+                    break
+                await pilot.pause(0.01)
+            assert export_started.is_set()
+
+            monkeypatch.setattr(layout, "call_after_refresh", reject_screenshot)
+            await _submit(pilot, layout, "/screenshot")
+
+            assert layout._search_input.value == "/screenshot"
+            assert layout._enum_dropdown.display is True
+            assert delivered == []
+        finally:
+            release_export.set()
+
+        for _ in range(100):
+            if delivered:
+                break
+            await pilot.pause(0.01)
+        assert delivered == ["<svg>accepted</svg>"]
 
 
 async def test_slash_screenshot_rejects_path_argument_as_search_text(

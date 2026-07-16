@@ -74,8 +74,9 @@ def _screenshot_console(width: int, height: int) -> Console:
 @_runtime.offload
 def _export_screenshot_frame(
     frame: _ScreenshotFrame,
+    generation: int,
     call_from_thread: t.Callable[..., object],
-    register_delivery: t.Callable[[t.TextIO, str], None],
+    register_delivery: t.Callable[[int, t.TextIO, str], None],
 ) -> None:
     """Serialize a detached Rich frame and register pump-side delivery.
 
@@ -83,6 +84,8 @@ def _export_screenshot_frame(
     ----------
     frame : _ScreenshotFrame
         Immutable dimensions, title, and recorded segments captured on the pump.
+    generation : int
+        Screenshot generation accepted by the originating layout.
     call_from_thread : typing.Callable
         Textual's worker-to-pump call gate captured before offload.
     register_delivery : typing.Callable
@@ -92,7 +95,7 @@ def _export_screenshot_frame(
     console.print(Segments(frame.segments))
     screenshot = io.StringIO(console.export_svg(title=frame.title))
     try:
-        call_from_thread(register_delivery, screenshot, frame.filename)
+        call_from_thread(register_delivery, generation, screenshot, frame.filename)
     except BaseException:
         screenshot.close()
         raise
@@ -124,6 +127,7 @@ class LayoutScreen(_SCREEN_BASE):
         self._workflow = workflow
         self._command_matches: tuple[commands.SlashCommand, ...] = ()
         self._enum_dropdown: t.Any = None
+        self._screenshot_generation: int = 0
 
     @property
     def context(self) -> UiContext:
@@ -248,12 +252,23 @@ class LayoutScreen(_SCREEN_BASE):
     @_runtime.pump_only
     def request_screenshot(self) -> bool:
         """Deliver this layout after command chrome changes have refreshed."""
+        generation = self._screenshot_generation + 1
         self.refresh()
-        return bool(self.call_after_refresh(self._deliver_screenshot_after_refresh))
+        scheduled = bool(
+            self.call_after_refresh(
+                self._deliver_screenshot_after_refresh,
+                generation,
+            ),
+        )
+        if scheduled:
+            self._screenshot_generation = generation
+        return scheduled
 
     @_runtime.pump_only
-    def _deliver_screenshot_after_refresh(self) -> None:
+    def _deliver_screenshot_after_refresh(self, generation: int) -> None:
         """Deliver only while this layout remains mounted and active."""
+        if generation != self._screenshot_generation:
+            return
         if not self.is_mounted or not self.is_attached:
             return
         app = self.app
@@ -265,6 +280,7 @@ class LayoutScreen(_SCREEN_BASE):
             functools.partial(
                 _export_screenshot_frame,
                 frame,
+                generation,
                 app.call_from_thread,
                 self._register_screenshot_delivery,
             ),
@@ -275,8 +291,16 @@ class LayoutScreen(_SCREEN_BASE):
         )
 
     @_runtime.pump_only
-    def _register_screenshot_delivery(self, screenshot: t.TextIO, filename: str) -> None:
+    def _register_screenshot_delivery(
+        self,
+        generation: int,
+        screenshot: t.TextIO,
+        filename: str,
+    ) -> None:
         """Deliver a worker-built SVG while its originating layout is active."""
+        if generation != self._screenshot_generation:
+            screenshot.close()
+            return
         if not self.is_mounted or not self.is_attached:
             screenshot.close()
             return
