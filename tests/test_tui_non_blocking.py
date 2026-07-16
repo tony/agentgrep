@@ -80,7 +80,14 @@ _SCHEDULER_FUNCS = {
 # type, they would false-positive on dicts/strings/futures; the wall-clock
 # watchdog is the backstop for those (ADR 0011 coverage limits).
 _FORBIDDEN_CALL_NAMES = {"open", "input", "run_search_query"}
-_FORBIDDEN_ATTRS = {"read_text", "read_bytes", "iterdir", "rglob"}
+_FORBIDDEN_ATTRS = {
+    "deliver_screenshot",
+    "export_screenshot",
+    "read_text",
+    "read_bytes",
+    "iterdir",
+    "rglob",
+}
 _FORBIDDEN_DOTTED_ROOTS = {
     "subprocess",
     "sqlite3",

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import pathlib
+import threading
 import typing as t
 
 import pytest
+from rich.console import Console
 from textual.command import CommandPalette
 from textual.widgets import Footer, HelpPanel
 
@@ -241,10 +243,10 @@ async def test_slash_screenshot_delivers_after_command_chrome_clears(
         filtered_records = layout.filtered_records
         results = layout._results
         result_records = results._records
-        workers = tuple(app.workers)
-        delivered: list[tuple[str, bool, bool, bool, bool, bool, bool, bool, bool, bool]] = []
+        delivered: list[tuple[str, bool, bool, bool, bool, bool, bool, bool, bool]] = []
 
-        def deliver_screenshot() -> str:
+        def deliver_text(screenshot: t.TextIO, **_kwargs: object) -> str:
+            screenshot.close()
             delivered.append(
                 (
                     str(layout._search_input.value),
@@ -256,12 +258,11 @@ async def test_slash_screenshot_delivers_after_command_chrome_clears(
                     layout.filtered_records is filtered_records,
                     layout._results is results,
                     results._records is result_records,
-                    tuple(app.workers) == workers,
                 ),
             )
             return "screenshot-key"
 
-        monkeypatch.setattr(app, "deliver_screenshot", deliver_screenshot)
+        monkeypatch.setattr(app, "deliver_text", deliver_text)
         layout._set_empty_state(empty=False)
         assert layout.handle_maximize_command("results") is True
 
@@ -272,12 +273,122 @@ async def test_slash_screenshot_delivers_after_command_chrome_clears(
         assert layout._enum_dropdown.display is True
         await pilot.press("enter")
         await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
 
-        assert delivered == [("", False, True, True, True, True, True, True, True, True)]
+        assert delivered == [("", False, True, True, True, True, True, True, True)]
         assert app.screen is layout
         assert app.focused is layout._search_input
         assert control.answer_now_requested() is False
         assert result_records == [record]
+
+
+async def test_slash_screenshot_serializes_svg_off_pump(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Screenshot capture owns the compositor; SVG serialization does not."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        layout = app.screen
+        expected_svg = app.export_screenshot()
+        compositor = layout._compositor
+        pump_thread = threading.get_ident()
+        render_threads: list[int] = []
+        export_threads: list[int] = []
+        delivered: list[tuple[int, str, dict[str, object]]] = []
+        original_render_update = type(compositor).render_update
+        original_export_svg = Console.export_svg
+
+        def render_update(
+            current: t.Any,
+            *args: object,
+            **kwargs: object,
+        ) -> object:
+            if current is compositor and kwargs.get("full") is True:
+                render_threads.append(threading.get_ident())
+            return original_render_update(current, *args, **kwargs)
+
+        def export_svg(
+            console: Console,
+            *args: t.Any,
+            **kwargs: t.Any,
+        ) -> str:
+            export_threads.append(threading.get_ident())
+            return original_export_svg(console, *args, **kwargs)
+
+        def deliver_text(file: t.TextIO, **kwargs: object) -> str:
+            delivered.append((threading.get_ident(), file.read(), kwargs))
+            file.close()
+            return "screenshot-key"
+
+        monkeypatch.setattr(type(compositor), "render_update", render_update)
+        monkeypatch.setattr(Console, "export_svg", export_svg)
+        monkeypatch.setattr(app, "deliver_text", deliver_text)
+
+        await _submit(pilot, layout, "/screenshot")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert render_threads == [pump_thread]
+        assert len(export_threads) == 1
+        assert export_threads[0] != pump_thread
+        assert len(delivered) == 1
+        delivery_thread, svg, delivery = delivered[0]
+        assert delivery_thread == pump_thread
+        assert svg == expected_svg
+        assert delivery["save_directory"] is None
+        assert str(delivery["save_filename"]).startswith(f"{app.title}_")
+        assert str(delivery["save_filename"]).endswith(".svg")
+        assert delivery["open_method"] == "browser"
+        assert delivery["mime_type"] == "image/svg+xml"
+        assert delivery["name"] == "screenshot"
+
+
+async def test_slash_screenshot_drops_worker_result_after_layout_switch(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A finished worker cannot deliver through an inactive origin layout."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        origin = app.screen
+        export_started = threading.Event()
+        release_export = threading.Event()
+        delivered: list[object] = []
+        original_export_svg = Console.export_svg
+
+        def delayed_export(console: Console, *args: t.Any, **kwargs: t.Any) -> str:
+            export_started.set()
+            assert release_export.wait(timeout=5)
+            return original_export_svg(console, *args, **kwargs)
+
+        def deliver_text(screenshot: t.TextIO, **_kwargs: object) -> str:
+            screenshot.close()
+            delivered.append(object())
+            return "screenshot-key"
+
+        monkeypatch.setattr(Console, "export_svg", delayed_export)
+        monkeypatch.setattr(app, "deliver_text", deliver_text)
+
+        await _submit(pilot, origin, "/screenshot")
+        for _ in range(100):
+            if export_started.is_set():
+                break
+            await pilot.pause(0.01)
+        assert export_started.is_set()
+
+        await pilot.press("f2")
+        await pilot.pause()
+        assert app.screen is not origin
+
+        release_export.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert delivered == []
 
 
 async def test_screenshot_prefix_dispatches_highlighted_menu_command(
@@ -292,7 +403,13 @@ async def test_screenshot_prefix_dispatches_highlighted_menu_command(
         queries: list[str] = []
         delivered: list[object] = []
         monkeypatch.setattr(layout.workflow, "on_query", lambda _host, text: queries.append(text))
-        monkeypatch.setattr(app, "deliver_screenshot", lambda: delivered.append(object()))
+
+        def deliver_text(screenshot: t.TextIO, **_kwargs: object) -> str:
+            screenshot.close()
+            delivered.append(object())
+            return "screenshot-key"
+
+        monkeypatch.setattr(app, "deliver_text", deliver_text)
 
         layout._search_input.value = "/scr"
         layout._search_input.cursor_position = len("/scr")
@@ -301,6 +418,8 @@ async def test_screenshot_prefix_dispatches_highlighted_menu_command(
 
         assert [command.name for command in layout._command_matches] == ["screenshot"]
         await pilot.press("enter")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
         await pilot.pause()
 
         assert queries == []
@@ -329,7 +448,7 @@ async def test_slash_screenshot_retains_command_when_scheduling_fails(
             return bool(original(callback, *args, **kwargs))
 
         monkeypatch.setattr(layout, "call_after_refresh", reject_screenshot)
-        monkeypatch.setattr(app, "deliver_screenshot", lambda: delivered.append(object()))
+        monkeypatch.setattr(app, "deliver_text", lambda *_a, **_k: delivered.append(object()))
 
         await _submit(pilot, layout, "/screenshot")
 
@@ -350,7 +469,7 @@ async def test_slash_screenshot_rejects_path_argument_as_search_text(
         queries: list[str] = []
         delivered: list[object] = []
         monkeypatch.setattr(layout.workflow, "on_query", lambda _host, text: queries.append(text))
-        monkeypatch.setattr(app, "deliver_screenshot", lambda: delivered.append(object()))
+        monkeypatch.setattr(app, "deliver_text", lambda *_a, **_k: delivered.append(object()))
 
         await _submit(pilot, layout, "/screenshot named.svg")
 
@@ -369,7 +488,7 @@ async def test_slash_screenshot_drops_delivery_after_layout_switch(
         origin = app.screen
         callbacks = _capture_screenshot_callbacks(origin, monkeypatch)
         delivered: list[object] = []
-        monkeypatch.setattr(app, "deliver_screenshot", lambda: delivered.append(object()))
+        monkeypatch.setattr(app, "deliver_text", lambda *_a, **_k: delivered.append(object()))
 
         await _submit(pilot, origin, "/screenshot")
         assert len(callbacks) == 1
@@ -393,7 +512,7 @@ async def test_slash_screenshot_drops_delivery_for_empty_stack(
         origin = app.screen
         callbacks = _capture_screenshot_callbacks(origin, monkeypatch)
         delivered: list[object] = []
-        monkeypatch.setattr(app, "deliver_screenshot", lambda: delivered.append(object()))
+        monkeypatch.setattr(app, "deliver_text", lambda *_a, **_k: delivered.append(object()))
 
         await _submit(pilot, origin, "/screenshot")
         assert len(callbacks) == 1
@@ -416,7 +535,7 @@ async def test_slash_screenshot_drops_delivery_after_origin_detaches(
         await pilot.pause()
         origin = app.screen
         callbacks = _capture_screenshot_callbacks(origin, monkeypatch)
-        monkeypatch.setattr(app, "deliver_screenshot", lambda: delivered.append(object()))
+        monkeypatch.setattr(app, "deliver_text", lambda *_a, **_k: delivered.append(object()))
 
         await _submit(pilot, origin, "/screenshot")
         assert len(callbacks) == 1
@@ -525,16 +644,18 @@ async def test_greplog_keys_theme_and_screenshot_match_hud_commands(
         await pilot.pause()
         layout = await _mount_greplog(app, pilot)
         delivered: list[tuple[str, bool]] = []
-        monkeypatch.setattr(
-            app,
-            "deliver_screenshot",
-            lambda: delivered.append(
+
+        def deliver_text(screenshot: t.TextIO, **_kwargs: object) -> str:
+            screenshot.close()
+            delivered.append(
                 (
                     str(layout._search_input.value),
                     bool(layout._enum_dropdown.display),
                 ),
-            ),
-        )
+            )
+            return "screenshot-key"
+
+        monkeypatch.setattr(app, "deliver_text", deliver_text)
 
         await _submit(pilot, layout, "/keys")
         assert len(layout.query(HelpPanel)) == 1
@@ -551,6 +672,8 @@ async def test_greplog_keys_theme_and_screenshot_match_hud_commands(
         assert layout._search_input.value == ""
 
         await _submit(pilot, layout, "/screenshot")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
         assert delivered == [("", False)]
         assert layout._search_input.value == ""
 

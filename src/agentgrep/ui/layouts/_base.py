@@ -9,8 +9,13 @@ bindings, and presentation; they reach the engine only through
 
 from __future__ import annotations
 
+import functools
+import io
 import typing as t
 
+from rich.console import Console
+from rich.segment import Segment, Segments
+from textual.app import generate_datetime_filename
 from textual.screen import Screen
 
 from agentgrep.ui import _runtime, commands, theme as ui_theme
@@ -27,6 +32,70 @@ __all__ = ["LayoutScreen"]
 #: collide with view helpers. The search-query state is ``self.search_query``
 #: precisely to avoid that collision; fully typing the views is a follow-up.
 _SCREEN_BASE: t.Any = Screen
+
+
+class _ScreenshotFrame(t.NamedTuple):
+    """Detached Rich recording data for one visible Textual frame."""
+
+    width: int
+    height: int
+    title: str
+    filename: str
+    segments: tuple[Segment, ...]
+
+
+def _screenshot_console(width: int, height: int) -> Console:
+    """Build the recording console Textual uses for SVG screenshots.
+
+    Parameters
+    ----------
+    width : int
+        Captured terminal width in cells.
+    height : int
+        Captured terminal height in cells.
+
+    Returns
+    -------
+    Console
+        A truecolor Rich recording console with Textual's screenshot options.
+    """
+    return Console(
+        width=width,
+        height=height,
+        file=io.StringIO(),
+        force_terminal=True,
+        color_system="truecolor",
+        record=True,
+        legacy_windows=False,
+        safe_box=False,
+    )
+
+
+@_runtime.offload
+def _export_screenshot_frame(
+    frame: _ScreenshotFrame,
+    call_from_thread: t.Callable[..., object],
+    register_delivery: t.Callable[[t.TextIO, str], None],
+) -> None:
+    """Serialize a detached Rich frame and register pump-side delivery.
+
+    Parameters
+    ----------
+    frame : _ScreenshotFrame
+        Immutable dimensions, title, and recorded segments captured on the pump.
+    call_from_thread : typing.Callable
+        Textual's worker-to-pump call gate captured before offload.
+    register_delivery : typing.Callable
+        Pump-only callback that validates and registers the finished SVG.
+    """
+    console = _screenshot_console(frame.width, frame.height)
+    console.print(Segments(frame.segments))
+    screenshot = io.StringIO(console.export_svg(title=frame.title))
+    try:
+        call_from_thread(register_delivery, screenshot, frame.filename)
+    except BaseException:
+        screenshot.close()
+        raise
 
 
 class LayoutScreen(_SCREEN_BASE):
@@ -201,10 +270,63 @@ class LayoutScreen(_SCREEN_BASE):
         """Deliver only while this layout remains mounted and active."""
         if not self.is_mounted or not self.is_attached:
             return
-        stack = self.app.screen_stack
+        app = self.app
+        stack = app.screen_stack
         if not stack or stack[-1] is not self:
             return
-        self.app.deliver_screenshot()
+        frame = self._capture_screenshot_frame()
+        self.run_worker(
+            functools.partial(
+                _export_screenshot_frame,
+                frame,
+                app.call_from_thread,
+                self._register_screenshot_delivery,
+            ),
+            name="screenshot",
+            group="screenshot",
+            thread=True,
+            exclusive=True,
+        )
+
+    @_runtime.pump_only
+    def _register_screenshot_delivery(self, screenshot: t.TextIO, filename: str) -> None:
+        """Deliver a worker-built SVG while its originating layout is active."""
+        if not self.is_mounted or not self.is_attached:
+            screenshot.close()
+            return
+        stack = self.app.screen_stack
+        if not stack or stack[-1] is not self:
+            screenshot.close()
+            return
+        self.app.deliver_text(
+            screenshot,
+            save_directory=None,
+            save_filename=filename,
+            open_method="browser",
+            mime_type="image/svg+xml",
+            name="screenshot",
+        )
+
+    @_runtime.pump_only
+    def _capture_screenshot_frame(self) -> _ScreenshotFrame:
+        """Detach the active compositor frame into immutable Rich segments."""
+        app = self.app
+        width, height = app.size
+        console = _screenshot_console(width, height)
+        screen_render = self._compositor.render_update(
+            full=True,
+            screen_stack=app._background_screens,
+            simplify=False,
+        )
+        assert screen_render is not None
+        title = app.title
+        return _ScreenshotFrame(
+            width=width,
+            height=height,
+            title=title,
+            filename=generate_datetime_filename(title, ".svg"),
+            segments=tuple(console.render(screen_render)),
+        )
 
     @_runtime.pump_only
     def toggle_help_panel(self) -> None:
