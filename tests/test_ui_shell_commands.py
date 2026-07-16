@@ -606,6 +606,48 @@ async def test_hud_zoom_help_names_its_logical_panes(
         assert by_name["minimize"].argument_hint == ""
 
 
+@pytest.mark.parametrize("view", ["empty", "searching"])
+@pytest.mark.parametrize("size", [(120, 30), (77, 30)], ids=["wide", "stacked"])
+async def test_detail_zoom_search_states_keep_body_content_visible(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    view: str,
+    size: tuple[int, int],
+) -> None:
+    """Results-hosted search states replace an incompatible detail zoom."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = _zoom_record(tmp_path, 0)
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        layout = app.screen
+        _seed_zoom_layout(layout, record)
+        await _submit(pilot, layout, "/maximize detail")
+        body = layout.query_one("#body")
+        results = layout.query_one("#results")
+
+        if view == "empty":
+            layout.reset_view()
+            state_panel = layout.query_one("#empty-hint")
+        else:
+            layout._set_results_view("searching")
+            state_panel = layout.query_one("#searching-panel")
+        await pilot.pause()
+
+        assert state_panel.is_on_screen
+        assert layout.query_one("#results-column").region.width > 0
+        assert layout.query_one("#results-column").region.height > 0
+        assert layout._zoomed_pane is None
+        assert not body.has_class("-zoom-results")
+        assert not body.has_class("-zoom-detail")
+
+        await layout._apply_records_batch((_zoom_record(tmp_path, 1),), 1)
+        await pilot.pause()
+
+        assert results.is_on_screen
+        assert results.region.width > 0
+        assert results.region.height > 0
+
+
 async def test_wide_hud_zoom_keeps_shell_usable_and_restores_geometry(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

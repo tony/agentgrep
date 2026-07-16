@@ -503,6 +503,8 @@ class HudLayout(LayoutScreen):
         spinner timer is stopped whenever the region leaves the searching
         view; its ``begin`` is armed by the search flow on entry.
         """
+        if view in {"empty", "searching"} and self._zoomed_pane == "detail":
+            self.handle_minimize_command()
         if self._body is not None:
             body = t.cast("t.Any", self._body)
             body.set_class(view == "empty", "-empty")
