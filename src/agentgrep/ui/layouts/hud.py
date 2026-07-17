@@ -378,6 +378,7 @@ class HudLayout(LayoutScreen):
             _DetailCacheKey,
             tuple[SearchRecord, object, str],
         ] = collections.OrderedDict()
+        self._presented_detail_cache_key: _DetailCacheKey | None = None
         self._detail_build_generation = 0
         # Per-record detail scroll memory: id(record) -> scroll_y. A
         # revisited record restores its position; a record opened for the
@@ -735,6 +736,7 @@ class HudLayout(LayoutScreen):
         self._detail_build_generation += 1
         clear_haystack_cache()
         self._detail_body_cache.clear()
+        self._presented_detail_cache_key = None
         self._detail_scroll_positions.clear()
         self._detail_find_state.clear()
         # A fresh search wipes the detail; close any open find bar.
@@ -1500,10 +1502,9 @@ class HudLayout(LayoutScreen):
     def on_filter_completed(self, message: FilterCompleted) -> None:
         """Apply the worker's filter result if it matches the current input.
 
-        Skips :meth:`show_detail` when the top filtered record is already
-        the one being displayed — detail rendering (Rich Text header,
-        JSON/Markdown body, scroll-to-match) is one of the heavier
-        main-thread units per filter pass.
+        Reuses the current detail only when its render key still matches.
+        Changed highlight state is rebuilt inline only for bounded small
+        bodies; large uncached bodies remain offloaded by :meth:`show_detail`.
         """
         if message.generation != self._filter_generation:
             return
@@ -1524,9 +1525,14 @@ class HudLayout(LayoutScreen):
                 highlighted = self._results.highlighted if self._results is not None else None
                 row_index = highlighted if highlighted is not None else 0
                 record = self.filtered_records[row_index]
-                if record is not self._current_detail_record:
+                detail_key = self._detail_cache_key(self.search_query.terms, record)
+                if (
+                    record is not self._current_detail_record
+                    or detail_key != self._presented_detail_cache_key
+                ):
                     self.show_detail(record)
             else:
+                self._presented_detail_cache_key = None
                 self._detail.update(
                     "No results." if self._search_done else "No matches yet.",
                 )
@@ -1920,6 +1926,7 @@ class HudLayout(LayoutScreen):
             self._detail_body_cache.move_to_end(cache_key)
             if len(self._detail_body_cache) > self._DETAIL_CACHE_MAX:
                 self._detail_body_cache.popitem(last=False)
+        self._presented_detail_cache_key = cache_key
         # The displayed text find searches/scrolls against — formatted JSON
         # for json bodies, the raw body otherwise.
         self._detail_find_source = body_for_scroll

@@ -5187,6 +5187,44 @@ DETAIL_FIND_FILTER_REFRESH_CASES: tuple[DetailFindFilterRefreshCase, ...] = (
 )
 
 
+async def test_filter_completion_refreshes_same_record_detail_highlights(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A new filter repaints decoration even when the selected record is unchanged."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    body = "before needle after"
+    record = _ui_record(agentgrep, tmp_path / "filter.jsonl", body, "filter")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app.screen._filter_terms = ("before",)
+        app.screen.show_detail(record)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        app.screen._filter_terms = ("after",)
+        app.screen._filter_input.value = "after"
+        app.screen.on_filter_completed(
+            _filter_completed(app, [record], text="after"),
+        )
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        detail_body = _static_content(app.screen._detail).renderables[1]
+        spans = [(span.start, span.end, str(span.style)) for span in detail_body.spans]
+        filter_bg = app.theme_variables["ag-match-filter-bg"]
+        assert not any(
+            start == 0 and end == len("before") and filter_bg in style
+            for start, end, style in spans
+        )
+        after_start = body.index("after")
+        assert any(
+            start == after_start and end == after_start + len("after") and filter_bg in style
+            for start, end, style in spans
+        )
+
+
 @pytest.mark.parametrize(
     "case",
     DETAIL_FIND_FILTER_REFRESH_CASES,
