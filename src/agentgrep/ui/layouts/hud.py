@@ -27,7 +27,9 @@ from rich.text import Text
 from textual.binding import Binding, BindingType
 from textual.containers import Center, Horizontal, Vertical
 from textual.content import Content
+from textual.reactive import reactive
 from textual.style import Style
+from textual.timer import Timer
 from textual.widgets import Footer, Static
 from textual.worker import Worker, WorkerCancelled
 
@@ -128,17 +130,33 @@ _WELCOME_QUERIES = (
 )
 _WELCOME_QUERY_ROWS = ((0, 1, 2), (3, 4))
 _WELCOME_BRAND_SHINE = (1, 2, 3, 4, 5, 4, 3, 2, 1)
+_WELCOME_SHINE_INTERVAL = 0.08
 
 
-def _welcome_wordmark() -> Content:
-    """Build the static, theme-aware welcome wordmark."""
+def _welcome_wordmark(offset: int = 0) -> Content:
+    """Build one frame of the theme-aware welcome wordmark."""
     return Content.assemble(
         "Welcome to ",
         *(
-            (character, f"bold $ag-brand-shine-{step}")
-            for character, step in zip("agentgrep", _WELCOME_BRAND_SHINE, strict=True)
+            (
+                character,
+                "bold $ag-brand-shine-"
+                f"{_WELCOME_BRAND_SHINE[(index + offset) % len(_WELCOME_BRAND_SHINE)]}",
+            )
+            for index, character in enumerate("agentgrep")
         ),
     )
+
+
+class _WelcomeWordmark(Static):
+    """Fixed-size welcome wordmark with a paint-only shine frame."""
+
+    shine_offset: reactive[int] = reactive(0, layout=False, repaint=True)
+
+    @_runtime.pump_only
+    def render(self) -> Content:
+        """Render the current theme-token frame without changing geometry."""
+        return _welcome_wordmark(self.shine_offset)
 
 
 def _welcome_query_examples() -> Content:
@@ -332,6 +350,8 @@ class HudLayout(LayoutScreen):
         self._last_snapshot: ProgressSnapshot | None = None
         self._active_source_snapshots: dict[int, ProgressSnapshot] = {}
         self._searching_panel: SearchingPanel | None = None
+        self._welcome_widget: _WelcomeWordmark | None = None
+        self._welcome_shine_timer: Timer | None = None
         # Persisted search-input history (agentgrep's only self-written state —
         # under XDG_STATE_HOME, never a searched store). The factory loads the
         # snapshot before Textual starts; the recall modal only reads memory.
@@ -517,10 +537,7 @@ class HudLayout(LayoutScreen):
                 # language at the moment of highest intent.
                 with Vertical(id="empty-hint"):
                     with Center():
-                        yield Static(
-                            _welcome_wordmark(),
-                            id="empty-welcome",
-                        )
+                        yield _WelcomeWordmark(id="empty-welcome")
                     with Center():
                         yield Static("try a search to begin", id="empty-lead")
                     with Center():
@@ -573,6 +590,10 @@ class HudLayout(LayoutScreen):
             "SearchingPanel",
             streaming.query_one("#searching-panel"),
         )
+        self._welcome_widget = t.cast(
+            "_WelcomeWordmark",
+            streaming.query_one("#empty-welcome", _WelcomeWordmark),
+        )
         self._detail_header = streaming.query_one("#detail-header")
         self._detail_row = t.cast(
             "SlowSourceDiagnosticsRow",
@@ -621,6 +642,13 @@ class HudLayout(LayoutScreen):
         # Attach the workflow (base.on_mount): it seeds the initial dispatch —
         # a launch search or the idle bare canvas — now that the widgets exist.
         super().on_mount()
+        self._welcome_shine_timer = self.set_interval(
+            _WELCOME_SHINE_INTERVAL,
+            self._animate_welcome_wordmark,
+            name="welcome-shine",
+            pause=True,
+        )
+        self._sync_welcome_shine_timer()
         # Focus the filter when a search is running, else the search box so the
         # user can start typing immediately.
         if not self._search_done:
@@ -666,6 +694,46 @@ class HudLayout(LayoutScreen):
             body.set_class(view == "searching", "-searching")
         if view != "searching" and self._searching_panel is not None:
             self._searching_panel.go_idle()
+        self._sync_welcome_shine_timer()
+
+    @_runtime.pump_only
+    def on_screen_suspend(self) -> None:
+        """Pause the welcome shine while another screen covers this layout."""
+        if self._welcome_shine_timer is not None:
+            self._welcome_shine_timer.pause()
+
+    @_runtime.pump_only
+    def on_screen_resume(self) -> None:
+        """Resume the welcome shine only if the empty canvas is active."""
+        self._sync_welcome_shine_timer()
+
+    @_runtime.pump_only
+    def _sync_welcome_shine_timer(self) -> None:
+        """Match the shine timer to active-screen and empty-view state."""
+        if self._welcome_shine_timer is None:
+            return
+        body = self._body
+        if self.is_active and body is not None and body.has_class("-empty"):
+            self._welcome_shine_timer.resume()
+        else:
+            self._welcome_shine_timer.pause()
+
+    @_runtime.pump_only
+    def _animate_welcome_wordmark(self) -> None:
+        """Advance the bounded welcome shine while its timer is active."""
+        body = self._body
+        if (
+            self._welcome_widget is None
+            or not self.is_active
+            or body is None
+            or not body.has_class("-empty")
+        ):
+            self._sync_welcome_shine_timer()
+            return
+        current_offset = self._welcome_widget.shine_offset
+        self._welcome_widget.shine_offset = (current_offset + 1) % len(
+            _WELCOME_BRAND_SHINE
+        )
 
     def on_descendant_focus(self, event: object) -> None:
         """Recolor the active pane's section header when focus moves."""

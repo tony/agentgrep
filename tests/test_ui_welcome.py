@@ -5,12 +5,14 @@ from __future__ import annotations
 import pathlib
 
 import pytest
+from textual.screen import Screen
 from textual.widgets import Static
 
 from agentgrep.query import build_query_from_input, compile_query, default_registry, parse_query
 from agentgrep.records import SearchQuery
 from agentgrep.ui.layouts.hud import (
     _WELCOME_QUERIES,
+    _WELCOME_SHINE_INTERVAL,
     _welcome_query_examples,
     _welcome_wordmark,
 )
@@ -52,7 +54,7 @@ def test_welcome_examples_share_query_highlighting_and_safe_metadata() -> None:
 
 
 def test_welcome_wordmark_uses_a_symmetric_brand_shine() -> None:
-    """The brand stays legible text with a restrained, static color ramp."""
+    """The brand starts as legible text with a restrained color ramp."""
     content = _welcome_wordmark()
     brand_spans = content.spans[-9:]
 
@@ -69,6 +71,69 @@ def test_welcome_wordmark_uses_a_symmetric_brand_shine() -> None:
         "bold $ag-brand-shine-2",
         "bold $ag-brand-shine-1",
     ]
+
+
+def test_welcome_wordmark_shifts_shine_without_changing_text() -> None:
+    """Animation advances semantic colors without changing the message."""
+    initial = _welcome_wordmark()
+    shifted = _welcome_wordmark(1)
+
+    assert shifted.plain == initial.plain
+    assert [str(span.style) for span in shifted.spans] != [
+        str(span.style) for span in initial.spans
+    ]
+
+
+async def test_welcome_wordmark_animates_only_on_empty_canvas(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The warm shine pauses off-canvas and resumes with the welcome state."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(100, 28)) as pilot:
+        await pilot.pause()
+        layout = app.screen
+        welcome = layout.query_one("#empty-welcome", Static)
+
+        before = tuple(str(span.style) for span in welcome.render().spans)
+        await pilot.pause(_WELCOME_SHINE_INTERVAL * 2)
+        animated = tuple(str(span.style) for span in welcome.render().spans)
+        assert animated != before
+
+        layout._set_results_view("results")
+        paused = tuple(str(span.style) for span in welcome.render().spans)
+        layout._animate_welcome_wordmark()
+        assert tuple(str(span.style) for span in welcome.render().spans) == paused
+        await pilot.pause(_WELCOME_SHINE_INTERVAL * 2)
+        assert tuple(str(span.style) for span in welcome.render().spans) == paused
+
+        layout._set_results_view("empty")
+        await pilot.pause(_WELCOME_SHINE_INTERVAL * 2)
+        assert tuple(str(span.style) for span in welcome.render().spans) != paused
+
+
+async def test_welcome_wordmark_pauses_under_a_covering_screen(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A covered welcome canvas does not spend idle repaint budget."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(100, 28)) as pilot:
+        await pilot.pause()
+        layout = app.screen
+        welcome = layout.query_one("#empty-welcome", Static)
+        await app.push_screen(Screen())
+        await pilot.pause()
+
+        covered = tuple(str(span.style) for span in welcome.render().spans)
+        await pilot.pause(_WELCOME_SHINE_INTERVAL * 2)
+        assert tuple(str(span.style) for span in welcome.render().spans) == covered
+
+        app.pop_screen()
+        await pilot.pause(_WELCOME_SHINE_INTERVAL * 2)
+        assert tuple(str(span.style) for span in welcome.render().spans) != covered
 
 
 @pytest.mark.parametrize("query", _WELCOME_QUERIES)
