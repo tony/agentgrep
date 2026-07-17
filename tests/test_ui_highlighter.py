@@ -17,10 +17,10 @@ from rich.text import Text
 from agentgrep.ui.highlighter import QueryHighlighter
 
 
-def _styled_spans(query: str) -> set[tuple[str, str]]:
+def _styled_spans(query: str, *, dark: bool = True) -> set[tuple[str, str]]:
     """Return ``{(token_text, style)}`` for a highlighted query."""
     text = Text(query)
-    QueryHighlighter().highlight(text)
+    QueryHighlighter(dark=dark).highlight(text)
     return {(text.plain[span.start : span.end], str(span.style)) for span in text.spans}
 
 
@@ -90,3 +90,21 @@ def test_query_highlighter_empty_is_noop() -> None:
     text = Text("")
     QueryHighlighter().highlight(text)
     assert not text.spans
+
+
+def test_query_highlighter_light_palette_uses_readable_semantic_hues() -> None:
+    """The light palette preserves syntax roles with dark foregrounds."""
+    spans = _styled_spans(
+        '-agent:codex OR model:gpt* timestamp:>2026-01-01 "exact phrase"',
+        dark=False,
+    )
+    assert {
+        ("-", "bold #9b2242"),
+        ("agent", "#006b75"),
+        (":", "#5c5c5c"),
+        ("codex", "#343434"),
+        ("OR", "bold #8a4b00"),
+        ("*", "bold #765f00"),
+        (">", "#8a4b00"),
+        ("exact phrase", "#343434"),
+    }.issubset(spans)

@@ -660,6 +660,29 @@ async def test_greplog_search_input_does_not_crash_on_keys(
         assert layout._search_input.value == ""
 
 
+async def test_greplog_search_highlighting_follows_active_theme(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A layout mounted in light mode keeps query colors in sync thereafter."""
+    from agentgrep.ui import theme
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app.theme = theme.LIGHT_THEME_NAME
+        await pilot.pause()
+        layout = await _mount_greplog(app, pilot)
+        layout._search_input.value = "agent:claude"
+        await pilot.pause()
+
+        assert any("#006b75" in str(span.style) for span in layout._search_input._value.spans)
+
+        app.theme = theme.DARK_THEME_NAME
+        await pilot.pause()
+        assert any("color(79)" in str(span.style) for span in layout._search_input._value.spans)
+
+
 def test_greplog_summary_slices_before_line_splitting(tmp_path: pathlib.Path) -> None:
     """Compact log projection never scans an entire oversized record body."""
     from agentgrep.ui.layouts.greplog import _format_log_line

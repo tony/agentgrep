@@ -13,11 +13,15 @@ import pathlib
 import typing as t
 
 import pytest
+from rich.style import Style
+from rich.text import Text
 from textual.color import Color
 from textual.css.stylesheet import Stylesheet
 
 from agentgrep.records import AGENT_CHOICES
 from agentgrep.ui import theme
+from agentgrep.ui.highlighter import QueryHighlighter
+from agentgrep.ui.widgets import WELCOME_QUERY_INDEX_META
 from tests.test_agentgrep import _build_empty_ui_app, _ui_record, load_agentgrep_module
 
 _STYLESHEET = pathlib.Path(theme.__file__).with_name("styles.tcss")
@@ -159,6 +163,22 @@ def test_brand_shine_is_readable(case: ThemeCase, step: int) -> None:
     assert ratio >= 4.5, f"{case.test_id}/shine-{step} contrast {ratio:.2f} below 4.5"
 
 
+@pytest.mark.parametrize("case", _THEME_CASES, ids=_THEME_IDS)
+def test_query_highlighter_palette_is_readable(case: ThemeCase) -> None:
+    """Every query-syntax foreground clears WCAG AA on its theme page."""
+    built = case.builder()
+    text = Text('-agent:codex OR model:gpt* timestamp:>2026-01-01 "exact phrase"')
+    QueryHighlighter(dark=built.dark).highlight(text)
+
+    for span in text.spans:
+        color = Style.parse(str(span.style)).color
+        assert color is not None
+        triplet = color.get_truecolor()
+        foreground = f"#{triplet.red:02x}{triplet.green:02x}{triplet.blue:02x}"
+        ratio = _contrast_ratio(foreground, built.background)
+        assert ratio >= 4.5, f"{case.test_id}/{span.style} contrast {ratio:.2f} below 4.5"
+
+
 # --- live app: registration, application, switching ------------------------
 
 
@@ -205,19 +225,68 @@ async def test_switch_to_light_theme_succeeds(
         assert header._c_accent.lower() == "#5a8080"
 
 
-async def test_switch_to_builtin_theme_does_not_crash(
+async def test_theme_switch_recolors_shared_query_highlighting(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A built-in theme without ``$ag-*`` still resolves via the defaults net."""
+    """Search, filter, and welcome examples repaint from one light palette."""
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
-        # textual-dark defines none of our $ag-* tokens; without the
-        # get_theme_variable_defaults fallback this would raise on re-style.
-        app.theme = "textual-dark"
+        search = app.screen._search_input
+        filter_input = app.screen._filter_input
+        examples = app.screen.query_one("#empty-examples")
+        search.value = "agent:claude"
+        filter_input.value = "agent:claude"
+        search.cursor_position = 5
+        filter_input.cursor_position = 3
         await pilot.pause()
-        assert app.theme == "textual-dark"
+
+        assert any("color(79)" in str(span.style) for span in search._value.spans)
+        assert any("rgb(95,215,175)" in str(span.style) for span in examples.render().spans)
+
+        app.theme = theme.LIGHT_THEME_NAME
+        await pilot.pause()
+
+        for widget in (search, filter_input):
+            assert any("#006b75" in str(span.style) for span in widget._value.spans)
+        assert any("rgb(0,107,117)" in str(span.style) for span in examples.render().spans)
+        assert (search.value, search.cursor_position) == ("agent:claude", 5)
+        assert (filter_input.value, filter_input.cursor_position) == ("agent:claude", 3)
+        assert {
+            span.style.meta[WELCOME_QUERY_INDEX_META]
+            for span in examples.render().spans
+            if not isinstance(span.style, str) and WELCOME_QUERY_INDEX_META in span.style.meta
+        } == set(range(5))
+
+        app.theme = theme.DARK_THEME_NAME
+        app.theme = theme.LIGHT_THEME_NAME
+        await pilot.pause()
+        assert any("#006b75" in str(span.style) for span in search._value.spans)
+        assert not any("color(79)" in str(span.style) for span in search._value.spans)
+
+
+@pytest.mark.parametrize(
+    ("theme_name", "field_style"),
+    (("textual-dark", "color(79)"), ("textual-light", "#006b75")),
+)
+async def test_switch_to_builtin_theme_does_not_crash(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    theme_name: str,
+    field_style: str,
+) -> None:
+    """Built-in themes use defaults plus the matching query palette."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        # Built-in themes define none of our $ag-* tokens; without the
+        # get_theme_variable_defaults fallback this would raise on re-style.
+        app.screen._search_input.value = "agent:claude"
+        app.theme = theme_name
+        await pilot.pause()
+        assert app.theme == theme_name
+        assert any(field_style in str(span.style) for span in app.screen._search_input._value.spans)
 
 
 async def test_theme_switch_rerenders_rows(

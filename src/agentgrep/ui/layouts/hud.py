@@ -159,11 +159,11 @@ class _WelcomeWordmark(Static):
         return _welcome_wordmark(self.shine_offset)
 
 
-def _welcome_query_examples() -> Content:
+def _welcome_query_examples(highlighter: QueryHighlighter | None = None) -> Content:
     """Build syntax-colored examples with bounded click metadata."""
     examples = Text()
     click_ranges: list[tuple[int, int, int]] = []
-    highlighter = QueryHighlighter()
+    active_highlighter = highlighter or QueryHighlighter()
     for row_number, row in enumerate(_WELCOME_QUERY_ROWS):
         if row_number:
             examples.append("\n")
@@ -172,7 +172,7 @@ def _welcome_query_examples() -> Content:
                 examples.append("   ")
             query = _WELCOME_QUERIES[index]
             hint = Text(query)
-            highlighter.highlight(hint)
+            active_highlighter.highlight(hint)
             start = len(examples)
             examples.append_text(hint)
             click_ranges.append((start, len(examples), index))
@@ -351,6 +351,7 @@ class HudLayout(LayoutScreen):
         self._active_source_snapshots: dict[int, ProgressSnapshot] = {}
         self._searching_panel: SearchingPanel | None = None
         self._welcome_widget: _WelcomeWordmark | None = None
+        self._welcome_examples: WelcomeExamples | None = None
         self._welcome_shine_timer: Timer | None = None
         # Persisted search-input history (agentgrep's only self-written state —
         # under XDG_STATE_HOME, never a searched store). The factory loads the
@@ -467,6 +468,7 @@ class HudLayout(LayoutScreen):
         """
         if not self.is_mounted:
             return
+        self._refresh_query_highlighting(dark=bool(getattr(_theme, "dark", True)))
         results = self._results
         if results is not None:
             results.refresh_theme()
@@ -477,6 +479,17 @@ class HudLayout(LayoutScreen):
         self._detail_body_cache.clear()
         if self._current_detail_record is not None:
             self.show_detail(self._current_detail_record)
+
+    @_runtime.pump_only
+    def _refresh_query_highlighting(self, *, dark: bool) -> None:
+        """Repaint the shared query grammar with the active theme palette."""
+        self._query_highlighter.set_theme(dark=dark)
+        if self._search_input is not None:
+            self._search_input.refresh()
+        if self._filter_input is not None:
+            self._filter_input.refresh()
+        if self._welcome_examples is not None:
+            self._welcome_examples.update(_welcome_query_examples(self._query_highlighter))
 
     def compose(self) -> cabc.Iterator[object]:
         """Build the widget tree (search → body[results-col, detail-col] → footer).
@@ -542,7 +555,7 @@ class HudLayout(LayoutScreen):
                         yield Static("try a search to begin", id="empty-lead")
                     with Center():
                         yield WelcomeExamples(
-                            _welcome_query_examples(),
+                            _welcome_query_examples(self._query_highlighter),
                             id="empty-examples",
                             markup=False,
                         )
@@ -594,6 +607,10 @@ class HudLayout(LayoutScreen):
             "_WelcomeWordmark",
             streaming.query_one("#empty-welcome", _WelcomeWordmark),
         )
+        self._welcome_examples = t.cast(
+            "WelcomeExamples",
+            streaming.query_one("#empty-examples", WelcomeExamples),
+        )
         self._detail_header = streaming.query_one("#detail-header")
         self._detail_row = t.cast(
             "SlowSourceDiagnosticsRow",
@@ -611,6 +628,7 @@ class HudLayout(LayoutScreen):
             "SearchInput",
             streaming.query_one("#search"),
         )
+        self._refresh_query_highlighting(dark=bool(self.app.current_theme.dark))
         self._detail_find_input = t.cast(
             "DetailFindInput",
             streaming.query_one("#detail-find"),
@@ -731,9 +749,7 @@ class HudLayout(LayoutScreen):
             self._sync_welcome_shine_timer()
             return
         current_offset = self._welcome_widget.shine_offset
-        self._welcome_widget.shine_offset = (current_offset + 1) % len(
-            _WELCOME_BRAND_SHINE
-        )
+        self._welcome_widget.shine_offset = (current_offset + 1) % len(_WELCOME_BRAND_SHINE)
 
     def on_descendant_focus(self, event: object) -> None:
         """Recolor the active pane's section header when focus moves."""

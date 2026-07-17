@@ -37,6 +37,7 @@ from agentgrep.records import SearchQuery, SearchRecord
 from agentgrep.ui import _runtime
 from agentgrep.ui._context import UiContext
 from agentgrep.ui._source_diagnostics import UiProgressSnapshot
+from agentgrep.ui.highlighter import QueryHighlighter
 from agentgrep.ui.layouts._base import LayoutScreen
 from agentgrep.ui.widgets import CompletionDropdown, SearchInput, SearchRequested
 
@@ -84,6 +85,7 @@ class GrepLogLayout(LayoutScreen):
         self._log: t.Any = None
         self._status: t.Any = None
         self._search_input: t.Any = None
+        self._query_highlighter = QueryHighlighter()
 
     def compose(self) -> cabc.Iterator[object]:
         """Build the tree: a search input over a log scrollback and a status line."""
@@ -92,7 +94,12 @@ class GrepLogLayout(LayoutScreen):
             if self.context.initial_search_text is not None
             else " ".join(self.context.query.terms)
         )
-        yield SearchInput(value=initial, placeholder="grep prompts", id="search")
+        yield SearchInput(
+            value=initial,
+            placeholder="grep prompts",
+            id="search",
+            highlighter=self._query_highlighter,
+        )
         yield CompletionDropdown(id="enum-dropdown", target_input_id="search")
         yield RichLog(id="greplog", highlight=False, markup=False, wrap=False, max_lines=5000)
         yield Static("", id="greplog-status", markup=False)
@@ -106,9 +113,19 @@ class GrepLogLayout(LayoutScreen):
         self._log = self.query_one("#greplog")
         self._status = self.query_one("#greplog-status")
         self._search_input.cursor_blink = False
+        self._query_highlighter.set_theme(dark=bool(self.app.current_theme.dark))
+        self.app.theme_changed_signal.subscribe(self, self._on_theme_changed)
         self._search_emit = self._make_gated_emit()
         super().on_mount()
         self._search_input.focus()
+
+    @_runtime.pump_only
+    def _on_theme_changed(self, selected_theme: object) -> None:
+        """Repaint the search query with the selected theme's syntax palette."""
+        if not self.is_mounted:
+            return
+        self._query_highlighter.set_theme(dark=bool(getattr(selected_theme, "dark", True)))
+        self._search_input.refresh()
 
     @_runtime.pump_only
     def on_input_changed(self, event: object) -> None:
