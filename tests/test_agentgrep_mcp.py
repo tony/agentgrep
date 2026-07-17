@@ -1647,6 +1647,15 @@ def test_agent_product_name_map_tracks_agent_name_literal() -> None:
     assert set(AGENT_PRODUCT_NAMES) == set(t.get_args(agentgrep.AgentName))
 
 
+def test_catalog_agent_selector_tracks_store_catalog() -> None:
+    """The MCP catalog filter accepts every agent emitted by the catalog."""
+    from agentgrep.mcp import CatalogAgentSelector
+    from agentgrep.store_catalog import CATALOG
+
+    catalog_agents = {descriptor.agent for descriptor in CATALOG.stores}
+    assert set(t.get_args(CatalogAgentSelector)) == catalog_agents | {"all"}
+
+
 async def test_mcp_list_stores_returns_catalog_entries() -> None:
     """``list_stores`` enumerates the StoreCatalog."""
     agentgrep_mcp = load_agentgrep_mcp_module()
