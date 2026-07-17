@@ -3866,6 +3866,12 @@ def _ui_record(agentgrep: t.Any, path: pathlib.Path, text: str, session_id: str)
     )
 
 
+def _static_content(widget: t.Any) -> t.Any:
+    """Return Static content across Textual's supported inspection APIs."""
+    content = getattr(widget, "content", None)
+    return content if content is not None else widget._content
+
+
 async def test_large_detail_body_builds_off_thread(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -3888,7 +3894,7 @@ async def test_large_detail_body_builds_off_thread(
 
         # The worker built and applied the body off the UI thread.
         assert app.screen._detail_body_is_cached(terms)
-        assert len(list(app.screen._detail.content.renderables)) == 2
+        assert len(list(_static_content(app.screen._detail).renderables)) == 2
 
 
 async def test_large_detail_body_resolves_match_styles_on_pump(
@@ -5191,7 +5197,7 @@ async def test_detail_find_base_refreshes_filter_highlights_when_filter_changes(
         app.screen._detail_find_step(1)
         await pilot.pause()
 
-        detail_body = app.screen._detail.content.renderables[1]
+        detail_body = _static_content(app.screen._detail).renderables[1]
         spans = [(span.start, span.end, str(span.style)) for span in detail_body.spans]
         filter_bg = app.theme_variables["ag-match-filter-bg"]
         initial_start = body.index(case.initial_filter)
@@ -5561,7 +5567,7 @@ async def test_detail_find_keeps_json_syntax_colors(
         app.screen._run_detail_find("needle", reset_cursor=True)
         await pilot.pause()
         assert len(app.screen._detail_find_matches) == 2
-        body_text = app.screen._detail.content.renderables[1]
+        body_text = _static_content(app.screen._detail).renderables[1]
         styles = {str(span.style) for span in body_text.spans}
         assert any("on " in s for s in styles)  # find-match background spans
         assert any(s and "on " not in s and s != "none" for s in styles)  # JSON token colors
@@ -7925,7 +7931,7 @@ async def test_show_detail_caps_body_at_max_lines(
         await pilot.pause()
         # ``Static.content`` is the original Group we passed to update().
         # For this plain-text body, the body renderable is a ``Text``.
-        group = app.screen._detail.content
+        group = _static_content(app.screen._detail)
         body_text = next(
             item
             for item in group.renderables
@@ -8175,7 +8181,7 @@ async def test_show_detail_renders_json_with_syntax(
         await pilot.pause()
         app.screen.show_detail(record)
         await pilot.pause()
-        rendered = app.screen._detail.content
+        rendered = _static_content(app.screen._detail)
         renderables = list(rendered.renderables)
         assert any(isinstance(item, rich_syntax.Syntax) for item in renderables)
 
@@ -8200,7 +8206,7 @@ async def test_show_detail_renders_markdown_with_markdown(
         await pilot.pause()
         app.screen.show_detail(record)
         await pilot.pause()
-        rendered = app.screen._detail.content
+        rendered = _static_content(app.screen._detail)
         renderables = list(rendered.renderables)
         assert any(isinstance(item, rich_markdown.Markdown) for item in renderables)
 
@@ -8238,7 +8244,7 @@ async def test_show_detail_keeps_text_highlighting_for_plain_body(
         await pilot.pause()
         app.screen.show_detail(record)
         await pilot.pause()
-        rendered = app.screen._detail.content
+        rendered = _static_content(app.screen._detail)
         renderables = list(rendered.renderables)
         # Two Text instances: the header and the body. The body is the one
         # carrying the highlight spans (header is bold labels only).
@@ -8293,7 +8299,7 @@ async def test_show_detail_includes_record_origin_without_io(
         await pilot.pause()
         app.screen.show_detail(record)
         await pilot.pause()
-        rendered = app.screen._detail.content
+        rendered = _static_content(app.screen._detail)
         header = next(
             item
             for item in rendered.renderables
