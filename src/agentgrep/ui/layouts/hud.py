@@ -297,6 +297,8 @@ class HudLayout(LayoutScreen):
     # ~50 cells to stay readable. Distinct from the statusline
     # breakpoint above, which measures the results column alone.
     _SPLIT_BREAKPOINT: t.ClassVar[int] = 100
+    _WELCOME_COMPACT_WIDTH: t.ClassVar[int] = 20
+    _WELCOME_COMPACT_HEIGHT: t.ClassVar[int] = 18
 
     def __init__(self, ctx: UiContext, workflow: Workflow) -> None:
         super().__init__(ctx, workflow)
@@ -1244,6 +1246,9 @@ class HudLayout(LayoutScreen):
         # and the detail would flash visible before the first resize
         # collapsed it. ``self.size`` is known from the driver at mount.
         width = int(getattr(self.size, "width", 0) or 0)
+        height = int(getattr(self.size, "height", 0) or 0)
+        self.set_class(0 < width < self._WELCOME_COMPACT_WIDTH, "-compact-width")
+        self.set_class(0 < height < self._WELCOME_COMPACT_HEIGHT, "-compact-height")
         stacked = 0 < width < self._SPLIT_BREAKPOINT
         self._stacked = stacked
         body = t.cast("t.Any", self._body)

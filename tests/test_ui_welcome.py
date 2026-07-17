@@ -13,6 +13,20 @@ from agentgrep.ui.widgets import WelcomeQuerySelected
 from tests.test_agentgrep import _build_empty_ui_app
 
 
+def _welcome_click_targets(examples: Static) -> dict[int, tuple[int, int]]:
+    """Map each rendered welcome-query index to a clickable cell."""
+    targets: dict[int, tuple[int, int]] = {}
+    for y in range(examples.region.height):
+        x = 0
+        for segment in examples.render_line(y):
+            if segment.style is not None:
+                index = segment.style.meta.get("agentgrep_query_index")
+                if type(index) is int:
+                    targets.setdefault(index, (x, y))
+            x += segment.cell_length
+    return targets
+
+
 def test_welcome_examples_share_query_highlighting_and_safe_metadata() -> None:
     """Examples retain syntax spans and expose only bounded integer metadata."""
     content = _welcome_query_examples()
@@ -81,36 +95,68 @@ async def test_welcome_example_click_loads_without_searching(
         assert spawned == []
 
 
-async def test_welcome_examples_wrap_and_click_at_24_columns(
+@pytest.mark.parametrize(
+    "size",
+    [(24, 20), (30, 12), (16, 20)],
+    ids=["narrow-width", "short-height", "compact-both"],
+)
+async def test_welcome_examples_fit_and_click_at_compact_sizes(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
+    size: tuple[int, int],
 ) -> None:
-    """Every example stays visible and clickable at the narrow supported edge."""
+    """Every example stays visible and clickable at compact supported edges."""
     app = _build_empty_ui_app(tmp_path, monkeypatch)
 
-    async with app.run_test(size=(24, 20)) as pilot:
+    async with app.run_test(size=size) as pilot:
         await pilot.pause()
         layout = app.screen
         welcome = layout.query_one("#empty-welcome", Static)
         examples = layout.query_one("#empty-examples", Static)
 
-        assert welcome.region.width <= 24
-        assert examples.region.width <= 24
-        targets: dict[int, tuple[int, int]] = {}
-        for y in range(examples.region.height):
-            x = 0
-            for segment in examples.render_line(y):
-                if segment.style is not None:
-                    index = segment.style.meta.get("agentgrep_query_index")
-                    if type(index) is int:
-                        targets.setdefault(index, (x, y))
-                x += segment.cell_length
+        assert welcome.region.width <= size[0]
+        assert examples.region.width <= size[0]
+        targets = _welcome_click_targets(examples)
         assert set(targets) == set(range(len(_WELCOME_QUERIES)))
 
         for index, query in enumerate(_WELCOME_QUERIES):
             assert await pilot.click(examples, offset=targets[index])
             await pilot.pause()
             assert layout._search_input.value == query
+
+
+async def test_welcome_compact_classes_follow_live_resize(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Compact welcome geometry follows both dimensions and restores on resize."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(100, 28)) as pilot:
+        await pilot.pause()
+        layout = app.screen
+        assert not layout.has_class("-compact-width")
+        assert not layout.has_class("-compact-height")
+
+        for width, height, compact_class in (
+            (30, 12, "-compact-height"),
+            (16, 20, "-compact-width"),
+        ):
+            await pilot.resize_terminal(width, height)
+            await pilot.pause(0.1)
+            assert layout.has_class(compact_class)
+            examples = layout.query_one("#empty-examples", Static)
+            targets = _welcome_click_targets(examples)
+            assert set(targets) == set(range(len(_WELCOME_QUERIES)))
+            for index, query in enumerate(_WELCOME_QUERIES):
+                assert await pilot.click(examples, offset=targets[index])
+                await pilot.pause()
+                assert layout._search_input.value == query
+
+        await pilot.resize_terminal(100, 28)
+        await pilot.pause(0.1)
+        assert not layout.has_class("-compact-width")
+        assert not layout.has_class("-compact-height")
 
 
 async def test_welcome_example_rejects_invalid_index(

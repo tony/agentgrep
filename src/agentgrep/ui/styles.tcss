@@ -541,6 +541,17 @@ Screen {
 #empty-lead {
     margin-bottom: 1;
 }
+HudLayout.-compact-height #empty-welcome,
+HudLayout.-compact-width #empty-welcome {
+    padding: 0 1;
+    margin-bottom: 0;
+}
+HudLayout.-compact-height #empty-lead {
+    margin-bottom: 0;
+}
+HudLayout.-compact-width #empty-lead {
+    display: none;
+}
 #body.-empty #filter-header,
 #body.-empty #results-header,
 #body.-empty #filter,
