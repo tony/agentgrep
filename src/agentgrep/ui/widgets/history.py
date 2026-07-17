@@ -155,8 +155,7 @@ class HistoryRecall(ModalScreen[t.Optional[str]]):  # noqa: UP045 -- Textual gen
             option_list.add_option(Option(self._empty_text(query), disabled=True))
             self.query_one("#history-preview", Static).update("")
             return
-        for entry in self._matches:
-            option_list.add_option(Option(self._row(entry, matcher)))
+        option_list.add_options(Option(self._row(entry, matcher)) for entry in self._matches)
         option_list.highlighted = 0
         self._update_preview(0)
 

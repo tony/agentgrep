@@ -192,3 +192,24 @@ async def test_modal_filters_once_on_open(
     async with app.run_test() as pilot:
         await pilot.pause()
         assert calls == case.expected_calls
+
+
+async def test_modal_adds_matching_rows_in_one_bulk_update(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A full history rebuild uses one mounted ``OptionList`` update."""
+    calls: list[int] = []
+    original = OptionList.add_options
+
+    def spy(self: OptionList, new_options: t.Iterable[t.Any]) -> OptionList:
+        options = tuple(new_options)
+        if self.id == "history-list" and options:
+            calls.append(len(options))
+        return original(self, options)
+
+    monkeypatch.setattr(OptionList, "add_options", spy)
+    entries = [HistoryEntry(text=f"query {index}", ts=index) for index in range(200)]
+    app = _HistoryHostApp(entries)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert calls == [len(entries)]
