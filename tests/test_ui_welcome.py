@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import pathlib
+import typing as t
 
 import pytest
+from textual.content import Content
 from textual.screen import Screen
 from textual.widgets import Static
 
@@ -32,6 +34,22 @@ def _welcome_click_targets(examples: Static) -> dict[int, tuple[int, int]]:
                     targets.setdefault(index, (x, y))
             x += segment.cell_length
     return targets
+
+
+async def _wait_for_wordmark_change(
+    pilot: t.Any,
+    welcome: Static,
+    before: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Wait through a bounded number of timer skips for a changed frame."""
+    current = before
+    for _ in range(6):
+        await pilot.pause(_WELCOME_SHINE_INTERVAL)
+        rendered = t.cast("Content", welcome.render())
+        current = tuple(str(span.style) for span in rendered.spans)
+        if current != before:
+            return current
+    pytest.fail("welcome shine did not advance")
 
 
 def test_welcome_examples_share_query_highlighting_and_safe_metadata() -> None:
@@ -97,9 +115,7 @@ async def test_welcome_wordmark_animates_only_on_empty_canvas(
         welcome = layout.query_one("#empty-welcome", Static)
 
         before = tuple(str(span.style) for span in welcome.render().spans)
-        await pilot.pause(_WELCOME_SHINE_INTERVAL * 2)
-        animated = tuple(str(span.style) for span in welcome.render().spans)
-        assert animated != before
+        await _wait_for_wordmark_change(pilot, welcome, before)
 
         layout._set_results_view("results")
         paused = tuple(str(span.style) for span in welcome.render().spans)
@@ -109,8 +125,7 @@ async def test_welcome_wordmark_animates_only_on_empty_canvas(
         assert tuple(str(span.style) for span in welcome.render().spans) == paused
 
         layout._set_results_view("empty")
-        await pilot.pause(_WELCOME_SHINE_INTERVAL * 2)
-        assert tuple(str(span.style) for span in welcome.render().spans) != paused
+        await _wait_for_wordmark_change(pilot, welcome, paused)
 
 
 async def test_welcome_wordmark_pauses_under_a_covering_screen(
@@ -132,8 +147,50 @@ async def test_welcome_wordmark_pauses_under_a_covering_screen(
         assert tuple(str(span.style) for span in welcome.render().spans) == covered
 
         app.pop_screen()
+        await _wait_for_wordmark_change(pilot, welcome, covered)
+
+
+@pytest.mark.parametrize("animation_level", ["none", "basic"])
+async def test_welcome_wordmark_respects_reduced_animation(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    animation_level: t.Literal["none", "basic"],
+) -> None:
+    """Reduced-animation modes keep the decorative wordmark still."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    app.animation_level = animation_level
+
+    async with app.run_test(size=(100, 28)) as pilot:
+        await pilot.pause()
+        layout = app.screen
+        welcome = layout.query_one("#empty-welcome", Static)
+        before = tuple(str(span.style) for span in welcome.render().spans)
+
+        layout._animate_welcome_wordmark()
         await pilot.pause(_WELCOME_SHINE_INTERVAL * 2)
-        assert tuple(str(span.style) for span in welcome.render().spans) != covered
+        assert tuple(str(span.style) for span in welcome.render().spans) == before
+
+
+async def test_welcome_wordmark_skips_frames_while_app_is_blurred(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An inactive terminal pane does not repaint decorative frames."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(100, 28)) as pilot:
+        await pilot.pause()
+        layout = app.screen
+        welcome = layout.query_one("#empty-welcome", Static)
+        app.app_focus = False
+        before = tuple(str(span.style) for span in welcome.render().spans)
+
+        layout._animate_welcome_wordmark()
+        assert tuple(str(span.style) for span in welcome.render().spans) == before
+
+        app.app_focus = True
+        layout._animate_welcome_wordmark()
+        assert tuple(str(span.style) for span in welcome.render().spans) != before
 
 
 @pytest.mark.parametrize("query", _WELCOME_QUERIES)

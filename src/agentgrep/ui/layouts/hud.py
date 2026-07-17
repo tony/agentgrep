@@ -731,7 +731,12 @@ class HudLayout(LayoutScreen):
         if self._welcome_shine_timer is None:
             return
         body = self._body
-        if self.is_active and body is not None and body.has_class("-empty"):
+        if (
+            self.app.animation_level == "full"
+            and self.is_active
+            and body is not None
+            and body.has_class("-empty")
+        ):
             self._welcome_shine_timer.resume()
         else:
             self._welcome_shine_timer.pause()
@@ -742,11 +747,14 @@ class HudLayout(LayoutScreen):
         body = self._body
         if (
             self._welcome_widget is None
+            or self.app.animation_level != "full"
             or not self.is_active
             or body is None
             or not body.has_class("-empty")
         ):
             self._sync_welcome_shine_timer()
+            return
+        if not self.app.app_focus:
             return
         current_offset = self._welcome_widget.shine_offset
         self._welcome_widget.shine_offset = (current_offset + 1) % len(_WELCOME_BRAND_SHINE)
