@@ -362,6 +362,45 @@ async def test_greplog_stale_filter_results_are_dropped(
         assert len(layout.query_one("#greplog").lines) == expected_lines
 
 
+async def test_greplog_filter_chunks_stop_after_generation_change(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A yielded filter repaint cannot append after a newer filter wins."""
+    from agentgrep.ui import _runtime
+    from agentgrep.ui.layouts import greplog as greplog_mod
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    entered_yield = asyncio.Event()
+    release_yield = asyncio.Event()
+
+    async def pause_between_chunks() -> None:
+        entered_yield.set()
+        await release_yield.wait()
+
+    monkeypatch.setattr(_runtime, "_sleep_zero", pause_between_chunks)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        layout = await _mount_greplog(app, pilot)
+        records = tuple(
+            _record(tmp_path, index, f"old row {index}")
+            for index in range(greplog_mod._APPLY_CHUNK_SIZE * 2 + 1)
+        )
+        generation = layout._filter_generation
+        apply_task = asyncio.create_task(layout._apply_log_filter(generation, records))
+        await asyncio.wait_for(entered_yield.wait(), timeout=2)
+
+        layout._filter_generation += 1
+        log = layout.query_one("#greplog")
+        log.clear()
+        log.write("new view")
+        release_yield.set()
+        await apply_task
+
+        assert len(log.lines) == 1
+        assert "new view" in log.lines[0].text
+
+
 class ActiveFilterBatchCase(t.NamedTuple):
     """A streamed batch that arrives while a browse filter is active."""
 

@@ -357,7 +357,16 @@ class GrepLogLayout(LayoutScreen):
         if self._log is None:
             return
         self._log.clear()
-        await _runtime.stream_apply(matching, self._write_chunk, chunk_size=_APPLY_CHUNK_SIZE)
+
+        def write_chunk_if_live(chunk: cabc.Sequence[SearchRecord]) -> None:
+            if generation == self._filter_generation:
+                self._write_chunk(chunk)
+
+        await _runtime.stream_apply(
+            matching,
+            write_chunk_if_live,
+            chunk_size=_APPLY_CHUNK_SIZE,
+        )
 
     def _build_matcher(self, text: str) -> CompiledRecordMatcher | None:
         """Compile a record matcher for ``text``, or ``None`` for an empty filter."""
