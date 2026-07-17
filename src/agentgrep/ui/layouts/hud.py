@@ -121,7 +121,7 @@ _RichSyntaxType = _RichSyntax
 
 _WELCOME_QUERIES = (
     "agent:claude",
-    "model:gpt*",
+    "scope:all model:gpt*",
     "role:user",
     "timestamp:>2026-01-01",
     '"exact phrase"',

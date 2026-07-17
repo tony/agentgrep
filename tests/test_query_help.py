@@ -52,3 +52,9 @@ def test_operators_include_phrase_exists_and_wildcard() -> None:
     syntaxes = " ".join(op.syntax for op in query_language_operators())
     for marker in ('"', "field:*", "*"):
         assert marker in syntaxes
+
+
+def test_model_wildcard_example_opts_into_conversations() -> None:
+    """Copying the model wildcard example cannot silently search prompts only."""
+    wildcard = next(op for op in query_language_operators() if op.syntax == "field:glob*")
+    assert wildcard.example == "scope:all model:gpt*"

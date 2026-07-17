@@ -53,7 +53,8 @@ _INSTR_DEFAULTS = (
 
 _INSTR_QUERY = (
     "Query language: search terms also accept field predicates (agent:codex, "
-    "model:gpt*, role:user, timestamp:>2026-01-01, path:..., scope:...), boolean "
+    "scope:all model:gpt*, role:user, timestamp:>2026-01-01, path:..., "
+    "scope:...), boolean "
     'OR / NOT / ( ), quoted "phrases", field:* (present) and field:glob* '
     "(wildcard). Bare terms stay literal substrings. Read the "
     "agentgrep://query-language resource for the field and operator catalog, or "

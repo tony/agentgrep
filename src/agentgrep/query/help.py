@@ -80,8 +80,11 @@ _OPERATORS: tuple[OperatorDoc, ...] = (
     ),
     OperatorDoc(
         syntax="field:glob*",
-        description="Wildcard (* / ?) on text and string fields, anchored.",
-        example="model:gpt*",
+        description=(
+            "Wildcard (* / ?) on text and string fields, anchored; "
+            "model filters require conversation discovery."
+        ),
+        example="scope:all model:gpt*",
     ),
     OperatorDoc(
         syntax="field:>v / field:<=v",

@@ -1623,6 +1623,15 @@ def test_mcp_instructions_describe_path_privacy_boundaries() -> None:
     assert "opaque result refs" in rendered
 
 
+def test_mcp_instructions_scope_model_example() -> None:
+    """Handshake guidance makes the conversation-only model example effective."""
+    from agentgrep.mcp.instructions import _build_instructions
+
+    rendered = _build_instructions()
+    assert "scope:all model:gpt*" in rendered
+    assert "agent:codex, model:gpt*" not in rendered
+
+
 @pytest.mark.parametrize(
     AgentProductNameCase._fields,
     AGENT_PRODUCT_NAME_CASES,
@@ -1916,6 +1925,8 @@ async def test_mcp_query_language_resource_lists_every_field() -> None:
     field_names = {field["name"] for field in payload["fields"]}
     assert field_names == set(default_registry().known_names())
     assert any(op["syntax"] == "field:*" for op in payload["operators"])
+    wildcard = next(op for op in payload["operators"] if op["syntax"] == "field:glob*")
+    assert wildcard["example"] == "scope:all model:gpt*"
     assert payload["summary"]
 
 

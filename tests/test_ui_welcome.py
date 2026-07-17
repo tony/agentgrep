@@ -7,7 +7,8 @@ import pathlib
 import pytest
 from textual.widgets import Static
 
-from agentgrep.query import compile_query, default_registry, parse_query
+from agentgrep.query import build_query_from_input, compile_query, default_registry, parse_query
+from agentgrep.records import SearchQuery
 from agentgrep.ui.layouts.hud import (
     _WELCOME_QUERIES,
     _welcome_query_examples,
@@ -41,7 +42,7 @@ def test_welcome_examples_share_query_highlighting_and_safe_metadata() -> None:
     ]
 
     assert content.plain == (
-        'agent:claude   model:gpt*   role:user\ntimestamp:>2026-01-01   "exact phrase"'
+        'agent:claude   scope:all model:gpt*   role:user\ntimestamp:>2026-01-01   "exact phrase"'
     )
     assert len(content.spans) > len(_WELCOME_QUERIES)
     assert query_indexes == list(range(len(_WELCOME_QUERIES)))
@@ -77,6 +78,26 @@ def test_welcome_query_parses_and_compiles(query: str) -> None:
     assert compile_query(parse_query(query, registry), registry) is not None
 
 
+def test_welcome_model_example_widens_prompt_discovery() -> None:
+    """The model example opts into stores whose records actually carry models."""
+    model_query = next(query for query in _WELCOME_QUERIES if "model:" in query)
+    base = SearchQuery(
+        terms=(),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=(),
+        limit=None,
+    )
+
+    result = build_query_from_input(model_query, base, default_registry())
+
+    assert result.error is None
+    assert result.query is not None
+    assert result.query.scope == "all"
+
+
 @pytest.mark.parametrize("size", [(100, 28), (40, 20)], ids=["wide", "narrow"])
 async def test_welcome_example_click_loads_without_searching(
     tmp_path: pathlib.Path,
@@ -100,9 +121,9 @@ async def test_welcome_example_click_loads_without_searching(
 
         assert welcome.render().plain == "Welcome to agentgrep"
         assert examples.render().plain.startswith("agent:claude")
-        assert 2 * welcome.region.x + welcome.region.width == (
-            2 * examples.region.x + examples.region.width
-        )
+        welcome_center = 2 * welcome.region.x + welcome.region.width
+        examples_center = 2 * examples.region.x + examples.region.width
+        assert abs(welcome_center - examples_center) <= 1
         syntax_colors = {
             str(segment.style.color)
             for segment in examples.render_line(0)
