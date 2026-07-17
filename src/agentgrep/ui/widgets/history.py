@@ -7,12 +7,13 @@ selected entry — with a bottom incremental filter and a footer hint. It owns a
 keys while open, dims the screen below, and ``dismiss(...)`` flows the chosen
 query (or ``None`` on cancel) back to the app, which fills the search box.
 
-The list is a small, capped, in-memory snapshot, so filtering runs synchronously
-on every keystroke (no worker, no disk) — ADR 0011's no-blocking rule holds with
-room to spare. The query text is rendered as a plain :class:`~textual.content.Content`
-(never ``from_markup``) so a query containing ``[...]`` is shown verbatim, and the
-fuzzy match offsets are stylized by hand — mirroring the completion dropdown's
-``markup=False`` guard.
+The list is a capped, in-memory snapshot, so filtering currently runs
+synchronously on every keystroke (no worker, no disk). This is a deliberately
+bounded pump path under ADR 0011; changes to its caps or row projection require
+fresh frame-budget evidence. The query text is rendered as a plain
+:class:`~textual.content.Content` (never ``from_markup``) so a query containing
+``[...]`` is shown verbatim, and the fuzzy match offsets are stylized by hand —
+mirroring the completion dropdown's ``markup=False`` guard.
 """
 
 from __future__ import annotations
