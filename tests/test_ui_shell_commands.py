@@ -1059,6 +1059,40 @@ async def test_detail_zoom_navigation_never_focuses_hidden_results_widgets(
         _assert_zoomed_focus(layout, "results", expected)
 
 
+@pytest.mark.parametrize("size", [(120, 30), (77, 30)], ids=["wide", "stacked"])
+@pytest.mark.parametrize(
+    ("key", "target_id"),
+    [("h", "results"), ("k", "filter")],
+    ids=["h-results", "k-filter"],
+)
+async def test_detail_zoom_vim_navigation_keeps_focus_visible(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    size: tuple[int, int],
+    key: str,
+    target_id: str,
+) -> None:
+    """Widget-local detail navigation reveals its target before focusing it."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = _zoom_record(tmp_path, 0)
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        layout = app.screen
+        _seed_zoom_layout(layout, record)
+        await _submit(pilot, layout, "/maximize detail")
+        layout._detail_scroll.focus()
+        await pilot.pause()
+
+        target = layout.query_one(f"#{target_id}")
+        assert not target.is_on_screen
+        assert layout._detail_scroll.scroll_y <= 0
+
+        await pilot.press(key)
+        await pilot.pause()
+
+        _assert_zoomed_focus(layout, "results", target)
+
+
 async def test_narrow_detail_zoom_renders_selection_without_losing_collapse(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

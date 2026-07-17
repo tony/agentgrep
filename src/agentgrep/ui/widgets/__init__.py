@@ -17,6 +17,7 @@ from agentgrep.ui.widgets.history import HistoryRecall
 from agentgrep.ui.widgets.inputs import DetailFindInput, FilterInput, SearchInput
 from agentgrep.ui.widgets.messages import (
     DetailFindRequested,
+    DetailFocusRequested,
     DetailScrollChanged,
     FilterCompleted,
     FilterRequested,
@@ -40,6 +41,7 @@ __all__ = [
     "CompletionDropdown",
     "DetailFindInput",
     "DetailFindRequested",
+    "DetailFocusRequested",
     "DetailScroll",
     "DetailScrollChanged",
     "FilterCompleted",

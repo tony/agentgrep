@@ -71,6 +71,7 @@ from agentgrep.ui.widgets import (
     CompletionDropdown,
     DetailFindInput,
     DetailFindRequested,
+    DetailFocusRequested,
     DetailScroll,
     DetailScrollChanged,
     FilterCompleted,
@@ -2211,6 +2212,11 @@ class HudLayout(LayoutScreen):
         if target_pane is not None and self._zoomed_pane not in {None, target_pane}:
             self._set_zoomed_pane(target_pane)
         target.focus()
+
+    @_runtime.pump_only
+    def on_detail_focus_requested(self, message: DetailFocusRequested) -> None:
+        """Reveal and focus a neighboring widget requested by the detail pane."""
+        self._focus_widget_by_id(message.target)
 
     def _record_for_detail_focus(self) -> SearchRecord | None:
         """Return the record explicit detail focus should render."""
