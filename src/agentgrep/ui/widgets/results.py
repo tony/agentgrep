@@ -14,6 +14,7 @@ from collections import abc as cabc
 
 import rich.text as rich_text
 from rich.segment import Segment
+from rich.style import Style
 from rich.styled import Styled
 from textual import events
 from textual.geometry import Region, Size
@@ -72,6 +73,7 @@ class SearchResultsList(ScrollView, can_focus=True):
     highlighted: reactive[int | None] = reactive(None, repaint=False)
 
     _RENDER_CACHE_MAX: t.ClassVar[int] = 2_048
+    _STRIP_CACHE_MAX: t.ClassVar[int] = 2_048
 
     def __init__(
         self,
@@ -89,6 +91,10 @@ class SearchResultsList(ScrollView, can_focus=True):
         self._render_cache: collections.OrderedDict[
             tuple[str, int],
             rich_text.Text,
+        ] = collections.OrderedDict()
+        self._strip_cache: collections.OrderedDict[
+            tuple[str, int, Style, int],
+            Strip,
         ] = collections.OrderedDict()
 
     @property
@@ -169,6 +175,7 @@ class SearchResultsList(ScrollView, can_focus=True):
         self._records = []
         self._record_ids.clear()
         self._render_cache.clear()
+        self._strip_cache.clear()
         self.highlighted = None
         self._sync_virtual_size()
         self.scroll_home(animate=False, immediate=True)
@@ -280,6 +287,12 @@ class SearchResultsList(ScrollView, can_focus=True):
             else "option-list--option"
         )
         style = self.get_component_rich_style(component)
+        record = self._records[index]
+        cache_key = (str(self.app.theme), width, style, id(record))
+        cached = self._strip_cache.get(cache_key)
+        if cached is not None:
+            self._strip_cache.move_to_end(cache_key)
+            return cached
         options = self.app.console.options.update(
             width=width,
             min_width=width,
@@ -289,20 +302,28 @@ class SearchResultsList(ScrollView, can_focus=True):
             height=1,
         )
         lines = self.app.console.render_lines(
-            Styled(self._render_record(self._records[index]), style),
+            Styled(self._render_record(record), style),
             options,
             pad=True,
         )
         if not lines:
-            return Strip.blank(width, style)
-        # Text with an explicitly empty span style may leave a Rich segment's
-        # style as ``None``. Textual filters expect every custom line segment to
-        # carry a concrete style, so inherit the row component style here.
-        segments = [
-            segment if segment.style is not None else Segment(segment.text, style, segment.control)
-            for segment in lines[0]
-        ]
-        return Strip(segments, width)
+            strip = Strip.blank(width, style)
+        else:
+            # Text with an explicitly empty span style may leave a Rich segment's
+            # style as ``None``. Textual filters expect every custom line segment to
+            # carry a concrete style, so inherit the row component style here.
+            segments = [
+                segment
+                if segment.style is not None
+                else Segment(segment.text, style, segment.control)
+                for segment in lines[0]
+            ]
+            strip = Strip(segments, width)
+        self._strip_cache[cache_key] = strip
+        self._strip_cache.move_to_end(cache_key)
+        while len(self._strip_cache) > self._STRIP_CACHE_MAX:
+            self._strip_cache.popitem(last=False)
+        return strip
 
     def _render_record(self, record: SearchRecord) -> rich_text.Text:
         """Return one rendered row from the bounded palette/identity LRU."""

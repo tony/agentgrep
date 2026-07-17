@@ -13,6 +13,7 @@ import typing as t
 
 import pytest
 from rich.cells import cell_len
+from rich.style import Style
 from textual.scroll_view import ScrollView
 from textual.widgets import Input, OptionList, Static
 
@@ -569,6 +570,91 @@ async def test_results_render_cache_evicts_oldest_rows(tmp_path: pathlib.Path) -
         assert (theme_name, id(records[0])) in results._render_cache
         assert (theme_name, id(records[1])) not in results._render_cache
         assert (theme_name, id(records[-1])) in results._render_cache
+
+
+async def test_results_line_cache_reuses_final_strip(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rendering an unchanged row reuses the completed fixed-width Strip."""
+    from agentgrep.progress import SearchControl
+    from agentgrep.ui.app import build_streaming_ui_app
+
+    app = t.cast("t.Any", build_streaming_ui_app(tmp_path, _make_query(), control=SearchControl()))
+    async with app.run_test(size=(80, 24)) as pilot:
+        results = app.screen.query_one(SearchResultsList)
+        app.screen._set_empty_state(empty=False)
+        _set_records(results, [_make_record()])
+        await pilot.pause()
+        results._strip_cache.clear()
+        render_lines_calls = 0
+        original = app.console.render_lines
+
+        def count_render_lines(*args: t.Any, **kwargs: t.Any) -> t.Any:
+            nonlocal render_lines_calls
+            render_lines_calls += 1
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(app.console, "render_lines", count_render_lines)
+        first = results.render_line(0)
+        second = results.render_line(0)
+
+        assert second is first
+        assert render_lines_calls == 1
+
+
+async def test_results_line_cache_invalidates_render_inputs(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Theme, width, effective style, and record identity key final rows."""
+    from agentgrep.progress import SearchControl
+    from agentgrep.ui import theme as ui_theme
+    from agentgrep.ui.app import build_streaming_ui_app
+
+    app = t.cast("t.Any", build_streaming_ui_app(tmp_path, _make_query(), control=SearchControl()))
+    async with app.run_test(size=(80, 24)) as pilot:
+        results = app.screen.query_one(SearchResultsList)
+        app.screen._set_empty_state(empty=False)
+        first_record = _make_record("same row")
+        _set_records(results, [first_record])
+        await pilot.pause()
+        results._strip_cache.clear()
+
+        base_style = results.get_component_rich_style("option-list--option")
+        styles = [base_style]
+        monkeypatch.setattr(
+            results,
+            "get_component_rich_style",
+            lambda _component: styles[0],
+        )
+        base = results.render_line(0)
+        assert results.render_line(0) is base
+
+        styles[0] = base_style + Style(reverse=True)
+        restyled = results.render_line(0)
+        assert restyled is not base
+        assert results.render_line(0) is restyled
+
+        app.theme = (
+            ui_theme.LIGHT_THEME_NAME
+            if str(app.theme) == ui_theme.DARK_THEME_NAME
+            else ui_theme.DARK_THEME_NAME
+        )
+        await pilot.pause()
+        themed = results.render_line(0)
+        assert themed is not restyled
+
+        old_width = results.size.width
+        await pilot.resize_terminal(120, 24)
+        await pilot.pause()
+        assert results.size.width != old_width
+        resized = results.render_line(0)
+        assert resized is not themed
+
+        _set_records(results, [_make_record("same row")])
+        replaced = results.render_line(0)
+        assert replaced is not resized
 
 
 def test_detail_scroll_is_focusable_vertical_scroll() -> None:
