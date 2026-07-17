@@ -202,6 +202,8 @@ class HudLayout(LayoutScreen):
         # Compiled record matcher for the current (query-aware) filter
         # text; ``None`` means no active filter (all records pass).
         self._filter_matcher: t.Any = None
+        self._filter_generation = 0
+        self._records_generation = 0
         self._resize_debounce_timer: object | None = None
         self._current_detail_record: SearchRecord | None = None
         self._detail_scroll: t.Any = None
@@ -561,6 +563,8 @@ class HudLayout(LayoutScreen):
         old control first so the new worker starts with a clean slate.
         """
         self.control = SearchControl()
+        self._filter_generation += 1
+        self._records_generation += 1
         clear_haystack_cache()
         self._detail_body_cache.clear()
         self._detail_scroll_positions.clear()
@@ -945,8 +949,10 @@ class HudLayout(LayoutScreen):
         chunks — so a 5000-record batch can't freeze the UI for the duration
         of a single apply (NB-4).
         """
+        filter_generation = self._filter_generation
         if records:
             self.all_records.extend(records)
+            self._records_generation += 1
         # Results are arriving — collapse the centered searching panel to
         # the results list (idempotent; a batch driven directly, e.g. in
         # tests, switches here too).
@@ -956,6 +962,8 @@ class HudLayout(LayoutScreen):
             results = self._results
 
             def _append_chunk(chunk: cabc.Sequence[SearchRecord]) -> None:
+                if filter_generation != self._filter_generation:
+                    return
                 results.append_records(chunk)
                 if not results.uses_records(self.filtered_records):
                     self.filtered_records.extend(chunk)
@@ -1192,12 +1200,17 @@ class HudLayout(LayoutScreen):
         # The filter's literal terms get highlighted in the detail pane in
         # a distinct color from the search-query terms.
         self._filter_terms = tuple(matcher.query.terms) if matcher is not None else ()
+        self._filter_generation += 1
+        generation = self._filter_generation
+        records_generation = self._records_generation
         streaming = t.cast("StreamingAppLike", t.cast("object", self))
         streaming.run_worker(
             functools.partial(
                 self._run_filter_worker,
                 text,
                 matcher,
+                generation,
+                records_generation,
             ),
             name="filter",
             group="filter",
@@ -1248,11 +1261,14 @@ class HudLayout(LayoutScreen):
         self,
         text: str,
         matcher: t.Any,
+        generation: int,
+        records_generation: int,
     ) -> None:
         """Compute the filtered list on a background thread; post a ``FilterCompleted``.
 
-        Copy and filter the current model off the pump so the completion can be
-        adopted without scanning records on the main thread.
+        Copy the current model before matching. The pump advances the records
+        generation on every mutation, so a copy that raced a streamed batch is
+        discarded and retried in :meth:`on_filter_completed`.
         """
         records = list(self.all_records)
         if matcher is None:
@@ -1266,6 +1282,8 @@ class HudLayout(LayoutScreen):
                 text=text,
                 records=matching,
                 record_ids=record_ids,
+                generation=generation,
+                records_generation=records_generation,
             ),
         )
 
@@ -1278,7 +1296,12 @@ class HudLayout(LayoutScreen):
         JSON/Markdown body, scroll-to-match) is one of the heavier
         main-thread units per filter pass.
         """
+        if message.generation != self._filter_generation:
+            return
         if self._filter_input is not None and message.text != self._filter_input.value:
+            return
+        if message.records_generation != self._records_generation:
+            self.filter_loaded(message.text)
             return
         self.filtered_records = message.records
         if self._results is not None:

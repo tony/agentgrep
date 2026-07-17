@@ -139,12 +139,16 @@ def test_messages_carry_their_payloads() -> None:
         text="bliss",
         records=[record],
         record_ids={id(record)},
+        generation=2,
+        records_generation=3,
     )
     assert (
         completed.text,
         completed.records,
         completed.record_ids,
-    ) == ("bliss", [record], {id(record)})
+        completed.generation,
+        completed.records_generation,
+    ) == ("bliss", [record], {id(record)}, 2, 3)
     highlighted = ResultHighlighted(
         record=record,
         index=3,

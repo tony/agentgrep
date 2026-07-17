@@ -4301,7 +4301,7 @@ def _set_result_records(results: t.Any, records: t.Iterable[t.Any]) -> None:
 
 
 def _filter_completed(app: t.Any, records: t.Iterable[t.Any], *, text: str = "") -> t.Any:
-    """Build a prepared filter completion for a mounted test app."""
+    """Build a generation-scoped filter completion for a mounted test app."""
     from agentgrep.ui.widgets import FilterCompleted
 
     prepared = list(records)
@@ -4309,6 +4309,8 @@ def _filter_completed(app: t.Any, records: t.Iterable[t.Any], *, text: str = "")
         text=text,
         records=prepared,
         record_ids={id(record) for record in prepared},
+        generation=app.screen._filter_generation,
+        records_generation=app.screen._records_generation,
     )
 
 
@@ -5821,12 +5823,122 @@ async def test_filter_completion_adopts_worker_model_without_iteration(
                 text="",
                 records=prepared,
                 record_ids={id(record) for record in records},
+                generation=app.screen._filter_generation,
+                records_generation=app.screen._records_generation,
             ),
         )
 
         assert app.screen.filtered_records is prepared
         assert app.screen._results.uses_records(prepared)
         assert app.screen._results.contains_record(records[2])
+
+
+async def test_filter_completion_drops_superseded_filter_generation(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An older same-text filter worker cannot replace the current model."""
+    from agentgrep.ui.widgets import FilterCompleted
+
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    first, second = _seed_records(agentgrep, tmp_path, 2)
+    async with app.run_test(size=(120, 24)):
+        app.screen.filtered_records = [first]
+        _set_result_records(app.screen._results, [first])
+        completion = FilterCompleted(
+            text="",
+            records=[second],
+            record_ids={id(second)},
+            generation=app.screen._filter_generation - 1,
+            records_generation=app.screen._records_generation,
+        )
+
+        app.screen.on_filter_completed(completion)
+
+        assert app.screen.filtered_records == [first]
+        assert app.screen._results.contains_record(first)
+        assert not app.screen._results.contains_record(second)
+
+
+async def test_filter_completion_retries_after_streamed_records(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A worker snapshot cannot replace records streamed after it started."""
+    from agentgrep.ui.widgets import FilterCompleted
+
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    first, second = _seed_records(agentgrep, tmp_path, 2)
+    async with app.run_test(size=(120, 24)):
+        await app.screen._apply_records_batch((first,), total=1)
+        stale_revision = app.screen._records_generation
+        completion = FilterCompleted(
+            text="",
+            records=[first],
+            record_ids={id(first)},
+            generation=app.screen._filter_generation,
+            records_generation=stale_revision,
+        )
+        await app.screen._apply_records_batch((second,), total=2)
+        retries: list[str] = []
+        monkeypatch.setattr(app.screen, "filter_loaded", retries.append)
+
+        app.screen.on_filter_completed(completion)
+
+        assert app.screen.filtered_records == [first, second]
+        assert app.screen._results.contains_record(second)
+        assert retries == [""]
+
+
+async def test_filter_retry_supersedes_inflight_stream_projection(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A retry cannot duplicate chunks left in a superseded batch projection."""
+    from agentgrep.ui import _runtime
+    from agentgrep.ui.widgets import FilterCompleted
+
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    entered_yield = asyncio.Event()
+    release_yield = asyncio.Event()
+
+    async def pause_between_chunks() -> None:
+        entered_yield.set()
+        await release_yield.wait()
+
+    monkeypatch.setattr(_runtime, "_sleep_zero", pause_between_chunks)
+    async with app.run_test(size=(120, 24)) as pilot:
+        records = _seed_records(
+            agentgrep,
+            tmp_path,
+            app.screen._APPLY_CHUNK_SIZE * 2 + 2,
+        )
+        stale_completion = FilterCompleted(
+            text="",
+            records=[],
+            record_ids=set(),
+            generation=app.screen._filter_generation,
+            records_generation=app.screen._records_generation,
+        )
+        apply_task = asyncio.create_task(
+            app.screen._apply_records_batch(records, total=len(records)),
+        )
+        await asyncio.wait_for(entered_yield.wait(), timeout=2)
+
+        app.screen.on_filter_completed(stale_completion)
+        async with asyncio.timeout(2):
+            while app.screen._results.option_count != len(records):
+                await pilot.pause()
+
+        release_yield.set()
+        await apply_task
+
+        assert len(app.screen.filtered_records) == len(records)
+        assert app.screen._results.option_count == len(records)
+        assert len({id(record) for record in app.screen.filtered_records}) == len(records)
 
 
 async def test_right_on_non_empty_filter_moves_cursor(

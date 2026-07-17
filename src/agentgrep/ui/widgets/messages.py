@@ -68,11 +68,15 @@ class FilterCompleted(Message):
         text: str,
         records: list[SearchRecord],
         record_ids: set[int],
+        generation: int,
+        records_generation: int,
     ) -> None:
         super().__init__()
         self.text = text
         self.records = records
         self.record_ids = record_ids
+        self.generation = generation
+        self.records_generation = records_generation
 
 
 class SearchRequested(Message):
