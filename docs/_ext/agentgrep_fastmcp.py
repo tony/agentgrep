@@ -69,6 +69,27 @@ async def search(
             description="Opaque page cursor returned by a previous search response.",
         ),
     ] = None,
+    cwd: t.Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Only return records whose recorded cwd matches this path.",
+        ),
+    ] = None,
+    repo: t.Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Only return records whose recorded repository root matches this path.",
+        ),
+    ] = None,
+    branch: t.Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Only return records whose recorded git branch matches this name.",
+        ),
+    ] = None,
 ) -> SearchToolResponse:
     """Search normalized prompts or conversations across local agent stores."""
     raise NotImplementedError(DOCS_ONLY_MESSAGE)

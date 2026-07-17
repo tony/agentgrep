@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import json
 import logging
 import os
@@ -1869,6 +1870,19 @@ async def test_mcp_search_tool_description_mentions_query_language() -> None:
     search = next(tool for tool in tools if tool.name == "search")
     description = t.cast("str | None", t.cast("t.Any", search).description)
     assert "query language" in (description or "")
+
+
+async def test_docs_search_signature_matches_live_mcp_schema() -> None:
+    """The docs-only search shim exposes every live MCP input field."""
+    from docs._ext.agentgrep_fastmcp import search as docs_search
+
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        tools = t.cast("list[ToolLike]", await client.list_tools())
+
+    search = next(tool for tool in tools if tool.name == "search")
+    properties = t.cast("dict[str, object]", t.cast("t.Any", search).inputSchema["properties"])
+    assert set(inspect.signature(docs_search).parameters) == set(properties)
 
 
 async def test_mcp_recent_sessions_filters_by_mtime(
