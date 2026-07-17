@@ -148,6 +148,37 @@ def test_build_streaming_ui_app_validates_selection(tmp_path: pathlib.Path) -> N
         )
 
 
+def test_factory_preserves_component_loader_import_error(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An internal loader defect is not mislabeled as missing Textual."""
+    from agentgrep.ui import registry
+
+    message = "sentinel loader defect"
+
+    def fail_loader() -> t.NoReturn:
+        raise ImportError(message)
+
+    spec = registry.LayoutSpec("hud", "test", fail_loader)
+    monkeypatch.setattr(registry, "layout_spec", lambda _name: spec)
+    query = agentgrep.SearchQuery(
+        terms=(),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=(),
+        limit=None,
+    )
+    with pytest.raises(ImportError, match=message):
+        agentgrep.build_streaming_ui_app(
+            tmp_path,
+            query,
+            control=agentgrep.SearchControl(),
+        )
+
+
 def test_build_streaming_ui_app_rejects_unrepresentable_launch_query(
     tmp_path: pathlib.Path,
 ) -> None:

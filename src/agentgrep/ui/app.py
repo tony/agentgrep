@@ -127,15 +127,18 @@ def build_streaming_ui_app(
     if initial_search_text is not None and len(initial_search_text) > _history.QUERY_TEXT_MAX_CHARS:
         msg = f"initial search text exceeds {_history.QUERY_TEXT_MAX_CHARS} characters"
         raise UiQueryTooLongError(msg)
-    try:
-        from agentgrep.ui._seams import EngineSearchInvoker
-        from agentgrep.ui._shell import ExplorerApp
+    from agentgrep.ui._seams import EngineSearchInvoker
 
-        layout_type = layout_spec.loader()
-        workflow_type = workflow_spec.loader()
-    except ImportError as error:
+    try:
+        from agentgrep.ui._shell import ExplorerApp
+    except ModuleNotFoundError as error:
+        missing = error.name or ""
+        if missing != "textual" and not missing.startswith("textual."):
+            raise
         msg = "Textual is required for --ui. Install with `uv pip install --editable .`."
         raise RuntimeError(msg) from error
+    layout_type = layout_spec.loader()
+    workflow_type = workflow_spec.loader()
     composition = registry._UiComposition(
         layout_type=layout_type,
         workflow_type=workflow_type,
