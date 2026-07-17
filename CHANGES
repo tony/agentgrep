@@ -36,11 +36,22 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a36 (Yet to be released)
+## agentgrep 0.1.0a37 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a36 (2026-07-16)
+
+agentgrep 0.1.0a36 rebuilds the interactive explorer (`agentgrep ui`) around a
+command-first input: type `/` for a compact, filterable menu of commands such
+as `/theme`, `/keys`, `/maximize`, and `/screenshot`, replacing Textual's
+screen-covering `Ctrl-P` palette. The experimental `--layout` and `--workflow`
+flags are retired, so the explorer launches one supported HUD and search
+experience. Content panes now zoom with `/maximize` while keeping the input
+and footer reachable, `/screenshot` saves a clean SVG of the current view, and
+theme changes and vim-style navigation keep every result row visible.
 
 ### Breaking changes
 
