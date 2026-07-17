@@ -151,7 +151,7 @@ def _import_map(tree: ast.AST) -> dict[str, str]:
     return mapping
 
 
-def _scheduled_pump_names() -> frozenset[str]:
+def _scheduled_pump_names(trees: t.Iterable[ast.AST] = _UI_TREES) -> frozenset[str]:
     """Return method names handed to a scheduler/cross-thread/signal call site.
 
     Textual runs these on the pump thread even though their names match no
@@ -159,13 +159,14 @@ def _scheduled_pump_names() -> frozenset[str]:
     cannot see them, so seed them from the call sites (NB-8).
     """
     names: set[str] = set()
-    for tree in _UI_TREES:
+    for tree in trees:
         for call in ast.walk(tree):
             if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Attribute):
                 continue
             if call.func.attr not in _SCHEDULER_FUNCS:
                 continue
-            for arg in call.args:
+            candidates = [*call.args, *(keyword.value for keyword in call.keywords)]
+            for arg in candidates:
                 # Seed only ``self.method`` targets: the data args passed
                 # alongside the callable are bare names, and a lambda/partial
                 # target has no name to seed (a known residual, ADR 0011).
@@ -449,6 +450,10 @@ def test_classifier_sees_scheduled_callables_and_on_handlers() -> None:
     assert "pump_only" in screenshot_callback.decorators
     # Data args passed alongside the callable must NOT be seeded (NB-8 false alarm).
     assert not ({"record", "header", "body", "query_terms", "self"} & _SCHEDULED_PUMP_NAMES)
+    keyword_tree = ast.parse(
+        "self.set_timer(delay=0.1, callback=self._keyword_callback)",
+    )
+    assert _scheduled_pump_names([keyword_tree]) == {"_keyword_callback"}
     node = t.cast("ast.FunctionDef", ast.parse("def f(self): ...").body[0])
     assert _is_pump_method(_Method("A", "_after_resize", node, (), ()))  # set_timer target
     assert _is_pump_method(_Method("W", "_handle", node, ("on",), ()))  # @on handler
