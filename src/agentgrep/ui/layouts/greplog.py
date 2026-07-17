@@ -22,6 +22,7 @@ import functools
 import typing as t
 from collections import abc as cabc
 
+from textual.binding import BindingType
 from textual.widgets import Footer, RichLog, Static
 
 from agentgrep._text import format_compact_path
@@ -60,7 +61,7 @@ class GrepLogLayout(LayoutScreen):
     GrepLogLayout.-zoom-log #greplog-status { display: none; }
     """
 
-    BINDINGS: t.ClassVar[list[t.Any]] = [
+    BINDINGS: t.ClassVar[list[BindingType]] = [
         ("tab", "app.focus_next", "Switch focus"),
         ("q", "app.quit", "Quit"),
         ("escape", "stop_search", "Stop search"),

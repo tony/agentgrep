@@ -24,7 +24,7 @@ from rich.console import Group as _RichGroup
 from rich.markdown import Markdown as _RichMarkdown
 from rich.syntax import Syntax as _RichSyntax
 from rich.text import Text
-from textual.binding import Binding
+from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Footer, Static
 from textual.worker import Worker, WorkerCancelled
@@ -218,7 +218,7 @@ class HudLayout(LayoutScreen):
     # ``ctrl+k`` = kill-to-end-of-line). Trade-off accepted per user
     # request: filter loses ``ctrl+k``; ``ctrl+u`` and ``ctrl+w`` are
     # untouched and remain readline-compatible.
-    BINDINGS: t.ClassVar[list[t.Any]] = [
+    BINDINGS: t.ClassVar[list[BindingType]] = [
         ("tab", "app.focus_next", "Switch focus"),
         ("q", "app.quit", "Quit"),
         ("escape", "stop_search", "Stop search"),

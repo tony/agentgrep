@@ -17,6 +17,7 @@ from __future__ import annotations
 import typing as t
 
 from textual.app import App
+from textual.binding import BindingType
 
 from agentgrep.ui import _runtime, registry, theme as ui_theme
 
@@ -37,7 +38,7 @@ class ExplorerApp(App[None]):
     #: ``$ag-*`` tokens it references always resolve via
     #: :meth:`get_theme_variable_defaults`, regardless of the active theme.
     CSS_PATH: t.ClassVar[str] = "styles.tcss"
-    BINDINGS: t.ClassVar[list[t.Any]] = []
+    BINDINGS: t.ClassVar[list[BindingType]] = []
 
     def __init__(
         self,

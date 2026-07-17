@@ -14,7 +14,7 @@ import typing as t
 
 from rich.highlighter import Highlighter
 from textual import events
-from textual.binding import Binding
+from textual.binding import Binding, BindingType
 from textual.suggester import Suggester
 from textual.timer import Timer
 from textual.widgets import Input
@@ -94,7 +94,7 @@ class FilterInput(_BoundedInput):
 
     _DEBOUNCE_SECONDS: t.ClassVar[float] = 0.15
 
-    BINDINGS: t.ClassVar[list[t.Any]] = [
+    BINDINGS: t.ClassVar[list[BindingType]] = [
         *_HIDDEN_EDITING_ALIASES,
         ("down", "release_down", "Results"),
     ]
@@ -204,7 +204,7 @@ class DetailFindInput(_BoundedInput):
     """
 
     _DEBOUNCE_SECONDS: t.ClassVar[float] = 0.12
-    BINDINGS: t.ClassVar[list[t.Any]] = [*_HIDDEN_EDITING_ALIASES]
+    BINDINGS: t.ClassVar[list[BindingType]] = [*_HIDDEN_EDITING_ALIASES]
 
     def __init__(
         self,
@@ -285,7 +285,7 @@ class SearchInput(_BoundedInput):
     worker before spawning a fresh one.
     """
 
-    BINDINGS: t.ClassVar[list[t.Any]] = [
+    BINDINGS: t.ClassVar[list[BindingType]] = [
         *_HIDDEN_EDITING_ALIASES,
         ("down", "release_down", "Filter"),
     ]
