@@ -14,7 +14,7 @@ from __future__ import annotations
 import pathlib
 import typing as t
 
-from agentgrep.ui import registry
+from agentgrep.ui import _history, registry
 from agentgrep.ui._context import UiContext
 
 if t.TYPE_CHECKING:
@@ -113,18 +113,32 @@ def build_streaming_ui_app(
     if workflow_spec is None:
         msg = f"unknown workflow {workflow!r}; choose from {', '.join(registry.workflow_names())}"
         raise ValueError(msg)
-    composition = registry._UiComposition(layout=layout_spec, workflow=workflow_spec)
     try:
         from agentgrep.ui._seams import EngineSearchInvoker
         from agentgrep.ui._shell import ExplorerApp
+
+        layout_type = layout_spec.loader()
+        workflow_type = workflow_spec.loader()
     except ImportError as error:
         msg = "Textual is required for --ui. Install with `uv pip install --editable .`."
         raise RuntimeError(msg) from error
+    composition = registry._UiComposition(
+        layout_type=layout_type,
+        workflow_type=workflow_type,
+    )
+    history_disabled = False
+    history: tuple[_history.HistoryEntry, ...] = ()
+    if layout_spec.uses_history:
+        history_disabled = _history.history_disabled()
+        if not history_disabled:
+            history = tuple(_history.load_history(_history.history_path(home)))
     ctx = UiContext(
         home=home,
         invoker=EngineSearchInvoker(home),
         query=query,
         control=control,
         initial_search_text=initial_search_text,
+        history=history,
+        history_disabled=history_disabled,
     )
     return ExplorerApp(ctx, composition=composition)

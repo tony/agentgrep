@@ -72,10 +72,11 @@ class ExplorerApp(App[None]):
         base = super().get_theme_variable_defaults()
         return {**base, **ui_theme.ag_variable_defaults()}
 
+    @_runtime.pump_only
     def get_default_screen(self) -> Screen:
         """Mount the selected layout and workflow as the launch screen."""
-        workflow = self._composition.workflow.loader()()
-        layout = self._composition.layout.loader()(self._ctx, workflow)
+        workflow = self._composition.workflow_type()
+        layout = self._composition.layout_type(self._ctx, workflow)
         return t.cast("Screen", layout)
 
     def on_mount(self) -> None:

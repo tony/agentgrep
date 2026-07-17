@@ -172,14 +172,12 @@ class HudLayout(LayoutScreen):
         self._last_snapshot: ProgressSnapshot | None = None
         self._active_source_snapshots: dict[int, ProgressSnapshot] = {}
         self._searching_panel: SearchingPanel | None = None
-        # Persisted search-input history (agentgrep's only self-written
-        # state — under XDG_STATE_HOME, never a searched store). Loaded once
-        # at construction; the recall modal reads this in-memory snapshot.
-        self._history_disabled = _history.history_disabled()
+        # Persisted search-input history (agentgrep's only self-written state —
+        # under XDG_STATE_HOME, never a searched store). The factory loads the
+        # snapshot before Textual starts; the recall modal only reads memory.
+        self._history_disabled = ctx.history_disabled
         self._history_path = _history.history_path(self.home)
-        self._history: list[_history.HistoryEntry] = (
-            [] if self._history_disabled else _history.load_history(self._history_path)
-        )
+        self._history = list(ctx.history)
         self._last_recorded_text = self._history[0].text if self._history else ""
         self._results: SearchResultsList | None = None
         self._detail: StaticLike | None = None

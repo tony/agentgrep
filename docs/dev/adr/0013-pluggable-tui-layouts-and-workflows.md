@@ -68,10 +68,12 @@ enumerated style of {ref}`ADR 0011 <adr-non-blocking-tui-invariants>`.
   `agentgrep.ui.registry` is a Textual-free catalog of `LayoutSpec` /
   `WorkflowSpec` whose loaders are function-local imports, so listing names never
   imports Textual. Programmatically injected names are validated against the
-  registry before launch and paired in one frozen value; the shell never
-  handles unresolved names or fallback selection. The CLI does not expose those
-  names. A future `importlib.metadata` entry-point source can feed the same spec
-  shape without changing internal consumers.
+  registry before launch, resolved before Textual starts its message pump, and
+  paired in one frozen value; the shell never handles lazy loaders, unresolved
+  names, or fallback selection. Layout-specific startup state such as query
+  history is likewise loaded at this pre-pump factory boundary. The CLI does not
+  expose those names. A future `importlib.metadata` entry-point source can feed
+  the same spec shape without changing internal consumers.
 - **PL-5 — Each layout carries its own transport over the shared primitives.**
   A layout's streaming transport reuses `_runtime.make_gated_emitter` /
   `@offload` / `@pump_only` / `stream_apply` (ADR 0011 NB-1..NB-10, unchanged)

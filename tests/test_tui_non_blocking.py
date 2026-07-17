@@ -60,7 +60,7 @@ _UI_TREES = _ui_source_trees()
 # handlers (any name), the callables handed to a scheduler/cross-thread/signal
 # site (see _SCHEDULED_PUMP_NAMES), plus anything explicitly tagged @pump_only.
 _PUMP_PREFIXES = ("on_", "action_", "watch_", "compute_", "_watch_")
-_PUMP_EXACT = {"render", "compose", "_on_key"}
+_PUMP_EXACT = {"render", "compose", "get_default_screen", "_on_key"}
 
 # Calls that hand a callable to the pump thread; their target methods run there
 # even though their names match no prefix (NB-1/NB-8).

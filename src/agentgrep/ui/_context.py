@@ -18,6 +18,7 @@ if t.TYPE_CHECKING:
 
     from agentgrep.progress import SearchControl
     from agentgrep.records import SearchQuery
+    from agentgrep.ui._history import HistoryEntry
     from agentgrep.ui._seams import SearchInvoker
 
 __all__ = ["UiContext"]
@@ -41,6 +42,10 @@ class UiContext:
     initial_search_text : str | None, optional
         Initial value of a layout's primary input. ``None`` defaults to the
         space-joined ``query.terms``.
+    history : tuple[HistoryEntry, ...], optional
+        Preloaded query-history snapshot for layouts that expose recall.
+    history_disabled : bool, optional
+        Whether persistent query history is disabled for this session.
     """
 
     home: pathlib.Path
@@ -48,3 +53,5 @@ class UiContext:
     query: SearchQuery
     control: SearchControl
     initial_search_text: str | None = None
+    history: tuple[HistoryEntry, ...] = ()
+    history_disabled: bool = False
