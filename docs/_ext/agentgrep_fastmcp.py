@@ -92,7 +92,11 @@ async def search(
         ),
     ] = None,
 ) -> SearchToolResponse:
-    """Search normalized prompts or conversations across local agent stores."""
+    """Search normalized prompts by default; opt into conversations with scope.
+
+    Terms accept agentgrep's query language (field predicates, booleans,
+    phrases, and wildcards); see agentgrep://query-language.
+    """
     raise NotImplementedError(DOCS_ONLY_MESSAGE)
 
 
@@ -395,7 +399,11 @@ async def validate_query(
         Field(description="Perform case-sensitive matching."),
     ] = False,
 ) -> ValidateQueryResponse:
-    """Dry-run terms and/or validate query syntax without searching files."""
+    """Dry-run terms against sample text and/or validate query-language syntax.
+
+    Supported syntax includes field predicates, booleans, and phrases; no
+    files are searched.
+    """
     raise NotImplementedError(DOCS_ONLY_MESSAGE)
 
 

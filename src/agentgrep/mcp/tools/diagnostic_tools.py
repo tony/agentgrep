@@ -78,8 +78,9 @@ def register(mcp: FastMCP) -> None:
         tags=READONLY_TAGS | {"diagnostic"},
         annotations=TOOL_ANNOTATIONS,
         description=(
-            "Dry-run terms against sample text and/or validate query-language "
-            "syntax (field predicates, booleans, phrases) without searching files."
+            "Dry-run terms against sample text and/or validate query-language syntax. "
+            "Supported syntax includes field predicates, booleans, and phrases; "
+            "no files are searched."
         ),
     )
     async def validate_query_tool(

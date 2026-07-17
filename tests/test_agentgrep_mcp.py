@@ -1894,11 +1894,21 @@ async def test_docs_tool_input_schemas_match_live_mcp_schemas() -> None:
         documented_tools = t.cast("list[ToolLike]", await client.list_tools())
 
     documented_by_name = {tool.name: tool for tool in documented_tools}
+    description_mismatches: list[str] = []
     for live_tool in live_tools:
         documented = documented_by_name[live_tool.name]
         assert without_examples(t.cast("t.Any", documented).inputSchema) == without_examples(
             t.cast("t.Any", live_tool).inputSchema,
         ), live_tool.name
+        live_description = " ".join(
+            (t.cast("t.Any", live_tool).description or "").split(),
+        )
+        documented_description = " ".join(
+            (t.cast("t.Any", documented).description or "").split(),
+        )
+        if documented_description != live_description:
+            description_mismatches.append(live_tool.name)
+    assert description_mismatches == []
 
 
 async def test_docs_list_stores_agent_examples_are_valid_selectors() -> None:
