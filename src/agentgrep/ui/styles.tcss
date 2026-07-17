@@ -524,6 +524,7 @@ Screen {
 }
 #empty-welcome {
     width: auto;
+    max-width: 100%;
     height: auto;
     border: round $ag-faint;
     padding: 1 3;
@@ -533,6 +534,7 @@ Screen {
 }
 #empty-lead, #empty-examples {
     width: auto;
+    max-width: 100%;
     height: auto;
     text-align: center;
 }

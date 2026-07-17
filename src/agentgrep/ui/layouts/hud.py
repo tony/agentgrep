@@ -130,7 +130,7 @@ _WELCOME_QUERY_ROWS = ((0, 1, 2), (3, 4))
 
 
 def _welcome_query_examples() -> Content:
-    """Build syntax-colored examples with bounded click actions."""
+    """Build syntax-colored examples with bounded click metadata."""
     examples = Text()
     click_ranges: list[tuple[int, int, int]] = []
     highlighter = QueryHighlighter()

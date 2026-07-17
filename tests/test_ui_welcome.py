@@ -81,6 +81,38 @@ async def test_welcome_example_click_loads_without_searching(
         assert spawned == []
 
 
+async def test_welcome_examples_wrap_and_click_at_24_columns(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every example stays visible and clickable at the narrow supported edge."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(24, 20)) as pilot:
+        await pilot.pause()
+        layout = app.screen
+        welcome = layout.query_one("#empty-welcome", Static)
+        examples = layout.query_one("#empty-examples", Static)
+
+        assert welcome.region.width <= 24
+        assert examples.region.width <= 24
+        targets: dict[int, tuple[int, int]] = {}
+        for y in range(examples.region.height):
+            x = 0
+            for segment in examples.render_line(y):
+                if segment.style is not None:
+                    index = segment.style.meta.get("agentgrep_query_index")
+                    if type(index) is int:
+                        targets.setdefault(index, (x, y))
+                x += segment.cell_length
+        assert set(targets) == set(range(len(_WELCOME_QUERIES)))
+
+        for index, query in enumerate(_WELCOME_QUERIES):
+            assert await pilot.click(examples, offset=targets[index])
+            await pilot.pause()
+            assert layout._search_input.value == query
+
+
 async def test_welcome_example_rejects_invalid_index(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
