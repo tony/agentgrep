@@ -5062,6 +5062,28 @@ async def test_input_second_ctrl_c_on_empty_exits(
         assert app.is_running is False
 
 
+@pytest.mark.parametrize("input_id", ["search", "filter"])
+async def test_empty_input_ctrl_c_cancels_active_search(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    input_id: str,
+) -> None:
+    """An empty focused input cancels active work before arming exit."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(100, 24)) as pilot:
+        await pilot.pause()
+        target = app.screen.query_one(f"#{input_id}")
+        target.focus()
+        app.screen._search_done = False
+
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+
+        assert app.screen.control.answer_now_requested() is True
+        assert app.screen._confirm_exit_pending is False
+        assert app.is_running
+
+
 async def test_ctrl_c_on_detail_pane_arms_confirm_exit(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

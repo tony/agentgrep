@@ -2136,9 +2136,8 @@ class HudLayout(LayoutScreen):
         """Staged ctrl-c from a focused input.
 
         With text, clear the box. On an empty box: the find input closes (its
-        "exit" is closing the bar); the search/filter inputs arm a "press
-        ctrl-c again to exit" gutter on the first press and quit on a second
-        press within the window.
+        "exit" is closing the bar), active work is cancelled, and only an idle
+        search/filter input arms the staged exit gutter.
         """
         target = t.cast("t.Any", widget)
         if str(getattr(target, "value", "")):
@@ -2147,6 +2146,9 @@ class HudLayout(LayoutScreen):
             return
         if widget is self._detail_find_input:
             self._close_detail_find()
+            return
+        if self._has_active_actions():
+            self._cancel_active_action()
             return
         self._arm_or_confirm_exit()
 
