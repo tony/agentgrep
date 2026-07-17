@@ -1087,16 +1087,7 @@ class HudLayout(LayoutScreen):
         # search box stays editable. The error message stays
         # accessible on the result for future UI surfacing.
         terms = tuple(text.split()) if text else ()
-        return SearchQuery(
-            terms=terms,
-            scope=self._user_scope,
-            any_term=self.search_query.any_term,
-            regex=self.search_query.regex,
-            case_sensitive=self.search_query.case_sensitive,
-            agents=self.search_query.agents,
-            limit=self.search_query.limit,
-            dedupe=self.search_query.dedupe,
-        )
+        return dataclasses.replace(base, terms=terms, compiled=None)
 
     _APPLY_CHUNK_SIZE: t.ClassVar[int] = 200
 

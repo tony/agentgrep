@@ -168,7 +168,11 @@ class GrepLogLayout(LayoutScreen):
         result = build_query_from_input(text, base, default_registry())
         if result.query is not None:
             return result.query
-        return dataclasses.replace(base, terms=tuple(text.split()) if text else ())
+        return dataclasses.replace(
+            base,
+            terms=tuple(text.split()) if text else (),
+            compiled=None,
+        )
 
     def run_search(self, query: SearchQuery) -> None:
         """Clear the log and stream ``query`` into it (host surface)."""

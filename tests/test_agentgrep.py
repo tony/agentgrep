@@ -4235,6 +4235,51 @@ def test_launch_scope_predicate_preserves_base_scope(
     assert screen.build_query("plain").scope == "prompts"
 
 
+@pytest.mark.parametrize("layout", ["hud", "greplog"])
+def test_malformed_ui_query_preserves_launch_invariants(
+    layout: str,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Literal fallback keeps overlay fields and drops stale compiled syntax."""
+    from agentgrep.query import compile_query, default_registry, parse_query
+
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    registry = default_registry()
+    launch = agentgrep.SearchQuery(
+        terms=("launch",),
+        scope="prompts",
+        any_term=True,
+        regex=True,
+        case_sensitive=True,
+        agents=("claude",),
+        limit=7,
+        dedupe=False,
+        compiled=compile_query(parse_query("agent:codex", registry), registry),
+        match_surface="text",
+        origin_filter=RecordOrigin(repo="example/repo"),
+    )
+    app = agentgrep.build_streaming_ui_app(
+        home,
+        launch,
+        control=agentgrep.SearchControl(),
+        initial_search_text="agent:codex",
+        base_scope="prompts",
+        layout=layout,
+    )
+
+    fallback = app.get_default_screen().build_query("agent:")
+
+    assert fallback == dataclasses.replace(
+        launch,
+        terms=("agent:",),
+        compiled=None,
+    )
+
+
 def test_streaming_ui_app_passes_runtime_to_search_worker(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
