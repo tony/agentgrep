@@ -29,6 +29,7 @@ from agentgrep.mcp.models import (
     StoreDescriptorModel,
     ValidateQueryResponse,
 )
+from agentgrep.query.help import query_language_summary
 
 READONLY_TAGS = {"readonly", "agentgrep"}
 DOCS_ONLY_MESSAGE = "Documentation signature only."
@@ -39,7 +40,7 @@ async def search(
         list[str] | None,
         Field(
             default=None,
-            description="One or more literal search terms (AND-matched).",
+            description=f"Search terms. {query_language_summary()}",
         ),
     ] = None,
     agent: t.Annotated[

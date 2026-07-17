@@ -1883,6 +1883,10 @@ async def test_docs_search_signature_matches_live_mcp_schema() -> None:
     search = next(tool for tool in tools if tool.name == "search")
     properties = t.cast("dict[str, object]", t.cast("t.Any", search).inputSchema["properties"])
     assert set(inspect.signature(docs_search).parameters) == set(properties)
+    docs_hints = t.get_type_hints(docs_search, include_extras=True)
+    docs_terms = docs_hints["terms"].__metadata__[0]
+    live_terms = t.cast("dict[str, object]", properties["terms"])
+    assert docs_terms.description == live_terms["description"]
 
 
 async def test_mcp_recent_sessions_filters_by_mtime(
