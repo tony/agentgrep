@@ -16,6 +16,7 @@ from rich.highlighter import Highlighter
 from textual import events
 from textual.binding import Binding, BindingType
 from textual.content import Content
+from textual.geometry import Region
 from textual.suggester import Suggester
 from textual.timer import Timer
 from textual.widgets import Input
@@ -317,6 +318,11 @@ class SearchInput(_BoundedInput):
         """Load a bounded query and place the cursor at its end."""
         self.value = value[:INPUT_MAX_LENGTH]
         self.cursor_position = len(self.value)
+        self.scroll_to_region(
+            Region(self.content_width, 0, width=1, height=1),
+            force=True,
+            animate=False,
+        )
 
     def _sync_submit_hint(self, value: str) -> None:
         """Show the submit affordance only while a nonblank query is ready."""

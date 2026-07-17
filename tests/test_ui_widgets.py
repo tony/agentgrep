@@ -250,7 +250,16 @@ async def test_search_input_submit_hint_tracks_nonblank_value() -> None:
         assert search.border_subtitle == "Press [bold $accent]Enter[/bold $accent] ↵"
 
 
-async def test_search_input_submit_hint_fits_supported_minimum_width() -> None:
+@pytest.mark.parametrize(
+    "query",
+    (
+        "x" * INPUT_MAX_LENGTH,
+        "界" * INPUT_MAX_LENGTH,
+        "e\N{COMBINING ACUTE ACCENT}" * (INPUT_MAX_LENGTH // 2),
+    ),
+    ids=("ascii", "wide", "combining"),
+)
+async def test_search_input_submit_hint_fits_supported_minimum_width(query: str) -> None:
     """The full hint fits the existing 16-column compact boundary."""
 
     class InputHarness(App[None]):
@@ -265,16 +274,17 @@ async def test_search_input_submit_hint_fits_supported_minimum_width() -> None:
         """
 
         def compose(self) -> ComposeResult:
-            yield SearchInput(value="query", id="search")
+            yield SearchInput(id="search")
 
     app = InputHarness()
     async with app.run_test(size=(16, 4)) as pilot:
         await pilot.pause()
         search = app.query_one("#search", SearchInput)
-        assert search.border_subtitle == "Press [bold $accent]Enter[/bold $accent] ↵"
-        search.load_query("x" * INPUT_MAX_LENGTH)
+        assert not search.border_subtitle
+        search.load_query(query)
         await pilot.pause()
-        assert search.cursor_position == INPUT_MAX_LENGTH
+        assert search.border_subtitle == "Press [bold $accent]Enter[/bold $accent] ↵"
+        assert search.cursor_position == len(query)
         assert 0 <= search.cursor_screen_offset.x < 16
         update = app.screen._compositor.render_full_update()
         bottom_rule = "".join(strip.text for strip in update.strips[2])
