@@ -216,7 +216,7 @@ async def inspect_record_sample(
         str,
         Field(
             min_length=1,
-            description="Absolute path to the source file.",
+            description="Path returned by list_sources; '~' home prefixes are accepted.",
         ),
     ],
     sample_size: t.Annotated[
@@ -277,13 +277,24 @@ async def list_sources(
         Field(description="Limit discovery to one agent or scan every agent."),
     ] = "all",
     path_kind_filter: t.Annotated[
-        t.Literal["history_file", "session_file", "sqlite_db"] | None,
+        t.Literal["history_file", "session_file", "sqlite_db", "store_file"] | None,
         Field(default=None, description="Filter by path kind."),
     ] = None,
     source_kind_filter: t.Annotated[
-        t.Literal["json", "jsonl", "sqlite"] | None,
+        t.Literal["json", "jsonl", "sqlite", "text", "opaque"] | None,
         Field(default=None, description="Filter by on-disk source kind."),
     ] = None,
+    coverage_filter: t.Annotated[
+        t.Literal["default_search", "inspectable", "catalog_only", "private"] | None,
+        Field(default=None, description="Filter by coverage level."),
+    ] = None,
+    include_non_default: t.Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Include non-default inventory sources when true.",
+        ),
+    ] = False,
     limit: t.Annotated[
         int | None,
         Field(default=None, ge=1, description="Maximum number of sources to return."),
@@ -359,23 +370,32 @@ t.cast(t.Any, summarize_discovery).__fastmcp__ = types.SimpleNamespace(
 
 async def validate_query(
     terms: t.Annotated[
-        list[str],
+        list[str] | None,
         Field(
-            min_length=1,
-            description="One or more literal search terms (AND-matched).",
-            examples=[["alpha"], ["foo", "bar"]],
+            default=None,
+            description="Literal/regex terms to test against sample_text.",
         ),
-    ],
+    ] = None,
+    query: t.Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "Query-language string to parse and compile; reports "
+                "query_valid and any parse/compile error."
+            ),
+        ),
+    ] = None,
     sample_text: t.Annotated[
         str,
-        Field(description="Sample text to test the query against."),
-    ],
+        Field(description="Sample text to test terms against."),
+    ] = "",
     case_sensitive: t.Annotated[
         bool,
         Field(description="Perform case-sensitive matching."),
     ] = False,
 ) -> ValidateQueryResponse:
-    """Dry-run a query against sample text without searching files."""
+    """Dry-run terms and/or validate query syntax without searching files."""
     raise NotImplementedError(DOCS_ONLY_MESSAGE)
 
 

@@ -74,11 +74,11 @@ _INSTR_RESOURCES = (
 )
 
 _INSTR_PRIVACY = (
-    "Privacy: source and result paths are privacy-collapsed display paths, "
-    "not raw absolute paths. Use opaque result refs with inspect_result() for "
-    "drilldown. Treat record text as potentially sensitive (it is the user's "
-    "own prompt history). Do not echo or forward record text outside the "
-    "immediate request scope."
+    "Privacy: Home-directory prefixes in source and result paths are collapsed "
+    "to '~'; external paths may remain absolute. Use opaque result refs with "
+    "inspect_result() for drilldown. Treat record text as potentially sensitive "
+    "(it is the user's own prompt history). Do not echo or forward record text "
+    "outside the immediate request scope."
 )
 
 _BASE_INSTRUCTIONS = "\n\n".join(

@@ -274,7 +274,7 @@ def register(mcp: FastMCP) -> None:
             str,
             Field(
                 min_length=1,
-                description="Absolute path to the source file.",
+                description="Path returned by list_sources; '~' home prefixes are accepted.",
             ),
         ],
         sample_size: t.Annotated[

@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import inspect
 import json
 import logging
 import os
@@ -14,7 +13,7 @@ import re
 import typing as t
 
 import pytest
-from fastmcp import Client
+from fastmcp import Client, FastMCP
 
 import agentgrep
 from agentgrep import mcp as _agentgrep_mcp_module
@@ -1589,13 +1588,14 @@ def test_mcp_instructions_carry_every_segment_header() -> None:
         assert marker in rendered, marker
 
 
-def test_mcp_instructions_describe_privacy_collapsed_paths() -> None:
-    """Handshake privacy guidance matches the serialized path contract."""
+def test_mcp_instructions_describe_path_privacy_boundaries() -> None:
+    """Handshake privacy guidance does not overpromise path redaction."""
     from agentgrep.mcp.instructions import _build_instructions
 
     rendered = _build_instructions()
     assert "all paths returned are absolute" not in rendered
-    assert "privacy-collapsed display paths" in rendered
+    assert "Home-directory prefixes" in rendered
+    assert "external paths may remain absolute" in rendered
     assert "opaque result refs" in rendered
 
 
@@ -1872,21 +1872,33 @@ async def test_mcp_search_tool_description_mentions_query_language() -> None:
     assert "query language" in (description or "")
 
 
-async def test_docs_search_signature_matches_live_mcp_schema() -> None:
-    """The docs-only search shim exposes every live MCP input field."""
-    from docs._ext.agentgrep_fastmcp import search as docs_search
+async def test_docs_tool_input_schemas_match_live_mcp_schemas() -> None:
+    """Every docs-only tool shim mirrors its live MCP input schema."""
+    from docs._ext import agentgrep_fastmcp as docs_tools
+
+    def without_examples(value: t.Any) -> t.Any:
+        if isinstance(value, dict):
+            return {key: without_examples(item) for key, item in value.items() if key != "examples"}
+        if isinstance(value, list):
+            return [without_examples(item) for item in value]
+        return value
 
     agentgrep_mcp = load_agentgrep_mcp_module()
     async with Client(agentgrep_mcp.build_mcp_server()) as client:
-        tools = t.cast("list[ToolLike]", await client.list_tools())
+        live_tools = t.cast("list[ToolLike]", await client.list_tools())
 
-    search = next(tool for tool in tools if tool.name == "search")
-    properties = t.cast("dict[str, object]", t.cast("t.Any", search).inputSchema["properties"])
-    assert set(inspect.signature(docs_search).parameters) == set(properties)
-    docs_hints = t.get_type_hints(docs_search, include_extras=True)
-    docs_terms = docs_hints["terms"].__metadata__[0]
-    live_terms = t.cast("dict[str, object]", properties["terms"])
-    assert docs_terms.description == live_terms["description"]
+    docs_server = FastMCP("agentgrep docs schema")
+    for tool in live_tools:
+        docs_server.tool(name=tool.name)(getattr(docs_tools, tool.name))
+    async with Client(docs_server) as client:
+        documented_tools = t.cast("list[ToolLike]", await client.list_tools())
+
+    documented_by_name = {tool.name: tool for tool in documented_tools}
+    for live_tool in live_tools:
+        documented = documented_by_name[live_tool.name]
+        assert without_examples(t.cast("t.Any", documented).inputSchema) == without_examples(
+            t.cast("t.Any", live_tool).inputSchema,
+        ), live_tool.name
 
 
 async def test_mcp_recent_sessions_filters_by_mtime(
