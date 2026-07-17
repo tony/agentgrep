@@ -40,7 +40,7 @@ def _ui_source_trees() -> list[ast.AST]:
 
     Each pluggable layout (HUD, grep-log, …) carries its own streaming transport,
     so the no-blocking-calls guard scans the pump methods (``watch_*`` /
-    ``_on_key`` / ``on_mount`` / ``render`` / ``@pump_only``) of all of them, plus
+    ``on_key`` / ``on_mount`` / ``render`` / ``@pump_only``) of all of them, plus
     the App-lifecycle shell and the leaf widgets.
     """
     ui_dir = _APP_PATH.parent.parent
@@ -60,7 +60,7 @@ _UI_TREES = _ui_source_trees()
 # handlers (any name), the callables handed to a scheduler/cross-thread/signal
 # site (see _SCHEDULED_PUMP_NAMES), plus anything explicitly tagged @pump_only.
 _PUMP_PREFIXES = ("on_", "action_", "watch_", "compute_", "_watch_")
-_PUMP_EXACT = {"render", "compose", "get_default_screen", "_on_key"}
+_PUMP_EXACT = {"render", "compose", "get_default_screen"}
 
 # Calls that hand a callable to the pump thread; their target methods run there
 # even though their names match no prefix (NB-1/NB-8).

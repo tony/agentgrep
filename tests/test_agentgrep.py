@@ -4657,7 +4657,7 @@ async def test_detail_find_steps_live_query_before_navigation(
         await _open_detail_with_find(app, record, pilot)
         app.screen._detail_find_input.value = "needle"
 
-        await app.screen._detail_find_input._on_key(events.Key(case.key, None))
+        await app.screen._detail_find_input.on_key(events.Key(case.key, None))
         app.screen.on_detail_find_requested(DetailFindRequested("needle"))
         await pilot.pause()
 

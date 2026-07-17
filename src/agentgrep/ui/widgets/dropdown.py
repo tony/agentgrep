@@ -38,17 +38,16 @@ class CompletionDropdown(OptionList):
         super().__init__(id=id, markup=False)
         self._target_input_id = target_input_id
 
-    async def _on_key(self, event: events.Key) -> None:
+    async def on_key(self, event: events.Key) -> None:
+        """Dismiss boundary keys or let the base option list handle them."""
         key = str(getattr(event, "key", ""))
-        stop = getattr(event, "stop", None)
         dismiss = key in {"escape", "ctrl+c"} or (
             key == "up" and int(getattr(self, "highlighted", 0) or 0) == 0
         )
         if dismiss:
-            if callable(stop):
-                stop()
+            event.stop()
+            event.prevent_default()
             self.display = False
             with contextlib.suppress(Exception):
                 self.app.query_one(f"#{self._target_input_id}").focus()
             return
-        await super()._on_key(event)

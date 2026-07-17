@@ -210,6 +210,16 @@ def test_inputs_are_input_subclasses() -> None:
     assert FilterInput._DEBOUNCE_SECONDS == 0.15
 
 
+def test_interactive_widgets_use_public_textual_handlers() -> None:
+    """Custom widgets avoid Textual's private key and value hooks."""
+    for widget_type in (CompletionDropdown, DetailFindInput, FilterInput, SearchInput):
+        assert "_on_key" not in widget_type.__dict__
+        assert "on_key" in widget_type.__dict__
+    for widget_type in (DetailFindInput, FilterInput):
+        assert "_watch_value" not in widget_type.__dict__
+        assert "on_input_changed" in widget_type.__dict__
+
+
 async def test_inputs_bound_text_processed_on_the_pump() -> None:
     """Typed, initial, and restored input text share one finite budget."""
     oversized = "x" * (INPUT_MAX_LENGTH + 1)
