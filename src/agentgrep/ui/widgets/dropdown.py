@@ -12,6 +12,8 @@ import contextlib
 from textual import events
 from textual.widgets import OptionList
 
+from agentgrep.ui import _runtime
+
 __all__ = ["CompletionDropdown"]
 
 
@@ -38,6 +40,7 @@ class CompletionDropdown(OptionList):
         super().__init__(id=id, markup=False)
         self._target_input_id = target_input_id
 
+    @_runtime.pump_only
     async def on_key(self, event: events.Key) -> None:
         """Dismiss boundary keys or let the base option list handle them."""
         key = str(getattr(event, "key", ""))

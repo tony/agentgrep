@@ -116,6 +116,7 @@ class FilterInput(_BoundedInput):
         )
         self._debounce_timer: Timer | None = None
 
+    @_runtime.pump_only
     def on_input_changed(self, event: Input.Changed) -> None:
         """Arm a debounced ``FilterRequested`` after a public change event."""
         value = event.value
@@ -128,6 +129,7 @@ class FilterInput(_BoundedInput):
             ),
         )
 
+    @_runtime.pump_only
     async def on_key(self, event: events.Key) -> None:
         """Down/up route between cursor-jump and focus-release per spec."""
         key = str(getattr(event, "key", ""))
@@ -184,6 +186,7 @@ class FilterInput(_BoundedInput):
                 t.cast("t.Any", self.screen)._focus_detail()
             return
 
+    @_runtime.pump_only
     def action_release_down(self) -> None:
         """Footer-binding fallback (``on_key`` handles the real release)."""
         self.app.action_focus_next()
@@ -235,6 +238,7 @@ class DetailFindInput(_BoundedInput):
             self._debounce_timer.stop()
             self._debounce_timer = None
 
+    @_runtime.pump_only
     def on_input_changed(self, event: Input.Changed) -> None:
         """Arm a debounced find request after a public change event."""
         value = event.value
@@ -247,6 +251,7 @@ class DetailFindInput(_BoundedInput):
             lambda: self.post_message(DetailFindRequested(text=value)),
         )
 
+    @_runtime.pump_only
     async def on_key(self, event: events.Key) -> None:
         """``esc`` closes; ``ctrl+c`` clears then closes; ``enter``/``down``/``up`` step."""
         key = str(getattr(event, "key", ""))
@@ -310,6 +315,7 @@ class SearchInput(_BoundedInput):
         self.value = value[:INPUT_MAX_LENGTH]
         self.cursor_position = len(self.value)
 
+    @_runtime.pump_only
     def on_mount(self) -> None:
         """Paint ``label`` into the top rule as the pi label-in-the-rule.
 
@@ -325,6 +331,7 @@ class SearchInput(_BoundedInput):
         if self._label is not None:
             self.border_title = self._label
 
+    @_runtime.pump_only
     def on_input_submitted(self, event: object) -> None:
         """Enter pressed — dispatch a :class:`SearchRequested` for the current value."""
         stop = getattr(event, "stop", None)
@@ -335,6 +342,7 @@ class SearchInput(_BoundedInput):
             SearchRequested(payload=SearchRequestedPayload(text=value)),
         )
 
+    @_runtime.pump_only
     async def on_key(self, event: events.Key) -> None:
         """``down`` releases focus to the filter; ``up`` is a no-op (top widget)."""
         key = str(getattr(event, "key", ""))
@@ -383,6 +391,7 @@ class SearchInput(_BoundedInput):
             _consume_key(event)
             return
 
+    @_runtime.pump_only
     def action_release_down(self) -> None:
         """Footer-binding fallback (``on_key`` handles the real release)."""
         self.app.action_focus_next()

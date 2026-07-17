@@ -343,6 +343,28 @@ def test_pump_methods_have_no_blocking_calls() -> None:
     assert not offenders, f"blocking calls reachable from pump methods (NB-1/NB-8): {offenders}"
 
 
+def test_input_widget_pump_entrypoints_have_runtime_guards() -> None:
+    """Interactive input hooks keep the runtime pump-thread assertion."""
+    input_classes = {
+        "CompletionDropdown",
+        "DetailFindInput",
+        "FilterInput",
+        "SearchInput",
+    }
+    entrypoints = [
+        method
+        for method in _all_methods()
+        if method.cls in input_classes and _is_pump_method(method)
+    ]
+
+    assert entrypoints
+    assert not {
+        f"{method.cls}.{method.name}"
+        for method in entrypoints
+        if "pump_only" not in method.decorators
+    }
+
+
 def test_forbidden_call_detector_flags_blocking_calls() -> None:
     """The detector itself is not a no-op — it flags real blocking calls.
 
