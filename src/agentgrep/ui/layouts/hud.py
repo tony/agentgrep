@@ -42,7 +42,6 @@ from agentgrep._types import (
     StreamingAppLike,
 )
 from agentgrep.progress import (
-    FilterCompletedPayload,
     ProgressSnapshot,
     SearchControl,
     StreamingRecordsBatch,
@@ -80,6 +79,7 @@ from agentgrep.ui.widgets import (
     FilterRequested,
     HistoryRecall,
     PaneHeader,
+    ResultHighlighted,
     ResultsHeader,
     ResultsScrollChanged,
     SearchingPanel,
@@ -181,7 +181,6 @@ class HudLayout(LayoutScreen):
             [] if self._history_disabled else _history.load_history(self._history_path)
         )
         self._last_recorded_text = self._history[0].text if self._history else ""
-        self._theme_generation: int = 0
         self._results: SearchResultsList | None = None
         self._detail: StaticLike | None = None
         self._detail_row: SlowSourceDiagnosticsRow | None = None
@@ -214,13 +213,11 @@ class HudLayout(LayoutScreen):
         # Responsive split: True when the detail pane is stacked
         # below the results rather than beside them. ``_detail_opened``
         # is the tig-style "user selected a row" gate that reveals the
-        # stacked detail; programmatic highlights caused by filter-list
-        # patching (``_pending_autohighlights``) must not trip it.
+        # stacked detail; programmatic filter highlights must not trip it.
         self._stacked: bool = False
         self._detail_opened: bool = False
         self._zoomed_pane: t.Literal["results", "detail"] | None = None
         self._last_content_pane: t.Literal["results", "detail"] = "results"
-        self._pending_autohighlights: int = 0
         # Literal terms of the active filter, highlighted in the detail
         # pane in a distinct color from the search-query terms.
         self._filter_terms: tuple[str, ...] = ()
@@ -277,7 +274,7 @@ class HudLayout(LayoutScreen):
         return self._started_at
 
     @_runtime.pump_only
-    async def _on_theme_changed(self, _theme: object) -> None:
+    def _on_theme_changed(self, _theme: object) -> None:
         """Rebuild Rich-baked surfaces when the palette switches.
 
         The chrome recolors automatically through TCSS, but the results
@@ -287,23 +284,9 @@ class HudLayout(LayoutScreen):
         """
         if not self.is_mounted:
             return
-        self._theme_generation += 1
-        generation = self._theme_generation
         results = self._results
         if results is not None:
-            records = results.prepare_theme_rerender()
-
-            def apply_chunk(chunk: cabc.Sequence[SearchRecord]) -> None:
-                if self._theme_repaint_is_live(generation, results):
-                    results.apply_theme_rerender(chunk)
-
-            await _runtime.stream_apply(
-                records,
-                apply_chunk,
-                chunk_size=self._APPLY_CHUNK_SIZE,
-            )
-        if not self._theme_repaint_is_live(generation, results):
-            return
+            results.refresh_theme()
         if self._filter_header is not None:
             self._filter_header.refresh_theme()
         if self._searching_panel is not None:
@@ -311,14 +294,6 @@ class HudLayout(LayoutScreen):
         self._detail_body_cache.clear()
         if self._current_detail_record is not None:
             self.show_detail(self._current_detail_record)
-
-    def _theme_repaint_is_live(
-        self,
-        generation: int,
-        results: SearchResultsList | None,
-    ) -> bool:
-        """Return whether one yielded theme repaint still owns the live HUD."""
-        return self.is_mounted and generation == self._theme_generation and results is self._results
 
     def compose(self) -> cabc.Iterator[object]:
         """Build the widget tree (search → body[results-col, detail-col] → footer).
@@ -602,7 +577,6 @@ class HudLayout(LayoutScreen):
         # A fresh search re-collapses the stacked detail pane until
         # the user selects a row again.
         self._detail_opened = False
-        self._pending_autohighlights = 0
         if self._results is not None:
             self._results.clear()
         self._apply_responsive_layout()
@@ -971,7 +945,8 @@ class HudLayout(LayoutScreen):
         chunks — so a 5000-record batch can't freeze the UI for the duration
         of a single apply (NB-4).
         """
-        self.all_records.extend(records)
+        if records:
+            self.all_records.extend(records)
         # Results are arriving — collapse the centered searching panel to
         # the results list (idempotent; a batch driven directly, e.g. in
         # tests, switches here too).
@@ -982,7 +957,8 @@ class HudLayout(LayoutScreen):
 
             def _append_chunk(chunk: cabc.Sequence[SearchRecord]) -> None:
                 results.append_records(chunk)
-                self.filtered_records.extend(chunk)
+                if not results.uses_records(self.filtered_records):
+                    self.filtered_records.extend(chunk)
 
             await _runtime.stream_apply(
                 matching,
@@ -1218,9 +1194,10 @@ class HudLayout(LayoutScreen):
         self._filter_terms = tuple(matcher.query.terms) if matcher is not None else ()
         streaming = t.cast("StreamingAppLike", t.cast("object", self))
         streaming.run_worker(
-            lambda captured_text=text, captured_matcher=matcher: self._run_filter_worker(
-                captured_text,
-                captured_matcher,
+            functools.partial(
+                self._run_filter_worker,
+                text,
+                matcher,
             ),
             name="filter",
             group="filter",
@@ -1267,22 +1244,28 @@ class HudLayout(LayoutScreen):
         return compile_record_matcher(query)
 
     @_runtime.offload
-    def _run_filter_worker(self, text: str, matcher: t.Any) -> None:
+    def _run_filter_worker(
+        self,
+        text: str,
+        matcher: t.Any,
+    ) -> None:
         """Compute the filtered list on a background thread; post a ``FilterCompleted``.
 
-        Runs in a worker thread; safe to scan ``self.all_records`` since
-        list reads under CPython are GIL-protected. The main thread guards
-        against stale results by comparing the captured text against the
-        current input value in :meth:`on_filter_completed`.
+        Copy and filter the current model off the pump so the completion can be
+        adopted without scanning records on the main thread.
         """
+        records = list(self.all_records)
         if matcher is None:
-            matching: tuple[SearchRecord, ...] = tuple(self.all_records)
+            matching = records
         else:
-            matching = tuple(record for record in self.all_records if matcher.matches(record))
+            matching = [record for record in records if matcher.matches(record)]
+        record_ids = {id(record) for record in matching}
         streaming = t.cast("StreamingAppLike", t.cast("object", self))
         streaming.post_message(
             FilterCompleted(
-                payload=FilterCompletedPayload(text=text, matching=matching),
+                text=text,
+                records=matching,
+                record_ids=record_ids,
             ),
         )
 
@@ -1295,21 +1278,22 @@ class HudLayout(LayoutScreen):
         JSON/Markdown body, scroll-to-match) is one of the heavier
         main-thread units per filter pass.
         """
-        payload = message.payload
-        if self._filter_input is not None and payload.text != self._filter_input.value:
+        if self._filter_input is not None and message.text != self._filter_input.value:
             return
-        self.filtered_records = list(payload.matching)
+        self.filtered_records = message.records
         if self._results is not None:
-            # Only suppress the programmatic highlights Textual actually
-            # queued while patching the list. Non-empty filter results do
-            # not guarantee a highlight message will be emitted.
-            self._pending_autohighlights = self._results.set_records(payload.matching)
+            self._results.set_records(
+                message.records,
+                record_ids=message.record_ids,
+            )
             self._refresh_results_status_right()
         if self._detail is not None:
             if self.filtered_records:
-                top = self.filtered_records[0]
-                if top is not self._current_detail_record:
-                    self.show_detail(top)
+                highlighted = self._results.highlighted if self._results is not None else None
+                row_index = highlighted if highlighted is not None else 0
+                record = self.filtered_records[row_index]
+                if record is not self._current_detail_record:
+                    self.show_detail(record)
             else:
                 self._detail.update(
                     "No results." if self._search_done else "No matches yet.",
@@ -1318,37 +1302,31 @@ class HudLayout(LayoutScreen):
         # keeps whatever open state the user already chose.
         self._apply_responsive_layout()
 
-    def on_option_list_option_highlighted(self, event: object) -> None:
-        """Update the detail pane and footer on OptionList cursor move.
+    @_runtime.pump_only
+    def on_result_highlighted(self, message: ResultHighlighted) -> None:
+        """Update the detail pane and footer on a result cursor move.
 
         Guards against the redundant re-render that fires when
-        ``set_records`` rebuilds the list and Textual re-emits the
-        highlight for the same row that's already in the detail pane.
+        a queued highlight belongs to a superseded filtered result set.
         """
-        option_list = getattr(event, "option_list", None)
-        if option_list is self._enum_dropdown or option_list is self._filter_dropdown:
-            # The completion dropdowns are separate OptionLists; their
-            # highlights must not drive the results detail pane.
-            return
-        option_index = getattr(event, "option_index", None)
-        if option_index is None:
+        row_index = message.index
+        results = self._results
+        if results is None or message.generation != results.generation:
             self._refresh_results_status_right()
             return
-        row_index = int(option_index)
-        if self._pending_autohighlights > 0:
-            # A programmatic highlight after a filter pass — update
-            # content (so the wide pane stays populated) but don't treat
-            # it as the user opening the stacked detail.
-            self._pending_autohighlights -= 1
-        else:
+        if not (
+            0 <= row_index < len(self.filtered_records)
+            and self.filtered_records[row_index] is message.record
+        ):
+            self._refresh_results_status_right()
+            return
+        if not message.programmatic:
             # A genuine cursor move: open the stacked detail pane and
             # keep it open for the rest of this result set (tig-style).
             self._detail_opened = True
             self._apply_responsive_layout()
-        if 0 <= row_index < len(self.filtered_records):
-            record = self.filtered_records[row_index]
-            if record is not self._current_detail_record:
-                self.show_detail(record)
+        if message.record is not self._current_detail_record:
+            self.show_detail(message.record)
         self._refresh_results_status_right(
             cursor=row_index,
             visible=len(self.filtered_records),

@@ -96,7 +96,7 @@ def _seed_zoom_layout(layout: t.Any, record: SearchRecord) -> None:
     layout._set_empty_state(empty=False)
     layout.all_records.append(record)
     layout.filtered_records = [record]
-    layout._results.set_records([record])
+    layout._results.set_records([record], record_ids={id(record)})
 
 
 def _assert_zoomed_focus(layout: t.Any, pane: str, target: t.Any) -> None:

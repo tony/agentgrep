@@ -11,7 +11,9 @@ from __future__ import annotations
 import pathlib
 import typing as t
 
+import pytest
 from rich.cells import cell_len
+from textual.scroll_view import ScrollView
 from textual.widgets import Input, OptionList, Static
 
 from agentgrep.progress import FilterRequestedPayload, ProgressSnapshot
@@ -20,11 +22,13 @@ from agentgrep.ui.format import phase_label
 from agentgrep.ui.widgets import (
     CompletionDropdown,
     DetailScroll,
+    FilterCompleted,
     FilterHeader,
     FilterInput,
     FilterRequested,
     MeterWidget,
     PaneHeader,
+    ResultHighlighted,
     ResultsHeader,
     ResultsScrollChanged,
     SearchingPanel,
@@ -58,6 +62,15 @@ def _make_query(*terms: str) -> SearchQuery:
         case_sensitive=False,
         agents=(),
         limit=None,
+    )
+
+
+def _set_records(results: SearchResultsList, records: t.Iterable[SearchRecord]) -> None:
+    """Adopt one test-prepared result model."""
+    prepared = list(records)
+    results.set_records(
+        prepared,
+        record_ids={id(record) for record in prepared},
     )
 
 
@@ -121,13 +134,37 @@ def test_messages_carry_their_payloads() -> None:
     """The message classes carry their payloads / snapshot fields."""
     event = FilterRequested(payload=FilterRequestedPayload(text="bliss"))
     assert event.payload.text == "bliss"
+    record = _make_record()
+    completed = FilterCompleted(
+        text="bliss",
+        records=[record],
+        record_ids={id(record)},
+    )
+    assert (
+        completed.text,
+        completed.records,
+        completed.record_ids,
+    ) == ("bliss", [record], {id(record)})
+    highlighted = ResultHighlighted(
+        record=record,
+        index=3,
+        generation=7,
+        programmatic=True,
+    )
+    assert (
+        highlighted.record,
+        highlighted.index,
+        highlighted.generation,
+        highlighted.programmatic,
+    ) == (record, 3, 7, True)
     snapshot = ResultsScrollChanged(cursor=2, total=10, percent=20)
     assert (snapshot.cursor, snapshot.total, snapshot.percent) == (2, 10, 20)
 
 
-def test_results_list_is_optionlist_subclass_starting_empty() -> None:
-    """The results list is an OptionList subclass starting empty."""
-    assert issubclass(SearchResultsList, OptionList)
+def test_results_list_is_scrollview_subclass_starting_empty() -> None:
+    """The results list is a line-rendered ScrollView starting empty."""
+    assert issubclass(SearchResultsList, ScrollView)
+    assert not issubclass(SearchResultsList, OptionList)
     results = SearchResultsList(id="results")
     assert results._records == []
     results.append_records([])  # empty batch is a no-op, no app required
@@ -423,11 +460,75 @@ async def test_results_streamed_row_is_pinned(
         assert results._render_record(_make_record()).plain == snapshot
 
 
+async def test_set_records_defers_row_rendering_to_visible_lines(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Replacing a large result set builds only rows requested by the viewport."""
+    from agentgrep.progress import SearchControl
+    from agentgrep.ui.app import build_streaming_ui_app
+
+    app = t.cast("t.Any", build_streaming_ui_app(tmp_path, _make_query(), control=SearchControl()))
+    async with app.run_test(size=(80, 24)) as pilot:
+        results = app.screen.query_one(SearchResultsList)
+        app.screen._set_empty_state(empty=False)
+        built = 0
+        original = results._build_row
+
+        def count_build(record: SearchRecord) -> t.Any:
+            nonlocal built
+            built += 1
+            return original(record)
+
+        monkeypatch.setattr(results, "_build_row", count_build)
+        records = [_make_record(f"row {index}") for index in range(1_000)]
+
+        _set_records(results, records)
+
+        assert built == 0
+        await pilot.pause()
+        assert 0 < built <= results.size.height
+
+
+async def test_results_highlight_clamps_and_posts_typed_record(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Out-of-range cursors clamp before emitting their record and index."""
+    from agentgrep.progress import SearchControl
+    from agentgrep.ui.app import build_streaming_ui_app
+
+    messages: list[ResultHighlighted] = []
+
+    def capture(message: object) -> None:
+        if isinstance(message, ResultHighlighted):
+            messages.append(message)
+
+    app = t.cast("t.Any", build_streaming_ui_app(tmp_path, _make_query(), control=SearchControl()))
+    async with app.run_test(size=(80, 24), message_hook=capture) as pilot:
+        results = app.screen.query_one(SearchResultsList)
+        records = [_make_record(f"row {index}") for index in range(3)]
+        _set_records(results, records)
+
+        results.highlighted = -7
+        await pilot.pause()
+        assert results.highlighted == 0
+        assert (messages[-1].record, messages[-1].index) == (records[0], 0)
+        assert messages[-1].generation == results.generation
+        assert messages[-1].programmatic is False
+
+        results.highlighted = 99
+        await pilot.pause()
+        assert results.highlighted == 2
+        assert (messages[-1].record, messages[-1].index) == (records[2], 2)
+        assert messages[-1].generation == results.generation
+        assert messages[-1].programmatic is False
+
+
 async def test_filter_rebuild_reuses_cached_row_renders(tmp_path: pathlib.Path) -> None:
-    """A full rebuild reuses cached row renders rather than re-rendering them.
+    """Replacing the model reuses cached rows rather than re-rendering them.
 
     ``_render_record`` dominates the filter re-apply cost, and the rows were
-    already rendered during streaming, so a rebuild must reuse them by record id
+    already rendered during streaming, so replacement must reuse them by record id
     instead of rebuilding every ``Text`` (the filter-widen pump stall, #1).
     """
     from agentgrep.progress import SearchControl
@@ -437,12 +538,33 @@ async def test_filter_rebuild_reuses_cached_row_renders(tmp_path: pathlib.Path) 
     async with app.run_test():
         results = app.screen.query_one(SearchResultsList)
         records = [_make_record(f"row {i}") for i in range(8)]
-        results.set_records(records)  # initial render populates the row cache
-        before = [results.get_option_at_index(i).prompt for i in range(results.option_count)]
-        results._rebuild_options(records)  # a filter widen rebuilds the whole list
-        after = [results.get_option_at_index(i).prompt for i in range(results.option_count)]
+        _set_records(results, records)
+        before = [results._render_record(record) for record in records]
+        _set_records(results, records)
+        after = [results._render_record(record) for record in records]
         assert results.option_count == len(records)
         assert all(a is b for a, b in zip(before, after, strict=True))
+
+
+async def test_results_render_cache_evicts_oldest_rows(tmp_path: pathlib.Path) -> None:
+    """Rendering beyond the row-cache limit evicts the least-recently used row."""
+    from agentgrep.progress import SearchControl
+    from agentgrep.ui.app import build_streaming_ui_app
+
+    app = t.cast("t.Any", build_streaming_ui_app(tmp_path, _make_query(), control=SearchControl()))
+    async with app.run_test():
+        results = app.screen.query_one(SearchResultsList)
+        records = [_make_record(f"row {index}") for index in range(results._RENDER_CACHE_MAX + 1)]
+        for record in records[:-1]:
+            results._render_record(record)
+        results._render_record(records[0])
+        results._render_record(records[-1])
+
+        theme_name = str(app.theme)
+        assert len(results._render_cache) == results._RENDER_CACHE_MAX
+        assert (theme_name, id(records[0])) in results._render_cache
+        assert (theme_name, id(records[1])) not in results._render_cache
+        assert (theme_name, id(records[-1])) in results._render_cache
 
 
 def test_detail_scroll_is_focusable_vertical_scroll() -> None:

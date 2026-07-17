@@ -21,6 +21,7 @@ from agentgrep.ui.widgets.messages import (
     DetailScrollChanged,
     FilterCompleted,
     FilterRequested,
+    ResultHighlighted,
     ResultsScrollChanged,
     SearchRequested,
 )
@@ -51,6 +52,7 @@ __all__ = [
     "HistoryRecall",
     "MeterWidget",
     "PaneHeader",
+    "ResultHighlighted",
     "ResultsHeader",
     "ResultsScrollChanged",
     "SearchInput",

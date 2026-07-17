@@ -513,28 +513,53 @@ def test_apply_records_batch_uses_bounded_stream_apply() -> None:
     assert "stream_apply" in calls
 
 
-def test_theme_changed_uses_bounded_async_pump_apply() -> None:
-    """Theme-baked rows rebuild asynchronously through the NB-4 chunk cap."""
+def test_filter_completed_adopts_worker_prepared_model() -> None:
+    """The pump callback performs no full-result projection work (NB-4/NB-5)."""
+    methods = {(item.cls, item.name): item for item in _all_methods()}
+    completed = methods[("HudLayout", "on_filter_completed")]
+    worker = methods[("HudLayout", "_run_filter_worker")]
+
+    assert "pump_only" in completed.decorators
+    assert "offload" in worker.decorators
+    assert not any(
+        isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp))
+        for node in ast.walk(completed.node)
+    )
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in {"id", "list", "set", "tuple"}
+        for node in ast.walk(completed.node)
+    )
+
+
+def test_theme_changed_invalidates_the_virtual_viewport() -> None:
+    """Theme changes invalidate lazy rows without scanning the result model."""
     method = next(
         item
         for item in _all_methods()
         if item.cls == "HudLayout" and item.name == "_on_theme_changed"
     )
-    assert isinstance(method.node, ast.AsyncFunctionDef)
+    assert isinstance(method.node, ast.FunctionDef)
     assert "pump_only" in method.decorators
-    stream_calls = [
-        node
+    call_attributes = [
+        node.func
         for node in ast.walk(method.node)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "stream_apply"
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
     ]
-    assert len(stream_calls) == 1
-    chunk_size = next(
-        keyword.value for keyword in stream_calls[0].keywords if keyword.arg == "chunk_size"
+    results_refreshes = [
+        attribute
+        for attribute in call_attributes
+        if attribute.attr == "refresh_theme"
+        and isinstance(attribute.value, ast.Name)
+        and attribute.value.id == "results"
+    ]
+    assert len(results_refreshes) == 1
+    assert not any(attribute.attr == "stream_apply" for attribute in call_attributes)
+    assert not any(
+        isinstance(node, (ast.For, ast.ListComp, ast.SetComp, ast.DictComp))
+        for node in ast.walk(method.node)
     )
-    assert isinstance(chunk_size, ast.Attribute)
-    assert chunk_size.attr == "_APPLY_CHUNK_SIZE"
 
 
 # --- runtime guards --------------------------------------------------------

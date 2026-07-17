@@ -469,10 +469,9 @@ Screen {
     padding: 0;
     color: $text-muted;
 }
-/* No box — the results pane is delineated by its #results-header rule. We
-   still cancel the two parts of OptionList's focus rule that fight
-   our per-span semantic colors: the ``$foreground 5%`` background-tint and the
-   bright ``$block-cursor-*`` cursor-row recolor. */
+/* No box — the results pane is delineated by its #results-header rule. Cancel
+   the focus background tint so it does not fight the rows' semantic colors;
+   the highlighted component keeps Textual's cursor palette. */
 #results {
     border: none;
 }

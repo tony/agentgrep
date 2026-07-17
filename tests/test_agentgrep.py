@@ -4291,6 +4291,27 @@ def _seed_records(
     ]
 
 
+def _set_result_records(results: t.Any, records: t.Iterable[t.Any]) -> None:
+    """Adopt one test-prepared result model."""
+    prepared = list(records)
+    results.set_records(
+        prepared,
+        record_ids={id(record) for record in prepared},
+    )
+
+
+def _filter_completed(app: t.Any, records: t.Iterable[t.Any], *, text: str = "") -> t.Any:
+    """Build a prepared filter completion for a mounted test app."""
+    from agentgrep.ui.widgets import FilterCompleted
+
+    prepared = list(records)
+    return FilterCompleted(
+        text=text,
+        records=prepared,
+        record_ids={id(record) for record in prepared},
+    )
+
+
 async def test_g_on_results_jumps_to_top(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -4772,11 +4793,13 @@ async def test_detail_find_base_refreshes_filter_highlights_when_filter_changes(
 
         app.screen._filter_terms = (case.updated_filter,)
         app.screen._filter_input.value = case.updated_filter
-        payload = agentgrep.FilterCompletedPayload(
-            text=case.updated_filter,
-            matching=(record,),
+        app.screen.on_filter_completed(
+            _filter_completed(
+                app,
+                [record],
+                text=case.updated_filter,
+            ),
         )
-        app.screen.on_filter_completed(_FakeFilterCompleted(payload=payload))
         app.screen._detail_find_step(1)
         await pilot.pause()
 
@@ -4815,7 +4838,9 @@ async def test_new_search_clears_results_render_cache(
     ]
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
-        app.screen._results.set_records(records)  # renders rows -> cache populated
+        _set_result_records(app.screen._results, records)
+        assert app.screen._results._render_cache == {}  # model replacement stays lazy
+        app.screen._results._render_record(records[0])  # one requested row populates the LRU
         assert app.screen._results._render_cache  # non-empty
         app.screen._reset_search_chrome()  # a fresh search releases the old records
         assert app.screen._results._render_cache == {}  # cache released with them
@@ -5426,7 +5451,7 @@ async def test_explicit_wide_detail_focus_survives_narrow_resize(
         await pilot.pause()
         app.screen.all_records.extend(records)
         app.screen.filtered_records = list(records)
-        app.screen._results.set_records(records)
+        _set_result_records(app.screen._results, records)
         app.screen._apply_responsive_layout()
         app.screen._results.focus()
         await pilot.pause()
@@ -5457,7 +5482,7 @@ async def test_l_from_results_opens_stacked_detail(
         await pilot.pause()
         app.screen.all_records.extend(records)
         app.screen.filtered_records = list(records)
-        app.screen._results.set_records(records)
+        _set_result_records(app.screen._results, records)
         app.screen._apply_responsive_layout()
         await pilot.pause()
         assert app.screen._detail_column.has_class("-collapsed")
@@ -5573,14 +5598,7 @@ async def test_detail_focus_membership_uses_ids_maintained_at_all_mutation_seams
         assert app.screen._results.contains_record(first) is True
         assert app.screen._results.contains_record(second) is True
 
-        app.screen.on_filter_completed(
-            _FakeFilterCompleted(
-                payload=agentgrep.FilterCompletedPayload(
-                    text="",
-                    matching=(second,),
-                ),
-            ),
-        )
+        app.screen.on_filter_completed(_filter_completed(app, [second]))
         assert app.screen._results.contains_record(first) is False
         assert app.screen._results.contains_record(second) is True
 
@@ -5590,12 +5608,6 @@ async def test_detail_focus_membership_uses_ids_maintained_at_all_mutation_seams
         assert app.screen._record_for_detail_focus() is second
 
 
-class _FakeFilterCompleted(t.NamedTuple):
-    """Minimal ``FilterCompleted`` stand-in carrying just the payload."""
-
-    payload: t.Any
-
-
 class AutohighlightQueueCase(t.NamedTuple):
     """One filter-result scenario for queued programmatic highlights."""
 
@@ -5603,7 +5615,7 @@ class AutohighlightQueueCase(t.NamedTuple):
     record_count: int
     matching_count: int
     initial_highlighted: int | None
-    expect_pending: int
+    expect_programmatic: int
 
 
 AUTOHIGHLIGHT_QUEUE_CASES: tuple[AutohighlightQueueCase, ...] = (
@@ -5612,28 +5624,28 @@ AUTOHIGHLIGHT_QUEUE_CASES: tuple[AutohighlightQueueCase, ...] = (
         record_count=3,
         matching_count=3,
         initial_highlighted=None,
-        expect_pending=0,
+        expect_programmatic=0,
     ),
     AutohighlightQueueCase(
         test_id="empty-leaves-it-disarmed",
         record_count=3,
         matching_count=0,
         initial_highlighted=None,
-        expect_pending=0,
+        expect_programmatic=0,
     ),
     AutohighlightQueueCase(
         test_id="single-clamp-highlight",
         record_count=3,
         matching_count=2,
         initial_highlighted=2,
-        expect_pending=1,
+        expect_programmatic=1,
     ),
     AutohighlightQueueCase(
-        test_id="multi-clamp-highlights",
+        test_id="far-clamp-is-one-programmatic-move",
         record_count=10,
         matching_count=5,
         initial_highlighted=9,
-        expect_pending=5,
+        expect_programmatic=1,
     ),
 )
 
@@ -5643,29 +5655,38 @@ AUTOHIGHLIGHT_QUEUE_CASES: tuple[AutohighlightQueueCase, ...] = (
     AUTOHIGHLIGHT_QUEUE_CASES,
     ids=[case.test_id for case in AUTOHIGHLIGHT_QUEUE_CASES],
 )
-async def test_filter_completion_counts_only_queued_autohighlights(
+async def test_filter_completion_marks_only_model_highlights_programmatic(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
     case: AutohighlightQueueCase,
 ) -> None:
-    """The suppression counter tracks queued highlights, not non-empty results."""
+    """Only an existing cursor emits a programmatic model-change highlight."""
+    from agentgrep.ui.widgets import ResultHighlighted
+
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     records = _seed_records(agentgrep, tmp_path, case.record_count)
-    async with app.run_test(size=(80, 24)) as pilot:
+    messages: dict[int, ResultHighlighted] = {}
+
+    def capture(message: object) -> None:
+        if isinstance(message, ResultHighlighted) and message.programmatic:
+            messages[id(message)] = message
+
+    async with app.run_test(size=(80, 24), message_hook=capture) as pilot:
         await pilot.pause()
         app.screen.all_records.extend(records)
         app.screen.filtered_records = list(records)
         app.screen._results.append_records(records)
         if case.initial_highlighted is not None:
             app.screen._results._reactive_highlighted = case.initial_highlighted
-        app.screen._pending_autohighlights = 99
-        payload = agentgrep.FilterCompletedPayload(
-            text="",
-            matching=tuple(records[: case.matching_count]),
+        app.screen.on_filter_completed(
+            _filter_completed(
+                app,
+                records[: case.matching_count],
+            ),
         )
-        app.screen.on_filter_completed(_FakeFilterCompleted(payload=payload))
-        assert app.screen._pending_autohighlights == case.expect_pending
+        await pilot.pause()
+        assert len(messages) == case.expect_programmatic
 
 
 class FilterUserMoveCase(t.NamedTuple):
@@ -5736,11 +5757,12 @@ async def test_filter_completion_does_not_swallow_first_real_cursor_move(
         app.screen._results.focus()
         await pilot.pause()
 
-        payload = agentgrep.FilterCompletedPayload(
-            text="",
-            matching=tuple(records[: case.matching_count]),
+        app.screen.on_filter_completed(
+            _filter_completed(
+                app,
+                records[: case.matching_count],
+            ),
         )
-        app.screen.on_filter_completed(_FakeFilterCompleted(payload=payload))
         await pilot.pause()
         await pilot.pause()
         assert app.screen._detail_opened is False
@@ -5750,6 +5772,61 @@ async def test_filter_completion_does_not_swallow_first_real_cursor_move(
         await pilot.pause()
         assert app.screen._detail_opened is True
         assert not app.screen._detail_column.has_class("-collapsed")
+
+
+async def test_filter_completion_keeps_detail_on_unchanged_cursor_index(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Replacing the record under a stable cursor also replaces its detail."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 5)
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        app.screen.filtered_records = list(records)
+        _set_result_records(app.screen._results, records)
+        app.screen._results.highlighted = 1
+        await pilot.pause()
+
+        matching = [records[2], records[4]]
+        app.screen.on_filter_completed(_filter_completed(app, matching))
+        await pilot.pause()
+
+        assert app.screen._results.highlighted == 1
+        assert app.screen._current_detail_record is records[4]
+
+
+async def test_filter_completion_adopts_worker_model_without_iteration(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The pump adopts worker-prepared lists and identity indexes in O(1)."""
+    from agentgrep.ui.widgets import FilterCompleted
+
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 3)
+    iteration_error = "prepared filter records were scanned on the pump"
+
+    class PreparedRecords(list[t.Any]):
+        def __iter__(self) -> t.NoReturn:
+            raise AssertionError(iteration_error)
+
+    prepared = PreparedRecords(records)
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        app.screen.on_filter_completed(
+            FilterCompleted(
+                text="",
+                records=prepared,
+                record_ids={id(record) for record in records},
+            ),
+        )
+
+        assert app.screen.filtered_records is prepared
+        assert app.screen._results.uses_records(prepared)
+        assert app.screen._results.contains_record(records[2])
 
 
 async def test_right_on_non_empty_filter_moves_cursor(
@@ -5778,11 +5855,8 @@ async def test_search_results_list_append_under_load(
 ) -> None:
     """Appending 1000 records to the results list completes within a generous bound.
 
-    Smoke test against accidental O(N²) regressions. Bound is intentionally
-    loose because ``OptionList.add_options`` is O(M) per call (vs the prior
-    custom widget's O(1)) — we're trading per-record speed for proven
-    correctness (visible cursor + Tab focus). If the bound trips on real
-    hardware, the escalation path is ``textual-fastdatatable``.
+    Smoke test against accidental O(N²) regressions in the virtual model update.
+    The row renderables themselves remain lazy and are covered separately.
     """
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
@@ -5807,11 +5881,11 @@ async def test_search_results_list_append_under_load(
         assert elapsed < 2.0, f"append_records(1000) took {elapsed:.3f}s; expected < 2.0s"
 
 
-async def test_set_records_narrowing_avoids_clear_options(
+async def test_set_records_narrowing_preserves_order(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A narrowing filter (subset of current records) must not full-rebuild the list."""
+    """A narrowing filter swaps the model without eagerly rebuilding rows."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     records = [
@@ -5829,28 +5903,27 @@ async def test_set_records_narrowing_avoids_clear_options(
         await pilot.pause()
         app.screen._results.append_records(records)
         await pilot.pause()
-        clear_count = 0
-        original_clear = app.screen._results.clear_options
+        rendered = 0
+        original_build = app.screen._results._build_row
 
-        def counting_clear() -> object:
-            nonlocal clear_count
-            clear_count += 1
-            return original_clear()
+        def counting_build(record: t.Any) -> t.Any:
+            nonlocal rendered
+            rendered += 1
+            return original_build(record)
 
-        monkeypatch.setattr(app.screen._results, "clear_options", counting_clear)
-        # Narrow to the first 7 records (drop 3). 3 / 10 <= 50% → delta path.
-        app.screen._results.set_records(records[:7])
+        monkeypatch.setattr(app.screen._results, "_build_row", counting_build)
+        _set_result_records(app.screen._results, records[:7])
+        assert rendered == 0
         await pilot.pause()
-        assert clear_count == 0
         assert len(app.screen._results._records) == 7
         assert [id(r) for r in app.screen._results._records] == [id(r) for r in records[:7]]
 
 
-async def test_set_records_widening_triggers_full_rebuild(
+async def test_set_records_widening_preserves_order(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Widening (introducing records not currently shown) rebuilds for order correctness."""
+    """Widening publishes the complete requested order without Option materialization."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     records = [
@@ -5868,20 +5941,10 @@ async def test_set_records_widening_triggers_full_rebuild(
         await pilot.pause()
         app.screen._results.append_records(records[:3])
         await pilot.pause()
-        clear_count = 0
-        original_clear = app.screen._results.clear_options
-
-        def counting_clear() -> object:
-            nonlocal clear_count
-            clear_count += 1
-            return original_clear()
-
-        monkeypatch.setattr(app.screen._results, "clear_options", counting_clear)
-        # Widen to all 5 records — two of them weren't shown before.
-        app.screen._results.set_records(records)
+        _set_result_records(app.screen._results, records)
         await pilot.pause()
-        assert clear_count == 1, "widening must rebuild to preserve record order"
         assert len(app.screen._results._records) == 5
+        assert [id(r) for r in app.screen._results._records] == [id(r) for r in records]
 
 
 async def test_apply_records_batch_yields_between_chunks(
@@ -5925,13 +5988,21 @@ async def test_apply_records_batch_yields_between_chunks(
         assert len(app.screen._results._records) == record_count
 
 
-async def test_set_records_majority_removal_falls_back_to_rebuild(
+async def test_set_records_majority_removal_clamps_cursor_once(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Removing more than half of the current records uses the chunked rebuild path."""
+    """A large narrowing clamps the global cursor with one programmatic move."""
+    from agentgrep.ui.widgets import ResultHighlighted
+
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
+    messages: list[ResultHighlighted] = []
+
+    def capture(message: object) -> None:
+        if isinstance(message, ResultHighlighted):
+            messages.append(message)
+
     records = [
         agentgrep.SearchRecord(
             kind="prompt",
@@ -5943,23 +6014,23 @@ async def test_set_records_majority_removal_falls_back_to_rebuild(
         )
         for idx in range(10)
     ]
-    async with app.run_test() as pilot:
+    async with app.run_test(message_hook=capture) as pilot:
         await pilot.pause()
         app.screen._results.append_records(records)
+        app.screen._results._reactive_highlighted = 9
         await pilot.pause()
-        clear_count = 0
-        original_clear = app.screen._results.clear_options
-
-        def counting_clear() -> object:
-            nonlocal clear_count
-            clear_count += 1
-            return original_clear()
-
-        monkeypatch.setattr(app.screen._results, "clear_options", counting_clear)
-        # Drop 8 of 10 — well over the 50% threshold.
-        app.screen._results.set_records(records[:2])
+        messages.clear()
+        result = _set_result_records(app.screen._results, records[:2])
         await pilot.pause()
-        assert clear_count == 1, "majority-removal must take the rebuild path"
+        assert result is None
+        generation = app.screen._results.generation
+        current = {
+            id(message): (message.index, message.programmatic)
+            for message in messages
+            if message.generation == generation
+        }
+        assert list(current.values()) == [(1, True)]
+        assert app.screen._results.highlighted == 1
         assert len(app.screen._results._records) == 2
 
 
@@ -6102,14 +6173,13 @@ async def test_filter_completion_refreshes_unchanged_cursor_denominator(
         await pilot.pause()
         app.screen.all_records.extend(records)
         app.screen.filtered_records = list(records)
-        app.screen._results.set_records(records)
+        _set_result_records(app.screen._results, records)
         app.screen._results.highlighted = 0
         app.screen._refresh_results_status_right()
         await pilot.pause()
         assert "1/10" in app.screen._results_header._right
 
-        payload = agentgrep.FilterCompletedPayload(text="", matching=tuple(records[:5]))
-        app.screen.on_filter_completed(_FakeFilterCompleted(payload=payload))
+        app.screen.on_filter_completed(_filter_completed(app, records[:5]))
         await pilot.pause()
 
         assert app.screen._results.highlighted == 0
@@ -6130,7 +6200,7 @@ async def test_stale_results_scroll_message_cannot_repaint_reset_rule(
         await pilot.pause()
         app.screen.all_records.extend(records)
         app.screen.filtered_records = list(records)
-        app.screen._results.set_records(records)
+        _set_result_records(app.screen._results, records)
         app.screen._results.highlighted = 0
         app.screen._refresh_results_status_right()
         await pilot.pause()
@@ -6810,12 +6880,6 @@ async def test_narrow_header_keeps_source_without_bar(
         assert "%" not in rendered
 
 
-class _FakeHighlight(t.NamedTuple):
-    """Minimal ``OptionHighlighted`` stand-in for the detail handler."""
-
-    option_index: int | None
-
-
 class SplitOrientationCase(t.NamedTuple):
     """One terminal-width scenario for the responsive detail split."""
 
@@ -6853,6 +6917,8 @@ async def test_narrow_detail_opens_on_user_selection_not_autohighlight(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Stacked detail stays collapsed until a genuine cursor move (tig-style)."""
+    from agentgrep.ui.widgets import ResultHighlighted
+
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     records = _seed_records(agentgrep, tmp_path, 5)
@@ -6860,24 +6926,94 @@ async def test_narrow_detail_opens_on_user_selection_not_autohighlight(
         await pilot.pause()
         app.screen.all_records.extend(records)
         app.screen.filtered_records = list(records)
-        app.screen._results.set_records(records)
+        _set_result_records(app.screen._results, records)
         app.screen._apply_responsive_layout()
         await pilot.pause()
         # Narrow + nothing opened → detail collapsed.
         assert app.screen._stacked is True
         assert app.screen._detail_column.has_class("-collapsed")
         # The programmatic row-0 highlight must NOT open it.
-        app.screen._pending_autohighlights = 1
-        app.screen.on_option_list_option_highlighted(_FakeHighlight(0))
+        app.screen.on_result_highlighted(
+            ResultHighlighted(
+                record=records[0],
+                index=0,
+                generation=app.screen._results.generation,
+                programmatic=True,
+            ),
+        )
         await pilot.pause()
-        assert app.screen._pending_autohighlights == 0
         assert app.screen._detail_opened is False
         assert app.screen._detail_column.has_class("-collapsed")
         # A real cursor move opens it and keeps it open.
-        app.screen.on_option_list_option_highlighted(_FakeHighlight(1))
+        app.screen.on_result_highlighted(
+            ResultHighlighted(
+                record=records[1],
+                index=1,
+                generation=app.screen._results.generation,
+                programmatic=False,
+            ),
+        )
         await pilot.pause()
         assert app.screen._detail_opened is True
         assert not app.screen._detail_column.has_class("-collapsed")
+
+
+async def test_clicking_programmatically_highlighted_row_opens_detail(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Click intent opens stacked detail even when the cursor value is unchanged."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 3)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.screen._set_empty_state(empty=False)
+        app.screen.filtered_records = list(records)
+        _set_result_records(app.screen._results, records)
+        app.screen._results._reactive_highlighted = 2
+        app.screen.on_filter_completed(_filter_completed(app, records[:1]))
+        await pilot.pause()
+
+        assert app.screen._results.highlighted == 0
+        assert app.screen._detail_column.has_class("-collapsed")
+
+        clicked = await pilot.click(app.screen._results, offset=(4, 0))
+        await pilot.pause()
+
+        assert clicked is True
+        assert app.screen._detail_opened is True
+        assert not app.screen._detail_column.has_class("-collapsed")
+
+
+async def test_stale_result_highlight_cannot_open_detail(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A queued highlight from an older model is rejected by generation."""
+    from agentgrep.ui.widgets import ResultHighlighted
+
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 2)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.screen.filtered_records = list(records)
+        _set_result_records(app.screen._results, records)
+        app.screen._detail_opened = False
+
+        app.screen.on_result_highlighted(
+            ResultHighlighted(
+                record=records[0],
+                index=0,
+                generation=app.screen._results.generation - 1,
+                programmatic=True,
+            ),
+        )
+        await pilot.pause()
+
+        assert app.screen._detail_opened is False
+        assert app.screen._current_detail_record is not records[0]
 
 
 async def test_wide_detail_always_visible(
@@ -6885,6 +7021,8 @@ async def test_wide_detail_always_visible(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Side-by-side keeps the detail pane visible regardless of selection."""
+    from agentgrep.ui.widgets import ResultHighlighted
+
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     records = _seed_records(agentgrep, tmp_path, 5)
@@ -6892,6 +7030,7 @@ async def test_wide_detail_always_visible(
         await pilot.pause()
         app.screen.all_records.extend(records)
         app.screen.filtered_records = list(records)
+        _set_result_records(app.screen._results, records)
         app.screen._apply_responsive_layout()
         await pilot.pause()
         assert app.screen._stacked is False
@@ -6900,7 +7039,14 @@ async def test_wide_detail_always_visible(
         assert not app.screen._detail_column.has_class("-collapsed")
         # ...and still visible after a genuine selection (the "regardless
         # of selection" property the docstring promises).
-        app.screen.on_option_list_option_highlighted(_FakeHighlight(0))
+        app.screen.on_result_highlighted(
+            ResultHighlighted(
+                record=records[0],
+                index=0,
+                generation=app.screen._results.generation,
+                programmatic=False,
+            ),
+        )
         await pilot.pause()
         assert not app.screen._detail_column.has_class("-collapsed")
 
@@ -6918,7 +7064,7 @@ async def test_responsive_layout_classes_stay_orthogonal_to_detail_zoom(
         app.screen._set_empty_state(empty=False)
         app.screen.all_records.extend(records)
         app.screen.filtered_records = list(records)
-        app.screen._results.set_records(records)
+        _set_result_records(app.screen._results, records)
         app.screen._detail_opened = False
         app.screen._apply_responsive_layout()
 
@@ -6947,7 +7093,7 @@ async def test_new_search_recollapses_narrow_detail(
         await pilot.pause()
         app.screen.all_records.extend(records)
         app.screen.filtered_records = list(records)
-        app.screen._results.set_records(records)
+        _set_result_records(app.screen._results, records)
         app.screen._detail_opened = True
         app.screen._apply_responsive_layout()
         await pilot.pause()
@@ -6970,7 +7116,7 @@ async def test_stacked_focus_routes_results_and_detail_vertically(
         await pilot.pause()
         app.screen.all_records.extend(records)
         app.screen.filtered_records = list(records)
-        app.screen._results.set_records(records)
+        _set_result_records(app.screen._results, records)
         app.screen._apply_responsive_layout()
         await pilot.pause()
         app.screen._results.focus()
