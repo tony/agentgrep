@@ -5094,6 +5094,49 @@ async def test_detail_find_step_reuses_syntax_base(
         assert syntax_calls == after_find  # the step reused the cached base
 
 
+async def test_detail_find_open_reuses_presented_text_highlights(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Opening find reuses the long plain-text body already highlighted off-pump."""
+    from agentgrep.ui.layouts import hud
+
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = _ui_record(
+        agentgrep,
+        tmp_path / "long.jsonl",
+        "needle " + ("plain text " * 6000),
+        "long",
+    )
+    highlight_calls = 0
+    real_highlight = hud._apply_bounded_literal_highlights
+
+    def counting_highlight(*args: t.Any, **kwargs: t.Any) -> None:
+        nonlocal highlight_calls
+        highlight_calls += 1
+        real_highlight(*args, **kwargs)
+
+    monkeypatch.setattr(hud, "_apply_bounded_literal_highlights", counting_highlight)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app.screen.search_query = dataclasses.replace(
+            app.screen.search_query,
+            terms=("needle",),
+        )
+        app.screen._set_empty_state(empty=False)
+        app.screen.show_detail(record)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        after_present = highlight_calls
+        assert after_present >= 1
+
+        app.screen.action_open_detail_find()
+        await pilot.pause()
+
+        assert highlight_calls == after_present
+
+
 class DetailFindFilterRefreshCase(t.NamedTuple):
     """A same-record filter change while detail find stays open."""
 

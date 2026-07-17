@@ -400,8 +400,8 @@ class HudLayout(LayoutScreen):
         self._detail_find_source: str = ""
         self._detail_find_json_syntax = False
         # Cached syntax+search+filter find body; the find-match overlay changes
-        # per keystroke but this base does not, so it is built once per
-        # highlight state and copied (invalidated in _present_detail).
+        # per keystroke but this base does not. A presented Text is retained;
+        # other renderables are converted once per highlight state, then copied.
         self._detail_find_base: Text | None = None
         self._detail_find_base_key: _DetailFindBaseKey | None = None
         # Per-record find memory, mirroring _detail_scroll_positions:
@@ -1671,11 +1671,11 @@ class HudLayout(LayoutScreen):
         renderable is chosen by
         :func:`detect_content_format`:
 
-        * JSON bodies are pretty-printed and rendered via
+        * Small JSON bodies are pretty-printed and rendered via
           :class:`rich.syntax.Syntax` with ``ansi_dark`` theming.
-        * Markdown bodies render via :class:`rich.markdown.Markdown`.
-        * Everything else keeps the existing ``Text`` + ``highlight_regex``
-          flow so search-term matches stay bold-yellow.
+        * Small Markdown bodies render via :class:`rich.markdown.Markdown`.
+        * Larger formatted bodies and plain text use bounded ``Text``
+          highlighting so search-term matches stay responsive.
 
         A record opened for the first time lands at the top; a record
         viewed before restores the scroll position the user left it at (see
@@ -1919,8 +1919,18 @@ class HudLayout(LayoutScreen):
         # for json bodies, the raw body otherwise.
         self._detail_find_source = body_for_scroll
         self._detail_find_json_syntax = isinstance(body_renderable, _RichSyntaxType)
-        self._detail_find_base = None  # a fresh body invalidates the find base
-        self._detail_find_base_key = None
+        if isinstance(body_renderable, Text):
+            self._detail_find_base = body_renderable
+            self._detail_find_base_key = (
+                body_for_scroll,
+                tuple(query_terms),
+                self.search_query.case_sensitive,
+                self.search_query.regex,
+                self._filter_terms,
+            )
+        else:
+            self._detail_find_base = None
+            self._detail_find_base_key = None
         self._detail.update(_RichGroup(t.cast("t.Any", header), t.cast("t.Any", body_renderable)))
         self._restore_detail_scroll(record)
         self._refresh_detail_statusline()
@@ -2266,11 +2276,11 @@ class HudLayout(LayoutScreen):
     def _detail_find_base_for(self, source: str) -> Text:
         """Return the syntax+search+filter body for ``source`` and highlight state.
 
-        For JSON the body is syntax-highlighted via :class:`rich.syntax.Syntax`
-        so token colors survive find; other formats use ``highlight_matches``.
-        The find-match overlay changes per keystroke/step but this base does
-        not, so building it once and copying keeps the per-keystroke cost off a
-        full-body ``Syntax`` re-highlight. Invalidated in :meth:`_present_detail`.
+        Small JSON bodies are syntax-highlighted via :class:`rich.syntax.Syntax`
+        so token colors survive find. Other renderables use bounded literal
+        highlighting. The find-match overlay changes per keystroke/step but
+        this base does not, so retaining or building it once keeps repeated
+        highlighting off the message pump.
         """
         key = (
             source,
@@ -2303,9 +2313,9 @@ class HudLayout(LayoutScreen):
     def _apply_search_highlight(self, text: t.Any) -> None:
         """Overlay the active search-query terms onto ``text`` (for the JSON path).
 
-        The plain-text path bakes these via ``highlight_matches``; on the
-        Syntax-highlighted JSON ``Text`` literal terms are layered with the
-        same style. Regex terms are omitted because presentation must not
+        The plain-text path bakes these through the bounded literal helper; on
+        the Syntax-highlighted JSON ``Text`` literal terms are layered with
+        the same style. Regex terms are omitted because presentation must not
         re-run an untrusted pattern on the message pump.
         """
         if self.search_query.regex:
