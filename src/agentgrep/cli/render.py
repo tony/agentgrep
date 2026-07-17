@@ -90,6 +90,8 @@ def _launch_ui(
     base_scope: SearchScope | None = None,
 ) -> None:
     """Launch the UI and translate factory validation into a CLI diagnostic."""
+    from agentgrep.ui.app import UiQueryTooLongError
+
     try:
         run_ui(
             pathlib.Path.home(),
@@ -98,11 +100,7 @@ def _launch_ui(
             initial_search_text=initial_search_text,
             base_scope=base_scope,
         )
-    except ValueError as error:
-        from agentgrep.ui.app import UiQueryTooLongError
-
-        if not isinstance(error, UiQueryTooLongError):
-            raise
+    except UiQueryTooLongError as error:
         raise SystemExit(str(error)) from None
 
 
