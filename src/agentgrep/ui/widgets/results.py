@@ -45,6 +45,7 @@ class SearchResultsList(ScrollView, can_focus=True):
     COMPONENT_CLASSES: t.ClassVar[set[str]] = {
         "option-list--option",
         "option-list--option-highlighted",
+        "option-list--option-hover",
     }
     DEFAULT_CSS = """
     SearchResultsList {
@@ -85,6 +86,7 @@ class SearchResultsList(ScrollView, can_focus=True):
         self._record_ids: set[int] = set()
         self._generation = 0
         self._next_highlight_programmatic = False
+        self._hovered: int | None = None
         # Rows bake theme hex, so the palette name participates in the key.
         # The LRU cap keeps filtering and theme switches from retaining one
         # renderable per result in an arbitrarily large history store.
@@ -138,6 +140,7 @@ class SearchResultsList(ScrollView, can_focus=True):
         self._generation += 1
         self._records = records
         self._record_ids = record_ids
+        self._set_hovered(None)
         self._sync_virtual_size()
 
         highlighted = self.highlighted
@@ -176,6 +179,7 @@ class SearchResultsList(ScrollView, can_focus=True):
         self._record_ids.clear()
         self._render_cache.clear()
         self._strip_cache.clear()
+        self._set_hovered(None)
         self.highlighted = None
         self._sync_virtual_size()
         self.scroll_home(animate=False, immediate=True)
@@ -212,6 +216,7 @@ class SearchResultsList(ScrollView, can_focus=True):
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
         """Re-render the viewport and status line on scroll."""
         super().watch_scroll_y(old_value, new_value)
+        self._set_hovered(None)
         self._post_scroll_changed()
 
     @_runtime.pump_only
@@ -274,6 +279,32 @@ class SearchResultsList(ScrollView, can_focus=True):
                 self.highlighted = index
 
     @_runtime.pump_only
+    def on_mouse_move(self, event: events.MouseMove) -> None:
+        """Apply the hover component to the row under the pointer."""
+        offset = event.get_content_offset(self)
+        if offset is None:
+            self._set_hovered(None)
+            return
+        index = self.scroll_offset.y + offset.y
+        self._set_hovered(index if 0 <= index < len(self._records) else None)
+
+    @_runtime.pump_only
+    def on_leave(self, _event: events.Leave) -> None:
+        """Clear the row hover when the pointer leaves the results."""
+        self._set_hovered(None)
+
+    def _set_hovered(self, index: int | None) -> None:
+        """Refresh only the rows affected by a hover transition."""
+        previous = self._hovered
+        if previous == index:
+            return
+        self._hovered = index
+        if previous is not None:
+            self.refresh_line(previous)
+        if index is not None:
+            self.refresh_line(index)
+
+    @_runtime.pump_only
     def render_line(self, y: int) -> Strip:
         """Render one visible fixed-height row requested by ``ScrollView``."""
         width = max(0, self.size.width)
@@ -281,11 +312,12 @@ class SearchResultsList(ScrollView, can_focus=True):
         if width == 0 or not 0 <= index < len(self._records):
             return Strip.blank(width, self.visual_style.rich_style)
 
-        component = (
-            "option-list--option-highlighted"
-            if index == self.highlighted
-            else "option-list--option"
-        )
+        if index == self.highlighted:
+            component = "option-list--option-highlighted"
+        elif index == self._hovered:
+            component = "option-list--option-hover"
+        else:
+            component = "option-list--option"
         style = self.get_component_rich_style(component)
         record = self._records[index]
         cache_key = (str(self.app.theme), width, style, id(record))
@@ -432,9 +464,15 @@ class SearchResultsList(ScrollView, can_focus=True):
     @_runtime.pump_only
     def action_page_down(self) -> None:
         """Advance the cursor by one viewport."""
-        self._cursor_jump(max(1, self.size.height))
+        if self.highlighted is None:
+            self.action_last()
+        else:
+            self._cursor_jump(max(1, self.size.height))
 
     @_runtime.pump_only
     def action_page_up(self) -> None:
         """Move the cursor up by one viewport."""
-        self._cursor_jump(-max(1, self.size.height))
+        if self.highlighted is None:
+            self.action_first()
+        else:
+            self._cursor_jump(-max(1, self.size.height))

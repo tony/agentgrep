@@ -492,6 +492,9 @@ Screen {
 #results > .option-list--option-highlighted {
     text-style: bold;
 }
+#results > .option-list--option-hover {
+    background: $block-hover-background;
+}
 
 /* pi-style section headers (a left label embedded in a full-width rule) stand in
    for pane boxes and input separators. The line color is muted at rest and

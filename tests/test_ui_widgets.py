@@ -529,6 +529,80 @@ async def test_results_highlight_clamps_and_posts_typed_record(
         assert messages[-1].programmatic is False
 
 
+async def test_results_page_keys_match_option_list_from_no_cursor(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Page keys retain Textual's first/last behavior before selection."""
+    from agentgrep.progress import SearchControl
+    from agentgrep.ui.app import build_streaming_ui_app
+
+    app = t.cast("t.Any", build_streaming_ui_app(tmp_path, _make_query(), control=SearchControl()))
+    async with app.run_test(size=(80, 24)) as pilot:
+        results = app.screen.query_one(SearchResultsList)
+        app.screen._set_empty_state(empty=False)
+        records = [_make_record(f"row {index}") for index in range(50)]
+        _set_records(results, records)
+        await pilot.pause()
+
+        results.action_page_down()
+        assert results.highlighted == len(records) - 1
+
+        results.highlighted = None
+        results.action_page_up()
+        assert results.highlighted == 0
+
+
+async def test_results_hover_and_click_track_scrolled_rows(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mouse hover and click map viewport rows to the scrolled model."""
+    from agentgrep.progress import SearchControl
+    from agentgrep.ui.app import build_streaming_ui_app
+
+    app = t.cast("t.Any", build_streaming_ui_app(tmp_path, _make_query(), control=SearchControl()))
+    async with app.run_test(size=(80, 24)) as pilot:
+        results = app.screen.query_one(SearchResultsList)
+        app.screen._set_empty_state(empty=False)
+        _set_records(results, [_make_record(f"row {index}") for index in range(100)])
+        await pilot.pause()
+        results.scroll_to(y=20, animate=False, force=True, immediate=True)
+        await pilot.pause()
+        assert results.scroll_offset.y > 0
+
+        row_y = 2
+        index = results.scroll_offset.y + row_y
+        assert await pilot.hover(results, offset=(4, row_y)) is True
+        await pilot.pause()
+        assert results._hovered == index
+        assert results.highlighted is None
+
+        components: list[str] = []
+        get_style = results.get_component_rich_style
+
+        def capture_component(component: str) -> Style:
+            components.append(component)
+            return get_style(component)
+
+        monkeypatch.setattr(results, "get_component_rich_style", capture_component)
+        results.render_line(row_y)
+        assert components[-1] == "option-list--option-hover"
+
+        results.highlighted = index
+        await pilot.pause()
+        results.render_line(row_y)
+        assert components[-1] == "option-list--option-highlighted"
+
+        results.highlighted = None
+        assert await pilot.click(results, offset=(4, row_y)) is True
+        await pilot.pause()
+        assert results.highlighted == index
+
+        assert await pilot.hover("#filter") is True
+        await pilot.pause()
+        assert results._hovered is None
+
+
 async def test_filter_rebuild_reuses_cached_row_renders(tmp_path: pathlib.Path) -> None:
     """Replacing the model reuses cached rows rather than re-rendering them.
 
