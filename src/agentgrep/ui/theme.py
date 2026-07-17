@@ -5,8 +5,8 @@ pi-inspired "lite" palette onto Textual's seed colors so every built-in widget
 re-skins through :class:`textual.design.ColorSystem` for free (one accent, calm
 muted secondary text, flat surfaces). agentgrep-specific semantics that have no
 seed equivalent live as ``$ag-*`` custom variables: per-agent hues, the
-``prompt`` / ``history`` kinds, the muted/dim/faint text trio, state-tint
-backgrounds, and search/filter match highlights.
+``prompt`` / ``history`` kinds, the muted/dim/faint text trio, the welcome
+wordmark shine, state-tint backgrounds, and search/filter match highlights.
 
 On-tint foregrounds (``$ag-on-*``) and match foregrounds are *computed* from
 each background via :meth:`textual.color.Color.get_contrast_text`, so a tinted
@@ -82,6 +82,17 @@ _TEXT_HUES: dict[str, tuple[str, str]] = {
     "ag-model": ("#9575cd", "#7e57c2"),
 }
 
+# Static warm ramp for the welcome wordmark. The dark and light columns are
+# calibrated independently so every step clears WCAG AA against its page;
+# animation would add idle repaints without improving search affordance.
+_BRAND_SHINE_HUES: tuple[tuple[str, str], ...] = (
+    ("#ff7a1a", "#9a3e00"),
+    ("#ff922b", "#994900"),
+    ("#ffaa3b", "#925300"),
+    ("#ffc04d", "#875a00"),
+    ("#ffd166", "#765f00"),
+)
+
 # Subtle state-tint backgrounds (pi's message/tool background family).
 _STATE_BG_HUES: dict[str, tuple[str, str]] = {
     "user": ("#343541", "#e8e8e8"),
@@ -144,6 +155,8 @@ def _ag_variables(mode: int) -> dict[str, str]:
         variables[f"ag-kind-{name}"] = hexes[mode]
     for name, hexes in _TEXT_HUES.items():
         variables[name] = hexes[mode]
+    for step, hexes in enumerate(_BRAND_SHINE_HUES, start=1):
+        variables[f"ag-brand-shine-{step}"] = hexes[mode]
     for name, hexes in _STATE_BG_HUES.items():
         background = hexes[mode]
         variables[f"ag-state-{name}-bg"] = background

@@ -8,7 +8,11 @@ import pytest
 from textual.widgets import Static
 
 from agentgrep.query import compile_query, default_registry, parse_query
-from agentgrep.ui.layouts.hud import _WELCOME_QUERIES, _welcome_query_examples
+from agentgrep.ui.layouts.hud import (
+    _WELCOME_QUERIES,
+    _welcome_query_examples,
+    _welcome_wordmark,
+)
 from agentgrep.ui.widgets import WelcomeQuerySelected
 from tests.test_agentgrep import _build_empty_ui_app
 
@@ -44,6 +48,26 @@ def test_welcome_examples_share_query_highlighting_and_safe_metadata() -> None:
     assert all(
         isinstance(span.style, str) or "@click" not in span.style.meta for span in content.spans
     )
+
+
+def test_welcome_wordmark_uses_a_symmetric_brand_shine() -> None:
+    """The brand stays legible text with a restrained, static color ramp."""
+    content = _welcome_wordmark()
+    brand_spans = content.spans[-9:]
+
+    assert content.plain == "Welcome to agentgrep"
+    assert [span.end - span.start for span in brand_spans] == [1] * 9
+    assert [str(span.style) for span in brand_spans] == [
+        "bold $ag-brand-shine-1",
+        "bold $ag-brand-shine-2",
+        "bold $ag-brand-shine-3",
+        "bold $ag-brand-shine-4",
+        "bold $ag-brand-shine-5",
+        "bold $ag-brand-shine-4",
+        "bold $ag-brand-shine-3",
+        "bold $ag-brand-shine-2",
+        "bold $ag-brand-shine-1",
+    ]
 
 
 @pytest.mark.parametrize("query", _WELCOME_QUERIES)

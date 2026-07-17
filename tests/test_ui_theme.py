@@ -106,6 +106,7 @@ def test_every_ag_token_present_and_parseable(case: ThemeCase) -> None:
         | {f"ag-state-{name}-bg" for name in ("user", "pending", "success", "error", "selected")}
         | {f"ag-on-{name}" for name in ("user", "pending", "success", "error", "selected")}
         | {"ag-match-search", "ag-match-filter-bg", "ag-match-filter-fg"}
+        | {f"ag-brand-shine-{step}" for step in range(1, 6)}
     )
     missing = expected - set(variables)
     assert not missing, f"{case.test_id} theme missing tokens: {sorted(missing)}"
@@ -146,6 +147,16 @@ def test_filter_match_foreground_is_readable(case: ThemeCase) -> None:
     variables = case.builder().variables
     ratio = _contrast_ratio(variables["ag-match-filter-fg"], variables["ag-match-filter-bg"])
     assert ratio >= 3.0, f"{case.test_id} filter-match contrast {ratio:.2f} below 3.0"
+
+
+@pytest.mark.parametrize("case", _THEME_CASES, ids=_THEME_IDS)
+@pytest.mark.parametrize("step", range(1, 6))
+def test_brand_shine_is_readable(case: ThemeCase, step: int) -> None:
+    """Every wordmark color clears WCAG AA against its theme background."""
+    built = case.builder()
+    foreground = built.variables[f"ag-brand-shine-{step}"]
+    ratio = _contrast_ratio(foreground, built.background)
+    assert ratio >= 4.5, f"{case.test_id}/shine-{step} contrast {ratio:.2f} below 4.5"
 
 
 # --- live app: registration, application, switching ------------------------

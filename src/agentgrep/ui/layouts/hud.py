@@ -127,6 +127,18 @@ _WELCOME_QUERIES = (
     '"exact phrase"',
 )
 _WELCOME_QUERY_ROWS = ((0, 1, 2), (3, 4))
+_WELCOME_BRAND_SHINE = (1, 2, 3, 4, 5, 4, 3, 2, 1)
+
+
+def _welcome_wordmark() -> Content:
+    """Build the static, theme-aware welcome wordmark."""
+    return Content.assemble(
+        "Welcome to ",
+        *(
+            (character, f"bold $ag-brand-shine-{step}")
+            for character, step in zip("agentgrep", _WELCOME_BRAND_SHINE, strict=True)
+        ),
+    )
 
 
 def _welcome_query_examples() -> Content:
@@ -506,10 +518,7 @@ class HudLayout(LayoutScreen):
                 with Vertical(id="empty-hint"):
                     with Center():
                         yield Static(
-                            Content.assemble(
-                                "Welcome to ",
-                                ("agentgrep", "bold $accent"),
-                            ),
+                            _welcome_wordmark(),
                             id="empty-welcome",
                         )
                     with Center():
