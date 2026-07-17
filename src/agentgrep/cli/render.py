@@ -9,6 +9,7 @@ in :mod:`agentgrep.cli.renderers`.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import pathlib
 import sys
@@ -269,9 +270,10 @@ def run_find_command(args: FindArgs) -> int:
 
 def run_ui_command(args: UIArgs) -> int:
     """Execute ``agentgrep ui``."""
-    initial_terms = tuple(args.initial_query.split()) if args.initial_query else ()
-    query = SearchQuery(
-        terms=initial_terms,
+    from agentgrep.query import build_query_from_input, default_registry
+
+    base = SearchQuery(
+        terms=(),
         scope="prompts",
         any_term=False,
         regex=False,
@@ -279,7 +281,12 @@ def run_ui_command(args: UIArgs) -> int:
         agents=AGENT_CHOICES,
         limit=None,
     )
-    _launch_ui(query)
+    result = build_query_from_input(args.initial_query, base, default_registry())
+    query = result.query or dataclasses.replace(
+        base,
+        terms=tuple(args.initial_query.split()),
+    )
+    _launch_ui(query, initial_search_text=args.initial_query or None)
     return 0
 
 

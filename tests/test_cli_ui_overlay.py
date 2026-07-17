@@ -126,6 +126,27 @@ def test_search_ui_overlay_passes_raw_query_text(monkeypatch: pytest.MonkeyPatch
     assert initial_texts == ["agent:codex"]
 
 
+def test_ui_subcommand_compiles_its_visible_query(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Launch text has the same query semantics before and after pressing Enter."""
+    initial_texts: list[str | None] = []
+    captured = _capture_run_ui(monkeypatch, initial_texts)
+
+    assert agentgrep.main(["ui", "agent:codex"]) == 0
+
+    assert initial_texts == ["agent:codex"]
+    assert captured[0].compiled is not None
+    assert captured[0].terms == ()
+
+
+def test_ui_subcommand_preserves_quoted_phrase(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A launch phrase remains one term instead of splitting its quote tokens."""
+    captured = _capture_run_ui(monkeypatch)
+
+    assert agentgrep.main(["ui", '"serene bliss"']) == 0
+
+    assert captured[0].terms == ("serene bliss",)
+
+
 def test_ui_overlay_reports_oversized_query_without_traceback() -> None:
     """A UI-only query budget error becomes a concise CLI diagnostic."""
     from agentgrep.ui._history import QUERY_TEXT_MAX_CHARS
