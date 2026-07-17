@@ -179,6 +179,7 @@ async def test_welcome_wordmark_skips_frames_while_app_is_blurred(
 ) -> None:
     """An inactive terminal pane does not repaint decorative frames."""
     app = _build_empty_ui_app(tmp_path, monkeypatch)
+    app.animation_level = "full"
 
     async with app.run_test(size=(100, 28)) as pilot:
         await pilot.pause()
