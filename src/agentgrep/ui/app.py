@@ -105,12 +105,15 @@ def build_streaming_ui_app(
     ValueError
         If ``layout`` or ``workflow`` names an unregistered component.
     """
-    if registry.layout_spec(layout) is None:
+    layout_spec = registry.layout_spec(layout)
+    if layout_spec is None:
         msg = f"unknown layout {layout!r}; choose from {', '.join(registry.layout_names())}"
         raise ValueError(msg)
-    if registry.workflow_spec(workflow) is None:
+    workflow_spec = registry.workflow_spec(workflow)
+    if workflow_spec is None:
         msg = f"unknown workflow {workflow!r}; choose from {', '.join(registry.workflow_names())}"
         raise ValueError(msg)
+    composition = registry._UiComposition(layout=layout_spec, workflow=workflow_spec)
     try:
         from agentgrep.ui._seams import EngineSearchInvoker
         from agentgrep.ui._shell import ExplorerApp
@@ -124,4 +127,4 @@ def build_streaming_ui_app(
         control=control,
         initial_search_text=initial_search_text,
     )
-    return ExplorerApp(ctx, layout=layout, workflow=workflow)
+    return ExplorerApp(ctx, composition=composition)

@@ -4,22 +4,20 @@
 
 ## Status
 
-Accepted. Shipped as a strangler-fig sequence (relocate the HUD into a layout →
-add the workflow seam → add a second workflow → add a second layout → add the
-registry, CLI, and switching), each step landing behind the {ref}`completion
-gate <adr-non-blocking-tui-invariants>`.
+Accepted. The layout/workflow architecture is an internal composition seam.
+The shipped `agentgrep ui` surface is fixed to one layout/workflow pair; alternate
+registered components remain available to Python factories, tests, and
+embedders.
 
 ## Context
 
 {ref}`ADR 0012 <adr-reusable-tui-widget-architecture>` finished the reusable
 leaf-widget layer behind the `SearchInvoker` engine seam and recorded the
 pi/ink → Textual capability mapping. It deliberately declined a *layout*
-abstraction, on the grounds that "agentgrep ships exactly one frontend" and a
-plugin base class with no second consumer is speculation. That premise no longer
-holds: the goal now is to **launch into — and switch between — different TUI
-surfaces over the same engine and the same normalized records**. The former
-`ExplorerApp` fused the App lifecycle and one fixed heads-up display into a
-single ~2358-line object, so it could be neither swapped nor re-targeted.
+abstraction until a second concrete consumer existed. The subsequent HUD,
+greplog, search, and browse implementations proved that two internal axes are
+useful for separating shell lifecycle, structure, and interaction policy. The
+former `ExplorerApp` had fused those concerns into a single ~2358-line object.
 
 The surface splits along two orthogonal axes:
 
@@ -29,18 +27,23 @@ The surface splits along two orthogonal axes:
   search vs. filter the already-loaded records in-memory).
 
 These are independent: a workflow should drive any layout, and a layout should
-host any workflow. Textual already supplies the mechanisms (`Screen`, `App.MODES`
-/ `switch_mode`, reactive state) — so this is an *extraction and seam* exercise,
-not a new framework. This ADR records the architecture so contributors neither
-re-fuse the App and the view nor invent a parallel plugin system.
+host any workflow. That orthogonality is valuable for implementation tests and
+embedding, but it does not require a normal user-facing selector or live
+switcher. This ADR records the internal architecture so contributors neither
+re-fuse the App and the view nor turn an implementation seam into product
+surface without a separate decision.
 
 ## Decision
 
-The TUI is a thin App shell that mounts one **layout** (a Textual `Screen`)
-driven by one **workflow** (a plain strategy object), both resolved by name from
-a registry and switchable at runtime. The following invariants govern the layer
-(PL for *pluggable layout*), in the enumerated style of {ref}`ADR 0011
-<adr-non-blocking-tui-invariants>`.
+The TUI is a thin App shell that mounts exactly one **layout** (a Textual
+`Screen`) driven by exactly one **workflow** (a plain strategy object), both
+resolved by name from an internal registry. The normal CLI always uses the
+registry defaults. Python app factories keep keyword injection for tests and
+embedding, validate the names, and pass one frozen internal composition to
+`ExplorerApp`. The shell never replaces that composition; the lower-level
+`LayoutScreen.set_workflow` strategy seam remains available to component code.
+The following invariants govern the layer (PL for *pluggable layout*), in the
+enumerated style of {ref}`ADR 0011 <adr-non-blocking-tui-invariants>`.
 
 - **PL-1 — A layout is a `Screen` injected with a shared context.** A layout is a
   `LayoutScreen(Screen)` subclass receiving a frozen `UiContext` (home, the
@@ -54,19 +57,21 @@ a registry and switchable at runtime. The following invariants govern the layer
   (`build_query` / `run_search` / `filter_loaded` / `reset_view` /
   `record_history` / `request_cancel`). A workflow imports no Textual and touches
   no widget, so it runs on any layout and is unit-tested against a fake host.
-- **PL-3 — The App shell owns selection and switching, not presentation.**
+- **PL-3 — The App shell owns initial composition, not switching or presentation.**
   `ExplorerApp(App)` owns lifecycle, theme registration, the ADR-0011 pump bind /
-  watchdog / audit hook, the `UiContext`, and the choice of layout × workflow.
-  Layouts switch via `App.MODES` / `switch_mode` (`F2`, suspend-not-destroy);
-  a layout's workflow swaps via `LayoutScreen.set_workflow` (`F3`). No rendering,
-  matching, or record-detail construction lives on the shell (mirrors RW-6).
+  watchdog / audit hook, the `UiContext`, and construction of the one typed
+  layout × workflow composition it receives. It registers no Textual modes,
+  exposes no layout or workflow cycling bindings/actions, and does not display
+  the internal pair in chrome. No rendering, matching, or record-detail
+  construction lives on the shell (mirrors RW-6).
 - **PL-4 — Layouts and workflows resolve through a frozen, lazy registry.**
   `agentgrep.ui.registry` is a Textual-free catalog of `LayoutSpec` /
   `WorkflowSpec` whose loaders are function-local imports, so listing names never
-  imports Textual and `agentgrep --help` stays cold. A name is validated against
-  the registry before launch; `--layout` / `--workflow` consume the names as
-  argparse `choices`. A future `importlib.metadata` entry-point source can feed
-  the same spec shape without changing consumers.
+  imports Textual. Programmatically injected names are validated against the
+  registry before launch and paired in one frozen value; the shell never
+  handles unresolved names or fallback selection. The CLI does not expose those
+  names. A future `importlib.metadata` entry-point source can feed the same spec
+  shape without changing internal consumers.
 - **PL-5 — Each layout carries its own transport over the shared primitives.**
   A layout's streaming transport reuses `_runtime.make_gated_emitter` /
   `@offload` / `@pump_only` / `stream_apply` (ADR 0011 NB-1..NB-10, unchanged)
@@ -75,18 +80,20 @@ a registry and switchable at runtime. The following invariants govern the layer
   static guard scans **every** `ui/layouts/*.py`, not just the HUD. The transport
   is intentionally *not* hoisted into the base: a shared `present_*` base waits
   for a third consumer, per the defer-until-consumer rule of ADR 0012.
-- **PL-6 — Orthogonality is real and proven.** Any workflow drives any layout.
+- **PL-6 — Orthogonality is an internal contract and is proven.** Any workflow
+  drives any layout.
   The behavior difference is the workflow's routing (`SearchWorkflow` →
   `run_search`, `BrowseWorkflow` → `filter_loaded`); the structure difference is
-  the layout's `compose` + present. The product is proven by `search` × `browse`
-  over `hud` × `greplog`.
+  the layout's `compose` + present. Direct component tests and injected app
+  construction prove `search` × `browse` over `hud` × `greplog`; normal users do
+  not choose among those combinations.
 - **PL-7 — The opaque `Screen` base carries the former App posture.**
   `LayoutScreen` keeps the `t.Any` base the fused App used, because `DOMNode.query`
   (the DOM query) collides with view state; the search-query state is
   `self.search_query` precisely to avoid that. Fully typing the views against
   `Screen` is a follow-up, as it was against `App`.
 
-### Catalog
+### Internal catalog
 
 | Kind | Name | Class | Role |
 | --- | --- | --- | --- |
@@ -95,9 +102,10 @@ a registry and switchable at runtime. The following invariants govern the layer
 | Workflow | `search` (default) | `SearchWorkflow` | Each submission runs a fresh engine search. |
 | Workflow | `browse` | `BrowseWorkflow` | The input filters the loaded records in-memory. |
 
-`agentgrep ui --layout greplog --workflow browse` launches a pair; `F2` cycles
-the layout and `F3` cycles the workflow at runtime, with the active pair shown in
-the title bar.
+`agentgrep ui` launches the fixed `hud` × `search` pair. There are no
+`--layout` / `--workflow` options, runtime cycling keys, Textual mode stacks, or
+active-pair subtitle. Tests and embedders may pass `layout=` and `workflow=` to
+the Python app factories; direct shell tests inject a validated composition.
 
 ## Relationship to ADR 0012
 
@@ -108,8 +116,9 @@ non-blocking catalog are kept intact — layouts compose the same leaf widgets a
 honor the same pump rules. What this ADR reverses is ADR 0012's single-frontend
 *position*: the second consumer it said to wait for has arrived, so the layout
 abstraction (`LayoutScreen`, the `Workflow` seam, the registry) is now
-warranted. No reconciler, flexbox engine, or kill-ring editor is adopted;
-Textual's `Screen` / `MODES` supply the switching primitive directly.
+warranted internally. It does not create multiple shipped frontends or a
+user-facing plugin contract. No reconciler, flexbox engine, or kill-ring editor
+is adopted; Textual's `Screen` supplies the composition boundary directly.
 
 ## Engine changes
 
@@ -120,14 +129,14 @@ native code, no new engine entry point.
 
 ## Consequences
 
-The explorer gains two orthogonal, registry-selected, runtime-switchable axes
-behind a thin shell; the former god-object is now a layout among layouts. Each
-step is independently revertable, and the non-blocking guards run at every gate.
+The former god-object is now one layout behind a thin lifecycle shell, while the
+shipped explorer keeps one stable interaction model. Removing live switching
+also removes suspended-screen state, hidden layout workers, cross-layout workflow
+reattachment, and user-facing key/chrome complexity.
 
-The chief risks: `switch_mode` *suspends* rather than destroys the previous
-layout, so a hidden layout's in-flight worker keeps running against the warm
-{class}`~agentgrep.SearchRuntime` cache — accepted for now (cheap warm-resume);
-a cancel-on-suspend policy is a follow-up. The opaque-base typing (PL-7)
-remains a debt. And the per-layout transport (PL-5) carries a little
-boilerplate over the shared primitives until a third layout justifies a
-`present_*` base.
+The internal registry and alternate pair injection still need direct coverage so
+they do not drift while absent from the CLI. `LayoutScreen.set_workflow` remains
+a programmatic component operation, but `ExplorerApp` never calls it. The
+opaque-base typing (PL-7) remains a debt, and the per-layout transport (PL-5)
+carries a little boilerplate over the shared primitives until a third layout
+justifies a `present_*` base.

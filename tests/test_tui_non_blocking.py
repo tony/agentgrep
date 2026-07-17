@@ -80,7 +80,14 @@ _SCHEDULER_FUNCS = {
 # type, they would false-positive on dicts/strings/futures; the wall-clock
 # watchdog is the backstop for those (ADR 0011 coverage limits).
 _FORBIDDEN_CALL_NAMES = {"open", "input", "run_search_query"}
-_FORBIDDEN_ATTRS = {"read_text", "read_bytes", "iterdir", "rglob"}
+_FORBIDDEN_ATTRS = {
+    "deliver_screenshot",
+    "export_screenshot",
+    "read_text",
+    "read_bytes",
+    "iterdir",
+    "rglob",
+}
 _FORBIDDEN_DOTTED_ROOTS = {
     "subprocess",
     "sqlite3",
@@ -389,7 +396,17 @@ def test_forbidden_call_detector_resolves_aliases_and_families() -> None:
 
 def test_classifier_sees_scheduled_callables_and_on_handlers() -> None:
     """Scheduler / call_from_thread targets and @on handlers classify as pump."""
-    assert {"_after_resize", "_on_theme_changed"} <= _SCHEDULED_PUMP_NAMES  # real sites
+    assert {
+        "_after_resize",
+        "_deliver_screenshot_after_refresh",
+        "_on_theme_changed",
+    } <= _SCHEDULED_PUMP_NAMES  # real sites
+    screenshot_callback = next(
+        method
+        for method in _all_methods()
+        if method.cls == "LayoutScreen" and method.name == "_deliver_screenshot_after_refresh"
+    )
+    assert "pump_only" in screenshot_callback.decorators
     # Data args passed alongside the callable must NOT be seeded (NB-8 false alarm).
     assert not ({"record", "header", "body", "query_terms", "self"} & _SCHEDULED_PUMP_NAMES)
     node = t.cast("ast.FunctionDef", ast.parse("def f(self): ...").body[0])
@@ -460,6 +477,31 @@ def test_workers_are_thread_exclusive_and_grouped() -> None:
         assert isinstance(exclusive, ast.Constant) and exclusive.value is not non_supersedable
 
 
+def test_results_widget_owns_filter_membership_without_hud_rescan() -> None:
+    """Filter replacement reuses the results widget's existing ID delta set."""
+    methods = {(method.cls, method.name): method.node for method in _all_methods()}
+    apply = methods[("HudLayout", "on_filter_completed")]
+    focus = methods[("HudLayout", "_record_for_detail_focus")]
+    results_methods = {
+        name: methods[("SearchResultsList", name)]
+        for name in ("append_records", "set_records", "clear", "contains_record")
+    }
+
+    assert not any(
+        isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "id"
+        for node in ast.walk(apply)
+    )
+    assert any(
+        isinstance(node, ast.Attribute) and node.attr == "contains_record"
+        for node in ast.walk(focus)
+    )
+    for name, node in results_methods.items():
+        assert any(
+            isinstance(item, ast.Attribute) and item.attr == "_record_ids"
+            for item in ast.walk(node)
+        ), name
+
+
 def test_apply_records_batch_uses_bounded_stream_apply() -> None:
     """The batch applier routes through the bounded ``stream_apply`` (NB-4)."""
     batch = next(m for m in _all_methods() if m.name == "_apply_records_batch")
@@ -469,6 +511,30 @@ def test_apply_records_batch_uses_bounded_stream_apply() -> None:
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
     }
     assert "stream_apply" in calls
+
+
+def test_theme_changed_uses_bounded_async_pump_apply() -> None:
+    """Theme-baked rows rebuild asynchronously through the NB-4 chunk cap."""
+    method = next(
+        item
+        for item in _all_methods()
+        if item.cls == "HudLayout" and item.name == "_on_theme_changed"
+    )
+    assert isinstance(method.node, ast.AsyncFunctionDef)
+    assert "pump_only" in method.decorators
+    stream_calls = [
+        node
+        for node in ast.walk(method.node)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "stream_apply"
+    ]
+    assert len(stream_calls) == 1
+    chunk_size = next(
+        keyword.value for keyword in stream_calls[0].keywords if keyword.arg == "chunk_size"
+    )
+    assert isinstance(chunk_size, ast.Attribute)
+    assert chunk_size.attr == "_APPLY_CHUNK_SIZE"
 
 
 # --- runtime guards --------------------------------------------------------

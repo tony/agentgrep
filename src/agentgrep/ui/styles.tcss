@@ -401,6 +401,19 @@ Screen {
 #detail-column.-collapsed {
     display: none;
 }
+/* Logical pane zoom consumes only #body: search/completion/footer stay mounted.
+   These selectors deliberately coexist with the responsive -stacked and
+   -collapsed classes so removing the zoom class restores the exact split. */
+#body.-zoom-results > #results-column,
+#body.-zoom-detail > #detail-column {
+    width: 1fr;
+    height: 1fr;
+    display: block;
+}
+#body.-zoom-results > #detail-column,
+#body.-zoom-detail > #results-column {
+    display: none;
+}
 #filter {
     height: 1;
     /* Dedicated filter/results rules own both separators, leaving this input

@@ -36,7 +36,7 @@ from agentgrep.ui import _runtime
 from agentgrep.ui._context import UiContext
 from agentgrep.ui._source_diagnostics import UiProgressSnapshot
 from agentgrep.ui.layouts._base import LayoutScreen
-from agentgrep.ui.widgets import SearchInput, SearchRequested
+from agentgrep.ui.widgets import CompletionDropdown, SearchInput, SearchRequested
 
 if t.TYPE_CHECKING:
     from agentgrep._engine.matching import CompiledRecordMatcher
@@ -49,11 +49,14 @@ _APPLY_CHUNK_SIZE = 200
 class GrepLogLayout(LayoutScreen):
     """A query input over an append-only :class:`RichLog` of streamed records."""
 
+    ZOOM_ARGUMENT_HINT: t.ClassVar[str] = "[log]"
+
     DEFAULT_CSS = """
     GrepLogLayout { layout: vertical; }
     GrepLogLayout #search { height: 3; }
     GrepLogLayout #greplog { height: 1fr; }
     GrepLogLayout #greplog-status { height: 1; padding: 0 1; color: $text-muted; }
+    GrepLogLayout.-zoom-log #greplog-status { display: none; }
     """
 
     BINDINGS: t.ClassVar[list[t.Any]] = [
@@ -86,6 +89,7 @@ class GrepLogLayout(LayoutScreen):
             else " ".join(self.context.query.terms)
         )
         yield SearchInput(value=initial, placeholder="grep prompts", id="search")
+        yield CompletionDropdown(id="enum-dropdown", target_input_id="search")
         yield RichLog(id="greplog", highlight=False, markup=False, wrap=False, max_lines=5000)
         yield Static("", id="greplog-status")
         yield Footer()
@@ -93,6 +97,8 @@ class GrepLogLayout(LayoutScreen):
     def on_mount(self) -> None:
         """Cache widgets, then attach the workflow (its initial dispatch streams)."""
         self._search_input = self.query_one("#search")
+        self._enum_dropdown = self.query_one("#enum-dropdown")
+        self._enum_dropdown.display = False
         self._log = self.query_one("#greplog")
         self._status = self.query_one("#greplog-status")
         self._search_input.cursor_blink = False
@@ -100,13 +106,52 @@ class GrepLogLayout(LayoutScreen):
         super().on_mount()
         self._search_input.focus()
 
+    @_runtime.pump_only
+    def on_input_changed(self, event: object) -> None:
+        """Update the shared slash menu as grep-log input changes."""
+        source = getattr(event, "input", None)
+        if getattr(source, "id", None) != "search":
+            return
+        value = str(getattr(event, "value", ""))
+        if not self._update_command_completion(value):
+            self._hide_command_completion()
+
+    @_runtime.pump_only
+    def on_option_list_option_selected(self, event: object) -> None:
+        """Run a selected row from the shared slash-command menu."""
+        self._select_command_option(event)
+
+    @_runtime.pump_only
     def on_search_requested(self, message: SearchRequested) -> None:
-        """Primary input submitted — route to the active workflow."""
-        self._workflow.on_query(self, message.payload.text.strip())
+        """Primary input submitted — run a command or route to the workflow."""
+        text = message.payload.text.strip()
+        if self._dispatch_slash_text(text) is not None:
+            return
+        self._workflow.on_query(self, text)
 
     def action_stop_search(self) -> None:
         """``Esc``: cooperatively stop the in-flight grep."""
         self.request_cancel()
+
+    @_runtime.pump_only
+    def handle_maximize_command(self, argument: str) -> bool:
+        """Give the log all available content rows without hiding the shell."""
+        target = argument.strip().lower()
+        if target not in {"", "log"}:
+            self.notify(
+                "Maximize target must be log.",
+                title="Maximize",
+                severity="warning",
+            )
+            return False
+        self.add_class("-zoom-log")
+        return True
+
+    @_runtime.pump_only
+    def handle_minimize_command(self) -> bool:
+        """Restore the grep-log status chrome."""
+        self.remove_class("-zoom-log")
+        return True
 
     # --- WorkflowHost surface -------------------------------------------------
     def build_query(self, text: str) -> SearchQuery:

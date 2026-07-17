@@ -43,6 +43,59 @@ async def _mount_greplog(app: t.Any, pilot: t.Any) -> t.Any:
     return layout
 
 
+async def _submit_command(pilot: t.Any, layout: t.Any, text: str) -> None:
+    """Submit one slash command through grep-log's mounted search input."""
+    layout._search_input.value = text
+    layout._search_input.cursor_position = len(text)
+    layout._search_input.focus()
+    await pilot.pause()
+    await pilot.press("enter")
+    await pilot.pause()
+
+
+async def test_greplog_zoom_recovers_status_and_keeps_command_shell(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Log zoom grows only the log; typed minimize restores its status chrome."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        layout = await _mount_greplog(app, pilot)
+        search = layout.query_one("#search")
+        log = layout.query_one("#greplog")
+        status = layout.query_one("#greplog-status")
+        footer = layout.query_one("Footer")
+        by_name = {command.name: command for command in layout.slash_commands}
+        original = (log.region, status.region, search.region, footer.region)
+        assert by_name["maximize"].argument_hint == "[log]"
+        assert layout.maximized is None
+
+        await _submit_command(pilot, layout, "/maximize log")
+
+        assert layout.maximized is None
+        assert layout.has_class("-zoom-log")
+        assert status.region.height == 0
+        assert log.region.height > original[0].height
+        assert search.region == original[2]
+        assert footer.region == original[3]
+        assert app.focused is search
+
+        await pilot.press(*"/minimize", "enter")
+        await pilot.pause()
+
+        assert layout.maximized is None
+        assert not layout.has_class("-zoom-log")
+        assert (log.region, status.region, search.region, footer.region) == original
+        assert app.focused is search
+
+        await _submit_command(pilot, layout, "/maximize")
+        assert layout.has_class("-zoom-log")
+        assert layout.maximized is None
+        await _submit_command(pilot, layout, "/minimize")
+        assert not layout.has_class("-zoom-log")
+
+
 async def test_greplog_streams_records_into_the_log(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

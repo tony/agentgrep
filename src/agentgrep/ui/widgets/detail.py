@@ -11,7 +11,7 @@ import typing as t
 from textual.containers import VerticalScroll
 
 from agentgrep.ui.format import scroll_percent
-from agentgrep.ui.widgets.messages import DetailScrollChanged
+from agentgrep.ui.widgets.messages import DetailFocusRequested, DetailScrollChanged
 
 __all__ = ["DetailScroll"]
 
@@ -48,8 +48,7 @@ class DetailScroll(VerticalScroll, can_focus=True):
 
     def action_focus_results(self) -> None:
         """Move focus leftward back to the results list (vim-style ``h``)."""
-        results = self.app.query_one("#results")
-        t.cast("t.Any", results).focus()
+        self.post_message(DetailFocusRequested("results"))
 
     def action_scroll_up(self) -> None:
         """Release focus to the filter input when already scrolled to the top.
@@ -62,7 +61,7 @@ class DetailScroll(VerticalScroll, can_focus=True):
         """
         scroll_y = t.cast("float", getattr(self, "scroll_y", 0))
         if scroll_y <= 0:
-            self.app.query_one("#filter").focus()
+            self.post_message(DetailFocusRequested("filter"))
         else:
             super().action_scroll_up()
 

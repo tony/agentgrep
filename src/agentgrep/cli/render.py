@@ -267,8 +267,6 @@ def run_ui_command(args: UIArgs) -> int:
         pathlib.Path.home(),
         query,
         control=SearchControl(),
-        layout=args.layout,
-        workflow=args.workflow,
     )
     return 0
 

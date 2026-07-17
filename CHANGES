@@ -42,6 +42,59 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### Breaking changes
+
+#### TUI layout and workflow controls retired (#125)
+
+`agentgrep ui` now launches one supported HUD and search experience. Remove
+`--layout` and `--workflow` from saved invocations; `F2` and `F3` no longer
+cycle experimental components or add an internal pair to the title.
+
+The layout/workflow implementation split remains intact. Python app factories
+can still choose an alternate initial pair for embedding and focused tests,
+while the shipped shell never switches it at runtime.
+
+### What's new
+
+#### Explorer controls move into slash commands (#125)
+
+The explorer now keeps its commands inside the primary input. Type `/` to open
+a compact menu, keep typing to filter it, or use `/help` to see the active
+command set. `Ctrl-P` no longer opens Textual's screen-covering command palette.
+
+The shared surface includes `/clear`, `/exit`, `/keys`, and `/theme`, with
+aliases and arguments shown directly in the menu. Unrecognized slash text stays
+available as a search instead of being swallowed as a command.
+
+#### Content panes zoom without hiding controls (#125)
+
+`/maximize` gives the results or detail pane the available body space while
+keeping the primary input and footer reachable. It follows the most recently
+used content pane, accepts an explicit `results` or `detail` target, and pairs
+with `/minimize` to restore the responsive split.
+
+#### Clean explorer screenshots (#125)
+
+`/screenshot` saves an automatically named SVG after clearing the command text
+and menu from the frame. The capture preserves the current search, results,
+theme, and zoom while keeping input and animation responsive.
+
+Only the newest valid screenshot request can finish delivery, so a superseded
+capture cannot overwrite a newer view or escape from a layout that has already
+closed.
+
+### Fixes
+
+#### Theme changes and zoom navigation stay visible (#125)
+
+Theme changes now repaint rows that were hidden by a filter before they return,
+so one result list cannot mix old and new colors. Directional navigation and
+detail-pane `h` / `k` bindings reveal their destination before moving focus,
+including in narrow and stacked terminals.
+
+Clearing or starting a search while the detail pane is zoomed now restores the
+empty and searching panels instead of leaving a blank body.
+
 ## agentgrep 0.1.0a35 (2026-07-13)
 
 agentgrep 0.1.0a35 makes the interactive explorer's (`agentgrep ui`) scan

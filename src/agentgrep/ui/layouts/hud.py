@@ -51,7 +51,7 @@ from agentgrep.progress import (
 )
 from agentgrep.query import default_registry
 from agentgrep.records import SearchQuery, SearchRecord
-from agentgrep.ui import _history, _runtime, commands, theme as ui_theme
+from agentgrep.ui import _history, _runtime, theme as ui_theme
 from agentgrep.ui._context import UiContext
 from agentgrep.ui._source_diagnostics import (
     SourceScanFinished,
@@ -71,6 +71,7 @@ from agentgrep.ui.widgets import (
     CompletionDropdown,
     DetailFindInput,
     DetailFindRequested,
+    DetailFocusRequested,
     DetailScroll,
     DetailScrollChanged,
     FilterCompleted,
@@ -105,6 +106,8 @@ _DetailFindBaseKey = tuple[str, tuple[str, ...], bool, bool, tuple[str, ...]]
 class HudLayout(LayoutScreen):
     """Search box, streaming results list, detail pane, and status chrome."""
 
+    ZOOM_ARGUMENT_HINT: t.ClassVar[str] = "[results|detail]"
+
     # ``priority=True`` on the directional ``ctrl+hjkl`` bindings pushes
     # them into Textual's priority dispatch lane so they win over any
     # widget binding for the same key (e.g. ``Input``'s readline
@@ -117,8 +120,7 @@ class HudLayout(LayoutScreen):
         ("escape", "stop_search", "Stop search"),
         ("ctrl+backslash", "toggle_detail_progress", "Detail"),
         ("ctrl+c", "smart_quit", "Stop / Quit"),
-        # priority so the focused search Input doesn't swallow it, matching
-        # Textual's own command-palette ctrl+p.
+        # Priority so the focused search Input cannot intercept recall.
         Binding("ctrl+r", "recall_history", "History", priority=True),
         Binding("ctrl+h", "focus_pane_left", "← Pane", priority=True),
         Binding("ctrl+j", "focus_pane_down", "↓ Pane", priority=True),
@@ -179,9 +181,7 @@ class HudLayout(LayoutScreen):
             [] if self._history_disabled else _history.load_history(self._history_path)
         )
         self._last_recorded_text = self._history[0].text if self._history else ""
-        # The slash commands currently shown in the search dropdown, parallel
-        # to its option rows; empty when the dropdown isn't in command mode.
-        self._command_matches: tuple[commands.SlashCommand, ...] = ()
+        self._theme_generation: int = 0
         self._results: SearchResultsList | None = None
         self._detail: StaticLike | None = None
         self._detail_row: SlowSourceDiagnosticsRow | None = None
@@ -197,7 +197,6 @@ class HudLayout(LayoutScreen):
         self._completion_suggester = QuerySuggester(default_registry())
         # One highlighter syntax-colors the typed query on both inputs.
         self._query_highlighter = QueryHighlighter()
-        self._enum_dropdown: t.Any = None
         self._enum_values: tuple[str, ...] = ()
         self._filter_dropdown: t.Any = None
         self._filter_dropdown_values: tuple[str, ...] = ()
@@ -219,6 +218,8 @@ class HudLayout(LayoutScreen):
         # patching (``_pending_autohighlights``) must not trip it.
         self._stacked: bool = False
         self._detail_opened: bool = False
+        self._zoomed_pane: t.Literal["results", "detail"] | None = None
+        self._last_content_pane: t.Literal["results", "detail"] = "results"
         self._pending_autohighlights: int = 0
         # Literal terms of the active filter, highlighted in the detail
         # pane in a distinct color from the search-query terms.
@@ -275,7 +276,8 @@ class HudLayout(LayoutScreen):
     def _get_start_time(self) -> float | None:
         return self._started_at
 
-    def _on_theme_changed(self, _theme: object) -> None:
+    @_runtime.pump_only
+    async def _on_theme_changed(self, _theme: object) -> None:
         """Rebuild Rich-baked surfaces when the palette switches.
 
         The chrome recolors automatically through TCSS, but the results
@@ -283,8 +285,25 @@ class HudLayout(LayoutScreen):
         build time, so they are rebuilt against the new theme's tokens. The
         detail caches are dropped so the rebuild reads fresh colors.
         """
-        if self._results is not None:
-            self._results.rerender_records()
+        if not self.is_mounted:
+            return
+        self._theme_generation += 1
+        generation = self._theme_generation
+        results = self._results
+        if results is not None:
+            records = results.prepare_theme_rerender()
+
+            def apply_chunk(chunk: cabc.Sequence[SearchRecord]) -> None:
+                if self._theme_repaint_is_live(generation, results):
+                    results.apply_theme_rerender(chunk)
+
+            await _runtime.stream_apply(
+                records,
+                apply_chunk,
+                chunk_size=self._APPLY_CHUNK_SIZE,
+            )
+        if not self._theme_repaint_is_live(generation, results):
+            return
         if self._filter_header is not None:
             self._filter_header.refresh_theme()
         if self._searching_panel is not None:
@@ -292,6 +311,14 @@ class HudLayout(LayoutScreen):
         self._detail_body_cache.clear()
         if self._current_detail_record is not None:
             self.show_detail(self._current_detail_record)
+
+    def _theme_repaint_is_live(
+        self,
+        generation: int,
+        results: SearchResultsList | None,
+    ) -> bool:
+        """Return whether one yielded theme repaint still owns the live HUD."""
+        return self.is_mounted and generation == self._theme_generation and results is self._results
 
     def compose(self) -> cabc.Iterator[object]:
         """Build the widget tree (search → body[results-col, detail-col] → footer).
@@ -440,9 +467,9 @@ class HudLayout(LayoutScreen):
             typed_input.cursor_blink = False
             typed_input.select_on_focus = False
         self._search_emit = self._make_gated_emit()
-        # Rebuild Rich-baked rows/detail when the user switches palette
-        # (e.g. dark <-> light via the command palette). The pump-thread bind
-        # and watchdog are owned by the App shell (it owns the pump).
+        # Rebuild Rich-baked rows/detail when the active color palette changes.
+        # The pump-thread bind and watchdog are owned by the App shell (it owns
+        # the pump).
         self.app.theme_changed_signal.subscribe(self, self._on_theme_changed)
         self._apply_responsive_layout()
         # Attach the workflow (base.on_mount): it seeds the initial dispatch —
@@ -477,6 +504,8 @@ class HudLayout(LayoutScreen):
         spinner timer is stopped whenever the region leaves the searching
         view; its ``begin`` is armed by the search flow on entry.
         """
+        if view in {"empty", "searching"} and self._zoomed_pane == "detail":
+            self.handle_minimize_command()
         if self._body is not None:
             body = t.cast("t.Any", self._body)
             body.set_class(view == "empty", "-empty")
@@ -508,6 +537,10 @@ class HudLayout(LayoutScreen):
         filter_active = focused_id == "filter"
         results_active = focused_id == "results"
         detail_active = focused_id in {"detail-scroll", "detail-find"}
+        if filter_active or results_active:
+            self._last_content_pane = "results"
+        elif detail_active:
+            self._last_content_pane = "detail"
         if self._filter_header is not None:
             t.cast("t.Any", self._filter_header).set_class(filter_active, "-active")
         if self._results_header is not None:
@@ -648,6 +681,7 @@ class HudLayout(LayoutScreen):
                 str(event.error) if event.error else None,
             )
 
+    @_runtime.pump_only
     def on_input_changed(self, event: object) -> None:
         """Refresh the relevant completion dropdown as an input value changes."""
         source = getattr(event, "input", None)
@@ -666,55 +700,11 @@ class HudLayout(LayoutScreen):
 
     def _update_search_dropdown(self, value: str) -> None:
         """Populate the search dropdown — slash commands, else keyword completion."""
-        if value.lstrip().startswith("/"):
-            self._update_command_dropdown(value)
+        if self._update_command_completion(value):
             return
-        self._command_matches = ()
-        if self._enum_dropdown is not None:
-            t.cast("t.Any", self._enum_dropdown).remove_class("-commands")
         values = keyword_completion_candidates(value, default_registry()) or ()
         self._enum_values = values
         self._populate_dropdown(self._enum_dropdown, self._search_input, values)
-
-    def _update_command_dropdown(self, value: str) -> None:
-        """Show the pi-style slash-command menu, prefix-filtered by the typed token.
-
-        Rows are an aligned ``name`` column + a dim description (no inline
-        aliases, which bloat the row); the ``-commands`` class swaps the
-        bordered keyword picker for pi's flush, borderless list. The rows are
-        stored in ``self._command_matches`` parallel to the option list so
-        :meth:`on_option_list_option_selected` can dispatch the chosen one.
-        """
-        from textual.content import Content
-        from textual.widgets.option_list import Option
-
-        token, args = commands.parse_command(value)
-        # A command takes no args; "/help find prompts" is literal search
-        # text, so leave the menu empty and let Enter fall through to
-        # on_search_requested rather than running the matched command.
-        matches = () if args else commands.command_matches(token)
-        self._command_matches = matches
-        dropdown = self._enum_dropdown
-        if dropdown is None:
-            return
-        if not matches:
-            dropdown.display = False
-            return
-        t.cast("t.Any", dropdown).add_class("-commands")
-        dropdown.clear_options()
-        # Pad the name column so the dim descriptions line up (pi's padEnd).
-        name_width = max(len(command.name) for command in matches) + 2
-        for command in matches:
-            prompt = Content.assemble(
-                (command.name.ljust(name_width), ""),
-                (command.description, "dim"),
-            )
-            dropdown.add_option(Option(prompt))
-        # The menu lists whole commands, so anchor it at the input's left edge
-        # rather than the cursor column (unlike a token completion).
-        dropdown.styles.offset = (0, 0)
-        dropdown.display = True
-        dropdown.highlighted = 0
 
     def _update_filter_dropdown(self, value: str) -> None:
         """Populate and show/hide the filter box's keyword dropdown."""
@@ -753,13 +743,13 @@ class HudLayout(LayoutScreen):
         cursor_x = int(t.cast("t.Any", target_input).cursor_screen_offset.x)
         dropdown.styles.offset = (max(cursor_x - 1, 0), 0)
 
+    @_runtime.pump_only
     def on_option_list_option_selected(self, event: object) -> None:
         """Accept a completion choice — or run a slash command — from the dropdown."""
         option_list = getattr(event, "option_list", None)
         index = int(getattr(event, "option_index", 0) or 0)
         if option_list is self._enum_dropdown:
-            if self._command_matches:
-                self._run_command_at(index)
+            if self._select_command_option(event):
                 return
             self._accept_dropdown_choice(
                 self._search_input,
@@ -814,6 +804,7 @@ class HudLayout(LayoutScreen):
                 str(exc),
             )
 
+    @_runtime.pump_only
     def on_search_requested(self, message: SearchRequested) -> None:
         """Primary input submitted: run a slash command, else route to the workflow.
 
@@ -822,14 +813,8 @@ class HudLayout(LayoutScreen):
         active workflow, which decides whether to search, filter, or reset.
         """
         text = message.payload.text.strip()
-        if text.startswith("/"):
-            token, args = commands.parse_command(text)
-            command = commands.resolve_command(token)
-            if not args and command is not None:
-                # Exact slash commands run handlers; other leading-slash
-                # text remains searchable prompt/path text.
-                self._dispatch_slash_command(command, args)
-                return
+        if self._dispatch_slash_text(text) is not None:
+            return
         self._workflow.on_query(self, text)
 
     # --- WorkflowHost surface: the active workflow drives the layout here -----
@@ -855,23 +840,6 @@ class HudLayout(LayoutScreen):
     def request_cancel(self) -> None:
         """Cooperatively signal the in-flight search to wrap up (host surface)."""
         self.control.request_answer_now()
-
-    def _dispatch_slash_command(self, command: commands.SlashCommand, args: str) -> None:
-        """Run an already-resolved ``/command`` from the search box."""
-        if self._enum_dropdown is not None:
-            self._enum_dropdown.display = False
-        self._command_matches = ()
-        command.run(self, args)
-
-    def _run_command_at(self, index: int) -> None:
-        """Dispatch the slash command at ``index`` in the open command menu."""
-        if not (0 <= index < len(self._command_matches)):
-            return
-        command = self._command_matches[index]
-        if self._enum_dropdown is not None:
-            self._enum_dropdown.display = False
-        self._command_matches = ()
-        command.run(self, "")
 
     def _record_history(self, text: str) -> None:
         """Append a submitted, non-empty query to the persisted history.
@@ -1103,6 +1071,45 @@ class HudLayout(LayoutScreen):
         # set stranded in a hidden pane.
         collapsed = stacked and not self._detail_opened
         t.cast("t.Any", self._detail_column).set_class(collapsed, "-collapsed")
+
+    @_runtime.pump_only
+    def handle_maximize_command(self, argument: str) -> bool:
+        """Toggle or select a logical results/detail column zoom."""
+        target = argument.strip().lower()
+        if not target:
+            if self._zoomed_pane is not None:
+                return self.handle_minimize_command()
+            target = self._last_content_pane
+        if target not in {"results", "detail"}:
+            self.notify(
+                "Maximize target must be results or detail.",
+                title="Maximize",
+                severity="warning",
+            )
+            return False
+        if target == "detail":
+            record = self._record_for_detail_focus()
+            if record is None:
+                self.notify(
+                    "No detail is available to maximize.",
+                    title="Maximize",
+                    severity="warning",
+                )
+                return False
+            self.show_detail(record)
+        zoomed: t.Literal["results", "detail"] = "detail" if target == "detail" else "results"
+        self._set_zoomed_pane(zoomed)
+        return True
+
+    @_runtime.pump_only
+    def handle_minimize_command(self) -> bool:
+        """Restore the responsive results/detail split without moving focus."""
+        self._zoomed_pane = None
+        if self._body is not None:
+            body = t.cast("t.Any", self._body)
+            body.remove_class("-zoom-results", "-zoom-detail")
+        self._apply_responsive_layout()
+        return True
 
     @_runtime.pump_only
     def action_toggle_detail_progress(self) -> None:
@@ -2182,12 +2189,34 @@ class HudLayout(LayoutScreen):
     # it side-by-side. Focusable regions: #search (top), then in the
     # body #filter and #results, and #detail-scroll (right or bottom).
 
+    @_runtime.pump_only
+    def _set_zoomed_pane(self, pane: t.Literal["results", "detail"]) -> None:
+        """Paint one logical content pane without moving focus."""
+        self._zoomed_pane = pane
+        if self._body is None:
+            return
+        body = t.cast("t.Any", self._body)
+        body.set_class(pane == "results", "-zoom-results")
+        body.set_class(pane == "detail", "-zoom-detail")
+
     def _focus_widget_by_id(self, widget_id: str) -> None:
         try:
             target = self.query_one(f"#{widget_id}")
         except Exception:
             return
+        target_pane: t.Literal["results", "detail"] | None = None
+        if widget_id in {"results", "filter"}:
+            target_pane = "results"
+        elif widget_id in {"detail-scroll", "detail-find"}:
+            target_pane = "detail"
+        if target_pane is not None and self._zoomed_pane not in {None, target_pane}:
+            self._set_zoomed_pane(target_pane)
         target.focus()
+
+    @_runtime.pump_only
+    def on_detail_focus_requested(self, message: DetailFocusRequested) -> None:
+        """Reveal and focus a neighboring widget requested by the detail pane."""
+        self._focus_widget_by_id(message.target)
 
     def _record_for_detail_focus(self) -> SearchRecord | None:
         """Return the record explicit detail focus should render."""
@@ -2197,7 +2226,11 @@ class HudLayout(LayoutScreen):
         if highlighted is not None and 0 <= highlighted < len(self.filtered_records):
             return self.filtered_records[highlighted]
         current = self._current_detail_record
-        if current is not None and any(record is current for record in self.filtered_records):
+        if (
+            current is not None
+            and self._results is not None
+            and self._results.contains_record(current)
+        ):
             return current
         return self.filtered_records[0] if self.filtered_records else None
 

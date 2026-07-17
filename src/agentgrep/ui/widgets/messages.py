@@ -13,6 +13,8 @@ directly.
 
 from __future__ import annotations
 
+import typing as t
+
 from textual.message import Message
 
 from agentgrep.progress import (
@@ -23,6 +25,7 @@ from agentgrep.progress import (
 
 __all__ = [
     "DetailFindRequested",
+    "DetailFocusRequested",
     "DetailScrollChanged",
     "FilterCompleted",
     "FilterRequested",
@@ -37,6 +40,14 @@ class DetailFindRequested(Message):
     def __init__(self, text: str) -> None:
         super().__init__()
         self.text = text
+
+
+class DetailFocusRequested(Message):
+    """Request that the layout reveal and focus a detail-pane neighbor."""
+
+    def __init__(self, target: t.Literal["filter", "results"]) -> None:
+        super().__init__()
+        self.target = target
 
 
 class FilterRequested(Message):

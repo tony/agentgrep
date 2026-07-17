@@ -13,7 +13,7 @@ from collections import abc as cabc
 
 import rich.text as rich_text
 from textual.widgets import OptionList
-from textual.widgets.option_list import Option
+from textual.widgets.option_list import Option, OptionDoesNotExist
 
 from agentgrep._engine.orchestration import cached_haystack
 from agentgrep._text import format_compact_path
@@ -66,10 +66,12 @@ class SearchResultsList(OptionList, can_focus=True):
     ) -> None:
         super().__init__(id=id)
         self._records: list[SearchRecord] = []
-        # Rendered rows memoized by record id (rows bake theme hex but are stable
-        # within a palette): a filter rebuild reuses them instead of paying the
-        # dominant _render_record cost again. Cleared on clear() / rerender.
-        self._render_cache: dict[int, rich_text.Text] = {}
+        self._record_ids: set[int] = set()
+        # Rows bake theme hex, so the palette name participates in the key.
+        # Filtering can then reuse rows without resurfacing stale colors after
+        # a theme switch. Agentgrep has two fixed palettes, bounding retention
+        # to at most two renderings per retained record.
+        self._render_cache: dict[tuple[str, int], rich_text.Text] = {}
 
     def append_records(self, records: cabc.Sequence[SearchRecord]) -> None:
         """Append a batch of records — invoked via ``app.call_from_thread``.
@@ -82,6 +84,7 @@ class SearchResultsList(OptionList, can_focus=True):
             return
         self._records.extend(records)
         for record in records:
+            self._record_ids.add(id(record))
             cached_haystack(record)
         self.add_options(
             [Option(self._render_record(r), id=str(id(r))) for r in records],
@@ -110,16 +113,17 @@ class SearchResultsList(OptionList, can_focus=True):
         """
         new_records = list(records)
         new_ids: set[int] = {id(record) for record in new_records}
+        self._record_ids = new_ids
         current_records = self._records
         if not current_records:
-            self._rebuild_options(new_records)
+            self._rebuild_options(new_records, record_ids=new_ids)
             return 0
         current_index_by_id: dict[int, int] = {
             id(record): idx for idx, record in enumerate(current_records)
         }
         additions = [record for record in new_records if id(record) not in current_index_by_id]
         if additions:
-            self._rebuild_options(new_records)
+            self._rebuild_options(new_records, record_ids=new_ids)
             return 0
         to_remove_indices = sorted(
             (
@@ -133,7 +137,7 @@ class SearchResultsList(OptionList, can_focus=True):
             # More than half goes — a single clear+rebuild is cheaper
             # than N ``remove_option_at_index`` calls (each shifts the
             # internal options list).
-            self._rebuild_options(new_records)
+            self._rebuild_options(new_records, record_ids=new_ids)
             return 0
         programmatic_highlights = 0
         for idx in to_remove_indices:
@@ -145,9 +149,17 @@ class SearchResultsList(OptionList, can_focus=True):
         self._records = new_records
         return programmatic_highlights
 
-    def _rebuild_options(self, records: cabc.Sequence[SearchRecord]) -> None:
+    def _rebuild_options(
+        self,
+        records: cabc.Sequence[SearchRecord],
+        *,
+        record_ids: set[int] | None = None,
+    ) -> None:
         """Full clear + rebuild path. Used when delta-apply isn't safe."""
         self._records = list(records)
+        self._record_ids = (
+            record_ids if record_ids is not None else {id(record) for record in self._records}
+        )
         self.clear_options()
         if self._records:
             for record in self._records:
@@ -156,21 +168,29 @@ class SearchResultsList(OptionList, can_focus=True):
                 [Option(self._render_record(r), id=str(id(r))) for r in self._records],
             )
 
-    def rerender_records(self) -> None:
-        """Re-render the existing rows against the current theme tokens.
+    def prepare_theme_rerender(self) -> cabc.Sequence[SearchRecord]:
+        """Return the current record sequence for a bounded theme repaint."""
+        return self._records
 
-        The rows bake concrete hex into Rich renderables at build time, so
-        a palette switch needs a full rebuild — drop the row cache first so the
-        new palette is rendered.
-        """
-        self._render_cache.clear()
-        self._rebuild_options(self._records)
+    def apply_theme_rerender(self, records: cabc.Sequence[SearchRecord]) -> None:
+        """Replace one bounded record slice with current-theme row prompts."""
+        for record in records:
+            try:
+                index = self.get_option_index(str(id(record)))
+            except OptionDoesNotExist:
+                continue
+            self.replace_option_prompt_at_index(index, self._render_record(record))
 
     def clear(self) -> None:
         """Empty the list."""
         self._records = []
+        self._record_ids.clear()
         self._render_cache.clear()
         self.clear_options()
+
+    def contains_record(self, record: SearchRecord) -> bool:
+        """Return whether ``record`` is in the current filtered result set."""
+        return id(record) in self._record_ids
 
     def _scroll_percent(self) -> int:
         """Compute the current scroll percent, clamped to ``[0, 100]``."""
@@ -212,12 +232,13 @@ class SearchResultsList(OptionList, can_focus=True):
         self._post_scroll_changed(cursor=highlighted)
 
     def _render_record(self, record: SearchRecord) -> rich_text.Text:
-        """Return the rendered row for ``record``, memoized by id."""
-        cached = self._render_cache.get(id(record))
+        """Return the rendered row, memoized by palette and record identity."""
+        cache_key = (str(self.app.theme), id(record))
+        cached = self._render_cache.get(cache_key)
         if cached is not None:
             return cached
         row = self._build_row(record)
-        self._render_cache[id(record)] = row
+        self._render_cache[cache_key] = row
         return row
 
     def _build_row(self, record: SearchRecord) -> rich_text.Text:

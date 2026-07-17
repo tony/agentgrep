@@ -50,31 +50,31 @@ Open the explorer over prompts and conversations at once:
 $ agentgrep grep tmux --scope all --ui
 ```
 
-## Layouts and workflows
+## Slash commands
 
-The explorer is a thin shell over two pluggable axes — a **layout** (how records
-are arranged on screen) and a **workflow** (how the primary input queries them).
-Both are selectable at launch and switchable at runtime, so the same engine and
-the same records can drive very different surfaces.
+Type `/` in the primary input to open the same compact, pi-like command menu in
+the explorer. Keep typing to filter it, or use `/help` to see the whole active
+command set. `Ctrl-P` is intentionally inert; the slash menu replaces the larger
+Textual command palette without covering your results.
 
-Two layouts ship:
+The shared commands are:
 
-- **`hud`** (default) — the search bar, streaming results list, and detail pane.
-- **`greplog`** — an append-only `grep`-style log of matches as they stream in.
+- `/clear` clears the current search and results.
+- `/exit` or `/quit` closes agentgrep.
+- `/help` lists the active slash commands, and `/keys` toggles the active key
+  bindings panel.
+- `/theme` toggles the theme; `/theme dark` and `/theme light` select one
+  directly.
+- `/maximize` gives a content pane the available body space while keeping the
+  primary input and footer reachable. It follows the last-used results or detail
+  pane; use `/maximize results` or `/maximize detail` to be explicit.
+- `/minimize` restores the normal results/detail split.
+- `/screenshot` captures the current screen as an automatically named SVG.
 
-Two workflows ship:
-
-- **`search`** (default) — the input runs a fresh engine search on each submit.
-- **`browse`** — the input filters the already-loaded records in-memory.
-
-Launch straight into a specific pair:
-
-```console
-$ agentgrep ui --layout greplog --workflow browse
-```
-
-Switch at runtime with `F2` (cycle the layout) and `F3` (cycle the workflow);
-the active `layout · workflow` pair shows in the title bar.
+`/screenshot` first clears the command text and menu, then captures the explorer
+without cancelling the search or changing its results, theme, or zoom.
+It accepts no path argument. In a terminal, Textual saves the SVG to your
+downloads directory; in a browser session, it initiates a download.
 
 ## Command
 

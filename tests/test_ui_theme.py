@@ -1,14 +1,15 @@
 """Tests for the pi-lite theme, semantic tokens, and global stylesheet.
 
 Pure tests cover the token maps and computed contrast offline; Pilot tests
-confirm both themes register, the stylesheet parses *and applies*, the palette
-switches (including to a built-in theme without ``$ag-*`` tokens, which the
+confirm both themes register, the stylesheet parses *and applies*, theme
+switching remains safe (including to a built-in theme without ``$ag-*`` tokens, which the
 ``get_theme_variable_defaults`` safety net must keep resolvable), and that
 Rich-baked rows re-render against the new palette.
 """
 
 from __future__ import annotations
 
+import asyncio
 import pathlib
 import typing as t
 
@@ -17,7 +18,7 @@ from textual.color import Color
 from textual.css.stylesheet import Stylesheet
 
 from agentgrep.records import AGENT_CHOICES
-from agentgrep.ui import theme
+from agentgrep.ui import _runtime, theme
 from tests.test_agentgrep import _build_empty_ui_app, _ui_record, load_agentgrep_module
 
 _STYLESHEET = pathlib.Path(theme.__file__).with_name("styles.tcss")
@@ -220,3 +221,141 @@ async def test_theme_switch_rerenders_rows(
         app.theme = theme.LIGHT_THEME_NAME
         await pilot.pause()
         assert any("#0087af" in style for style in agent_span_styles())
+
+
+async def test_theme_switch_invalidates_filtered_out_row_cache(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rows hidden during a theme switch recolor when filtering widens."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        records = [
+            _ui_record(
+                agentgrep,
+                tmp_path / f"filtered-{index}.jsonl",
+                f"codex prompt body {index}",
+                f"filtered-{index}",
+            )
+            for index in range(2)
+        ]
+        results = app.screen._results
+        results._rebuild_options(records)
+        results.set_records(records[:1])
+
+        app.theme = theme.LIGHT_THEME_NAME
+        await pilot.pause()
+        results.set_records(records)
+
+        for index in range(2):
+            option = results.get_option_at_index(index)
+            styles = [str(span.style) for span in option.prompt.spans]
+            assert any("#0087af" in style for style in styles)
+            assert not any("#00d7ff" in style for style in styles)
+
+
+async def test_theme_switch_rebuilds_rows_in_bounded_chunks(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A large result palette switch yields after each bounded row slice."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    chunk_sizes: list[int] = []
+    original_stream_apply = _runtime.stream_apply
+
+    async def tracking_stream_apply(
+        items: t.Any,
+        apply_chunk: t.Callable[[t.Any], None],
+        *,
+        chunk_size: int = 200,
+        yield_between: t.Callable[[], t.Awaitable[None]] | None = None,
+    ) -> None:
+        def track_and_apply(chunk: t.Any) -> None:
+            chunk_sizes.append(len(chunk))
+            apply_chunk(chunk)
+
+        await original_stream_apply(
+            items,
+            track_and_apply,
+            chunk_size=chunk_size,
+            yield_between=yield_between,
+        )
+
+    monkeypatch.setattr(_runtime, "stream_apply", tracking_stream_apply)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        records = [
+            _ui_record(
+                agentgrep,
+                tmp_path / f"r{index}.jsonl",
+                f"codex prompt body {index}",
+                f"r{index}",
+            )
+            for index in range(401)
+        ]
+        app.screen._results._rebuild_options(records)
+
+        app.theme = theme.LIGHT_THEME_NAME
+        await pilot.pause()
+
+        assert chunk_sizes == [200, 200, 1]
+        assert app.screen._results.option_count == len(records)
+
+
+async def test_rapid_theme_switch_supersedes_chunked_repaint(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A newer palette wins when it arrives during a yielded row repaint."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    first_chunk_applied = asyncio.Event()
+    release_first_repaint = asyncio.Event()
+    stream_calls = 0
+
+    async def controlled_stream_apply(
+        items: t.Any,
+        apply_chunk: t.Callable[[t.Any], None],
+        *,
+        chunk_size: int = 200,
+        yield_between: t.Callable[[], t.Awaitable[None]] | None = None,
+    ) -> None:
+        del yield_between
+        nonlocal stream_calls
+        stream_calls += 1
+        this_call = stream_calls
+        for start in range(0, len(items), chunk_size):
+            apply_chunk(items[start : start + chunk_size])
+            if this_call == 1 and start == 0:
+                first_chunk_applied.set()
+                await release_first_repaint.wait()
+            else:
+                await asyncio.sleep(0)
+
+    monkeypatch.setattr(_runtime, "stream_apply", controlled_stream_apply)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        records = [
+            _ui_record(
+                agentgrep,
+                tmp_path / f"rapid-{index}.jsonl",
+                f"codex prompt body {index}",
+                f"rapid-{index}",
+            )
+            for index in range(201)
+        ]
+        app.screen._results._rebuild_options(records)
+
+        app.theme = theme.LIGHT_THEME_NAME
+        await asyncio.wait_for(first_chunk_applied.wait(), timeout=1)
+        app.theme = theme.DARK_THEME_NAME
+        release_first_repaint.set()
+        await pilot.pause()
+
+        assert stream_calls >= 2
+        assert app.screen._results.option_count == len(records)
+        first = app.screen._results.get_option_at_index(0)
+        assert any("#00d7ff" in str(span.style) for span in first.prompt.spans)
